@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: salary-db
+    environment:
+      POSTGRES_USER: salary
+      POSTGRES_PASSWORD: salary123
+      POSTGRES_DB: salary_cal_sys
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U salary -d salary_cal_sys"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: salary-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: salary-backend
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USERNAME: salary
+      DB_PASSWORD: salary123
+      DB_DATABASE: salary_cal_sys
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: salary-cal-sys-jwt-secret-2026
+      JWT_EXPIRES_IN: 2h
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: salary-frontend
+    ports:
+      - "6666:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  redis_data:
