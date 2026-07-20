@@ -11,6 +11,7 @@
     "build": "pnpm -r --if-present build",
     "predev": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build",
     "dev": "pnpm --parallel --filter './apps/*' dev",
+    "prelint": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build",
     "lint": "eslint .",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
