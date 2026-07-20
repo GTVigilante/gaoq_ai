@@ -1,11 +1,13 @@
 # 告趣ERP系统（代号：GaoQ-OS）产品需求文档（PRD）
 
-> **版本**: v1.0.0  
-> **日期**: 2025-06-27  
+> **版本**: v1.1.0
+> **日期**: 2026-07-21
 > **撰写**: Kimi / Codex 架构团队  
 > **目标读者**: 技术团队、产品团队、Kimi Code / Codex 编码 Agent  
 > **技术栈**: NestJS + MongoDB + React/Next.js  
 > **核心目标**: 替代氚云（审批）、智能薪酬（薪酬+人事）、招聘门户；自建 MCP 服务层；钉钉/飞书 SSO；一站式企业运营平台。
+>
+> **规范优先级**：本PRD描述产品需求；架构、租户、主数据、集成、MCP、安全、质量与上线门禁以[`docs/phase-0/`](./docs/phase-0/)为强制基线。冲突内容以Phase 0规范和已接受ADR为准。
 
 ---
 
@@ -179,7 +181,7 @@ ALUMNI (独立体系，保留历史数据只读权限)
 | AUTH-001 | 支持钉钉扫码登录（企业内部应用） | P0 | 读取钉钉通讯录同步组织架构 |
 | AUTH-002 | 支持飞书扫码登录（企业自建应用） | P0 | 读取飞书通讯录同步组织架构 |
 | AUTH-003 | 支持手机验证码登录（外部人员/候选人） | P1 | 用于候选人面试安排、外部合作方 |
-| AUTH-004 | 支持MCP API Key认证（外部AI Agent） | P0 | 每个API Key绑定角色和权限范围 |
+| AUTH-004 | 支持MCP OAuth 2.1认证（人员代理与服务代理） | P0 | 令牌绑定资源、租户、主体和最小Scope |
 | AUTH-005 | JWT Token刷新机制（Access Token 2h + Refresh Token 7d） | P0 | 移动端长期保持登录 |
 | AUTH-006 | 单点登出（SSO Logout）同步 | P1 | 登出时使所有端Token失效 |
 | AUTH-007 | 多租户隔离（告趣集团 vs OP SaaS客户） | P1 | 数据库层面tenantId隔离 |
@@ -219,13 +221,6 @@ interface User {
   resignDate?: Date;         // 离职日期
   lastLoginAt?: Date;        // 最后登录时间
   lastLoginIp?: string;      // 最后登录IP
-  mcpApiKeys?: {             // MCP API Key列表
-    keyId: string;
-    name: string;            // 如"Kimi Agent"
-    permissions: string[];   // 权限范围
-    createdAt: Date;
-    lastUsedAt?: Date;
-  }[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -256,15 +251,15 @@ interface Tenant {
 
 | 需求编号 | 需求描述 | 优先级 | 备注 |
 |----------|----------|--------|------|
-| MCP-001 | 实现MCP Server（SSE/stdio两种模式） | P0 | 兼容Claude Desktop、Kimi、Cursor等客户端 |
+| MCP-001 | 实现MCP Server（远程Streamable HTTP、本地stdio） | P0 | 遵循当前稳定MCP规范，不支持旧HTTP+SSE |
 | MCP-002 | 提供Resources（资源暴露）：员工信息、审批列表、薪酬单、知识库文章 | P0 | 支持动态URI模板，如`user://{userId}/profile` |
 | MCP-003 | 提供Tools（工具调用）：提交审批、查询薪酬、发起招聘、搜索知识库 | P0 | 每个工具必须有中文描述和参数说明 |
 | MCP-004 | 提供Prompts（预设提示词）："帮我查本月待审批","我要请假3天" | P1 | 降低员工使用门槛 |
 | MCP-005 | 细粒度权限控制：AI Agent只能操作被授予权限的Tools/Resources | P0 | 防止越权操作 |
 | MCP-006 | MCP操作审计日志：记录所有AI操作（who/what/when/result） | P0 | 安全可追溯 |
-| MCP-007 | 支持多轮对话上下文保持（通过sessionId） | P1 | 提升对话体验 |
-| MCP-008 | 支持流式响应（SSE）处理长耗时操作（如薪酬计算） | P1 | 避免超时 |
-| MCP-009 | MCP API Key分级管理（只读、读写、管理员） | P1 | 外部合作方限制 |
+| MCP-007 | 支持标准会话和协议版本协商 | P0 | 权限每次请求重新校验，不依赖会话授权 |
+| MCP-008 | 通过Streamable HTTP进度通知和任务Resource处理长耗时操作 | P1 | 避免超时，不依赖旧SSE传输 |
+| MCP-009 | MCP OAuth Scope与风险分级授权 | P0 | 只读、普通写、高风险和禁止操作分级 |
 
 #### 4.2.3 MCP Tools 清单（示例）
 
@@ -1276,7 +1271,7 @@ interface AuditLog {
   _id: ObjectId;
   tenantId: string;
   userId?: ObjectId;         // 操作人
-  apiKeyId?: string;         // MCP API Key
+  oauthClientId?: string;    // MCP OAuth客户端ID
   action: string;            // 操作：LOGIN / VIEW / CREATE / UPDATE / DELETE / EXPORT / MCP_CALL
   module: string;             // 模块
   resourceId?: string;       // 资源ID
@@ -1399,7 +1394,6 @@ interface AuditLog {
 ```http
 GET /api/v1/approval/templates?status=published&page=1&pageSize=20
 Authorization: Bearer {accessToken}
-X-Tenant-Id: gaoq
 Content-Type: application/json
 Accept-Language: zh-CN
 ```
@@ -1439,7 +1433,7 @@ interface PaginatedResponse<T> {
   "timestamp": "2025-06-27T10:00:00Z"
 }
 
-// 业务错误响应示例（HTTP 200但业务失败）
+// 业务错误响应示例（HTTP 404）
 {
   "code": "APPROVAL_NOT_FOUND",
   "message": "审批实例不存在或已被删除",
@@ -1489,9 +1483,9 @@ interface PaginatedResponse<T> {
 | POST | /api/v1/auth/refresh | 刷新Token | `{ refreshToken }` | `{ accessToken, refreshToken }` |
 | POST | /api/v1/auth/logout | 退出登录 | `{}` | `null` |
 | GET | /api/v1/auth/me | 获取当前用户信息 | - | `User` |
-| GET | /api/v1/auth/mcp-keys | 获取我的MCP API Keys | - | `ApiKey[]` |
-| POST | /api/v1/auth/mcp-keys | 创建MCP API Key | `{ name, permissions }` | `ApiKey` |
-| DELETE | /api/v1/auth/mcp-keys/:id | 删除MCP API Key | - | `null` |
+| GET | /api/v1/auth/mcp-connections | 获取我的MCP授权连接 | - | `McpConnection[]` |
+| DELETE | /api/v1/auth/mcp-connections/:id | 撤销MCP授权连接 | - | `null` |
+| POST | /api/v1/security/oauth-clients | 创建服务型MCP OAuth客户端（管理员） | `{ name, scopes, expiresAt }` | `OAuthClientMetadata` |
 
 #### 5.2.2 审批模块（Approval）
 
@@ -1610,10 +1604,11 @@ interface PaginatedResponse<T> {
   "version": "1.0.0",
   "description": "告趣企业ERP系统MCP接口，支持审批、薪酬、招聘、知识库等操作",
   "transport": {
-    "type": "sse",
-    "url": "https://erp.gaoq.com/mcp/sse",
+    "type": "streamable-http",
+    "url": "https://erp.gaoq.com/mcp",
     "headers": {
-      "Authorization": "Bearer {mcpApiKey}"
+      "Authorization": "Bearer {oauthAccessToken}",
+      "MCP-Protocol-Version": "2025-11-25"
     }
   },
   "resources": [
@@ -1754,7 +1749,7 @@ interface PaginatedResponse<T> {
 
 ### 6.2 MCP 权限控制
 
-每个MCP API Key在创建时绑定：
+每个MCP OAuth授权或服务客户端绑定：
 - **允许访问的Resources**（白名单）
 - **允许调用的Tools**（白名单）
 - **数据范围**（本人/本部门/全公司）
@@ -1767,7 +1762,9 @@ interface PaginatedResponse<T> {
 ```typescript
 interface McpAuditLog {
   _id: ObjectId;
-  apiKeyId: string;          // API Key ID
+  oauthClientId: string;     // OAuth客户端ID
+  subjectId: string;         // 用户或服务主体ID
+  tenantId: string;          // 租户ID
   toolName?: string;         // 调用的Tool
   resourceUri?: string;      // 访问的Resource
   parameters: Record<string, any>; // 参数
@@ -1827,81 +1824,27 @@ db.candidates.createIndex({ tenantId: 1, stage: 1, positionId: 1 });
 
 ### 8.1 阶段划分
 
-| 阶段 | 时间 | 目标 | 交付物 |
+| 阶段 | 参考时间 | 目标 | 强制交付 |
 |------|------|------|--------|
-| **MVP** | 第1-2月 | 基础底座+SSO+组织架构+审批 | 可运行系统，替代氚云审批 |
-| **V1.0** | 第3-4月 | 薪酬管理+招聘管理+知识库 | 替代智能薪酬+智能人事招聘 |
-| **V1.5** | 第5-6月 | 入职引导+培训考试+员工关怀 | 完整入职体验+培训体系 |
-| **V2.0** | 第7-8月 | MCP完整实现+OP桥接+数据安全 | AI接入+SaaS桥接+安全审计 |
-| **V2.5** | 第9-10月 | 移动端优化+数据分析+校友社区 | 移动端完善+管理驾驶舱 |
+| **Phase 0** | 4-6周 | 治理与契约冻结 | 架构、数据、安全、集成、MCP、切换规范与GitHub Backlog |
+| **Phase 1** | 8-10周 | 平台与主数据底座 | 多租户、身份、组织主数据、双平台连接、MCP Core |
+| **Phase 2** | 8-10周 | 审批工作流MVP | 审批、表单、PC/H5、通知与审批MCP能力 |
+| **Phase 3** | 10-12周 | 人才与学习闭环 | 招聘、e签宝、入职、知识培训、关怀与对应MCP能力 |
+| **Phase 4** | 10-12周 | 薪酬闭环 | 考勤、薪酬、薪税文件、发放回盘、对账与对应MCP能力 |
+| **Phase 5** | 8-10周 | 连接与生产加固 | OP桥接、移动端、分析、迁移工具和完整MCP目录 |
+| **Phase 6** | 6-8周 | 统一大切换 | 三次演练、正式切换、回滚保障和四周Hypercare |
 
 ### 8.2 迭代详细计划
 
-#### Phase 1: MVP（第1-2月）
-**目标**：让系统可用，审批流程跑通
+详细阶段范围、责任、质量指标和退出门禁统一维护在[`docs/phase-0/00-program-charter.md`](./docs/phase-0/00-program-charter.md)。本PRD不再复制实现清单，避免产品需求与工程Backlog出现双重事实源。
 
-**后端（NestJS）**：
-- [ ] 项目脚手架搭建（NestJS + MongoDB + Redis）
-- [ ] 认证模块（钉钉SSO、飞书SSO、JWT）
-- [ ] 组织架构模块（部门、人员、职级）
-- [ ] 审批模块（模板、流程引擎、表单设计器后端）
-- [ ] 安全模块（RBAC、审计日志、数据脱敏）
-- [ ] 基础网关（限流、认证中间件）
+执行原则：
 
-**前端**：
-- [ ] 管理后台框架（React + Ant Design）
-- [ ] 登录页（钉钉/飞书扫码）
-- [ ] 组织架构管理页
-- [ ] 审批模板设计器（简化版）
-- [ ] 审批列表/详情/处理页
-- [ ] 个人中心
-
-**部署**：
-- [ ] Docker Compose本地开发环境
-- [ ] 生产环境部署脚本（MongoDB Replica Set + Redis + NestJS + Nginx）
-
-#### Phase 2: V1.0（第3-4月）
-**目标**：核心HR功能完备
-
-- [ ] 薪酬管理（结构、计算、审批、发放）
-- [ ] 招聘管理（职位、简历、面试、Offer）
-- [ ] 知识库（分类、文章、课程）
-- [ ] 考勤导入（对接钉钉/飞书考勤数据）
-- [ ] 前端对应页面
-- [ ] 数据加密（敏感字段）
-
-#### Phase 3: V1.5（第5-6月）
-**目标**：入职体验+培训考试+关怀
-
-- [ ] 入职模板和任务引擎
-- [ ] 电子签署（法大大/e签宝集成）
-- [ ] 考试系统（题库、组卷、考试）
-- [ ] 培训计划和学习进度
-- [ ] 员工关怀（生日、周年、离职）
-- [ ] 校友库管理
-- [ ] 企业公告
-- [ ] 移动端H5（入职引导、学习、审批）
-
-#### Phase 4: V2.0（第7-8月）
-**目标**：MCP+OP桥接+安全
-
-- [ ] MCP Server（SSE模式）
-- [ ] MCP Tools（审批、薪酬、招聘、知识）
-- [ ] MCP权限和审计
-- [ ] OP SaaS桥接（账号同步、数据互通）
-- [ ] 数据安全加固（加密、备份、防泄漏）
-- [ ] API文档自动生成（Swagger/OpenAPI）
-- [ ] 性能优化（缓存、分页、索引）
-
-#### Phase 5: V2.5（第9-10月）
-**目标**：体验优化+数据驱动
-
-- [ ] 移动端完善（审批、薪酬、知识、通讯录）
-- [ ] 管理驾驶舱（数据可视化、报表）
-- [ ] 校友社区（可选）
-- [ ] 自动化工作流（如：入职自动触发培训）
-- [ ] 国际化（多语言）
-- [ ] 性能压测和优化
+1. 多租户、身份、安全、审计、可观测性、集成底座和MCP Core在Phase 1完成，不得后置。
+2. 每个业务模块必须同步交付REST、事件、MCP能力和审计点。
+3. e签宝在Offer和员工合同正式上线前完成验收。
+4. 薪酬正式上线前至少完成两个完整薪资周期的影子计算。
+5. 所有旧系统在Phase 6统一切换；此前只做影子验证和迁移演练。
 
 ### 8.3 风险与应对
 

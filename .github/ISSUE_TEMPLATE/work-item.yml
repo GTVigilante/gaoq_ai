@@ -1,0 +1,66 @@
+name: 开发工作项
+description: Epic、Story、Task、ADR或集成工作项
+title: "[Phase X][领域] "
+labels: []
+body:
+  - type: dropdown
+    id: type
+    attributes:
+      label: 工作项类型
+      options:
+        - Epic
+        - Story
+        - Task
+        - ADR
+        - Security
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: 目标与业务价值
+      description: 描述完成后的可观察结果，不只描述技术动作。
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 范围与非范围
+      description: 分别列出本项包含和明确不包含的内容。
+    validations:
+      required: true
+  - type: textarea
+    id: contracts
+    attributes:
+      label: 接口、事件与MCP契约
+      description: 列出OpenAPI、CloudEvents、Webhook、MCP Resources/Tools及兼容影响；不适用时说明原因。
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: 租户、权限与数据安全
+      description: 明确租户来源、角色/数据/字段权限、数据等级、加密、脱敏和审计点。
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: 依赖与外部条件
+      description: 关联Issue、ADR、供应商资质、测试账号、密钥和联调窗口。
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准
+      description: 使用可测试、可量化的Given/When/Then或检查项。
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: 测试、监控与回滚
+      description: 列出测试层级、指标/告警、发布和回滚方法。
+    validations:
+      required: true

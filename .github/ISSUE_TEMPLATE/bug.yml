@@ -1,0 +1,45 @@
+name: 缺陷报告
+description: 报告可复现的产品、数据、集成或安全缺陷
+title: "[Bug][领域] "
+labels:
+  - type:bug
+body:
+  - type: dropdown
+    id: severity
+    attributes:
+      label: 严重级别
+      options:
+        - Sev1
+        - Sev2
+        - Sev3
+        - Sev4
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: 影响范围
+      description: 包括租户、用户、业务、数据、金额和安全影响，禁止粘贴敏感原文。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期与实际结果
+    validations:
+      required: true
+  - type: input
+    id: trace
+    attributes:
+      label: Trace ID或审计引用
+      description: 禁止填写Token、密码、身份证、银行卡或完整薪酬信息。
+  - type: textarea
+    id: rollback
+    attributes:
+      label: 临时缓解与回滚

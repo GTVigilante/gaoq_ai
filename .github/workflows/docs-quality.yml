@@ -1,0 +1,30 @@
+name: 文档质量检查
+
+on:
+  pull_request:
+    paths:
+      - "**/*.md"
+      - "scripts/validate-docs.mjs"
+      - ".github/workflows/docs-quality.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "**/*.md"
+      - "scripts/validate-docs.mjs"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+      - name: 配置Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: 校验规范文档
+        run: node scripts/validate-docs.mjs
