@@ -7,6 +7,18 @@ const environmentSchema = z.object({
   REDIS_URL: z.string().url().startsWith('redis://'),
   WEB_ORIGIN: z.string().url(),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+  AUTH_ISSUER: z.string().url(),
+  AUTH_AUDIENCE: z.string().min(1),
+  AUTH_RESOURCE: z.string().url(),
+  AUTH_JWKS_URI: z.string().url(),
+  MCP_AUTHORIZATION_SERVER: z.string().url(),
+  MCP_ALLOWED_ORIGINS: z.string().min(1),
+  DINGTALK_CLIENT_ID: z.string().optional(),
+  DINGTALK_CLIENT_SECRET: z.string().optional(),
+  DINGTALK_REDIRECT_URI: z.string().url().optional(),
+  FEISHU_CLIENT_ID: z.string().optional(),
+  FEISHU_CLIENT_SECRET: z.string().optional(),
+  FEISHU_REDIRECT_URI: z.string().url().optional(),
 });
 
 export type AppEnvironment = z.infer<typeof environmentSchema>;

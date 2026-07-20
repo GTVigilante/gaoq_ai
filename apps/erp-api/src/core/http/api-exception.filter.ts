@@ -9,12 +9,16 @@ import {
 import type { ApiErrorResponse, ErrorDetail } from '@gaoq/shared-types';
 import { createTraceId } from '@gaoq/shared-utils';
 import type { Response } from 'express';
+import { ConfigService } from '@nestjs/config';
 
 import type { ErpRequest } from './request-context.js';
+import type { AppEnvironment } from '../../config/environment.js';
 
 @Catch()
 export class ApiExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(ApiExceptionFilter.name);
+
+  constructor(private readonly config: ConfigService<AppEnvironment, true>) {}
 
   /** 屏蔽未知异常细节，并返回稳定的错误代码与追踪标识。 */
   catch(exception: unknown, host: ArgumentsHost): void {
@@ -31,6 +35,14 @@ export class ApiExceptionFilter implements ExceptionFilter {
       traceId,
       timestamp: new Date().toISOString(),
     };
+
+    if (status === 401 && request.path === '/mcp') {
+      const metadataUrl = new URL(
+        '/.well-known/oauth-protected-resource',
+        this.config.get('AUTH_RESOURCE', { infer: true }),
+      );
+      response.setHeader('WWW-Authenticate', `Bearer resource_metadata="${metadataUrl.toString()}"`);
+    }
 
     if (!(exception instanceof HttpException)) {
       this.logger.error(`未处理异常 traceId=${traceId}`, exception instanceof Error ? exception.stack : undefined);

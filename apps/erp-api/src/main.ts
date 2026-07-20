@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 
-import { ValidationPipe } from '@nestjs/common';
+import { RequestMethod, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import helmet from 'helmet';
@@ -14,10 +14,18 @@ import type { AppEnvironment } from './config/environment.js';
 const bootstrap = async (): Promise<void> => {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   const config = app.get<ConfigService<AppEnvironment, true>>(ConfigService);
+  const allowedOrigins = [
+    config.get('WEB_ORIGIN', { infer: true }),
+    ...config
+      .get('MCP_ALLOWED_ORIGINS', { infer: true })
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean),
+  ];
 
   app.use(helmet());
   app.enableCors({
-    origin: config.get('WEB_ORIGIN', { infer: true }),
+    origin: [...new Set(allowedOrigins)],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   });
@@ -28,7 +36,12 @@ const bootstrap = async (): Promise<void> => {
       forbidNonWhitelisted: true,
     }),
   );
-  app.setGlobalPrefix('api');
+  app.setGlobalPrefix('api', {
+    exclude: [
+      { path: 'mcp', method: RequestMethod.ALL },
+      { path: '.well-known/oauth-protected-resource', method: RequestMethod.GET },
+    ],
+  });
   app.enableShutdownHooks();
 
   await app.listen(config.get('PORT', { infer: true }), '0.0.0.0');

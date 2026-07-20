@@ -11,6 +11,12 @@ describe('validateEnvironment', () => {
       REDIS_URL: 'redis://localhost:6379/0',
       WEB_ORIGIN: 'http://localhost:3000',
       LOG_LEVEL: 'info',
+      AUTH_ISSUER: 'https://auth.example.internal',
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'http://localhost:3001/mcp',
+      AUTH_JWKS_URI: 'https://auth.example.internal/.well-known/jwks.json',
+      MCP_AUTHORIZATION_SERVER: 'https://auth.example.internal',
+      MCP_ALLOWED_ORIGINS: 'http://localhost:3000',
     });
 
     expect(environment.PORT).toBe(3001);

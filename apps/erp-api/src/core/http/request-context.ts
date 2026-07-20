@@ -1,5 +1,6 @@
 import type { Request } from 'express';
 import type { ActorType, TenantContext } from '@gaoq/shared-types';
+import type { VerifiedAccessToken } from '../../modules/identity/auth.types.js';
 
 /** 已经由认证守卫验签并写入请求的可信主体。 */
 export interface TrustedPrincipal {
@@ -16,4 +17,6 @@ export interface TrustedPrincipal {
 export interface ErpRequest extends Request {
   traceId?: string;
   user?: TrustedPrincipal;
+  bearerToken?: string;
+  verifiedAccessToken?: VerifiedAccessToken;
 }

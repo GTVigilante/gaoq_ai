@@ -2,7 +2,7 @@ import { Logger, Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
-import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 
 import { validateEnvironment, type AppEnvironment } from './config/environment.js';
 import { AuditModule } from './core/audit/audit.module.js';
@@ -15,6 +15,10 @@ import { HealthModule } from './health/health.module.js';
 import { RedisModule } from './infrastructure/redis/redis.module.js';
 import { toBullMqConnection } from './infrastructure/redis/redis-options.js';
 import type { Connection } from 'mongoose';
+import { IdentityModule } from './modules/identity/identity.module.js';
+import { BearerAuthGuard } from './modules/identity/bearer-auth.guard.js';
+import { McpModule } from './modules/mcp/mcp.module.js';
+import { McpOriginGuard } from './modules/mcp/mcp-origin.guard.js';
 
 const mongoLogger = new Logger('MongoDB');
 
@@ -47,12 +51,22 @@ const mongoLogger = new Logger('MongoDB');
       }),
     }),
     RedisModule,
+    IdentityModule,
+    McpModule,
     TraceMiddlewareModule,
     TenantContextModule,
     AuditModule,
     HealthModule,
   ],
   providers: [
+    {
+      provide: APP_GUARD,
+      useClass: McpOriginGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: BearerAuthGuard,
+    },
     {
       provide: APP_INTERCEPTOR,
       useClass: TenantContextInterceptor,
