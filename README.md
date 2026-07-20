@@ -1,6 +1,6 @@
 # GaoQ AI
 
-告趣ERP系统（代号：GaoQ-OS）产品需求、企业架构规范与开发跟踪仓库。
+告趣ERP系统（代号：GaoQ-OS）产品需求、企业架构规范与工程实现仓库。
 
 ## 简介
 
@@ -21,8 +21,8 @@
 
 | 阶段 | 参考时间 | 目标 | 状态 |
 |------|------|------|------|
-| Phase 0 | 4-6周 | 架构、数据、安全、MCP、集成契约与Backlog冻结 | 执行中 |
-| Phase 1 | 8-10周 | 多租户底座、身份、组织主数据、双平台连接、MCP Core | 规划中 |
+| Phase 0 | 4-6周 | 架构、数据、安全、MCP、集成契约与Backlog冻结 | 待评审 |
+| Phase 1 | 8-10周 | 多租户底座、身份、组织主数据、双平台连接、MCP Core | 执行中 |
 | Phase 2 | 8-10周 | 审批工作流、PC/H5及审批MCP能力 | 规划中 |
 | Phase 3 | 10-12周 | 招聘、e签宝、入职、知识培训、关怀及MCP能力 | 规划中 |
 | Phase 4 | 10-12周 | 考勤、薪酬、薪税文件、发放对账及MCP能力 | 规划中 |
@@ -45,3 +45,25 @@
 - ERP是员工、部门、岗位和职级的唯一主数据源；钉钉、飞书和OP通过适配器同步。
 - Web、REST、MCP、Webhook和后台任务必须复用同一应用服务，禁止重复实现业务规则。
 - 禁止提交密钥、个人敏感数据、WordPress备份、构建产物和本地环境文件。
+
+## 本地开发
+
+要求 Node.js 22、pnpm 10 和 Docker。仓库使用 pnpm workspace 管理 NestJS API、Next.js Web 与共享契约包。
+
+```bash
+cp .env.example .env
+pnpm install
+docker compose up -d
+pnpm dev
+```
+
+- Web：`http://localhost:3000`
+- API 存活探针：`http://localhost:3001/api/health/live`
+- API 就绪探针：`http://localhost:3001/api/health/ready`
+
+提交前执行：
+
+```bash
+pnpm check
+pnpm build
+```

@@ -1,0 +1,67 @@
+# =============================================================================
+# GaoQ-OS 本地开发基础设施
+#
+# 仅限本地开发使用，禁止用于任何生产 / 预发环境：
+#   - MongoDB 未启用访问控制（--noauth 默认），仅监听开发机端口；
+#   - Redis 无密码、无持久化备份策略；
+#   - 所有默认值均为开发便利而设，不构成安全基线。
+#
+# 用法：
+#   docker compose up -d          # 启动 MongoDB Replica Set rs0 + Redis
+#   docker compose down           # 停止（保留数据卷）
+#
+# 连接串（与 .env.example 一致）：
+#   MONGODB_URI=mongodb://localhost:27017/gaoq_os?replicaSet=rs0&directConnection=true
+#   REDIS_URL=redis://localhost:6379/0
+# =============================================================================
+
+services:
+  mongo:
+    image: mongo:7.0
+    container_name: gaoq-mongo
+    restart: unless-stopped
+    # 单节点副本集 rs0：事务与 Change Stream 依赖副本集形态。
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "${MONGO_PORT:-27017}:27017"
+    volumes:
+      - gaoq-mongo-data:/data/db
+    healthcheck:
+      # ping 在副本集初始化前后均可用，仅证明 mongod 进程可服务。
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand({ ping: 1 }).ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  mongo-init:
+    image: mongo:7.0
+    container_name: gaoq-mongo-init
+    # 一次性初始化副本集，脚本可重复执行且不做任何破坏性操作。
+    restart: "no"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    volumes:
+      - ./docker/mongo-init.js:/scripts/mongo-init.js:ro
+    entrypoint: ["mongosh", "mongodb://mongo:27017", "--quiet", "/scripts/mongo-init.js"]
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: gaoq-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - gaoq-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+volumes:
+  gaoq-mongo-data:
+  gaoq-redis-data:
