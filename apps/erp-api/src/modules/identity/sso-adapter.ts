@@ -21,6 +21,9 @@ export abstract class SsoAdapter {
   ): Promise<ExternalIdentityProfile>;
 }
 
+export abstract class DingTalkSsoAdapterToken extends SsoAdapter {}
+export abstract class FeishuSsoAdapterToken extends SsoAdapter {}
+
 @Injectable()
 export class SsoAdapterRegistry {
   private readonly adapters: ReadonlyMap<SsoProviderCode, SsoAdapter>;
@@ -41,6 +44,3 @@ export class SsoAdapterRegistry {
     return adapter;
   }
 }
-
-export abstract class DingTalkSsoAdapterToken extends SsoAdapter {}
-export abstract class FeishuSsoAdapterToken extends SsoAdapter {}
