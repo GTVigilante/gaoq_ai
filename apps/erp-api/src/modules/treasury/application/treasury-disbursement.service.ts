@@ -314,7 +314,7 @@ export class TreasuryDisbursementService {
         ...input, payrollRunId: source.payrollRunId, payrollResultHash: source.resultHash,
       }, async (session) => this.stage(source, input, actor.actorId, session),
     ));
-    return this.materialize(deriveKey(key, 'materialize'), staged.id);
+    return this.materializeStaged(deriveKey(key, 'materialize'), staged.id);
   }
 
   private async stage(
@@ -380,7 +380,7 @@ export class TreasuryDisbursementService {
       id: batchId, tenantId: this.tenantId(), payrollPeriodId: source.periodId,
       payrollRunId: source.payrollRunId, payrollResultHash: source.resultHash,
       payableResultHash,
-      batchSequence: 1, parentBatchId: null,
+      batchSequence: 1, parentBatchId: null, recoverySourceBatchId: null,
       purpose: 'regular', format: 'ISO20022_PAIN_001_001_03', fileHash: null,
       lineCount: payable.length, totalMinor: Number(total), preparedBy,
       payrollLockedBy: source.payrollLockedBy, exportApprovedBy: null,
@@ -431,7 +431,8 @@ export class TreasuryDisbursementService {
     });
   }
 
-  private async materialize(key: string, batchId: string): Promise<TreasuryDisbursementSummary> {
+  /** 仅供已在 Treasury 事务中建立可信密文快照的编排服务继续 WORM 物化。 */
+  async materializeStaged(key: string, batchId: string): Promise<TreasuryDisbursementSummary> {
     const batch = await this.batches.findOne({ tenantId: this.tenantId(), id: batchId }).lean().exec();
     if (batch === null) throw new NotFoundException({
       code: 'TREASURY_BATCH_NOT_FOUND', message: '代发批次不存在',

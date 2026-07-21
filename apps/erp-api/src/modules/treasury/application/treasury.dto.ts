@@ -32,3 +32,8 @@ export class SubmitTreasuryDisbursementDto {
 export class IngestTreasuryBankReturnDto {
   @IsInt() @Min(1) expectedVersion!: number;
 }
+
+export class CreateTreasuryRecoveryDto {
+  @IsInt() @Min(1) expectedVersion!: number;
+  @Matches(ULID) strongAuthEvidenceId!: string;
+}

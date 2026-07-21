@@ -15,6 +15,7 @@ export interface TreasuryEvent {
     | 'treasury.disbursement.export_approved'
     | 'treasury.disbursement.submission_requested'
     | 'treasury.disbursement.submitted'
+    | 'treasury.disbursement.recovery_requested'
     | 'treasury.bank_return.applied';
   readonly tenantId: string;
   readonly aggregateId: string;
@@ -74,6 +75,18 @@ export class TreasuryOutboxWriter {
         !nonnegativeInteger(data['lineAmountMismatchCount']) ||
         !nonnegativeInteger(data['successfulMinor']) || !nonnegativeInteger(data['failedMinor']) ||
         typeof data['freezeReason'] !== 'string'
+      ) throw new Error('TREASURY_OUTBOX_DATA_INVALID');
+      return;
+    }
+    if (event.type === 'treasury.disbursement.recovery_requested') {
+      if (
+        keys !==
+          'failedCount,failedMinor,parentBatchId,payrollPeriodId,payrollRunId,returnHash,status,strongAuthMethod' ||
+        !safeId(data['parentBatchId']) || !safeId(data['payrollPeriodId']) ||
+        !safeId(data['payrollRunId']) || !positiveInteger(data['failedCount']) ||
+        !positiveInteger(data['failedMinor']) || data['status'] !== 'materializing' ||
+        data['strongAuthMethod'] !== 'webauthn_uv' ||
+        typeof data['returnHash'] !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(data['returnHash'])
       ) throw new Error('TREASURY_OUTBOX_DATA_INVALID');
       return;
     }

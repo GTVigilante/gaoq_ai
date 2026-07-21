@@ -118,6 +118,8 @@ export class TreasuryDisbursementBatchRecord extends ProtectedTreasuryRecord {
   @Prop({ type: Number, required: true, immutable: true, min: 1 }) batchSequence!: number;
   @Prop({ type: String, default: null, immutable: true, match: ULID_PATTERN })
   parentBatchId!: string | null;
+  @Prop({ type: String, default: null, immutable: true, match: ULID_PATTERN })
+  recoverySourceBatchId!: string | null;
   @Prop({ type: String, required: true, immutable: true, enum: ['regular', 'supplement', 'recovery'] })
   purpose!: 'regular' | 'supplement' | 'recovery';
   @Prop({ type: String, required: true, immutable: true, enum: ['ISO20022_PAIN_001_001_03'] })
@@ -133,6 +135,12 @@ export class TreasuryDisbursementBatchRecord extends ProtectedTreasuryRecord {
   exportApprovedBy!: string | null;
   @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
   strongAuthEvidenceId!: string | null;
+  @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
+  recoveryApprovedBy!: string | null;
+  @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
+  recoveryStrongAuthEvidenceId!: string | null;
+  @Prop({ type: String, default: null, match: ULID_PATTERN })
+  recoveryReturnId!: string | null;
   @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
   objectEvidenceId!: string | null;
   @Prop({ type: String, default: null, maxlength: 512, match: /^[A-Za-z0-9][A-Za-z0-9/._:-]{0,511}$/ })
@@ -173,6 +181,10 @@ TreasuryDisbursementBatchRecordSchema.index({ tenantId: 1, payrollPeriodId: 1, s
 TreasuryDisbursementBatchRecordSchema.index(
   { tenantId: 1, parentBatchId: 1 },
   { partialFilterExpression: { parentBatchId: { $type: 'string' } } },
+);
+TreasuryDisbursementBatchRecordSchema.index(
+  { tenantId: 1, recoverySourceBatchId: 1 },
+  { unique: true, partialFilterExpression: { recoverySourceBatchId: { $type: 'string' } } },
 );
 
 /** 银行回盘只保存受控对象、证据、汇总和规范化行密文；原始正文不得进入 Mongo。 */

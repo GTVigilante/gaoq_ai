@@ -19,7 +19,8 @@ const SCHEMAS = Object.freeze([
 ]);
 
 export function buildPhaseFourTreasuryIndexManifest() {
-  return buildIndexManifestFromSchemas(SCHEMAS);
+  return Object.freeze(buildIndexManifestFromSchemas(SCHEMAS).filter((item) =>
+    item.key.recoverySourceBatchId !== 1));
 }
 export async function runPhaseFourTreasuryIndexMigration(
   connection: Parameters<typeof runAdditiveIndexMigration>[0],

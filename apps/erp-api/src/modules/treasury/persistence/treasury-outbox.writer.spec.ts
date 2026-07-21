@@ -140,4 +140,23 @@ describe('TreasuryOutboxWriter', () => {
       ...returned, data: { ...returned.data, instructionId: 'instruction-001' },
     }, session))).rejects.toThrow('TREASURY_OUTBOX_DATA_INVALID');
   });
+
+  it('失败子批次事件只公开父批次、回盘摘要和失败汇总', async () => {
+    const context = new TenantContextService();
+    const create = vi.fn().mockResolvedValue([]);
+    const writer = new TreasuryOutboxWriter(context, { create } as never);
+    const recovery: TreasuryEvent = {
+      type: 'treasury.disbursement.recovery_requested', tenantId: 'tenant-001',
+      aggregateId: 'child-batch-001', version: 1, occurredAt: '2026-07-22T10:04:00.000Z',
+      data: {
+        parentBatchId: 'parent-batch-001', payrollPeriodId: 'period-001',
+        payrollRunId: 'run-001', returnHash: 'r'.repeat(43), failedCount: 1,
+        failedMinor: 839_500, status: 'materializing', strongAuthMethod: 'webauthn_uv',
+      },
+    };
+    await context.run({ tenant, actor }, () => writer.append(recovery, session));
+    const calls = JSON.stringify(create.mock.calls);
+    expect(calls).toContain('"parentBatchId":"parent-batch-001"');
+    expect(calls).not.toMatch(/employee|instruction|account|approvedBy|evidence/u);
+  });
 });

@@ -162,7 +162,7 @@ export async function runAdditiveIndexMigration(
 }> {
   const database = connection.db;
   if (database === undefined) throw new Error('PHASE3_INDEX_DATABASE_UNAVAILABLE');
-  if (!/^phase-3-[a-z0-9-]{1,96}-v[1-9][0-9]*$/.test(config.migrationId)) {
+  if (!/^phase-[1-9][0-9]*-[a-z0-9-]{1,96}-v[1-9][0-9]*$/.test(config.migrationId)) {
     throw new Error('PHASE3_INDEX_MIGRATION_ID_INVALID');
   }
   const manifest = config.manifest;

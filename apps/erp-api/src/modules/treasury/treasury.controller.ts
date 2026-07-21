@@ -15,9 +15,11 @@ import {
   TreasuryDisbursementService,
   type TreasuryDisbursementSummary,
 } from './application/treasury-disbursement.service.js';
+import { TreasuryRecoveryService } from './application/treasury-recovery.service.js';
 import {
   AttestTreasuryBankAccountDto,
   ApproveTreasuryExportDto,
+  CreateTreasuryRecoveryDto,
   IngestTreasuryBankReturnDto,
   PrepareTreasuryDisbursementDto,
   SubmitTreasuryDisbursementDto,
@@ -29,8 +31,38 @@ export class TreasuryController {
     private readonly accounts: TreasuryBankAccountService,
     private readonly bankReturns: TreasuryBankReturnService,
     private readonly disbursements: TreasuryDisbursementService,
+    private readonly recovery: TreasuryRecoveryService,
     private readonly audit: AuditService,
   ) {}
+
+  /** R3：只从受保护终态回盘派生失败子批次；父批次、员工与金额不可由客户端选择。 */
+  @Post('disbursements/:id/recovery')
+  @RequiredScopes('erp:treasury:recovery:create')
+  async createRecovery(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Body() body: CreateTreasuryRecoveryDto,
+    @Req() request: ErpRequest,
+  ): Promise<TreasuryDisbursementSummary> {
+    if (request.verifiedAccessToken === undefined) throw new BadRequestException({
+      code: 'TREASURY_RECOVERY_TOKEN_REQUIRED', message: '失败代发恢复必须使用已验证人员访问令牌',
+    });
+    const result = await this.recovery.create(
+      this.key(key), id, body, request.verifiedAccessToken,
+    );
+    await this.audit.record({
+      action: 'treasury.disbursement.recovery_create',
+      resourceType: 'treasury_disbursement_batch', resourceId: result.id,
+      riskLevel: 'R3', outcome: 'success', metadata: {
+        parentBatchId: id, payrollPeriodId: result.payrollPeriodId,
+        payrollRunId: result.payrollRunId, status: result.status, version: result.version,
+        lineCount: result.lineCount, totalMinor: result.totalMinor,
+        objectEvidenceId: result.objectEvidenceId ?? 'none',
+        strongAuthEvidenceId: body.strongAuthEvidenceId,
+      },
+    });
+    return result;
+  }
 
   /** R3：只接收 Inbox 规范清单并逐行复核；原始回盘与冻结解除不向 MCP 暴露。 */
   @Post('disbursements/:id/returns')

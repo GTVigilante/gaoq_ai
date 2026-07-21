@@ -51,6 +51,9 @@ describe('Treasury 持久化契约', () => {
     expect(TreasuryBankReturnRecordSchema.indexes()).toContainEqual([
       { tenantId: 1, returnHash: 1 }, expect.objectContaining({ unique: true }),
     ]);
+    expect(TreasuryDisbursementBatchRecordSchema.indexes()).toContainEqual([
+      { tenantId: 1, recoverySourceBatchId: 1 }, expect.objectContaining({ unique: true }),
+    ]);
   });
 
   it('员工级支付指令金额没有明文字段，批次仅保留控制总额', () => {
