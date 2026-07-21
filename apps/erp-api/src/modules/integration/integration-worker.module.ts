@@ -10,6 +10,9 @@ import { ORG_INTEGRATION_QUEUE } from './org-integration.queue.js';
 import { OrgIntegrationProcessor } from './org-integration.processor.js';
 import { OrgIntegrationScheduler } from './org-integration.scheduler.js';
 import { OrgQueueMetricsPoller } from './org-queue-metrics.poller.js';
+import { RecruitmentChannelProcessor } from './recruitment-channel.processor.js';
+import { RECRUITMENT_CHANNEL_QUEUE } from './recruitment-channel.queue.js';
+import { RecruitmentChannelScheduler } from './recruitment-channel.scheduler.js';
 
 /** 只在独立 Worker 进程装配队列消费者，API 进程不消费后台任务。 */
 @Module({
@@ -17,10 +20,12 @@ import { OrgQueueMetricsPoller } from './org-queue-metrics.poller.js';
     IntegrationModule,
     BullModule.registerQueue({ name: ORG_INTEGRATION_QUEUE }),
     BullModule.registerQueue({ name: ESIGN_WEBHOOK_QUEUE }),
+    BullModule.registerQueue({ name: RECRUITMENT_CHANNEL_QUEUE }),
   ],
   providers: [
     OrgIntegrationProcessor, OrgIntegrationScheduler, OrgQueueMetricsPoller,
     ESignWebhookProcessor, ESignScheduler, ESignQueueMetricsPoller,
+    RecruitmentChannelProcessor, RecruitmentChannelScheduler,
   ],
 })
 export class IntegrationWorkerModule {}

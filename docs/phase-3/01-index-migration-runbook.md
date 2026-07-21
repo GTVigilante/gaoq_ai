@@ -2,7 +2,7 @@
 
 ## 变更边界
 
-- 招聘/eSign/组织/入职迁移标识固定为 `phase-3-indexes-v1`；Knowledge 使用 `phase-3-knowledge-indexes-v1`，Care 与 Employment 终止引用使用 `phase-3-care-indexes-v1`。已发布清单不得通过追加 Schema 改写 checksum。
+- 招聘/eSign/组织/入职迁移标识固定为 `phase-3-indexes-v1`；Knowledge 使用 `phase-3-knowledge-indexes-v1`，Care 与 Employment 终止引用使用 `phase-3-care-indexes-v1`，招聘渠道使用 `phase-3-recruitment-channel-indexes-v1`。已发布清单不得通过追加 Schema 改写 checksum。
 - 只创建缺失索引，不删除未知索引；同名或同键异配置立即失败关闭。
 - apply 使用 30 分钟数据库租约，完成后重新读取并复验全部索引。
 - 唯一索引创建前必须先在影子库检查重复数据并保留快照；本脚本不会自动删除或合并业务数据。
@@ -40,6 +40,14 @@
    ```
 
 9. 验证同一劳动关系不能存在两个进行中离职案件、同一清算任务证据不可替换、Care 终止引用唯一，且 Worker 重试不会重复关闭劳动关系。
+10. 对招聘渠道追加清单执行 dry-run 和变更审核：
+
+   ```bash
+   pnpm --filter @gaoq/erp-api migrate:phase3:recruitment-channel-indexes -- --dry-run
+   pnpm --filter @gaoq/erp-api migrate:phase3:recruitment-channel-indexes
+   ```
+
+11. 验证同租户同渠道只有一个绑定，同一外部事件盲指纹只入箱一次，同一外部 ID 不能映射到两个 ERP 实体；职位投递按事件/绑定唯一，申请阶段投递按申请/版本唯一。
 
 ## 失败处理
 

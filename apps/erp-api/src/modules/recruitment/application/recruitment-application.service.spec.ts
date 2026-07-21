@@ -39,6 +39,7 @@ function fixture(options?: {
   readonly matches?: readonly Record<string, unknown>[];
   readonly actorDepartments?: readonly string[];
   readonly actorScopes?: readonly string[];
+  readonly actorType?: 'user' | 'system_job';
 }) {
   const execute = vi.fn().mockImplementation(
     async (_operation: string, _key: string, _request: unknown, handler: (value: ClientSession) => Promise<unknown>) =>
@@ -47,7 +48,7 @@ function fixture(options?: {
   const trusted = {
     tenant: { tenantId: 'tenant-001', source: 'access_token' as const },
     actor: {
-      actorId: 'actor-001', tenantId: 'tenant-001', actorType: 'user' as const,
+      actorId: 'actor-001', tenantId: 'tenant-001', actorType: options?.actorType ?? 'user',
       roleCodes: [], scopes: options?.actorScopes ?? [],
       departmentIds: options?.actorDepartments ?? ['department-001'], traceId: 'trace-001',
     },
@@ -168,6 +169,54 @@ describe('RecruitmentApplicationService', () => {
     expect(store.applications.insert).not.toHaveBeenCalled();
   });
 
+  it('通用入口拒绝自报渠道投递，只有受信任 Worker 窄接口可写入', async () => {
+    const channelInput = {
+      ...createInput, sourceChannel: 'sandbox_ats',
+      consent: { ...createInput.consent, source: 'channel' as const },
+    };
+    const publicStore = fixture();
+    await expect(publicStore.service.createApplication('channel-public-001', channelInput))
+      .rejects.toMatchObject({ response: { code: 'RECRUITMENT_CHANNEL_WORKER_REQUIRED' } });
+    await expect(publicStore.service.createApplicationFromChannel(
+      'channel-worker-001', channelInput, { consentEvidenceId: CONSENT_ID },
+    ))
+      .rejects.toMatchObject({ response: { code: 'RECRUITMENT_TRUSTED_CHANNEL_REQUIRED' } });
+    expect(publicStore.execute).not.toHaveBeenCalled();
+
+    const workerStore = fixture({
+      actorType: 'system_job', actorScopes: ['erp:recruitment:channel:ingest'],
+    });
+    await expect(workerStore.service.createApplicationFromChannel(
+      'channel-worker-002', channelInput, { consentEvidenceId: CONSENT_ID },
+    )).resolves.toMatchObject({ application: { positionId: POSITION_ID } });
+    expect(workerStore.execute).toHaveBeenCalledOnce();
+    expect(workerStore.execute.mock.calls[0]?.[2]).toMatchObject({
+      trustedConsentEvidenceId: CONSENT_ID,
+    });
+    expect(workerStore.applications.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ consentEvidenceId: CONSENT_ID }), session,
+    );
+    await expect(workerStore.service.createApplicationFromChannel(
+      'channel-worker-003', channelInput, { consentEvidenceId: 'unverified-reference' },
+    )).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_CHANNEL_CONSENT_EVIDENCE_INVALID' },
+    });
+  });
+
+  it('通用入口拒绝伪造来源渠道和缺少专用证据链的人工导入', async () => {
+    const store = fixture();
+    await expect(store.service.createApplication('source-spoof-001', {
+      ...createInput, sourceChannel: 'sandbox_ats',
+    })).rejects.toMatchObject({ response: { code: 'RECRUITMENT_SOURCE_CHANNEL_INVALID' } });
+    await expect(store.service.createApplication('manual-import-001', {
+      ...createInput, sourceChannel: 'manual_import',
+      consent: { ...createInput.consent, source: 'manual_import' as const },
+    })).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_MANUAL_IMPORT_WORKFLOW_REQUIRED' },
+    });
+    expect(store.execute).not.toHaveBeenCalled();
+  });
+
   it('阶段推进原子写聚合、阶段日志和 Outbox', async () => {
     const store = fixture();
     const result = await store.service.transitionApplication(
@@ -206,5 +255,18 @@ describe('RecruitmentApplicationService', () => {
     });
     await expect(allowed.service.getApplication(APPLICATION_ID))
       .resolves.toMatchObject({ id: APPLICATION_ID });
+  });
+
+  it('渠道回执投影只允许系统 Worker，并且不泄露候选人和证据字段', async () => {
+    const denied = fixture({ actorScopes: ['erp:recruitment:channel:ack'] });
+    await expect(denied.service.getApplicationForChannelDelivery(APPLICATION_ID))
+      .rejects.toMatchObject({ response: { code: 'RECRUITMENT_CHANNEL_ACK_WORKER_REQUIRED' } });
+    const allowed = fixture({
+      actorType: 'system_job', actorScopes: ['erp:recruitment:channel:ack'],
+    });
+    const projection = await allowed.service.getApplicationForChannelDelivery(APPLICATION_ID);
+    expect(projection).toEqual({ id: APPLICATION_ID, sourceChannel: 'portal', version: 1 });
+    expect(projection).not.toHaveProperty('candidateId');
+    expect(projection).not.toHaveProperty('consentEvidenceId');
   });
 });

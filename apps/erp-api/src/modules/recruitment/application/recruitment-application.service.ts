@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { createEventId } from '@gaoq/shared-utils';
+import { createEventId, ULID_PATTERN } from '@gaoq/shared-utils';
 import type { ClientSession } from 'mongoose';
 
 import { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
@@ -41,6 +41,25 @@ export interface CandidateApplicationSummary extends Record<string, unknown> {
   readonly endedAt: string | null;
 }
 
+export interface RecruitmentChannelApplicationProjection {
+  readonly id: string;
+  readonly sourceChannel: string;
+  readonly version: number;
+}
+
+export interface CreateCandidateApplicationInput {
+  readonly positionId: string;
+  readonly sourceChannel: string;
+  readonly candidate: { readonly name: string; readonly phone?: string; readonly email?: string };
+  readonly consent: {
+    readonly version: string;
+    readonly purpose: string;
+    readonly source: 'portal' | 'channel' | 'manual_import';
+    readonly expiresAt: string;
+    readonly retentionExpiresAt: string;
+  };
+}
+
 /** 招聘应用服务；REST、MCP、Worker 只可通过本层操作候选人和职位申请。 */
 @Injectable()
 export class RecruitmentApplicationService {
@@ -57,21 +76,55 @@ export class RecruitmentApplicationService {
 
   async createApplication(
     key: string,
-    input: {
-      readonly positionId: string;
-      readonly sourceChannel: string;
-      readonly candidate: { readonly name: string; readonly phone?: string; readonly email?: string };
-      readonly consent: {
-        readonly version: string;
-        readonly purpose: string;
-        readonly source: 'portal' | 'channel' | 'manual_import';
-        readonly expiresAt: string;
-        readonly retentionExpiresAt: string;
-      };
-    },
+    input: CreateCandidateApplicationInput,
   ): Promise<{ readonly application: CandidateApplicationSummary }> {
+    if (input.consent.source === 'channel') throw new ForbiddenException({
+      code: 'RECRUITMENT_CHANNEL_WORKER_REQUIRED',
+      message: '渠道投递必须由验证后的 Integration Worker 入箱',
+    });
+    if (input.consent.source === 'manual_import') throw new ForbiddenException({
+      code: 'RECRUITMENT_MANUAL_IMPORT_WORKFLOW_REQUIRED',
+      message: '人工导入必须通过带证据校验与人工复核的专用工作流',
+    });
+    if (input.sourceChannel !== 'portal') throw new BadRequestException({
+      code: 'RECRUITMENT_SOURCE_CHANNEL_INVALID',
+      message: '门户申请的来源渠道必须为 portal',
+    });
+    return this.createApplicationCore(key, input);
+  }
+
+  /** 招聘渠道 Worker 窄接口；不接受 REST/MCP 伪造的渠道事实。 */
+  async createApplicationFromChannel(
+    key: string,
+    input: CreateCandidateApplicationInput,
+    evidence: { readonly consentEvidenceId: string },
+  ): Promise<{ readonly application: CandidateApplicationSummary }> {
+    const actor = this.context.getActorRequired();
+    if (
+      actor.actorType !== 'system_job' ||
+      !actor.scopes.includes('erp:recruitment:channel:ingest') ||
+      input.consent.source !== 'channel'
+    ) throw new ForbiddenException({
+      code: 'RECRUITMENT_TRUSTED_CHANNEL_REQUIRED',
+      message: '只允许受信任招聘渠道 Worker 建立渠道申请',
+    });
+    if (!ULID_PATTERN.test(evidence.consentEvidenceId)) throw new BadRequestException({
+      code: 'RECRUITMENT_CHANNEL_CONSENT_EVIDENCE_INVALID',
+      message: '渠道同意证据标识无效',
+    });
+    return this.createApplicationCore(key, input, evidence.consentEvidenceId);
+  }
+
+  private async createApplicationCore(
+    key: string,
+    input: CreateCandidateApplicationInput,
+    trustedConsentEvidenceId?: string,
+  ): Promise<{ readonly application: CandidateApplicationSummary }> {
+    const request = trustedConsentEvidenceId === undefined
+      ? input
+      : { ...input, trustedConsentEvidenceId };
     return this.run(async () => this.idempotency.execute(
-      'recruitment.application.create', key, input, async (session) => {
+      'recruitment.application.create', key, request, async (session) => {
         const trusted = this.context.getRequired();
         const position = await this.positions.findById(input.positionId, session);
         if (position === null) throw new NotFoundException({
@@ -81,7 +134,7 @@ export class RecruitmentApplicationService {
           code: 'RECRUITMENT_POSITION_NOT_OPEN', message: '职位当前不接受新申请',
         });
         const now = new Date();
-        const evidenceId = createEventId(now);
+        const evidenceId = trustedConsentEvidenceId ?? createEventId(now);
         const draftCandidate = createCandidate({
           id: createEventId(now), tenantId: trusted.tenant.tenantId,
           ...input.candidate,
@@ -181,6 +234,26 @@ export class RecruitmentApplicationService {
       code: 'RECRUITMENT_APPLICATION_READ_DENIED', message: '无权读取该职位申请',
     });
     return summary(application);
+  }
+
+  /** 渠道回执 Worker 窄读取接口；不向 Adapter 暴露候选人身份或内部证据。 */
+  async getApplicationForChannelDelivery(
+    id: string,
+  ): Promise<RecruitmentChannelApplicationProjection> {
+    const actor = this.context.getActorRequired();
+    if (
+      actor.actorType !== 'system_job' ||
+      !actor.scopes.includes('erp:recruitment:channel:ack')
+    ) throw new ForbiddenException({
+      code: 'RECRUITMENT_CHANNEL_ACK_WORKER_REQUIRED',
+      message: '只允许受信任招聘渠道回执 Worker 读取投递投影',
+    });
+    const application = await this.requireApplication(id);
+    return Object.freeze({
+      id: application.id,
+      sourceChannel: application.sourceChannel,
+      version: application.version,
+    });
   }
 
   private async requireApplication(

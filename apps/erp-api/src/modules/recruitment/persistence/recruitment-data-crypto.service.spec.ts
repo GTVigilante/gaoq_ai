@@ -110,6 +110,28 @@ describe('RecruitmentDataCryptoService', () => {
     expect(JSON.stringify(first)).not.toContain('13800138000');
   });
 
+  it('渠道原文、游标和映射使用 AAD 隔离，外部 ID 使用不可枚举盲指纹', () => {
+    const crypto = service();
+    const channelContext = {
+      tenantId: 'tenant-001', resourceType: 'channel_inbox' as const,
+      resourceId: '01J8ZQK7V0A2M4N6P8R0T2W4C1',
+    };
+    const protectedData = crypto.protect(channelContext, { externalApplicationId: 'apply-001' });
+    expect(crypto.unprotect(channelContext, protectedData)).toEqual({
+      externalApplicationId: 'apply-001',
+    });
+    expect(() => crypto.unprotect({ ...channelContext, resourceType: 'channel_cursor' }, protectedData))
+      .toThrow('密文或上下文无效');
+    const event = crypto.channelFingerprints('tenant-001', 'event', 'sandbox_ats', 'apply-001');
+    expect(event).toEqual(
+      crypto.channelFingerprints('tenant-001', 'event', 'sandbox_ats', 'apply-001'),
+    );
+    expect(event).not.toEqual(
+      crypto.channelFingerprints('tenant-001', 'application', 'sandbox_ats', 'apply-001'),
+    );
+    expect(JSON.stringify(event)).not.toContain('apply-001');
+  });
+
   it('拒绝加密与盲索引复用同一配置字段或不完整密钥环', () => {
     const crypto = new RecruitmentDataCryptoService(new ConfigService<AppEnvironment, true>({
       RECRUITMENT_DATA_ENCRYPTION_KEYS: '',

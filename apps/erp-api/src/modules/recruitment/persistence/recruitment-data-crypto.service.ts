@@ -60,7 +60,10 @@ export interface RecruitmentCryptoContext {
     | 'candidate_identity'
     | 'offer_terms'
     | 'interview_location'
-    | 'interview_feedback';
+    | 'interview_feedback'
+    | 'channel_inbox'
+    | 'channel_cursor'
+    | 'channel_mapping';
   readonly resourceId: string;
 }
 
@@ -169,6 +172,32 @@ export class RecruitmentDataCryptoService {
     }));
   }
 
+  /** 渠道外部标识使用独立域分隔的可轮换盲指纹，不保存可枚举明文哈希。 */
+  channelFingerprints(
+    tenantId: string,
+    namespace: 'event' | 'position' | 'candidate' | 'application',
+    channelCode: string,
+    externalId: string,
+  ): readonly string[] {
+    this.assertContext({ tenantId, resourceType: 'channel_mapping', resourceId: 'blind-index' });
+    if (
+      !/^[a-z][a-z0-9_]{1,31}$/.test(channelCode) ||
+      externalId.length < 1 || externalId.length > 256
+    ) throw this.invalidPayload();
+    const ring = this.loadBlindIndexRing();
+    return Object.freeze(ring.keys.map((key) => {
+      const rawKey = this.decodeKey(key.keyBase64url);
+      try {
+        const digest = createHmac('sha256', rawKey).update(JSON.stringify([
+          'gaoq-recruitment-channel-fingerprint-v1', tenantId, namespace, channelCode, externalId,
+        ])).digest('base64url');
+        return `${key.keyId}.${digest}`;
+      } finally {
+        rawKey.fill(0);
+      }
+    }));
+  }
+
   private loadEncryptionRing(): EncryptionRing {
     return this.parseRing(
       this.config.get('RECRUITMENT_DATA_ENCRYPTION_KEYS', { infer: true }),
@@ -225,6 +254,7 @@ export class RecruitmentDataCryptoService {
       !RECRUITMENT_ID_PATTERN.test(context.resourceId) ||
       ![
         'candidate_identity', 'offer_terms', 'interview_location', 'interview_feedback',
+        'channel_inbox', 'channel_cursor', 'channel_mapping',
       ].includes(context.resourceType)
     ) throw this.invalidPayload();
   }

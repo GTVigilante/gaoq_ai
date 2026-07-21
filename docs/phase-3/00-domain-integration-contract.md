@@ -85,6 +85,13 @@ draft → pending_approval → approved → clearing → ready → scheduled →
 
 外部职位、投递和候选人标识统一进入 `integration_external_mappings`；领域集合不保存供应商 Token 或供应商状态枚举。渠道失败可补拉、重放和对账，不能改变已有 ERP 阶段。
 
+- 每个渠道必须同时装配传输 Adapter、带版本 Normalizer 和 EvidenceVerifier；缺失任意一项即在启动或调用时失败关闭。
+- 渠道绑定只保存 `GAOQ_RECRUITMENT_CHANNEL_*` 受控凭据引用；补拉游标、原始投递和外部标识使用不同 AAD 的 AES-256-GCM 密文。去重和查找使用可轮换 HMAC 盲指纹，禁止存储可枚举的明文 SHA-256。
+- Worker 只从队列的租户与 Inbox ULID 建立系统身份；Normalizer 输出不合约进入人工复核，证据校验、职位映射、领域写入或回执失败则保留 Inbox 并重试。
+- 通用 REST 创建申请禁止自报 `consent.source=channel`；只有具备 `erp:recruitment:channel:ingest` 的 `system_job` 可调用渠道窄接口。回执使用稳定幂等键，成功回执只保存盲指纹证明。
+- EvidenceVerifier 形成的同意证据 ULID 必须先固化为 Inbox 检查点，再原样贯穿 Candidate、ConsentEvidence 与 Application；崩溃重试复用检查点，不得重复生成或由领域写入层另造“可信证据”。失败 BullMQ 确定性任务必须显式 `retry`，不能依赖重复 `add`。
+- 职位开放/暂停/关闭及申请阶段变化分别由事务 Outbox 投影为独立投递轨迹。申请阶段按聚合版本顺序映射为 `screening/interview/offer/hired/rejected/withdrawn`，回执 Worker 仅用 `erp:recruitment:channel:ack` 读取来源渠道窄投影；渠道只接收阶段，不接收淘汰原因、评价、Offer 条款或证据正文。
+
 ### 4.2 日历与通知
 
 面试和入职日程由 ERP 发出不可变业务标识，经日历适配器创建外部事件；外部编辑只作为回执，不覆盖 ERP 时间与参与人。消息正文不含简历、评价、Offer 条款或签署文件，只发送受保护链接。

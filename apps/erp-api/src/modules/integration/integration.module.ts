@@ -14,6 +14,7 @@ import {
 } from '../identity/external-identity.schema.js';
 import { OutboxRecord, OutboxRecordSchema } from '../org/persistence/outbox.schema.js';
 import { RecruitmentModule } from '../recruitment/recruitment.module.js';
+import { OrgModule } from '../org/org.module.js';
 import {
   OrgDepartmentRecord,
   OrgDepartmentRecordSchema,
@@ -108,6 +109,36 @@ import {
   OrgPushAdapter,
   OrgPushAdapterRegistry,
 } from './org-push.adapter.js';
+import {
+  RECRUITMENT_CHANNEL_ADAPTERS,
+  RECRUITMENT_CHANNEL_EVIDENCE_VERIFIERS,
+  RECRUITMENT_CHANNEL_NORMALIZERS,
+  RecruitmentChannelRegistry,
+  type RecruitmentChannelAdapter,
+  type RecruitmentChannelEvidenceVerifier,
+  type RecruitmentChannelNormalizer,
+} from './recruitment-channel.adapter.js';
+import {
+  RecruitmentChannelPullService,
+  RecruitmentChannelSecretResolver,
+} from './recruitment-channel-pull.service.js';
+import { RECRUITMENT_CHANNEL_QUEUE } from './recruitment-channel.queue.js';
+import {
+  RecruitmentChannelBindingRecord,
+  RecruitmentChannelBindingRecordSchema,
+  RecruitmentChannelInboxRecord,
+  RecruitmentChannelInboxRecordSchema,
+  RecruitmentExternalMappingRecord,
+  RecruitmentExternalMappingRecordSchema,
+  RecruitmentChannelPositionDeliveryRecord,
+  RecruitmentChannelPositionDeliveryRecordSchema,
+  RecruitmentChannelStageDeliveryRecord,
+  RecruitmentChannelStageDeliveryRecordSchema,
+} from './recruitment-channel.schemas.js';
+import { RecruitmentChannelPositionRelayService } from './recruitment-channel-position-relay.service.js';
+import { RecruitmentChannelPositionDeliveryService } from './recruitment-channel-position-delivery.service.js';
+import { RecruitmentChannelStageRelayService } from './recruitment-channel-stage-relay.service.js';
+import { RecruitmentChannelStageDeliveryService } from './recruitment-channel-stage-delivery.service.js';
 
 /** 外部集成底座：Outbox 扇出、双平台投递、版本防乱序、重试与对账。 */
 @Module({
@@ -116,7 +147,9 @@ import {
     IdempotencyModule,
     TenantContextModule,
     RecruitmentModule,
+    OrgModule,
     BullModule.registerQueue({ name: ESIGN_WEBHOOK_QUEUE }),
+    BullModule.registerQueue({ name: RECRUITMENT_CHANNEL_QUEUE }),
     MongooseModule.forFeature([
       { name: OutboxRecord.name, schema: OutboxRecordSchema },
       { name: OrgDeliveryRecord.name, schema: OrgDeliveryRecordSchema },
@@ -140,6 +173,26 @@ import {
       { name: ESignEvidenceRecord.name, schema: ESignEvidenceRecordSchema },
       { name: ESignFlowRecord.name, schema: ESignFlowRecordSchema },
       { name: ESignWebhookInboxRecord.name, schema: ESignWebhookInboxRecordSchema },
+      {
+        name: RecruitmentChannelBindingRecord.name,
+        schema: RecruitmentChannelBindingRecordSchema,
+      },
+      {
+        name: RecruitmentChannelInboxRecord.name,
+        schema: RecruitmentChannelInboxRecordSchema,
+      },
+      {
+        name: RecruitmentExternalMappingRecord.name,
+        schema: RecruitmentExternalMappingRecordSchema,
+      },
+      {
+        name: RecruitmentChannelPositionDeliveryRecord.name,
+        schema: RecruitmentChannelPositionDeliveryRecordSchema,
+      },
+      {
+        name: RecruitmentChannelStageDeliveryRecord.name,
+        schema: RecruitmentChannelStageDeliveryRecordSchema,
+      },
     ]),
   ],
   providers: [
@@ -160,6 +213,12 @@ import {
     ESignReconciliationService,
     ESignWebhookCryptoService,
     ESignWebhookService,
+    RecruitmentChannelPullService,
+    RecruitmentChannelSecretResolver,
+    RecruitmentChannelPositionRelayService,
+    RecruitmentChannelPositionDeliveryService,
+    RecruitmentChannelStageRelayService,
+    RecruitmentChannelStageDeliveryService,
     ESignCnAdapter,
     { provide: ESignAdapter, useExisting: ESignCnAdapter },
     FetchESignHttpClient,
@@ -180,6 +239,9 @@ import {
     FeishuRecruitmentCalendarAdapter,
     { provide: DINGTALK_ORG_PUSH_ADAPTER, useExisting: DingTalkOrgPushAdapter },
     { provide: FEISHU_ORG_PUSH_ADAPTER, useExisting: FeishuOrgPushAdapter },
+    { provide: RECRUITMENT_CHANNEL_ADAPTERS, useValue: [] },
+    { provide: RECRUITMENT_CHANNEL_NORMALIZERS, useValue: [] },
+    { provide: RECRUITMENT_CHANNEL_EVIDENCE_VERIFIERS, useValue: [] },
     {
       provide: DINGTALK_RECRUITMENT_CALENDAR_ADAPTER,
       useExisting: DingTalkRecruitmentCalendarAdapter,
@@ -205,6 +267,19 @@ import {
         feishu: RecruitmentCalendarAdapter,
       ) => new RecruitmentCalendarAdapterRegistry(dingtalk, feishu),
     },
+    {
+      provide: RecruitmentChannelRegistry,
+      inject: [
+        RECRUITMENT_CHANNEL_ADAPTERS,
+        RECRUITMENT_CHANNEL_NORMALIZERS,
+        RECRUITMENT_CHANNEL_EVIDENCE_VERIFIERS,
+      ],
+      useFactory: (
+        adapters: readonly RecruitmentChannelAdapter[],
+        normalizers: readonly RecruitmentChannelNormalizer[],
+        verifiers: readonly RecruitmentChannelEvidenceVerifier[],
+      ) => new RecruitmentChannelRegistry(adapters, normalizers, verifiers),
+    },
   ],
   controllers: [
     IntegrationController, OrgEmployeeProvisioningController, ESignWebhookController,
@@ -223,6 +298,12 @@ import {
     ESignEvidenceService,
     ESignReconciliationService,
     ESignAdapter,
+    RecruitmentChannelPullService,
+    RecruitmentChannelRegistry,
+    RecruitmentChannelPositionRelayService,
+    RecruitmentChannelPositionDeliveryService,
+    RecruitmentChannelStageRelayService,
+    RecruitmentChannelStageDeliveryService,
   ],
 })
 export class IntegrationModule {}
