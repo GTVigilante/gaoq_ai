@@ -28,6 +28,7 @@ import { OnboardingModule } from './modules/onboarding/onboarding.module.js';
 import { KnowledgeModule } from './modules/knowledge/knowledge.module.js';
 import { CareModule } from './modules/care/care.module.js';
 import { AttendanceModule } from './modules/attendance/attendance.module.js';
+import { PayrollModule } from './modules/payroll/payroll.module.js';
 
 const mongoLogger = new Logger('MongoDB');
 
@@ -70,6 +71,7 @@ const mongoLogger = new Logger('MongoDB');
     KnowledgeModule,
     CareModule,
     AttendanceModule,
+    PayrollModule,
     TraceMiddlewareModule,
     TenantContextModule,
     ObservabilityModule,

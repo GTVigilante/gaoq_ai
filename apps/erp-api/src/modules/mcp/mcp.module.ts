@@ -10,6 +10,7 @@ import { OnboardingModule } from '../onboarding/onboarding.module.js';
 import { KnowledgeModule } from '../knowledge/knowledge.module.js';
 import { CareModule } from '../care/care.module.js';
 import { AttendanceModule } from '../attendance/attendance.module.js';
+import { PayrollModule } from '../payroll/payroll.module.js';
 import { McpConfirmationController } from './mcp-confirmation.controller.js';
 import {
   McpConfirmationRecord,
@@ -33,6 +34,7 @@ import { McpToolService } from './mcp-tool.service.js';
     KnowledgeModule,
     CareModule,
     AttendanceModule,
+    PayrollModule,
     MongooseModule.forFeature([
       { name: McpConfirmationRecord.name, schema: McpConfirmationRecordSchema },
     ]),

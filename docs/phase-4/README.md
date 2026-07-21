@@ -9,10 +9,10 @@ Phase 4 在 ERP 组织与劳动关系主数据之上，建立可重放的考勤�
 3. [Attendance 索引迁移 Runbook](./02-attendance-index-migration-runbook.md)
 4. [钉钉/飞书考勤 Provider 加密补拉与标准化](./03-attendance-provider-integration.md)
 5. [Attendance Provider 独立索引迁移 Runbook](./04-attendance-provider-index-migration-runbook.md)
-6. 薪酬结构与法定规则版本、累计预扣确定性计算和结果哈希
-7. HR 复核、财务审批、双人锁定、薪资单与字段级权限
-8. 银行代发、回盘、税务文件、异常冻结和三方对账
-9. 薪酬/考勤 MCP 脱敏查询与请求能力
+6. [薪酬结构、法定规则、权威输入快照与确定性运行](./05-payroll-core-implementation.md)
+7. [Payroll Core 索引迁移 Runbook](./06-payroll-core-index-migration-runbook.md)
+8. HR 复核、财务审批、双人锁定、薪资单与字段级权限
+9. 银行代发、回盘、税务文件、异常冻结和三方对账
 10. 两个完整薪资周期影子计算、差异归因与财务签署
 
 ## 强制边界

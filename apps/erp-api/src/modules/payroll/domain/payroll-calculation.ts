@@ -64,6 +64,7 @@ export interface PayrollCalculationStep {
 
 export interface PayrollCalculationResult {
   readonly currency: 'CNY';
+  readonly inputHash: string;
   readonly grossPayMinor: number;
   readonly taxableEarningsMinor: number;
   readonly withholdingTaxMinor: number;
@@ -151,7 +152,7 @@ export function calculatePayroll(input: PayrollCalculationInput): PayrollCalcula
     postTaxDeductionMinor: input.postTaxDeductionMinor,
     cumulativeBefore: Object.freeze({ ...input.cumulativeBefore }),
   });
-  const inputDigest = hash(normalizedInput);
+  const inputDigest = payrollDigest(normalizedInput);
   const amounts = [
     ['gross_pay', BigInt(grossPay)],
     ['cumulative_taxable_income', cumulativeTaxable],
@@ -169,6 +170,7 @@ export function calculatePayroll(input: PayrollCalculationInput): PayrollCalcula
   ));
   const resultWithoutHash = Object.freeze({
     currency: input.currency,
+    inputHash: inputDigest,
     grossPayMinor: grossPay,
     taxableEarningsMinor: taxableEarnings,
     withholdingTaxMinor: toSafeSignedMinor(withholdingTax),
@@ -176,7 +178,7 @@ export function calculatePayroll(input: PayrollCalculationInput): PayrollCalcula
     cumulativeAfter: Object.freeze({ ...cumulativeAfter }),
     steps,
   });
-  return Object.freeze({ ...resultWithoutHash, resultHash: hash(resultWithoutHash) });
+  return Object.freeze({ ...resultWithoutHash, resultHash: payrollDigest(resultWithoutHash) });
 }
 
 function validateInput(input: PayrollCalculationInput): void {
@@ -297,8 +299,40 @@ function toSafeSignedMinor(value: bigint): number {
   return Number(value);
 }
 
-function hash(value: unknown): string {
-  return createHash('sha256').update(JSON.stringify(value), 'utf8').digest('base64url');
+/** 工资证据统一规范摘要；对象键排序，数组保持业务顺序。 */
+export function payrollDigest(value: unknown): string {
+  return createHash('sha256')
+    .update(canonicalize(value, 0, new Set()), 'utf8')
+    .digest('base64url');
+}
+
+function canonicalize(value: unknown, depth: number, seen: ReadonlySet<object>): string {
+  if (depth > 20) invalid('PAYROLL_CANONICAL_VALUE_INVALID', '规范摘要嵌套深度超限');
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') {
+    return JSON.stringify(value);
+  }
+  if (typeof value === 'number') {
+    if (!Number.isSafeInteger(value)) invalid('PAYROLL_CANONICAL_VALUE_INVALID', '规范摘要只接受安全整数');
+    return JSON.stringify(value);
+  }
+  if (typeof value !== 'object' || value === undefined) {
+    invalid('PAYROLL_CANONICAL_VALUE_INVALID', '规范摘要包含不支持的值');
+  }
+  if (seen.has(value)) invalid('PAYROLL_CANONICAL_VALUE_INVALID', '规范摘要包含循环引用');
+  const nextSeen = new Set(seen);
+  nextSeen.add(value);
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalize(item, depth + 1, nextSeen)).join(',')}]`;
+  }
+  const prototype: unknown = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    invalid('PAYROLL_CANONICAL_VALUE_INVALID', '规范摘要只接受纯对象');
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, item]) => item !== undefined)
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
+  return `{${entries.map(([key, item]) =>
+    `${JSON.stringify(key)}:${canonicalize(item, depth + 1, nextSeen)}`).join(',')}}`;
 }
 
 function invalid(code: string, message: string): never {

@@ -18,6 +18,7 @@ import { OnboardingApplicationService } from '../onboarding/application/onboardi
 import { KnowledgeApplicationService } from '../knowledge/application/knowledge-application.service.js';
 import { CareApplicationService } from '../care/application/care-application.service.js';
 import { AttendanceApplicationService } from '../attendance/application/attendance-application.service.js';
+import { PayrollRunService } from '../payroll/application/payroll-run.service.js';
 import { parseMcpIdentity, type McpIdentity } from './mcp-auth-context.js';
 import {
   McpConfirmationService,
@@ -58,6 +59,7 @@ export class McpToolService {
     private readonly knowledge: KnowledgeApplicationService,
     private readonly care: CareApplicationService,
     private readonly attendance: AttendanceApplicationService,
+    private readonly payroll: PayrollRunService,
     private readonly confirmations: McpConfirmationService,
   ) {}
 
@@ -142,6 +144,19 @@ export class McpToolService {
       const attendanceMonth = await this.attendance.getMyMonth(month);
       await this.auditTool(identity, 'attendance_month_get', 'R0', 'success');
       return structuredResult({ attendanceMonth });
+    });
+  }
+
+  async getPayrollPeriod(id: string, extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:payroll:period:read')) {
+        await this.auditTool(identity, 'payroll_period_get', 'R0', 'denied');
+        return scopeError('erp:payroll:period:read');
+      }
+      const payrollPeriod = await this.payroll.getPeriod(id);
+      await this.auditTool(identity, 'payroll_period_get', 'R0', 'success');
+      return structuredResult({ payrollPeriod });
     });
   }
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   calculatePayroll,
+  payrollDigest,
   type PayrollCalculationInput,
 } from './payroll-calculation.js';
 
@@ -44,6 +45,7 @@ describe('累计预扣确定性计算内核', () => {
       },
     });
     expect(result.steps).toHaveLength(5);
+    expect(result.inputHash).toMatch(/^[A-Za-z0-9_-]{43}$/u);
     expect(result.resultHash).toMatch(/^[A-Za-z0-9_-]{43}$/u);
   });
 
@@ -81,6 +83,16 @@ describe('累计预扣确定性计算内核', () => {
     });
     expect(right.resultHash).toBe(left.resultHash);
     expect(right.steps).toEqual(left.steps);
+  });
+
+  it('规范摘要对对象键顺序稳定，并拒绝日期对象和循环引用', () => {
+    expect(payrollDigest({ amount: 1, code: 'BASE' }))
+      .toBe(payrollDigest({ code: 'BASE', amount: 1 }));
+    expect(() => payrollDigest(new Date('2026-01-01T00:00:00.000Z')))
+      .toThrow(/纯对象/u);
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    expect(() => payrollDigest(cyclic)).toThrow(/循环引用/u);
   });
 
   it('累计已扣税高于当前累计税额时形成负税额调整并增加实发', () => {

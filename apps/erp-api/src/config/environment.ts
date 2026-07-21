@@ -50,6 +50,11 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(64).max(16_384).optional(),
   ),
+  /** 薪酬 L4 输入、步骤和结果密钥环；不得复用考勤、审批或招聘密钥。 */
+  PAYROLL_DATA_ENCRYPTION_KEYS: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(64).max(16_384).optional(),
+  ),
   /** eSign Webhook L4 加密密钥环，仅由 Secret Manager 注入。 */
   ESIGN_WEBHOOK_ENCRYPTION_KEYS: z.preprocess(
     (value) => value === '' ? undefined : value,
@@ -161,6 +166,13 @@ const environmentSchema = z.object({
       message: '生产环境必须由 Secret Manager 注入签名私钥与 key id',
     });
   }
+  if (
+    environment.NODE_ENV === 'production' &&
+    environment.PAYROLL_DATA_ENCRYPTION_KEYS === undefined
+  ) context.addIssue({
+    code: 'custom', path: ['PAYROLL_DATA_ENCRYPTION_KEYS'],
+    message: '生产环境必须由 Secret Manager 注入薪酬数据独立密钥环',
+  });
   if (environment.NODE_ENV === 'production' && environment.ESIGN_WEBHOOK_ENCRYPTION_KEYS === undefined) {
     context.addIssue({
       code: 'custom',

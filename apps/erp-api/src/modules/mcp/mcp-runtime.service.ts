@@ -219,6 +219,22 @@ const attendanceCorrectionInputSchema = {
   absentMinutes: z.number().int().min(0).max(44_640),
   reasonCode: z.string().regex(/^[A-Z][A-Z0-9_]{1,63}$/),
 };
+const payrollPeriodSchema = z.object({
+  id: recruitmentIdSchema,
+  period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  status: z.enum([
+    'draft', 'collecting', 'review', 'pending_approval', 'approved',
+    'locked', 'disbursing', 'reconciling', 'reconciled',
+  ]),
+  version: z.number().int().positive(),
+  activeRunId: recruitmentIdSchema.nullable(),
+  inputSnapshotHash: z.string().length(43).nullable(),
+  resultHash: z.string().length(43).nullable(),
+  employeeCount: z.number().int().positive().nullable(),
+  totalGrossMinor: z.number().int().nonnegative().nullable(),
+  totalTaxMinor: z.number().int().nullable(),
+  totalNetMinor: z.number().int().nonnegative().nullable(),
+});
 
 @Injectable()
 export class McpRuntimeService {
@@ -492,6 +508,24 @@ export class McpRuntimeService {
       },
     );
 
+    server.registerResource(
+      'payroll-period',
+      new ResourceTemplate('erp://payroll/periods/{id}', { list: undefined }),
+      {
+        title: '工资周期脱敏汇总',
+        description: '只返回周期状态、人数、总额与完整性摘要，不返回员工明细或薪酬档案。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getPayrollPeriod(requiredResourceId(id), extra);
+        if (result.isError === true) throw new Error('无权读取工资周期');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
     server.registerPrompt(
       'approval_submission_guide',
       {
@@ -595,6 +629,24 @@ export class McpRuntimeService {
           content: {
             type: 'text',
             text: `请读取我 ${month} 的考勤月结摘要，解释各分钟汇总和快照版本。不要索取或推断打卡时间、地点或设备；若我明确提供源事实标识、替换分钟和受控原因码，可调用 attendance_correction_prepare，并引导我在 ERP 确认页核对后再执行。AI 不得直接改事实、审批申请或重开月结。`,
+          },
+        }],
+      }),
+    );
+
+    server.registerPrompt(
+      'payroll_period_review_guide',
+      {
+        title: '工资周期汇总核对清单',
+        description: '指导 AI 只核对周期状态、总额与摘要；不读取明细或执行任何工资写操作。',
+        argsSchema: { periodId: recruitmentIdSchema },
+      },
+      ({ periodId }) => ({
+        messages: [{
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `请读取工资周期 ${periodId} 的脱敏汇总，说明状态、人数、总额和输入/结果摘要是否齐全。不要索取、推断或展示任何员工薪酬明细；不得触发规则发布、薪酬登记、工资计算、审批、锁定、代发或对账。`,
           },
         }],
       }),
@@ -844,6 +896,20 @@ export class McpRuntimeService {
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
       },
       async ({ month }, extra) => this.tools.getMyAttendanceMonth(month, extra),
+    );
+
+    server.registerTool(
+      'payroll_period_get',
+      {
+        title: '查询工资周期脱敏汇总',
+        description: '只返回财务汇总和完整性摘要，不返回员工级输入、结果或证据正文。风险等级 R0。',
+        inputSchema: { id: recruitmentIdSchema },
+        outputSchema: z.object({ payrollPeriod: payrollPeriodSchema }),
+        annotations: {
+          readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+        },
+      },
+      async ({ id }, extra) => this.tools.getPayrollPeriod(id, extra),
     );
 
     server.registerTool(

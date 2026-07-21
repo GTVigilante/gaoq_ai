@@ -16,6 +16,7 @@ import type { OnboardingApplicationService } from '../onboarding/application/onb
 import type { KnowledgeApplicationService } from '../knowledge/application/knowledge-application.service.js';
 import type { CareApplicationService } from '../care/application/care-application.service.js';
 import type { AttendanceApplicationService } from '../attendance/application/attendance-application.service.js';
+import type { PayrollRunService } from '../payroll/application/payroll-run.service.js';
 import { McpToolService } from './mcp-tool.service.js';
 import type { McpConfirmationService } from './mcp-confirmation.service.js';
 
@@ -76,6 +77,7 @@ function assemble() {
   const attendance = {
     getMyMonth: vi.fn(), validateCorrectionRequest: vi.fn(), requestCorrection: vi.fn(),
   };
+  const payroll = { getPeriod: vi.fn() };
   const service = new McpToolService(
     context,
     audit as unknown as AuditService,
@@ -89,12 +91,13 @@ function assemble() {
     knowledge as unknown as KnowledgeApplicationService,
     care as unknown as CareApplicationService,
     attendance as unknown as AttendanceApplicationService,
+    payroll as unknown as PayrollRunService,
     confirmations as unknown as McpConfirmationService,
   );
   return {
     context, audit, organization, approvals, recruitmentApplications,
     recruitmentInterviews, recruitmentManagement, recruitmentOffers, confirmations, service,
-    onboarding, knowledge, care, attendance,
+    onboarding, knowledge, care, attendance, payroll,
   };
 }
 
@@ -359,6 +362,29 @@ describe('McpToolService', () => {
     expect(JSON.stringify(result)).not.toMatch(
       /reasonCode|separationType|approvalInstanceId|EvidenceId|execution/iu,
     );
+  });
+
+  it('Payroll MCP 只返回周期汇总，缺少财务读取 Scope 时失败关闭', async () => {
+    const store = assemble();
+    store.payroll.getPeriod.mockResolvedValue({
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4P1', period: '2026-07', status: 'review', version: 3,
+      activeRunId: '01J8ZQK7V0A2M4N6P8R0T2W4P2', inputSnapshotHash: 'a'.repeat(43),
+      resultHash: 'b'.repeat(43), employeeCount: 12, totalGrossMinor: 12_000_000,
+      totalTaxMinor: 800_000, totalNetMinor: 9_500_000,
+    });
+    const denied = await store.service.getPayrollPeriod(
+      '01J8ZQK7V0A2M4N6P8R0T2W4P1', extra(['erp:mcp:server:connect']),
+    );
+    expect(denied.isError).toBe(true);
+    expect(store.payroll.getPeriod).not.toHaveBeenCalled();
+    const result = await store.service.getPayrollPeriod(
+      '01J8ZQK7V0A2M4N6P8R0T2W4P1',
+      extra(['erp:mcp:server:connect', 'erp:payroll:period:read']),
+    );
+    expect(result.structuredContent).toMatchObject({
+      payrollPeriod: { period: '2026-07', employeeCount: 12, status: 'review' },
+    });
+    expect(JSON.stringify(result)).not.toMatch(/employeeId|baseSalary|calculationLine|profile/iu);
   });
 
   it('考勤修订准备只校验本人事实并固化 R1 命令，不直接创建审批', async () => {
