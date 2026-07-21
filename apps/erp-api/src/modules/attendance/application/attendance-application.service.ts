@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import {
   BadRequestException,
   ConflictException,
@@ -31,6 +33,7 @@ import type {
   CloseAttendanceMonthDto,
   IngestAttendanceSourceFactDto,
   RegisterAttendanceCorrectionDto,
+  RequestAttendanceCorrectionDto,
 } from './attendance.dto.js';
 
 export interface AttendanceFactSummary extends Record<string, unknown> {
@@ -47,6 +50,15 @@ export interface AttendanceCorrectionSummary extends Record<string, unknown> {
   readonly sourceFactId: string;
   readonly businessDate: string;
   readonly approvalInstanceId: string;
+}
+
+export interface AttendanceCorrectionRequestSummary extends Record<string, unknown> {
+  readonly approvalInstanceId: string;
+  readonly approvalStatus: 'running' | 'approved';
+  readonly approvalVersion: number;
+  readonly sourceFactId: string;
+  readonly employeeId: string;
+  readonly businessDate: string;
 }
 
 export interface AttendanceMonthSummary extends Record<string, unknown> {
@@ -80,6 +92,83 @@ export class AttendanceApplicationService {
     private readonly snapshots: AttendanceMonthlySnapshotRepository,
     private readonly outbox: AttendanceOutboxWriter,
   ) {}
+
+  /** 准备 MCP/REST 修订申请时只校验本人归属与是否已有生效修订，不产生写入。 */
+  async validateCorrectionRequest(
+    input: RequestAttendanceCorrectionDto,
+  ): Promise<AttendanceFactSummary> {
+    this.assertScope('erp:attendance:correction:request');
+    const source = await this.requireOwnSourceFact(input.sourceFactId);
+    if (await this.corrections.findBySourceFactId(source.id) !== null) {
+      throw new ConflictException({
+        code: 'ATTENDANCE_CORRECTION_ALREADY_EFFECTIVE', message: '该源事实已有生效修订',
+      });
+    }
+    this.assertCorrectionPayload(source, input);
+    return factSummary(source);
+  }
+
+  /** 创建并提交专用 Approval；Attendance 事件不包含原因或分钟明细。 */
+  async requestCorrection(
+    key: string,
+    input: RequestAttendanceCorrectionDto,
+  ): Promise<{ readonly request: AttendanceCorrectionRequestSummary }> {
+    this.assertScope('erp:attendance:correction:request');
+    this.assertScope('erp:approval:instance:submit');
+    const source = await this.requireOwnSourceFact(input.sourceFactId);
+    if (await this.corrections.findBySourceFactId(source.id) !== null) {
+      throw new ConflictException({
+        code: 'ATTENDANCE_CORRECTION_ALREADY_EFFECTIVE', message: '该源事实已有生效修订',
+      });
+    }
+    this.assertCorrectionPayload(source, input);
+    const created = await this.approvals.createInstance(deriveKey(key, 'approval-create'), {
+      templateCode: 'attendance_correction',
+      title: `考勤修订：${source.businessDate}`,
+      formData: {
+        source_fact_id: source.id,
+        employee_id: source.employeeId,
+        business_date: source.businessDate,
+        worked_minutes: input.replacementImpact.workedMinutes,
+        leave_minutes: input.replacementImpact.leaveMinutes,
+        overtime_minutes: input.replacementImpact.overtimeMinutes,
+        absent_minutes: input.replacementImpact.absentMinutes,
+        reason_code: input.reasonCode,
+      },
+    });
+    const submitted = await this.approvals.submitInstance(
+      created.instance.id, created.instance.version, deriveKey(key, 'approval-submit'),
+    );
+    if (submitted.instance.status !== 'running' && submitted.instance.status !== 'approved') {
+      throw new ConflictException({
+        code: 'ATTENDANCE_CORRECTION_SUBMIT_INVALID', message: '考勤修订审批未进入可处理状态',
+      });
+    }
+    const request = Object.freeze({
+      approvalInstanceId: submitted.instance.id,
+      approvalStatus: submitted.instance.status,
+      approvalVersion: submitted.instance.version,
+      sourceFactId: source.id,
+      employeeId: source.employeeId,
+      businessDate: source.businessDate,
+    });
+    return this.idempotency.execute(
+      'attendance.correction.request_event', deriveKey(key, 'attendance-event'),
+      { approvalInstanceId: request.approvalInstanceId, sourceFactId: source.id },
+      async (session) => {
+        await this.outbox.append({
+          type: 'attendance.correction.requested', tenantId: source.tenantId,
+          aggregateId: request.approvalInstanceId, version: 1,
+          occurredAt: new Date().toISOString(), data: {
+            employeeId: source.employeeId, sourceFactId: source.id,
+            businessDate: source.businessDate,
+            approvalInstanceId: request.approvalInstanceId,
+          },
+        }, session);
+        return { request };
+      },
+    );
+  }
 
   /** 只允许受信任服务/系统主体写入规范化事实；外部事件标识仅转为盲指纹。 */
   async ingest(
@@ -139,28 +228,29 @@ export class AttendanceApplicationService {
     input: RegisterAttendanceCorrectionDto,
   ): Promise<{ readonly correction: AttendanceCorrectionSummary }> {
     this.assertScope('erp:attendance:correction:attest');
-    const approval = await this.approvals.getInstanceStatusForAttendance(
-      input.approvalInstanceId, 'attendance_correction',
+    const approval = await this.approvals.getAttendanceCorrectionDecision(
+      input.approvalInstanceId,
     );
-    if (approval.status !== 'approved' || approval.completedAt === null) {
-      throw new ConflictException({
-        code: 'ATTENDANCE_CORRECTION_APPROVAL_INCOMPLETE', message: '考勤修订审批尚未形成可信通过终态',
-      });
-    }
-    const approvedAt = approval.completedAt;
     return this.run(async () => this.idempotency.execute(
       'attendance.correction.register', key, input, async (session) => {
-        const source = await this.facts.findById(input.sourceFactId, session);
+        const source = await this.facts.findById(approval.sourceFactId, session);
         if (source === null) throw new NotFoundException({
           code: 'ATTENDANCE_SOURCE_FACT_NOT_FOUND', message: '考勤源事实不存在',
+        });
+        if (
+          source.employeeId !== approval.employeeId ||
+          source.businessDate !== approval.businessDate
+        ) throw new ConflictException({
+          code: 'ATTENDANCE_CORRECTION_APPROVAL_BINDING_MISMATCH',
+          message: '考勤修订审批与源事实员工或业务日期不匹配',
         });
         const now = new Date();
         const correction = createAttendanceCorrection({
           id: createEventId(now), tenantId: this.context.getTenantRequired().tenantId,
           employeeId: source.employeeId, sourceFactId: source.id,
-          businessDate: source.businessDate, replacementImpact: input.replacementImpact,
-          reasonCode: input.reasonCode, approvalInstanceId: approval.id,
-          approvalEvidenceId: approval.id, approvedAt,
+          businessDate: source.businessDate, replacementImpact: approval.replacementImpact,
+          reasonCode: approval.reasonCode, approvalInstanceId: approval.id,
+          approvalEvidenceId: approval.id, approvedAt: approval.completedAt,
         }, now);
         await this.corrections.insert(correction, session);
         await this.outbox.append({
@@ -195,11 +285,15 @@ export class AttendanceApplicationService {
       if (input.supersessionApprovalInstanceId === undefined) throw new ConflictException({
         code: 'ATTENDANCE_REOPEN_APPROVAL_REQUIRED', message: '已关账月份重开必须提供审批引用',
       });
-      const approval = await this.approvals.getInstanceStatusForAttendance(
-        input.supersessionApprovalInstanceId, 'attendance_month_reopen',
+      const approval = await this.approvals.getAttendanceMonthReopenDecision(
+        input.supersessionApprovalInstanceId,
       );
-      if (approval.status !== 'approved') throw new ConflictException({
-        code: 'ATTENDANCE_REOPEN_APPROVAL_INCOMPLETE', message: '月结重开审批尚未通过',
+      if (
+        approval.employeeId !== input.employeeId || approval.month !== input.month ||
+        approval.previousSnapshotId !== current.id
+      ) throw new ConflictException({
+        code: 'ATTENDANCE_REOPEN_APPROVAL_BINDING_MISMATCH',
+        message: '月结重开审批与员工、月份或活动快照不匹配',
       });
       supersessionEvidenceId = approval.id;
     } else if (input.supersessionApprovalInstanceId !== undefined) {
@@ -266,6 +360,39 @@ export class AttendanceApplicationService {
     return monthSummary(snapshot);
   }
 
+  private async requireOwnSourceFact(sourceFactId: string): Promise<AttendanceSourceFact> {
+    const trusted = this.context.getRequired();
+    const profile = await this.profiles.resolveActive(
+      trusted.tenant.tenantId, trusted.actor.actorId,
+    );
+    if (profile === null) throw new ForbiddenException({
+      code: 'ATTENDANCE_EMPLOYEE_IDENTITY_REQUIRED', message: '当前主体未绑定有效 ERP 员工身份',
+    });
+    const source = await this.facts.findById(sourceFactId);
+    if (source === null) throw new NotFoundException({
+      code: 'ATTENDANCE_SOURCE_FACT_NOT_FOUND', message: '考勤源事实不存在',
+    });
+    if (source.employeeId !== profile.employeeId) throw new ForbiddenException({
+      code: 'ATTENDANCE_CORRECTION_SELF_ONLY', message: '只能为本人考勤事实发起修订',
+    });
+    return source;
+  }
+
+  private assertCorrectionPayload(
+    source: AttendanceSourceFact,
+    input: RequestAttendanceCorrectionDto,
+  ): void {
+    // 复用领域分钟与原因码约束，不依赖 Controller 或 MCP Schema 才保证安全。
+    const now = new Date();
+    createAttendanceCorrection({
+      id: 'validation-only', tenantId: source.tenantId, employeeId: source.employeeId,
+      sourceFactId: source.id, businessDate: source.businessDate,
+      replacementImpact: input.replacementImpact, reasonCode: input.reasonCode,
+      approvalInstanceId: 'validation-approval', approvalEvidenceId: 'validation-evidence',
+      approvedAt: now.toISOString(),
+    }, now);
+  }
+
   private assertScope(scope: string): void {
     if (!this.context.getActorRequired().scopes.includes(scope)) throw new ForbiddenException({
       code: 'ATTENDANCE_SCOPE_REQUIRED', message: `缺少 ${scope}`,
@@ -324,4 +451,9 @@ function normalizeInstant(value: string): string {
 
 function isDuplicateKeyError(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 11_000;
+}
+
+function deriveKey(root: string, stage: string): string {
+  const digest = createHash('sha256').update(JSON.stringify([root, stage]), 'utf8').digest('base64url');
+  return `attendance:${digest}`;
 }

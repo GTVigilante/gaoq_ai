@@ -105,6 +105,41 @@ describe('McpConfirmationService', () => {
     expect(stored.commandJson).not.toMatch(/terms|salary|benefit|candidate/iu);
   });
 
+  it('考勤修订 R1 命令规范化固化受控分钟与原因码，并可完整认领', async () => {
+    const create = vi.fn().mockResolvedValue(undefined);
+    await service({ create }).prepare(identity, 'attendance-prepare-001', {
+      operation: 'attendance.correction.request', sourceFactId: INSTANCE_ID,
+      expectedVersion: 1, workedMinutes: 420, leaveMinutes: 60,
+      overtimeMinutes: 0, absentMinutes: 0, reasonCode: 'MISSED_BREAK',
+    }, 'R1');
+    const stored = create.mock.calls[0]?.[0] as unknown as {
+      readonly operation: string; readonly commandJson: string; readonly digest: string;
+    };
+    expect(stored.operation).toBe('attendance.correction.request');
+    expect(JSON.parse(stored.commandJson)).toEqual({
+      absentMinutes: 0, expectedVersion: 1, leaveMinutes: 60,
+      operation: 'attendance.correction.request', overtimeMinutes: 0,
+      reasonCode: 'MISSED_BREAK', sourceFactId: INSTANCE_ID, workedMinutes: 420,
+    });
+    const credential = `mcpc_${'d'.repeat(43)}`;
+    const current = {
+      ...pending(), operation: 'attendance.correction.request', status: 'ready',
+      commandJson: stored.commandJson, digest: stored.digest,
+      confirmationCredentialHash: createHash('sha256').update(credential).digest('base64url'),
+    };
+    const findOne = vi.fn().mockReturnValue(query(current));
+    const findOneAndUpdate = vi.fn().mockReturnValue(query({
+      ...current, status: 'executing', executionLockedAt: new Date(),
+    }));
+    const result = await service({ findOne, findOneAndUpdate }).claim(
+      identity, 'attendance.correction.request', OPERATION_ID, credential,
+    );
+    expect(result.command).toMatchObject({
+      operation: 'attendance.correction.request', sourceFactId: INSTANCE_ID,
+      workedMinutes: 420, reasonCode: 'MISSED_BREAK',
+    });
+  });
+
   it('R1 浏览器确认只持久化凭据摘要，明文仅返回一次', async () => {
     const findOne = vi.fn().mockReturnValue(query(pending()));
     const findOneAndUpdate = vi.fn().mockImplementation(

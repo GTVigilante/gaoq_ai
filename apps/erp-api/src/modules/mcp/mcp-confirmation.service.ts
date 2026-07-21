@@ -63,6 +63,16 @@ export type McpCommand =
       readonly operation: 'recruitment.offer.request_send';
       readonly offerId: string;
       readonly expectedVersion: number;
+    }
+  | {
+      readonly operation: 'attendance.correction.request';
+      readonly sourceFactId: string;
+      readonly expectedVersion: 1;
+      readonly workedMinutes: number;
+      readonly leaveMinutes: number;
+      readonly overtimeMinutes: number;
+      readonly absentMinutes: number;
+      readonly reasonCode: string;
     };
 
 export interface McpPreparedOperation {
@@ -420,6 +430,17 @@ function canonicalCommand(command: McpCommand): string {
         offerId: command.offerId,
         operation: command.operation,
       });
+    case 'attendance.correction.request':
+      return JSON.stringify({
+        absentMinutes: command.absentMinutes,
+        expectedVersion: command.expectedVersion,
+        leaveMinutes: command.leaveMinutes,
+        operation: command.operation,
+        overtimeMinutes: command.overtimeMinutes,
+        reasonCode: command.reasonCode,
+        sourceFactId: command.sourceFactId,
+        workedMinutes: command.workedMinutes,
+      });
   }
 }
 
@@ -479,6 +500,23 @@ function parseCommand(value: string): McpCommand {
     offerId: String(command.offerId),
     expectedVersion: Number(command.expectedVersion),
   };
+  if (
+    command.operation === 'attendance.correction.request' &&
+    Number(command.expectedVersion) === 1 &&
+    OPERATION_ID_PATTERN.test(String(command.sourceFactId ?? '')) &&
+    typeof command.reasonCode === 'string' && /^[A-Z][A-Z0-9_]{1,63}$/.test(command.reasonCode) &&
+    validMinutes(command.workedMinutes) && validMinutes(command.leaveMinutes) &&
+    validMinutes(command.overtimeMinutes) && validMinutes(command.absentMinutes)
+  ) return {
+    operation: command.operation,
+    sourceFactId: String(command.sourceFactId),
+    expectedVersion: 1,
+    workedMinutes: Number(command.workedMinutes),
+    leaveMinutes: Number(command.leaveMinutes),
+    overtimeMinutes: Number(command.overtimeMinutes),
+    absentMinutes: Number(command.absentMinutes),
+    reasonCode: command.reasonCode,
+  };
   throw new Error('MCP 确认命令类型非法');
 }
 
@@ -492,4 +530,8 @@ function sha256(value: string): string {
 
 function isDuplicateKeyError(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 11000;
+}
+
+function validMinutes(value: unknown): boolean {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= 44_640;
 }

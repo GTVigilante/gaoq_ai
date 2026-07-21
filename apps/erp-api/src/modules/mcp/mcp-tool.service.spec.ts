@@ -73,7 +73,9 @@ function assemble() {
   const onboarding = { get: vi.fn() };
   const knowledge = { getCourse: vi.fn(), getAssignment: vi.fn() };
   const care = { getForMcp: vi.fn() };
-  const attendance = { getMyMonth: vi.fn() };
+  const attendance = {
+    getMyMonth: vi.fn(), validateCorrectionRequest: vi.fn(), requestCorrection: vi.fn(),
+  };
   const service = new McpToolService(
     context,
     audit as unknown as AuditService,
@@ -357,6 +359,68 @@ describe('McpToolService', () => {
     expect(JSON.stringify(result)).not.toMatch(
       /reasonCode|separationType|approvalInstanceId|EvidenceId|execution/iu,
     );
+  });
+
+  it('考勤修订准备只校验本人事实并固化 R1 命令，不直接创建审批', async () => {
+    const store = assemble();
+    store.attendance.validateCorrectionRequest.mockResolvedValue({
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4F1', employeeId: 'employee-001',
+      providerCode: 'dingtalk', factType: 'shift', businessDate: '2026-04-01',
+    });
+    const result = await store.service.prepareAttendanceCorrectionRequest({
+      sourceFactId: '01J8ZQK7V0A2M4N6P8R0T2W4F1', workedMinutes: 420,
+      leaveMinutes: 60, overtimeMinutes: 0, absentMinutes: 0,
+      reasonCode: 'MISSED_BREAK', prepareKey: 'attendance-prepare-001',
+    }, extra(['erp:attendance:correction:request', 'erp:approval:instance:submit']));
+    expect(result.structuredContent).toMatchObject({ riskLevel: 'R1' });
+    expect(store.confirmations.prepare).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: 'tenant-001', actorId: 'employee-001' }),
+      'attendance-prepare-001',
+      {
+        operation: 'attendance.correction.request',
+        sourceFactId: '01J8ZQK7V0A2M4N6P8R0T2W4F1', expectedVersion: 1,
+        workedMinutes: 420, leaveMinutes: 60, overtimeMinutes: 0,
+        absentMinutes: 0, reasonCode: 'MISSED_BREAK',
+      },
+      'R1',
+    );
+    expect(store.attendance.requestCorrection).not.toHaveBeenCalled();
+  });
+
+  it('考勤修订执行只消费确认账本命令并复用 Attendance 应用服务', async () => {
+    const store = assemble();
+    store.confirmations.claim.mockResolvedValue({
+      operationId: '01J8ZQK7V0A2M4N6P8R0T2W4A1', replayResult: null,
+      command: {
+        operation: 'attendance.correction.request',
+        sourceFactId: '01J8ZQK7V0A2M4N6P8R0T2W4F1', expectedVersion: 1,
+        workedMinutes: 420, leaveMinutes: 60, overtimeMinutes: 0,
+        absentMinutes: 0, reasonCode: 'MISSED_BREAK',
+      },
+    });
+    store.attendance.requestCorrection.mockResolvedValue({
+      request: {
+        approvalInstanceId: '01J8ZQK7V0A2M4N6P8R0T2W4A2', approvalStatus: 'running',
+        approvalVersion: 2, sourceFactId: '01J8ZQK7V0A2M4N6P8R0T2W4F1',
+        employeeId: 'employee-001', businessDate: '2026-04-01',
+      },
+    });
+    const result = await store.service.executeAttendanceCorrectionRequest(
+      '01J8ZQK7V0A2M4N6P8R0T2W4A1', `mcpc_${'a'.repeat(43)}`,
+      extra(['erp:attendance:correction:request', 'erp:approval:instance:submit']),
+    );
+    expect(store.attendance.requestCorrection).toHaveBeenCalledWith(
+      'mcp:01J8ZQK7V0A2M4N6P8R0T2W4A1',
+      {
+        sourceFactId: '01J8ZQK7V0A2M4N6P8R0T2W4F1',
+        replacementImpact: {
+          workedMinutes: 420, leaveMinutes: 60, overtimeMinutes: 0, absentMinutes: 0,
+        },
+        reasonCode: 'MISSED_BREAK',
+      },
+    );
+    expect(store.confirmations.complete).toHaveBeenCalledOnce();
+    expect(result.structuredContent).toMatchObject({ request: { approvalStatus: 'running' } });
   });
 
   it('Offer 发送准备只固化标识和版本并要求 R2 确认', async () => {

@@ -28,7 +28,13 @@ import {
 type ApprovalMcpCommand = Extract<McpCommand, {
   readonly operation: 'approval.submit' | 'approval.withdraw' | 'approval.decide';
 }>;
-type RecruitmentMcpCommand = Exclude<McpCommand, ApprovalMcpCommand>;
+type AttendanceMcpCommand = Extract<McpCommand, {
+  readonly operation: 'attendance.correction.request';
+}>;
+type RecruitmentMcpCommand = Exclude<
+  McpCommand,
+  ApprovalMcpCommand | AttendanceMcpCommand
+>;
 type ApprovalMcpOperation = ApprovalMcpCommand['operation'];
 type RecruitmentMcpOperation = RecruitmentMcpCommand['operation'];
 
@@ -136,6 +142,103 @@ export class McpToolService {
       const attendanceMonth = await this.attendance.getMyMonth(month);
       await this.auditTool(identity, 'attendance_month_get', 'R0', 'success');
       return structuredResult({ attendanceMonth });
+    });
+  }
+
+  async prepareAttendanceCorrectionRequest(
+    input: {
+      readonly sourceFactId: string;
+      readonly workedMinutes: number;
+      readonly leaveMinutes: number;
+      readonly overtimeMinutes: number;
+      readonly absentMinutes: number;
+      readonly reasonCode: string;
+      readonly prepareKey: string;
+    },
+    extra: McpExtra,
+  ): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      const required = [
+        'erp:attendance:correction:request', 'erp:approval:instance:submit',
+      ];
+      const missing = required.find((scope) => !identity.scopes.includes(scope));
+      if (missing !== undefined) {
+        await this.auditTool(identity, 'attendance_correction_prepare', 'R1', 'denied');
+        return scopeError(missing);
+      }
+      await this.attendance.validateCorrectionRequest({
+        sourceFactId: input.sourceFactId,
+        replacementImpact: {
+          workedMinutes: input.workedMinutes, leaveMinutes: input.leaveMinutes,
+          overtimeMinutes: input.overtimeMinutes, absentMinutes: input.absentMinutes,
+        },
+        reasonCode: input.reasonCode,
+      });
+      const command: AttendanceMcpCommand = {
+        operation: 'attendance.correction.request', sourceFactId: input.sourceFactId,
+        expectedVersion: 1, workedMinutes: input.workedMinutes,
+        leaveMinutes: input.leaveMinutes, overtimeMinutes: input.overtimeMinutes,
+        absentMinutes: input.absentMinutes, reasonCode: input.reasonCode,
+      };
+      const prepared = await this.confirmations.prepare(identity, input.prepareKey, command, 'R1');
+      await this.auditTool(identity, 'attendance_correction_prepare', 'R1', 'success', {
+        operationId: prepared.operationId, digest: prepared.digest,
+      });
+      return preparedResult(prepared);
+    });
+  }
+
+  async executeAttendanceCorrectionRequest(
+    operationId: string,
+    confirmationCredential: string,
+    extra: McpExtra,
+  ): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      const required = [
+        'erp:attendance:correction:request', 'erp:approval:instance:submit',
+      ];
+      const missing = required.find((scope) => !identity.scopes.includes(scope));
+      if (missing !== undefined) {
+        await this.auditTool(identity, 'attendance_correction_execute', 'R1', 'denied');
+        return scopeError(missing);
+      }
+      const claimed = await this.confirmations.claim(
+        identity, 'attendance.correction.request', operationId, confirmationCredential,
+      );
+      if (claimed.replayResult !== null) {
+        await this.auditTool(identity, 'attendance_correction_execute', 'R1', 'success', {
+          operationId, replayed: true,
+        });
+        return structuredResult(claimed.replayResult);
+      }
+      try {
+        if (!isAttendanceCommand(claimed.command)) {
+          throw new Error('MCP_ATTENDANCE_COMMAND_TYPE_MISMATCH');
+        }
+        const result = await this.attendance.requestCorrection(`mcp:${operationId}`, {
+          sourceFactId: claimed.command.sourceFactId,
+          replacementImpact: {
+            workedMinutes: claimed.command.workedMinutes,
+            leaveMinutes: claimed.command.leaveMinutes,
+            overtimeMinutes: claimed.command.overtimeMinutes,
+            absentMinutes: claimed.command.absentMinutes,
+          },
+          reasonCode: claimed.command.reasonCode,
+        });
+        await this.confirmations.complete(operationId, result);
+        await this.auditTool(identity, 'attendance_correction_execute', 'R1', 'success', {
+          operationId, replayed: false,
+        });
+        return structuredResult(result);
+      } catch (error) {
+        await this.confirmations.release(operationId);
+        await this.auditTool(identity, 'attendance_correction_execute', 'R1', 'failure', {
+          operationId,
+        });
+        throw error;
+      }
     });
   }
 
@@ -791,4 +894,8 @@ function isApprovalCommand(command: McpCommand): command is ApprovalMcpCommand {
 
 function isRecruitmentCommand(command: McpCommand): command is RecruitmentMcpCommand {
   return command.operation.startsWith('recruitment.');
+}
+
+function isAttendanceCommand(command: McpCommand): command is AttendanceMcpCommand {
+  return command.operation === 'attendance.correction.request';
 }

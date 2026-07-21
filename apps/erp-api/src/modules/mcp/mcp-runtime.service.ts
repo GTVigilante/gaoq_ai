@@ -203,6 +203,22 @@ const attendanceMonthSchema = z.object({
   correctionCount: z.number().int().nonnegative(), snapshotHash: z.string().length(43),
   closedAt: z.string(),
 });
+const attendanceCorrectionRequestSchema = z.object({
+  approvalInstanceId: recruitmentIdSchema,
+  approvalStatus: z.enum(['running', 'approved']),
+  approvalVersion: z.number().int().positive(),
+  sourceFactId: recruitmentIdSchema,
+  employeeId: z.string(),
+  businessDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+const attendanceCorrectionInputSchema = {
+  sourceFactId: recruitmentIdSchema,
+  workedMinutes: z.number().int().min(0).max(44_640),
+  leaveMinutes: z.number().int().min(0).max(44_640),
+  overtimeMinutes: z.number().int().min(0).max(44_640),
+  absentMinutes: z.number().int().min(0).max(44_640),
+  reasonCode: z.string().regex(/^[A-Z][A-Z0-9_]{1,63}$/),
+};
 
 @Injectable()
 export class McpRuntimeService {
@@ -578,7 +594,7 @@ export class McpRuntimeService {
           role: 'user',
           content: {
             type: 'text',
-            text: `请读取我 ${month} 的考勤月结摘要，解释各分钟汇总和快照版本。不要索取或推断打卡时间、地点、设备和修订原因；若有异议，请引导我在 ERP 发起考勤修订审批，AI 不得直接改事实或重开月结。`,
+            text: `请读取我 ${month} 的考勤月结摘要，解释各分钟汇总和快照版本。不要索取或推断打卡时间、地点或设备；若我明确提供源事实标识、替换分钟和受控原因码，可调用 attendance_correction_prepare，并引导我在 ERP 确认页核对后再执行。AI 不得直接改事实、审批申请或重开月结。`,
           },
         }],
       }),
@@ -828,6 +844,40 @@ export class McpRuntimeService {
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
       },
       async ({ month }, extra) => this.tools.getMyAttendanceMonth(month, extra),
+    );
+
+    server.registerTool(
+      'attendance_correction_prepare',
+      {
+        title: '准备本人考勤修订申请',
+        description: '校验本人源事实和受控分钟/原因码，生成 R1 服务端确认单；不会改事实或创建审批。',
+        inputSchema: {
+          ...attendanceCorrectionInputSchema,
+          prepareKey: z.string().regex(/^[A-Za-z0-9._:-]{8,128}$/),
+        },
+        outputSchema: preparedOperationOutputSchema,
+        annotations: {
+          readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+        },
+      },
+      async (input, extra) => this.tools.prepareAttendanceCorrectionRequest(input, extra),
+    );
+
+    server.registerTool(
+      'attendance_correction_execute',
+      {
+        title: '提交本人考勤修订审批',
+        description: '仅消费 ERP 用户确认后的固化命令，创建并提交 attendance_correction 审批；不修改源事实。风险等级 R1。',
+        inputSchema: confirmationExecuteInputSchema,
+        outputSchema: z.object({ request: attendanceCorrectionRequestSchema }),
+        annotations: {
+          readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+        },
+      },
+      async ({ operationId, confirmationCredential }, extra) =>
+        this.tools.executeAttendanceCorrectionRequest(
+          operationId, confirmationCredential, extra,
+        ),
     );
 
     server.registerTool(

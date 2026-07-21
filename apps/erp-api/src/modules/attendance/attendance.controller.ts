@@ -14,6 +14,7 @@ import { AuditService } from '../../core/audit/audit.service.js';
 import { RequiredScopes } from '../identity/auth.decorators.js';
 import {
   AttendanceApplicationService,
+  type AttendanceCorrectionRequestSummary,
   type AttendanceCorrectionSummary,
   type AttendanceFactSummary,
   type AttendanceMonthSummary,
@@ -22,6 +23,7 @@ import {
   CloseAttendanceMonthDto,
   IngestAttendanceSourceFactDto,
   RegisterAttendanceCorrectionDto,
+  RequestAttendanceCorrectionDto,
 } from './application/attendance.dto.js';
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -64,6 +66,25 @@ export class AttendanceController {
         sourceFactId: result.correction.sourceFactId,
         businessDate: result.correction.businessDate,
         approvalInstanceId: result.correction.approvalInstanceId,
+      },
+    });
+    return result;
+  }
+
+  @Post('correction-requests')
+  @RequiredScopes('erp:attendance:correction:request', 'erp:approval:instance:submit')
+  async requestCorrection(
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: RequestAttendanceCorrectionDto,
+  ): Promise<{ readonly request: AttendanceCorrectionRequestSummary }> {
+    const result = await this.attendance.requestCorrection(this.key(key), body);
+    await this.audit.record({
+      action: 'attendance.correction.request', resourceType: 'attendance_correction_request',
+      resourceId: result.request.approvalInstanceId, riskLevel: 'R1', outcome: 'success',
+      metadata: {
+        employeeId: result.request.employeeId, sourceFactId: result.request.sourceFactId,
+        businessDate: result.request.businessDate,
+        approvalStatus: result.request.approvalStatus,
       },
     });
     return result;

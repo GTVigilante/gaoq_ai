@@ -11,6 +11,7 @@ import {
   publishApprovalTemplate,
   submitApprovalInstance,
   type ApprovalTemplateDefinition,
+  type ApprovalInstance,
 } from '../domain/index.js';
 import type {
   ApprovalActionRepository,
@@ -193,6 +194,59 @@ describe('ApprovalApplicationService', () => {
     expect(result).toMatchObject({ id: instance.id, templateCode: 'care_offboarding' });
     expect(result).not.toHaveProperty('formData');
     expect(result).not.toHaveProperty('title');
+  });
+
+  it('考勤修订只输出与批准正文哈希绑定的强类型决定，非法字段失败关闭', async () => {
+    const deps = dependencies();
+    const approved = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4A1', status: 'approved',
+      completedAt: '2026-04-02T00:00:00.000Z', formDataHash: 'a'.repeat(43),
+      templateSnapshot: { templateCode: 'attendance_correction' },
+      formData: {
+        source_fact_id: '01J8ZQK7V0A2M4N6P8R0T2W4F1', employee_id: 'employee-001',
+        business_date: '2026-04-01', worked_minutes: 420, leave_minutes: 60,
+        overtime_minutes: 0, absent_minutes: 0, reason_code: 'MISSED_BREAK',
+      },
+    } as unknown as ApprovalInstance;
+    deps.instances.findById.mockResolvedValue(approved);
+    const attendance = service(deps, trustedContext(['erp:attendance:approval:sync']));
+    await expect(attendance.getAttendanceCorrectionDecision(approved.id)).resolves.toEqual({
+      id: approved.id, completedAt: approved.completedAt,
+      sourceFactId: '01J8ZQK7V0A2M4N6P8R0T2W4F1', employeeId: 'employee-001',
+      businessDate: '2026-04-01', replacementImpact: {
+        workedMinutes: 420, leaveMinutes: 60, overtimeMinutes: 0, absentMinutes: 0,
+      },
+      reasonCode: 'MISSED_BREAK', formDataHash: 'a'.repeat(43),
+    });
+    deps.instances.findById.mockResolvedValue({
+      ...approved, formData: { ...approved.formData, worked_minutes: 420.5 },
+    });
+    await expect(attendance.getAttendanceCorrectionDecision(approved.id)).rejects.toMatchObject({
+      response: { code: 'APPROVAL_ATTENDANCE_FORM_INVALID' },
+    });
+  });
+
+  it('月结重开决定绑定员工、月份和前序快照，不返回审批其他字段', async () => {
+    const deps = dependencies();
+    const approved = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4A2', status: 'approved',
+      completedAt: '2026-05-02T00:00:00.000Z', formDataHash: 'b'.repeat(43),
+      templateSnapshot: { templateCode: 'attendance_month_reopen' },
+      formData: {
+        employee_id: 'employee-001', month: '2026-04',
+        previous_snapshot_id: '01J8ZQK7V0A2M4N6P8R0T2W4S1', reason_code: 'LATE_SOURCE',
+      },
+    } as unknown as ApprovalInstance;
+    deps.instances.findById.mockResolvedValue(approved);
+    const result = await service(
+      deps, trustedContext(['erp:attendance:approval:sync']),
+    ).getAttendanceMonthReopenDecision(approved.id);
+    expect(result).toEqual({
+      id: approved.id, completedAt: approved.completedAt, employeeId: 'employee-001',
+      month: '2026-04', previousSnapshotId: '01J8ZQK7V0A2M4N6P8R0T2W4S1',
+      formDataHash: 'b'.repeat(43),
+    });
+    expect(result).not.toHaveProperty('reasonCode');
   });
 
   it('创建实例只返回脱敏摘要，聚合与事件共用幂等事务', async () => {

@@ -24,10 +24,13 @@ export class IngestAttendanceSourceFactDto {
 }
 
 export class RegisterAttendanceCorrectionDto {
+  @Matches(ULID) approvalInstanceId!: string;
+}
+
+export class RequestAttendanceCorrectionDto {
   @Matches(ULID) sourceFactId!: string;
   @ValidateNested() @Type(() => AttendanceImpactDto) replacementImpact!: AttendanceImpactDto;
   @Matches(/^[A-Z][A-Z0-9_]{1,63}$/) reasonCode!: string;
-  @Matches(ULID) approvalInstanceId!: string;
 }
 
 export class CloseAttendanceMonthDto {

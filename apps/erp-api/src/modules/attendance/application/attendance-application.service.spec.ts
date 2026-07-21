@@ -43,7 +43,10 @@ function assemble() {
   ) => handler(session)) };
   const profiles = { resolveActive: vi.fn().mockResolvedValue({ employeeId: 'employee-001' }) };
   const employees = { findById: vi.fn().mockResolvedValue({ id: 'employee-001' }) };
-  const approvals = { getInstanceStatusForAttendance: vi.fn() };
+  const approvals = {
+    getAttendanceCorrectionDecision: vi.fn(), getAttendanceMonthReopenDecision: vi.fn(),
+    createInstance: vi.fn(), submitInstance: vi.fn(),
+  };
   const crypto = { sourceEventFingerprints: vi.fn().mockReturnValue(['key.digest']) };
   const facts = {
     findByEventFingerprints: vi.fn().mockResolvedValue(null),
@@ -52,7 +55,8 @@ function assemble() {
     insert: vi.fn().mockResolvedValue(undefined),
   };
   const corrections = {
-    findForMonth: vi.fn().mockResolvedValue([]), insert: vi.fn().mockResolvedValue(undefined),
+    findForMonth: vi.fn().mockResolvedValue([]), findBySourceFactId: vi.fn().mockResolvedValue(null),
+    insert: vi.fn().mockResolvedValue(undefined),
   };
   const snapshots = {
     findActive: vi.fn(), activate: vi.fn().mockResolvedValue(undefined),
@@ -101,22 +105,23 @@ describe('AttendanceApplicationService', () => {
 
   it('修订员工与业务日期取自不可变源事实，并要求专用审批已通过', async () => {
     const store = assemble();
-    store.approvals.getInstanceStatusForAttendance.mockResolvedValue({
-      id: '01J8ZQK7V0A2M4N6P8R0T2W4A1', status: 'approved',
+    store.approvals.getAttendanceCorrectionDecision = vi.fn().mockResolvedValue({
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4A1',
       completedAt: '2026-04-02T00:00:00.000Z',
+      sourceFactId: sourceFact().id, employeeId: 'employee-001', businessDate: '2026-04-01',
+      replacementImpact: {
+        workedMinutes: 420, leaveMinutes: 0, overtimeMinutes: 0, absentMinutes: 0,
+      },
+      reasonCode: 'MISSED_BREAK', formDataHash: 'a'.repeat(43),
     });
     const result = await store.context.run({
       tenant,
       actor: actor(['erp:attendance:correction:attest', 'erp:attendance:approval:sync']),
     }, () => store.service.registerCorrection('correction-key-001', {
-      sourceFactId: sourceFact().id,
-      replacementImpact: {
-        workedMinutes: 420, leaveMinutes: 0, overtimeMinutes: 0, absentMinutes: 0,
-      },
-      reasonCode: 'MISSED_BREAK', approvalInstanceId: '01J8ZQK7V0A2M4N6P8R0T2W4A1',
+      approvalInstanceId: '01J8ZQK7V0A2M4N6P8R0T2W4A1',
     }));
-    expect(store.approvals.getInstanceStatusForAttendance).toHaveBeenCalledWith(
-      '01J8ZQK7V0A2M4N6P8R0T2W4A1', 'attendance_correction',
+    expect(store.approvals.getAttendanceCorrectionDecision).toHaveBeenCalledWith(
+      '01J8ZQK7V0A2M4N6P8R0T2W4A1',
     );
     expect(store.corrections.insert).toHaveBeenCalledWith(expect.objectContaining({
       employeeId: 'employee-001', businessDate: '2026-04-01',
@@ -124,6 +129,58 @@ describe('AttendanceApplicationService', () => {
     }), session);
     expect(result.correction).not.toHaveProperty('reasonCode');
     expect(result.correction).not.toHaveProperty('replacementImpact');
+    store.approvals.getAttendanceCorrectionDecision.mockResolvedValue({
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4A3', completedAt: '2026-04-02T00:00:00.000Z',
+      sourceFactId: sourceFact().id, employeeId: 'employee-999', businessDate: '2026-04-01',
+      replacementImpact: {
+        workedMinutes: 420, leaveMinutes: 0, overtimeMinutes: 0, absentMinutes: 0,
+      },
+      reasonCode: 'MISSED_BREAK', formDataHash: 'b'.repeat(43),
+    });
+    await expect(store.context.run({
+      tenant,
+      actor: actor(['erp:attendance:correction:attest', 'erp:attendance:approval:sync']),
+    }, () => store.service.registerCorrection('correction-key-002', {
+      approvalInstanceId: '01J8ZQK7V0A2M4N6P8R0T2W4A3',
+    }))).rejects.toThrow('考勤修订审批与源事实员工或业务日期不匹配');
+    expect(store.corrections.insert).toHaveBeenCalledTimes(1);
+  });
+
+  it('本人修订请求把受控内容固化到专用 Approval，Attendance 事件不泄露分钟和原因', async () => {
+    const store = assemble();
+    store.approvals.createInstance = vi.fn().mockResolvedValue({
+      instance: { id: '01J8ZQK7V0A2M4N6P8R0T2W4A2', version: 1 },
+    });
+    store.approvals.submitInstance = vi.fn().mockResolvedValue({
+      instance: {
+        id: '01J8ZQK7V0A2M4N6P8R0T2W4A2', status: 'running', version: 2,
+      },
+    });
+    const result = await store.context.run({
+      tenant,
+      actor: actor(['erp:attendance:correction:request', 'erp:approval:instance:submit']),
+    }, () => store.service.requestCorrection('request-key-001', {
+      sourceFactId: sourceFact().id,
+      replacementImpact: {
+        workedMinutes: 420, leaveMinutes: 60, overtimeMinutes: 0, absentMinutes: 0,
+      },
+      reasonCode: 'MISSED_BREAK',
+    }));
+    expect(store.approvals.createInstance).toHaveBeenCalledWith(
+      expect.stringMatching(/^attendance:/),
+      expect.objectContaining({
+        templateCode: 'attendance_correction',
+        formData: {
+          source_fact_id: sourceFact().id, employee_id: 'employee-001',
+          business_date: '2026-04-01', worked_minutes: 420, leave_minutes: 60,
+          overtime_minutes: 0, absent_minutes: 0, reason_code: 'MISSED_BREAK',
+        },
+      }),
+    );
+    expect(result.request).toMatchObject({ approvalStatus: 'running', businessDate: '2026-04-01' });
+    const event = store.outbox.append.mock.calls.at(-1)?.[0] as unknown as Record<string, unknown>;
+    expect(event).toMatchObject({ type: 'attendance.correction.requested' });
+    expect(JSON.stringify(event)).not.toMatch(/workedMinutes|leaveMinutes|MISSED_BREAK/);
   });
 
   it('已有活动快照时，没有重开审批就拒绝生成新版本', async () => {
@@ -135,6 +192,27 @@ describe('AttendanceApplicationService', () => {
       employeeId: 'employee-001', month: '2026-04', rulesetVersion: 'attendance-cn-v1',
       sourceCutoffAt: '2026-05-01T00:00:00.000Z',
     }))).rejects.toThrow('已关账月份重开必须提供审批引用');
+    expect(store.snapshots.activate).not.toHaveBeenCalled();
+  });
+
+  it('月结重开审批必须绑定当前员工、月份和活动快照', async () => {
+    const store = assemble();
+    store.snapshots.findActive.mockResolvedValue({
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4S1', snapshotVersion: 1,
+    });
+    store.approvals.getAttendanceMonthReopenDecision.mockResolvedValue({
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4A4', completedAt: '2026-05-02T00:00:00.000Z',
+      employeeId: 'employee-001', month: '2026-03',
+      previousSnapshotId: '01J8ZQK7V0A2M4N6P8R0T2W4S1', formDataHash: 'c'.repeat(43),
+    });
+    await expect(store.context.run({
+      tenant,
+      actor: actor(['erp:attendance:month:close', 'erp:attendance:approval:sync']),
+    }, () => store.service.closeMonth('close-key-002', {
+      employeeId: 'employee-001', month: '2026-04', rulesetVersion: 'attendance-cn-v1',
+      sourceCutoffAt: '2026-05-02T00:00:00.000Z',
+      supersessionApprovalInstanceId: '01J8ZQK7V0A2M4N6P8R0T2W4A4',
+    }))).rejects.toThrow('月结重开审批与员工、月份或活动快照不匹配');
     expect(store.snapshots.activate).not.toHaveBeenCalled();
   });
 });

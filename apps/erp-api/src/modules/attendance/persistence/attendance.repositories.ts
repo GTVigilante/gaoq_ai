@@ -131,6 +131,13 @@ export class AttendanceCorrectionRepository extends TenantRepository {
     private readonly crypto: AttendanceDataCryptoService,
   ) { super(context); }
 
+  async findBySourceFactId(sourceFactId: string): Promise<AttendanceCorrection | null> {
+    const record = await this.records.findOne({
+      tenantId: this.tenantId(), sourceFactId,
+    }).lean().exec();
+    return record === null ? null : this.toDomain(record);
+  }
+
   async findForMonth(
     employeeId: string,
     month: string,

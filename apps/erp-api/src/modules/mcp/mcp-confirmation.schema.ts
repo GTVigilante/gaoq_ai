@@ -8,7 +8,8 @@ export type McpOperation =
   | 'approval.decide'
   | 'recruitment.requisition.submit'
   | 'recruitment.position.transition'
-  | 'recruitment.offer.request_send';
+  | 'recruitment.offer.request_send'
+  | 'attendance.correction.request';
 export type McpConfirmationStatus =
   | 'pending_confirmation'
   | 'ready'
@@ -36,7 +37,7 @@ export class McpConfirmationRecord {
     enum: [
       'approval.submit', 'approval.withdraw', 'approval.decide',
       'recruitment.requisition.submit', 'recruitment.position.transition',
-      'recruitment.offer.request_send',
+      'recruitment.offer.request_send', 'attendance.correction.request',
     ],
     required: true,
     immutable: true,

@@ -82,6 +82,31 @@ export interface ApprovalInstanceView {
   readonly completedAt: string | null;
 }
 
+export interface AttendanceCorrectionDecision {
+  readonly id: string;
+  readonly completedAt: string;
+  readonly sourceFactId: string;
+  readonly employeeId: string;
+  readonly businessDate: string;
+  readonly replacementImpact: {
+    readonly workedMinutes: number;
+    readonly leaveMinutes: number;
+    readonly overtimeMinutes: number;
+    readonly absentMinutes: number;
+  };
+  readonly reasonCode: string;
+  readonly formDataHash: string;
+}
+
+export interface AttendanceMonthReopenDecision {
+  readonly id: string;
+  readonly completedAt: string;
+  readonly employeeId: string;
+  readonly month: string;
+  readonly previousSnapshotId: string;
+  readonly formDataHash: string;
+}
+
 /** 审批应用服务：唯一事务编排入口，REST、Worker 与 MCP 必须复用本服务。 */
 @Injectable()
 export class ApprovalApplicationService {
@@ -428,11 +453,48 @@ export class ApprovalApplicationService {
     return instanceSummary(instance);
   }
 
-  /** Attendance 只读取专用修订/重开模板终态，不读取打卡明细或审批表单正文。 */
-  async getInstanceStatusForAttendance(
+  /** 返回修订执行所需的强类型批准内容；字段不匹配模板契约时失败关闭。 */
+  async getAttendanceCorrectionDecision(id: string): Promise<AttendanceCorrectionDecision> {
+    const instance = await this.requireApprovedAttendanceInstance(id, 'attendance_correction');
+    const form = instance.formData;
+    return Object.freeze({
+      id: instance.id,
+      completedAt: requiredCompletedAt(instance),
+      sourceFactId: requiredFormString(form, 'source_fact_id', /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/),
+      employeeId: requiredFormString(form, 'employee_id', /^[A-Za-z0-9._:-]{1,128}$/),
+      businessDate: requiredFormString(form, 'business_date', /^\d{4}-\d{2}-\d{2}$/),
+      replacementImpact: Object.freeze({
+        workedMinutes: requiredFormMinutes(form, 'worked_minutes'),
+        leaveMinutes: requiredFormMinutes(form, 'leave_minutes'),
+        overtimeMinutes: requiredFormMinutes(form, 'overtime_minutes'),
+        absentMinutes: requiredFormMinutes(form, 'absent_minutes'),
+      }),
+      reasonCode: requiredFormString(form, 'reason_code', /^[A-Z][A-Z0-9_]{1,63}$/),
+      formDataHash: instance.formDataHash,
+    });
+  }
+
+  /** 返回月结重开所需的强类型批准绑定；禁止同一批准引用重开其他员工或月份。 */
+  async getAttendanceMonthReopenDecision(id: string): Promise<AttendanceMonthReopenDecision> {
+    const instance = await this.requireApprovedAttendanceInstance(id, 'attendance_month_reopen');
+    return Object.freeze({
+      id: instance.id,
+      completedAt: requiredCompletedAt(instance),
+      employeeId: requiredFormString(
+        instance.formData, 'employee_id', /^[A-Za-z0-9._:-]{1,128}$/,
+      ),
+      month: requiredFormString(instance.formData, 'month', /^\d{4}-(0[1-9]|1[0-2])$/),
+      previousSnapshotId: requiredFormString(
+        instance.formData, 'previous_snapshot_id', /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/,
+      ),
+      formDataHash: instance.formDataHash,
+    });
+  }
+
+  private async requireApprovedAttendanceInstance(
     id: string,
-    expectedTemplate: 'attendance_correction' | 'attendance_month_reopen',
-  ): Promise<ApprovalInstanceSummary> {
+    templateCode: 'attendance_correction' | 'attendance_month_reopen',
+  ): Promise<ApprovalInstance> {
     const actor = this.context.getActorRequired();
     if (!actor.scopes.includes('erp:attendance:approval:sync')) {
       throw new ForbiddenException({
@@ -441,13 +503,19 @@ export class ApprovalApplicationService {
       });
     }
     const instance = await this.requireInstance(id);
-    if (instance.templateSnapshot.templateCode !== expectedTemplate) {
+    if (instance.templateSnapshot.templateCode !== templateCode) {
       throw new ForbiddenException({
         code: 'APPROVAL_ATTENDANCE_INTEGRATION_TEMPLATE_DENIED',
-        message: '考勤集成只能读取匹配的修订或月结重开审批状态',
+        message: '考勤审批模板与执行动作不匹配',
       });
     }
-    return instanceSummary(instance);
+    if (instance.status !== 'approved' || instance.completedAt === null) {
+      throw new ConflictException({
+        code: 'APPROVAL_ATTENDANCE_DECISION_INCOMPLETE',
+        message: '考勤审批尚未形成可信通过终态',
+      });
+    }
+    return instance;
   }
 
   private async transition(
@@ -519,6 +587,37 @@ export class ApprovalApplicationService {
       throw error;
     }
   }
+}
+
+function requiredCompletedAt(instance: ApprovalInstance): string {
+  if (instance.completedAt === null || !Number.isFinite(Date.parse(instance.completedAt))) {
+    throw new ConflictException({
+      code: 'APPROVAL_ATTENDANCE_DECISION_INVALID', message: '考勤审批完成时间非法',
+    });
+  }
+  return instance.completedAt;
+}
+
+function requiredFormString(
+  form: ApprovalFormData,
+  field: string,
+  pattern: RegExp,
+): string {
+  const value = form[field];
+  if (typeof value !== 'string' || !pattern.test(value)) throw new ConflictException({
+    code: 'APPROVAL_ATTENDANCE_FORM_INVALID', message: `考勤审批字段 ${field} 非法或缺失`,
+  });
+  return value;
+}
+
+function requiredFormMinutes(form: ApprovalFormData, field: string): number {
+  const value = form[field];
+  if (!Number.isSafeInteger(value) || typeof value !== 'number' || value < 0 || value > 44_640) {
+    throw new ConflictException({
+      code: 'APPROVAL_ATTENDANCE_FORM_INVALID', message: `考勤审批字段 ${field} 非法或缺失`,
+    });
+  }
+  return value;
 }
 
 function templateSummary(template: ApprovalTemplate): ApprovalTemplateSummary {

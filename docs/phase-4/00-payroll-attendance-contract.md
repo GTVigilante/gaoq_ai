@@ -82,7 +82,7 @@ draft → collecting → calculating → review → pending_approval → approve
 | 用例 | REST | 事件 | MCP | 风险 |
 | --- | --- | --- | --- | --- |
 | 查询本人考勤月结 | `GET /attendance/months/{month}/me` | 无 | Resource + `attendance_month_get` | R0 |
-| 提交考勤修订请求 | `POST /attendance/days/{date}/corrections` | `attendance.correction.requested.v1` | `attendance_correction_prepare/execute`，只形成请求 | R1 |
+| 提交考勤修订请求 | `POST /attendance/correction-requests` | `attendance.correction.requested.v1` | `attendance_correction_prepare/execute`，只形成请求 | R1 |
 | 关闭考勤月份 | 内部月结命令 | `attendance.month.closed.v1` | 不开放 | R2 |
 | 查询本人薪资单 | `GET /payroll/payslips/{period}/me` | 无 | Resource + `payroll_payslip_get`，默认脱敏 | R0 |
 | 计算/重算工资 | 内部 Worker 命令 | `payroll.run.completed/failed.v1` | 不开放 | R2 |
