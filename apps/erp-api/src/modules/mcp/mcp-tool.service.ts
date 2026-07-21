@@ -23,6 +23,7 @@ import { PayrollPayslipService } from '../payroll/application/payroll-payslip.se
 import { PayrollTaxFilingService } from '../payroll/application/payroll-tax-filing.service.js';
 import { PayrollReconciliationService } from '../payroll/application/payroll-reconciliation.service.js';
 import { PayrollShadowService } from '../payroll/application/payroll-shadow.service.js';
+import { OpOperatingSummaryService } from '../op/application/op-operating-summary.service.js';
 import { parseMcpIdentity, type McpIdentity } from './mcp-auth-context.js';
 import {
   McpConfirmationService,
@@ -68,6 +69,7 @@ export class McpToolService {
     private readonly taxFilings: PayrollTaxFilingService,
     private readonly reconciliations: PayrollReconciliationService,
     private readonly shadows: PayrollShadowService,
+    private readonly opSummaries: OpOperatingSummaryService,
     private readonly confirmations: McpConfirmationService,
   ) {}
 
@@ -246,6 +248,22 @@ export class McpToolService {
         endPeriod: cutoverReadiness.endPeriod, evidenceHash: cutoverReadiness.evidenceHash,
       });
       return structuredResult({ cutoverReadiness });
+    });
+  }
+
+  async getOpOperatingSummary(date: string, extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:op:operating_summary:read')) {
+        await this.auditTool(identity, 'op_operating_summary_get', 'R0', 'denied');
+        return scopeError('erp:op:operating_summary:read');
+      }
+      const operatingSummary = await this.opSummaries.getLatest(date);
+      await this.auditTool(identity, 'op_operating_summary_get', 'R0', 'success', {
+        summaryDate: operatingSummary.summaryDate, revision: operatingSummary.revision,
+        payloadHash: operatingSummary.payloadHash,
+      });
+      return structuredResult({ operatingSummary });
     });
   }
 

@@ -313,6 +313,22 @@ const payrollCutoverReadinessSchema = z.object({
   evidenceHash: z.string().length(43), status: z.literal('eligible'),
   version: z.number().int().positive(),
 });
+const opOperatingSummarySchema = z.object({
+  id: recruitmentIdSchema,
+  summaryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  revision: z.number().int().positive(),
+  currency: z.literal('CNY'),
+  metrics: z.object({
+    gmvMinor: z.number().int().nonnegative(),
+    paidOrderCount: z.number().int().nonnegative(),
+    refundMinor: z.number().int().nonnegative(),
+    refundOrderCount: z.number().int().nonnegative(),
+    activeCustomerCount: z.number().int().nonnegative(),
+  }),
+  payloadHash: z.string().length(43),
+  occurredAt: z.string().datetime(),
+  receivedAt: z.string().datetime(),
+});
 
 @Injectable()
 export class McpRuntimeService {
@@ -694,6 +710,24 @@ export class McpRuntimeService {
       },
     );
 
+    server.registerResource(
+      'op-operating-summary',
+      new ResourceTemplate('erp://op/operating-summaries/{date}', { list: undefined }),
+      {
+        title: 'OP 每日经营摘要',
+        description: '只返回固定白名单经营指标与来源摘要；不参与工资、税务、资金或会计计算。',
+        mimeType: 'application/json',
+      },
+      async (uri, { date }, extra) => {
+        const result = await this.tools.getOpOperatingSummary(requiredDate(date), extra);
+        if (result.isError === true) throw new Error('无权读取 OP 经营摘要');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
     server.registerPrompt(
       'approval_submission_guide',
       {
@@ -882,6 +916,19 @@ export class McpRuntimeService {
       ({ readinessId }) => ({ messages: [{ role: 'user', content: {
         type: 'text',
         text: `请读取工资可切换资格 ${readinessId}，核对两个影子周期是否连续、证据摘要和状态是否完整。该资格只是 Phase 4 门禁证据，不代表总体 Go/No-Go 已通过；不得执行连接切换、真实代发或修改证据。`,
+      } }] }),
+    );
+
+    server.registerPrompt(
+      'op_operating_summary_review_guide',
+      {
+        title: 'OP 经营摘要核对指南',
+        description: '指导 AI 只读解释固定经营指标、修订和来源摘要，不执行写入或财务推断。',
+        argsSchema: { date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) },
+      },
+      ({ date }) => ({ messages: [{ role: 'user', content: {
+        type: 'text',
+        text: `请读取 ${date} 的 OP 经营摘要，解释 GMV、支付单量、退款额、退款单量、活跃客户数以及当前修订。仅将其视为管理展示数据；不得用于工资、税务、资金或会计计算，不得触发 OP 写入或补造数据。`,
       } }] }),
     );
 
@@ -1214,6 +1261,20 @@ export class McpRuntimeService {
     );
 
     server.registerTool(
+      'op_operating_summary_get',
+      {
+        title: '查询 OP 每日经营摘要',
+        description: '读取固定白名单经营指标与最新修订，仅供管理展示。风险等级 R0。',
+        inputSchema: { date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) },
+        outputSchema: z.object({ operatingSummary: opOperatingSummarySchema }),
+        annotations: {
+          readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+        },
+      },
+      async ({ date }, extra) => this.tools.getOpOperatingSummary(date, extra),
+    );
+
+    server.registerTool(
       'attendance_correction_prepare',
       {
         title: '准备本人考勤修订申请',
@@ -1355,6 +1416,13 @@ function requiredResourceId(value: string | string[] | undefined): string {
 function requiredMonth(value: string | string[] | undefined): string {
   if (typeof value !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) {
     throw new Error('MCP_ATTENDANCE_MONTH_INVALID');
+  }
+  return value;
+}
+
+function requiredDate(value: string | string[] | undefined): string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new Error('MCP_OP_SUMMARY_DATE_INVALID');
   }
   return value;
 }

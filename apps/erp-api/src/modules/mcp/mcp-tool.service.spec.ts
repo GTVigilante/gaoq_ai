@@ -21,6 +21,7 @@ import type { PayrollPayslipService } from '../payroll/application/payroll-paysl
 import type { PayrollTaxFilingService } from '../payroll/application/payroll-tax-filing.service.js';
 import type { PayrollReconciliationService } from '../payroll/application/payroll-reconciliation.service.js';
 import type { PayrollShadowService } from '../payroll/application/payroll-shadow.service.js';
+import type { OpOperatingSummaryService } from '../op/application/op-operating-summary.service.js';
 import { McpToolService } from './mcp-tool.service.js';
 import type { McpConfirmationService } from './mcp-confirmation.service.js';
 
@@ -86,6 +87,7 @@ function assemble() {
   const taxFilings = { getStatus: vi.fn() };
   const reconciliations = { getStatus: vi.fn() };
   const shadows = { getCycle: vi.fn(), getReadiness: vi.fn() };
+  const opSummaries = { getLatest: vi.fn() };
   const service = new McpToolService(
     context,
     audit as unknown as AuditService,
@@ -104,12 +106,14 @@ function assemble() {
     taxFilings as unknown as PayrollTaxFilingService,
     reconciliations as unknown as PayrollReconciliationService,
     shadows as unknown as PayrollShadowService,
+    opSummaries as unknown as OpOperatingSummaryService,
     confirmations as unknown as McpConfirmationService,
   );
   return {
     context, audit, organization, approvals, recruitmentApplications,
     recruitmentInterviews, recruitmentManagement, recruitmentOffers, confirmations, service,
     onboarding, knowledge, care, attendance, payroll, payslips, taxFilings, reconciliations, shadows,
+    opSummaries,
   };
 }
 
@@ -640,5 +644,23 @@ describe('McpToolService', () => {
     expect(completed[0]).toBe('01J8ZQK7V0A2M4N6P8R0T2W4Y7');
     expect(completed[1]).toHaveProperty('offer');
     expect(result.structuredContent).toMatchObject({ offer: { status: 'sending' } });
+  });
+
+  it('OP 经营摘要 Tool 仅凭 Scope 复用只读应用服务', async () => {
+    const store = assemble();
+    store.opSummaries.getLatest.mockResolvedValue({
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4D1', summaryDate: '2026-07-22', revision: 2,
+      payloadHash: 'o'.repeat(43), metrics: { gmvMinor: 100 },
+    });
+    const denied = await store.service.getOpOperatingSummary('2026-07-22', extra([]));
+    expect(denied.isError).toBe(true);
+    expect(store.opSummaries.getLatest).not.toHaveBeenCalled();
+    const result = await store.service.getOpOperatingSummary(
+      '2026-07-22', extra(['erp:op:operating_summary:read']),
+    );
+    expect(store.opSummaries.getLatest).toHaveBeenCalledWith('2026-07-22');
+    expect(result.structuredContent).toMatchObject({
+      operatingSummary: { summaryDate: '2026-07-22', revision: 2 },
+    });
   });
 });

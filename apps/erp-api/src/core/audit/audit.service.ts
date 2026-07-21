@@ -89,4 +89,25 @@ export class AuditService {
       occurredAt: new Date().toISOString(),
     });
   }
+
+  /** 公共集成端点完成独立协议验签后，以外部服务身份记录审计。 */
+  async recordTrustedExternalService(
+    tenantId: string,
+    input: TrustedServiceAuditRecordInput,
+  ): Promise<void> {
+    if (
+      !AUDIT_ID_PATTERN.test(tenantId) ||
+      !AUDIT_ID_PATTERN.test(input.actorId) ||
+      !AUDIT_ID_PATTERN.test(input.traceId)
+    ) throw new Error('可信外部服务审计上下文非法');
+    const { actorId, traceId, ...record } = input;
+    await this.sink.append({
+      ...record,
+      tenantId,
+      actorId,
+      actorType: 'service',
+      traceId,
+      occurredAt: new Date().toISOString(),
+    });
+  }
 }

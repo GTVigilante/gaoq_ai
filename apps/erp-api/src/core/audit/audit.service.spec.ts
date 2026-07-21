@@ -112,4 +112,17 @@ describe('AuditService', () => {
       riskLevel: 'R1', outcome: 'failure',
     })).rejects.toThrow('可信服务审计上下文非法');
   });
+
+  it('独立协议验签后的外部连接器使用 service 主体', async () => {
+    const sink = new CapturingAuditSink();
+    const service = new AuditService(sink, new TenantContextService());
+    await service.recordTrustedExternalService('tenant-001', {
+      actorId: 'op:client-001', traceId: 'trace-op-001',
+      action: 'integration.op.webhook.verify', resourceType: 'op_webhook',
+      riskLevel: 'R1', outcome: 'success',
+    });
+    expect(sink.append).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: 'tenant-001', actorId: 'op:client-001', actorType: 'service',
+    }));
+  });
 });

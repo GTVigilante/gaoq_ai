@@ -119,6 +119,11 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(64).max(16_384).optional(),
   ),
+  /** OP 经营摘要原始请求专用 AES-256-GCM 密钥环；不得复用 eSign 或业务数据密钥。 */
+  OP_WEBHOOK_ENCRYPTION_KEYS: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(64).max(16_384).optional(),
+  ),
   /** eSign OpenAPI 只允许官方生产或沙箱域名，禁止自定义地址导致 SSRF。 */
   ESIGN_API_BASE_URL: z.enum([
     'https://openapi.esign.cn', 'https://smlopenapi.esign.cn',
@@ -431,6 +436,13 @@ const environmentSchema = z.object({
       code: 'custom',
       path: ['ESIGN_WEBHOOK_ENCRYPTION_KEYS'],
       message: '生产环境必须由 Secret Manager 注入 eSign Webhook 加密密钥环',
+    });
+  }
+  if (environment.NODE_ENV === 'production' && environment.OP_WEBHOOK_ENCRYPTION_KEYS === undefined) {
+    context.addIssue({
+      code: 'custom',
+      path: ['OP_WEBHOOK_ENCRYPTION_KEYS'],
+      message: '生产环境必须由 Secret Manager 注入 OP Webhook 独立加密密钥环',
     });
   }
   if (

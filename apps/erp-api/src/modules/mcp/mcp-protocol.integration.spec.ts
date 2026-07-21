@@ -157,6 +157,24 @@ describe('MCP Streamable HTTP 协议集成', () => {
       getPayrollReconciliation: vi.fn(),
       getPayrollShadowCycle: vi.fn(),
       getPayrollCutoverReadiness: vi.fn(),
+      getOpOperatingSummary: vi.fn().mockResolvedValue({
+        content: [{ type: 'text' as const, text: JSON.stringify({ operatingSummary: {
+          id: '01J8ZQK7V0A2M4N6P8R0T2W4D1', summaryDate: '2026-07-22', revision: 1,
+          currency: 'CNY', metrics: {
+            gmvMinor: 123_456, paidOrderCount: 12, refundMinor: 500,
+            refundOrderCount: 1, activeCustomerCount: 8,
+          }, payloadHash: 'o'.repeat(43), occurredAt: '2026-07-22T08:00:00.000Z',
+          receivedAt: '2026-07-22T08:00:01.000Z',
+        } }) }],
+        structuredContent: { operatingSummary: {
+          id: '01J8ZQK7V0A2M4N6P8R0T2W4D1', summaryDate: '2026-07-22', revision: 1,
+          currency: 'CNY', metrics: {
+            gmvMinor: 123_456, paidOrderCount: 12, refundMinor: 500,
+            refundOrderCount: 1, activeCustomerCount: 8,
+          }, payloadHash: 'o'.repeat(43), occurredAt: '2026-07-22T08:00:00.000Z',
+          receivedAt: '2026-07-22T08:00:01.000Z',
+        } },
+      }),
       prepareAttendanceCorrectionRequest: vi.fn(),
       executeAttendanceCorrectionRequest: vi.fn(),
       prepareRecruitmentRequisitionSubmit: vi.fn(),
@@ -194,7 +212,10 @@ describe('MCP Streamable HTTP 协议集成', () => {
         actorType: 'user',
         clientId: 'official-sdk-test-client',
         roleCodes: ['employee'],
-        scopes: ['erp:mcp:server:connect', 'erp:org:chart:read'],
+        scopes: [
+          'erp:mcp:server:connect', 'erp:org:chart:read',
+          'erp:op:operating_summary:read',
+        ],
         departmentIds: ['department-001'],
         sessionId: 'session-001',
         expiresAt: 1_900_000_000,
@@ -259,6 +280,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       'payroll_reconciliation_get',
       'payroll_shadow_cycle_get',
       'payroll_cutover_readiness_get',
+      'op_operating_summary_get',
       'attendance_correction_prepare',
       'attendance_correction_execute',
       'recruitment_requisition_submit_prepare',
@@ -288,6 +310,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ uriTemplate: 'erp://payroll/reconciliations/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://payroll/shadow-cycles/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://payroll/cutover-readiness/{id}' }),
+      expect.objectContaining({ uriTemplate: 'erp://op/operating-summaries/{date}' }),
     ]));
     const prompts = await client.listPrompts();
     expect(prompts.prompts).toEqual(expect.arrayContaining([
@@ -303,6 +326,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ name: 'payroll_reconciliation_review_guide' }),
       expect.objectContaining({ name: 'payroll_shadow_cycle_review_guide' }),
       expect.objectContaining({ name: 'payroll_cutover_readiness_review_guide' }),
+      expect.objectContaining({ name: 'op_operating_summary_review_guide' }),
     ]));
 
     const result = await client.callTool({ name: 'get_org_chart', arguments: {} });
