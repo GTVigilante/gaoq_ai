@@ -4,6 +4,7 @@ export interface UpsertRecruitmentCalendarCommand {
   readonly tenantId: string;
   readonly interviewId: string;
   readonly version: number;
+  readonly externalCalendarId: string;
   readonly startsAt: string;
   readonly endsAt: string;
   readonly timezone: string;
@@ -18,6 +19,7 @@ export interface CancelRecruitmentCalendarCommand {
   readonly tenantId: string;
   readonly interviewId: string;
   readonly version: number;
+  readonly externalCalendarId: string;
   readonly organizerExternalId: string;
   readonly externalEventId: string;
   readonly idempotencyKey: string;

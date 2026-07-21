@@ -10,7 +10,7 @@ const ALLOWED_ORIGINS = new Set([
   'https://open.feishu.cn',
 ]);
 
-export type OrgPlatformHttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
+export type OrgPlatformHttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 export interface OrgPlatformHttpRequest {
   readonly origin: 'https://api.dingtalk.com' | 'https://oapi.dingtalk.com' | 'https://open.feishu.cn';
@@ -95,6 +95,7 @@ export class FetchOrgPlatformHttpClient extends OrgPlatformHttpClient {
         this.classifyStatus(response.status),
         '组织平台调用失败',
         response.status,
+        this.providerCode(body),
       );
     }
     return { status: response.status, requestId, body };
@@ -116,5 +117,14 @@ export class FetchOrgPlatformHttpClient extends OrgPlatformHttpClient {
     if (status === 408 || status === 425 || status === 429 || status >= 500) return 'retryable';
     if (status === 409 || status === 412) return 'conflict';
     return 'business';
+  }
+
+  private providerCode(body: unknown): number | undefined {
+    const parsed = z.object({
+      code: z.number().int().optional(),
+      errcode: z.number().int().optional(),
+    }).passthrough().safeParse(body);
+    if (!parsed.success) return undefined;
+    return parsed.data.code ?? parsed.data.errcode;
   }
 }

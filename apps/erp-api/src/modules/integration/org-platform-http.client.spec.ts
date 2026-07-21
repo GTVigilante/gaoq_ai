@@ -45,7 +45,7 @@ describe('FetchOrgPlatformHttpClient', () => {
 
   it('上游错误只返回稳定分类，不泄露敏感查询参数或响应正文', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
-      JSON.stringify({ msg: 'secret provider detail' }),
+      JSON.stringify({ code: 190004, msg: 'secret provider detail' }),
       { status: 429 },
     )));
     const client = new FetchOrgPlatformHttpClient();
@@ -57,7 +57,9 @@ describe('FetchOrgPlatformHttpClient', () => {
       body: { name: '财务部' },
     }).catch((caught: unknown) => caught);
 
-    expect(error).toMatchObject({ code: 'ORG_PLATFORM_HTTP_429', category: 'retryable' });
+    expect(error).toMatchObject({
+      code: 'ORG_PLATFORM_HTTP_429', category: 'retryable', providerCode: 190004,
+    });
     expect(String(error)).not.toContain('secret-access-token');
     expect(String(error)).not.toContain('secret provider detail');
   });

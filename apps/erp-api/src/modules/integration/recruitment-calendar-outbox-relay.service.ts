@@ -8,6 +8,10 @@ import {
   OrgPlatformBinding,
   type OrgPlatformBindingDocument,
 } from './org-platform-binding.schema.js';
+import {
+  RecruitmentCalendarBinding,
+  type RecruitmentCalendarBindingDocument,
+} from './recruitment-calendar-binding.schema.js';
 import type { RecruitmentCalendarChannel } from './recruitment-calendar.adapter.js';
 import {
   RecruitmentCalendarDeliveryRecord,
@@ -28,6 +32,11 @@ interface ClaimedInterviewEvent {
   readonly attempts: number;
 }
 
+interface ActiveCalendarTarget {
+  readonly channel: RecruitmentCalendarChannel;
+  readonly externalCalendarId: string;
+}
+
 /** 将面试 Outbox 原子扇出为租户已启用平台的日历投递轨迹。 */
 @Injectable()
 export class RecruitmentCalendarOutboxRelayService {
@@ -39,7 +48,9 @@ export class RecruitmentCalendarOutboxRelayService {
     @InjectModel(RecruitmentCalendarDeliveryRecord.name)
     private readonly deliveries: Model<RecruitmentCalendarDeliveryDocument>,
     @InjectModel(OrgPlatformBinding.name)
-    private readonly bindings: Model<OrgPlatformBindingDocument>,
+    private readonly platformBindings: Model<OrgPlatformBindingDocument>,
+    @InjectModel(RecruitmentCalendarBinding.name)
+    private readonly calendarBindings: Model<RecruitmentCalendarBindingDocument>,
   ) {}
 
   async relayBatch(workerId: string, limit = 50): Promise<number> {
@@ -83,13 +94,13 @@ export class RecruitmentCalendarOutboxRelayService {
 
   private async fanOut(event: ClaimedInterviewEvent, workerId: string): Promise<void> {
     const action = this.action(event.eventType);
-    const channels = action === null ? [] : await this.activeChannels(event.tenantId);
-    if (action !== null && channels.length === 0) throw new Error('CALENDAR_BINDING_MISSING');
+    const targets = action === null ? [] : await this.targetsFor(event, action);
+    if (action === 'upsert' && targets.length === 0) throw new Error('CALENDAR_BINDING_MISSING');
     const session = await this.connection.startSession();
     try {
       await session.withTransaction(async () => {
         if (action !== null) {
-          for (const channel of channels) await this.createDelivery(event, channel, action, session);
+          for (const target of targets) await this.createDelivery(event, target, action, session);
         }
         const updated = await this.outbox.updateOne(
           { eventId: event.eventId, status: 'dispatching', lockedBy: workerId },
@@ -106,24 +117,64 @@ export class RecruitmentCalendarOutboxRelayService {
     }
   }
 
-  private async activeChannels(tenantId: string): Promise<readonly RecruitmentCalendarChannel[]> {
-    const records = await this.bindings.find(
-      { tenantId, status: 'active' },
-      { channel: 1, _id: 0 },
+  private async targetsFor(
+    event: ClaimedInterviewEvent,
+    action: RecruitmentCalendarDeliveryAction,
+  ): Promise<readonly ActiveCalendarTarget[]> {
+    if (action === 'upsert') return this.activeTargets(event.tenantId);
+    const records = await this.deliveries.find(
+      { tenantId: event.tenantId, interviewId: event.aggregateId, action: 'upsert' },
+      { channel: 1, externalCalendarId: 1, _id: 0 },
     ).lean().exec();
-    return Object.freeze([...new Set(records.map((record) => record.channel))].sort());
+    const unique = new Map<string, ActiveCalendarTarget>();
+    for (const record of records) {
+      const key = `${record.channel}:${record.externalCalendarId}`;
+      unique.set(key, Object.freeze({
+        channel: record.channel,
+        externalCalendarId: record.externalCalendarId,
+      }));
+    }
+    return Object.freeze([...unique.values()].sort((left, right) =>
+      left.channel.localeCompare(right.channel)));
+  }
+
+  private async activeTargets(tenantId: string): Promise<readonly ActiveCalendarTarget[]> {
+    const [platformRecords, calendarRecords] = await Promise.all([
+      this.platformBindings.find(
+        { tenantId, status: 'active' },
+        { channel: 1, _id: 0 },
+      ).lean().exec(),
+      this.calendarBindings.find(
+        { tenantId, status: 'active' },
+        { channel: 1, externalCalendarId: 1, _id: 0 },
+      ).lean().exec(),
+    ]);
+    const enabledPlatforms = new Set(platformRecords.map((record) => record.channel));
+    return Object.freeze(calendarRecords
+      .filter((record) => enabledPlatforms.has(record.channel))
+      .map((record) => Object.freeze({
+        channel: record.channel,
+        externalCalendarId: record.externalCalendarId,
+      }))
+      .sort((left, right) => left.channel.localeCompare(right.channel)));
   }
 
   private async createDelivery(
     event: ClaimedInterviewEvent,
-    channel: RecruitmentCalendarChannel,
+    target: ActiveCalendarTarget,
     action: RecruitmentCalendarDeliveryAction,
     session: ClientSession,
   ): Promise<void> {
     await this.deliveries.updateOne(
-      { tenantId: event.tenantId, eventId: event.eventId, channel },
+      {
+        tenantId: event.tenantId,
+        eventId: event.eventId,
+        channel: target.channel,
+        externalCalendarId: target.externalCalendarId,
+      },
       { $setOnInsert: {
-        eventId: event.eventId, tenantId: event.tenantId, channel,
+        eventId: event.eventId, tenantId: event.tenantId, channel: target.channel,
+        externalCalendarId: target.externalCalendarId,
         interviewId: event.aggregateId, interviewVersion: event.aggregateVersion,
         action, status: 'pending', attempts: 0, nextAttemptAt: new Date(),
         lockedAt: null, lockedBy: null, externalEventId: null,

@@ -29,6 +29,9 @@ export class RecruitmentCalendarDeliveryRecord {
   @Prop({ type: String, enum: ['dingtalk', 'feishu'], required: true, immutable: true })
   channel!: RecruitmentCalendarChannel;
 
+  @Prop({ type: String, required: true, immutable: true, maxlength: 256 })
+  externalCalendarId!: string;
+
   @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
   interviewId!: string;
 
@@ -82,12 +85,18 @@ export const RecruitmentCalendarDeliveryRecordSchema = SchemaFactory.createForCl
 );
 
 RecruitmentCalendarDeliveryRecordSchema.index(
-  { tenantId: 1, eventId: 1, channel: 1 },
+  { tenantId: 1, eventId: 1, channel: 1, externalCalendarId: 1 },
   { unique: true },
 );
 RecruitmentCalendarDeliveryRecordSchema.index(
   { status: 1, channel: 1, nextAttemptAt: 1, createdAt: 1 },
 );
 RecruitmentCalendarDeliveryRecordSchema.index(
-  { tenantId: 1, interviewId: 1, channel: 1, interviewVersion: 1 },
+  {
+    tenantId: 1,
+    interviewId: 1,
+    channel: 1,
+    externalCalendarId: 1,
+    interviewVersion: 1,
+  },
 );

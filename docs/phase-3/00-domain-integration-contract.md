@@ -61,6 +61,11 @@ applied → screening → interview → offer_approval → offer_sent
 - 访问令牌的 `actorId` 必须经有效 AccessProfile 映射为 `employeeId`，禁止直接将 actor 标识当作面试官标识。
 - 每位面试官每轮只能追加一份评价；推荐、分数和备注作为单一 L3 载荷整体加密。评价、取消和完成共用面试版本锁，防止取消后并发写入评价。
 - 日历投递由事务 Outbox 触发；事件只含面试标识和时间摘要，Integration Worker 通过专用最小 Scope 读取加密地点投影。日历失败只进入重试/人工介入，不回滚 ERP 排期。
+- 日历投递必须同时存在有效 `OrgPlatformBinding`（凭据引用）与 `RecruitmentCalendarBinding`（可写日历）；绑定只能由受控运维面变更，业务 API 和客户端不得提交外部日历 ID。
+- Relay 创建投递轨迹时固化 `externalCalendarId`，后续即使租户切换默认日历，重试、更新和取消仍只操作原目标日历；轨迹禁止保存地点、参与人、Token 或候选人资料。
+- 钉钉使用 Calendar 1.0 的 `x-client-token` 原子创建/更新日程与参与人；飞书使用 Calendar v4 `idempotency_key` 创建日程，并通过参与人接口补齐 `user_id`。两个适配器都只能通过统一令牌服务取短期访问令牌，401 最多刷新一次。
+- Worker 任务分为 `relay:calendar`、`deliver:calendar:dingtalk` 和 `deliver:calendar:feishu`；平台限流、网络错误和外部身份尚未就绪按指数退避重试，业务错误、冲突或耗尽重试进入人工介入，不反写 Recruitment 状态。
+- 外部事件标题固定为无候选人信息的“招聘面试”；仅在业务必要范围向日历平台发送时间、时区、地点和已验证面试官外部 ID，审计、日志和 Outbox 均不得记录地点明文。
 
 ### 4.3 e签宝
 

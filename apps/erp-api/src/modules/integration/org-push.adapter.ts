@@ -95,6 +95,8 @@ export class OrgPushError extends Error {
     readonly category: OrgPushFailureCategory,
     message: string,
     readonly status?: number,
+    /** 仅保留无敏感内容的数值型平台错误码，供适配器执行幂等恢复。 */
+    readonly providerCode?: number,
   ) {
     super(message);
     this.name = 'OrgPushError';

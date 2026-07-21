@@ -12,6 +12,7 @@ import {
   ExternalIdentitySchema,
 } from '../identity/external-identity.schema.js';
 import { OutboxRecord, OutboxRecordSchema } from '../org/persistence/outbox.schema.js';
+import { RecruitmentModule } from '../recruitment/recruitment.module.js';
 import {
   OrgDepartmentRecord,
   OrgDepartmentRecordSchema,
@@ -61,6 +62,19 @@ import {
   RecruitmentCalendarDeliveryRecordSchema,
 } from './recruitment-calendar-delivery.schema.js';
 import { RecruitmentCalendarOutboxRelayService } from './recruitment-calendar-outbox-relay.service.js';
+import {
+  RecruitmentCalendarBinding,
+  RecruitmentCalendarBindingSchema,
+} from './recruitment-calendar-binding.schema.js';
+import { RecruitmentCalendarDeliveryService } from './recruitment-calendar-delivery.service.js';
+import { DingTalkRecruitmentCalendarAdapter } from './dingtalk-recruitment-calendar.adapter.js';
+import { FeishuRecruitmentCalendarAdapter } from './feishu-recruitment-calendar.adapter.js';
+import {
+  DINGTALK_RECRUITMENT_CALENDAR_ADAPTER,
+  FEISHU_RECRUITMENT_CALENDAR_ADAPTER,
+  RecruitmentCalendarAdapter,
+  RecruitmentCalendarAdapterRegistry,
+} from './recruitment-calendar.adapter.js';
 import { OrgReconciliationService } from './org-reconciliation.service.js';
 import {
   DINGTALK_ORG_PUSH_ADAPTER,
@@ -75,11 +89,13 @@ import {
     AuditModule,
     IdempotencyModule,
     TenantContextModule,
+    RecruitmentModule,
     MongooseModule.forFeature([
       { name: OutboxRecord.name, schema: OutboxRecordSchema },
       { name: OrgDeliveryRecord.name, schema: OrgDeliveryRecordSchema },
       { name: OrgExternalVersionState.name, schema: OrgExternalVersionStateSchema },
       { name: OrgPlatformBinding.name, schema: OrgPlatformBindingSchema },
+      { name: RecruitmentCalendarBinding.name, schema: RecruitmentCalendarBindingSchema },
       { name: AccessProfile.name, schema: AccessProfileSchema },
       { name: ExternalIdentity.name, schema: ExternalIdentitySchema },
       { name: OrgDepartmentRecord.name, schema: OrgDepartmentRecordSchema },
@@ -98,6 +114,7 @@ import {
   providers: [
     OrgOutboxRelayService,
     RecruitmentCalendarOutboxRelayService,
+    RecruitmentCalendarDeliveryService,
     OrgDeliveryService,
     OrgDeliveryOperationsService,
     OrgExternalIdentityResolver,
@@ -114,19 +131,41 @@ import {
     { provide: OrgPlatformHttpClient, useExisting: FetchOrgPlatformHttpClient },
     DingTalkOrgPushAdapter,
     FeishuOrgPushAdapter,
+    DingTalkRecruitmentCalendarAdapter,
+    FeishuRecruitmentCalendarAdapter,
     { provide: DINGTALK_ORG_PUSH_ADAPTER, useExisting: DingTalkOrgPushAdapter },
     { provide: FEISHU_ORG_PUSH_ADAPTER, useExisting: FeishuOrgPushAdapter },
+    {
+      provide: DINGTALK_RECRUITMENT_CALENDAR_ADAPTER,
+      useExisting: DingTalkRecruitmentCalendarAdapter,
+    },
+    {
+      provide: FEISHU_RECRUITMENT_CALENDAR_ADAPTER,
+      useExisting: FeishuRecruitmentCalendarAdapter,
+    },
     {
       provide: OrgPushAdapterRegistry,
       inject: [DINGTALK_ORG_PUSH_ADAPTER, FEISHU_ORG_PUSH_ADAPTER],
       useFactory: (dingtalk: OrgPushAdapter, feishu: OrgPushAdapter) =>
         new OrgPushAdapterRegistry(dingtalk, feishu),
     },
+    {
+      provide: RecruitmentCalendarAdapterRegistry,
+      inject: [
+        DINGTALK_RECRUITMENT_CALENDAR_ADAPTER,
+        FEISHU_RECRUITMENT_CALENDAR_ADAPTER,
+      ],
+      useFactory: (
+        dingtalk: RecruitmentCalendarAdapter,
+        feishu: RecruitmentCalendarAdapter,
+      ) => new RecruitmentCalendarAdapterRegistry(dingtalk, feishu),
+    },
   ],
   controllers: [IntegrationController, OrgEmployeeProvisioningController],
   exports: [
     OrgOutboxRelayService,
     RecruitmentCalendarOutboxRelayService,
+    RecruitmentCalendarDeliveryService,
     OrgDeliveryService,
     OrgReconciliationService,
     OrgEmployeeProvisioningService,
