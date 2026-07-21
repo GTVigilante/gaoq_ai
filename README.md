@@ -16,14 +16,16 @@
 
 - [PRD-告趣ERP系统-v1.0.md](PRD-告趣ERP系统-v1.0.md) — 完整产品需求文档
 - [Phase 0 规范包](./docs/phase-0/) — 架构、数据、集成、MCP、安全、切换与GitHub治理基线
+- [Phase 1 运行手册](./docs/phase-1/) — 索引迁移、审计完整性与可观测性
+- [Phase 2 验收包](./docs/phase-2/) — 审批、通知、MCP确认、迁移、UAT与SLO
 
 ## 阶段规划
 
 | 阶段 | 参考时间 | 目标 | 状态 |
 |------|------|------|------|
-| Phase 0 | 4-6周 | 架构、数据、安全、MCP、集成契约与Backlog冻结 | 待评审 |
+| Phase 0 | 4-6周 | 架构、数据、安全、MCP、集成契约与Backlog冻结 | 已建立基线 |
 | Phase 1 | 8-10周 | 多租户底座、身份、组织主数据、双平台连接、MCP Core | 执行中 |
-| Phase 2 | 8-10周 | 审批工作流、PC/H5及审批MCP能力 | 规划中 |
+| Phase 2 | 8-10周 | 审批工作流、PC/H5及审批MCP能力 | 执行中（代码完成，真实平台与实体认证器 UAT 待完成） |
 | Phase 3 | 10-12周 | 招聘、e签宝、入职、知识培训、关怀及MCP能力 | 规划中 |
 | Phase 4 | 10-12周 | 考勤、薪酬、薪税文件、发放对账及MCP能力 | 规划中 |
 | Phase 5 | 8-10周 | OP桥接、移动端、分析、生产加固和迁移工具 | 规划中 |
@@ -62,7 +64,7 @@ pnpm --filter @gaoq/erp-api dev:worker
 - Web：`http://localhost:3000`
 - API 存活探针：`http://localhost:3001/api/health/live`
 - API 就绪探针：`http://localhost:3001/api/health/ready`
-- Worker：独立进程消费 Outbox、钉钉与飞书组织同步任务，不开放 HTTP 端口
+- Worker：独立进程消费 Outbox、钉钉/飞书组织同步与审批通知任务，不开放 HTTP 端口
 
 ### MCP OAuth 公共客户端
 

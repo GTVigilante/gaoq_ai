@@ -1,0 +1,33 @@
+# Phase 2：审批引擎与 AI 受控操作
+
+## 交付状态
+
+Phase 2 当前已交付审批模板、受限条件 DSL、模板快照、实例状态机、会签/或签、委托、转交、加签、撤回、归档、乐观锁、加密持久化、REST 工作台、可靠事件、双平台通知、MCP R0/R1 能力，以及基于 WebAuthn 用户验证的 R2 确认链。
+
+尚未满足生产验收的项目：
+
+1. WebAuthn 代码、浏览器登记/断言页面和 R2 证据绑定已经交付，但尚未使用目标域名、目标浏览器和实体认证器完成兼容与恢复演练。
+2. 钉钉、飞书真实租户沙箱的消息发送、权限范围、限流、令牌轮换和回执格式尚未完成联调。
+3. 生产 MongoDB Replica Set、Redis/BullMQ、WORM 审计和告警规则尚未在目标环境执行演练。
+
+因此本阶段代码可进入集成环境，不得标记为生产完成。
+
+## 架构边界
+
+- ERP 组织与员工是审批人解析的唯一主数据源；平台身份只用于 SSO 和消息投递。
+- REST、MCP 和 Worker 复用 `ApprovalApplicationService`；MCP 与通知适配器不得直接读写审批聚合。
+- 租户只能来自验签令牌或 HttpOnly ERP 会话；任何业务参数中的租户标识均无效。
+- 表单使用 AES-256-GCM 和租户/实例/定义摘要 AAD；通知、Outbox、MCP 确认和幂等快照不得包含表单正文。
+- 审批写入、动作日志、Outbox 和通知意图位于同一 Mongo 事务；平台发送在独立 Worker 中执行。
+- R1 使用 `prepare → ERP 页面确认 → execute`；R2 使用与操作、租户、主体、浏览器会话绑定的一次性 WebAuthn challenge，要求认证器 UV 成功和独立审批人；R3 不注册工具。
+- Passkey 登记、清单和撤销要求 `erp:identity:passkey:manage`，生产 `WEB_ORIGIN` 必须为 HTTPS；服务端仅保存公钥、计数器、传输方式和备份状态。
+
+## 上线门禁
+
+按顺序执行：
+
+1. 阅读并执行 [索引迁移手册](./01-index-migration-runbook.md)。
+2. 完成 [UAT 与安全验收](./02-uat-security-acceptance.md)，保留证据链接。
+3. 部署并验证 [SLO 与告警](./03-observability-slo-runbook.md)。
+4. 完成 [平台与 MCP 兼容矩阵](./04-platform-mcp-compatibility.md)。
+5. R2 实体认证器兼容、真实平台沙箱和 Sev1/Sev2 演练全部通过后，方可提交生产变更审批。
