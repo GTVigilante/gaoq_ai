@@ -2,7 +2,13 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { ULID_PATTERN } from '@gaoq/shared-utils';
 import type { HydratedDocument } from 'mongoose';
 
-export type McpApprovalOperation = 'approval.submit' | 'approval.withdraw' | 'approval.decide';
+export type McpOperation =
+  | 'approval.submit'
+  | 'approval.withdraw'
+  | 'approval.decide'
+  | 'recruitment.requisition.submit'
+  | 'recruitment.position.transition'
+  | 'recruitment.offer.request_send';
 export type McpConfirmationStatus =
   | 'pending_confirmation'
   | 'ready'
@@ -27,11 +33,15 @@ export class McpConfirmationRecord {
 
   @Prop({
     type: String,
-    enum: ['approval.submit', 'approval.withdraw', 'approval.decide'],
+    enum: [
+      'approval.submit', 'approval.withdraw', 'approval.decide',
+      'recruitment.requisition.submit', 'recruitment.position.transition',
+      'recruitment.offer.request_send',
+    ],
     required: true,
     immutable: true,
   })
-  operation!: McpApprovalOperation;
+  operation!: McpOperation;
 
   @Prop({ type: String, enum: ['R1', 'R2'], required: true, immutable: true })
   riskLevel!: 'R1' | 'R2';

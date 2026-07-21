@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import type { Response } from 'express';
@@ -96,6 +96,54 @@ const approvalOperationInputSchema = {
 const confirmationExecuteInputSchema = {
   operationId: z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/),
   confirmationCredential: z.string().regex(/^mcpc_[A-Za-z0-9_-]{43}$/),
+};
+const recruitmentIdSchema = z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/);
+const recruitmentApplicationSchema = z.object({
+  id: recruitmentIdSchema, candidateId: recruitmentIdSchema, positionId: recruitmentIdSchema,
+  stage: z.enum([
+    'applied', 'screening', 'interview', 'offer_approval', 'offer_sent',
+    'offer_accepted', 'preboarding', 'hired', 'rejected', 'withdrawn',
+  ]),
+  version: z.number().int().positive(), appliedAt: z.string(), endedAt: z.string().nullable(),
+});
+const recruitmentRequisitionSchema = z.object({
+  id: recruitmentIdSchema, departmentId: z.string(), positionTitle: z.string(),
+  headcount: z.number().int().positive(),
+  status: z.enum(['draft', 'pending_approval', 'approved', 'rejected', 'closed']),
+  approvalInstanceId: recruitmentIdSchema.nullable(), version: z.number().int().positive(),
+});
+const recruitmentPositionSchema = z.object({
+  id: recruitmentIdSchema, requisitionId: recruitmentIdSchema, title: z.string(),
+  departmentId: z.string(), jobLevelId: z.string(), location: z.string(),
+  headcount: z.number().int().positive(), status: z.enum(['draft', 'open', 'paused', 'closed']),
+  version: z.number().int().positive(), publishedAt: z.string().nullable(),
+  closedAt: z.string().nullable(),
+});
+const recruitmentInterviewSchema = z.object({
+  id: recruitmentIdSchema, applicationId: recruitmentIdSchema,
+  roundNumber: z.number().int().positive(), mode: z.enum(['onsite', 'video', 'phone']),
+  startsAt: z.string(), endsAt: z.string(), timezone: z.string(),
+  interviewerIds: z.array(z.string()),
+  status: z.enum(['scheduled', 'completed', 'cancelled']),
+  version: z.number().int().positive(), completedAt: z.string().nullable(),
+  cancelledAt: z.string().nullable(),
+});
+const recruitmentOfferSchema = z.object({
+  id: recruitmentIdSchema, applicationId: recruitmentIdSchema, positionId: recruitmentIdSchema,
+  completedInterviewId: recruitmentIdSchema,
+  status: z.enum([
+    'draft', 'pending_approval', 'approved', 'rejected', 'sending', 'sent',
+    'accepted', 'declined', 'expired', 'cancelled', 'signed',
+  ]),
+  expiresAt: z.string(), approvalInstanceId: recruitmentIdSchema.nullable(),
+  sendRequestId: z.string().nullable(), sentEvidenceId: z.string().nullable(),
+  acceptanceEvidenceId: z.string().nullable(), esignFlowId: z.string().nullable(),
+  signedEvidenceId: z.string().nullable(), version: z.number().int().positive(),
+});
+const recruitmentWriteOutputSchemas = {
+  requisition: z.object({ requisition: recruitmentRequisitionSchema }),
+  position: z.object({ position: recruitmentPositionSchema }),
+  offer: z.object({ offer: recruitmentOfferSchema }),
 };
 
 @Injectable()
@@ -244,6 +292,42 @@ export class McpRuntimeService {
       },
     );
 
+    server.registerResource(
+      'recruitment-application',
+      new ResourceTemplate('erp://recruitment/applications/{id}', { list: undefined }),
+      {
+        title: '候选申请摘要',
+        description: '按已验证主体和部门数据范围读取申请阶段；不返回候选人身份或评价原文。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getRecruitmentApplication(requiredResourceId(id), extra);
+        if (result.isError === true) throw new Error('无权读取候选申请');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
+    server.registerResource(
+      'recruitment-offer',
+      new ResourceTemplate('erp://recruitment/offers/{id}', { list: undefined }),
+      {
+        title: 'Offer 脱敏摘要',
+        description: '读取 Offer 状态和证据引用；永不返回 L4 薪酬、福利或签署文件。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getRecruitmentOffer(requiredResourceId(id), extra);
+        if (result.isError === true) throw new Error('无权读取 Offer');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
     server.registerPrompt(
       'approval_submission_guide',
       {
@@ -257,6 +341,24 @@ export class McpRuntimeService {
           content: {
             type: 'text',
             text: `请按模板 ${templateCode} 检查必填字段、附件引用、审批路径和敏感信息。不要直接执行提交；先调用 approval_submit_prepare，并引导用户在 ERP 确认页核对影响。`,
+          },
+        }],
+      }),
+    );
+
+    server.registerPrompt(
+      'recruitment_offer_send_guide',
+      {
+        title: 'Offer 发送前检查清单',
+        description: '只检查状态、版本、审批与证据引用，不要求 AI 展示或复述 L4 条款。',
+        argsSchema: { offerId: recruitmentIdSchema },
+      },
+      ({ offerId }) => ({
+        messages: [{
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `请查询 Offer ${offerId} 的脱敏摘要，确认状态为 approved、版本未变化且审批引用存在。不要索取或复述薪酬、福利和签署文件；发送前调用 recruitment_offer_send_prepare 并引导用户在 ERP 完成 R2 强认证确认。`,
           },
         }],
       }),
@@ -387,5 +489,168 @@ export class McpRuntimeService {
       },
       async (extra) => this.tools.getOrgChart(extra),
     );
+
+    server.registerTool(
+      'recruitment_application_get',
+      {
+        title: '查询候选申请摘要',
+        description: '按当前主体部门数据范围返回阶段摘要，不返回候选人身份、简历或评价。风险等级 R0。',
+        inputSchema: { id: recruitmentIdSchema },
+        outputSchema: z.object({ application: recruitmentApplicationSchema }),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      },
+      async ({ id }, extra) => this.tools.getRecruitmentApplication(id, extra),
+    );
+
+    server.registerTool(
+      'recruitment_requisition_get',
+      {
+        title: '查询 HC 摘要',
+        description: '返回 HC 状态、人数和审批引用，不返回申请理由原文。风险等级 R0。',
+        inputSchema: { id: recruitmentIdSchema },
+        outputSchema: z.object({ requisition: recruitmentRequisitionSchema }),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      },
+      async ({ id }, extra) => this.tools.getRecruitmentRequisition(id, extra),
+    );
+
+    server.registerTool(
+      'recruitment_position_get',
+      {
+        title: '查询招聘职位摘要',
+        description: '返回职位及 HC 引用并沿用部门数据范围。风险等级 R0。',
+        inputSchema: { id: recruitmentIdSchema },
+        outputSchema: z.object({ position: recruitmentPositionSchema }),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      },
+      async ({ id }, extra) => this.tools.getRecruitmentPosition(id, extra),
+    );
+
+    server.registerTool(
+      'recruitment_interview_get',
+      {
+        title: '查询面试摘要',
+        description: '返回时间、面试官与状态，不返回地点/会议链接或评价原文。风险等级 R0。',
+        inputSchema: { id: recruitmentIdSchema },
+        outputSchema: z.object({ interview: recruitmentInterviewSchema }),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      },
+      async ({ id }, extra) => this.tools.getRecruitmentInterview(id, extra),
+    );
+
+    server.registerTool(
+      'recruitment_offer_get',
+      {
+        title: '查询 Offer 脱敏摘要',
+        description: '只返回状态和证据引用，不返回任何 L4 条款。风险等级 R0。',
+        inputSchema: { id: recruitmentIdSchema },
+        outputSchema: z.object({ offer: recruitmentOfferSchema }),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      },
+      async ({ id }, extra) => this.tools.getRecruitmentOffer(id, extra),
+    );
+
+    server.registerTool(
+      'recruitment_requisition_submit_prepare',
+      {
+        title: '准备提交 HC 审批',
+        description: '校验 HC 草稿和版本并创建 R2 确认单；不会提交。',
+        inputSchema: {
+          requisitionId: recruitmentIdSchema,
+          expectedVersion: z.number().int().positive(),
+          prepareKey: z.string().regex(/^[A-Za-z0-9._:-]{8,128}$/),
+        },
+        outputSchema: preparedOperationOutputSchema,
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      },
+      async ({ requisitionId, expectedVersion, prepareKey }, extra) =>
+        this.tools.prepareRecruitmentRequisitionSubmit(
+          requisitionId, expectedVersion, prepareKey, extra,
+        ),
+    );
+
+    server.registerTool(
+      'recruitment_requisition_submit_execute',
+      {
+        title: '执行提交 HC 审批',
+        description: '仅在 ERP R2 强认证确认后幂等提交 HC 审批。',
+        inputSchema: confirmationExecuteInputSchema,
+        outputSchema: recruitmentWriteOutputSchemas.requisition,
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      },
+      async ({ operationId, confirmationCredential }, extra) =>
+        this.tools.executeRecruitmentRequisitionSubmit(
+          operationId, confirmationCredential, extra,
+        ),
+    );
+
+    server.registerTool(
+      'recruitment_position_transition_prepare',
+      {
+        title: '准备变更职位状态',
+        description: '校验职位状态和版本并创建 R1 确认单；不会修改职位。',
+        inputSchema: {
+          positionId: recruitmentIdSchema,
+          expectedVersion: z.number().int().positive(),
+          targetStatus: z.enum(['open', 'paused', 'closed']),
+          prepareKey: z.string().regex(/^[A-Za-z0-9._:-]{8,128}$/),
+        },
+        outputSchema: preparedOperationOutputSchema,
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      },
+      async (input, extra) => this.tools.prepareRecruitmentPositionTransition(input, extra),
+    );
+
+    server.registerTool(
+      'recruitment_position_transition_execute',
+      {
+        title: '执行职位状态变更',
+        description: '仅消费 ERP 用户确认后的固化命令；关闭职位为不可逆业务动作。风险等级 R1。',
+        inputSchema: confirmationExecuteInputSchema,
+        outputSchema: recruitmentWriteOutputSchemas.position,
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+      },
+      async ({ operationId, confirmationCredential }, extra) =>
+        this.tools.executeRecruitmentPositionTransition(
+          operationId, confirmationCredential, extra,
+        ),
+    );
+
+    server.registerTool(
+      'recruitment_offer_send_prepare',
+      {
+        title: '准备发送 Offer',
+        description: '只校验脱敏状态和版本并创建 R2 确认单；不会读取条款或形成投递事实。',
+        inputSchema: {
+          offerId: recruitmentIdSchema,
+          expectedVersion: z.number().int().positive(),
+          prepareKey: z.string().regex(/^[A-Za-z0-9._:-]{8,128}$/),
+        },
+        outputSchema: preparedOperationOutputSchema,
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      },
+      async ({ offerId, expectedVersion, prepareKey }, extra) =>
+        this.tools.prepareRecruitmentOfferSend(offerId, expectedVersion, prepareKey, extra),
+    );
+
+    server.registerTool(
+      'recruitment_offer_send_execute',
+      {
+        title: '执行 Offer 发送请求',
+        description: '仅在 ERP R2 强认证确认后创建 sending 意图；投递回执前仍不视为已发送。',
+        inputSchema: confirmationExecuteInputSchema,
+        outputSchema: recruitmentWriteOutputSchemas.offer,
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      },
+      async ({ operationId, confirmationCredential }, extra) =>
+        this.tools.executeRecruitmentOfferSend(operationId, confirmationCredential, extra),
+    );
   }
+}
+
+function requiredResourceId(value: string | string[] | undefined): string {
+  if (typeof value !== 'string' || !/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(value)) {
+    throw new Error('MCP_RECRUITMENT_RESOURCE_ID_INVALID');
+  }
+  return value;
 }

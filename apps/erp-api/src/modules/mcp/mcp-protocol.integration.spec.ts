@@ -40,6 +40,40 @@ describe('MCP Streamable HTTP 协议集成', () => {
       executeApprovalWithdraw: vi.fn(),
       prepareApprovalDecision: vi.fn(),
       executeApprovalDecision: vi.fn(),
+      getRecruitmentApplication: vi.fn(),
+      getRecruitmentRequisition: vi.fn(),
+      getRecruitmentPosition: vi.fn(),
+      getRecruitmentInterview: vi.fn(),
+      getRecruitmentOffer: vi.fn().mockResolvedValue({
+        content: [{ type: 'text' as const, text: JSON.stringify({
+          offer: {
+            id: '01J8ZQK7V0A2M4N6P8R0T2W4Y6',
+            applicationId: '01J8ZQK7V0A2M4N6P8R0T2W4Y7',
+            positionId: '01J8ZQK7V0A2M4N6P8R0T2W4Y8',
+            completedInterviewId: '01J8ZQK7V0A2M4N6P8R0T2W4Y9',
+            status: 'approved', expiresAt: '2026-08-01T00:00:00.000Z',
+            approvalInstanceId: '01J8ZQK7V0A2M4N6P8R0T2W4Z0',
+            sendRequestId: null, sentEvidenceId: null, acceptanceEvidenceId: null,
+            esignFlowId: null, signedEvidenceId: null, version: 3,
+          },
+        }) }],
+        structuredContent: { offer: {
+          id: '01J8ZQK7V0A2M4N6P8R0T2W4Y6',
+          applicationId: '01J8ZQK7V0A2M4N6P8R0T2W4Y7',
+          positionId: '01J8ZQK7V0A2M4N6P8R0T2W4Y8',
+          completedInterviewId: '01J8ZQK7V0A2M4N6P8R0T2W4Y9',
+          status: 'approved', expiresAt: '2026-08-01T00:00:00.000Z',
+          approvalInstanceId: '01J8ZQK7V0A2M4N6P8R0T2W4Z0',
+          sendRequestId: null, sentEvidenceId: null, acceptanceEvidenceId: null,
+          esignFlowId: null, signedEvidenceId: null, version: 3,
+        } },
+      }),
+      prepareRecruitmentRequisitionSubmit: vi.fn(),
+      executeRecruitmentRequisitionSubmit: vi.fn(),
+      prepareRecruitmentPositionTransition: vi.fn(),
+      executeRecruitmentPositionTransition: vi.fn(),
+      prepareRecruitmentOfferSend: vi.fn(),
+      executeRecruitmentOfferSend: vi.fn(),
     };
     const module = await Test.createTestingModule({
       controllers: [McpController],
@@ -118,19 +152,52 @@ describe('MCP Streamable HTTP 协议集成', () => {
       'approval_decide_prepare',
       'approval_decide_execute',
       'get_org_chart',
+      'recruitment_application_get',
+      'recruitment_requisition_get',
+      'recruitment_position_get',
+      'recruitment_interview_get',
+      'recruitment_offer_get',
+      'recruitment_requisition_submit_prepare',
+      'recruitment_requisition_submit_execute',
+      'recruitment_position_transition_prepare',
+      'recruitment_position_transition_execute',
+      'recruitment_offer_send_prepare',
+      'recruitment_offer_send_execute',
     ]);
     const resources = await client.listResources();
     expect(resources.resources).toEqual(expect.arrayContaining([
       expect.objectContaining({ uri: 'gaoq://mcp/guide' }),
       expect.objectContaining({ uri: 'erp://approval/pending' }),
     ]));
+    const resourceTemplates = await client.listResourceTemplates();
+    expect(resourceTemplates.resourceTemplates).toEqual(expect.arrayContaining([
+      expect.objectContaining({ uriTemplate: 'erp://recruitment/applications/{id}' }),
+      expect.objectContaining({ uriTemplate: 'erp://recruitment/offers/{id}' }),
+    ]));
     const prompts = await client.listPrompts();
     expect(prompts.prompts).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'approval_submission_guide' }),
+      expect.objectContaining({ name: 'recruitment_offer_send_guide' }),
     ]));
 
     const result = await client.callTool({ name: 'get_org_chart', arguments: {} });
     expect(result.structuredContent).toEqual({ departments: [], employees: [] });
     expect(tools.getOrgChart).toHaveBeenCalledOnce();
+
+    const offerResult = await client.callTool({
+      name: 'recruitment_offer_get',
+      arguments: { id: '01J8ZQK7V0A2M4N6P8R0T2W4Y6' },
+    });
+    expect(offerResult.structuredContent).toMatchObject({
+      offer: { status: 'approved', version: 3 },
+    });
+    expect(JSON.stringify(offerResult)).not.toMatch(/salary|benefits|terms/iu);
+    const offerResource = await client.readResource({
+      uri: 'erp://recruitment/offers/01J8ZQK7V0A2M4N6P8R0T2W4Y6',
+    });
+    expect(JSON.parse(offerResource.contents[0]?.text ?? '{}')).toMatchObject({
+      offer: { status: 'approved', version: 3 },
+    });
+    expect(tools.getRecruitmentOffer).toHaveBeenCalledTimes(2);
   });
 });

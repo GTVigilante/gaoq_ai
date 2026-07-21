@@ -97,14 +97,14 @@ draft → pending_approval → approved → sending → sent → accepted → si
 
 | 用例 | REST | 事件 | MCP | 风险 |
 | --- | --- | --- | --- | --- |
-| 创建与提交 HC | `POST /recruitment/requisitions` 及 `/:id/submit` | `recruitment.requisition.created/submitted.v1` | `recruitment_requisition_create/submit_prepare/execute` | R1/R2 |
+| 创建与提交 HC | `POST /recruitment/requisitions` 及 `/:id/submit` | `recruitment.requisition.created/submitted.v1` | 查询 + `recruitment_requisition_submit_prepare/execute`；创建待加密草稿引用 | R1/R2 |
 | 同步 HC 审批 | `POST /recruitment/requisitions/:id/sync-approval` | `recruitment.requisition.approved/rejected.v1` | 只读查询，不接受 AI 上报 outcome | R2 |
-| 创建与发布职位 | `POST /recruitment/requisitions/:id/positions` 及 `POST /recruitment/positions/:id/status` | `recruitment.position.created/status_changed.v1` | `recruitment_position_create/transition_prepare/execute` | R1 |
-| 创建候选人及申请 | `POST /recruitment/applications` | `recruitment.application.created.v1` | `recruitment_application_create_prepare/execute` | R1 |
+| 创建与发布职位 | `POST /recruitment/requisitions/:id/positions` 及 `POST /recruitment/positions/:id/status` | `recruitment.position.created/status_changed.v1` | 查询 + `recruitment_position_transition_prepare/execute`；创建待安全草稿 | R1 |
+| 创建候选人及申请 | `POST /recruitment/applications` | `recruitment.application.created.v1` | 查询；创建待 L3 加密草稿引用 | R1 |
 | 查询候选人状态 | `GET /recruitment/applications/:id` | 无 | Resource + `recruitment_application_get` | R0 |
-| 安排面试 | `POST /recruitment/applications/:id/interviews` | `recruitment.interview.scheduled.v1` | prepare/execute | R1 |
-| 提交面试评价 | `POST /recruitment/interviews/:id/feedback` | `recruitment.interview.feedback_submitted.v1` | prepare/execute | R1 |
-| 形成/发送 Offer | Offer 资源端点 | `recruitment.offer.*.v1` | 仅准备与查询；发送为 R2 | R2 |
+| 安排面试 | `POST /recruitment/applications/:id/interviews` | `recruitment.interview.scheduled.v1` | 查询；安排待 L3 加密草稿引用 | R1 |
+| 提交面试评价 | `POST /recruitment/interviews/:id/feedback` | `recruitment.interview.feedback_submitted.v1` | 查询；评价写入不向 AI 开放 | R1 |
+| 形成/发送 Offer | Offer 资源端点 | `recruitment.offer.*.v1` | 脱敏查询 + `recruitment_offer_send_prepare/execute` | R2 |
 | 合同完成与入职转化 | Webhook/应用命令 | `esign.flow.completed.v1`、`onboarding.completed.v1` | 只读状态，不提供终态执行 Tool | R2/R3 |
 
 ### 5.1 HC 审批模板与 Saga 契约
@@ -123,6 +123,13 @@ draft → pending_approval → approved → sending → sent → accepted → si
 - 创建 Offer 必须以申请强版本引用该申请已完成面试；提交审批在同一 Recruitment 事务内将申请推进到 `offer_approval`。审批拒绝将申请推进到 `rejected`；可信投递证据将申请推进到 `offer_sent`；候选人接受/拒绝分别推进到 `offer_accepted`/`withdrawn`。
 - 审批创建、审批提交和 Offer 绑定由客户端根幂等键派生三个不同幂等键；通用幂等层只保存请求 SHA-256 与脱敏响应，不保存 L4 请求正文。投递、候选人决定和 eSign 完成仅通过应用服务的专用内部 Scope 调用，不注册普通管理端 REST。
 - 投递与候选人决定写入 `recruitment_offer_evidence` 不可变账本。调用方只能提交 SHA-256 base64url 回执摘要、外部事实时间及必要内部引用；证据 ID 由 Recruitment 生成，客户端不得自报。每个 Offer 最多一条投递证据和一条候选人决定证据，摘要在租户内不可复用；候选人决定还必须匹配 Offer 的 `candidateId` 并引用门户认证证据。
+
+### 5.3 Recruitment MCP 首批能力
+
+- Resource Templates：`erp://recruitment/applications/{id}` 与 `erp://recruitment/offers/{id}`。Tools：`recruitment_application_get`、`recruitment_requisition_get`、`recruitment_position_get`、`recruitment_interview_get`、`recruitment_offer_get`，全部为 R0 脱敏查询并复用 Recruitment 应用服务与部门数据范围。
+- 写工具只交付无 L3/L4 正文的 `recruitment_requisition_submit_prepare/execute`（R2）、`recruitment_position_transition_prepare/execute`（R1）和 `recruitment_offer_send_prepare/execute`（R2）。确认账本只固化业务 ULID、预期版本和目标状态；执行幂等键由 `operationId` 派生。
+- Offer 发送 execute 只形成 `sending` 意图，不形成 `sent` 事实；AI 不得调用投递回写、候选人接受/拒绝、eSign 完成或入职终态方法。
+- 候选人创建、面试安排/评价和 Offer 条款创建含 L3/L4 原文。在服务端加密草稿引用机制交付前不注册对应 MCP 写工具，禁止为追求能力数量把原文写入 `mcp_operation_confirmations.commandJson`。
 
 ## 6. 发布门禁
 

@@ -20,7 +20,7 @@ import type { VerifiedStrongAuthEvidence } from '../identity/strong-auth/webauth
 import type { McpIdentity } from './mcp-auth-context.js';
 import {
   McpConfirmationRecord,
-  type McpApprovalOperation,
+  type McpOperation,
   type McpConfirmationDocument,
 } from './mcp-confirmation.schema.js';
 
@@ -30,7 +30,7 @@ const CREDENTIAL_PATTERN = /^mcpc_[A-Za-z0-9_-]{43}$/;
 const CONFIRMATION_TTL_MS = 10 * 60 * 1_000;
 const EXECUTION_LEASE_MS = 2 * 60 * 1_000;
 
-export type ApprovalMcpCommand =
+export type McpCommand =
   | {
       readonly operation: 'approval.submit';
       readonly instanceId: string;
@@ -47,6 +47,22 @@ export type ApprovalMcpCommand =
       readonly expectedVersion: number;
       readonly principalApproverId: string;
       readonly outcome: 'approved' | 'rejected';
+    }
+  | {
+      readonly operation: 'recruitment.requisition.submit';
+      readonly requisitionId: string;
+      readonly expectedVersion: number;
+    }
+  | {
+      readonly operation: 'recruitment.position.transition';
+      readonly positionId: string;
+      readonly expectedVersion: number;
+      readonly targetStatus: 'open' | 'paused' | 'closed';
+    }
+  | {
+      readonly operation: 'recruitment.offer.request_send';
+      readonly offerId: string;
+      readonly expectedVersion: number;
     };
 
 export interface McpPreparedOperation {
@@ -59,7 +75,7 @@ export interface McpPreparedOperation {
 
 export interface ClaimedMcpOperation {
   readonly operationId: string;
-  readonly command: ApprovalMcpCommand;
+  readonly command: McpCommand;
   readonly replayResult: Record<string, unknown> | null;
 }
 
@@ -80,7 +96,7 @@ export class McpConfirmationService {
   async prepare(
     identity: McpIdentity,
     prepareKey: string,
-    command: ApprovalMcpCommand,
+    command: McpCommand,
     riskLevel: 'R1' | 'R2',
   ): Promise<McpPreparedOperation> {
     if (!PREPARE_KEY_PATTERN.test(prepareKey)) throw new Error('MCP 准备幂等键非法');
@@ -186,7 +202,7 @@ export class McpConfirmationService {
 
   async claim(
     identity: McpIdentity,
-    operation: McpApprovalOperation,
+    operation: McpOperation,
     operationId: string,
     credential: string,
   ): Promise<ClaimedMcpOperation> {
@@ -361,12 +377,14 @@ export class McpConfirmationService {
   }
 }
 
-function assertCommandRisk(operation: McpApprovalOperation, riskLevel: 'R1' | 'R2'): void {
-  const expected = operation === 'approval.decide' ? 'R2' : 'R1';
+function assertCommandRisk(operation: McpOperation, riskLevel: 'R1' | 'R2'): void {
+  const expected = [
+    'approval.decide', 'recruitment.requisition.submit', 'recruitment.offer.request_send',
+  ].includes(operation) ? 'R2' : 'R1';
   if (riskLevel !== expected) throw new Error('MCP 操作风险分级错误');
 }
 
-function canonicalCommand(command: ApprovalMcpCommand): string {
+function canonicalCommand(command: McpCommand): string {
   switch (command.operation) {
     case 'approval.submit':
     case 'approval.withdraw':
@@ -383,18 +401,39 @@ function canonicalCommand(command: ApprovalMcpCommand): string {
         outcome: command.outcome,
         principalApproverId: command.principalApproverId,
       });
+    case 'recruitment.requisition.submit':
+      return JSON.stringify({
+        expectedVersion: command.expectedVersion,
+        operation: command.operation,
+        requisitionId: command.requisitionId,
+      });
+    case 'recruitment.position.transition':
+      return JSON.stringify({
+        expectedVersion: command.expectedVersion,
+        operation: command.operation,
+        positionId: command.positionId,
+        targetStatus: command.targetStatus,
+      });
+    case 'recruitment.offer.request_send':
+      return JSON.stringify({
+        expectedVersion: command.expectedVersion,
+        offerId: command.offerId,
+        operation: command.operation,
+      });
   }
 }
 
-function parseCommand(value: string): ApprovalMcpCommand {
+function parseCommand(value: string): McpCommand {
   const parsed = JSON.parse(value) as unknown;
   if (typeof parsed !== 'object' || parsed === null) throw new Error('MCP 确认命令损坏');
-  const command = parsed as Partial<ApprovalMcpCommand>;
-  if (
-    !OPERATION_ID_PATTERN.test(String(command.instanceId ?? '')) ||
-    !Number.isSafeInteger(command.expectedVersion) || Number(command.expectedVersion) < 1
-  ) throw new Error('MCP 确认命令非法');
+  const command = parsed as Partial<McpCommand> & Readonly<Record<string, unknown>>;
+  if (!Number.isSafeInteger(command.expectedVersion) || Number(command.expectedVersion) < 1) {
+    throw new Error('MCP 确认命令非法');
+  }
   if (command.operation === 'approval.submit' || command.operation === 'approval.withdraw') {
+    if (!OPERATION_ID_PATTERN.test(String(command.instanceId ?? ''))) {
+      throw new Error('MCP 确认命令非法');
+    }
     return {
       operation: command.operation,
       instanceId: String(command.instanceId),
@@ -403,6 +442,7 @@ function parseCommand(value: string): ApprovalMcpCommand {
   }
   if (
     command.operation === 'approval.decide' &&
+    OPERATION_ID_PATTERN.test(String(command.instanceId ?? '')) &&
     typeof command.principalApproverId === 'string' &&
     /^[A-Za-z0-9._:-]{1,128}$/.test(command.principalApproverId) &&
     ['approved', 'rejected'].includes(String(command.outcome))
@@ -413,10 +453,36 @@ function parseCommand(value: string): ApprovalMcpCommand {
     principalApproverId: command.principalApproverId,
     outcome: command.outcome as 'approved' | 'rejected',
   };
+  if (
+    command.operation === 'recruitment.requisition.submit' &&
+    OPERATION_ID_PATTERN.test(String(command.requisitionId ?? ''))
+  ) return {
+    operation: command.operation,
+    requisitionId: String(command.requisitionId),
+    expectedVersion: Number(command.expectedVersion),
+  };
+  if (
+    command.operation === 'recruitment.position.transition' &&
+    OPERATION_ID_PATTERN.test(String(command.positionId ?? '')) &&
+    ['open', 'paused', 'closed'].includes(String(command.targetStatus))
+  ) return {
+    operation: command.operation,
+    positionId: String(command.positionId),
+    expectedVersion: Number(command.expectedVersion),
+    targetStatus: command.targetStatus as 'open' | 'paused' | 'closed',
+  };
+  if (
+    command.operation === 'recruitment.offer.request_send' &&
+    OPERATION_ID_PATTERN.test(String(command.offerId ?? ''))
+  ) return {
+    operation: command.operation,
+    offerId: String(command.offerId),
+    expectedVersion: Number(command.expectedVersion),
+  };
   throw new Error('MCP 确认命令类型非法');
 }
 
-function safeImpact(command: ApprovalMcpCommand): Readonly<Record<string, unknown>> {
+function safeImpact(command: McpCommand): Readonly<Record<string, unknown>> {
   return Object.freeze({ ...command });
 }
 

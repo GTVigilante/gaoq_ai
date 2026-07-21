@@ -79,6 +79,32 @@ describe('McpConfirmationService', () => {
     expect(create).toHaveBeenCalledOnce();
   });
 
+  it('招聘 R2 确认只持久化无敏感正文的 Offer 标识与版本', async () => {
+    const create = vi.fn().mockResolvedValue(undefined);
+    const result = await service({ create }).prepare(
+      identity,
+      'offer-prepare-001',
+      {
+        operation: 'recruitment.offer.request_send',
+        offerId: INSTANCE_ID,
+        expectedVersion: 3,
+      },
+      'R2',
+    );
+    expect(result).toMatchObject({ riskLevel: 'R2' });
+    const stored = create.mock.calls[0]?.[0] as unknown as {
+      readonly operation: string;
+      readonly commandJson: string;
+    };
+    expect(stored.operation).toBe('recruitment.offer.request_send');
+    expect(JSON.parse(stored.commandJson)).toEqual({
+      expectedVersion: 3,
+      offerId: INSTANCE_ID,
+      operation: 'recruitment.offer.request_send',
+    });
+    expect(stored.commandJson).not.toMatch(/terms|salary|benefit|candidate/iu);
+  });
+
   it('R1 浏览器确认只持久化凭据摘要，明文仅返回一次', async () => {
     const findOne = vi.fn().mockReturnValue(query(pending()));
     const findOneAndUpdate = vi.fn().mockImplementation(
