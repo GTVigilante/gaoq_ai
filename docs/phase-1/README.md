@@ -1,0 +1,5 @@
+# Phase 1 运行手册
+
+本目录承载 Phase 1 可执行验收与生产运维手册；架构和安全强制规范仍以 [`../phase-0/README.md`](../phase-0/README.md) 为入口。
+
+- [`01-index-migration-runbook.md`](./01-index-migration-runbook.md)：生产索引只增不删迁移、验证与失败处理。
