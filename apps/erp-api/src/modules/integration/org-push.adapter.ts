@@ -1,5 +1,5 @@
 /** 首期同时正式支持的组织下发渠道。 */
-export type OrgPushChannel = 'dingtalk' | 'feishu';
+export type OrgPushChannel = 'dingtalk' | 'feishu' | 'op';
 
 export interface PushDepartmentCommand {
   readonly tenantId: string;
@@ -97,26 +97,30 @@ export class OrgPushError extends Error {
     readonly status?: number,
     /** 仅保留无敏感内容的数值型平台错误码，供适配器执行幂等恢复。 */
     readonly providerCode?: number,
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
     this.name = 'OrgPushError';
   }
 }
 
 export const DINGTALK_ORG_PUSH_ADAPTER = Symbol('DINGTALK_ORG_PUSH_ADAPTER');
 export const FEISHU_ORG_PUSH_ADAPTER = Symbol('FEISHU_ORG_PUSH_ADAPTER');
+export const OP_ORG_PUSH_ADAPTER = Symbol('OP_ORG_PUSH_ADAPTER');
 
-/** 同时持有双平台一级适配器，禁止按“先一个平台、后补另一个平台”装配。 */
+/** 钉钉与飞书必须同时装配；Phase 5 可附加独立 OP 适配器。 */
 export class OrgPushAdapterRegistry {
   private readonly adapters: ReadonlyMap<OrgPushChannel, OrgPushAdapter>;
 
-  constructor(dingtalk: OrgPushAdapter, feishu: OrgPushAdapter) {
-    if (dingtalk.channel !== 'dingtalk' || feishu.channel !== 'feishu') {
+  constructor(dingtalk: OrgPushAdapter, feishu: OrgPushAdapter, op?: OrgPushAdapter) {
+    if (dingtalk.channel !== 'dingtalk' || feishu.channel !== 'feishu' ||
+      (op !== undefined && op.channel !== 'op')) {
       throw new Error('组织下发适配器渠道装配错误');
     }
     this.adapters = new Map([
       ['dingtalk', dingtalk],
       ['feishu', feishu],
+      ...(op === undefined ? [] : [['op', op] as const]),
     ]);
   }
 

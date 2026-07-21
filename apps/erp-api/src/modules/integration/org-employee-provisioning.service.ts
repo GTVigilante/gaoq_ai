@@ -45,6 +45,7 @@ const LOCK_TIMEOUT_MS = 5 * 60 * 1_000;
 const SENSITIVE_TTL_MS = 15 * 60 * 1_000;
 const RECORD_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 const DUPLICATE_KEY_CODE = 11_000;
+type ProvisioningChannel = Exclude<OrgPushChannel, 'op'>;
 
 /** 外部与本地事务已成功，但后置审计不可用；禁止再改写业务终态。 */
 class ProvisioningPostCommitAuditError extends Error {}
@@ -59,7 +60,7 @@ interface ClaimedProvisioning {
   readonly tenantId: string;
   readonly requestId: string;
   readonly employeeId: string;
-  readonly channel: OrgPushChannel;
+  readonly channel: ProvisioningChannel;
   readonly idempotencyKey: string;
   readonly payloadKeyId: string;
   readonly payloadIv: string | null;
@@ -586,7 +587,7 @@ export class OrgEmployeeProvisioningService {
 
   private async resolveDepartments(
     tenantId: string,
-    channel: OrgPushChannel,
+    channel: ProvisioningChannel,
     departmentIds: readonly string[],
   ): Promise<readonly string[]> {
     if (
@@ -619,7 +620,7 @@ export class OrgEmployeeProvisioningService {
   private externalUserId(
     externalTenantId: string,
     employeeId: string,
-    channel: OrgPushChannel,
+    channel: ProvisioningChannel,
   ): string {
     const digest = createHash('sha256')
       .update(JSON.stringify([externalTenantId, employeeId, channel]), 'utf8')

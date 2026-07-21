@@ -28,7 +28,7 @@ export class OrgReconciliationReport {
   @Prop({ type: String, required: true, immutable: true, maxlength: 128 })
   tenantId!: string;
 
-  @Prop({ type: String, enum: ['dingtalk', 'feishu'], required: true, immutable: true })
+  @Prop({ type: String, enum: ['dingtalk', 'feishu', 'op'], required: true, immutable: true })
   channel!: OrgDeliveryChannel;
 
   /** UTC 自然日 YYYY-MM-DD。 */

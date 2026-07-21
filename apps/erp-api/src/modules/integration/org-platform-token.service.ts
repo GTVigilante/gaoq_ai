@@ -6,6 +6,8 @@ import { OrgPlatformCredentialService } from './org-platform-credential.service.
 import { OrgPlatformHttpClient } from './org-platform-http.client.js';
 import { OrgPushError } from './org-push.adapter.js';
 
+type OAuthOrgDeliveryChannel = Exclude<OrgDeliveryChannel, 'op'>;
+
 const dingtalkTokenSchema = z.object({
   accessToken: z.string().min(1),
   expireIn: z.number().int().positive(),
@@ -45,7 +47,7 @@ export class OrgPlatformTokenService {
     private readonly http: OrgPlatformHttpClient,
   ) {}
 
-  async getAccess(tenantId: string, channel: OrgDeliveryChannel): Promise<OrgPlatformAccess> {
+  async getAccess(tenantId: string, channel: OAuthOrgDeliveryChannel): Promise<OrgPlatformAccess> {
     const key = `${tenantId}:${channel}`;
     const cached = this.cache.get(key);
     if (cached !== undefined && cached.expiresAt > Date.now()) {
@@ -68,7 +70,7 @@ export class OrgPlatformTokenService {
   /** 仅在调用方仍持有当前缓存值时失效，避免并发请求误删另一请求刚刷新的令牌。 */
   invalidate(
     tenantId: string,
-    channel: OrgDeliveryChannel,
+    channel: OAuthOrgDeliveryChannel,
     rejectedAccessToken: string,
   ): void {
     const key = `${tenantId}:${channel}`;
@@ -78,7 +80,7 @@ export class OrgPlatformTokenService {
 
   private async refresh(
     tenantId: string,
-    channel: OrgDeliveryChannel,
+    channel: OAuthOrgDeliveryChannel,
   ): Promise<CachedAccessToken> {
     const credential = await this.credentials.resolve(tenantId, channel);
     if (channel === 'dingtalk') {

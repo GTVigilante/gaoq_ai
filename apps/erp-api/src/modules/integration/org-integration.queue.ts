@@ -6,6 +6,7 @@ export const ORG_INTEGRATION_JOB_NAMES = [
   'relay:calendar',
   'deliver:dingtalk',
   'deliver:feishu',
+  'deliver:op',
   'deliver:calendar:dingtalk',
   'deliver:calendar:feishu',
   'provision',

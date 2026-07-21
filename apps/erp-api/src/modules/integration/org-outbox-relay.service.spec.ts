@@ -56,16 +56,17 @@ function assemble(claimed: unknown = event) {
 }
 
 describe('OrgOutboxRelayService', () => {
-  it('同一事务扇出钉钉和飞书，并在两条任务建立后标记 Outbox dispatched', async () => {
+  it('同一事务扇出钉钉、飞书和 OP，并在三条任务建立后标记 Outbox dispatched', async () => {
     const store = assemble();
 
     const count = await store.service.relayBatch('worker-001', 10);
 
     expect(count).toBe(1);
-    expect(store.deliveryUpdateOne).toHaveBeenCalledTimes(2);
+    expect(store.deliveryUpdateOne).toHaveBeenCalledTimes(3);
     expect(store.deliveryUpdateOne.mock.calls.map((call) => call[0])).toEqual([
       { eventId: EVENT_ID, channel: 'dingtalk' },
       { eventId: EVENT_ID, channel: 'feishu' },
+      { eventId: EVENT_ID, channel: 'op' },
     ]);
     for (const call of store.deliveryUpdateOne.mock.calls) {
       expect(call[2]).toMatchObject({

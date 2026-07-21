@@ -13,7 +13,7 @@ const FORBIDDEN_ENVELOPE_KEY =
 const MAX_SCAN_DEPTH = 6;
 
 /** 组织下发渠道。 */
-export type OrgDeliveryChannel = 'dingtalk' | 'feishu';
+export type OrgDeliveryChannel = 'dingtalk' | 'feishu' | 'op';
 
 /** 组织下发聚合类型。 */
 export type OrgDeliveryAggregateType = 'org.department' | 'org.employee';
@@ -64,7 +64,7 @@ const isPositiveInteger = (value: number): boolean =>
 
 /**
  * 组织下发持久化记录（集合 integration_org_deliveries）。
- * 用途：ERP 组织事件向钉钉/飞书下发的存储转发与重试轨迹。
+ * 用途：ERP 组织事件向钉钉/飞书/OP 下发的存储转发与重试轨迹。
  * 安全红线：envelope 严禁写入上游 token、密钥或含联系方式的原始报文，
  * 仅允许存放脱敏后的下发负载（由键名递归扫描兜底，递归过深失败关闭）。
  */
@@ -91,7 +91,7 @@ export class OrgDeliveryRecord {
   /** 下发渠道，创建后不可变。 */
   @Prop({
     type: String,
-    enum: ['dingtalk', 'feishu'],
+    enum: ['dingtalk', 'feishu', 'op'],
     required: true,
     immutable: true,
   })
@@ -242,7 +242,7 @@ export class OrgExternalVersionState {
   /** 下发渠道，创建后不可变。 */
   @Prop({
     type: String,
-    enum: ['dingtalk', 'feishu'],
+    enum: ['dingtalk', 'feishu', 'op'],
     required: true,
     immutable: true,
   })

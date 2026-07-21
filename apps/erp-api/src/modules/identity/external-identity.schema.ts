@@ -2,7 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import type { HydratedDocument } from 'mongoose';
 
 /** 外部身份提供方。 */
-export const EXTERNAL_IDENTITY_PROVIDERS = ['dingtalk', 'feishu'] as const;
+export const EXTERNAL_IDENTITY_PROVIDERS = ['dingtalk', 'feishu', 'op'] as const;
 export type ExternalIdentityProvider = (typeof EXTERNAL_IDENTITY_PROVIDERS)[number];
 
 /** 外部身份绑定状态：bound 已绑定可用，disabled 已解绑/停用。 */
@@ -10,7 +10,7 @@ export const EXTERNAL_IDENTITY_STATUSES = ['bound', 'disabled'] as const;
 export type ExternalIdentityStatus = (typeof EXTERNAL_IDENTITY_STATUSES)[number];
 
 /**
- * 外部身份映射：将钉钉/飞书等外部租户内的用户身份
+ * 外部身份映射：将钉钉/飞书/OP 等外部租户内的用户身份
  * 映射到本系统租户内的 actor（与员工）。
  * 只通过 unionId / externalUserId 精确匹配，禁止按手机号/邮箱自动合并。
  */

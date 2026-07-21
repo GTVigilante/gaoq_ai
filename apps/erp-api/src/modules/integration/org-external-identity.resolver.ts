@@ -52,7 +52,7 @@ export class OrgExternalIdentityResolver {
       { externalUserId: 1, unionId: 1, _id: 0 },
     ).lean().exec();
     if (identity === null) return null;
-    if (channel === 'feishu') return identity.externalUserId;
+    if (channel !== 'dingtalk') return identity.externalUserId;
     const access = await this.tokens.getAccess(tenantId, 'dingtalk');
     const response = await this.http.request({
       origin: 'https://oapi.dingtalk.com',

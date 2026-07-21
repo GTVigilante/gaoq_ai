@@ -124,6 +124,11 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(64).max(16_384).optional(),
   ),
+  /** OP 组织下发 API 根地址；只允许标准 HTTPS 且不得携带凭据、query 或 fragment。 */
+  OP_API_BASE_URL: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().url().optional(),
+  ),
   /** eSign OpenAPI 只允许官方生产或沙箱域名，禁止自定义地址导致 SSRF。 */
   ESIGN_API_BASE_URL: z.enum([
     'https://openapi.esign.cn', 'https://smlopenapi.esign.cn',
@@ -443,6 +448,23 @@ const environmentSchema = z.object({
       code: 'custom',
       path: ['OP_WEBHOOK_ENCRYPTION_KEYS'],
       message: '生产环境必须由 Secret Manager 注入 OP Webhook 独立加密密钥环',
+    });
+  }
+  if (environment.NODE_ENV === 'production' && environment.OP_API_BASE_URL === undefined) {
+    context.addIssue({
+      code: 'custom', path: ['OP_API_BASE_URL'],
+      message: '生产环境必须配置 OP 组织下发独立 HTTPS API 根地址',
+    });
+  }
+  if (environment.OP_API_BASE_URL !== undefined) {
+    const endpoint = new URL(environment.OP_API_BASE_URL);
+    if (
+      endpoint.protocol !== 'https:' || endpoint.username !== '' || endpoint.password !== '' ||
+      endpoint.search !== '' || endpoint.hash !== '' || endpoint.pathname !== '/' ||
+      (endpoint.port !== '' && endpoint.port !== '443') || endpoint.origin === issuer.origin
+    ) context.addIssue({
+      code: 'custom', path: ['OP_API_BASE_URL'],
+      message: 'OP API 必须是独立权限域的标准 HTTPS 根地址，禁止凭据、路径、query、fragment 和非标准端口',
     });
   }
   if (

@@ -46,13 +46,15 @@ class FakeAdapter extends OrgPushAdapter {
 }
 
 describe('OrgPushAdapterRegistry', () => {
-  it('钉钉和飞书必须同时按正确渠道装配', () => {
+  it('钉钉、飞书与可选 OP 按正确渠道装配', () => {
     const dingtalk = new FakeAdapter('dingtalk');
     const feishu = new FakeAdapter('feishu');
-    const registry = new OrgPushAdapterRegistry(dingtalk, feishu);
+    const op = new FakeAdapter('op');
+    const registry = new OrgPushAdapterRegistry(dingtalk, feishu, op);
 
     expect(registry.get('dingtalk')).toBe(dingtalk);
     expect(registry.get('feishu')).toBe(feishu);
+    expect(registry.get('op')).toBe(op);
   });
 
   it('渠道错配在启动期失败', () => {

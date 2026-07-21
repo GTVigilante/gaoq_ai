@@ -18,10 +18,13 @@ export class OrgPlatformBinding {
   @Prop({ type: String, required: true, immutable: true, maxlength: 128 })
   tenantId!: string;
 
-  @Prop({ type: String, enum: ['dingtalk', 'feishu'], required: true, immutable: true })
+  @Prop({ type: String, enum: ['dingtalk', 'feishu', 'op'], required: true, immutable: true })
   channel!: OrgDeliveryChannel;
 
-  @Prop({ type: String, required: true, maxlength: 128 })
+  @Prop({
+    type: String, required: true, maxlength: 128,
+    match: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/,
+  })
   externalTenantId!: string;
 
   @Prop({

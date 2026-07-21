@@ -15,7 +15,7 @@ function job(name: OrgIntegrationJobName): Job<Record<string, never>, unknown, O
 }
 
 describe('OrgIntegrationProcessor', () => {
-  it('将 relay、双平台、开户与对账任务路由到对应服务', async () => {
+  it('将 relay、三平台、开户与对账任务路由到对应服务', async () => {
     const relayBatch = vi.fn().mockResolvedValue(2);
     const calendarRelayBatch = vi.fn().mockResolvedValue(6);
     const processBatch = vi.fn().mockResolvedValue(3);
@@ -35,6 +35,7 @@ describe('OrgIntegrationProcessor', () => {
     await expect(processor.process(job('relay:calendar'))).resolves.toBe(6);
     await expect(processor.process(job('deliver:dingtalk'))).resolves.toBe(3);
     await expect(processor.process(job('deliver:feishu'))).resolves.toBe(3);
+    await expect(processor.process(job('deliver:op'))).resolves.toBe(3);
     await expect(processor.process(job('deliver:calendar:dingtalk'))).resolves.toBe(7);
     await expect(processor.process(job('deliver:calendar:feishu'))).resolves.toBe(7);
     await expect(processor.process(job('provision'))).resolves.toBe(5);
@@ -58,6 +59,12 @@ describe('OrgIntegrationProcessor', () => {
     expect(processBatch).toHaveBeenNthCalledWith(
       2,
       'feishu',
+      expect.stringMatching(/^org-worker-/),
+      25,
+    );
+    expect(processBatch).toHaveBeenNthCalledWith(
+      3,
+      'op',
       expect.stringMatching(/^org-worker-/),
       25,
     );

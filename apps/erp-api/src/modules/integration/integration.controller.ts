@@ -24,7 +24,7 @@ const RETRY_REASONS: readonly OrgDeliveryRetryReason[] = [
   'credentials_fixed', 'mapping_fixed', 'provider_recovered', 'approved_exception',
 ];
 
-/** 双平台组织同步运维接口；不暴露 Outbox envelope、平台令牌或原始响应。 */
+/** 多渠道组织同步运维接口；不暴露 Outbox envelope、平台令牌或原始响应。 */
 @Controller('integrations/org-deliveries')
 export class IntegrationController {
   constructor(
@@ -97,7 +97,7 @@ export class IntegrationController {
   }
 
   private requireChannel(value: string): OrgDeliveryChannel {
-    if (value === 'dingtalk' || value === 'feishu') return value;
+    if (value === 'dingtalk' || value === 'feishu' || value === 'op') return value;
     throw new BadRequestException({ code: 'ORG_DELIVERY_CHANNEL_INVALID', message: 'channel 非法' });
   }
 

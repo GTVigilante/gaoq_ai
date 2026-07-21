@@ -6,7 +6,7 @@ Phase 5 在已验收的组织、审批、招聘入职、考勤薪酬底座之上
 
 1. [OP 每日经营摘要垂直切片契约](./00-op-operating-summary-contract.md)（代码已交付，外部联调待验收）
    - [OP 索引迁移运行手册](./01-op-index-migration-runbook.md)
-2. OP 组织与人员下发管线（ERP→OP，待立项契约文档）
+2. [OP 组织与人员下发管线](./02-op-organization-delivery-contract.md)（代码已交付，OP 沙箱联调待验收）
 3. OP 审批桥（OP 单据→ERP 审批→结果回推，待立项契约文档）
 4. 移动端（待立项契约文档）
 5. 管理驾驶舱与受控分析导出（待立项契约文档）

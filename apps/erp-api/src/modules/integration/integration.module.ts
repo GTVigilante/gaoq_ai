@@ -24,6 +24,8 @@ import {
 } from '../org/persistence/org.schemas.js';
 import { DingTalkOrgPushAdapter } from './dingtalk-org-push.adapter.js';
 import { FeishuOrgPushAdapter } from './feishu-org-push.adapter.js';
+import { OpOrgPushAdapter } from './op-org-push.adapter.js';
+import { FetchOpOrgHttpClient, OpOrgHttpClient } from './op-org-http.client.js';
 import { ESignBinding, ESignBindingSchema } from './esign-binding.schema.js';
 import { ESignAdapter, ESignCnAdapter } from './esign.adapter.js';
 import {
@@ -109,6 +111,7 @@ import { OrgReconciliationService } from './org-reconciliation.service.js';
 import {
   DINGTALK_ORG_PUSH_ADAPTER,
   FEISHU_ORG_PUSH_ADAPTER,
+  OP_ORG_PUSH_ADAPTER,
   OrgPushAdapter,
   OrgPushAdapterRegistry,
 } from './org-push.adapter.js';
@@ -159,7 +162,7 @@ import {
   AttendanceProviderStateRecordSchema,
 } from './attendance-provider.schemas.js';
 
-/** 外部集成底座：Outbox 扇出、双平台投递、版本防乱序、重试与对账。 */
+/** 外部集成底座：Outbox 多渠道扇出、版本防乱序、重试与对账。 */
 @Module({
   imports: [
     AuditModule,
@@ -262,14 +265,18 @@ import {
     { provide: OrgSecretResolver, useExisting: EnvironmentOrgSecretResolver },
     FetchOrgPlatformHttpClient,
     { provide: OrgPlatformHttpClient, useExisting: FetchOrgPlatformHttpClient },
+    FetchOpOrgHttpClient,
+    { provide: OpOrgHttpClient, useExisting: FetchOpOrgHttpClient },
     DingTalkOrgPushAdapter,
     FeishuOrgPushAdapter,
+    OpOrgPushAdapter,
     DingTalkRecruitmentCalendarAdapter,
     FeishuRecruitmentCalendarAdapter,
     DingTalkAttendanceProvider,
     FeishuAttendanceProvider,
     { provide: DINGTALK_ORG_PUSH_ADAPTER, useExisting: DingTalkOrgPushAdapter },
     { provide: FEISHU_ORG_PUSH_ADAPTER, useExisting: FeishuOrgPushAdapter },
+    { provide: OP_ORG_PUSH_ADAPTER, useExisting: OpOrgPushAdapter },
     { provide: RECRUITMENT_CHANNEL_ADAPTERS, useValue: [] },
     { provide: RECRUITMENT_CHANNEL_NORMALIZERS, useValue: [] },
     { provide: RECRUITMENT_CHANNEL_EVIDENCE_VERIFIERS, useValue: [] },
@@ -283,9 +290,9 @@ import {
     },
     {
       provide: OrgPushAdapterRegistry,
-      inject: [DINGTALK_ORG_PUSH_ADAPTER, FEISHU_ORG_PUSH_ADAPTER],
-      useFactory: (dingtalk: OrgPushAdapter, feishu: OrgPushAdapter) =>
-        new OrgPushAdapterRegistry(dingtalk, feishu),
+      inject: [DINGTALK_ORG_PUSH_ADAPTER, FEISHU_ORG_PUSH_ADAPTER, OP_ORG_PUSH_ADAPTER],
+      useFactory: (dingtalk: OrgPushAdapter, feishu: OrgPushAdapter, op: OrgPushAdapter) =>
+        new OrgPushAdapterRegistry(dingtalk, feishu, op),
     },
     {
       provide: RecruitmentCalendarAdapterRegistry,

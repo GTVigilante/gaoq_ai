@@ -16,7 +16,7 @@ import {
 const LOCK_TIMEOUT_MS = 5 * 60 * 1_000;
 const MAX_RELAY_ATTEMPTS = 6;
 const WORKER_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
-const CHANNELS: readonly OrgDeliveryChannel[] = ['dingtalk', 'feishu'];
+const CHANNELS: readonly OrgDeliveryChannel[] = ['dingtalk', 'feishu', 'op'];
 
 interface ClaimedOutboxEvent {
   readonly eventId: string;
@@ -33,7 +33,7 @@ interface ClaimedOutboxEvent {
   readonly attempts: number;
 }
 
-/** 将组织 Outbox 事件原子扇出为钉钉、飞书两条独立投递任务。 */
+/** 将组织 Outbox 事件原子扇出为钉钉、飞书、OP 三条独立投递任务。 */
 @Injectable()
 export class OrgOutboxRelayService {
   private readonly logger = new Logger(OrgOutboxRelayService.name);

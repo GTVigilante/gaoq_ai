@@ -14,7 +14,7 @@ const identifierSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/);
 const secretRefSchema = z.string().regex(/^GAOQ_ORG_(?:PLATFORM|PROVISIONING)_[A-Z0-9_]{1,96}$/);
 const platformSecretRefSchema = z.string().regex(/^GAOQ_ORG_PLATFORM_[A-Z0-9_]{1,96}$/);
 const credentialSchema = z.object({
-  clientId: z.string().min(1).max(256),
+  clientId: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
   clientSecret: z.string().min(8).max(2048),
 }).strict();
 
@@ -83,7 +83,7 @@ export class OrgPlatformCredentialService {
       throw new OrgPushError('ORG_CREDENTIAL_INVALID', 'business', '平台凭据格式无效');
     }
     const credential = credentialSchema.safeParse(decoded);
-    if (!credential.success) {
+    if (!credential.success || !identifierSchema.safeParse(binding.externalTenantId).success) {
       throw new OrgPushError('ORG_CREDENTIAL_INVALID', 'business', '平台凭据格式无效');
     }
     return {

@@ -95,7 +95,8 @@ describe('OrgDeliveryRecordSchema 校验', () => {
     );
   });
 
-  it('channel 仅允许 dingtalk/feishu', async () => {
+  it('channel 仅允许 dingtalk/feishu/op', async () => {
+    await expectValid(new DeliveryModel({ ...validDelivery(), channel: 'op' }));
     await expectInvalid(new DeliveryModel({ ...validDelivery(), channel: 'wecom' }), 'channel');
   });
 

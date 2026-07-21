@@ -45,7 +45,32 @@ describe('validateEnvironment', () => {
     expect(environment.ESIGN_MALWARE_SCAN_ENDPOINT).toBeUndefined();
     expect(environment.ESIGN_WORM_ARCHIVE_ENDPOINT).toBeUndefined();
     expect(environment.ESIGN_WORM_RETENTION_DAYS).toBe(3_650);
+    expect(environment.OP_API_BASE_URL).toBeUndefined();
     expect(environment.MCP_OAUTH_CLIENTS_JSON).toBe('[]');
+  });
+
+  it('OP 组织下发只接受独立权限域的标准 HTTPS 根地址', () => {
+    const base = {
+      NODE_ENV: 'test',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0',
+      WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://erp.example.com',
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://erp.example.com/.well-known/jwks.json',
+      MCP_AUTHORIZATION_SERVER: 'https://erp.example.com',
+      MCP_ALLOWED_ORIGINS: 'https://client.example.com',
+    };
+
+    expect(validateEnvironment({ ...base, OP_API_BASE_URL: 'https://op.example.net' }))
+      .toMatchObject({ OP_API_BASE_URL: 'https://op.example.net' });
+    expect(() => validateEnvironment({ ...base, OP_API_BASE_URL: 'http://op.example.net' }))
+      .toThrow('独立权限域的标准 HTTPS 根地址');
+    expect(() => validateEnvironment({ ...base, OP_API_BASE_URL: 'https://op.example.net/api' }))
+      .toThrow('独立权限域的标准 HTTPS 根地址');
+    expect(() => validateEnvironment({ ...base, OP_API_BASE_URL: 'https://erp.example.com' }))
+      .toThrow('独立权限域的标准 HTTPS 根地址');
   });
 
   it('eSign 扫描与 WORM 必须成套配置且位于独立 HTTPS 权限域', () => {

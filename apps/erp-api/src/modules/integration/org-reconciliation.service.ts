@@ -41,7 +41,7 @@ interface MappingView {
   readonly externalId: string;
 }
 
-/** 按 UTC 日对 ERP 主数据与双平台通讯录做只读对账，不自动覆盖任一侧。 */
+/** 按 UTC 日对 ERP 主数据与所有 active 平台绑定做只读对账，不自动覆盖任一侧。 */
 @Injectable()
 export class OrgReconciliationService {
   constructor(
