@@ -12,3 +12,4 @@ export {
   addAmountMinor,
   subtractAmountMinor,
 } from './amount-minor.js';
+export { ULID_PATTERN, createEventId, isValidEventId } from './ulid.js';

@@ -19,6 +19,7 @@ import { IdentityModule } from './modules/identity/identity.module.js';
 import { BearerAuthGuard } from './modules/identity/bearer-auth.guard.js';
 import { McpModule } from './modules/mcp/mcp.module.js';
 import { McpOriginGuard } from './modules/mcp/mcp-origin.guard.js';
+import { OrgModule } from './modules/org/org.module.js';
 
 const mongoLogger = new Logger('MongoDB');
 
@@ -53,6 +54,7 @@ const mongoLogger = new Logger('MongoDB');
     RedisModule,
     IdentityModule,
     McpModule,
+    OrgModule,
     TraceMiddlewareModule,
     TenantContextModule,
     AuditModule,
