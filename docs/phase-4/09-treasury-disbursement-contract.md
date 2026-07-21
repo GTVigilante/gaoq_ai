@@ -26,4 +26,4 @@ prepared → exported → submitted → reconciling
 
 ## 后续实现门禁
 
-生产连接前仍必须完成：银行账号独立 AES-GCM 与 HMAC 盲索引、文件 WORM/受控对象存储、银行 Adapter 签名/加密、回盘 Inbox、病毒与压缩炸弹防护、补发子批次、税务文件以及四方对账。MCP 永不接触这些能力。
+银行账号独立 AES-GCM/HMAC 盲索引与文件 WORM Adapter 已落地。生产连接前仍必须完成：从锁定工资生成文件的应用编排、银行 Adapter 签名/加密、回盘 Inbox、病毒与压缩炸弹防护、补发子批次、税务文件以及四方对账。MCP 永不接触这些能力。

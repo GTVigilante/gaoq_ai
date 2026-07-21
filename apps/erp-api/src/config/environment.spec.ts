@@ -32,6 +32,8 @@ describe('validateEnvironment', () => {
     expect(environment.RECRUITMENT_BLIND_INDEX_KEYS).toBeUndefined();
     expect(environment.TREASURY_DATA_ENCRYPTION_KEYS).toBeUndefined();
     expect(environment.TREASURY_BLIND_INDEX_KEYS).toBeUndefined();
+    expect(environment.TREASURY_WORM_ARCHIVE_ENDPOINT).toBeUndefined();
+    expect(environment.TREASURY_WORM_RETENTION_DAYS).toBe(3_650);
     expect(environment.METRICS_BEARER_TOKEN).toBeUndefined();
     expect(environment.ESIGN_MALWARE_SCAN_ENDPOINT).toBeUndefined();
     expect(environment.ESIGN_WORM_ARCHIVE_ENDPOINT).toBeUndefined();
@@ -214,6 +216,35 @@ describe('validateEnvironment', () => {
     })).toThrow('不得复用同一密钥环');
     expect(() => validateEnvironment({ ...base, NODE_ENV: 'production' }))
       .toThrow('资金数据与盲索引独立密钥环');
+  });
+
+  it('Treasury WORM 配置必须成套且使用独立 HTTPS 权限域', () => {
+    const base = {
+      NODE_ENV: 'test',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0', WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://erp.example.com', AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://erp.example.com/.well-known/jwks.json',
+      MCP_AUTHORIZATION_SERVER: 'https://erp.example.com',
+      MCP_ALLOWED_ORIGINS: 'https://erp.example.com',
+    };
+    expect(() => validateEnvironment({
+      ...base, TREASURY_WORM_ARCHIVE_ENDPOINT: 'https://worm.example.net/v1/objects',
+    })).toThrow('必须成套配置');
+    const configured = {
+      ...base,
+      TREASURY_WORM_ARCHIVE_ENDPOINT: 'https://worm.example.net/v1/objects',
+      TREASURY_WORM_ARCHIVE_BEARER_TOKEN: 'treasury-worm-token-at-least-32-characters',
+    };
+    expect(validateEnvironment(configured).TREASURY_WORM_RETENTION_DAYS).toBe(3_650);
+    expect(() => validateEnvironment({
+      ...configured, TREASURY_WORM_ARCHIVE_ENDPOINT: 'https://erp.example.com/v1/objects',
+    })).toThrow('独立权限域 HTTPS');
+    expect(() => validateEnvironment({
+      ...configured,
+      TREASURY_WORM_ARCHIVE_ENDPOINT: 'https://worm.example.net/v1/objects?token=unsafe',
+    })).toThrow('独立权限域 HTTPS');
   });
 
   it('生产环境具备指标凭据时仍拒绝缺失独立 WORM 配置', () => {

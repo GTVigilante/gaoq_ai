@@ -65,6 +65,16 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(64).max(16_384).optional(),
   ),
+  /** 银行代发文件专用 WORM 归档；与 ERP 应用权限域隔离。 */
+  TREASURY_WORM_ARCHIVE_ENDPOINT: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().url().optional(),
+  ),
+  TREASURY_WORM_ARCHIVE_BEARER_TOKEN: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/).optional(),
+  ),
+  TREASURY_WORM_RETENTION_DAYS: z.coerce.number().int().min(3_650).max(36_500).default(3_650),
   /** eSign Webhook L4 加密密钥环，仅由 Secret Manager 注入。 */
   ESIGN_WEBHOOK_ENCRYPTION_KEYS: z.preprocess(
     (value) => value === '' ? undefined : value,
@@ -198,6 +208,35 @@ const environmentSchema = z.object({
     code: 'custom', path: ['TREASURY_BLIND_INDEX_KEYS'],
     message: '资金数据加密与账号盲索引不得复用同一密钥环',
   });
+  const treasuryArchive = [
+    environment.TREASURY_WORM_ARCHIVE_ENDPOINT,
+    environment.TREASURY_WORM_ARCHIVE_BEARER_TOKEN,
+  ];
+  if (
+    treasuryArchive.some((value) => value !== undefined) &&
+    treasuryArchive.some((value) => value === undefined)
+  ) context.addIssue({
+    code: 'custom', path: ['TREASURY_WORM_ARCHIVE_ENDPOINT'],
+    message: 'Treasury WORM 端点与凭据必须成套配置',
+  });
+  if (
+    environment.NODE_ENV === 'production' &&
+    treasuryArchive.some((value) => value === undefined)
+  ) context.addIssue({
+    code: 'custom', path: ['TREASURY_WORM_ARCHIVE_ENDPOINT'],
+    message: '生产环境必须完整配置 Treasury 独立 WORM 归档',
+  });
+  if (environment.TREASURY_WORM_ARCHIVE_ENDPOINT !== undefined) {
+    const endpoint = new URL(environment.TREASURY_WORM_ARCHIVE_ENDPOINT);
+    if (
+      endpoint.protocol !== 'https:' || endpoint.username !== '' || endpoint.password !== '' ||
+      endpoint.search !== '' || endpoint.hash !== '' ||
+      (endpoint.port !== '' && endpoint.port !== '443') || endpoint.origin === issuer.origin
+    ) context.addIssue({
+      code: 'custom', path: ['TREASURY_WORM_ARCHIVE_ENDPOINT'],
+      message: 'Treasury WORM 必须为独立权限域 HTTPS，且禁止凭据、查询、fragment 和非标准端口',
+    });
+  }
   if (environment.NODE_ENV === 'production' && environment.ESIGN_WEBHOOK_ENCRYPTION_KEYS === undefined) {
     context.addIssue({
       code: 'custom',

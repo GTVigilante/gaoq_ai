@@ -5,6 +5,8 @@ import { IdempotencyModule } from '../../core/idempotency/idempotency.module.js'
 import { OrgModule } from '../org/org.module.js';
 import { OutboxRecord, OutboxRecordSchema } from '../org/persistence/outbox.schema.js';
 import { TreasuryBankAccountService } from './application/treasury-bank-account.service.js';
+import { HttpTreasuryImmutableArchive } from './integration/treasury-evidence-http.adapter.js';
+import { TreasuryImmutableArchive } from './integration/treasury-evidence.ports.js';
 import { TreasuryDataCryptoService } from './persistence/treasury-data-crypto.service.js';
 import { TreasuryOutboxWriter } from './persistence/treasury-outbox.writer.js';
 import {
@@ -32,7 +34,13 @@ import { TreasuryController } from './treasury.controller.js';
     ]),
   ],
   controllers: [TreasuryController],
-  providers: [TreasuryBankAccountService, TreasuryDataCryptoService, TreasuryOutboxWriter],
+  providers: [
+    TreasuryBankAccountService,
+    TreasuryDataCryptoService,
+    TreasuryOutboxWriter,
+    HttpTreasuryImmutableArchive,
+    { provide: TreasuryImmutableArchive, useExisting: HttpTreasuryImmutableArchive },
+  ],
   exports: [TreasuryBankAccountService, TreasuryDataCryptoService],
 })
 export class TreasuryModule {}
