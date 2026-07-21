@@ -31,7 +31,43 @@ describe('validateEnvironment', () => {
     expect(environment.RECRUITMENT_DATA_ENCRYPTION_KEYS).toBeUndefined();
     expect(environment.RECRUITMENT_BLIND_INDEX_KEYS).toBeUndefined();
     expect(environment.METRICS_BEARER_TOKEN).toBeUndefined();
+    expect(environment.ESIGN_MALWARE_SCAN_ENDPOINT).toBeUndefined();
+    expect(environment.ESIGN_WORM_ARCHIVE_ENDPOINT).toBeUndefined();
+    expect(environment.ESIGN_WORM_RETENTION_DAYS).toBe(3_650);
     expect(environment.MCP_OAUTH_CLIENTS_JSON).toBe('[]');
+  });
+
+  it('eSign 扫描与 WORM 必须成套配置且位于独立 HTTPS 权限域', () => {
+    const base = {
+      NODE_ENV: 'test',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0',
+      WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://erp.example.com',
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://erp.example.com/.well-known/jwks.json',
+      MCP_AUTHORIZATION_SERVER: 'https://erp.example.com',
+      MCP_ALLOWED_ORIGINS: 'https://client.example.com',
+    };
+    expect(() => validateEnvironment({
+      ...base, ESIGN_MALWARE_SCAN_ENDPOINT: 'https://scanner.example.net/v1/scan',
+    })).toThrow('必须成套配置');
+    const evidence = {
+      ESIGN_MALWARE_SCAN_ENDPOINT: 'https://scanner.example.net/v1/scan',
+      ESIGN_MALWARE_SCAN_BEARER_TOKEN: 'scanner-token-that-is-at-least-32-characters',
+      ESIGN_WORM_ARCHIVE_ENDPOINT: 'https://worm.example.net/v1/archive',
+      ESIGN_WORM_ARCHIVE_BEARER_TOKEN: 'archive-token-that-is-at-least-32-characters',
+    };
+    expect(() => validateEnvironment({
+      ...base, ...evidence, ESIGN_WORM_ARCHIVE_ENDPOINT: 'http://worm.example.net/archive',
+    })).toThrow('独立权限域 HTTPS');
+    expect(() => validateEnvironment({
+      ...base, ...evidence, ESIGN_WORM_ARCHIVE_ENDPOINT: 'https://erp.example.com/archive',
+    })).toThrow('独立权限域 HTTPS');
+    expect(validateEnvironment({ ...base, ...evidence })).toMatchObject({
+      ESIGN_WORM_RETENTION_DAYS: 3_650,
+    });
   });
 
   it('拒绝授权服务器与 issuer 错位或 resource 携带 fragment', () => {

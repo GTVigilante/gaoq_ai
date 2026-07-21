@@ -33,9 +33,11 @@ import { ESignEvidenceService } from './esign-evidence.service.js';
 import {
   ESignImmutableArchive,
   ESignMalwareScanner,
-  UnavailableESignImmutableArchive,
-  UnavailableESignMalwareScanner,
 } from './esign-evidence.ports.js';
+import {
+  HttpESignImmutableArchive,
+  HttpESignMalwareScanner,
+} from './esign-evidence-http.adapters.js';
 import { ESignFlowRecord, ESignFlowRecordSchema } from './esign-flow.schema.js';
 import { ESignFlowService } from './esign-flow.service.js';
 import { ESignHttpClient, FetchESignHttpClient } from './esign-http.client.js';
@@ -223,10 +225,10 @@ import { RecruitmentChannelStageDeliveryService } from './recruitment-channel-st
     { provide: ESignAdapter, useExisting: ESignCnAdapter },
     FetchESignHttpClient,
     { provide: ESignHttpClient, useExisting: FetchESignHttpClient },
-    UnavailableESignMalwareScanner,
-    { provide: ESignMalwareScanner, useExisting: UnavailableESignMalwareScanner },
-    UnavailableESignImmutableArchive,
-    { provide: ESignImmutableArchive, useExisting: UnavailableESignImmutableArchive },
+    HttpESignMalwareScanner,
+    { provide: ESignMalwareScanner, useExisting: HttpESignMalwareScanner },
+    HttpESignImmutableArchive,
+    { provide: ESignImmutableArchive, useExisting: HttpESignImmutableArchive },
     AccessProfileRepository,
     ExternalIdentityRepository,
     EnvironmentOrgSecretResolver,

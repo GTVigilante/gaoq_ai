@@ -49,6 +49,25 @@ const environmentSchema = z.object({
   ESIGN_API_BASE_URL: z.enum([
     'https://openapi.esign.cn', 'https://smlopenapi.esign.cn',
   ]).default('https://smlopenapi.esign.cn'),
+  /** eSign 合同病毒扫描网关；正文只通过 HTTPS 请求体传输，凭据由 Secret Manager 注入。 */
+  ESIGN_MALWARE_SCAN_ENDPOINT: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().url().optional(),
+  ),
+  ESIGN_MALWARE_SCAN_BEARER_TOKEN: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/).optional(),
+  ),
+  /** eSign 合同独立 WORM 归档网关；不得与 ERP 授权域同源。 */
+  ESIGN_WORM_ARCHIVE_ENDPOINT: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().url().optional(),
+  ),
+  ESIGN_WORM_ARCHIVE_BEARER_TOKEN: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/).optional(),
+  ),
+  ESIGN_WORM_RETENTION_DAYS: z.coerce.number().int().min(3_650).max(36_500).default(3_650),
   /** Prometheus 独立抓取凭据，仅由 Secret Manager 注入，不复用业务 OAuth token。 */
   METRICS_BEARER_TOKEN: z.preprocess(
     (value) => value === '' ? undefined : value,
@@ -146,6 +165,41 @@ const environmentSchema = z.object({
     context.addIssue({
       code: 'custom', path: ['ESIGN_API_BASE_URL'],
       message: '生产环境 eSign OpenAPI 必须使用官方生产域名',
+    });
+  }
+  const evidenceInfrastructure = [
+    environment.ESIGN_MALWARE_SCAN_ENDPOINT,
+    environment.ESIGN_MALWARE_SCAN_BEARER_TOKEN,
+    environment.ESIGN_WORM_ARCHIVE_ENDPOINT,
+    environment.ESIGN_WORM_ARCHIVE_BEARER_TOKEN,
+  ];
+  if (
+    evidenceInfrastructure.some((value) => value !== undefined) &&
+    evidenceInfrastructure.some((value) => value === undefined)
+  ) context.addIssue({
+    code: 'custom', path: ['ESIGN_MALWARE_SCAN_ENDPOINT'],
+    message: 'eSign 扫描与 WORM 归档端点及凭据必须成套配置',
+  });
+  if (
+    environment.NODE_ENV === 'production' &&
+    evidenceInfrastructure.some((value) => value === undefined)
+  ) context.addIssue({
+    code: 'custom', path: ['ESIGN_MALWARE_SCAN_ENDPOINT'],
+    message: '生产环境必须完整配置 eSign 病毒扫描与独立 WORM 归档',
+  });
+  for (const [field, value] of [
+    ['ESIGN_MALWARE_SCAN_ENDPOINT', environment.ESIGN_MALWARE_SCAN_ENDPOINT],
+    ['ESIGN_WORM_ARCHIVE_ENDPOINT', environment.ESIGN_WORM_ARCHIVE_ENDPOINT],
+  ] as const) {
+    if (value === undefined) continue;
+    const endpoint = new URL(value);
+    if (
+      endpoint.protocol !== 'https:' || endpoint.username !== '' || endpoint.password !== '' ||
+      endpoint.search !== '' || endpoint.hash !== '' ||
+      (endpoint.port !== '' && endpoint.port !== '443') || endpoint.origin === issuer.origin
+    ) context.addIssue({
+      code: 'custom', path: [field],
+      message: 'eSign 证据端点必须为独立权限域 HTTPS，且禁止凭据、查询、fragment 和非标准端口',
     });
   }
   if (

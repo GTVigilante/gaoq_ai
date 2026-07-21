@@ -117,6 +117,7 @@ draft → pending_approval → approved → clearing → ready → scheduled →
 - OpenAPI 只允许官方 `https://smlopenapi.esign.cn` 和 `https://openapi.esign.cn`，生产强制后者。请求按官方七段式字符串计算 Content-MD5 和 HmacSHA256；MD5 仅用于供应商协议兼容，ERP 证据统一使用 SHA-256。
 - 补拉调用 `GET /v3/sign-flow/{id}/detail`；下载地址使用官方推荐的 `POST /v3/sign-flow/{id}/file-download-url`，有效期固定 300 秒；每个 PDF 再调用 `POST /v3/files/{fileId}/verify`。下载客户端禁止跳转，限定 eSign HTTPS 域名、50 MiB 上限和 `%PDF-` 魔数。
 - `integration_esign_evidence` 仅保存供应商文件 ID 摘要、PDF SHA-256、大小、扫描证据、验签结果摘要、WORM 对象引用与回执；不保存 PDF、文件名、下载短链、证书或签署人原文。WORM `objectKey` 必须幂等；扫描或归档 Adapter 未装配时必须失败关闭。
+- 扫描与 WORM 网关必须成套配置在独立 HTTPS 权限域。Adapter 出站前复算 PDF SHA-256，响应限制为 16 KiB 严格 JSON；扫描回执绑定摘要，WORM 回执同时绑定摘要、对象键、不可变标志和不少于十年的保留期。任一错位均不得推进 Offer `signed`。
 
 ## 5. REST、事件与 MCP 同步交付
 
