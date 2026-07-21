@@ -9,6 +9,7 @@ import {
   RecruitmentInterviewFeedbackRecordSchema,
   RecruitmentInterviewRecordSchema,
   RecruitmentOfferRecordSchema,
+  RecruitmentOfferEvidenceRecordSchema,
   RecruitmentPositionRecordSchema,
   RecruitmentRequisitionRecordSchema,
   type CandidateApplicationRecord,
@@ -16,6 +17,7 @@ import {
   type RecruitmentInterviewFeedbackRecord,
   type RecruitmentInterviewRecord,
   type RecruitmentOfferRecord,
+  type RecruitmentOfferEvidenceRecord,
   type RecruitmentPositionRecord,
   type RecruitmentRequisitionRecord,
 } from './recruitment.schemas.js';
@@ -41,6 +43,9 @@ const FeedbackModel = mongoose.model<RecruitmentInterviewFeedbackRecord>(
 );
 const OfferModel = mongoose.model<RecruitmentOfferRecord>(
   'SpecRecruitmentOffer', RecruitmentOfferRecordSchema,
+);
+const OfferEvidenceModel = mongoose.model<RecruitmentOfferEvidenceRecord>(
+  'SpecRecruitmentOfferEvidence', RecruitmentOfferEvidenceRecordSchema,
 );
 
 const CANDIDATE_ID = '01J8ZQK7V0A2M4N6P8R0T2W4Y6';
@@ -222,6 +227,24 @@ describe('RecruitmentSchemas', () => {
     expect(RecruitmentOfferRecordSchema.path('termsCiphertext')).toBeDefined();
   });
 
+  it('Offer 证据账本只保存摘要并失败关闭来源字段', async () => {
+    const evidence = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4X5', tenantId: 'tenant-001',
+      offerId: '01J8ZQK7V0A2M4N6P8R0T2W4X3', kind: 'sent', category: 'delivery',
+      source: 'integration_delivery', subjectCandidateId: null,
+      sendRequestId: 'send-request-001', authenticationEvidenceId: null,
+      proofHash: 'a'.repeat(43), occurredAt: new Date('2026-07-21T00:01:00.000Z'),
+      actorId: 'integration-worker-001', recordedAt: new Date('2026-07-21T00:02:00.000Z'),
+    };
+    await new OfferEvidenceModel(evidence).validate();
+    await expect(new OfferEvidenceModel({
+      ...evidence, kind: 'accepted', category: 'candidate_decision', source: 'candidate_portal',
+    }).validate()).rejects.toThrow('候选人决定证据字段不完整');
+    for (const field of ['payload', 'receipt', 'responseBody', 'candidateName']) {
+      expect(RecruitmentOfferEvidenceRecordSchema.path(field)).toBeUndefined();
+    }
+  });
+
   it('全部业务索引以 tenantId 开头，盲索引唯一且密文不建索引', () => {
     const schemas: readonly Schema[] = [
       RecruitmentCandidateRecordSchema,
@@ -233,6 +256,7 @@ describe('RecruitmentSchemas', () => {
       RecruitmentInterviewRecordSchema,
       RecruitmentInterviewFeedbackRecordSchema,
       RecruitmentOfferRecordSchema,
+      RecruitmentOfferEvidenceRecordSchema,
     ];
     for (const schema of schemas) {
       for (const [spec] of schema.indexes()) {

@@ -17,6 +17,7 @@ import {
   applyRecruitmentOfferApprovalOutcome,
   buildCandidateApplicationStageEvent,
   buildRecruitmentOfferEvent,
+  createRecruitmentOfferEvidence,
   createRecruitmentOffer,
   recordRecruitmentOfferDecision,
   recordRecruitmentOfferSent,
@@ -35,6 +36,7 @@ import {
   CandidateApplicationStageRepository,
   RecruitmentInterviewRepository,
   RecruitmentOfferRepository,
+  RecruitmentOfferEvidenceRepository,
   RecruitmentPositionRepository,
   RecruitmentWriteConflictError,
 } from '../persistence/recruitment.repositories.js';
@@ -69,6 +71,7 @@ export class RecruitmentOfferService {
     private readonly positions: RecruitmentPositionRepository,
     private readonly interviews: RecruitmentInterviewRepository,
     private readonly offers: RecruitmentOfferRepository,
+    private readonly evidence: RecruitmentOfferEvidenceRepository,
     private readonly outbox: RecruitmentOutboxWriter,
   ) {}
 
@@ -232,21 +235,38 @@ export class RecruitmentOfferService {
     id: string,
     expectedVersion: number,
     key: string,
-    input: { readonly sendRequestId: string; readonly sentEvidenceId: string },
+    input: {
+      readonly sendRequestId: string;
+      readonly proofHash: string;
+      readonly deliveredAt: string;
+    },
   ): Promise<{ readonly offer: RecruitmentOfferSummary }> {
     this.assertTrustedScope('erp:integration:offer:deliver');
     return this.run(async () => this.idempotency.execute(
       'recruitment.offer.record_sent', key, { id, expectedVersion, ...input },
       async (session) => {
         const current = await this.requireOffer(id, session);
+        const now = new Date();
+        const occurredAt = requiredDate(input.deliveredAt);
+        if (occurredAt.getTime() < Date.parse(current.updatedAt)) throw new RecruitmentDomainError(
+          'RECRUITMENT_OFFER_EVIDENCE_TIME_INVALID',
+          '投递证据时间不能早于发送请求',
+        );
+        const sentEvidence = createRecruitmentOfferEvidence({
+          id: createEventId(now), tenantId: current.tenantId, offerId: current.id,
+          kind: 'sent', sendRequestId: input.sendRequestId, proofHash: input.proofHash,
+          occurredAt, actorId: this.context.getActorRequired().actorId,
+        }, now);
         const offer = recordRecruitmentOfferSent(current, {
           tenantId: this.context.getTenantRequired().tenantId, expectedVersion,
-          ...input, deliveryVerified: true,
-        }, new Date());
+          sendRequestId: input.sendRequestId, sentEvidenceId: sentEvidence.id,
+          deliveryVerified: true,
+        }, now);
         const application = await this.requireApplication(current.applicationId, session);
         const transition = this.transitionApplication(
           application, 'offer_sent', offer.id, this.context.getActorRequired().actorId,
         );
+        await this.evidence.append(sentEvidence, session);
         await this.offers.replace(offer, expectedVersion, session);
         await this.persistApplicationTransition(application, transition, session);
         await this.outbox.append(buildRecruitmentOfferEvent(offer, 'sent'), session);
@@ -262,7 +282,10 @@ export class RecruitmentOfferService {
     key: string,
     input: {
       readonly decision: 'accepted' | 'declined';
-      readonly acceptanceEvidenceId: string;
+      readonly candidateId: string;
+      readonly authenticationEvidenceId: string;
+      readonly proofHash: string;
+      readonly decidedAt: string;
     },
   ): Promise<{ readonly offer: RecruitmentOfferSummary }> {
     this.assertTrustedScope('erp:recruitment:offer:candidate_decide');
@@ -270,16 +293,35 @@ export class RecruitmentOfferService {
       'recruitment.offer.candidate_decide', key, { id, expectedVersion, ...input },
       async (session) => {
         const current = await this.requireOffer(id, session);
+        if (input.candidateId !== current.candidateId) throw new ForbiddenException({
+          code: 'RECRUITMENT_OFFER_CANDIDATE_MISMATCH',
+          message: '候选人身份与 Offer 不匹配',
+        });
+        const now = new Date();
+        const occurredAt = requiredDate(input.decidedAt);
+        if (occurredAt.getTime() < Date.parse(current.updatedAt)) throw new RecruitmentDomainError(
+          'RECRUITMENT_OFFER_EVIDENCE_TIME_INVALID',
+          '候选人决定时间不能早于 Offer 送达',
+        );
+        const decisionEvidence = createRecruitmentOfferEvidence({
+          id: createEventId(now), tenantId: current.tenantId, offerId: current.id,
+          kind: input.decision, subjectCandidateId: input.candidateId,
+          authenticationEvidenceId: input.authenticationEvidenceId,
+          proofHash: input.proofHash, occurredAt,
+          actorId: this.context.getActorRequired().actorId,
+        }, now);
         const offer = recordRecruitmentOfferDecision(current, {
           tenantId: this.context.getTenantRequired().tenantId, expectedVersion,
-          ...input, candidateEvidenceVerified: true,
-        }, new Date());
+          decision: input.decision, acceptanceEvidenceId: decisionEvidence.id,
+          candidateEvidenceVerified: true,
+        }, now);
         const application = await this.requireApplication(current.applicationId, session);
         const transition = this.transitionApplication(
           application, input.decision === 'accepted' ? 'offer_accepted' : 'withdrawn',
-          input.acceptanceEvidenceId, this.context.getActorRequired().actorId,
+          decisionEvidence.id, this.context.getActorRequired().actorId,
           input.decision === 'declined' ? 'offer_declined' : undefined,
         );
+        await this.evidence.append(decisionEvidence, session);
         await this.persistApplicationTransition(application, transition, session);
         await this.offers.replace(offer, expectedVersion, session);
         await this.outbox.append(buildRecruitmentOfferEvent(offer, input.decision), session);

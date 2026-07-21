@@ -14,6 +14,7 @@ import {
   type RecruitmentInterview,
   type RecruitmentInterviewFeedback,
   type RecruitmentOffer,
+  type RecruitmentOfferEvidence,
   type RecruitmentOfferTerms,
   type RecruitmentPosition,
   type RecruitmentRequisition,
@@ -38,6 +39,8 @@ import {
   type RecruitmentInterviewDocument,
   RecruitmentOfferRecord,
   type RecruitmentOfferDocument,
+  RecruitmentOfferEvidenceRecord,
+  type RecruitmentOfferEvidenceDocument,
   RecruitmentPositionRecord,
   type RecruitmentPositionDocument,
   RecruitmentRequisitionRecord,
@@ -560,6 +563,24 @@ export class RecruitmentOfferRepository extends TenantBoundRecruitmentRepository
       { session, timestamps: false, runValidators: true },
     );
     if (updated.matchedCount !== 1) throw new RecruitmentWriteConflictError();
+  }
+}
+
+@Injectable()
+export class RecruitmentOfferEvidenceRepository extends TenantBoundRecruitmentRepository {
+  constructor(
+    context: TenantContextService,
+    @InjectModel(RecruitmentOfferEvidenceRecord.name)
+    private readonly records: Model<RecruitmentOfferEvidenceDocument>,
+  ) { super(context); }
+
+  async append(evidence: RecruitmentOfferEvidence, session: ClientSession): Promise<void> {
+    this.assertTenant(evidence.tenantId);
+    await this.records.create([{
+      ...evidence,
+      occurredAt: new Date(evidence.occurredAt),
+      recordedAt: new Date(evidence.recordedAt),
+    }], { session });
   }
 }
 

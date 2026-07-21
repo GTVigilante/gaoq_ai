@@ -7,6 +7,7 @@ import type {
   RecruitmentInterviewMode,
   RecruitmentInterviewStatus,
   RecruitmentOfferStatus,
+  RecruitmentOfferEvidenceKind,
   RecruitmentPositionStatus,
 } from '../domain/index.js';
 import { RECRUITMENT_CODE_PATTERN, RECRUITMENT_ID_PATTERN } from '../domain/index.js';
@@ -687,6 +688,84 @@ RecruitmentOfferRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 RecruitmentOfferRecordSchema.index({ tenantId: 1, applicationId: 1 }, { unique: true });
 RecruitmentOfferRecordSchema.index({ tenantId: 1, status: 1, expiresAt: 1 });
 RecruitmentOfferRecordSchema.index({ tenantId: 1, retentionExpiresAt: 1 });
+
+/** Offer 外部事实证据账本；只保存摘要与内部引用，不保存回执正文。 */
+@Schema({
+  collection: 'recruitment_offer_evidence', timestamps: true, versionKey: false, id: false,
+})
+export class RecruitmentOfferEvidenceRecord {
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
+  id!: string;
+
+  @Prop({ ...STRING_ID, immutable: true })
+  tenantId!: string;
+
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
+  offerId!: string;
+
+  @Prop({ type: String, enum: ['sent', 'accepted', 'declined'], required: true, immutable: true })
+  kind!: RecruitmentOfferEvidenceKind;
+
+  @Prop({ type: String, enum: ['delivery', 'candidate_decision'], required: true, immutable: true })
+  category!: 'delivery' | 'candidate_decision';
+
+  @Prop({
+    type: String, enum: ['integration_delivery', 'candidate_portal'], required: true, immutable: true,
+  })
+  source!: 'integration_delivery' | 'candidate_portal';
+
+  @Prop({ type: String, default: null, immutable: true, match: ULID_PATTERN })
+  subjectCandidateId!: string | null;
+
+  @Prop({ type: String, default: null, immutable: true, maxlength: 128, match: RECRUITMENT_ID_PATTERN })
+  sendRequestId!: string | null;
+
+  @Prop({ type: String, default: null, immutable: true, maxlength: 128, match: RECRUITMENT_ID_PATTERN })
+  authenticationEvidenceId!: string | null;
+
+  @Prop({ type: String, required: true, immutable: true, minlength: 43, maxlength: 43, match: BASE64URL_PATTERN })
+  proofHash!: string;
+
+  @Prop({ type: Date, required: true, immutable: true })
+  occurredAt!: Date;
+
+  @Prop({ ...STRING_ID, immutable: true })
+  actorId!: string;
+
+  @Prop({ type: Date, required: true, immutable: true })
+  recordedAt!: Date;
+
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+
+export type RecruitmentOfferEvidenceDocument = HydratedDocument<RecruitmentOfferEvidenceRecord>;
+export const RecruitmentOfferEvidenceRecordSchema = SchemaFactory.createForClass(
+  RecruitmentOfferEvidenceRecord,
+);
+
+RecruitmentOfferEvidenceRecordSchema.pre('validate', function () {
+  const record = this as RecruitmentOfferEvidenceRecord;
+  const delivery = record.kind === 'sent';
+  if (delivery !== (record.category === 'delivery') ||
+    delivery !== (record.source === 'integration_delivery')) {
+    throw new Error('Offer 证据类型与来源不一致');
+  }
+  if (delivery) {
+    if (record.sendRequestId === null || record.subjectCandidateId !== null ||
+      record.authenticationEvidenceId !== null) throw new Error('Offer 投递证据字段不完整');
+  } else if (
+    record.sendRequestId !== null || record.subjectCandidateId === null ||
+    record.authenticationEvidenceId === null
+  ) throw new Error('Offer 候选人决定证据字段不完整');
+});
+
+RecruitmentOfferEvidenceRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
+RecruitmentOfferEvidenceRecordSchema.index(
+  { tenantId: 1, offerId: 1, category: 1 }, { unique: true },
+);
+RecruitmentOfferEvidenceRecordSchema.index({ tenantId: 1, proofHash: 1 }, { unique: true });
+RecruitmentOfferEvidenceRecordSchema.index({ tenantId: 1, source: 1, occurredAt: -1 });
 
 function applicationStageRank(stage: CandidateApplicationStage): number {
   const rank: Readonly<Record<CandidateApplicationStage, number>> = {

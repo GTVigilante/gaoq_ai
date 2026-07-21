@@ -122,6 +122,7 @@ draft → pending_approval → approved → sending → sent → accepted → si
 - Offer 条款使用 Recruitment L4 密钥域 AES-256-GCM 整体加密，AAD 绑定租户、`offer_terms` 和 Offer ID。数据库、列表、REST 响应、审计、Outbox、日志及 MCP 均不得保存或返回条款原文。
 - 创建 Offer 必须以申请强版本引用该申请已完成面试；提交审批在同一 Recruitment 事务内将申请推进到 `offer_approval`。审批拒绝将申请推进到 `rejected`；可信投递证据将申请推进到 `offer_sent`；候选人接受/拒绝分别推进到 `offer_accepted`/`withdrawn`。
 - 审批创建、审批提交和 Offer 绑定由客户端根幂等键派生三个不同幂等键；通用幂等层只保存请求 SHA-256 与脱敏响应，不保存 L4 请求正文。投递、候选人决定和 eSign 完成仅通过应用服务的专用内部 Scope 调用，不注册普通管理端 REST。
+- 投递与候选人决定写入 `recruitment_offer_evidence` 不可变账本。调用方只能提交 SHA-256 base64url 回执摘要、外部事实时间及必要内部引用；证据 ID 由 Recruitment 生成，客户端不得自报。每个 Offer 最多一条投递证据和一条候选人决定证据，摘要在租户内不可复用；候选人决定还必须匹配 Offer 的 `candidateId` 并引用门户认证证据。
 
 ## 6. 发布门禁
 

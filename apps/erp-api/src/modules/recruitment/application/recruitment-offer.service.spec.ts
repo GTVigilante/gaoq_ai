@@ -7,6 +7,7 @@ import type { ApprovalApplicationService } from '../../approval/application/appr
 import {
   applyRecruitmentOfferApprovalOutcome,
   createRecruitmentOffer,
+  recordRecruitmentOfferSent,
   requestRecruitmentOfferSend,
   submitRecruitmentOffer,
   type CandidateApplicationStage,
@@ -18,6 +19,7 @@ import type {
   CandidateApplicationStageRepository,
   RecruitmentInterviewRepository,
   RecruitmentOfferRepository,
+  RecruitmentOfferEvidenceRepository,
   RecruitmentPositionRepository,
 } from '../persistence/recruitment.repositories.js';
 import { RecruitmentOfferService } from './recruitment-offer.service.js';
@@ -78,11 +80,26 @@ function offer(status: RecruitmentOfferStatus = 'draft') {
   if (status === 'sending') return requestRecruitmentOfferSend(approved, {
     tenantId: 'tenant-001', expectedVersion: 3, sendRequestId: 'send-request-001',
   }, NOW);
+  if (status === 'sent') {
+    const sending = requestRecruitmentOfferSend(approved, {
+      tenantId: 'tenant-001', expectedVersion: 3, sendRequestId: 'send-request-001',
+    }, NOW);
+    return recordRecruitmentOfferSent(sending, {
+      tenantId: 'tenant-001', expectedVersion: 4, sendRequestId: 'send-request-001',
+      sentEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4X5', deliveryVerified: true,
+    }, NOW);
+  }
   throw new Error(`测试暂不支持状态 ${status}`);
 }
 
 function fixture(options?: {
-  readonly offerStatus?: 'draft' | 'pending_approval' | 'approved' | 'rejected' | 'sending';
+  readonly offerStatus?:
+    | 'draft'
+    | 'pending_approval'
+    | 'approved'
+    | 'rejected'
+    | 'sending'
+    | 'sent';
   readonly applicationStage?: CandidateApplicationStage;
   readonly approvalStatus?: 'running' | 'approved' | 'rejected';
   readonly scopes?: readonly string[];
@@ -137,6 +154,7 @@ function fixture(options?: {
     insert: vi.fn().mockResolvedValue(undefined),
     replace: vi.fn().mockResolvedValue(undefined),
   };
+  const evidence = { append: vi.fn().mockResolvedValue(undefined) };
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
   const service = new RecruitmentOfferService(
     { execute } as unknown as IdempotencyService,
@@ -147,9 +165,10 @@ function fixture(options?: {
     positions as unknown as RecruitmentPositionRepository,
     interviews as unknown as RecruitmentInterviewRepository,
     offers as unknown as RecruitmentOfferRepository,
+    evidence as unknown as RecruitmentOfferEvidenceRepository,
     outbox as unknown as RecruitmentOutboxWriter,
   );
-  return { service, execute, approvals, applications, stages, offers, outbox };
+  return { service, execute, approvals, applications, stages, offers, evidence, outbox };
 }
 
 describe('RecruitmentOfferService', () => {
@@ -216,7 +235,8 @@ describe('RecruitmentOfferService', () => {
     const denied = fixture({ offerStatus: 'sending', applicationStage: 'offer_approval', scopes: [] });
     await expect(denied.service.recordSentForIntegration(
       OFFER_ID, 4, 'offer-delivery-key-001', {
-        sendRequestId: 'send-request-001', sentEvidenceId: 'sent-evidence-001',
+        sendRequestId: 'send-request-001', proofHash: 'a'.repeat(43),
+        deliveredAt: '2026-07-21T00:01:00.000Z',
       },
     )).rejects.toMatchObject({ response: { code: 'RECRUITMENT_OFFER_TRUSTED_WORKFLOW_REQUIRED' } });
     const store = fixture({
@@ -225,12 +245,54 @@ describe('RecruitmentOfferService', () => {
     });
     const result = await store.service.recordSentForIntegration(
       OFFER_ID, 4, 'offer-delivery-key-002', {
-        sendRequestId: 'send-request-001', sentEvidenceId: 'sent-evidence-001',
+        sendRequestId: 'send-request-001', proofHash: 'a'.repeat(43),
+        deliveredAt: '2026-07-21T00:01:00.000Z',
       },
     );
-    expect(result.offer).toMatchObject({ status: 'sent', sentEvidenceId: 'sent-evidence-001' });
+    expect(result.offer).toMatchObject({ status: 'sent' });
+    expect(result.offer.sentEvidenceId).toMatch(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/);
+    expect(store.evidence.append).toHaveBeenCalledWith(expect.objectContaining({
+      id: result.offer.sentEvidenceId, kind: 'sent', source: 'integration_delivery',
+      proofHash: 'a'.repeat(43),
+    }), SESSION);
     expect(store.applications.replace).toHaveBeenCalledWith(expect.objectContaining({
       stage: 'offer_sent', offerId: OFFER_ID,
     }), 4, SESSION);
+  });
+
+  it('候选人决定必须绑定 Offer 候选人和门户认证证据', async () => {
+    const mismatched = fixture({
+      offerStatus: 'sending', applicationStage: 'offer_sent',
+      scopes: ['erp:recruitment:offer:candidate_decide'],
+    });
+    await expect(mismatched.service.recordCandidateDecision(
+      OFFER_ID, 4, 'offer-decision-key-001', {
+        decision: 'accepted', candidateId: '01J8ZQK7V0A2M4N6P8R0T2W4Z9',
+        authenticationEvidenceId: 'auth-evidence-001', proofHash: 'b'.repeat(43),
+        decidedAt: '2026-07-21T00:02:00.000Z',
+      },
+    )).rejects.toMatchObject({ response: { code: 'RECRUITMENT_OFFER_CANDIDATE_MISMATCH' } });
+    expect(mismatched.evidence.append).not.toHaveBeenCalled();
+
+    const store = fixture({
+      offerStatus: 'sent', applicationStage: 'offer_sent',
+      scopes: ['erp:recruitment:offer:candidate_decide'],
+    });
+    const result = await store.service.recordCandidateDecision(
+      OFFER_ID, 5, 'offer-decision-key-002', {
+        decision: 'accepted', candidateId: CANDIDATE_ID,
+        authenticationEvidenceId: 'auth-evidence-001', proofHash: 'b'.repeat(43),
+        decidedAt: '2026-07-21T00:02:00.000Z',
+      },
+    );
+    expect(result.offer).toMatchObject({ status: 'accepted', version: 6 });
+    expect(result.offer.acceptanceEvidenceId).toMatch(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/);
+    expect(store.evidence.append).toHaveBeenCalledWith(expect.objectContaining({
+      id: result.offer.acceptanceEvidenceId, kind: 'accepted', source: 'candidate_portal',
+      subjectCandidateId: CANDIDATE_ID, authenticationEvidenceId: 'auth-evidence-001',
+    }), SESSION);
+    expect(store.applications.replace).toHaveBeenCalledWith(expect.objectContaining({
+      stage: 'offer_accepted', acceptanceEvidenceId: result.offer.acceptanceEvidenceId,
+    }), 5, SESSION);
   });
 });
