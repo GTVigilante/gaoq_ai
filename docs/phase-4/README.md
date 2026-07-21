@@ -17,7 +17,9 @@ Phase 4 在 ERP 组织与劳动关系主数据之上，建立可重放的考勤�
 11. [Treasury 密钥与索引迁移 Runbook](./10-treasury-key-index-migration-runbook.md)
 12. [Treasury 银行账户版本应用契约](./11-treasury-bank-account-application.md)
 13. [锁定工资到受控代发文件](./12-treasury-disbursement-materialization.md)
-14. 两个完整薪资周期影子计算、差异归因与财务签署
+14. [隔离银行回盘、逐行复核与异常冻结](./13-treasury-bank-return-inbox.md)
+15. 失败行子批次、税务文件与四方对账
+16. 两个完整薪资周期影子计算、差异归因与财务签署
 
 ## 强制边界
 

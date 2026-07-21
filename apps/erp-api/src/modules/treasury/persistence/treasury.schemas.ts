@@ -149,7 +149,8 @@ export class TreasuryDisbursementBatchRecord extends ProtectedTreasuryRecord {
   @Prop({
     type: String, default: null,
     enum: [
-      'SIGNATURE_INVALID', 'UNKNOWN_LINE', 'DUPLICATE_LINE',
+      'MALWARE_DETECTED', 'SIGNATURE_INVALID', 'UNKNOWN_LINE', 'DUPLICATE_LINE',
+      'LINE_AMOUNT_MISMATCH',
       'COUNT_MISMATCH', 'AMOUNT_MISMATCH', 'PARTIAL_SUCCESS', null,
     ],
   })
@@ -174,24 +175,33 @@ TreasuryDisbursementBatchRecordSchema.index(
   { partialFilterExpression: { parentBatchId: { $type: 'string' } } },
 );
 
-/** 银行回盘只保存受控对象、签名证据、摘要和汇总；原始正文不得进入 Mongo。 */
+/** 银行回盘只保存受控对象、证据、汇总和规范化行密文；原始正文不得进入 Mongo。 */
 @Schema({ collection: 'treasury_bank_returns', timestamps: true, versionKey: false, id: false })
-export class TreasuryBankReturnRecord {
+export class TreasuryBankReturnRecord extends ProtectedTreasuryRecord {
   @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) id!: string;
   @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
   tenantId!: string;
   @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) batchId!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  bankSubmissionId!: string;
   @Prop({ type: Number, required: true, immutable: true, min: 1 }) sequence!: number;
   @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN }) returnHash!: string;
   @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
   objectEvidenceId!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 512, match: /^[A-Za-z0-9][A-Za-z0-9/._:-]{0,511}$/ })
+  objectRef!: string;
   @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
   signatureEvidenceId!: string;
   @Prop({ type: Boolean, required: true, immutable: true }) signatureVerified!: boolean;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  malwareScanEvidenceId!: string;
+  @Prop({ type: Boolean, required: true, immutable: true }) malwareClean!: boolean;
   @Prop({ type: Number, required: true, immutable: true, min: 0 }) successfulCount!: number;
   @Prop({ type: Number, required: true, immutable: true, min: 0 }) failedCount!: number;
   @Prop({ type: Number, required: true, immutable: true, min: 0 }) unknownCount!: number;
   @Prop({ type: Number, required: true, immutable: true, min: 0 }) duplicateCount!: number;
+  @Prop({ type: Number, required: true, immutable: true, min: 0 })
+  lineAmountMismatchCount!: number;
   @Prop({ type: Number, required: true, immutable: true, min: 0 }) successfulMinor!: number;
   @Prop({ type: Number, required: true, immutable: true, min: 0 }) failedMinor!: number;
   @Prop({ type: String, required: true, immutable: true, enum: ['accepted', 'frozen'] })

@@ -28,3 +28,7 @@ export class ApproveTreasuryExportDto {
 export class SubmitTreasuryDisbursementDto {
   @IsInt() @Min(1) expectedVersion!: number;
 }
+
+export class IngestTreasuryBankReturnDto {
+  @IsInt() @Min(1) expectedVersion!: number;
+}

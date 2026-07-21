@@ -84,6 +84,15 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/).optional(),
   ),
+  /** 银行回盘隔离 Inbox；在返回规范清单前完成验签、扫描与 WORM 留档。 */
+  TREASURY_BANK_RETURN_INBOX_ENDPOINT: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().url().optional(),
+  ),
+  TREASURY_BANK_RETURN_INBOX_BEARER_TOKEN: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/).optional(),
+  ),
   /** eSign Webhook L4 加密密钥环，仅由 Secret Manager 注入。 */
   ESIGN_WEBHOOK_ENCRYPTION_KEYS: z.preprocess(
     (value) => value === '' ? undefined : value,
@@ -285,6 +294,51 @@ const environmentSchema = z.object({
       message: 'Treasury 银行提交网关必须为独立权限域 HTTPS，且禁止凭据、查询、fragment 和非标准端口',
     });
   }
+  const treasuryReturnInbox = [
+    environment.TREASURY_BANK_RETURN_INBOX_ENDPOINT,
+    environment.TREASURY_BANK_RETURN_INBOX_BEARER_TOKEN,
+  ];
+  if (
+    treasuryReturnInbox.some((value) => value !== undefined) &&
+    treasuryReturnInbox.some((value) => value === undefined)
+  ) context.addIssue({
+    code: 'custom', path: ['TREASURY_BANK_RETURN_INBOX_ENDPOINT'],
+    message: 'Treasury 回盘 Inbox 端点与凭据必须成套配置',
+  });
+  if (
+    environment.NODE_ENV === 'production' &&
+    treasuryReturnInbox.some((value) => value === undefined)
+  ) context.addIssue({
+    code: 'custom', path: ['TREASURY_BANK_RETURN_INBOX_ENDPOINT'],
+    message: '生产环境必须完整配置 Treasury 独立回盘 Inbox',
+  });
+  if (environment.TREASURY_BANK_RETURN_INBOX_ENDPOINT !== undefined) {
+    const endpoint = new URL(environment.TREASURY_BANK_RETURN_INBOX_ENDPOINT);
+    const forbiddenOrigins = [
+      issuer.origin,
+      environment.TREASURY_WORM_ARCHIVE_ENDPOINT === undefined
+        ? null : new URL(environment.TREASURY_WORM_ARCHIVE_ENDPOINT).origin,
+      environment.TREASURY_BANK_SUBMISSION_ENDPOINT === undefined
+        ? null : new URL(environment.TREASURY_BANK_SUBMISSION_ENDPOINT).origin,
+    ];
+    if (
+      endpoint.protocol !== 'https:' || endpoint.username !== '' || endpoint.password !== '' ||
+      endpoint.search !== '' || endpoint.hash !== '' ||
+      (endpoint.port !== '' && endpoint.port !== '443') || forbiddenOrigins.includes(endpoint.origin)
+    ) context.addIssue({
+      code: 'custom', path: ['TREASURY_BANK_RETURN_INBOX_ENDPOINT'],
+      message: 'Treasury 回盘 Inbox 必须为独立权限域 HTTPS，且禁止凭据、查询、fragment 和非标准端口',
+    });
+  }
+  if (
+    environment.TREASURY_BANK_RETURN_INBOX_BEARER_TOKEN !== undefined &&
+    [environment.TREASURY_WORM_ARCHIVE_BEARER_TOKEN,
+      environment.TREASURY_BANK_SUBMISSION_BEARER_TOKEN]
+      .includes(environment.TREASURY_BANK_RETURN_INBOX_BEARER_TOKEN)
+  ) context.addIssue({
+    code: 'custom', path: ['TREASURY_BANK_RETURN_INBOX_BEARER_TOKEN'],
+    message: 'Treasury 回盘 Inbox 不得复用 WORM 或银行提交凭据',
+  });
   if (environment.NODE_ENV === 'production' && environment.ESIGN_WEBHOOK_ENCRYPTION_KEYS === undefined) {
     context.addIssue({
       code: 'custom',

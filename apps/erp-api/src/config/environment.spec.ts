@@ -35,6 +35,7 @@ describe('validateEnvironment', () => {
     expect(environment.TREASURY_WORM_ARCHIVE_ENDPOINT).toBeUndefined();
     expect(environment.TREASURY_WORM_RETENTION_DAYS).toBe(3_650);
     expect(environment.TREASURY_BANK_SUBMISSION_ENDPOINT).toBeUndefined();
+    expect(environment.TREASURY_BANK_RETURN_INBOX_ENDPOINT).toBeUndefined();
     expect(environment.METRICS_BEARER_TOKEN).toBeUndefined();
     expect(environment.ESIGN_MALWARE_SCAN_ENDPOINT).toBeUndefined();
     expect(environment.ESIGN_WORM_ARCHIVE_ENDPOINT).toBeUndefined();
@@ -279,6 +280,40 @@ describe('validateEnvironment', () => {
       ...base, TREASURY_BANK_SUBMISSION_ENDPOINT: endpoint,
       TREASURY_BANK_SUBMISSION_BEARER_TOKEN: 'bank-gateway-token-at-least-32-characters',
     })).toThrow('独立权限域 HTTPS');
+  });
+
+  it('Treasury 回盘 Inbox 必须独立于 ERP、WORM 和提交网关', () => {
+    const base = {
+      NODE_ENV: 'test', MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0', WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://erp.example.com', AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://erp.example.com/.well-known/jwks.json',
+      MCP_AUTHORIZATION_SERVER: 'https://erp.example.com',
+      MCP_ALLOWED_ORIGINS: 'https://erp.example.com',
+      TREASURY_WORM_ARCHIVE_ENDPOINT: 'https://worm.example.net/v1/objects',
+      TREASURY_WORM_ARCHIVE_BEARER_TOKEN: 'treasury-worm-token-at-least-32-characters',
+      TREASURY_BANK_SUBMISSION_ENDPOINT: 'https://submit.example.net/v1/submissions',
+      TREASURY_BANK_SUBMISSION_BEARER_TOKEN: 'bank-submit-token-at-least-32-characters',
+    };
+    expect(() => validateEnvironment({
+      ...base, TREASURY_BANK_RETURN_INBOX_ENDPOINT: 'https://inbox.example.net/v1/returns',
+    })).toThrow('必须成套配置');
+    expect(validateEnvironment({
+      ...base, TREASURY_BANK_RETURN_INBOX_ENDPOINT: 'https://inbox.example.net/v1/returns',
+      TREASURY_BANK_RETURN_INBOX_BEARER_TOKEN: 'return-inbox-token-at-least-32-characters',
+    }).TREASURY_BANK_RETURN_INBOX_ENDPOINT).toBe('https://inbox.example.net/v1/returns');
+    for (const endpoint of [
+      'https://erp.example.com/v1/returns', 'https://worm.example.net/v1/returns',
+      'https://submit.example.net/v1/returns', 'https://inbox.example.net/v1/returns?token=unsafe',
+    ]) expect(() => validateEnvironment({
+      ...base, TREASURY_BANK_RETURN_INBOX_ENDPOINT: endpoint,
+      TREASURY_BANK_RETURN_INBOX_BEARER_TOKEN: 'return-inbox-token-at-least-32-characters',
+    })).toThrow('独立权限域 HTTPS');
+    expect(() => validateEnvironment({
+      ...base, TREASURY_BANK_RETURN_INBOX_ENDPOINT: 'https://inbox.example.net/v1/returns',
+      TREASURY_BANK_RETURN_INBOX_BEARER_TOKEN: 'bank-submit-token-at-least-32-characters',
+    })).toThrow('不得复用');
   });
 
   it('生产环境具备指标凭据时仍拒绝缺失独立 WORM 配置', () => {

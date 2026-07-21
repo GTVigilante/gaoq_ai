@@ -14,7 +14,8 @@ export interface TreasuryEvent {
     | 'treasury.disbursement.prepared'
     | 'treasury.disbursement.export_approved'
     | 'treasury.disbursement.submission_requested'
-    | 'treasury.disbursement.submitted';
+    | 'treasury.disbursement.submitted'
+    | 'treasury.bank_return.applied';
   readonly tenantId: string;
   readonly aggregateId: string;
   readonly version: number;
@@ -60,6 +61,22 @@ export class TreasuryOutboxWriter {
   private assertSafeEvent(event: TreasuryEvent): void {
     const data = event.data;
     const keys = Object.keys(data).sort().join(',');
+    if (event.type === 'treasury.bank_return.applied') {
+      if (
+        keys !==
+          'duplicateCount,failedCount,failedMinor,freezeReason,lineAmountMismatchCount,malwareScanEvidenceId,objectEvidenceId,outcome,returnHash,signatureEvidenceId,successfulCount,successfulMinor,unknownCount' ||
+        !['reconciling', 'frozen'].includes(String(data['outcome'])) ||
+        typeof data['returnHash'] !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(data['returnHash']) ||
+        !safeId(data['objectEvidenceId']) || !safeId(data['signatureEvidenceId']) ||
+        !safeId(data['malwareScanEvidenceId']) ||
+        !nonnegativeInteger(data['successfulCount']) || !nonnegativeInteger(data['failedCount']) ||
+        !nonnegativeInteger(data['unknownCount']) || !nonnegativeInteger(data['duplicateCount']) ||
+        !nonnegativeInteger(data['lineAmountMismatchCount']) ||
+        !nonnegativeInteger(data['successfulMinor']) || !nonnegativeInteger(data['failedMinor']) ||
+        typeof data['freezeReason'] !== 'string'
+      ) throw new Error('TREASURY_OUTBOX_DATA_INVALID');
+      return;
+    }
     if (event.type === 'treasury.bank_account.attested') {
       if (
         keys !== 'ownerId,ownerType,status,version' ||
@@ -120,4 +137,8 @@ function safeId(value: string | number | null | undefined): boolean {
 
 function positiveInteger(value: string | number | null | undefined): boolean {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+}
+
+function nonnegativeInteger(value: string | number | null | undefined): boolean {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }

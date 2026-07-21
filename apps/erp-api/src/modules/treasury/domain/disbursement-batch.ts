@@ -113,10 +113,12 @@ export function applyBankReturn(
   command: BaseCommand & {
     readonly returnHash: string;
     readonly signatureVerified: boolean;
+    readonly fileProtectionPassed: boolean;
     readonly successfulCount: number;
     readonly failedCount: number;
     readonly unknownCount: number;
     readonly duplicateCount: number;
+    readonly lineAmountMismatchCount: number;
     readonly successfulMinor: number;
     readonly failedMinor: number;
   },
@@ -126,6 +128,7 @@ export function applyBankReturn(
   assertHash(command.returnHash);
   for (const count of [
     command.successfulCount, command.failedCount, command.unknownCount, command.duplicateCount,
+    command.lineAmountMismatchCount,
   ]) if (!Number.isSafeInteger(count) || count < 0) {
     invalid('TREASURY_RETURN_COUNT_INVALID', '银行回盘行数非法');
   }
@@ -133,11 +136,14 @@ export function applyBankReturn(
   assertAmount(command.failedMinor, true);
   const countBalanced = command.successfulCount + command.failedCount === batch.lineCount;
   const amountBalanced = safeSum(command.successfulMinor, command.failedMinor) === batch.totalMinor;
-  const clean = command.signatureVerified && command.unknownCount === 0 &&
-    command.duplicateCount === 0 && countBalanced && amountBalanced && command.failedCount === 0;
-  const reason = !command.signatureVerified ? 'SIGNATURE_INVALID'
+  const clean = command.fileProtectionPassed && command.signatureVerified && command.unknownCount === 0 &&
+    command.duplicateCount === 0 && command.lineAmountMismatchCount === 0 &&
+    countBalanced && amountBalanced && command.failedCount === 0;
+  const reason = !command.fileProtectionPassed ? 'MALWARE_DETECTED'
+    : !command.signatureVerified ? 'SIGNATURE_INVALID'
     : command.unknownCount > 0 ? 'UNKNOWN_LINE'
     : command.duplicateCount > 0 ? 'DUPLICATE_LINE'
+    : command.lineAmountMismatchCount > 0 ? 'LINE_AMOUNT_MISMATCH'
     : !countBalanced ? 'COUNT_MISMATCH'
     : !amountBalanced ? 'AMOUNT_MISMATCH'
     : command.failedCount > 0 ? 'PARTIAL_SUCCESS'

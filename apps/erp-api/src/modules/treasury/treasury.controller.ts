@@ -8,12 +8,17 @@ import {
   type TreasuryBankAccountSummary,
 } from './application/treasury-bank-account.service.js';
 import {
+  TreasuryBankReturnService,
+  type TreasuryBankReturnSummary,
+} from './application/treasury-bank-return.service.js';
+import {
   TreasuryDisbursementService,
   type TreasuryDisbursementSummary,
 } from './application/treasury-disbursement.service.js';
 import {
   AttestTreasuryBankAccountDto,
   ApproveTreasuryExportDto,
+  IngestTreasuryBankReturnDto,
   PrepareTreasuryDisbursementDto,
   SubmitTreasuryDisbursementDto,
 } from './application/treasury.dto.js';
@@ -22,9 +27,34 @@ import {
 export class TreasuryController {
   constructor(
     private readonly accounts: TreasuryBankAccountService,
+    private readonly bankReturns: TreasuryBankReturnService,
     private readonly disbursements: TreasuryDisbursementService,
     private readonly audit: AuditService,
   ) {}
+
+  /** R3：只接收 Inbox 规范清单并逐行复核；原始回盘与冻结解除不向 MCP 暴露。 */
+  @Post('disbursements/:id/returns')
+  @RequiredScopes('erp:treasury:return:ingest')
+  async ingestBankReturn(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Body() body: IngestTreasuryBankReturnDto,
+  ): Promise<TreasuryBankReturnSummary> {
+    const result = await this.bankReturns.ingest(this.key(key), id, body.expectedVersion);
+    await this.audit.record({
+      action: 'treasury.bank_return.ingest', resourceType: 'treasury_bank_return',
+      resourceId: result.id, riskLevel: 'R3', outcome: 'success', metadata: {
+        batchId: result.batchId, status: result.status, batchVersion: result.batchVersion,
+        returnHash: result.returnHash, successfulCount: result.successfulCount,
+        failedCount: result.failedCount, unknownCount: result.unknownCount,
+        duplicateCount: result.duplicateCount,
+        lineAmountMismatchCount: result.lineAmountMismatchCount,
+        successfulMinor: result.successfulMinor, failedMinor: result.failedMinor,
+        freezeReason: result.freezeReason ?? 'none',
+      },
+    });
+    return result;
+  }
 
   /** R3：仅可信提交服务可调用；网关只接收 WORM 引用，MCP 永不注册。 */
   @Post('disbursements/:id/submission')

@@ -51,8 +51,9 @@ describe('代发批次状态机', () => {
     const batch = submitted();
     const returned = applyBankReturn(batch, {
       tenantId: batch.tenantId, expectedVersion: 3, returnHash: 'b'.repeat(43),
-      signatureVerified: true, successfulCount: 2, failedCount: 0,
+      signatureVerified: true, fileProtectionPassed: true, successfulCount: 2, failedCount: 0,
       unknownCount: 0, duplicateCount: 0, successfulMinor: 1_839_600, failedMinor: 0,
+      lineAmountMismatchCount: 0,
     }, now);
     expect(returned).toMatchObject({ status: 'reconciling', freezeReason: null, version: 4 });
   });
@@ -61,14 +62,17 @@ describe('代发批次状态机', () => {
     ['部分成功', { successfulCount: 1, failedCount: 1, successfulMinor: 1_000_000, failedMinor: 839_600 }],
     ['未知行', { unknownCount: 1 }],
     ['重复行', { duplicateCount: 1 }],
+    ['行金额错位', { lineAmountMismatchCount: 1 }],
     ['签名失败', { signatureVerified: false }],
+    ['恶意文件', { fileProtectionPassed: false }],
     ['总额不守恒', { successfulMinor: 1_839_599 }],
   ])('%s 回盘冻结批次', (_label, changes) => {
     const batch = submitted();
     const returned = applyBankReturn(batch, {
       tenantId: batch.tenantId, expectedVersion: 3, returnHash: 'b'.repeat(43),
-      signatureVerified: true, successfulCount: 2, failedCount: 0,
+      signatureVerified: true, fileProtectionPassed: true, successfulCount: 2, failedCount: 0,
       unknownCount: 0, duplicateCount: 0, successfulMinor: 1_839_600, failedMinor: 0,
+      lineAmountMismatchCount: 0,
       ...changes,
     }, now);
     expect(returned.status).toBe('frozen');

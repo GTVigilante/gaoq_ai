@@ -115,4 +115,29 @@ describe('TreasuryOutboxWriter', () => {
       ...submitted, data: { ...submitted.data, objectRef: 'worm/private-object' },
     }, session))).rejects.toThrow('TREASURY_OUTBOX_DATA_INVALID');
   });
+
+  it('银行回盘事件只公开证据引用与批次汇总', async () => {
+    const context = new TenantContextService();
+    const create = vi.fn().mockResolvedValue([]);
+    const writer = new TreasuryOutboxWriter(context, { create } as never);
+    const returned: TreasuryEvent = {
+      type: 'treasury.bank_return.applied', tenantId: 'tenant-001',
+      aggregateId: 'batch-001', version: 5, occurredAt: '2026-07-22T10:03:00.000Z',
+      data: {
+        returnHash: 'r'.repeat(43), outcome: 'frozen', freezeReason: 'PARTIAL_SUCCESS',
+        successfulCount: 1, failedCount: 1, unknownCount: 0, duplicateCount: 0,
+        lineAmountMismatchCount: 0, successfulMinor: 839_500, failedMinor: 1_000_100,
+        objectEvidenceId: 'return-object-001', signatureEvidenceId: 'signature-001',
+        malwareScanEvidenceId: 'scan-001',
+      },
+    };
+    await context.run({ tenant, actor }, () => writer.append(returned, session));
+    const calls = JSON.stringify(create.mock.calls);
+    expect(calls).toContain('"freezeReason":"PARTIAL_SUCCESS"');
+    expect(calls).toContain('"malwareScanEvidenceId":"scan-001"');
+    expect(calls).not.toMatch(/instruction|bankLineReference|account|employee/u);
+    await expect(context.run({ tenant, actor }, () => writer.append({
+      ...returned, data: { ...returned.data, instructionId: 'instruction-001' },
+    }, session))).rejects.toThrow('TREASURY_OUTBOX_DATA_INVALID');
+  });
 });
