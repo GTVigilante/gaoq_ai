@@ -77,6 +77,22 @@ function trustedContext(scopes: readonly string[] = [], actorId = 'actor-001'): 
   } as unknown as TenantContextService;
 }
 
+function opWorkerContext(scopes: readonly string[] = ['erp:approval:op:ingest']): TenantContextService {
+  const trusted = {
+    tenant: { tenantId: 'tenant-001', source: 'service_identity' as const },
+    actor: {
+      actorType: 'system_job' as const,
+      actorId: 'system:op-approval-bridge', tenantId: 'tenant-001',
+      roleCodes: ['INTEGRATION_WORKER'], scopes, departmentIds: [], traceId: 'trace-op-001',
+    },
+  };
+  return {
+    getRequired: () => trusted,
+    getTenantRequired: () => trusted.tenant,
+    getActorRequired: () => trusted.actor,
+  } as unknown as TenantContextService;
+}
+
 function idempotency(): IdempotencyService {
   return {
     execute: async <T extends Record<string, unknown>>(
@@ -129,6 +145,45 @@ function service(
 }
 
 describe('ApprovalApplicationService', () => {
+  it('OP Worker 只能以 ERP 员工主体和 ERP 路由模板原子创建并提交审批', async () => {
+    const deps = dependencies({
+      profiles: {
+        findActorIdByEmployee: vi.fn().mockResolvedValue('actor-op-001'),
+        resolveActive: vi.fn().mockResolvedValue({
+          actorId: 'actor-op-001', employeeId: 'employee-op-001',
+        }),
+      },
+    });
+    const result = await service(deps, opWorkerContext()).createAndSubmitFromOp(
+      'opapp:test-001', {
+        instanceId: '01K00000000000000000000001',
+        templateCode: 'EXPENSE', title: 'OP 费用申请',
+        formData: { amount: 123_45 }, initiatorEmployeeId: 'employee-op-001',
+        sourceDocumentType: 'expense_claim', sourceDocumentId: 'expense-001',
+      },
+    );
+    expect(result.instance).toMatchObject({ status: 'running' });
+    expect(deps.instances.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ initiatorId: 'actor-op-001', status: 'running' }), SESSION,
+    );
+    expect(deps.actions.append).toHaveBeenCalledOnce();
+    expect(deps.outbox.append).toHaveBeenCalledTimes(2);
+    expect(deps.notifications.append).toHaveBeenCalledOnce();
+  });
+
+  it('普通用户即使伪造 OP Scope 也不能调用 OP 审批接入方法', async () => {
+    const deps = dependencies();
+    await expect(service(
+      deps, trustedContext(['erp:approval:op:ingest']),
+    ).createAndSubmitFromOp('opapp:test-002', {
+      instanceId: '01K00000000000000000000002',
+      templateCode: 'EXPENSE', title: '越权申请', formData: { amount: 100 },
+      initiatorEmployeeId: 'employee-001', sourceDocumentType: 'expense_claim',
+      sourceDocumentId: 'expense-002',
+    })).rejects.toBeInstanceOf(ForbiddenException);
+    expect(deps.instances.insert).not.toHaveBeenCalled();
+  });
+
   it('招聘集成只能用专用 Scope 读取状态摘要', async () => {
     const deps = dependencies();
     const instance = draftInstance('recruitment_hc');

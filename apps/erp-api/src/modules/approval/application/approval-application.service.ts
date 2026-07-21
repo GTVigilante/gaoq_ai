@@ -122,6 +122,16 @@ export interface PayrollPeriodApprovalDecision {
   readonly formDataHash: string;
 }
 
+export interface OpApprovalSubmissionInput {
+  readonly instanceId: string;
+  readonly templateCode: string;
+  readonly title: string;
+  readonly formData: ApprovalFormData;
+  readonly initiatorEmployeeId: string;
+  readonly sourceDocumentType: string;
+  readonly sourceDocumentId: string;
+}
+
 /** 审批应用服务：唯一事务编排入口，REST、Worker 与 MCP 必须复用本服务。 */
 @Injectable()
 export class ApprovalApplicationService {
@@ -232,6 +242,63 @@ export class ApprovalApplicationService {
         await this.instances.insert(instance, session);
         await this.outbox.append(buildApprovalInstanceCreatedEvent(instance), session);
         return { instance: instanceSummary(instance) };
+      },
+    ));
+  }
+
+  /** OP 可信 Worker 专用：按 ERP 路由选定模板，以 ERP 员工主体原子创建并提交审批。 */
+  async createAndSubmitFromOp(
+    key: string,
+    input: OpApprovalSubmissionInput,
+  ): Promise<{ readonly instance: ApprovalInstanceSummary }> {
+    const trusted = this.context.getRequired();
+    if (
+      trusted.actor.actorType !== 'system_job' ||
+      !trusted.actor.scopes.includes('erp:approval:op:ingest')
+    ) throw new ForbiddenException({
+      code: 'APPROVAL_OP_INGEST_DENIED', message: 'OP 审批接入只允许可信后台任务',
+    });
+    if (!ULID_PATTERN.test(input.instanceId)) throw new BadRequestException({
+      code: 'APPROVAL_OP_INSTANCE_ID_INVALID', message: 'OP 审批实例标识无效',
+    });
+    return this.run(async () => this.idempotency.execute(
+      'approval.instance.op_ingest', key, input, async (session) => {
+        const tenantId = trusted.tenant.tenantId;
+        const initiatorId = await this.profiles.findActorIdByEmployee(
+          tenantId, input.initiatorEmployeeId, session,
+        );
+        if (initiatorId === null) throw new BadRequestException({
+          code: 'APPROVAL_OP_INITIATOR_NOT_FOUND', message: 'OP 审批发起员工未绑定有效 ERP 主体',
+        });
+        const profile = await this.profiles.resolveActive(tenantId, initiatorId, session);
+        if (profile === null || profile.employeeId !== input.initiatorEmployeeId) {
+          throw new BadRequestException({
+            code: 'APPROVAL_OP_INITIATOR_INACTIVE', message: 'OP 审批发起员工主体已停用',
+          });
+        }
+        const template = await this.templates.findPublishedByCode(input.templateCode, session);
+        if (template === null) throw new NotFoundException({
+          code: 'APPROVAL_TEMPLATE_NOT_FOUND', message: '未找到 OP 路由指定的已发布审批模板',
+        });
+        const now = new Date();
+        const draft = createApprovalInstanceDraft({
+          id: input.instanceId, tenantId, title: input.title,
+          initiatorId, template, formData: input.formData,
+        }, now);
+        const resolvedNodes = await this.resolvers.resolve(
+          draft.templateSnapshot, initiatorId, draft.formData, session,
+        );
+        const submitted = submitApprovalInstance(draft, {
+          tenantId, expectedVersion: draft.version, actorId: initiatorId, resolvedNodes,
+        }, now);
+        await this.instances.insert(submitted.instance, session);
+        await this.actions.append(submitted.instance, submitted.action, session);
+        await this.outbox.append(buildApprovalInstanceCreatedEvent(draft), session);
+        await this.outbox.append(
+          buildApprovalActionEvent(submitted.instance, submitted.action), session,
+        );
+        await this.notifications.append(submitted.instance, submitted.action, session);
+        return { instance: instanceSummary(submitted.instance) };
       },
     ));
   }

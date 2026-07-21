@@ -22,6 +22,7 @@ import type { PayrollTaxFilingService } from '../payroll/application/payroll-tax
 import type { PayrollReconciliationService } from '../payroll/application/payroll-reconciliation.service.js';
 import type { PayrollShadowService } from '../payroll/application/payroll-shadow.service.js';
 import type { OpOperatingSummaryService } from '../op/application/op-operating-summary.service.js';
+import type { OpApprovalBridgeService } from '../op/application/op-approval-bridge.service.js';
 import { McpToolService } from './mcp-tool.service.js';
 import type { McpConfirmationService } from './mcp-confirmation.service.js';
 
@@ -88,6 +89,7 @@ function assemble() {
   const reconciliations = { getStatus: vi.fn() };
   const shadows = { getCycle: vi.fn(), getReadiness: vi.fn() };
   const opSummaries = { getLatest: vi.fn() };
+  const opApprovalBridges = { get: vi.fn() };
   const service = new McpToolService(
     context,
     audit as unknown as AuditService,
@@ -107,13 +109,14 @@ function assemble() {
     reconciliations as unknown as PayrollReconciliationService,
     shadows as unknown as PayrollShadowService,
     opSummaries as unknown as OpOperatingSummaryService,
+    opApprovalBridges as unknown as OpApprovalBridgeService,
     confirmations as unknown as McpConfirmationService,
   );
   return {
     context, audit, organization, approvals, recruitmentApplications,
     recruitmentInterviews, recruitmentManagement, recruitmentOffers, confirmations, service,
     onboarding, knowledge, care, attendance, payroll, payslips, taxFilings, reconciliations, shadows,
-    opSummaries,
+    opSummaries, opApprovalBridges,
   };
 }
 
@@ -662,5 +665,26 @@ describe('McpToolService', () => {
     expect(result.structuredContent).toMatchObject({
       operatingSummary: { summaryDate: '2026-07-22', revision: 2 },
     });
+  });
+
+  it('OP 审批桥 Tool 只读复用应用服务且不返回表单正文', async () => {
+    const store = assemble();
+    store.opApprovalBridges.get.mockResolvedValue({
+      externalEventId: 'op-approval-event-001', sourceDocumentType: 'purchase_order',
+      sourceDocumentId: 'po-001', approvalInstanceId: '01J8ZQK7V0A2M4N6P8R0T2W4D2',
+      templateCode: 'PURCHASE_ORDER', approvalStatus: 'running', approvalVersion: 2,
+      completedAt: null, updatedAt: '2026-07-22T08:00:01.000Z',
+    });
+    const denied = await store.service.getOpApprovalBridge('op-approval-event-001', extra([]));
+    expect(denied.isError).toBe(true);
+    expect(store.opApprovalBridges.get).not.toHaveBeenCalled();
+    const result = await store.service.getOpApprovalBridge(
+      'op-approval-event-001', extra(['erp:op:approval_bridge:read']),
+    );
+    expect(store.opApprovalBridges.get).toHaveBeenCalledWith('op-approval-event-001');
+    expect(result.structuredContent).toMatchObject({
+      approvalBridge: { approvalStatus: 'running', approvalVersion: 2 },
+    });
+    expect(JSON.stringify(result)).not.toMatch(/formData|payloadCiphertext/iu);
   });
 });

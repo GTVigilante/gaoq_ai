@@ -124,6 +124,11 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(64).max(16_384).optional(),
   ),
+  /** OP 审批原始表单专用 AES-256-GCM 密钥环；不得复用经营摘要密钥。 */
+  OP_APPROVAL_WEBHOOK_ENCRYPTION_KEYS: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(64).max(16_384).optional(),
+  ),
   /** OP 组织下发 API 根地址；只允许标准 HTTPS 且不得携带凭据、query 或 fragment。 */
   OP_API_BASE_URL: z.preprocess(
     (value) => value === '' ? undefined : value,
@@ -461,6 +466,25 @@ const environmentSchema = z.object({
       code: 'custom',
       path: ['OP_WEBHOOK_ENCRYPTION_KEYS'],
       message: '生产环境必须由 Secret Manager 注入 OP Webhook 独立加密密钥环',
+    });
+  }
+  if (
+    environment.NODE_ENV === 'production' &&
+    environment.OP_APPROVAL_WEBHOOK_ENCRYPTION_KEYS === undefined
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['OP_APPROVAL_WEBHOOK_ENCRYPTION_KEYS'],
+      message: '生产环境必须由 Secret Manager 注入 OP 审批 Webhook 独立加密密钥环',
+    });
+  }
+  if (
+    environment.OP_WEBHOOK_ENCRYPTION_KEYS !== undefined &&
+    environment.OP_WEBHOOK_ENCRYPTION_KEYS === environment.OP_APPROVAL_WEBHOOK_ENCRYPTION_KEYS
+  ) {
+    context.addIssue({
+      code: 'custom', path: ['OP_APPROVAL_WEBHOOK_ENCRYPTION_KEYS'],
+      message: 'OP 审批 Webhook 不得复用经营摘要加密密钥环',
     });
   }
   if (environment.NODE_ENV === 'production' && environment.OP_API_BASE_URL === undefined) {

@@ -19,6 +19,10 @@ import { AttendanceProviderScheduler } from './attendance-provider.scheduler.js'
 import { OpModule } from '../op/op.module.js';
 import { OpOperatingSummaryProcessor } from '../op/op-operating-summary.processor.js';
 import { OP_OPERATING_SUMMARY_QUEUE } from '../op/op-operating-summary.queue.js';
+import { OpApprovalProcessor } from '../op/op-approval.processor.js';
+import { OP_APPROVAL_BRIDGE_QUEUE } from '../op/op-approval.queue.js';
+import { OpApprovalScheduler } from '../op/op-approval.scheduler.js';
+import { OpApprovalQueueMetricsPoller } from '../op/op-approval-queue-metrics.poller.js';
 
 /** 只在独立 Worker 进程装配队列消费者，API 进程不消费后台任务。 */
 @Module({
@@ -29,6 +33,7 @@ import { OP_OPERATING_SUMMARY_QUEUE } from '../op/op-operating-summary.queue.js'
     BullModule.registerQueue({ name: RECRUITMENT_CHANNEL_QUEUE }),
     BullModule.registerQueue({ name: ATTENDANCE_PROVIDER_QUEUE }),
     BullModule.registerQueue({ name: OP_OPERATING_SUMMARY_QUEUE }),
+    BullModule.registerQueue({ name: OP_APPROVAL_BRIDGE_QUEUE }),
     OpModule,
   ],
   providers: [
@@ -37,6 +42,7 @@ import { OP_OPERATING_SUMMARY_QUEUE } from '../op/op-operating-summary.queue.js'
     RecruitmentChannelProcessor, RecruitmentChannelScheduler,
     AttendanceProviderProcessor, AttendanceProviderScheduler,
     OpOperatingSummaryProcessor,
+    OpApprovalProcessor, OpApprovalScheduler, OpApprovalQueueMetricsPoller,
   ],
 })
 export class IntegrationWorkerModule {}

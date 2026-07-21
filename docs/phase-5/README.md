@@ -8,7 +8,8 @@ Phase 5 在已验收的组织、审批、招聘入职、考勤薪酬底座之上
    - [OP 索引迁移运行手册](./01-op-index-migration-runbook.md)
 2. [OP 组织与人员下发管线](./02-op-organization-delivery-contract.md)（代码已交付，OP 沙箱联调待验收）
 3. [OP 身份联合](./03-op-identity-federation-contract.md)（运行时代码已交付，初始绑定迁移与实体 UAT 待验收）
-4. OP 审批桥（OP 单据→ERP 审批→结果回推，待立项契约文档）
+4. [OP 审批桥契约](./04-op-approval-bridge-contract.md)（运行时代码已交付，OP 沙箱联调待验收）
+   - [OP 审批桥索引迁移运行手册](./05-op-approval-index-migration-runbook.md)
 5. 移动端（待立项契约文档）
 6. 管理驾驶舱与受控分析导出（待立项契约文档）
 7. 全量迁移工具与生产加固（断连演练、性能、容灾、切换预验收，待立项契约文档）

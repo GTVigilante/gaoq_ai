@@ -329,6 +329,13 @@ const opOperatingSummarySchema = z.object({
   occurredAt: z.string().datetime(),
   receivedAt: z.string().datetime(),
 });
+const opApprovalBridgeSchema = z.object({
+  externalEventId: z.string(), sourceDocumentType: z.string(), sourceDocumentId: z.string(),
+  approvalInstanceId: recruitmentIdSchema, templateCode: z.string(),
+  approvalStatus: z.enum(['processing', 'running', 'approved', 'rejected', 'withdrawn']),
+  approvalVersion: z.number().int().nonnegative(), completedAt: z.string().nullable(),
+  updatedAt: z.string(),
+});
 
 @Injectable()
 export class McpRuntimeService {
@@ -728,6 +735,26 @@ export class McpRuntimeService {
       },
     );
 
+    server.registerResource(
+      'op-approval-bridge',
+      new ResourceTemplate('erp://op/approval-bridges/{externalEventId}', { list: undefined }),
+      {
+        title: 'OP 来源审批状态',
+        description: '只返回 OP 来源单据与 ERP 审批的控制关联和状态，不返回表单正文。',
+        mimeType: 'application/json',
+      },
+      async (uri, { externalEventId }, extra) => {
+        const result = await this.tools.getOpApprovalBridge(
+          requiredExternalEventId(externalEventId), extra,
+        );
+        if (result.isError === true) throw new Error('无权读取 OP 审批关联');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
     server.registerPrompt(
       'approval_submission_guide',
       {
@@ -744,6 +771,21 @@ export class McpRuntimeService {
           },
         }],
       }),
+    );
+
+    server.registerPrompt(
+      'op_approval_bridge_review_guide',
+      {
+        title: 'OP 来源审批状态核对清单',
+        description: '指导 AI 只核对来源单据、审批状态和回推控制信息，不读取表单或执行审批。',
+        argsSchema: {
+          externalEventId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/),
+        },
+      },
+      ({ externalEventId }) => ({ messages: [{ role: 'user', content: {
+        type: 'text',
+        text: `请读取 OP 审批事件 ${externalEventId} 的桥接状态，说明 ERP 审批实例、当前状态和版本。不要读取或复述表单正文，不要代替审批人决策，也不要触发重试或回推。`,
+      } }] }),
     );
 
     server.registerPrompt(
@@ -1275,6 +1317,23 @@ export class McpRuntimeService {
     );
 
     server.registerTool(
+      'op_approval_bridge_get',
+      {
+        title: '查询 OP 来源审批状态',
+        description: '读取来源单据、ERP 审批实例、状态与版本，不返回表单正文。风险等级 R0。',
+        inputSchema: {
+          externalEventId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/),
+        },
+        outputSchema: z.object({ approvalBridge: opApprovalBridgeSchema }),
+        annotations: {
+          readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+        },
+      },
+      async ({ externalEventId }, extra) =>
+        this.tools.getOpApprovalBridge(externalEventId, extra),
+    );
+
+    server.registerTool(
       'attendance_correction_prepare',
       {
         title: '准备本人考勤修订申请',
@@ -1423,6 +1482,13 @@ function requiredMonth(value: string | string[] | undefined): string {
 function requiredDate(value: string | string[] | undefined): string {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     throw new Error('MCP_OP_SUMMARY_DATE_INVALID');
+  }
+  return value;
+}
+
+function requiredExternalEventId(value: string | string[] | undefined): string {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/.test(value)) {
+    throw new Error('MCP_OP_APPROVAL_EVENT_ID_INVALID');
   }
   return value;
 }

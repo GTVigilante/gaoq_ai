@@ -175,6 +175,20 @@ describe('MCP Streamable HTTP 协议集成', () => {
           receivedAt: '2026-07-22T08:00:01.000Z',
         } },
       }),
+      getOpApprovalBridge: vi.fn().mockResolvedValue({
+        content: [{ type: 'text' as const, text: JSON.stringify({ approvalBridge: {
+          externalEventId: 'op-approval-event-001', sourceDocumentType: 'purchase_order',
+          sourceDocumentId: 'po-001', approvalInstanceId: '01J8ZQK7V0A2M4N6P8R0T2W4D2',
+          templateCode: 'PURCHASE_ORDER', approvalStatus: 'running', approvalVersion: 2,
+          completedAt: null, updatedAt: '2026-07-22T08:00:01.000Z',
+        } }) }],
+        structuredContent: { approvalBridge: {
+          externalEventId: 'op-approval-event-001', sourceDocumentType: 'purchase_order',
+          sourceDocumentId: 'po-001', approvalInstanceId: '01J8ZQK7V0A2M4N6P8R0T2W4D2',
+          templateCode: 'PURCHASE_ORDER', approvalStatus: 'running', approvalVersion: 2,
+          completedAt: null, updatedAt: '2026-07-22T08:00:01.000Z',
+        } },
+      }),
       prepareAttendanceCorrectionRequest: vi.fn(),
       executeAttendanceCorrectionRequest: vi.fn(),
       prepareRecruitmentRequisitionSubmit: vi.fn(),
@@ -281,6 +295,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       'payroll_shadow_cycle_get',
       'payroll_cutover_readiness_get',
       'op_operating_summary_get',
+      'op_approval_bridge_get',
       'attendance_correction_prepare',
       'attendance_correction_execute',
       'recruitment_requisition_submit_prepare',
@@ -311,6 +326,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ uriTemplate: 'erp://payroll/shadow-cycles/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://payroll/cutover-readiness/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://op/operating-summaries/{date}' }),
+      expect.objectContaining({ uriTemplate: 'erp://op/approval-bridges/{externalEventId}' }),
     ]));
     const prompts = await client.listPrompts();
     expect(prompts.prompts).toEqual(expect.arrayContaining([
@@ -327,6 +343,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ name: 'payroll_shadow_cycle_review_guide' }),
       expect.objectContaining({ name: 'payroll_cutover_readiness_review_guide' }),
       expect.objectContaining({ name: 'op_operating_summary_review_guide' }),
+      expect.objectContaining({ name: 'op_approval_bridge_review_guide' }),
     ]));
 
     const result = await client.callTool({ name: 'get_org_chart', arguments: {} });
@@ -408,5 +425,19 @@ describe('MCP Streamable HTTP 协议集成', () => {
       /reasonCode|separationType|approvalInstanceId|EvidenceId|execution/iu,
     );
     expect(tools.getCareCase).toHaveBeenCalledTimes(2);
+
+    const bridgeResult = await client.callTool({
+      name: 'op_approval_bridge_get', arguments: { externalEventId: 'approval-event-001' },
+    });
+    expect(bridgeResult.structuredContent).toMatchObject({
+      approvalBridge: { approvalStatus: 'running', approvalVersion: 2 },
+    });
+    const bridgeResource = await client.readResource({
+      uri: 'erp://op/approval-bridges/approval-event-001',
+    });
+    expect(JSON.stringify([bridgeResult, bridgeResource])).not.toMatch(
+      /formData|payloadCiphertext|comment|credential/iu,
+    );
+    expect(tools.getOpApprovalBridge).toHaveBeenCalledTimes(2);
   });
 });

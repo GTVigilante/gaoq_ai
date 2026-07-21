@@ -24,6 +24,7 @@ import { PayrollTaxFilingService } from '../payroll/application/payroll-tax-fili
 import { PayrollReconciliationService } from '../payroll/application/payroll-reconciliation.service.js';
 import { PayrollShadowService } from '../payroll/application/payroll-shadow.service.js';
 import { OpOperatingSummaryService } from '../op/application/op-operating-summary.service.js';
+import { OpApprovalBridgeService } from '../op/application/op-approval-bridge.service.js';
 import { parseMcpIdentity, type McpIdentity } from './mcp-auth-context.js';
 import {
   McpConfirmationService,
@@ -70,6 +71,7 @@ export class McpToolService {
     private readonly reconciliations: PayrollReconciliationService,
     private readonly shadows: PayrollShadowService,
     private readonly opSummaries: OpOperatingSummaryService,
+    private readonly opApprovalBridges: OpApprovalBridgeService,
     private readonly confirmations: McpConfirmationService,
   ) {}
 
@@ -264,6 +266,23 @@ export class McpToolService {
         payloadHash: operatingSummary.payloadHash,
       });
       return structuredResult({ operatingSummary });
+    });
+  }
+
+  async getOpApprovalBridge(externalEventId: string, extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:op:approval_bridge:read')) {
+        await this.auditTool(identity, 'op_approval_bridge_get', 'R0', 'denied');
+        return scopeError('erp:op:approval_bridge:read');
+      }
+      const approvalBridge = await this.opApprovalBridges.get(externalEventId);
+      await this.auditTool(identity, 'op_approval_bridge_get', 'R0', 'success', {
+        externalEventId: approvalBridge.externalEventId,
+        approvalStatus: approvalBridge.approvalStatus,
+        approvalVersion: approvalBridge.approvalVersion,
+      });
+      return structuredResult({ approvalBridge });
     });
   }
 
