@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { getPasskeyAssertion } from '../../webauthn-client';
 
 interface ConfirmationView {
   readonly operationId: string;
@@ -61,6 +62,35 @@ export function McpConfirmationClient({ operationId }: { readonly operationId: s
     setStatus('submitting');
     setMessage('正在创建一次性确认凭据…');
     try {
+      if (view?.riskLevel === 'R2') {
+        const optionsResponse = await fetch(
+          `${API_ORIGIN}/api/mcp/confirmations/${encodeURIComponent(operationId)}/webauthn/options`,
+          { method: 'POST', credentials: 'include', headers: { accept: 'application/json' } },
+        );
+        if (!optionsResponse.ok) throw new Error(optionsResponse.status === 404 ? 'passkey-required' : 'strong-auth');
+        const ceremony = await optionsResponse.json() as {
+          readonly ceremonyId: string;
+          readonly options: Parameters<typeof getPasskeyAssertion>[0];
+        };
+        const assertion = await getPasskeyAssertion(ceremony.options);
+        const verifyResponse = await fetch(
+          `${API_ORIGIN}/api/mcp/confirmations/${encodeURIComponent(operationId)}/webauthn/verify`,
+          {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'content-type': 'application/json', accept: 'application/json' },
+            body: JSON.stringify({ ceremonyId: ceremony.ceremonyId, response: assertion }),
+          },
+        );
+        const verified = await verifyResponse.json() as { readonly confirmationCredential?: unknown };
+        if (!verifyResponse.ok || typeof verified.confirmationCredential !== 'string') {
+          throw new Error('strong-auth');
+        }
+        setCredential(verified.confirmationCredential);
+        setStatus('confirmed');
+        setMessage('强认证与确认均已完成。请复制一次性凭据交给当前 AI 客户端。');
+        return;
+      }
       const response = await fetch(
         `${API_ORIGIN}/api/mcp/confirmations/${encodeURIComponent(operationId)}/confirm`,
         { method: 'POST', credentials: 'include', headers: { accept: 'application/json' } },
@@ -77,8 +107,10 @@ export function McpConfirmationClient({ operationId }: { readonly operationId: s
       setMessage('确认完成。请复制一次性凭据交给当前 AI 客户端；页面关闭后无法再次查看。');
     } catch (error) {
       setStatus('error');
-      setMessage(error instanceof Error && error.message === 'strong-auth'
-        ? '这是 R2 操作，必须先配置并完成强认证；系统已按安全策略拒绝降级确认。'
+      setMessage(error instanceof Error && error.message === 'passkey-required'
+        ? '尚未登记 Passkey。请先在 ERP 安全设置中登记强认证凭据。'
+        : error instanceof Error && error.message === 'strong-auth'
+        ? 'R2 强认证失败或状态已变化；系统不会降级为普通确认。'
         : '确认失败或状态已变化，请返回 AI 客户端重新准备。');
     }
   };

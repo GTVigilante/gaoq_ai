@@ -113,6 +113,16 @@ const environmentSchema = z.object({
       message: '生产环境必须由 Secret Manager 注入签名私钥与 key id',
     });
   }
+  if (
+    environment.NODE_ENV === 'production' &&
+    new URL(environment.WEB_ORIGIN).protocol !== 'https:'
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['WEB_ORIGIN'],
+      message: '生产环境 WebAuthn 依赖可信安全上下文，WEB_ORIGIN 必须使用 HTTPS',
+    });
+  }
   if (environment.NODE_ENV === 'production' && environment.AUDIT_INTEGRITY_KEYS === undefined) {
     context.addIssue({
       code: 'custom',

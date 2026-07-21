@@ -84,6 +84,21 @@ describe('validateEnvironment', () => {
     ).toThrow('生产环境必须由 Secret Manager 注入签名私钥');
   });
 
+  it('生产环境拒绝不安全的 WebAuthn Web Origin', () => {
+    expect(() => validateEnvironment({
+      NODE_ENV: 'production',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0',
+      WEB_ORIGIN: 'http://erp.example.com',
+      AUTH_ISSUER: 'https://erp.example.com',
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://erp.example.com/.well-known/jwks.json',
+      MCP_AUTHORIZATION_SERVER: 'https://erp.example.com',
+      MCP_ALLOWED_ORIGINS: 'https://erp.example.com',
+    })).toThrow('WEB_ORIGIN 必须使用 HTTPS');
+  });
+
   it('生产环境即使具备签名材料也拒绝缺失审计完整性密钥环', () => {
     expect(() => validateEnvironment({
       NODE_ENV: 'production',

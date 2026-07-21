@@ -26,6 +26,8 @@ function record(): Record<string, unknown> {
     status: 'pending_confirmation',
     confirmationCredentialHash: null,
     confirmedAt: null,
+    strongAuthMethod: null,
+    strongAuthEvidenceId: null,
     executionLockedAt: null,
     executionResult: null,
     expiresAt: new Date('2026-07-21T00:10:00.000Z'),
@@ -59,5 +61,19 @@ describe('McpConfirmationRecordSchema', () => {
       spec.operation === 1 && spec.prepareKey === 1,
     );
     expect(index?.[1]?.unique).toBe(true);
+  });
+
+  it('R2 待执行状态必须携带 WebAuthn 证据，R1 禁止伪装强认证', async () => {
+    await expect(new ConfirmationModel({
+      ...record(), riskLevel: 'R2', status: 'ready', confirmationCredentialHash: 'b'.repeat(43),
+    }).validate()).rejects.toThrow('R2 确认必须包含强认证证据');
+    await new ConfirmationModel({
+      ...record(), riskLevel: 'R2', status: 'ready', confirmationCredentialHash: 'b'.repeat(43),
+      strongAuthMethod: 'webauthn_uv', strongAuthEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4Y7',
+    }).validate();
+    await expect(new ConfirmationModel({
+      ...record(), strongAuthMethod: 'webauthn_uv',
+      strongAuthEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4Y7',
+    }).validate()).rejects.toThrow('R1 确认不能伪装强认证证据');
   });
 });

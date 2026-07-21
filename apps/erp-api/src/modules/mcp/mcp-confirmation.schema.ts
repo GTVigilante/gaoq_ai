@@ -58,6 +58,12 @@ export class McpConfirmationRecord {
   @Prop({ type: Date, default: null })
   confirmedAt!: Date | null;
 
+  @Prop({ type: String, enum: ['webauthn_uv', null], default: null })
+  strongAuthMethod!: 'webauthn_uv' | null;
+
+  @Prop({ type: String, default: null, match: ULID_PATTERN })
+  strongAuthEvidenceId!: string | null;
+
   @Prop({ type: Date, default: null })
   executionLockedAt!: Date | null;
 
@@ -79,6 +85,13 @@ McpConfirmationRecordSchema.pre('validate', function () {
   if (record.status === 'ready' && record.confirmationCredentialHash === null) {
     throw new Error('待执行确认必须包含凭据摘要');
   }
+  if (
+    record.riskLevel === 'R2' && ['ready', 'executing', 'executed'].includes(record.status) &&
+    (record.strongAuthMethod !== 'webauthn_uv' || record.strongAuthEvidenceId === null)
+  ) throw new Error('R2 确认必须包含强认证证据');
+  if (record.riskLevel === 'R1' && (
+    record.strongAuthMethod !== null || record.strongAuthEvidenceId !== null
+  )) throw new Error('R1 确认不能伪装强认证证据');
   if (record.status === 'executing' && (
     record.confirmationCredentialHash === null || record.executionLockedAt === null
   )) throw new Error('执行中确认必须包含凭据摘要和租约');

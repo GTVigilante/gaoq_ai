@@ -14,7 +14,9 @@ import { createEventId } from '@gaoq/shared-utils';
 import type { Model } from 'mongoose';
 
 import type { AppEnvironment } from '../../config/environment.js';
+import { MetricsService } from '../../core/observability/metrics.service.js';
 import type { BrowserOAuthIdentity } from '../identity/token-grant.service.js';
+import type { VerifiedStrongAuthEvidence } from '../identity/strong-auth/webauthn.service.js';
 import type { McpIdentity } from './mcp-auth-context.js';
 import {
   McpConfirmationRecord,
@@ -70,6 +72,7 @@ export class McpConfirmationService {
     @InjectModel(McpConfirmationRecord.name)
     private readonly records: Model<McpConfirmationDocument>,
     config: ConfigService<AppEnvironment, true>,
+    private readonly metrics: MetricsService,
   ) {
     this.webOrigin = config.get('WEB_ORIGIN', { infer: true });
   }
@@ -98,12 +101,15 @@ export class McpConfirmationService {
       status: 'pending_confirmation' as const,
       confirmationCredentialHash: null,
       confirmedAt: null,
+      strongAuthMethod: null,
+      strongAuthEvidenceId: null,
       executionLockedAt: null,
       executionResult: null,
       expiresAt: new Date(now.getTime() + CONFIRMATION_TTL_MS),
     };
     try {
       await this.records.create(record);
+      this.metrics.recordMcpConfirmation('prepare', riskLevel, 'success');
       return this.prepared(record);
     } catch (error) {
       if (!isDuplicateKeyError(error)) throw error;
@@ -117,6 +123,7 @@ export class McpConfirmationService {
       if (existing === null || existing.digest !== digest) throw new ConflictException({
         code: 'MCP_PREPARE_KEY_REUSED', message: '准备幂等键已被不同操作占用',
       });
+      this.metrics.recordMcpConfirmation('prepare', riskLevel, 'success');
       return this.prepared(existing);
     }
   }
@@ -141,10 +148,13 @@ export class McpConfirmationService {
   }> {
     const record = await this.requireBrowserRecord(operationId, identity);
     this.assertNotExpired(record.expiresAt);
-    if (record.riskLevel === 'R2') throw new ServiceUnavailableException({
-      code: 'MCP_R2_STRONG_AUTH_UNAVAILABLE',
-      message: 'R2 操作必须完成已验证的强认证；当前未配置强认证签发器',
-    });
+    if (record.riskLevel === 'R2') {
+      this.metrics.recordMcpConfirmation('confirm', 'R2', 'denied');
+      throw new ServiceUnavailableException({
+        code: 'MCP_R2_STRONG_AUTH_UNAVAILABLE',
+        message: 'R2 操作必须通过 WebAuthn 强认证端点确认，禁止使用普通确认路径',
+      });
+    }
     if (record.status !== 'pending_confirmation') throw new ConflictException({
       code: 'MCP_CONFIRMATION_ALREADY_DECIDED', message: '该操作已确认或不可再次确认',
     });
@@ -170,6 +180,7 @@ export class McpConfirmationService {
     if (updated === null) throw new ConflictException({
       code: 'MCP_CONFIRMATION_RACE', message: '确认状态已变化，请刷新页面',
     });
+    this.metrics.recordMcpConfirmation('confirm', record.riskLevel, 'success');
     return Object.freeze({ operationId, confirmationCredential: credential, expiresAt: updated.expiresAt.toISOString() });
   }
 
@@ -228,8 +239,69 @@ export class McpConfirmationService {
     return { operationId, command, replayResult: null };
   }
 
+  async confirmR2(
+    operationId: string,
+    identity: BrowserOAuthIdentity,
+    evidence: VerifiedStrongAuthEvidence,
+  ): Promise<{
+    readonly operationId: string;
+    readonly confirmationCredential: string;
+    readonly expiresAt: string;
+  }> {
+    const record = await this.requireBrowserRecord(operationId, identity);
+    this.assertNotExpired(record.expiresAt);
+    if (record.riskLevel !== 'R2' || record.status !== 'pending_confirmation') {
+      throw new ConflictException({
+        code: 'MCP_R2_CONFIRMATION_STATE_INVALID', message: 'R2 确认状态无效',
+      });
+    }
+    const verifiedAt = new Date(evidence.verifiedAt);
+    if (
+      evidence.method !== 'webauthn_uv' ||
+      evidence.tenantId !== identity.tenantId ||
+      evidence.actorId !== identity.actorId ||
+      evidence.sessionId !== identity.sessionId ||
+      evidence.operationId !== operationId ||
+      Number.isNaN(verifiedAt.getTime()) ||
+      Date.now() - verifiedAt.getTime() > 60_000 ||
+      verifiedAt.getTime() > Date.now() + 5_000
+    ) throw new ForbiddenException({
+      code: 'MCP_R2_EVIDENCE_INVALID', message: '强认证证据无效或不够新鲜',
+    });
+    const credential = `mcpc_${randomBytes(32).toString('base64url')}`;
+    const updated = await this.records.findOneAndUpdate(
+      {
+        operationId,
+        tenantId: identity.tenantId,
+        actorId: identity.actorId,
+        riskLevel: 'R2',
+        status: 'pending_confirmation',
+        expiresAt: { $gt: new Date() },
+      },
+      {
+        $set: {
+          status: 'ready',
+          confirmationCredentialHash: sha256(credential),
+          confirmedAt: verifiedAt,
+          strongAuthMethod: evidence.method,
+          strongAuthEvidenceId: evidence.evidenceId,
+        },
+      },
+      { returnDocument: 'after', runValidators: true },
+    ).lean().exec();
+    if (updated === null) throw new ConflictException({
+      code: 'MCP_CONFIRMATION_RACE', message: '确认状态已变化，请刷新页面',
+    });
+    this.metrics.recordMcpConfirmation('confirm', 'R2', 'success');
+    return Object.freeze({
+      operationId,
+      confirmationCredential: credential,
+      expiresAt: updated.expiresAt.toISOString(),
+    });
+  }
+
   async complete(operationId: string, result: Record<string, unknown>): Promise<void> {
-    const updated = await this.records.updateOne(
+    const updated = await this.records.findOneAndUpdate(
       { operationId, status: 'executing' },
       {
         $set: {
@@ -237,17 +309,21 @@ export class McpConfirmationService {
           confirmationCredentialHash: null, executionLockedAt: null,
         },
       },
-      { runValidators: true },
-    );
-    if (updated.modifiedCount !== 1) throw new Error('MCP 确认完成状态冲突');
+      { returnDocument: 'after', runValidators: true },
+    ).lean().exec();
+    if (updated === null) throw new Error('MCP 确认完成状态冲突');
+    this.metrics.recordMcpConfirmation('execute', updated.riskLevel, 'success');
   }
 
   async release(operationId: string): Promise<void> {
-    await this.records.updateOne(
+    const updated = await this.records.findOneAndUpdate(
       { operationId, status: 'executing' },
       { $set: { status: 'ready', executionLockedAt: null } },
-      { runValidators: true },
-    );
+      { returnDocument: 'after', runValidators: true },
+    ).lean().exec();
+    if (updated !== null) {
+      this.metrics.recordMcpConfirmation('execute', updated.riskLevel, 'failure');
+    }
   }
 
   private async requireBrowserRecord(operationId: string, identity: BrowserOAuthIdentity) {

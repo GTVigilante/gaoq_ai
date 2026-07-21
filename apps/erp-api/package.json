@@ -10,6 +10,7 @@
     "start": "node dist/main.js",
     "start:worker": "node dist/worker-main.js",
     "migrate:phase1:indexes": "node dist/migrations/phase-1-indexes.js",
+    "migrate:phase2:indexes": "node dist/migrations/phase-2-indexes.js",
     "typecheck": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && tsc --noEmit",
     "test": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && vitest run",
     "test:coverage": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && vitest run --coverage"
@@ -24,6 +25,7 @@
     "@nestjs/core": "^11.1.28",
     "@nestjs/mongoose": "^11.0.4",
     "@nestjs/platform-express": "^11.1.28",
+    "@simplewebauthn/server": "13.3.2",
     "bullmq": "^5.80.9",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",

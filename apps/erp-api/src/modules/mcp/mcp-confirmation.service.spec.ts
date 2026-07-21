@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { ConfigService } from '@nestjs/config';
-import { ServiceUnavailableException } from '@nestjs/common';
+import { ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
 import type { Model } from 'mongoose';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -10,6 +10,7 @@ import type { BrowserOAuthIdentity } from '../identity/token-grant.service.js';
 import type { McpIdentity } from './mcp-auth-context.js';
 import type { McpConfirmationDocument } from './mcp-confirmation.schema.js';
 import { McpConfirmationService } from './mcp-confirmation.service.js';
+import type { MetricsService } from '../../core/observability/metrics.service.js';
 
 const OPERATION_ID = '01J8ZQK7V0A2M4N6P8R0T2W4Y6';
 const INSTANCE_ID = '01J8ZQK7V0A2M4N6P8R0T2W4Y7';
@@ -32,6 +33,7 @@ function service(model: Record<string, unknown>): McpConfirmationService {
   return new McpConfirmationService(
     model as unknown as Model<McpConfirmationDocument>,
     new ConfigService<AppEnvironment, true>({ WEB_ORIGIN: 'https://erp.example.com' } as AppEnvironment),
+    { recordMcpConfirmation: vi.fn() } as unknown as MetricsService,
   );
 }
 
@@ -53,6 +55,8 @@ function pending(riskLevel: 'R1' | 'R2' = 'R1') {
     digest: 'a'.repeat(43),
     status: 'pending_confirmation' as const,
     confirmationCredentialHash: null,
+    strongAuthMethod: null,
+    strongAuthEvidenceId: null,
     executionResult: null,
     executionLockedAt: null,
     expiresAt: EXPIRES,
@@ -95,6 +99,75 @@ describe('McpConfirmationService', () => {
     const findOneAndUpdate = vi.fn();
     await expect(service({ findOne, findOneAndUpdate }).confirm(OPERATION_ID, browserIdentity))
       .rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(findOneAndUpdate).not.toHaveBeenCalled();
+  });
+
+  it('R2 仅接受新鲜 WebAuthn UV 证据并绑定证据标识', async () => {
+    const findOne = vi.fn().mockReturnValue(query(pending('R2')));
+    const findOneAndUpdate = vi.fn().mockImplementation(
+      (_filter: unknown, update: { $set: Record<string, unknown> }) =>
+        query({ ...pending('R2'), ...update.$set, status: 'ready', expiresAt: EXPIRES }),
+    );
+    const result = await service({ findOne, findOneAndUpdate }).confirmR2(
+      OPERATION_ID,
+      browserIdentity,
+      {
+        evidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4Y8',
+        credentialId: 'credential_1234567890',
+        tenantId: 'tenant-001',
+        actorId: 'actor-001',
+        sessionId: 'session-001',
+        operationId: OPERATION_ID,
+        method: 'webauthn_uv',
+        verifiedAt: new Date().toISOString(),
+      },
+    );
+    const update = findOneAndUpdate.mock.calls[0]?.[1] as unknown as { $set: Record<string, unknown> };
+    expect(result.confirmationCredential).toMatch(/^mcpc_[A-Za-z0-9_-]{43}$/);
+    expect(update.$set).toMatchObject({
+      strongAuthMethod: 'webauthn_uv',
+      strongAuthEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4Y8',
+    });
+    expect(update.$set.confirmationCredentialHash).not.toBe(result.confirmationCredential);
+  });
+
+  it('R2 拒绝超过一分钟的强认证证据', async () => {
+    const findOne = vi.fn().mockReturnValue(query(pending('R2')));
+    const findOneAndUpdate = vi.fn();
+    await expect(service({ findOne, findOneAndUpdate }).confirmR2(
+      OPERATION_ID,
+      browserIdentity,
+      {
+        evidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4Y8',
+        credentialId: 'credential_1234567890',
+        tenantId: 'tenant-001',
+        actorId: 'actor-001',
+        sessionId: 'session-001',
+        operationId: OPERATION_ID,
+        method: 'webauthn_uv',
+        verifiedAt: new Date(Date.now() - 60_001).toISOString(),
+      },
+    )).rejects.toBeInstanceOf(ForbiddenException);
+    expect(findOneAndUpdate).not.toHaveBeenCalled();
+  });
+
+  it('R2 拒绝属于其他操作的强认证证据', async () => {
+    const findOne = vi.fn().mockReturnValue(query(pending('R2')));
+    const findOneAndUpdate = vi.fn();
+    await expect(service({ findOne, findOneAndUpdate }).confirmR2(
+      OPERATION_ID,
+      browserIdentity,
+      {
+        evidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4Y8',
+        credentialId: 'credential_1234567890',
+        tenantId: 'tenant-001',
+        actorId: 'actor-001',
+        sessionId: 'session-001',
+        operationId: '01J8ZQK7V0A2M4N6P8R0T2W4Y9',
+        method: 'webauthn_uv',
+        verifiedAt: new Date().toISOString(),
+      },
+    )).rejects.toBeInstanceOf(ForbiddenException);
     expect(findOneAndUpdate).not.toHaveBeenCalled();
   });
 
