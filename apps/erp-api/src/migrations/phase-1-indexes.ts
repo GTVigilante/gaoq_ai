@@ -5,6 +5,7 @@ import { createConnection, type Connection, type IndexOptions, type Schema } fro
 
 import { IdempotencyRecordSchema } from '../core/idempotency/idempotency.schema.js';
 import {
+  AuditAnchorReceiptRecordSchema,
   AuditChainHeadRecordSchema,
   AuditEventRecordSchema,
 } from '../core/audit/audit.schema.js';
@@ -28,7 +29,7 @@ import {
 } from '../modules/org/persistence/org.schemas.js';
 import { OutboxRecordSchema } from '../modules/org/persistence/outbox.schema.js';
 
-const MIGRATION_ID = 'phase-1-indexes-v2';
+const MIGRATION_ID = 'phase-1-indexes-v3';
 const LOCK_ID = `${MIGRATION_ID}:lock`;
 const LOCK_TTL_MS = 30 * 60 * 1_000;
 const INDEX_NAME_PATTERN = /^[A-Za-z0-9._:-]{1,127}$/;
@@ -87,6 +88,7 @@ interface MigrationRun {
 }
 
 const PHASE_ONE_SCHEMAS: readonly Schema[] = Object.freeze([
+  AuditAnchorReceiptRecordSchema,
   AuditEventRecordSchema,
   AuditChainHeadRecordSchema,
   IdempotencyRecordSchema,

@@ -3,6 +3,7 @@ import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { createEventId } from '@gaoq/shared-utils';
 import type { Connection, Model } from 'mongoose';
 
+import { elapsedSeconds, MetricsService } from '../observability/metrics.service.js';
 import { AUDIT_GENESIS_HASH, AuditIntegrityService } from './audit-integrity.service.js';
 import {
   AuditChainHeadRecord,
@@ -25,60 +26,76 @@ export class MongoAuditEventSink extends AuditEventSink {
     @InjectModel(AuditChainHeadRecord.name)
     private readonly heads: Model<AuditChainHeadRecordDocument>,
     private readonly integrity: AuditIntegrityService,
+    private readonly metrics: MetricsService,
   ) {
     super();
   }
 
   override async append(event: AuditEvent): Promise<void> {
-    const normalized = this.integrity.normalize(event);
-    const eventId = createEventId();
-    for (let attempt = 1; attempt <= MAX_APPEND_ATTEMPTS; attempt += 1) {
-      const session = await this.connection.startSession();
-      try {
-        await session.withTransaction(async () => {
-          const head = await this.heads.findOne(
-            { tenantId: normalized.tenantId },
-            { tenantId: 1, sequence: 1, eventHash: 1, _id: 0 },
-          ).session(session).lean().exec();
-          const sequence = (head?.sequence ?? 0) + 1;
-          const previousHash = head?.eventHash ?? AUDIT_GENESIS_HASH;
-          const chainPayload = { ...normalized, eventId, sequence, previousHash };
-          const signed = this.integrity.sign(chainPayload);
-          await this.events.create([{
-            ...chainPayload,
-            occurredAt: new Date(normalized.occurredAt),
-            resourceId: normalized.resourceId ?? null,
-            keyId: signed.keyId,
-            eventHash: signed.eventHash,
-          }], { session });
-          const result = await this.heads.updateOne(
-            head === null
-              ? { tenantId: normalized.tenantId }
-              : {
+    const startedAt = process.hrtime.bigint();
+    try {
+      const normalized = this.integrity.normalize(event);
+      const eventId = createEventId();
+      for (let attempt = 1; attempt <= MAX_APPEND_ATTEMPTS; attempt += 1) {
+        const session = await this.connection.startSession();
+        try {
+          await session.withTransaction(async () => {
+            const head = await this.heads.findOne(
+              { tenantId: normalized.tenantId },
+              { tenantId: 1, sequence: 1, eventHash: 1, _id: 0 },
+            ).session(session).lean().exec();
+            const sequence = (head?.sequence ?? 0) + 1;
+            const previousHash = head?.eventHash ?? AUDIT_GENESIS_HASH;
+            const chainPayload = { ...normalized, eventId, sequence, previousHash };
+            const signed = this.integrity.sign(chainPayload);
+            const chainUpdatedAt = new Date();
+            await this.events.create([{
+              ...chainPayload,
+              occurredAt: new Date(normalized.occurredAt),
+              resourceId: normalized.resourceId ?? null,
+              keyId: signed.keyId,
+              eventHash: signed.eventHash,
+            }], { session });
+            const result = await this.heads.updateOne(
+              head === null
+                ? { tenantId: normalized.tenantId }
+                : {
+                    tenantId: normalized.tenantId,
+                    sequence: head.sequence,
+                    eventHash: head.eventHash,
+                  },
+              {
+                $setOnInsert: {
                   tenantId: normalized.tenantId,
-                  sequence: head.sequence,
-                  eventHash: head.eventHash,
+                  anchoredSequence: 0,
+                  lastAnchoredAt: null,
+                  chainUpdatedAt,
                 },
-            {
-              $setOnInsert: { tenantId: normalized.tenantId },
-              $set: {
-                sequence,
-                eventHash: signed.eventHash,
-                keyId: signed.keyId,
+                $set: {
+                  sequence,
+                  eventHash: signed.eventHash,
+                  keyId: signed.keyId,
+                  chainUpdatedAt,
+                },
               },
-            },
-            { upsert: head === null, session, runValidators: true },
-          );
-          if (result.modifiedCount + result.upsertedCount !== 1) {
-            throw new Error('AUDIT_CHAIN_CONFLICT');
-          }
-        });
-        return;
-      } catch (error) {
-        if (attempt >= MAX_APPEND_ATTEMPTS || !isConcurrencyError(error)) throw error;
-      } finally {
-        await session.endSession();
+              { upsert: head === null, session, runValidators: true },
+            );
+            if (result.modifiedCount + result.upsertedCount !== 1) {
+              throw new Error('AUDIT_CHAIN_CONFLICT');
+            }
+          });
+          this.metrics.recordAuditAppend('success', elapsedSeconds(startedAt));
+          return;
+        } catch (error) {
+          if (attempt >= MAX_APPEND_ATTEMPTS || !isConcurrencyError(error)) throw error;
+          this.metrics.recordAuditTransactionRetry();
+        } finally {
+          await session.endSession();
+        }
       }
+    } catch (error) {
+      this.metrics.recordAuditAppend('failure', elapsedSeconds(startedAt));
+      throw error;
     }
   }
 }

@@ -20,12 +20,14 @@ describe('validateEnvironment', () => {
       AUTH_SIGNING_PRIVATE_KEY_BASE64: '',
       AUTH_SIGNING_KEY_ID: '',
       AUDIT_INTEGRITY_KEYS: '',
+      METRICS_BEARER_TOKEN: '',
     });
 
     expect(environment.PORT).toBe(3001);
     expect(environment.AUTH_ACCESS_TOKEN_TTL_SECONDS).toBe(600);
     expect(environment.AUTH_SIGNING_PRIVATE_KEY_BASE64).toBeUndefined();
     expect(environment.AUDIT_INTEGRITY_KEYS).toBeUndefined();
+    expect(environment.METRICS_BEARER_TOKEN).toBeUndefined();
     expect(environment.MCP_OAUTH_CLIENTS_JSON).toBe('[]');
   });
 
@@ -96,5 +98,76 @@ describe('validateEnvironment', () => {
       MCP_AUTHORIZATION_SERVER: 'https://erp.example.com',
       MCP_ALLOWED_ORIGINS: 'https://erp.example.com',
     })).toThrow('生产环境必须由 Secret Manager 注入审计完整性密钥环');
+  });
+
+  it('生产环境具备签名与审计材料时仍拒绝缺失指标抓取凭据', () => {
+    expect(() => validateEnvironment({
+      NODE_ENV: 'production',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0',
+      WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://erp.example.com',
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://erp.example.com/.well-known/jwks.json',
+      AUTH_SIGNING_PRIVATE_KEY_BASE64: 'a'.repeat(64),
+      AUTH_SIGNING_KEY_ID: 'signing-key-001',
+      AUDIT_INTEGRITY_KEYS: JSON.stringify([{
+        id: 'audit-key-001', secret: 'b'.repeat(64), status: 'active',
+      }]),
+      MCP_AUTHORIZATION_SERVER: 'https://erp.example.com',
+      MCP_ALLOWED_ORIGINS: 'https://erp.example.com',
+    })).toThrow('生产环境必须由 Secret Manager 注入指标抓取凭据');
+  });
+
+  it('生产环境具备指标凭据时仍拒绝缺失独立 WORM 配置', () => {
+    expect(() => validateEnvironment({
+      NODE_ENV: 'production',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0',
+      WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://erp.example.com',
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://erp.example.com/.well-known/jwks.json',
+      AUTH_SIGNING_PRIVATE_KEY_BASE64: 'a'.repeat(64),
+      AUTH_SIGNING_KEY_ID: 'signing-key-001',
+      AUDIT_INTEGRITY_KEYS: JSON.stringify([{
+        id: 'audit-key-001', secret: 'b'.repeat(64), status: 'active',
+      }]),
+      METRICS_BEARER_TOKEN: 'metrics-token-that-is-at-least-32-characters',
+      MCP_AUTHORIZATION_SERVER: 'https://erp.example.com',
+      MCP_ALLOWED_ORIGINS: 'https://erp.example.com',
+    })).toThrow('必须完整配置独立 WORM 锚定端点');
+  });
+
+  it('生产环境拒绝与 ERP 同域或携带查询参数的 WORM 端点', () => {
+    const base = {
+      NODE_ENV: 'production',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0',
+      WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://erp.example.com',
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://erp.example.com/.well-known/jwks.json',
+      AUTH_SIGNING_PRIVATE_KEY_BASE64: 'a'.repeat(64),
+      AUTH_SIGNING_KEY_ID: 'signing-key-001',
+      AUDIT_INTEGRITY_KEYS: JSON.stringify([{
+        id: 'audit-key-001', secret: 'b'.repeat(64), status: 'active',
+      }]),
+      METRICS_BEARER_TOKEN: 'metrics-token-that-is-at-least-32-characters',
+      AUDIT_WORM_BEARER_TOKEN: 'worm-token-that-is-at-least-32-characters',
+      AUDIT_ANCHOR_SIGNING_PRIVATE_KEY_BASE64: 'c'.repeat(64),
+      AUDIT_ANCHOR_SIGNING_KEY_ID: 'anchor-key-001',
+      MCP_AUTHORIZATION_SERVER: 'https://erp.example.com',
+      MCP_ALLOWED_ORIGINS: 'https://erp.example.com',
+    };
+    expect(() => validateEnvironment({
+      ...base, AUDIT_WORM_ENDPOINT: 'https://erp.example.com/worm',
+    })).toThrow('必须与 ERP 授权域隔离');
+    expect(() => validateEnvironment({
+      ...base, AUDIT_WORM_ENDPOINT: 'https://worm.example.net/anchors?token=unsafe',
+    })).toThrow('禁止凭据、查询、fragment');
   });
 });

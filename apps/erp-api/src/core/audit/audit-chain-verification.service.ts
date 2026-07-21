@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import type { Model } from 'mongoose';
 
+import { elapsedSeconds, MetricsService } from '../observability/metrics.service.js';
 import { AUDIT_GENESIS_HASH, AuditIntegrityService } from './audit-integrity.service.js';
 import {
   AuditChainHeadRecord,
@@ -29,9 +30,22 @@ export class AuditChainVerificationService {
     @InjectModel(AuditChainHeadRecord.name)
     private readonly heads: Model<AuditChainHeadRecordDocument>,
     private readonly integrity: AuditIntegrityService,
+    private readonly metrics: MetricsService,
   ) {}
 
   async verifyTenant(tenantId: string): Promise<AuditChainVerificationResult> {
+    const startedAt = process.hrtime.bigint();
+    try {
+      const result = await this.verifyTenantChain(tenantId);
+      this.metrics.recordAuditVerification('success', elapsedSeconds(startedAt));
+      return result;
+    } catch (error) {
+      this.metrics.recordAuditVerification('failure', elapsedSeconds(startedAt));
+      throw error;
+    }
+  }
+
+  private async verifyTenantChain(tenantId: string): Promise<AuditChainVerificationResult> {
     if (!TENANT_ID_PATTERN.test(tenantId)) throw new Error('AUDIT_TENANT_INVALID');
     const head = await this.heads.findOne(
       { tenantId },

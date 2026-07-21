@@ -3,6 +3,7 @@ import { z } from 'zod';
 const environmentSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().min(1).max(65_535).default(3001),
+  WORKER_METRICS_PORT: z.coerce.number().int().min(1).max(65_535).default(9464),
   MONGODB_URI: z.string().url().startsWith('mongodb://'),
   REDIS_URL: z.string().url().startsWith('redis://'),
   WEB_ORIGIN: z.string().url(),
@@ -24,6 +25,30 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(64).max(16_384).optional(),
   ),
+  /** Prometheus 独立抓取凭据，仅由 Secret Manager 注入，不复用业务 OAuth token。 */
+  METRICS_BEARER_TOKEN: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(32).max(256).regex(/^[\x21-\x7e]+$/).optional(),
+  ),
+  /** 独立 WORM 平台写入端点与凭据；不得指向 ERP 自身或普通可变对象存储。 */
+  AUDIT_WORM_ENDPOINT: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().url().optional(),
+  ),
+  AUDIT_WORM_BEARER_TOKEN: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/).optional(),
+  ),
+  /** 审计锚点专用 Ed25519 PKCS#8 私钥及 key id，只由 KMS/Secret Manager 注入。 */
+  AUDIT_ANCHOR_SIGNING_PRIVATE_KEY_BASE64: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(64).max(8_192).optional(),
+  ),
+  AUDIT_ANCHOR_SIGNING_KEY_ID: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(8).max(128).regex(/^[A-Za-z0-9._-]+$/).optional(),
+  ),
+  AUDIT_WORM_RETENTION_DAYS: z.coerce.number().int().min(365).max(36_500).default(2_555),
   AUTH_ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().min(300).max(900).default(600),
   AUTH_REFRESH_TOKEN_TTL_SECONDS: z.coerce
     .number()
@@ -89,6 +114,51 @@ const environmentSchema = z.object({
       path: ['AUDIT_INTEGRITY_KEYS'],
       message: '生产环境必须由 Secret Manager 注入审计完整性密钥环',
     });
+  }
+  if (environment.NODE_ENV === 'production' && environment.METRICS_BEARER_TOKEN === undefined) {
+    context.addIssue({
+      code: 'custom',
+      path: ['METRICS_BEARER_TOKEN'],
+      message: '生产环境必须由 Secret Manager 注入指标抓取凭据',
+    });
+  }
+  if (environment.NODE_ENV === 'production') {
+    const wormFields = [
+      environment.AUDIT_WORM_ENDPOINT,
+      environment.AUDIT_WORM_BEARER_TOKEN,
+      environment.AUDIT_ANCHOR_SIGNING_PRIVATE_KEY_BASE64,
+      environment.AUDIT_ANCHOR_SIGNING_KEY_ID,
+    ];
+    if (wormFields.some((value) => value === undefined)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['AUDIT_WORM_ENDPOINT'],
+        message: '生产环境必须完整配置独立 WORM 锚定端点、凭据与专用签名密钥',
+      });
+    }
+    if (
+      environment.AUDIT_WORM_ENDPOINT !== undefined &&
+      new URL(environment.AUDIT_WORM_ENDPOINT).protocol !== 'https:'
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['AUDIT_WORM_ENDPOINT'],
+        message: '生产环境 WORM 锚定端点必须使用 HTTPS',
+      });
+    }
+    if (environment.AUDIT_WORM_ENDPOINT !== undefined) {
+      const endpoint = new URL(environment.AUDIT_WORM_ENDPOINT);
+      if (
+        endpoint.username !== '' || endpoint.password !== '' || endpoint.search !== '' ||
+        endpoint.hash !== '' || endpoint.origin === issuer.origin
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['AUDIT_WORM_ENDPOINT'],
+          message: 'WORM 锚定端点禁止凭据、查询、fragment，且必须与 ERP 授权域隔离',
+        });
+      }
+    }
   }
 });
 

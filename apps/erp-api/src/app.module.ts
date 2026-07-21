@@ -8,6 +8,7 @@ import { validateEnvironment, type AppEnvironment } from './config/environment.j
 import { AuditModule } from './core/audit/audit.module.js';
 import { ApiExceptionFilter } from './core/http/api-exception.filter.js';
 import { ApiResponseInterceptor } from './core/http/api-response.interceptor.js';
+import { ObservabilityModule } from './core/observability/observability.module.js';
 import { TraceMiddlewareModule } from './core/http/trace-middleware.module.js';
 import { TenantContextInterceptor } from './core/tenant/tenant-context.interceptor.js';
 import { TenantContextModule } from './core/tenant/tenant-context.module.js';
@@ -59,6 +60,7 @@ const mongoLogger = new Logger('MongoDB');
     OrgModule,
     TraceMiddlewareModule,
     TenantContextModule,
+    ObservabilityModule,
     AuditModule,
     HealthModule,
   ],

@@ -117,6 +117,20 @@ export class AuditChainHeadRecord {
   @Prop({ type: String, required: true, match: KEY_ID_PATTERN })
   keyId!: string;
 
+  /** 仅在审计链追加时更新，锚定进度不得改变确定性锚点载荷。 */
+  @Prop({ type: Date, required: true, default: Date.now })
+  chainUpdatedAt!: Date;
+
+  @Prop({
+    type: Number,
+    default: 0,
+    validate: { validator: isNonNegativeInteger, message: 'anchoredSequence 必须为非负安全整数' },
+  })
+  anchoredSequence!: number;
+
+  @Prop({ type: Date, default: null })
+  lastAnchoredAt!: Date | null;
+
   createdAt!: Date;
   updatedAt!: Date;
 }
@@ -124,3 +138,58 @@ export class AuditChainHeadRecord {
 export type AuditChainHeadRecordDocument = HydratedDocument<AuditChainHeadRecord>;
 export const AuditChainHeadRecordSchema = SchemaFactory.createForClass(AuditChainHeadRecord);
 AuditChainHeadRecordSchema.index({ tenantId: 1 }, { unique: true });
+AuditChainHeadRecordSchema.index({ lastAnchoredAt: 1, tenantId: 1, anchoredSequence: 1, sequence: 1 });
+
+/** 外部 WORM 平台返回的不可变锚定回执；只追加，不设置 TTL。 */
+@Schema({
+  collection: 'security_audit_anchor_receipts',
+  timestamps: true,
+  versionKey: false,
+  id: false,
+})
+export class AuditAnchorReceiptRecord {
+  @Prop({ type: String, required: true, immutable: true, match: ID_PATTERN })
+  tenantId!: string;
+
+  @Prop({ type: Number, required: true, immutable: true, validate: isPositiveInteger })
+  sequence!: number;
+
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  eventHash!: string;
+
+  @Prop({ type: String, required: true, immutable: true, match: KEY_ID_PATTERN })
+  auditKeyId!: string;
+
+  @Prop({ type: String, required: true, immutable: true, maxlength: 4_096 })
+  payloadCanonical!: string;
+
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  payloadHash!: string;
+
+  @Prop({ type: String, required: true, immutable: true, match: KEY_ID_PATTERN })
+  signingKeyId!: string;
+
+  @Prop({ type: String, required: true, immutable: true, maxlength: 512 })
+  signature!: string;
+
+  @Prop({ type: String, required: true, immutable: true, match: ID_PATTERN })
+  receiptId!: string;
+
+  @Prop({ type: String, required: true, immutable: true, maxlength: 256 })
+  objectVersion!: string;
+
+  @Prop({ type: Date, required: true, immutable: true })
+  retainedUntil!: Date;
+
+  @Prop({ type: Date, required: true, immutable: true })
+  anchoredAt!: Date;
+
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+
+export type AuditAnchorReceiptRecordDocument = HydratedDocument<AuditAnchorReceiptRecord>;
+export const AuditAnchorReceiptRecordSchema = SchemaFactory.createForClass(AuditAnchorReceiptRecord);
+AuditAnchorReceiptRecordSchema.index({ tenantId: 1, sequence: 1 }, { unique: true });
+AuditAnchorReceiptRecordSchema.index({ receiptId: 1 }, { unique: true });
+AuditAnchorReceiptRecordSchema.index({ anchoredAt: 1 });

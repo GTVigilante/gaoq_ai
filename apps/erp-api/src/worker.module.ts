@@ -5,6 +5,9 @@ import { MongooseModule } from '@nestjs/mongoose';
 import type { Connection } from 'mongoose';
 
 import { validateEnvironment, type AppEnvironment } from './config/environment.js';
+import { AuditWorkerModule } from './core/audit/audit-worker.module.js';
+import { ObservabilityModule } from './core/observability/observability.module.js';
+import { WorkerMetricsServer } from './core/observability/worker-metrics.server.js';
 import { toBullMqConnection } from './infrastructure/redis/redis-options.js';
 import { IntegrationWorkerModule } from './modules/integration/integration-worker.module.js';
 
@@ -36,6 +39,9 @@ const mongoLogger = new Logger('WorkerMongoDB');
       }),
     }),
     IntegrationWorkerModule,
+    AuditWorkerModule,
+    ObservabilityModule,
   ],
+  providers: [WorkerMetricsServer],
 })
 export class WorkerModule {}

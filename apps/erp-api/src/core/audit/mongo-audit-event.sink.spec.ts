@@ -2,6 +2,7 @@ import type { Connection, Model } from 'mongoose';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AuditIntegrityService } from './audit-integrity.service.js';
+import type { MetricsService } from '../observability/metrics.service.js';
 import type {
   AuditChainHeadRecordDocument,
   AuditEventRecordDocument,
@@ -37,15 +38,20 @@ function assemble() {
   const withTransaction = vi.fn(async (handler: () => Promise<void>) => handler());
   const endSession = vi.fn().mockResolvedValue(undefined);
   const startSession = vi.fn().mockResolvedValue({ withTransaction, endSession });
+  const metrics = {
+    recordAuditAppend: vi.fn(),
+    recordAuditTransactionRetry: vi.fn(),
+  };
   const sink = new MongoAuditEventSink(
     { startSession } as unknown as Connection,
     { create: eventCreate } as unknown as Model<AuditEventRecordDocument>,
     { findOne: headFindOne, updateOne: headUpdateOne } as unknown as Model<AuditChainHeadRecordDocument>,
     { normalize, sign } as unknown as AuditIntegrityService,
+    metrics as unknown as MetricsService,
   );
   return {
     sink, normalize, sign, headFindOne, headUpdateOne, eventCreate,
-    withTransaction, endSession, startSession,
+    withTransaction, endSession, startSession, metrics,
   };
 }
 
@@ -70,6 +76,7 @@ describe('MongoAuditEventSink', () => {
     expect(updateCall[1]).toMatchObject({ $set: { sequence: 1 } });
     expect(updateCall[2]).toMatchObject({ upsert: true, runValidators: true });
     expect(store.endSession).toHaveBeenCalledOnce();
+    expect(store.metrics.recordAuditAppend).toHaveBeenCalledWith('success', expect.any(Number));
   });
 
   it('链头并发冲突最多重试三次并使用新的事务会话', async () => {
@@ -81,6 +88,7 @@ describe('MongoAuditEventSink', () => {
     expect(store.startSession).toHaveBeenCalledTimes(2);
     expect(store.eventCreate).toHaveBeenCalledTimes(2);
     expect(store.endSession).toHaveBeenCalledTimes(2);
+    expect(store.metrics.recordAuditTransactionRetry).toHaveBeenCalledOnce();
   });
 
   it('规范化或密钥失败时失败关闭且不触达数据库', async () => {
@@ -91,5 +99,6 @@ describe('MongoAuditEventSink', () => {
     await expect(store.sink.append(auditEvent)).rejects.toThrow('AUDIT_EVENT_INVALID');
     expect(store.startSession).not.toHaveBeenCalled();
     expect(store.eventCreate).not.toHaveBeenCalled();
+    expect(store.metrics.recordAuditAppend).toHaveBeenCalledWith('failure', expect.any(Number));
   });
 });

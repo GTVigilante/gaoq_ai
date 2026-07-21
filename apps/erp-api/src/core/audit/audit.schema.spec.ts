@@ -2,6 +2,7 @@ import { Mongoose } from 'mongoose';
 import { describe, expect, it } from 'vitest';
 
 import {
+  AuditAnchorReceiptRecordSchema,
   AuditChainHeadRecordSchema,
   AuditEventRecordSchema,
   type AuditChainHeadRecord,
@@ -38,6 +39,7 @@ describe('持久审计 Schema', () => {
   it('使用固定集合且声明全部唯一、检索索引并禁止 TTL', () => {
     expect(AuditEventRecordSchema.get('collection')).toBe('security_audit_events');
     expect(AuditChainHeadRecordSchema.get('collection')).toBe('security_audit_chain_heads');
+    expect(AuditAnchorReceiptRecordSchema.get('collection')).toBe('security_audit_anchor_receipts');
     expect(AuditEventRecordSchema.indexes()).toEqual(expect.arrayContaining([
       [{ tenantId: 1, sequence: 1 }, { unique: true }],
       [{ tenantId: 1, eventId: 1 }, { unique: true }],
@@ -51,6 +53,7 @@ describe('持久审计 Schema', () => {
     expect([
       ...AuditEventRecordSchema.indexes(),
       ...AuditChainHeadRecordSchema.indexes(),
+      ...AuditAnchorReceiptRecordSchema.indexes(),
     ].every(([, options]) => options.expireAfterSeconds === undefined)).toBe(true);
   });
 

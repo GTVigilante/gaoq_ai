@@ -2,6 +2,7 @@ import type { Model } from 'mongoose';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AuditIntegrityService } from './audit-integrity.service.js';
+import type { MetricsService } from '../observability/metrics.service.js';
 import { AuditChainVerificationService } from './audit-chain-verification.service.js';
 import type {
   AuditChainHeadRecordDocument,
@@ -39,6 +40,7 @@ describe('AuditChainVerificationService', () => {
       eventModel,
       headModel,
       { verify } as unknown as AuditIntegrityService,
+      { recordAuditVerification: vi.fn() } as unknown as MetricsService,
     );
     await expect(service.verifyTenant('tenant-001')).resolves.toEqual({
       tenantId: 'tenant-001', verifiedEvents: 2, lastSequence: 2, lastHash: hash2,
@@ -59,6 +61,7 @@ describe('AuditChainVerificationService', () => {
         eventModel,
         headModel,
         { verify } as unknown as AuditIntegrityService,
+        { recordAuditVerification: vi.fn() } as unknown as MetricsService,
       );
     };
     await expect(build([event(2, '0'.repeat(43), hash2)], {
