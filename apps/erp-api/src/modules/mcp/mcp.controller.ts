@@ -1,4 +1,4 @@
-import { All, Controller, ForbiddenException, Req, Res } from '@nestjs/common';
+import { All, Controller, ForbiddenException, Inject, Req, Res } from '@nestjs/common';
 import type { Response } from 'express';
 
 import type { ErpRequest } from '../../core/http/request-context.js';
@@ -7,7 +7,7 @@ import { McpRuntimeService } from './mcp-runtime.service.js';
 
 @Controller()
 export class McpController {
-  constructor(private readonly runtime: McpRuntimeService) {}
+  constructor(@Inject(McpRuntimeService) private readonly runtime: McpRuntimeService) {}
 
   /** MCP 2025-11-25 Streamable HTTP 单一端点。 */
   @All('mcp')

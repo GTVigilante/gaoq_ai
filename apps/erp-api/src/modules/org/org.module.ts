@@ -45,6 +45,7 @@ import { OrgOutboxWriter } from './persistence/outbox.writer.js';
   ],
   controllers: [OrgController],
   exports: [
+    OrgApplicationService,
     DepartmentRepository,
     EmployeeRepository,
     PositionRepository,
