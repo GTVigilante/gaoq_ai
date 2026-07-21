@@ -73,6 +73,12 @@ export type McpCommand =
       readonly overtimeMinutes: number;
       readonly absentMinutes: number;
       readonly reasonCode: string;
+    }
+  | {
+      readonly operation: 'analytics.management_dashboard.export';
+      readonly asOf: string;
+      readonly format: 'json';
+      readonly expectedVersion: 1;
     };
 
 export interface McpPreparedOperation {
@@ -390,6 +396,7 @@ export class McpConfirmationService {
 function assertCommandRisk(operation: McpOperation, riskLevel: 'R1' | 'R2'): void {
   const expected = [
     'approval.decide', 'recruitment.requisition.submit', 'recruitment.offer.request_send',
+    'analytics.management_dashboard.export',
   ].includes(operation) ? 'R2' : 'R1';
   if (riskLevel !== expected) throw new Error('MCP 操作风险分级错误');
 }
@@ -440,6 +447,13 @@ function canonicalCommand(command: McpCommand): string {
         reasonCode: command.reasonCode,
         sourceFactId: command.sourceFactId,
         workedMinutes: command.workedMinutes,
+      });
+    case 'analytics.management_dashboard.export':
+      return JSON.stringify({
+        asOf: command.asOf,
+        expectedVersion: command.expectedVersion,
+        format: command.format,
+        operation: command.operation,
       });
   }
 }
@@ -516,6 +530,17 @@ function parseCommand(value: string): McpCommand {
     overtimeMinutes: Number(command.overtimeMinutes),
     absentMinutes: Number(command.absentMinutes),
     reasonCode: command.reasonCode,
+  };
+  if (
+    command.operation === 'analytics.management_dashboard.export' &&
+    Number(command.expectedVersion) === 1 &&
+    typeof command.asOf === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(command.asOf) &&
+    command.format === 'json'
+  ) return {
+    operation: command.operation,
+    asOf: command.asOf,
+    format: command.format,
+    expectedVersion: 1,
   };
   throw new Error('MCP 确认命令类型非法');
 }

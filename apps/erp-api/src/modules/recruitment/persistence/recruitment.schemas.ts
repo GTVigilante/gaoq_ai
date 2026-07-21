@@ -394,6 +394,7 @@ CandidateApplicationRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true })
 CandidateApplicationRecordSchema.index({ tenantId: 1, candidateId: 1, appliedAt: -1 });
 CandidateApplicationRecordSchema.index({ tenantId: 1, positionId: 1, stage: 1, appliedAt: -1 });
 CandidateApplicationRecordSchema.index({ tenantId: 1, stage: 1, updatedAt: -1 });
+CandidateApplicationRecordSchema.index({ tenantId: 1, stage: 1, endedAt: -1 });
 CandidateApplicationRecordSchema.index(
   { tenantId: 1, candidateId: 1, positionId: 1 },
   { unique: true, partialFilterExpression: { active: true } },

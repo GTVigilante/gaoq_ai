@@ -12,6 +12,7 @@ import { toBullMqConnection } from './infrastructure/redis/redis-options.js';
 import { IntegrationWorkerModule } from './modules/integration/integration-worker.module.js';
 import { ApprovalNotificationWorkerModule } from './modules/approval/notification/approval-notification-worker.module.js';
 import { CareWorkerModule } from './modules/care/care-worker.module.js';
+import { AnalyticsWorkerModule } from './modules/analytics/analytics-worker.module.js';
 
 const mongoLogger = new Logger('WorkerMongoDB');
 
@@ -43,6 +44,7 @@ const mongoLogger = new Logger('WorkerMongoDB');
     IntegrationWorkerModule,
     ApprovalNotificationWorkerModule,
     CareWorkerModule,
+    AnalyticsWorkerModule,
     AuditWorkerModule,
     ObservabilityModule,
   ],

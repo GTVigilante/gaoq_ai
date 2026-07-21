@@ -25,6 +25,8 @@ import { PayrollReconciliationService } from '../payroll/application/payroll-rec
 import { PayrollShadowService } from '../payroll/application/payroll-shadow.service.js';
 import { OpOperatingSummaryService } from '../op/application/op-operating-summary.service.js';
 import { OpApprovalBridgeService } from '../op/application/op-approval-bridge.service.js';
+import { ManagementDashboardService } from '../analytics/application/management-dashboard.service.js';
+import { AnalyticsExportService } from '../analytics/application/analytics-export.service.js';
 import { parseMcpIdentity, type McpIdentity } from './mcp-auth-context.js';
 import {
   McpConfirmationService,
@@ -38,9 +40,12 @@ type ApprovalMcpCommand = Extract<McpCommand, {
 type AttendanceMcpCommand = Extract<McpCommand, {
   readonly operation: 'attendance.correction.request';
 }>;
+type AnalyticsMcpCommand = Extract<McpCommand, {
+  readonly operation: 'analytics.management_dashboard.export';
+}>;
 type RecruitmentMcpCommand = Exclude<
   McpCommand,
-  ApprovalMcpCommand | AttendanceMcpCommand
+  ApprovalMcpCommand | AttendanceMcpCommand | AnalyticsMcpCommand
 >;
 type ApprovalMcpOperation = ApprovalMcpCommand['operation'];
 type RecruitmentMcpOperation = RecruitmentMcpCommand['operation'];
@@ -72,6 +77,8 @@ export class McpToolService {
     private readonly shadows: PayrollShadowService,
     private readonly opSummaries: OpOperatingSummaryService,
     private readonly opApprovalBridges: OpApprovalBridgeService,
+    private readonly managementDashboard: ManagementDashboardService,
+    private readonly analyticsExports: AnalyticsExportService,
     private readonly confirmations: McpConfirmationService,
   ) {}
 
@@ -283,6 +290,105 @@ export class McpToolService {
         approvalVersion: approvalBridge.approvalVersion,
       });
       return structuredResult({ approvalBridge });
+    });
+  }
+
+  async getManagementDashboard(asOf: string, extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:analytics:management:read')) {
+        await this.auditTool(identity, 'management_dashboard_get', 'R1', 'denied');
+        return scopeError('erp:analytics:management:read');
+      }
+      const dashboard = await this.managementDashboard.get(asOf);
+      await this.auditTool(identity, 'management_dashboard_get', 'R1', 'success', {
+        asOf: dashboard.asOf, sourceCount: dashboard.sources.length,
+      });
+      return structuredResult({ dashboard });
+    });
+  }
+
+  async getAnalyticsExport(exportId: string, extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:analytics:management:export')) {
+        await this.auditTool(identity, 'management_dashboard_export_get', 'R1', 'denied');
+        return scopeError('erp:analytics:management:export');
+      }
+      const result = await this.analyticsExports.get(exportId);
+      await this.auditTool(identity, 'management_dashboard_export_get', 'R1', 'success', {
+        exportId, status: result.status,
+      });
+      return structuredResult({ export: result });
+    });
+  }
+
+  async prepareManagementDashboardExport(
+    asOf: string,
+    prepareKey: string,
+    extra: McpExtra,
+  ): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      const missing = ['erp:analytics:management:read', 'erp:analytics:management:export']
+        .find((scope) => !identity.scopes.includes(scope));
+      if (missing !== undefined) {
+        await this.auditTool(identity, 'management_dashboard_export_prepare', 'R2', 'denied');
+        return scopeError(missing);
+      }
+      await this.managementDashboard.get(asOf);
+      const command: AnalyticsMcpCommand = {
+        operation: 'analytics.management_dashboard.export', asOf,
+        format: 'json', expectedVersion: 1,
+      };
+      const prepared = await this.confirmations.prepare(identity, prepareKey, command, 'R2');
+      await this.auditTool(identity, 'management_dashboard_export_prepare', 'R2', 'success', {
+        operationId: prepared.operationId, digest: prepared.digest, asOf,
+      });
+      return preparedResult(prepared);
+    });
+  }
+
+  async executeManagementDashboardExport(
+    operationId: string,
+    confirmationCredential: string,
+    extra: McpExtra,
+  ): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      const missing = ['erp:analytics:management:read', 'erp:analytics:management:export']
+        .find((scope) => !identity.scopes.includes(scope));
+      if (missing !== undefined) {
+        await this.auditTool(identity, 'management_dashboard_export_execute', 'R2', 'denied');
+        return scopeError(missing);
+      }
+      const claimed = await this.confirmations.claim(
+        identity, 'analytics.management_dashboard.export', operationId, confirmationCredential,
+      );
+      if (claimed.replayResult !== null) {
+        await this.auditTool(identity, 'management_dashboard_export_execute', 'R2', 'success', {
+          operationId, replayed: true,
+        });
+        return exportResourceResult(claimed.replayResult);
+      }
+      try {
+        if (!isAnalyticsCommand(claimed.command)) {
+          throw new Error('MCP_ANALYTICS_COMMAND_TYPE_MISMATCH');
+        }
+        const exportView = await this.analyticsExports.request(operationId, claimed.command.asOf);
+        const result: Record<string, unknown> = { export: exportView };
+        await this.confirmations.complete(operationId, result);
+        await this.auditTool(identity, 'management_dashboard_export_execute', 'R2', 'success', {
+          operationId, replayed: false, asOf: claimed.command.asOf,
+        });
+        return exportResourceResult(result);
+      } catch (error) {
+        await this.confirmations.release(operationId);
+        await this.auditTool(identity, 'management_dashboard_export_execute', 'R2', 'failure', {
+          operationId,
+        });
+        throw error;
+      }
     });
   }
 
@@ -1029,6 +1135,27 @@ function structuredResult(data: Record<string, unknown>): McpToolResult {
   };
 }
 
+function exportResourceResult(data: Record<string, unknown>): McpToolResult {
+  const exportValue = data.export;
+  const resourceUri = typeof exportValue === 'object' && exportValue !== null &&
+    typeof (exportValue as { resourceUri?: unknown }).resourceUri === 'string'
+    ? (exportValue as { resourceUri: string }).resourceUri : '';
+  if (!resourceUri.startsWith('erp://analytics/exports/')) {
+    throw new Error('MCP_ANALYTICS_EXPORT_RESOURCE_INVALID');
+  }
+  return {
+    content: [
+      { type: 'text', text: JSON.stringify(data) },
+      {
+        type: 'resource_link', uri: resourceUri, name: 'management-dashboard-export',
+        title: '管理驾驶舱异步导出', description: '轮询此资源直到状态为 ready。',
+        mimeType: 'application/json',
+      },
+    ],
+    structuredContent: data,
+  };
+}
+
 function isApprovalCommand(command: McpCommand): command is ApprovalMcpCommand {
   return command.operation.startsWith('approval.');
 }
@@ -1039,4 +1166,8 @@ function isRecruitmentCommand(command: McpCommand): command is RecruitmentMcpCom
 
 function isAttendanceCommand(command: McpCommand): command is AttendanceMcpCommand {
   return command.operation === 'attendance.correction.request';
+}
+
+function isAnalyticsCommand(command: McpCommand): command is AnalyticsMcpCommand {
+  return command.operation === 'analytics.management_dashboard.export';
 }

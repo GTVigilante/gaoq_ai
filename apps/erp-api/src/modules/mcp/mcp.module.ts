@@ -12,6 +12,7 @@ import { CareModule } from '../care/care.module.js';
 import { AttendanceModule } from '../attendance/attendance.module.js';
 import { PayrollModule } from '../payroll/payroll.module.js';
 import { OpModule } from '../op/op.module.js';
+import { AnalyticsModule } from '../analytics/analytics.module.js';
 import { McpConfirmationController } from './mcp-confirmation.controller.js';
 import {
   McpConfirmationRecord,
@@ -37,6 +38,7 @@ import { McpToolService } from './mcp-tool.service.js';
     AttendanceModule,
     PayrollModule,
     OpModule,
+    AnalyticsModule,
     MongooseModule.forFeature([
       { name: McpConfirmationRecord.name, schema: McpConfirmationRecordSchema },
     ]),

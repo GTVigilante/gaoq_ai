@@ -228,6 +228,8 @@ ApprovalInstanceRecordSchema.pre('validate', function () {
 ApprovalInstanceRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 ApprovalInstanceRecordSchema.index({ tenantId: 1, initiatorId: 1, createdAt: -1 });
 ApprovalInstanceRecordSchema.index({ tenantId: 1, status: 1, updatedAt: -1 });
+ApprovalInstanceRecordSchema.index({ tenantId: 1, status: 1, completedAt: -1 });
+ApprovalInstanceRecordSchema.index({ tenantId: 1, status: 1, submittedAt: -1 });
 ApprovalInstanceRecordSchema.index({ tenantId: 1, currentActorIds: 1, status: 1, updatedAt: -1 });
 ApprovalInstanceRecordSchema.index({ tenantId: 1, templateCode: 1, createdAt: -1 });
 

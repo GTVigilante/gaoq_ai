@@ -23,6 +23,8 @@ import type { PayrollReconciliationService } from '../payroll/application/payrol
 import type { PayrollShadowService } from '../payroll/application/payroll-shadow.service.js';
 import type { OpOperatingSummaryService } from '../op/application/op-operating-summary.service.js';
 import type { OpApprovalBridgeService } from '../op/application/op-approval-bridge.service.js';
+import type { ManagementDashboardService } from '../analytics/application/management-dashboard.service.js';
+import type { AnalyticsExportService } from '../analytics/application/analytics-export.service.js';
 import { McpToolService } from './mcp-tool.service.js';
 import type { McpConfirmationService } from './mcp-confirmation.service.js';
 
@@ -90,6 +92,8 @@ function assemble() {
   const shadows = { getCycle: vi.fn(), getReadiness: vi.fn() };
   const opSummaries = { getLatest: vi.fn() };
   const opApprovalBridges = { get: vi.fn() };
+  const managementDashboard = { get: vi.fn() };
+  const analyticsExports = { get: vi.fn(), request: vi.fn() };
   const service = new McpToolService(
     context,
     audit as unknown as AuditService,
@@ -110,13 +114,15 @@ function assemble() {
     shadows as unknown as PayrollShadowService,
     opSummaries as unknown as OpOperatingSummaryService,
     opApprovalBridges as unknown as OpApprovalBridgeService,
+    managementDashboard as unknown as ManagementDashboardService,
+    analyticsExports as unknown as AnalyticsExportService,
     confirmations as unknown as McpConfirmationService,
   );
   return {
     context, audit, organization, approvals, recruitmentApplications,
     recruitmentInterviews, recruitmentManagement, recruitmentOffers, confirmations, service,
     onboarding, knowledge, care, attendance, payroll, payslips, taxFilings, reconciliations, shadows,
-    opSummaries, opApprovalBridges,
+    opSummaries, opApprovalBridges, managementDashboard, analyticsExports,
   };
 }
 
@@ -686,5 +692,71 @@ describe('McpToolService', () => {
       approvalBridge: { approvalStatus: 'running', approvalVersion: 2 },
     });
     expect(JSON.stringify(result)).not.toMatch(/formData|payloadCiphertext/iu);
+  });
+
+  it('管理驾驶舱 Tool 复用统一指标服务且缺 Scope 时失败关闭', async () => {
+    const store = assemble();
+    store.managementDashboard.get.mockResolvedValue({
+      asOf: '2026-07-22', sources: ['org_employees'],
+      workforce: { activeHeadcount: 280 }, approvals: { running: 12 },
+    });
+    const denied = await store.service.getManagementDashboard('2026-07-22', extra([]));
+    expect(denied.isError).toBe(true);
+    expect(store.managementDashboard.get).not.toHaveBeenCalled();
+    const result = await store.service.getManagementDashboard(
+      '2026-07-22', extra(['erp:analytics:management:read']),
+    );
+    expect(store.managementDashboard.get).toHaveBeenCalledWith('2026-07-22');
+    expect(result.structuredContent).toMatchObject({
+      dashboard: { workforce: { activeHeadcount: 280 } },
+    });
+  });
+
+  it('管理驾驶舱导出必须经 R2 确认并返回异步资源链接', async () => {
+    const store = assemble();
+    store.managementDashboard.get.mockResolvedValue({ asOf: '2026-07-22' });
+    store.confirmations.prepare.mockResolvedValueOnce({
+      operationId: '01J8ZQK7V0A2M4N6P8R0T2W4E1', digest: 'b'.repeat(43), riskLevel: 'R2',
+      expiresAt: '2026-07-22T00:10:00.000Z',
+      confirmationUrl: 'https://erp.example.com/mcp/confirm?operation_id=01J8ZQK7V0A2M4N6P8R0T2W4E1',
+    });
+    const scopes = ['erp:analytics:management:read', 'erp:analytics:management:export'];
+    const prepared = await store.service.prepareManagementDashboardExport(
+      '2026-07-22', 'export-key-001', extra(scopes),
+    );
+    expect(prepared.structuredContent).toMatchObject({ riskLevel: 'R2' });
+    expect(store.confirmations.prepare).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: 'tenant-001' }),
+      'export-key-001',
+      {
+        operation: 'analytics.management_dashboard.export', asOf: '2026-07-22',
+        format: 'json', expectedVersion: 1,
+      },
+      'R2',
+    );
+
+    store.confirmations.claim.mockResolvedValueOnce({
+      operationId: '01J8ZQK7V0A2M4N6P8R0T2W4E1', replayResult: null,
+      command: {
+        operation: 'analytics.management_dashboard.export', asOf: '2026-07-22',
+        format: 'json', expectedVersion: 1,
+      },
+    });
+    store.analyticsExports.request.mockResolvedValueOnce({
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4E1', asOf: '2026-07-22', format: 'json',
+      status: 'queued', resourceUri: 'erp://analytics/exports/01J8ZQK7V0A2M4N6P8R0T2W4E1',
+      contentHash: null, artifact: null, expiresAt: '2026-07-23T00:00:00.000Z',
+    });
+    const executed = await store.service.executeManagementDashboardExport(
+      '01J8ZQK7V0A2M4N6P8R0T2W4E1', `mcpc_${'c'.repeat(43)}`, extra(scopes),
+    );
+    expect(executed.structuredContent).toMatchObject({ export: { status: 'queued' } });
+    expect(executed.content).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'resource_link',
+        uri: 'erp://analytics/exports/01J8ZQK7V0A2M4N6P8R0T2W4E1',
+      }),
+    ]));
+    expect(store.confirmations.complete).toHaveBeenCalledOnce();
   });
 });

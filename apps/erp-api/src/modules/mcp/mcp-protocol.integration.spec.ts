@@ -189,6 +189,76 @@ describe('MCP Streamable HTTP 协议集成', () => {
           completedAt: null, updatedAt: '2026-07-22T08:00:01.000Z',
         } },
       }),
+      getManagementDashboard: vi.fn().mockResolvedValue({
+        content: [{ type: 'text' as const, text: JSON.stringify({ dashboard: {
+          asOf: '2026-07-22',
+          window: { from: '2026-06-23', to: '2026-07-22', timezone: 'Asia/Shanghai' },
+          generatedAt: '2026-07-22T08:00:00.000Z',
+          freshness: {
+            transactional: 'live', operatingSummaryDate: '2026-07-22', payrollPeriod: '2026-06',
+          },
+          workforce: { activeHeadcount: 120, probationHeadcount: 8, suspendedHeadcount: 1 },
+          approvals: { running: 9, overdue48h: 2, completed30d: 40, approvalRateBps: 8_500 },
+          recruitment: {
+            openPositionCount: 5, openHeadcount: 8, activeApplicationCount: 32, hired30d: 4,
+          },
+          learning: {
+            mandatoryAssignments: 100, completedMandatoryAssignments: 88,
+            expiredMandatoryAssignments: 3, completionRateBps: 8_800,
+          },
+          payroll: { period: '2026-06', status: 'locked', employeeCount: 120 },
+          operating: {
+            summaryDate: '2026-07-22', revision: 1, currency: 'CNY',
+            gmvMinor: 123_456, paidOrderCount: 12, refundMinor: 500,
+          },
+          sources: [
+            'org_employees', 'approval_instances', 'recruitment_positions',
+            'recruitment_applications', 'knowledge_training_assignments',
+            'payroll_periods', 'op_operating_summaries',
+          ],
+        } }) }],
+        structuredContent: { dashboard: {
+          asOf: '2026-07-22',
+          window: { from: '2026-06-23', to: '2026-07-22', timezone: 'Asia/Shanghai' },
+          generatedAt: '2026-07-22T08:00:00.000Z',
+          freshness: {
+            transactional: 'live', operatingSummaryDate: '2026-07-22', payrollPeriod: '2026-06',
+          },
+          workforce: { activeHeadcount: 120, probationHeadcount: 8, suspendedHeadcount: 1 },
+          approvals: { running: 9, overdue48h: 2, completed30d: 40, approvalRateBps: 8_500 },
+          recruitment: {
+            openPositionCount: 5, openHeadcount: 8, activeApplicationCount: 32, hired30d: 4,
+          },
+          learning: {
+            mandatoryAssignments: 100, completedMandatoryAssignments: 88,
+            expiredMandatoryAssignments: 3, completionRateBps: 8_800,
+          },
+          payroll: { period: '2026-06', status: 'locked', employeeCount: 120 },
+          operating: {
+            summaryDate: '2026-07-22', revision: 1, currency: 'CNY',
+            gmvMinor: 123_456, paidOrderCount: 12, refundMinor: 500,
+          },
+          sources: [
+            'org_employees', 'approval_instances', 'recruitment_positions',
+            'recruitment_applications', 'knowledge_training_assignments',
+            'payroll_periods', 'op_operating_summaries',
+          ],
+        } },
+      }),
+      getAnalyticsExport: vi.fn().mockResolvedValue({
+        content: [{ type: 'text' as const, text: JSON.stringify({ export: {
+          id: '01J8ZQK7V0A2M4N6P8R0T2W4E1', asOf: '2026-07-22', format: 'json',
+          status: 'queued', resourceUri: 'erp://analytics/exports/01J8ZQK7V0A2M4N6P8R0T2W4E1',
+          contentHash: null, artifact: null, expiresAt: '2026-07-23T08:00:00.000Z',
+        } }) }],
+        structuredContent: { export: {
+          id: '01J8ZQK7V0A2M4N6P8R0T2W4E1', asOf: '2026-07-22', format: 'json',
+          status: 'queued', resourceUri: 'erp://analytics/exports/01J8ZQK7V0A2M4N6P8R0T2W4E1',
+          contentHash: null, artifact: null, expiresAt: '2026-07-23T08:00:00.000Z',
+        } },
+      }),
+      prepareManagementDashboardExport: vi.fn(),
+      executeManagementDashboardExport: vi.fn(),
       prepareAttendanceCorrectionRequest: vi.fn(),
       executeAttendanceCorrectionRequest: vi.fn(),
       prepareRecruitmentRequisitionSubmit: vi.fn(),
@@ -229,6 +299,8 @@ describe('MCP Streamable HTTP 协议集成', () => {
         scopes: [
           'erp:mcp:server:connect', 'erp:org:chart:read',
           'erp:op:operating_summary:read',
+          'erp:analytics:management:read',
+          'erp:analytics:management:export',
         ],
         departmentIds: ['department-001'],
         sessionId: 'session-001',
@@ -296,6 +368,9 @@ describe('MCP Streamable HTTP 协议集成', () => {
       'payroll_cutover_readiness_get',
       'op_operating_summary_get',
       'op_approval_bridge_get',
+      'management_dashboard_get',
+      'management_dashboard_export_prepare',
+      'management_dashboard_export_execute',
       'attendance_correction_prepare',
       'attendance_correction_execute',
       'recruitment_requisition_submit_prepare',
@@ -327,6 +402,8 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ uriTemplate: 'erp://payroll/cutover-readiness/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://op/operating-summaries/{date}' }),
       expect.objectContaining({ uriTemplate: 'erp://op/approval-bridges/{externalEventId}' }),
+      expect.objectContaining({ uriTemplate: 'erp://analytics/management-dashboard/{asOf}' }),
+      expect.objectContaining({ uriTemplate: 'erp://analytics/exports/{id}' }),
     ]));
     const prompts = await client.listPrompts();
     expect(prompts.prompts).toEqual(expect.arrayContaining([
@@ -344,6 +421,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ name: 'payroll_cutover_readiness_review_guide' }),
       expect.objectContaining({ name: 'op_operating_summary_review_guide' }),
       expect.objectContaining({ name: 'op_approval_bridge_review_guide' }),
+      expect.objectContaining({ name: 'management_dashboard_review_guide' }),
     ]));
 
     const result = await client.callTool({ name: 'get_org_chart', arguments: {} });
@@ -439,5 +517,32 @@ describe('MCP Streamable HTTP 协议集成', () => {
       /formData|payloadCiphertext|comment|credential/iu,
     );
     expect(tools.getOpApprovalBridge).toHaveBeenCalledTimes(2);
+
+    const dashboardResult = await client.callTool({
+      name: 'management_dashboard_get', arguments: { asOf: '2026-07-22' },
+    });
+    expect(dashboardResult.structuredContent).toMatchObject({
+      dashboard: {
+        asOf: '2026-07-22', workforce: { activeHeadcount: 120 },
+        approvals: { approvalRateBps: 8_500 },
+      },
+    });
+    const dashboardResource = await client.readResource({
+      uri: 'erp://analytics/management-dashboard/2026-07-22',
+    });
+    expect(JSON.stringify([dashboardResult, dashboardResource])).not.toMatch(
+      /displayName|employeeNo|candidateId|salary|payslip|formData|comment/iu,
+    );
+    expect(tools.getManagementDashboard).toHaveBeenCalledTimes(2);
+
+    const exportResource = await client.readResource({
+      uri: 'erp://analytics/exports/01J8ZQK7V0A2M4N6P8R0T2W4E1',
+    });
+    const exportContent = exportResource.contents[0];
+    const exportText = exportContent !== undefined && 'text' in exportContent
+      ? exportContent.text : '{}';
+    expect(JSON.parse(exportText)).toMatchObject({ export: { status: 'queued' } });
+    expect(exportText).not.toMatch(/tenantId|requestedBy|failureCode/iu);
+    expect(tools.getAnalyticsExport).toHaveBeenCalledOnce();
   });
 });

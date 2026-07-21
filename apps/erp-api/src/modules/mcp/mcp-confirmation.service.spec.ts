@@ -105,6 +105,26 @@ describe('McpConfirmationService', () => {
     expect(stored.commandJson).not.toMatch(/terms|salary|benefit|candidate/iu);
   });
 
+  it('分析导出固定为 R2 且命令只包含口径日与固定格式', async () => {
+    const create = vi.fn().mockResolvedValue(undefined);
+    await service({ create }).prepare(identity, 'analytics-export-001', {
+      operation: 'analytics.management_dashboard.export',
+      asOf: '2026-07-22', format: 'json', expectedVersion: 1,
+    }, 'R2');
+    const stored = create.mock.calls[0]?.[0] as unknown as {
+      readonly operation: string; readonly commandJson: string;
+    };
+    expect(stored.operation).toBe('analytics.management_dashboard.export');
+    expect(JSON.parse(stored.commandJson)).toEqual({
+      asOf: '2026-07-22', expectedVersion: 1, format: 'json',
+      operation: 'analytics.management_dashboard.export',
+    });
+    await expect(service({ create: vi.fn() }).prepare(identity, 'analytics-export-002', {
+      operation: 'analytics.management_dashboard.export',
+      asOf: '2026-07-22', format: 'json', expectedVersion: 1,
+    }, 'R1')).rejects.toThrow('MCP 操作风险分级错误');
+  });
+
   it('考勤修订 R1 命令规范化固化受控分钟与原因码，并可完整认领', async () => {
     const create = vi.fn().mockResolvedValue(undefined);
     await service({ create }).prepare(identity, 'attendance-prepare-001', {

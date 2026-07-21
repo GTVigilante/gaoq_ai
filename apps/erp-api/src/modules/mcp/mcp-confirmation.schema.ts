@@ -9,7 +9,8 @@ export type McpOperation =
   | 'recruitment.requisition.submit'
   | 'recruitment.position.transition'
   | 'recruitment.offer.request_send'
-  | 'attendance.correction.request';
+  | 'attendance.correction.request'
+  | 'analytics.management_dashboard.export';
 export type McpConfirmationStatus =
   | 'pending_confirmation'
   | 'ready'
@@ -38,6 +39,7 @@ export class McpConfirmationRecord {
       'approval.submit', 'approval.withdraw', 'approval.decide',
       'recruitment.requisition.submit', 'recruitment.position.transition',
       'recruitment.offer.request_send', 'attendance.correction.request',
+      'analytics.management_dashboard.export',
     ],
     required: true,
     immutable: true,

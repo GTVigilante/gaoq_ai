@@ -58,6 +58,7 @@ KnowledgeTrainingAssignmentRecordSchema.index(
   { unique: true },
 );
 KnowledgeTrainingAssignmentRecordSchema.index({ tenantId: 1, onboardingInstanceId: 1, mandatory: 1, status: 1 });
+KnowledgeTrainingAssignmentRecordSchema.index({ tenantId: 1, mandatory: 1, status: 1 });
 
 @Schema({ collection: 'knowledge_exam_attempts', timestamps: true, versionKey: false, id: false })
 export class KnowledgeExamAttemptRecord {

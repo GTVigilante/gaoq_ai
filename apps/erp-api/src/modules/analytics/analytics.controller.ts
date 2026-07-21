@@ -1,0 +1,26 @@
+import { Controller, Get, Query } from '@nestjs/common';
+
+import { AuditService } from '../../core/audit/audit.service.js';
+import { RequiredScopes } from '../identity/auth.decorators.js';
+import { ManagementDashboardService } from './application/management-dashboard.service.js';
+
+/** 管理驾驶舱只读入口；不返回个人明细、表单、薪资金额或候选人数据。 */
+@Controller('analytics')
+export class AnalyticsController {
+  constructor(
+    private readonly dashboard: ManagementDashboardService,
+    private readonly audit: AuditService,
+  ) {}
+
+  @Get('management-dashboard')
+  @RequiredScopes('erp:analytics:management:read')
+  async getManagementDashboard(@Query('asOf') asOf: string) {
+    const result = await this.dashboard.get(asOf);
+    await this.audit.record({
+      action: 'analytics.management_dashboard.read', resourceType: 'management_dashboard',
+      resourceId: asOf, riskLevel: 'R1', outcome: 'success',
+      metadata: { asOf, sourceCount: result.sources.length },
+    });
+    return result;
+  }
+}

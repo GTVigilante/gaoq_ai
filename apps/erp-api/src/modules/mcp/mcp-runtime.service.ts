@@ -336,6 +336,67 @@ const opApprovalBridgeSchema = z.object({
   approvalVersion: z.number().int().nonnegative(), completedAt: z.string().nullable(),
   updatedAt: z.string(),
 });
+const managementDashboardSchema = z.object({
+  asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  window: z.object({
+    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), timezone: z.literal('Asia/Shanghai'),
+  }),
+  generatedAt: z.string().datetime(),
+  freshness: z.object({
+    transactional: z.literal('live'),
+    operatingSummaryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+    payrollPeriod: z.string().regex(/^\d{4}-\d{2}$/).nullable(),
+  }),
+  workforce: z.object({
+    activeHeadcount: z.number().int().nonnegative(),
+    probationHeadcount: z.number().int().nonnegative(),
+    suspendedHeadcount: z.number().int().nonnegative(),
+  }),
+  approvals: z.object({
+    running: z.number().int().nonnegative(), overdue48h: z.number().int().nonnegative(),
+    completed30d: z.number().int().nonnegative(),
+    approvalRateBps: z.number().int().min(0).max(10_000).nullable(),
+  }),
+  recruitment: z.object({
+    openPositionCount: z.number().int().nonnegative(),
+    openHeadcount: z.number().int().nonnegative(),
+    activeApplicationCount: z.number().int().nonnegative(),
+    hired30d: z.number().int().nonnegative(),
+  }),
+  learning: z.object({
+    mandatoryAssignments: z.number().int().nonnegative(),
+    completedMandatoryAssignments: z.number().int().nonnegative(),
+    expiredMandatoryAssignments: z.number().int().nonnegative(),
+    completionRateBps: z.number().int().min(0).max(10_000).nullable(),
+  }),
+  payroll: z.object({
+    period: z.string().regex(/^\d{4}-\d{2}$/).nullable(),
+    status: z.enum([
+      'draft', 'collecting', 'review', 'pending_approval', 'approved',
+      'locked', 'disbursing', 'reconciling', 'reconciled',
+    ]).nullable(),
+    employeeCount: z.number().int().nonnegative().nullable(),
+  }),
+  operating: z.object({
+    summaryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+    revision: z.number().int().positive().nullable(), currency: z.literal('CNY').nullable(),
+    gmvMinor: z.number().int().nonnegative().nullable(),
+    paidOrderCount: z.number().int().nonnegative().nullable(),
+    refundMinor: z.number().int().nonnegative().nullable(),
+  }),
+  sources: z.array(z.string()).max(16),
+});
+const analyticsExportSchema = z.object({
+  id: recruitmentIdSchema,
+  asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  format: z.literal('json'),
+  status: z.enum(['queued', 'processing', 'ready', 'failed']),
+  resourceUri: z.string().regex(/^erp:\/\/analytics\/exports\/[0-7][0-9A-HJKMNP-TV-Z]{25}$/),
+  contentHash: z.string().length(43).nullable(),
+  artifact: z.record(z.string(), z.unknown()).nullable(),
+  expiresAt: z.string().datetime(),
+});
 
 @Injectable()
 export class McpRuntimeService {
@@ -755,6 +816,42 @@ export class McpRuntimeService {
       },
     );
 
+    server.registerResource(
+      'management-dashboard',
+      new ResourceTemplate('erp://analytics/management-dashboard/{asOf}', { list: undefined }),
+      {
+        title: '管理驾驶舱',
+        description: '固定口径的组织、审批、招聘、培训、薪资周期和 OP 聚合指标，不含个人明细。',
+        mimeType: 'application/json',
+      },
+      async (uri, { asOf }, extra) => {
+        const result = await this.tools.getManagementDashboard(requiredDate(asOf), extra);
+        if (result.isError === true) throw new Error('无权读取管理驾驶舱');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
+    server.registerResource(
+      'management-dashboard-export',
+      new ResourceTemplate('erp://analytics/exports/{id}', { list: undefined }),
+      {
+        title: '管理驾驶舱异步导出',
+        description: '返回当前用户经 R2 确认发起的固定聚合导出状态；就绪后包含 JSON 产物。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getAnalyticsExport(requiredResourceId(id), extra);
+        if (result.isError === true) throw new Error('无权读取管理驾驶舱导出');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
     server.registerPrompt(
       'approval_submission_guide',
       {
@@ -785,6 +882,19 @@ export class McpRuntimeService {
       ({ externalEventId }) => ({ messages: [{ role: 'user', content: {
         type: 'text',
         text: `请读取 OP 审批事件 ${externalEventId} 的桥接状态，说明 ERP 审批实例、当前状态和版本。不要读取或复述表单正文，不要代替审批人决策，也不要触发重试或回推。`,
+      } }] }),
+    );
+
+    server.registerPrompt(
+      'management_dashboard_review_guide',
+      {
+        title: '管理驾驶舱解读清单',
+        description: '指导 AI 核对口径、时间窗、数据覆盖与守护指标，不推断个人表现。',
+        argsSchema: { asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) },
+      },
+      ({ asOf }) => ({ messages: [{ role: 'user', content: {
+        type: 'text',
+        text: `请读取 ${asOf} 管理驾驶舱。先说明 30 日窗口、来源集合和空值，再概括在岗规模、审批积压、招聘供给、必修培训、薪资周期与 OP 经营摘要。不得推断个人绩效，不得把相关性表述为因果，也不得触发导出。`,
       } }] }),
     );
 
@@ -1331,6 +1441,53 @@ export class McpRuntimeService {
       },
       async ({ externalEventId }, extra) =>
         this.tools.getOpApprovalBridge(externalEventId, extra),
+    );
+
+    server.registerTool(
+      'management_dashboard_get',
+      {
+        title: '查询管理驾驶舱',
+        description: '读取固定口径跨域聚合指标，不返回个人明细。风险等级 R1。',
+        inputSchema: { asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) },
+        outputSchema: z.object({ dashboard: managementDashboardSchema }),
+        annotations: {
+          readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+        },
+      },
+      async ({ asOf }, extra) => this.tools.getManagementDashboard(asOf, extra),
+    );
+
+    server.registerTool(
+      'management_dashboard_export_prepare',
+      {
+        title: '准备管理驾驶舱导出',
+        description: '固定口径 JSON 导出的 R2 准备操作；只生成确认单，不创建导出任务。',
+        inputSchema: {
+          asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+          prepareKey: z.string().regex(/^[A-Za-z0-9._:-]{8,128}$/),
+        },
+        outputSchema: preparedOperationOutputSchema,
+        annotations: {
+          readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+        },
+      },
+      async ({ asOf, prepareKey }, extra) =>
+        this.tools.prepareManagementDashboardExport(asOf, prepareKey, extra),
+    );
+
+    server.registerTool(
+      'management_dashboard_export_execute',
+      {
+        title: '执行管理驾驶舱导出',
+        description: '消费经 Passkey 强认证的一次性凭据并创建异步任务，返回可轮询资源链接。风险等级 R2。',
+        inputSchema: confirmationExecuteInputSchema,
+        outputSchema: z.object({ export: analyticsExportSchema }),
+        annotations: {
+          readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+        },
+      },
+      async ({ operationId, confirmationCredential }, extra) =>
+        this.tools.executeManagementDashboardExport(operationId, confirmationCredential, extra),
     );
 
     server.registerTool(
