@@ -12,6 +12,7 @@
 | `Offer` | Recruitment | 条款为 L4；审批、发送、接受、签署引用分别留证；金额使用整数分 |
 | `ESignFlow` / `ESignEvidence` | Integration | ERP 状态机权威；回调先验签入 inbox；完成 PDF 哈希与证据不可普通删除 |
 | `OnboardingInstance` | Onboarding | 由已接受 Offer 幂等创建；任务、材料、签署与培训均是引用，不复制权威数据 |
+| `Person` / `Employee` / `Employment` | Org | 自然人、组织视图、劳动关系严格分层；由组织应用服务事务化建立 |
 | `TrainingAssignment` / `ExamAttempt` | Knowledge | 进度由服务端事件计算；学员接口和 MCP 永不返回标准答案 |
 | `CareCase` / `AlumniConsent` | Care | 权限失效与离职日期绑定；校友联系有目的、授权、到期时间和撤回清理 |
 
@@ -35,6 +36,9 @@ applied → screening → interview → offer_approval → offer_sent
 - 禁止任意回退；重新评估必须创建显式的新面试轮次或新申请，不能改写历史。
 - `rejected/withdrawn/hired` 为终态。人才库是带目的、授权和到期时间的候选人关系，不伪装成申请阶段。
 - 进入 `offer_approval` 必须已有完成的面试；进入 `offer_sent` 必须关联已通过的审批实例；进入 `preboarding` 必须有候选人接受证据；进入 `hired` 必须由 Onboarding 完成门禁驱动。
+- Onboarding 完成时只调用组织域应用服务；服务在同一事务建立 `Person`、`Employee`、`Employment`，Onboarding 不得直接写组织集合。
+- `Person` 只保存候选人来源与身份核验证据引用，不复制身份证、联系方式或材料原文；工号由组织域按租户年度序列原子分配。
+- 招聘职位只表达招聘需求，不能当作正式组织岗位；入职完成前必须显式核验 `orgPositionId`、部门和职级引用。
 
 Offer 子状态机：
 

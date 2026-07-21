@@ -41,6 +41,9 @@ export type OrgDepartmentStatus = 'active' | 'inactive';
 /** 员工在职状态。 */
 export type OrgEmployeeStatus = 'probation' | 'active' | 'suspended' | 'terminated';
 
+/** 劳动关系状态。 */
+export type OrgEmploymentStatus = 'probation' | 'active' | 'suspended' | 'resigned';
+
 /** 岗位状态。 */
 export type OrgPositionStatus = 'active' | 'inactive';
 
@@ -213,6 +216,117 @@ OrgEmployeeRecordSchema.index({ tenantId: 1, departmentIds: 1 });
 OrgEmployeeRecordSchema.index({ tenantId: 1, primaryDepartmentId: 1 });
 /** 按在职状态检索员工。 */
 OrgEmployeeRecordSchema.index({ tenantId: 1, status: 1 });
+
+/**
+ * 自然人主数据（集合 org_persons）。
+ * 只持有来源和核验证据引用，不保存证件号、手机号、邮箱或材料原文。
+ */
+@Schema({ collection: 'org_persons', timestamps: true, versionKey: false, id: false })
+export class OrgPersonRecord {
+  @Prop({ type: String, required: true, immutable: true, maxlength: MAX_ID_LENGTH })
+  id!: string;
+
+  @Prop({ type: String, required: true, immutable: true, maxlength: MAX_ID_LENGTH })
+  tenantId!: string;
+
+  @Prop({ type: String, required: true, immutable: true, maxlength: MAX_ID_LENGTH })
+  sourceCandidateId!: string;
+
+  @Prop({ type: String, required: true, immutable: true, maxlength: MAX_ID_LENGTH })
+  identityEvidenceId!: string;
+
+  @Prop({ type: String, enum: ['active'], required: true })
+  status!: 'active';
+
+  @Prop({ type: Number, required: true, validate: { validator: isPositiveInteger } })
+  version!: number;
+
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+
+export type OrgPersonDocument = HydratedDocument<OrgPersonRecord>;
+export const OrgPersonRecordSchema = SchemaFactory.createForClass(OrgPersonRecord);
+OrgPersonRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
+OrgPersonRecordSchema.index({ tenantId: 1, sourceCandidateId: 1 }, { unique: true });
+OrgPersonRecordSchema.index({ tenantId: 1, identityEvidenceId: 1 }, { unique: true });
+
+/** 劳动关系记录（集合 org_employments），与员工组织视图分离。 */
+@Schema({ collection: 'org_employments', timestamps: true, versionKey: false, id: false })
+export class OrgEmploymentRecord {
+  @Prop({ type: String, required: true, immutable: true, maxlength: MAX_ID_LENGTH })
+  id!: string;
+
+  @Prop({ type: String, required: true, immutable: true, maxlength: MAX_ID_LENGTH })
+  tenantId!: string;
+
+  @Prop({ type: String, required: true, immutable: true, maxlength: MAX_ID_LENGTH })
+  personId!: string;
+
+  @Prop({ type: String, required: true, immutable: true, maxlength: MAX_ID_LENGTH })
+  employeeId!: string;
+
+  @Prop({ type: String, required: true, immutable: true, maxlength: MAX_ID_LENGTH })
+  onboardingInstanceId!: string;
+
+  @Prop({ type: String, required: true, immutable: true, maxlength: MAX_ID_LENGTH })
+  onboardingCompletionEvidenceId!: string;
+
+  @Prop({ type: String, required: true, immutable: true, maxlength: MAX_ID_LENGTH })
+  offerId!: string;
+
+  @Prop({ type: String, required: true, immutable: true, maxlength: MAX_ID_LENGTH })
+  signedEvidenceId!: string;
+
+  @Prop({
+    type: String, enum: ['probation', 'active', 'suspended', 'resigned'], required: true,
+  })
+  status!: OrgEmploymentStatus;
+
+  @Prop({ type: Date, required: true, immutable: true })
+  effectiveFrom!: Date;
+
+  @Prop({ type: Date, default: null })
+  effectiveTo!: Date | null;
+
+  @Prop({ type: Number, required: true, validate: { validator: isPositiveInteger } })
+  version!: number;
+
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+
+export type OrgEmploymentDocument = HydratedDocument<OrgEmploymentRecord>;
+export const OrgEmploymentRecordSchema = SchemaFactory.createForClass(OrgEmploymentRecord);
+OrgEmploymentRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
+OrgEmploymentRecordSchema.index({ tenantId: 1, onboardingInstanceId: 1 }, { unique: true });
+OrgEmploymentRecordSchema.index({ tenantId: 1, employeeId: 1, effectiveFrom: -1 });
+OrgEmploymentRecordSchema.index(
+  { tenantId: 1, personId: 1 },
+  { unique: true, partialFilterExpression: { effectiveTo: null } },
+);
+
+/** 租户年度工号序列，仅由组织应用服务在事务内原子递增。 */
+@Schema({ collection: 'org_employee_number_sequences', timestamps: true, versionKey: false, id: false })
+export class OrgEmployeeNumberSequenceRecord {
+  @Prop({ type: String, required: true, immutable: true, maxlength: MAX_ID_LENGTH })
+  tenantId!: string;
+
+  @Prop({ type: Number, required: true, immutable: true, min: 2000, max: 2200 })
+  year!: number;
+
+  @Prop({ type: Number, required: true, min: 1, validate: { validator: isPositiveInteger } })
+  lastValue!: number;
+
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+
+export type OrgEmployeeNumberSequenceDocument = HydratedDocument<OrgEmployeeNumberSequenceRecord>;
+export const OrgEmployeeNumberSequenceRecordSchema = SchemaFactory.createForClass(
+  OrgEmployeeNumberSequenceRecord,
+);
+OrgEmployeeNumberSequenceRecordSchema.index({ tenantId: 1, year: 1 }, { unique: true });
 
 /**
  * 岗位持久化记录（集合 org_positions）。

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -17,12 +18,16 @@ import {
   buildEmployeeCreatedEvent,
   buildEmployeeStatusChangedEvent,
   buildEmployeeUpdatedEvent,
+  buildEmploymentEstablishedEvent,
+  buildPersonCreatedEvent,
   buildJobLevelCreatedEvent,
   buildJobLevelUpdatedEvent,
   buildPositionCreatedEvent,
   buildPositionUpdatedEvent,
   createDepartment,
   createEmployee,
+  createEmployment,
+  createPerson,
   createJobLevel,
   createPosition,
   OrgDomainError,
@@ -35,6 +40,7 @@ import {
   type Employee,
   type JobLevel,
   type Position,
+  type Employment,
 } from '../domain/index.js';
 import {
   DepartmentRepository,
@@ -42,6 +48,9 @@ import {
   JobLevelRepository,
   OrgWriteConflictError,
   PositionRepository,
+  PersonRepository,
+  EmploymentRepository,
+  EmployeeNumberSequenceRepository,
 } from '../persistence/org.repositories.js';
 import { OrgOutboxWriter } from '../persistence/outbox.writer.js';
 import type {
@@ -73,6 +82,9 @@ export class OrgApplicationService {
     private readonly employees: EmployeeRepository,
     private readonly positions: PositionRepository,
     private readonly jobLevels: JobLevelRepository,
+    private readonly persons: PersonRepository,
+    private readonly employments: EmploymentRepository,
+    private readonly employeeNumbers: EmployeeNumberSequenceRepository,
     private readonly outbox: OrgOutboxWriter,
     private readonly identities: IdentityLifecycleService,
   ) {}
@@ -275,6 +287,124 @@ export class OrgApplicationService {
     ));
   }
 
+  /**
+   * Onboarding 完成闸门专用：在组织域事务内建立 Person、Employee 与 Employment。
+   * 调用方只能提交证据引用和组织引用，不能指定 tenantId、工号或聚合标识。
+   */
+  async establishEmploymentFromOnboarding(
+    key: string,
+    input: {
+      readonly onboardingInstanceId: string;
+      readonly onboardingCompletionEvidenceId: string;
+      readonly candidateId: string;
+      readonly offerId: string;
+      readonly signedEvidenceId: string;
+      readonly identityEvidenceId: string;
+      readonly displayName: string;
+      readonly primaryDepartmentId: string;
+      readonly orgPositionId: string;
+      readonly jobLevelId: string | null;
+      readonly effectiveFrom: string;
+    },
+  ): Promise<{
+    readonly employment: Employment;
+    readonly employeeId: string;
+    readonly employeeNo: string;
+    readonly personId: string;
+  }> {
+    this.assertTrustedScope('erp:onboarding:employment:establish');
+    return this.run(async () => this.idempotency.execute(
+      'org.employment.establish_from_onboarding', key, input, async (session) => {
+        const effectiveFrom = new Date(input.effectiveFrom);
+        if (Number.isNaN(effectiveFrom.getTime())) throw new BadRequestException({
+          code: 'ORG_EMPLOYMENT_EFFECTIVE_DATE_INVALID', message: '劳动关系生效日期非法',
+        });
+        const existing = await this.employments.findByOnboardingInstanceId(
+          input.onboardingInstanceId,
+          session,
+        );
+        if (existing !== null) {
+          if (
+            existing.offerId !== input.offerId ||
+            existing.signedEvidenceId !== input.signedEvidenceId ||
+            existing.onboardingCompletionEvidenceId !== input.onboardingCompletionEvidenceId ||
+            existing.effectiveFrom !== effectiveFrom.toISOString()
+          ) {
+            throw new ConflictException({
+              code: 'ORG_ONBOARDING_EMPLOYMENT_MISMATCH',
+              message: '该入职实例已绑定不同的完成证据或生效日期',
+            });
+          }
+          const existingPerson = await this.persons.findBySourceCandidateId(
+            input.candidateId,
+            session,
+          );
+          if (
+            existingPerson === null || existingPerson.id !== existing.personId ||
+            existingPerson.identityEvidenceId !== input.identityEvidenceId
+          ) throw new ConflictException({
+            code: 'ORG_ONBOARDING_PERSON_MISMATCH',
+            message: '该入职实例已绑定不同的自然人或身份核验证据',
+          });
+          const employee = await this.requireEmployee(existing.employeeId, session);
+          return {
+            employment: existing, employeeId: employee.id,
+            employeeNo: employee.employeeNo, personId: existing.personId,
+          };
+        }
+
+        const now = new Date();
+        const tenantId = this.context.getTenantRequired().tenantId;
+        let person = await this.persons.findBySourceCandidateId(input.candidateId, session);
+        let personCreated = false;
+        if (person === null) {
+          person = createPerson({
+            id: createEventId(now), tenantId, sourceCandidateId: input.candidateId,
+            identityEvidenceId: input.identityEvidenceId,
+          }, now);
+          personCreated = true;
+        } else if (person.identityEvidenceId !== input.identityEvidenceId) {
+          throw new ConflictException({
+            code: 'ORG_PERSON_IDENTITY_EVIDENCE_MISMATCH',
+            message: '候选人已绑定不同身份核验证据，必须人工复核',
+          });
+        }
+
+        const sequence = await this.employeeNumbers.next(now.getUTCFullYear(), session);
+        if (sequence > 999_999) throw new ConflictException({
+          code: 'ORG_EMPLOYEE_NUMBER_EXHAUSTED', message: '当前年度工号序列已耗尽',
+        });
+        const employeeNo = `E${now.getUTCFullYear()}${String(sequence).padStart(6, '0')}`;
+        const employee = createEmployee({
+          id: createEventId(now), tenantId, employeeNo, displayName: input.displayName,
+          status: 'probation', departmentIds: [input.primaryDepartmentId],
+          primaryDepartmentId: input.primaryDepartmentId, positionIds: [input.orgPositionId],
+          jobLevelId: input.jobLevelId,
+        }, now);
+        await this.assertEmployeeReferences(employee, session);
+        const employment = createEmployment({
+          id: createEventId(now), tenantId, personId: person.id, employeeId: employee.id,
+          onboardingInstanceId: input.onboardingInstanceId, offerId: input.offerId,
+          onboardingCompletionEvidenceId: input.onboardingCompletionEvidenceId,
+          signedEvidenceId: input.signedEvidenceId, effectiveFrom,
+        }, now);
+
+        if (personCreated) {
+          await this.persons.insert(person, session);
+          await this.outbox.append(buildPersonCreatedEvent(person, now), session);
+        }
+        await this.employees.insert(employee, session);
+        await this.employments.insert(employment, session);
+        await this.outbox.append(buildEmployeeCreatedEvent(employee, now), session);
+        await this.outbox.append(buildEmploymentEstablishedEvent(employment, now), session);
+        return {
+          employment, employeeId: employee.id, employeeNo: employee.employeeNo,
+          personId: person.id,
+        };
+      },
+    ));
+  }
+
   async updateEmployee(
     id: string,
     expectedVersion: number,
@@ -419,6 +549,12 @@ export class OrgApplicationService {
     if (Object.keys(patch).length === 0) {
       throw new BadRequestException({ code: 'ORG_EMPTY_PATCH', message: '更新内容不能为空' });
     }
+  }
+
+  private assertTrustedScope(scope: string): void {
+    if (!this.context.getActorRequired().scopes.includes(scope)) throw new ForbiddenException({
+      code: 'ORG_TRUSTED_WORKFLOW_REQUIRED', message: '必须由受信任的入职工作流执行',
+    });
   }
 
   private async run<T>(operation: () => Promise<T>): Promise<T> {

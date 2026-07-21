@@ -15,6 +15,8 @@ export type OrgErrorCode =
   | 'INVALID_TRACK'
   | 'INVALID_RANK'
   | 'INVALID_TIME'
+  | 'PERSON_EVIDENCE_INVALID'
+  | 'EMPLOYMENT_EFFECTIVE_DATE_INVALID'
   | 'IMMUTABLE_FIELD';
 
 /** 组织领域错误；纯领域层不依赖 Nest 异常体系。 */

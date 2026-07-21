@@ -2,6 +2,8 @@ import type { Department } from './department.js';
 import type { Employee, EmployeeStatus } from './employee.js';
 import type { JobLevel } from './job-level.js';
 import type { Position } from './position.js';
+import type { Person } from './person.js';
+import type { Employment } from './employment.js';
 
 /**
  * 组织领域事件。
@@ -68,6 +70,20 @@ export interface EmployeeStatusChangedPayload {
   readonly toStatus: EmployeeStatus;
 }
 
+export interface PersonCreatedPayload {
+  readonly sourceCandidateId: string;
+  readonly status: Person['status'];
+}
+
+export interface EmploymentEstablishedPayload {
+  readonly personId: string;
+  readonly employeeId: string;
+  readonly onboardingInstanceId: string;
+  readonly offerId: string;
+  readonly status: Employment['status'];
+  readonly effectiveFrom: string;
+}
+
 /** position.created 载荷。 */
 export interface PositionCreatedPayload {
   readonly code: string;
@@ -106,6 +122,11 @@ export type EmployeeStatusChangedEvent = OrgEventBase<
   'employee.status_changed',
   EmployeeStatusChangedPayload
 >;
+export type PersonCreatedEvent = OrgEventBase<'person.created', PersonCreatedPayload>;
+export type EmploymentEstablishedEvent = OrgEventBase<
+  'employment.established',
+  EmploymentEstablishedPayload
+>;
 export type PositionCreatedEvent = OrgEventBase<'position.created', PositionCreatedPayload>;
 export type PositionUpdatedEvent = OrgEventBase<'position.updated', PositionUpdatedPayload>;
 export type JobLevelCreatedEvent = OrgEventBase<'job_level.created', JobLevelCreatedPayload>;
@@ -118,6 +139,8 @@ export type OrgDomainEvent =
   | EmployeeCreatedEvent
   | EmployeeUpdatedEvent
   | EmployeeStatusChangedEvent
+  | PersonCreatedEvent
+  | EmploymentEstablishedEvent
   | PositionCreatedEvent
   | PositionUpdatedEvent
   | JobLevelCreatedEvent
@@ -231,6 +254,30 @@ export function buildEmployeeStatusChangedEvent(
     payload: {
       fromStatus,
       toStatus: employee.status,
+    },
+  };
+}
+
+export function buildPersonCreatedEvent(person: Person, occurredAt: Date): PersonCreatedEvent {
+  return {
+    type: 'person.created', tenantId: person.tenantId, aggregateId: person.id,
+    version: person.version, occurredAt: occurredAt.toISOString(),
+    payload: { sourceCandidateId: person.sourceCandidateId, status: person.status },
+  };
+}
+
+export function buildEmploymentEstablishedEvent(
+  employment: Employment,
+  occurredAt: Date,
+): EmploymentEstablishedEvent {
+  return {
+    type: 'employment.established', tenantId: employment.tenantId,
+    aggregateId: employment.id, version: employment.version,
+    occurredAt: occurredAt.toISOString(),
+    payload: {
+      personId: employment.personId, employeeId: employment.employeeId,
+      onboardingInstanceId: employment.onboardingInstanceId, offerId: employment.offerId,
+      status: employment.status, effectiveFrom: employment.effectiveFrom,
     },
   };
 }

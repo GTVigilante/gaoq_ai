@@ -7,6 +7,8 @@ import type { Department } from '../domain/department.js';
 import type { Employee } from '../domain/employee.js';
 import type { JobLevel } from '../domain/job-level.js';
 import type { Position } from '../domain/position.js';
+import type { Person } from '../domain/person.js';
+import type { Employment } from '../domain/employment.js';
 import {
   OrgDepartmentRecord,
   type OrgDepartmentDocument,
@@ -16,6 +18,12 @@ import {
   type OrgJobLevelDocument,
   OrgPositionRecord,
   type OrgPositionDocument,
+  OrgPersonRecord,
+  type OrgPersonDocument,
+  OrgEmploymentRecord,
+  type OrgEmploymentDocument,
+  OrgEmployeeNumberSequenceRecord,
+  type OrgEmployeeNumberSequenceDocument,
 } from './org.schemas.js';
 
 export class OrgWriteConflictError extends Error {
@@ -229,6 +237,109 @@ export class EmployeeRepository extends TenantBoundRepository {
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
     });
+  }
+}
+
+@Injectable()
+export class PersonRepository extends TenantBoundRepository {
+  constructor(
+    context: TenantContextService,
+    @InjectModel(OrgPersonRecord.name) private readonly records: Model<OrgPersonDocument>,
+  ) {
+    super(context);
+  }
+
+  async findBySourceCandidateId(
+    sourceCandidateId: string,
+    session?: ClientSession,
+  ): Promise<Person | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), sourceCandidateId });
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record === null ? null : this.toDomain(record);
+  }
+
+  async insert(person: Person, session: ClientSession): Promise<void> {
+    this.assertEntityTenant(person.tenantId);
+    await this.records.create([{
+      ...person,
+      createdAt: new Date(person.createdAt),
+      updatedAt: new Date(person.updatedAt),
+    }], { session });
+  }
+
+  private toDomain(record: OrgPersonRecord): Person {
+    return Object.freeze({
+      id: record.id, tenantId: record.tenantId, sourceCandidateId: record.sourceCandidateId,
+      identityEvidenceId: record.identityEvidenceId, status: record.status,
+      version: record.version, createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString(),
+    });
+  }
+}
+
+@Injectable()
+export class EmploymentRepository extends TenantBoundRepository {
+  constructor(
+    context: TenantContextService,
+    @InjectModel(OrgEmploymentRecord.name) private readonly records: Model<OrgEmploymentDocument>,
+  ) {
+    super(context);
+  }
+
+  async findByOnboardingInstanceId(
+    onboardingInstanceId: string,
+    session?: ClientSession,
+  ): Promise<Employment | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), onboardingInstanceId });
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record === null ? null : this.toDomain(record);
+  }
+
+  async insert(employment: Employment, session: ClientSession): Promise<void> {
+    this.assertEntityTenant(employment.tenantId);
+    await this.records.create([{
+      ...employment,
+      effectiveFrom: new Date(employment.effectiveFrom),
+      effectiveTo: employment.effectiveTo === null ? null : new Date(employment.effectiveTo),
+      createdAt: new Date(employment.createdAt),
+      updatedAt: new Date(employment.updatedAt),
+    }], { session });
+  }
+
+  private toDomain(record: OrgEmploymentRecord): Employment {
+    return Object.freeze({
+      id: record.id, tenantId: record.tenantId, personId: record.personId,
+      employeeId: record.employeeId, onboardingInstanceId: record.onboardingInstanceId,
+      onboardingCompletionEvidenceId: record.onboardingCompletionEvidenceId,
+      offerId: record.offerId, signedEvidenceId: record.signedEvidenceId,
+      status: record.status, effectiveFrom: record.effectiveFrom.toISOString(),
+      effectiveTo: record.effectiveTo?.toISOString() ?? null, version: record.version,
+      createdAt: record.createdAt.toISOString(), updatedAt: record.updatedAt.toISOString(),
+    });
+  }
+}
+
+@Injectable()
+export class EmployeeNumberSequenceRepository extends TenantBoundRepository {
+  constructor(
+    context: TenantContextService,
+    @InjectModel(OrgEmployeeNumberSequenceRecord.name)
+    private readonly records: Model<OrgEmployeeNumberSequenceDocument>,
+  ) {
+    super(context);
+  }
+
+  /** 事务内原子分配租户年度序号，避免并发入职产生重复工号。 */
+  async next(year: number, session: ClientSession): Promise<number> {
+    const record = await this.records.findOneAndUpdate(
+      { tenantId: this.tenantId(), year },
+      { $inc: { lastValue: 1 }, $setOnInsert: { tenantId: this.tenantId(), year } },
+      { session, upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
+    ).lean().exec();
+    if (record === null) throw new Error('工号序列分配失败');
+    return record.lastValue;
   }
 }
 

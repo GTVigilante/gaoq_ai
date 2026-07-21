@@ -11,6 +11,9 @@ import type {
   EmployeeRepository,
   JobLevelRepository,
   PositionRepository,
+  PersonRepository,
+  EmploymentRepository,
+  EmployeeNumberSequenceRepository,
 } from '../persistence/org.repositories.js';
 import type { OrgOutboxWriter } from '../persistence/outbox.writer.js';
 import { OrgApplicationService } from './org-application.service.js';
@@ -90,6 +93,15 @@ function assemble() {
     insert: vi.fn().mockResolvedValue(undefined),
     replace: vi.fn().mockResolvedValue(undefined),
   };
+  const personRepo = {
+    findBySourceCandidateId: vi.fn().mockResolvedValue(null),
+    insert: vi.fn().mockResolvedValue(undefined),
+  };
+  const employmentRepo = {
+    findByOnboardingInstanceId: vi.fn().mockResolvedValue(null),
+    insert: vi.fn().mockResolvedValue(undefined),
+  };
+  const employeeNumberRepo = { next: vi.fn().mockResolvedValue(1) };
   const outbox = { append: vi.fn().mockResolvedValue({}) };
   const terminateEmployee = vi.fn().mockResolvedValue({
     actorIds: [], accessProfileDisabled: false, externalIdentitiesDisabled: 0,
@@ -106,6 +118,9 @@ function assemble() {
     employeeRepo as unknown as EmployeeRepository,
     positionRepo as unknown as PositionRepository,
     jobLevelRepo as unknown as JobLevelRepository,
+    personRepo as unknown as PersonRepository,
+    employmentRepo as unknown as EmploymentRepository,
+    employeeNumberRepo as unknown as EmployeeNumberSequenceRepository,
     outbox as unknown as OrgOutboxWriter,
     { terminateEmployee } as unknown as IdentityLifecycleService,
   );
@@ -117,6 +132,9 @@ function assemble() {
     employeeRepo,
     positionRepo,
     jobLevelRepo,
+    personRepo,
+    employmentRepo,
+    employeeNumberRepo,
     outbox,
     terminateEmployee,
   };
@@ -255,5 +273,76 @@ describe('OrgApplicationService', () => {
       'employee-001', 1, 'key-suspend-001', { status: 'suspended' },
     ));
     expect(store.terminateEmployee).not.toHaveBeenCalled();
+  });
+
+  it('受信任入职工作流在同一事务建立三层主数据且工号由服务端生成', async () => {
+    const store = assemble();
+    const context = {
+      ...trustedContext,
+      actor: {
+        ...trustedContext.actor,
+        scopes: [...trustedContext.actor.scopes, 'erp:onboarding:employment:establish'],
+      },
+    };
+    store.departmentRepo.findByIds.mockResolvedValue([department('dept-a', null)]);
+    store.positionRepo.findByIds.mockResolvedValue([{
+      id: 'position-a', tenantId: 'tenant-001', code: 'POS_A', name: '岗位A', status: 'active',
+      version: 1, createdAt: NOW, updatedAt: NOW,
+    }]);
+    store.jobLevelRepo.findById.mockResolvedValue({
+      id: 'level-a', tenantId: 'tenant-001', code: 'P5', name: 'P5',
+      track: 'professional', rank: 5, version: 1, createdAt: NOW, updatedAt: NOW,
+    });
+
+    const result = await store.context.run(context, () =>
+      store.service.establishEmploymentFromOnboarding('key-onboarding-employment-001', {
+        onboardingInstanceId: 'onboarding-001', candidateId: 'candidate-001',
+        onboardingCompletionEvidenceId: 'onboarding-evidence-001',
+        offerId: 'offer-001', signedEvidenceId: 'signed-evidence-001',
+        identityEvidenceId: 'identity-evidence-001', displayName: '新员工',
+        primaryDepartmentId: 'dept-a', orgPositionId: 'position-a',
+        jobLevelId: 'level-a', effectiveFrom: '2026-08-01T00:00:00.000Z',
+      }),
+    );
+
+    expect(result.employeeNo).toMatch(/^E\d{10}$/);
+    expect(store.personRepo.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceCandidateId: 'candidate-001' }), session,
+    );
+    expect(store.employeeRepo.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ employeeNo: result.employeeNo, status: 'probation' }), session,
+    );
+    expect(store.employmentRepo.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ onboardingInstanceId: 'onboarding-001' }), session,
+    );
+    expect(store.outbox.append).toHaveBeenCalledTimes(3);
+  });
+
+  it('入职工作流不能用新证据静默覆盖既有 Person 身份绑定', async () => {
+    const store = assemble();
+    const context = {
+      ...trustedContext,
+      actor: {
+        ...trustedContext.actor,
+        scopes: [...trustedContext.actor.scopes, 'erp:onboarding:employment:establish'],
+      },
+    };
+    store.personRepo.findBySourceCandidateId.mockResolvedValue({
+      id: 'person-001', tenantId: 'tenant-001', sourceCandidateId: 'candidate-001',
+      identityEvidenceId: 'identity-evidence-old', status: 'active', version: 1,
+      createdAt: NOW, updatedAt: NOW,
+    });
+
+    await expect(store.context.run(context, () =>
+      store.service.establishEmploymentFromOnboarding('key-onboarding-employment-002', {
+        onboardingInstanceId: 'onboarding-001', candidateId: 'candidate-001',
+        onboardingCompletionEvidenceId: 'onboarding-evidence-001',
+        offerId: 'offer-001', signedEvidenceId: 'signed-evidence-001',
+        identityEvidenceId: 'identity-evidence-new', displayName: '新员工',
+        primaryDepartmentId: 'dept-a', orgPositionId: 'position-a',
+        jobLevelId: null, effectiveFrom: '2026-08-01T00:00:00.000Z',
+      }),
+    )).rejects.toBeInstanceOf(ConflictException);
+    expect(store.employeeRepo.insert).not.toHaveBeenCalled();
   });
 });

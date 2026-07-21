@@ -15,12 +15,21 @@ import {
   OrgJobLevelRecordSchema,
   OrgPositionRecord,
   OrgPositionRecordSchema,
+  OrgPersonRecord,
+  OrgPersonRecordSchema,
+  OrgEmploymentRecord,
+  OrgEmploymentRecordSchema,
+  OrgEmployeeNumberSequenceRecord,
+  OrgEmployeeNumberSequenceRecordSchema,
 } from './persistence/org.schemas.js';
 import {
   DepartmentRepository,
   EmployeeRepository,
   JobLevelRepository,
   PositionRepository,
+  PersonRepository,
+  EmploymentRepository,
+  EmployeeNumberSequenceRepository,
 } from './persistence/org.repositories.js';
 import { OutboxRecord, OutboxRecordSchema } from './persistence/outbox.schema.js';
 import { OrgOutboxWriter } from './persistence/outbox.writer.js';
@@ -34,6 +43,12 @@ import { OrgOutboxWriter } from './persistence/outbox.writer.js';
       { name: OrgEmployeeRecord.name, schema: OrgEmployeeRecordSchema },
       { name: OrgPositionRecord.name, schema: OrgPositionRecordSchema },
       { name: OrgJobLevelRecord.name, schema: OrgJobLevelRecordSchema },
+      { name: OrgPersonRecord.name, schema: OrgPersonRecordSchema },
+      { name: OrgEmploymentRecord.name, schema: OrgEmploymentRecordSchema },
+      {
+        name: OrgEmployeeNumberSequenceRecord.name,
+        schema: OrgEmployeeNumberSequenceRecordSchema,
+      },
       { name: OutboxRecord.name, schema: OutboxRecordSchema },
     ]),
   ],
@@ -44,6 +59,9 @@ import { OrgOutboxWriter } from './persistence/outbox.writer.js';
     PositionRepository,
     JobLevelRepository,
     OrgOutboxWriter,
+    PersonRepository,
+    EmploymentRepository,
+    EmployeeNumberSequenceRepository,
   ],
   controllers: [OrgController],
   exports: [
@@ -53,6 +71,9 @@ import { OrgOutboxWriter } from './persistence/outbox.writer.js';
     PositionRepository,
     JobLevelRepository,
     OrgOutboxWriter,
+    PersonRepository,
+    EmploymentRepository,
+    EmployeeNumberSequenceRepository,
   ],
 })
 export class OrgModule {}

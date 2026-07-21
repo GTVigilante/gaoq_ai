@@ -7,10 +7,16 @@ import {
   OrgEmployeeRecordSchema,
   OrgJobLevelRecordSchema,
   OrgPositionRecordSchema,
+  OrgPersonRecordSchema,
+  OrgEmploymentRecordSchema,
+  OrgEmployeeNumberSequenceRecordSchema,
   type OrgDepartmentRecord,
   type OrgEmployeeRecord,
   type OrgJobLevelRecord,
   type OrgPositionRecord,
+  type OrgPersonRecord,
+  type OrgEmploymentRecord,
+  type OrgEmployeeNumberSequenceRecord,
 } from './org.schemas.js';
 import { OutboxRecordSchema, type OutboxRecord } from './outbox.schema.js';
 
@@ -29,6 +35,13 @@ const PositionModel = mongoose.model<OrgPositionRecord>('SpecOrgPosition', OrgPo
 const JobLevelModel = mongoose.model<OrgJobLevelRecord>(
   'SpecOrgJobLevel',
   OrgJobLevelRecordSchema,
+);
+const PersonModel = mongoose.model<OrgPersonRecord>('SpecOrgPerson', OrgPersonRecordSchema);
+const EmploymentModel = mongoose.model<OrgEmploymentRecord>(
+  'SpecOrgEmployment', OrgEmploymentRecordSchema,
+);
+const EmployeeNumberSequenceModel = mongoose.model<OrgEmployeeNumberSequenceRecord>(
+  'SpecOrgEmployeeNumberSequence', OrgEmployeeNumberSequenceRecordSchema,
 );
 const OutboxModel = mongoose.model<OutboxRecord>('SpecOutbox', OutboxRecordSchema);
 
@@ -97,6 +110,23 @@ function validOutbox(): Record<string, unknown> {
     status: 'pending',
     attempts: 0,
     nextAttemptAt: new Date('2026-01-01T00:00:00.000Z'),
+  };
+}
+
+function validPerson(): Record<string, unknown> {
+  return {
+    id: 'person-1', tenantId: 'tenant-a', sourceCandidateId: 'candidate-1',
+    identityEvidenceId: 'identity-evidence-1', status: 'active', version: 1,
+  };
+}
+
+function validEmployment(): Record<string, unknown> {
+  return {
+    id: 'employment-1', tenantId: 'tenant-a', personId: 'person-1',
+    employeeId: 'employee-1', onboardingInstanceId: 'onboarding-1', offerId: 'offer-1',
+    onboardingCompletionEvidenceId: 'onboarding-evidence-1',
+    signedEvidenceId: 'signed-evidence-1', status: 'probation',
+    effectiveFrom: new Date('2026-08-01T00:00:00.000Z'), effectiveTo: null, version: 1,
   };
 }
 
@@ -204,6 +234,56 @@ describe('OrgEmployeeRecordSchema 校验', () => {
     for (const status of ['probation', 'active', 'suspended', 'terminated'] as const) {
       await expectValid(new EmployeeModel({ ...validEmployee(), status }));
     }
+  });
+});
+
+describe('Person、Employment 与工号序列 Schema 校验', () => {
+  it('只允许 Person 引用核验证据，不接受非法状态', async () => {
+    await expectValid(new PersonModel(validPerson()));
+    await expectInvalid(new PersonModel({ ...validPerson(), status: 'merged' }), 'status');
+  });
+
+  it('Employment 必须具备来源、合同证据和合法状态', async () => {
+    await expectValid(new EmploymentModel(validEmployment()));
+    await expectInvalid(
+      new EmploymentModel({ ...validEmployment(), signedEvidenceId: undefined }),
+      'signedEvidenceId',
+    );
+    await expectInvalid(
+      new EmploymentModel({ ...validEmployment(), status: 'terminated' }),
+      'status',
+    );
+  });
+
+  it('年度工号序列只接受正整数与受控年份', async () => {
+    await expectValid(new EmployeeNumberSequenceModel({
+      tenantId: 'tenant-a', year: 2026, lastValue: 1,
+    }));
+    await expectInvalid(new EmployeeNumberSequenceModel({
+      tenantId: 'tenant-a', year: 2026, lastValue: 0,
+    }), 'lastValue');
+    await expectInvalid(new EmployeeNumberSequenceModel({
+      tenantId: 'tenant-a', year: 1999, lastValue: 1,
+    }), 'year');
+  });
+
+  it('关键幂等和在职唯一索引全部存在', () => {
+    expect(OrgPersonRecordSchema.indexes()).toContainEqual([
+      { tenantId: 1, sourceCandidateId: 1 }, expect.objectContaining({ unique: true }),
+    ]);
+    expect(OrgPersonRecordSchema.indexes()).toContainEqual([
+      { tenantId: 1, identityEvidenceId: 1 }, expect.objectContaining({ unique: true }),
+    ]);
+    expect(OrgEmploymentRecordSchema.indexes()).toContainEqual([
+      { tenantId: 1, onboardingInstanceId: 1 }, expect.objectContaining({ unique: true }),
+    ]);
+    const activeEmploymentIndex = OrgEmploymentRecordSchema.indexes().find(
+      ([fields]) => JSON.stringify(fields) === JSON.stringify({ tenantId: 1, personId: 1 }),
+    );
+    expect(activeEmploymentIndex?.[1]).toMatchObject({
+      unique: true,
+      partialFilterExpression: { effectiveTo: null },
+    });
   });
 });
 

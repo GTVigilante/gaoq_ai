@@ -21,6 +21,10 @@ export {
   transitionEmployeeStatus,
   updateEmployee,
 } from './employee.js';
+export { createPerson } from './person.js';
+export type { CreatePersonInput, Person } from './person.js';
+export { createEmployment } from './employment.js';
+export type { CreateEmploymentInput, Employment, EmploymentStatus } from './employment.js';
 export type {
   CreateEmployeeInput,
   Employee,
@@ -52,10 +56,12 @@ export {
   buildEmployeeCreatedEvent,
   buildEmployeeStatusChangedEvent,
   buildEmployeeUpdatedEvent,
+  buildEmploymentEstablishedEvent,
   buildJobLevelCreatedEvent,
   buildJobLevelUpdatedEvent,
   buildPositionCreatedEvent,
   buildPositionUpdatedEvent,
+  buildPersonCreatedEvent,
 } from './org-events.js';
 export type {
   DepartmentCreatedEvent,
@@ -68,6 +74,8 @@ export type {
   EmployeeStatusChangedPayload,
   EmployeeUpdatedEvent,
   EmployeeUpdatedPayload,
+  EmploymentEstablishedEvent,
+  EmploymentEstablishedPayload,
   JobLevelCreatedEvent,
   JobLevelCreatedPayload,
   JobLevelUpdatedEvent,
@@ -78,4 +86,6 @@ export type {
   PositionCreatedPayload,
   PositionUpdatedEvent,
   PositionUpdatedPayload,
+  PersonCreatedEvent,
+  PersonCreatedPayload,
 } from './org-events.js';
