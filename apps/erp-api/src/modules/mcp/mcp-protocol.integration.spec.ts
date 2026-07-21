@@ -103,11 +103,18 @@ describe('MCP Streamable HTTP 协议集成', () => {
     }
     expect(listedTools.tools.map((tool) => tool.name)).toEqual([
       'get_my_permissions',
+      'approval_get_inbox',
+      'approval_get',
       'get_org_chart',
     ]);
     const resources = await client.listResources();
     expect(resources.resources).toEqual(expect.arrayContaining([
       expect.objectContaining({ uri: 'gaoq://mcp/guide' }),
+      expect.objectContaining({ uri: 'erp://approval/pending' }),
+    ]));
+    const prompts = await client.listPrompts();
+    expect(prompts.prompts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'approval_submission_guide' }),
     ]));
 
     const result = await client.callTool({ name: 'get_org_chart', arguments: {} });

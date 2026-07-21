@@ -47,6 +47,40 @@ const orgChartOutputSchema = z.object({
   })),
 });
 
+const approvalSummarySchema = z.object({
+  id: z.string(),
+  status: z.enum(['draft', 'running', 'approved', 'rejected', 'withdrawn', 'archived']),
+  templateCode: z.string(),
+  templateRevision: z.number().int().positive(),
+  riskLevel: z.enum(['R1', 'R2']),
+  version: z.number().int().positive(),
+  submittedAt: z.string().nullable(),
+  completedAt: z.string().nullable(),
+});
+
+const approvalInboxOutputSchema = z.object({ items: z.array(approvalSummarySchema) });
+const readableFormValueSchema = z.union([
+  z.string(), z.number(), z.boolean(), z.null(),
+  z.array(z.union([z.string(), z.number(), z.boolean(), z.null()])),
+  z.object({ redacted: z.literal(true) }),
+]);
+const approvalInstanceOutputSchema = z.object({
+  instance: z.object({
+    id: z.string(),
+    title: z.string(),
+    initiatorId: z.string(),
+    status: z.enum(['draft', 'running', 'approved', 'rejected', 'withdrawn', 'archived']),
+    templateCode: z.string(),
+    templateRevision: z.number().int().positive(),
+    riskLevel: z.enum(['R1', 'R2']),
+    formData: z.record(z.string(), readableFormValueSchema),
+    currentNodeIndex: z.number().int().nonnegative().nullable(),
+    version: z.number().int().positive(),
+    submittedAt: z.string().nullable(),
+    completedAt: z.string().nullable(),
+  }),
+});
+
 @Injectable()
 export class McpRuntimeService {
   private readonly logger = new Logger(McpRuntimeService.name);
@@ -172,6 +206,45 @@ export class McpRuntimeService {
       }),
     );
 
+    server.registerResource(
+      'approval-pending',
+      'erp://approval/pending',
+      {
+        title: '我的待办审批',
+        description: '按当前已验证主体返回待办摘要；不返回表单正文。',
+        mimeType: 'application/json',
+      },
+      async (uri, extra) => {
+        const result = await this.tools.getApprovalInbox(extra);
+        if (result.isError === true) throw new Error('无权读取审批待办');
+        return {
+          contents: [{
+            uri: uri.toString(),
+            mimeType: 'application/json',
+            text: JSON.stringify(result.structuredContent ?? { items: [] }),
+          }],
+        };
+      },
+    );
+
+    server.registerPrompt(
+      'approval_submission_guide',
+      {
+        title: '审批提交检查清单',
+        description: '指导用户检查审批内容并明确进入服务端确认流程，不代替用户确认。',
+        argsSchema: { templateCode: z.string().min(1).max(64) },
+      },
+      ({ templateCode }) => ({
+        messages: [{
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `请按模板 ${templateCode} 检查必填字段、附件引用、审批路径和敏感信息。不要直接执行提交；先调用 approval_submit_prepare，并引导用户在 ERP 确认页核对影响。`,
+          },
+        }],
+      }),
+    );
+
     server.registerTool(
       'get_my_permissions',
       {
@@ -181,6 +254,29 @@ export class McpRuntimeService {
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
       },
       async (extra) => this.tools.getMyPermissions(extra),
+    );
+
+    server.registerTool(
+      'approval_get_inbox',
+      {
+        title: '查询我的审批待办',
+        description: '返回当前主体可处理的审批摘要，不接受租户参数且不返回表单正文。风险等级 R0。',
+        outputSchema: approvalInboxOutputSchema,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      },
+      async (extra) => this.tools.getApprovalInbox(extra),
+    );
+
+    server.registerTool(
+      'approval_get',
+      {
+        title: '查询审批详情',
+        description: '按当前主体权限返回审批详情；L3/L4 字段由应用服务脱敏。风险等级 R0。',
+        inputSchema: { instanceId: z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/) },
+        outputSchema: approvalInstanceOutputSchema,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      },
+      async ({ instanceId }, extra) => this.tools.getApprovalInstance(instanceId, extra),
     );
 
     server.registerTool(

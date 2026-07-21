@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AuditService } from '../../core/audit/audit.service.js';
 import { TenantContextService } from '../../core/tenant/tenant-context.service.js';
 import type { OrgApplicationService } from '../org/application/org-application.service.js';
+import type { ApprovalApplicationService } from '../approval/application/approval-application.service.js';
 import { McpToolService } from './mcp-tool.service.js';
 
 type McpExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
@@ -34,12 +35,17 @@ function assemble() {
   const context = new TenantContextService();
   const audit = { record: vi.fn().mockResolvedValue(undefined) };
   const organization = { getOrgChart: vi.fn().mockResolvedValue({ departments: [], employees: [] }) };
+  const approvals = {
+    getInbox: vi.fn().mockResolvedValue([]),
+    getInstance: vi.fn().mockResolvedValue({ id: 'instance-001', formData: { remark: { redacted: true } } }),
+  };
   const service = new McpToolService(
     context,
     audit as unknown as AuditService,
     organization as unknown as OrgApplicationService,
+    approvals as unknown as ApprovalApplicationService,
   );
-  return { context, audit, organization, service };
+  return { context, audit, organization, approvals, service };
 }
 
 describe('McpToolService', () => {
@@ -50,6 +56,29 @@ describe('McpToolService', () => {
       UnauthorizedException,
     );
     expect(store.audit.record).not.toHaveBeenCalled();
+  });
+
+  it('审批待办复用应用服务并且缺 Scope 时失败关闭', async () => {
+    const store = assemble();
+    const denied = await store.service.getApprovalInbox(extra(['erp:mcp:server:connect']));
+    expect(denied.isError).toBe(true);
+    expect(store.approvals.getInbox).not.toHaveBeenCalled();
+
+    const result = await store.service.getApprovalInbox(extra([
+      'erp:mcp:server:connect', 'erp:approval:instance:read',
+    ]));
+    expect(result.structuredContent).toEqual({ items: [] });
+    expect(store.approvals.getInbox).toHaveBeenCalled();
+  });
+
+  it('审批详情沿用应用层 L3/L4 脱敏投影', async () => {
+    const store = assemble();
+    const result = await store.service.getApprovalInstance('instance-001', extra([
+      'erp:mcp:server:connect', 'erp:approval:instance:read',
+    ]));
+    expect(result.structuredContent).toEqual({
+      instance: { id: 'instance-001', formData: { remark: { redacted: true } } },
+    });
   });
 
   it('权限查询只返回服务端身份快照，不返回租户参数或访问令牌', async () => {

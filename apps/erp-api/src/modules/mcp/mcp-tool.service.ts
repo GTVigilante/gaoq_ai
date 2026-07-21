@@ -9,6 +9,7 @@ import type {
 import { AuditService } from '../../core/audit/audit.service.js';
 import { TenantContextService } from '../../core/tenant/tenant-context.service.js';
 import { OrgApplicationService } from '../org/application/org-application.service.js';
+import { ApprovalApplicationService } from '../approval/application/approval-application.service.js';
 import { parseMcpIdentity, type McpIdentity } from './mcp-auth-context.js';
 
 export type McpToolResult = CallToolResult;
@@ -22,6 +23,7 @@ export class McpToolService {
     private readonly tenantContext: TenantContextService,
     private readonly audit: AuditService,
     private readonly organization: OrgApplicationService,
+    private readonly approvals: ApprovalApplicationService,
   ) {}
 
   async getMyPermissions(extra: McpExtra): Promise<McpToolResult> {
@@ -93,6 +95,57 @@ export class McpToolService {
     });
   }
 
+  async getApprovalInbox(extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:approval:instance:read')) {
+        await this.auditTool(identity, 'approval_get_inbox', 'R0', 'denied');
+        return scopeError('erp:approval:instance:read');
+      }
+      const items = await this.approvals.getInbox();
+      const data: Record<string, unknown> = { items };
+      await this.auditTool(identity, 'approval_get_inbox', 'R0', 'success', { count: items.length });
+      return {
+        content: [{ type: 'text', text: JSON.stringify(data) }],
+        structuredContent: data,
+      };
+    });
+  }
+
+  async getApprovalInstance(instanceId: string, extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:approval:instance:read')) {
+        await this.auditTool(identity, 'approval_get', 'R0', 'denied');
+        return scopeError('erp:approval:instance:read');
+      }
+      const instance = await this.approvals.getInstance(instanceId);
+      const data: Record<string, unknown> = { instance };
+      await this.auditTool(identity, 'approval_get', 'R0', 'success');
+      return {
+        content: [{ type: 'text', text: JSON.stringify(data) }],
+        structuredContent: data,
+      };
+    });
+  }
+
+  private async auditTool(
+    identity: McpIdentity,
+    tool: string,
+    riskLevel: 'R0' | 'R1' | 'R2',
+    outcome: 'success' | 'denied' | 'failure',
+    metadata: Readonly<Record<string, string | number | boolean>> = {},
+  ): Promise<void> {
+    await this.audit.record({
+      action: `mcp.tool.${tool}`,
+      resourceType: 'mcp_tool',
+      resourceId: tool,
+      riskLevel,
+      outcome,
+      metadata: { clientId: identity.clientId, protocol: '2025-11-25', ...metadata },
+    });
+  }
+
   private run<T>(identity: McpIdentity, operation: () => Promise<T>): Promise<T> {
     return this.tenantContext.run(
       {
@@ -113,4 +166,14 @@ export class McpToolService {
       operation,
     );
   }
+}
+
+function scopeError(scope: string): McpToolResult {
+  return {
+    isError: true,
+    content: [{
+      type: 'text',
+      text: JSON.stringify({ code: 'AUTH_INSUFFICIENT_SCOPE', message: `需要 ${scope}` }),
+    }],
+  };
 }
