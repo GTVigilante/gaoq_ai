@@ -8,6 +8,7 @@ import {
 } from './org-platform-credential.service.js';
 
 const SECRET_NAME = 'GAOQ_ORG_PLATFORM_TENANT_A_DINGTALK';
+const PROVISIONING_SECRET_NAME = 'GAOQ_ORG_PROVISIONING_ENCRYPTION_KEYS';
 
 function query(value: unknown) {
   return { lean: () => ({ exec: () => Promise.resolve(value) }) };
@@ -16,6 +17,7 @@ function query(value: unknown) {
 describe('OrgPlatformCredentialService', () => {
   afterEach(() => {
     delete process.env[SECRET_NAME];
+    delete process.env[PROVISIONING_SECRET_NAME];
   });
 
   it('只按租户与渠道读取绑定，并从受控秘密引用解析凭据', async () => {
@@ -50,6 +52,28 @@ describe('OrgPlatformCredentialService', () => {
       code: 'ORG_TENANT_ID_INVALID',
       category: 'conflict',
     });
+  });
+
+  it('开户编排只读外部租户标识且不解析客户端密钥', async () => {
+    const findOne = vi.fn().mockReturnValue(query({ externalTenantId: 'corp-001' }));
+    const resolve = vi.fn();
+    const service = new OrgPlatformCredentialService(
+      { findOne } as unknown as Model<OrgPlatformBindingDocument>,
+      { resolve },
+    );
+    await expect(service.resolveExternalTenantId('tenant-a', 'feishu')).resolves.toBe('corp-001');
+    expect(findOne).toHaveBeenCalledWith(
+      { tenantId: 'tenant-a', channel: 'feishu', status: 'active' },
+      { externalTenantId: 1, _id: 0 },
+    );
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it('通用 Secret 解析器允许受控开户密钥引用但拒绝任意环境变量', async () => {
+    process.env[PROVISIONING_SECRET_NAME] = '{"redacted":true}';
+    const resolver = new EnvironmentOrgSecretResolver();
+    await expect(resolver.resolve(PROVISIONING_SECRET_NAME)).resolves.toBe('{"redacted":true}');
+    expect(() => resolver.resolve('HOME')).toThrow('平台凭据引用无效');
   });
 
   it('秘密缺失和格式错误均失败关闭，异常不携带秘密正文', async () => {

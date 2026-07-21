@@ -5,6 +5,7 @@ export const ORG_INTEGRATION_JOB_NAMES = [
   'relay',
   'deliver:dingtalk',
   'deliver:feishu',
+  'provision',
   'reconcile',
 ] as const;
 

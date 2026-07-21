@@ -10,6 +10,8 @@ import {
   OrgPushError,
   type ChangeEmployeeStatusCommand,
   type ExternalOrgSnapshot,
+  type ProvisionEmployeeCommand,
+  type ProvisionEmployeeResult,
   type OrgPushResult,
   type PushDepartmentCommand,
   type PushEmployeeCommand,
@@ -44,6 +46,14 @@ const feishuUserPageSchema = z.object({
       is_resigned: z.boolean().optional(),
     }).passthrough().optional(),
   }).passthrough()).default([]),
+}).passthrough();
+
+const feishuProvisionedUserSchema = z.object({
+  user: z.object({
+    user_id: z.string().min(1).max(128),
+    union_id: z.string().min(1).max(256),
+    employee_no: z.string().max(128).optional(),
+  }).passthrough(),
 }).passthrough();
 
 const MAX_SNAPSHOT_OBJECTS = 20_000;
@@ -126,6 +136,45 @@ export class FeishuOrgPushAdapter extends OrgPushAdapter {
       },
     });
     return this.result(command.currentExternalId, response.requestId);
+  }
+
+  async provisionEmployee(command: ProvisionEmployeeCommand): Promise<ProvisionEmployeeResult> {
+    let response: {
+      readonly data: Record<string, unknown> | undefined;
+      readonly requestId: string | undefined;
+    };
+    try {
+      response = await this.call({
+        tenantId: command.tenantId,
+        path: '/open-apis/contact/v3/users',
+        method: 'POST',
+        query: {
+          user_id_type: 'user_id',
+          department_id_type: 'department_id',
+          client_token: this.clientToken(command.idempotencyKey),
+        },
+        body: {
+          user_id: command.externalUserId,
+          name: command.displayName,
+          employee_no: command.employeeNo,
+          department_ids: [...command.departmentExternalIds],
+          ...(command.contact.email === undefined ? {} : { email: command.contact.email }),
+          ...(command.contact.mobile === undefined ? {} : {
+            mobile: `${command.contact.mobile.countryCode}${command.contact.mobile.subscriberNumber}`,
+          }),
+        },
+      });
+    } catch (error) {
+      if (!(error instanceof OrgPushError) || error.category === 'retryable') throw error;
+      const recovered = await this.tryGetProvisionedUser(command);
+      if (recovered !== null) return recovered;
+      throw error;
+    }
+    const identity = await this.getProvisionedUser(command);
+    return {
+      ...identity,
+      ...(response.requestId === undefined ? {} : { requestId: response.requestId }),
+    };
   }
 
   async changeEmployeeStatus(command: ChangeEmployeeStatusCommand): Promise<OrgPushResult> {
@@ -244,6 +293,61 @@ export class FeishuOrgPushAdapter extends OrgPushAdapter {
       query: { user_id_type: 'user_id' },
     });
     return this.result(externalId, response.requestId);
+  }
+
+  private async getProvisionedUser(
+    command: ProvisionEmployeeCommand,
+  ): Promise<ProvisionEmployeeResult> {
+    const response = await this.call({
+      tenantId: command.tenantId,
+      path: `/open-apis/contact/v3/users/${encodeURIComponent(command.externalUserId)}`,
+      method: 'GET',
+      query: { user_id_type: 'user_id', department_id_type: 'department_id' },
+    });
+    return this.parseProvisionedUser(command, response.data, response.requestId);
+  }
+
+  private parseProvisionedUser(
+    command: ProvisionEmployeeCommand,
+    data: Record<string, unknown> | undefined,
+    requestId: string | undefined,
+  ): ProvisionEmployeeResult {
+    const parsed = feishuProvisionedUserSchema.safeParse(data);
+    if (!parsed.success || parsed.data.user.user_id !== command.externalUserId) {
+      throw new OrgPushError(
+        'FEISHU_PROVISIONING_IDENTITY_INVALID',
+        'conflict',
+        '飞书开户身份响应无效',
+      );
+    }
+    if (parsed.data.user.employee_no !== command.employeeNo) {
+      throw new OrgPushError(
+        'FEISHU_PROVISIONING_IDENTITY_CONFLICT',
+        'conflict',
+        '飞书确定性用户标识已被其他员工占用',
+      );
+    }
+    return {
+      externalUserId: parsed.data.user.user_id,
+      unionId: parsed.data.user.union_id,
+      ...(requestId === undefined ? {} : { requestId }),
+    };
+  }
+
+  private async tryGetProvisionedUser(
+    command: ProvisionEmployeeCommand,
+  ): Promise<ProvisionEmployeeResult | null> {
+    try {
+      return await this.getProvisionedUser(command);
+    } catch (error) {
+      if (error instanceof OrgPushError) {
+        if (
+          error.code === 'FEISHU_PROVISIONING_IDENTITY_CONFLICT' ||
+          error.category === 'retryable'
+        ) throw error;
+      }
+      return null;
+    }
   }
 
   /** 以自定义 department_id 确认已存在对象，用于外部成功、本地提交前崩溃的恢复。 */

@@ -7,6 +7,8 @@ import {
   type ChangeEmployeeStatusCommand,
   type OrgPushChannel,
   type OrgPushResult,
+  type ProvisionEmployeeCommand,
+  type ProvisionEmployeeResult,
   type PushDepartmentCommand,
   type PushEmployeeCommand,
 } from './org-push.adapter.js';
@@ -24,6 +26,13 @@ class FakeAdapter extends OrgPushAdapter {
   pushEmployee(command: PushEmployeeCommand): Promise<OrgPushResult> {
     void command;
     return Promise.resolve({ externalId: `${this.channel}-employee` });
+  }
+
+  provisionEmployee(command: ProvisionEmployeeCommand): Promise<ProvisionEmployeeResult> {
+    return Promise.resolve({
+      externalUserId: command.externalUserId,
+      unionId: `${this.channel}-union`,
+    });
   }
 
   changeEmployeeStatus(command: ChangeEmployeeStatusCommand): Promise<OrgPushResult> {

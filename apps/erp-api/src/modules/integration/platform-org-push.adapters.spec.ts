@@ -19,6 +19,20 @@ const departmentCommand = {
   idempotencyKey: 'tenant-a:department:1',
 };
 
+const provisionCommand = {
+  tenantId: 'tenant-a',
+  employeeId: 'employee-a',
+  externalUserId: 'gq_external_user_a',
+  employeeNo: 'E001',
+  displayName: '张三',
+  departmentExternalIds: ['123'],
+  idempotencyKey: 'provision-key-001',
+  contact: {
+    email: 'person@example.com',
+    mobile: { countryCode: '+86', subscriberNumber: '13800138000' },
+  },
+};
+
 function tokens() {
   return {
     getAccess: vi.fn().mockImplementation((_tenantId: string, channel: string) => Promise.resolve({
@@ -71,6 +85,61 @@ describe('DingTalkOrgPushAdapter', () => {
     })).rejects.toMatchObject({
       code: 'ORG_EMPLOYEE_PREPROVISION_REQUIRED',
       category: 'business',
+    });
+  });
+
+  it('私密通道创建后固定回读 userid、unionid 和工号', async () => {
+    const request = vi.fn()
+      .mockResolvedValueOnce({
+        status: 200,
+        requestId: undefined,
+        body: { errcode: 0, request_id: 'dt-create-request', result: { userid: 'ignored' } },
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        requestId: undefined,
+        body: {
+          errcode: 0,
+          result: { userid: 'gq_external_user_a', unionid: 'dt-union-a', job_number: 'E001' },
+        },
+      });
+    const adapter = new DingTalkOrgPushAdapter(tokens(), { request });
+
+    await expect(adapter.provisionEmployee(provisionCommand)).resolves.toEqual({
+      externalUserId: 'gq_external_user_a',
+      unionId: 'dt-union-a',
+      requestId: 'dt-create-request',
+    });
+    expect(request.mock.calls[0]?.[0]).toMatchObject({
+      path: '/topapi/v2/user/create',
+      body: {
+        userid: 'gq_external_user_a',
+        mobile: '13800138000',
+        state_code: '86',
+        hide_mobile: true,
+        email: 'person@example.com',
+        dept_id_list: '123',
+      },
+    });
+    expect(request.mock.calls[1]?.[0]).toMatchObject({
+      path: '/topapi/v2/user/get',
+      body: { userid: 'gq_external_user_a' },
+    });
+  });
+
+  it('创建冲突后的恢复查询暂时失败时保留可重试分类', async () => {
+    const request = vi.fn()
+      .mockResolvedValueOnce({
+        status: 200, requestId: undefined, body: { errcode: 40035, errmsg: 'duplicate' },
+      })
+      .mockRejectedValueOnce(
+        new OrgPushError('DINGTALK_HTTP_RETRYABLE', 'retryable', '查询暂时失败'),
+      );
+    const adapter = new DingTalkOrgPushAdapter(tokens(), { request });
+
+    await expect(adapter.provisionEmployee(provisionCommand)).rejects.toMatchObject({
+      code: 'DINGTALK_HTTP_RETRYABLE',
+      category: 'retryable',
     });
   });
 
@@ -188,6 +257,75 @@ describe('FeishuOrgPushAdapter', () => {
       department_id: '01K00000000000000000000001',
       parent_department_id: '0',
       create_group_chat: false,
+    });
+  });
+
+  it('私密通道创建员工时使用自定义 user_id 与平台幂等令牌', async () => {
+    const request = vi.fn()
+      .mockResolvedValueOnce({
+        status: 200,
+        requestId: 'fs-create-request',
+        body: { code: 0, data: {} },
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        requestId: 'fs-get-request',
+        body: {
+          code: 0,
+          data: {
+            user: {
+              user_id: 'gq_external_user_a',
+              union_id: 'fs-union-a',
+              employee_no: 'E001',
+            },
+          },
+        },
+      });
+    const adapter = new FeishuOrgPushAdapter(tokens(), { request });
+
+    await expect(adapter.provisionEmployee(provisionCommand)).resolves.toEqual({
+      externalUserId: 'gq_external_user_a',
+      unionId: 'fs-union-a',
+      requestId: 'fs-create-request',
+    });
+    const call = request.mock.calls[0]?.[0] as {
+      readonly path: string;
+      readonly query: Record<string, string>;
+      readonly body: Record<string, unknown>;
+    };
+    expect(call.path).toBe('/open-apis/contact/v3/users');
+    expect(call.query).toMatchObject({
+      user_id_type: 'user_id',
+      department_id_type: 'department_id',
+    });
+    expect(call.query.client_token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(call.body).toMatchObject({
+      user_id: 'gq_external_user_a',
+      email: 'person@example.com',
+      mobile: '+8613800138000',
+      employee_no: 'E001',
+      department_ids: ['123'],
+    });
+    expect(request.mock.calls[1]?.[0]).toMatchObject({
+      method: 'GET',
+      path: '/open-apis/contact/v3/users/gq_external_user_a',
+      query: { user_id_type: 'user_id', department_id_type: 'department_id' },
+    });
+  });
+
+  it('创建冲突后的恢复查询暂时失败时保留飞书可重试分类', async () => {
+    const request = vi.fn()
+      .mockResolvedValueOnce({
+        status: 200, requestId: undefined, body: { code: 40001 },
+      })
+      .mockRejectedValueOnce(
+        new OrgPushError('FEISHU_HTTP_RETRYABLE', 'retryable', '查询暂时失败'),
+      );
+    const adapter = new FeishuOrgPushAdapter(tokens(), { request });
+
+    await expect(adapter.provisionEmployee(provisionCommand)).rejects.toMatchObject({
+      code: 'FEISHU_HTTP_RETRYABLE',
+      category: 'retryable',
     });
   });
 

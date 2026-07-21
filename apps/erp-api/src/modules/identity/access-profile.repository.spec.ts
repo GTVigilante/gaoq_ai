@@ -160,8 +160,9 @@ describe('AccessProfileRepository', () => {
     const model = createModelMock();
     const exec = vi.fn().mockResolvedValue({ actorId: 'actor-001' });
     const lean = vi.fn().mockReturnValue({ exec });
-    const session = vi.fn().mockReturnValue({ lean });
-    const select = vi.fn().mockReturnValue({ session });
+    const selectedQuery = { lean, session: vi.fn() };
+    selectedQuery.session.mockReturnValue(selectedQuery);
+    const select = vi.fn().mockReturnValue(selectedQuery);
     model.findOne.mockReturnValue({ select });
     const mongoSession = {} as ClientSession;
     await expect(createRepository(model).findActorIdByEmployee(
@@ -169,7 +170,7 @@ describe('AccessProfileRepository', () => {
     )).resolves.toBe('actor-001');
     expect(model.findOne).toHaveBeenCalledWith({ tenantId: 'tenant-001', employeeId: 'employee-001' });
     expect(select).toHaveBeenCalledWith('actorId -_id');
-    expect(session).toHaveBeenCalledWith(mongoSession);
+    expect(selectedQuery.session).toHaveBeenCalledWith(mongoSession);
   });
 
   it('离职仅停用员工 active 快照、推进版本并返回命中状态', async () => {
@@ -192,5 +193,41 @@ describe('AccessProfileRepository', () => {
       'tenant-001', '$ne', {} as ClientSession,
     )).rejects.toThrow('标识非法');
     expect(model.updateOne).not.toHaveBeenCalled();
+  });
+
+  it('开户前只投影员工主体与启停状态', async () => {
+    const model = createModelMock();
+    const query = createQueryMock({ actorId: 'actor-001', status: 'active' });
+    model.findOne.mockReturnValue(query);
+    const result = await createRepository(model).resolveEmployeeIdentity(
+      'tenant-001', 'employee-001',
+    );
+    expect(model.findOne).toHaveBeenCalledWith({ tenantId: 'tenant-001', employeeId: 'employee-001' });
+    expect(query.select).toHaveBeenCalledWith('actorId status -_id');
+    expect(result).toEqual({ actorId: 'actor-001', status: 'active' });
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it('开户事务幂等创建零权限 active 主体且不覆盖既有快照', async () => {
+    const model = createModelMock();
+    model.updateOne.mockResolvedValue({ modifiedCount: 0 });
+    const session = {} as ClientSession;
+    await createRepository(model).ensureProvisionedEmployee(
+      'tenant-001',
+      'employee-001',
+      'actor-001',
+      ['department-001', 'department-001'],
+      session,
+    );
+    expect(model.updateOne).toHaveBeenCalledWith(
+      { tenantId: 'tenant-001', employeeId: 'employee-001', actorId: 'actor-001', status: 'active' },
+      {
+        $setOnInsert: {
+          tenantId: 'tenant-001', employeeId: 'employee-001', actorId: 'actor-001',
+          status: 'active', roleCodes: [], scopes: [], departmentIds: ['department-001'], version: 1,
+        },
+      },
+      { upsert: true, session, runValidators: true },
+    );
   });
 });

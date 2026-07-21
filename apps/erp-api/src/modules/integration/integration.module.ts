@@ -4,6 +4,9 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { AuditModule } from '../../core/audit/audit.module.js';
 import { IdempotencyModule } from '../../core/idempotency/idempotency.module.js';
 import { TenantContextModule } from '../../core/tenant/tenant-context.module.js';
+import { AccessProfileRepository } from '../identity/access-profile.repository.js';
+import { AccessProfile, AccessProfileSchema } from '../identity/access-profile.schema.js';
+import { ExternalIdentityRepository } from '../identity/external-identity.repository.js';
 import {
   ExternalIdentity,
   ExternalIdentitySchema,
@@ -18,6 +21,12 @@ import {
 import { DingTalkOrgPushAdapter } from './dingtalk-org-push.adapter.js';
 import { FeishuOrgPushAdapter } from './feishu-org-push.adapter.js';
 import { IntegrationController } from './integration.controller.js';
+import { OrgEmployeeProvisioningController } from './org-employee-provisioning.controller.js';
+import { OrgEmployeeProvisioningService } from './org-employee-provisioning.service.js';
+import {
+  OrgEmployeeProvisioningRequest,
+  OrgEmployeeProvisioningRequestSchema,
+} from './org-employee-provisioning.schema.js';
 import { OrgDeliveryOperationsService } from './org-delivery-operations.service.js';
 import { OrgDeliveryService } from './org-delivery.service.js';
 import {
@@ -42,6 +51,7 @@ import {
   OrgPlatformHttpClient,
 } from './org-platform-http.client.js';
 import { OrgPlatformTokenService } from './org-platform-token.service.js';
+import { OrgProvisioningCryptoService } from './org-provisioning-crypto.service.js';
 import {
   OrgReconciliationReport,
   OrgReconciliationReportSchema,
@@ -65,10 +75,15 @@ import {
       { name: OrgDeliveryRecord.name, schema: OrgDeliveryRecordSchema },
       { name: OrgExternalVersionState.name, schema: OrgExternalVersionStateSchema },
       { name: OrgPlatformBinding.name, schema: OrgPlatformBindingSchema },
+      { name: AccessProfile.name, schema: AccessProfileSchema },
       { name: ExternalIdentity.name, schema: ExternalIdentitySchema },
       { name: OrgDepartmentRecord.name, schema: OrgDepartmentRecordSchema },
       { name: OrgEmployeeRecord.name, schema: OrgEmployeeRecordSchema },
       { name: OrgReconciliationReport.name, schema: OrgReconciliationReportSchema },
+      {
+        name: OrgEmployeeProvisioningRequest.name,
+        schema: OrgEmployeeProvisioningRequestSchema,
+      },
     ]),
   ],
   providers: [
@@ -79,6 +94,10 @@ import {
     OrgPlatformCredentialService,
     OrgPlatformTokenService,
     OrgReconciliationService,
+    OrgEmployeeProvisioningService,
+    OrgProvisioningCryptoService,
+    AccessProfileRepository,
+    ExternalIdentityRepository,
     EnvironmentOrgSecretResolver,
     { provide: OrgSecretResolver, useExisting: EnvironmentOrgSecretResolver },
     FetchOrgPlatformHttpClient,
@@ -94,7 +113,12 @@ import {
         new OrgPushAdapterRegistry(dingtalk, feishu),
     },
   ],
-  controllers: [IntegrationController],
-  exports: [OrgOutboxRelayService, OrgDeliveryService, OrgReconciliationService],
+  controllers: [IntegrationController, OrgEmployeeProvisioningController],
+  exports: [
+    OrgOutboxRelayService,
+    OrgDeliveryService,
+    OrgReconciliationService,
+    OrgEmployeeProvisioningService,
+  ],
 })
 export class IntegrationModule {}

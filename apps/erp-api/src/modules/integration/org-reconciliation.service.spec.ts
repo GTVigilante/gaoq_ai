@@ -37,6 +37,7 @@ class SnapshotAdapter extends OrgPushAdapter {
 
   pushDepartment(): never { throw new Error('not used'); }
   pushEmployee(): never { throw new Error('not used'); }
+  provisionEmployee(): never { throw new Error('not used'); }
   changeEmployeeStatus(): never { throw new Error('not used'); }
   fetchSnapshot(tenantId: string) { return this.fetchSnapshotMock(tenantId); }
 }

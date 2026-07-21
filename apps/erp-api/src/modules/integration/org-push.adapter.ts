@@ -33,6 +33,29 @@ export interface OrgPushResult {
   readonly requestId?: string;
 }
 
+export interface ProvisionEmployeeCommand {
+  readonly tenantId: string;
+  readonly employeeId: string;
+  readonly externalUserId: string;
+  readonly employeeNo: string;
+  readonly displayName: string;
+  readonly departmentExternalIds: readonly string[];
+  readonly idempotencyKey: string;
+  readonly contact: {
+    readonly email?: string;
+    readonly mobile?: {
+      readonly countryCode: string;
+      readonly subscriberNumber: string;
+    };
+  };
+}
+
+export interface ProvisionEmployeeResult {
+  readonly externalUserId: string;
+  readonly unionId: string;
+  readonly requestId?: string;
+}
+
 export interface ChangeEmployeeStatusCommand {
   readonly tenantId: string;
   readonly employeeId: string;
@@ -54,6 +77,9 @@ export abstract class OrgPushAdapter {
   abstract pushDepartment(command: PushDepartmentCommand): Promise<OrgPushResult>;
 
   abstract pushEmployee(command: PushEmployeeCommand): Promise<OrgPushResult>;
+
+  /** 只允许私密开户 Worker 调用，常规 Outbox 不得携带联系方式。 */
+  abstract provisionEmployee(command: ProvisionEmployeeCommand): Promise<ProvisionEmployeeResult>;
 
   abstract changeEmployeeStatus(command: ChangeEmployeeStatusCommand): Promise<OrgPushResult>;
 

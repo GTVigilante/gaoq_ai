@@ -93,8 +93,18 @@
 - 触发源：org-module 的员工/部门变更事件（outbox）。
 - 下发顺序：先部门树、后人员，保证父级存在；离职先做停用（禁登录），T+30 天后再删除外部账号。
 - 幂等键：`tenantId + employeeId + version`。ERP 每主档行维护单调递增 `version`，适配器拒绝执行低于已记录版本的事件（防乱序）。
-- 冲突策略：外部侧已存在同手机号账号时，只建立映射（external mapping），不覆盖外部侧已有字段；映射冲突进入人工处理队列。
+- 冲突策略：外部侧已存在同手机号或邮箱账号时，禁止自动合并或覆盖；必须进入人工仲裁，完成独立身份核验后才能建立 external mapping。
 - 全量校准：每日凌晨对钉钉/飞书各跑一次全量 diff（ERP 为基准），差异自动生成修复任务，差异率 >1% 告警。
+
+#### 3.1.1 员工首次开户私密资料通道
+
+- 联系方式禁止进入组织 Outbox、通用幂等响应、日志、审计 metadata 和 MCP 参数；只允许通过 `POST /api/integrations/org-provisioning-requests` 提交。
+- 端点为 R3，必须由 `actorType=user` 且具有 `erp:integration:org_provisioning:write` 的已验证人员发起；即使 MCP 服务主体持有同名 scope 也永久拒绝，且不注册 MCP Tool。
+- API 在请求内完成严格 DTO 校验和平台前置校验，使用 AES-256-GCM 加密；AAD 固定绑定 `tenantId/requestId/employeeId/channel`，幂等比较使用独立 HKDF 子密钥生成的 HMAC-SHA-256，禁止保存可字典攻击的明文 SHA-256。
+- 主密钥环只从 Secret Manager 注入的 `GAOQ_ORG_PROVISIONING_ENCRYPTION_KEYS` 解析，格式为 `activeKeyId + 1..5 keys`，密钥状态仅允许 `active/decrypt_only`；每次只允许一枚 active，旧密钥至少保留至对应请求整记录 TTL 结束。
+- 密文有效期 15 分钟；成功、业务冲突、重试耗尽或到期时立即将 IV/密文/AuthTag 置空，最小状态记录 30 天后 TTL 清理。
+- Worker 最多 6 次带抖动退避；只在内存中解密，平台调用后尽力断开明文引用。外部 userId 使用平台租户+员工+渠道的确定性标识，创建后固定回读 userId、unionId 与工号，以恢复“外部成功、本地未提交”。
+- 平台回读必须与 ERP 工号完全一致；缺少字段或任一冲突均失败关闭。最小权限 AccessProfile、ExternalIdentity 和开户终态必须在同一 Mongo 事务中提交。
 
 ### 3.2 SSO 身份映射
 

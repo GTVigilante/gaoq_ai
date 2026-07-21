@@ -11,7 +11,8 @@ import {
 import { OrgPushError } from './org-push.adapter.js';
 
 const identifierSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/);
-const secretRefSchema = z.string().regex(/^GAOQ_ORG_PLATFORM_[A-Z0-9_]{1,96}$/);
+const secretRefSchema = z.string().regex(/^GAOQ_ORG_(?:PLATFORM|PROVISIONING)_[A-Z0-9_]{1,96}$/);
+const platformSecretRefSchema = z.string().regex(/^GAOQ_ORG_PLATFORM_[A-Z0-9_]{1,96}$/);
 const credentialSchema = z.object({
   clientId: z.string().min(1).max(256),
   clientSecret: z.string().min(8).max(2048),
@@ -71,6 +72,9 @@ export class OrgPlatformCredentialService {
     if (binding === null) {
       throw new OrgPushError('ORG_PLATFORM_BINDING_MISSING', 'business', '组织平台尚未绑定');
     }
+    if (!platformSecretRefSchema.safeParse(binding.credentialSecretRef).success) {
+      throw new OrgPushError('ORG_CREDENTIAL_REF_INVALID', 'business', '平台凭据引用无效');
+    }
     const rawSecret = await this.secrets.resolve(binding.credentialSecretRef);
     let decoded: unknown;
     try {
@@ -86,5 +90,24 @@ export class OrgPlatformCredentialService {
       ...credential.data,
       externalTenantId: binding.externalTenantId,
     };
+  }
+
+  /** 仅返回平台租户标识，避免开户编排层触达客户端密钥。 */
+  async resolveExternalTenantId(
+    tenantId: string,
+    channel: OrgDeliveryChannel,
+  ): Promise<string> {
+    const parsedTenantId = identifierSchema.safeParse(tenantId);
+    if (!parsedTenantId.success) {
+      throw new OrgPushError('ORG_TENANT_ID_INVALID', 'conflict', '租户标识无效');
+    }
+    const binding = await this.bindings.findOne(
+      { tenantId: parsedTenantId.data, channel, status: 'active' },
+      { externalTenantId: 1, _id: 0 },
+    ).lean().exec();
+    if (binding === null) {
+      throw new OrgPushError('ORG_PLATFORM_BINDING_MISSING', 'business', '组织平台尚未绑定');
+    }
+    return binding.externalTenantId;
   }
 }

@@ -18,6 +18,17 @@ export interface ExternalProfile {
   externalUserId: string;
 }
 
+export interface ProvisionedExternalIdentityInput extends ExternalProfile {
+  readonly actorId: string;
+  readonly employeeId: string;
+}
+
+export interface BoundEmployeeExternalIdentitySnapshot {
+  readonly actorId: string;
+  readonly externalUserId: string;
+  readonly unionId: string;
+}
+
 /**
  * 外部身份映射仓储。
  * 安全约定：所有查询必须携带 tenantId；动态值一律作为普通 Mongo 标量值传入，
@@ -48,6 +59,30 @@ export class ExternalIdentityRepository {
         externalUserId: profile.externalUserId,
       })
       .exec();
+  }
+
+  /** 按租户+平台租户+员工精确确认已绑定身份。 */
+  async findBoundByEmployee(
+    tenantId: string,
+    provider: ExternalIdentityProvider,
+    externalTenantId: string,
+    employeeId: string,
+  ): Promise<BoundEmployeeExternalIdentitySnapshot | null> {
+    this.assertIds(tenantId, employeeId);
+    if (!/^[A-Za-z0-9._:@-]{1,256}$/.test(externalTenantId)) {
+      throw new Error('外部租户标识非法');
+    }
+    const record = await this.externalIdentities.findOne(
+      { tenantId, provider, externalTenantId, employeeId, status: 'bound' },
+      { actorId: 1, externalUserId: 1, unionId: 1, _id: 0 },
+    ).lean().exec();
+    return record === null
+      ? null
+      : Object.freeze({
+          actorId: record.actorId,
+          externalUserId: record.externalUserId,
+          unionId: record.unionId,
+        });
   }
 
   /**
@@ -91,6 +126,54 @@ export class ExternalIdentityRepository {
       { session: mongoSession },
     );
     return result.modifiedCount;
+  }
+
+  /**
+   * 将已由私密通道开通的平台身份幂等绑定。
+   * 过滤条件包含全部不可变标识和 bound 状态；任一冲突由唯一索引失败关闭，
+   * 禁止依据手机号或邮箱合并身份。
+   */
+  async bindProvisioned(
+    tenantId: string,
+    input: ProvisionedExternalIdentityInput,
+    mongoSession: ClientSession,
+  ): Promise<void> {
+    this.assertIds(tenantId, input.employeeId);
+    for (const value of [
+      input.externalTenantId,
+      input.unionId,
+      input.externalUserId,
+      input.actorId,
+    ]) {
+      if (!/^[A-Za-z0-9._:@-]{1,256}$/.test(value)) {
+        throw new Error('开户外部身份标识非法');
+      }
+    }
+    await this.externalIdentities.updateOne(
+      {
+        tenantId,
+        provider: input.provider,
+        externalTenantId: input.externalTenantId,
+        unionId: input.unionId,
+        externalUserId: input.externalUserId,
+        actorId: input.actorId,
+        employeeId: input.employeeId,
+        status: 'bound',
+      },
+      {
+        $setOnInsert: {
+          tenantId,
+          provider: input.provider,
+          externalTenantId: input.externalTenantId,
+          unionId: input.unionId,
+          externalUserId: input.externalUserId,
+          actorId: input.actorId,
+          employeeId: input.employeeId,
+          status: 'bound',
+        },
+      },
+      { upsert: true, session: mongoSession, runValidators: true },
+    );
   }
 
   private assertIds(tenantId: string, employeeId: string): void {

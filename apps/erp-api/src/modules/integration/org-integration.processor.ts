@@ -4,6 +4,7 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import type { Job } from 'bullmq';
 
 import { OrgDeliveryService } from './org-delivery.service.js';
+import { OrgEmployeeProvisioningService } from './org-employee-provisioning.service.js';
 import {
   ORG_INTEGRATION_QUEUE,
   type OrgIntegrationJobName,
@@ -19,6 +20,7 @@ export class OrgIntegrationProcessor extends WorkerHost {
   constructor(
     private readonly relay: OrgOutboxRelayService,
     private readonly deliveries: OrgDeliveryService,
+    private readonly provisioning: OrgEmployeeProvisioningService,
     private readonly reconciliation: OrgReconciliationService,
   ) {
     super();
@@ -34,6 +36,8 @@ export class OrgIntegrationProcessor extends WorkerHost {
         return this.deliveries.processBatch('dingtalk', this.workerId, 25);
       case 'deliver:feishu':
         return this.deliveries.processBatch('feishu', this.workerId, 25);
+      case 'provision':
+        return this.provisioning.processBatch(this.workerId, 10);
       case 'reconcile':
         return this.reconciliation.runDaily();
       default:

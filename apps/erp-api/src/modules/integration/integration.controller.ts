@@ -33,7 +33,7 @@ export class IntegrationController {
   ) {}
 
   @Get()
-  @RequiredScopes('integration:read')
+  @RequiredScopes('erp:integration:org_delivery:read')
   list(
     @Query('status') status: string | undefined,
     @Query('channel') channel: string | undefined,
@@ -50,7 +50,7 @@ export class IntegrationController {
 
   @Post(':eventId/:channel/retries')
   @HttpCode(200)
-  @RequiredScopes('integration:operate')
+  @RequiredScopes('erp:integration:org_delivery:operate')
   async retry(
     @Param('eventId') eventId: string,
     @Param('channel') channel: string,

@@ -22,6 +22,11 @@ export interface AccessProfileSnapshot {
   readonly version: number;
 }
 
+export interface EmployeeAccessIdentitySnapshot {
+  readonly actorId: string;
+  readonly status: AccessProfileStatus;
+}
+
 /** 最小投影：只取鉴权所需字段，不带回 _id 与 Mongoose 内部字段。 */
 const SNAPSHOT_PROJECTION =
   'tenantId actorId employeeId status roleCodes scopes departmentIds version -_id';
@@ -88,16 +93,65 @@ export class AccessProfileRepository {
   async findActorIdByEmployee(
     tenantId: string,
     employeeId: string,
-    mongoSession: ClientSession,
+    mongoSession?: ClientSession,
   ): Promise<string | null> {
     this.assertIds(tenantId, employeeId);
-    const record = await this.accessProfiles
+    const query = this.accessProfiles
       .findOne({ tenantId, employeeId })
-      .select('actorId -_id')
-      .session(mongoSession)
+      .select('actorId -_id');
+    if (mongoSession !== undefined) query.session(mongoSession);
+    const record = await query
       .lean()
       .exec();
     return record?.actorId ?? null;
+  }
+
+  /** 开户前只读解析员工主体与启停状态，不返回权限数组。 */
+  async resolveEmployeeIdentity(
+    tenantId: string,
+    employeeId: string,
+  ): Promise<EmployeeAccessIdentitySnapshot | null> {
+    this.assertIds(tenantId, employeeId);
+    const record = await this.accessProfiles
+      .findOne({ tenantId, employeeId })
+      .select('actorId status -_id')
+      .lean()
+      .exec();
+    return record === null
+      ? null
+      : Object.freeze({ actorId: record.actorId, status: record.status });
+  }
+
+  /** 开户绑定事务内幂等确保最小权限员工主体，既有冲突失败关闭。 */
+  async ensureProvisionedEmployee(
+    tenantId: string,
+    employeeId: string,
+    actorId: string,
+    departmentIds: readonly string[],
+    mongoSession: ClientSession,
+  ): Promise<void> {
+    this.assertIds(tenantId, employeeId);
+    if (
+      !ID_PATTERN.test(actorId) ||
+      departmentIds.length < 1 || departmentIds.length > 500 ||
+      !departmentIds.every((departmentId) => ID_PATTERN.test(departmentId))
+    ) throw new Error('开户授权主体参数非法');
+    await this.accessProfiles.updateOne(
+      { tenantId, employeeId, actorId, status: 'active' },
+      {
+        $setOnInsert: {
+          tenantId,
+          employeeId,
+          actorId,
+          status: 'active',
+          roleCodes: [],
+          scopes: [],
+          departmentIds: [...new Set(departmentIds)],
+          version: 1,
+        },
+      },
+      { upsert: true, session: mongoSession, runValidators: true },
+    );
   }
 
   /** 离职事务内停用员工当前有效授权快照并推进版本。 */

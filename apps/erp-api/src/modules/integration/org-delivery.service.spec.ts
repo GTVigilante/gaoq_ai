@@ -14,6 +14,8 @@ import {
   type ExternalOrgSnapshot,
   type OrgPushChannel,
   type OrgPushResult,
+  type ProvisionEmployeeCommand,
+  type ProvisionEmployeeResult,
   type PushDepartmentCommand,
   type PushEmployeeCommand,
 } from './org-push.adapter.js';
@@ -72,6 +74,10 @@ class FakeAdapter extends OrgPushAdapter {
 
   pushEmployee(command: PushEmployeeCommand): Promise<OrgPushResult> {
     return this.pushEmployeeMock(command);
+  }
+
+  provisionEmployee(command: ProvisionEmployeeCommand): Promise<ProvisionEmployeeResult> {
+    return Promise.resolve({ externalUserId: command.externalUserId, unionId: 'union-test' });
   }
 
   changeEmployeeStatus(command: ChangeEmployeeStatusCommand): Promise<OrgPushResult> {

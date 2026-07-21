@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { OrgIntegrationScheduler } from './org-integration.scheduler.js';
 
 describe('OrgIntegrationScheduler', () => {
-  it('幂等注册 relay 与双平台三类调度任务', async () => {
+  it('幂等注册 relay、双平台、开户与对账调度任务', async () => {
     const upsertJobScheduler = vi.fn<
       (schedulerId: string, repeat: unknown, template: unknown) => Promise<object>
     >().mockResolvedValue({});
@@ -14,13 +14,14 @@ describe('OrgIntegrationScheduler', () => {
 
     await scheduler.onApplicationBootstrap();
 
-    expect(upsertJobScheduler).toHaveBeenCalledTimes(4);
+    expect(upsertJobScheduler).toHaveBeenCalledTimes(5);
     expect(upsertJobScheduler.mock.calls.map((call) => call[0])).toEqual([
       'org-integration:relay',
       'org-integration:deliver:dingtalk',
       'org-integration:deliver:feishu',
+      'org-integration:provision',
       'org-integration:reconcile',
     ]);
-    expect(upsertJobScheduler.mock.calls[3]?.[1]).toEqual({ every: 86_400_000 });
+    expect(upsertJobScheduler.mock.calls[4]?.[1]).toEqual({ every: 86_400_000 });
   });
 });

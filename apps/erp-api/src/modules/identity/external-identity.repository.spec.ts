@@ -138,4 +138,46 @@ describe('ExternalIdentityRepository', () => {
     )).rejects.toThrow('标识非法');
     expect(model.find).not.toHaveBeenCalled();
   });
+
+  it('开户前按租户、平台租户和员工精确查找 bound 身份', async () => {
+    const model = createModelMock();
+    const exec = vi.fn().mockResolvedValue({
+      actorId: 'actor-001', externalUserId: 'external-user-001', unionId: 'union-001',
+    });
+    const lean = vi.fn().mockReturnValue({ exec });
+    model.findOne.mockReturnValue({ lean });
+    const result = await createRepository(model).findBoundByEmployee(
+      'tenant-001', 'feishu', 'external-tenant-001', 'employee-001',
+    );
+    expect(model.findOne).toHaveBeenCalledWith(
+      {
+        tenantId: 'tenant-001', provider: 'feishu', externalTenantId: 'external-tenant-001',
+        employeeId: 'employee-001', status: 'bound',
+      },
+      { actorId: 1, externalUserId: 1, unionId: 1, _id: 0 },
+    );
+    expect(result).toEqual({
+      actorId: 'actor-001', externalUserId: 'external-user-001', unionId: 'union-001',
+    });
+  });
+
+  it('开户绑定用全部不可变身份做幂等 upsert 并透传事务', async () => {
+    const model = createModelMock();
+    model.updateOne.mockResolvedValue({ modifiedCount: 0 });
+    const session = {} as ClientSession;
+    const identity = {
+      provider: 'feishu' as const,
+      externalTenantId: 'external-tenant-001',
+      unionId: 'union-001',
+      externalUserId: 'external-user-001',
+      actorId: 'actor-001',
+      employeeId: 'employee-001',
+    };
+    await createRepository(model).bindProvisioned('tenant-001', identity, session);
+    expect(model.updateOne).toHaveBeenCalledWith(
+      { tenantId: 'tenant-001', ...identity, status: 'bound' },
+      { $setOnInsert: { tenantId: 'tenant-001', ...identity, status: 'bound' } },
+      { upsert: true, session, runValidators: true },
+    );
+  });
 });

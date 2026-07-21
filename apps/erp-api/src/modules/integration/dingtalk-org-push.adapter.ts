@@ -8,6 +8,8 @@ import {
   OrgPushError,
   type ChangeEmployeeStatusCommand,
   type ExternalOrgSnapshot,
+  type ProvisionEmployeeCommand,
+  type ProvisionEmployeeResult,
   type OrgPushResult,
   type PushDepartmentCommand,
   type PushEmployeeCommand,
@@ -36,6 +38,12 @@ const dingtalkUserPageSchema = z.object({
   }).passthrough()).default([]),
   has_more: z.boolean().default(false),
   next_cursor: z.number().int().nonnegative().optional(),
+}).passthrough();
+
+const dingtalkProvisionedUserSchema = z.object({
+  userid: z.string().min(1).max(128),
+  unionid: z.string().min(1).max(256),
+  job_number: z.string().max(128).optional(),
 }).passthrough();
 
 const MAX_SNAPSHOT_OBJECTS = 20_000;
@@ -133,6 +141,40 @@ export class DingTalkOrgPushAdapter extends OrgPushAdapter {
     return this.result(command.currentExternalId, response.request_id);
   }
 
+  async provisionEmployee(command: ProvisionEmployeeCommand): Promise<ProvisionEmployeeResult> {
+    if (command.contact.mobile === undefined) {
+      throw new OrgPushError(
+        'DINGTALK_PROVISIONING_MOBILE_REQUIRED',
+        'business',
+        '钉钉首次开户必须提供手机号',
+      );
+    }
+    let createRequestId: string | undefined;
+    try {
+      const response = await this.call(command.tenantId, '/topapi/v2/user/create', {
+        userid: command.externalUserId,
+        name: command.displayName,
+        mobile: command.contact.mobile.subscriberNumber,
+        state_code: command.contact.mobile.countryCode.slice(1),
+        job_number: command.employeeNo,
+        dept_id_list: command.departmentExternalIds.join(','),
+        hide_mobile: true,
+        ...(command.contact.email === undefined ? {} : { email: command.contact.email }),
+      });
+      createRequestId = response.request_id;
+    } catch (error) {
+      if (!(error instanceof OrgPushError) || error.category === 'retryable') throw error;
+      const recovered = await this.tryGetProvisionedUser(command);
+      if (recovered !== null) return recovered;
+      throw error;
+    }
+    const identity = await this.getProvisionedUser(command);
+    return {
+      ...identity,
+      ...(createRequestId === undefined ? {} : { requestId: createRequestId }),
+    };
+  }
+
   async changeEmployeeStatus(command: ChangeEmployeeStatusCommand): Promise<OrgPushResult> {
     if (command.status === 'terminated') {
       return this.deleteEmployee(command.tenantId, command.externalId);
@@ -217,6 +259,52 @@ export class DingTalkOrgPushAdapter extends OrgPushAdapter {
   private async deleteEmployee(tenantId: string, externalId: string): Promise<OrgPushResult> {
     const response = await this.call(tenantId, '/topapi/v2/user/delete', { userid: externalId });
     return this.result(externalId, response.request_id);
+  }
+
+  /** 创建返回后再固定查询 unionId，不依赖平台创建响应的可选字段。 */
+  private async getProvisionedUser(
+    command: ProvisionEmployeeCommand,
+  ): Promise<ProvisionEmployeeResult> {
+    const response = await this.call(command.tenantId, '/topapi/v2/user/get', {
+      userid: command.externalUserId,
+      language: 'zh_CN',
+    });
+    const parsed = dingtalkProvisionedUserSchema.safeParse(response.result);
+    if (!parsed.success || parsed.data.userid !== command.externalUserId) {
+      throw new OrgPushError(
+        'DINGTALK_PROVISIONING_IDENTITY_INVALID',
+        'conflict',
+        '钉钉开户身份响应无效',
+      );
+    }
+    if (parsed.data.job_number !== command.employeeNo) {
+      throw new OrgPushError(
+        'DINGTALK_PROVISIONING_IDENTITY_CONFLICT',
+        'conflict',
+        '钉钉确定性用户标识已被其他员工占用',
+      );
+    }
+    return {
+      externalUserId: parsed.data.userid,
+      unionId: parsed.data.unionid,
+      ...(response.request_id === undefined ? {} : { requestId: response.request_id }),
+    };
+  }
+
+  private async tryGetProvisionedUser(
+    command: ProvisionEmployeeCommand,
+  ): Promise<ProvisionEmployeeResult | null> {
+    try {
+      return await this.getProvisionedUser(command);
+    } catch (error) {
+      if (error instanceof OrgPushError) {
+        if (
+          error.code === 'DINGTALK_PROVISIONING_IDENTITY_CONFLICT' ||
+          error.category === 'retryable'
+        ) throw error;
+      }
+      return null;
+    }
   }
 
   /** 外部创建成功、本地提交前崩溃时，以 ERP 稳定来源标识恢复映射，避免重复建部门。 */
