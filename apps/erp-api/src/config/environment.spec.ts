@@ -27,6 +27,7 @@ describe('validateEnvironment', () => {
     expect(environment.AUTH_ACCESS_TOKEN_TTL_SECONDS).toBe(600);
     expect(environment.AUTH_SIGNING_PRIVATE_KEY_BASE64).toBeUndefined();
     expect(environment.AUDIT_INTEGRITY_KEYS).toBeUndefined();
+    expect(environment.APPROVAL_DATA_ENCRYPTION_KEYS).toBeUndefined();
     expect(environment.METRICS_BEARER_TOKEN).toBeUndefined();
     expect(environment.MCP_OAUTH_CLIENTS_JSON).toBe('[]');
   });

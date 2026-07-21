@@ -25,6 +25,11 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(64).max(16_384).optional(),
   ),
+  /** 审批表单 AES-256-GCM 密钥环，仅由 Secret Manager 注入。 */
+  APPROVAL_DATA_ENCRYPTION_KEYS: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(64).max(16_384).optional(),
+  ),
   /** Prometheus 独立抓取凭据，仅由 Secret Manager 注入，不复用业务 OAuth token。 */
   METRICS_BEARER_TOKEN: z.preprocess(
     (value) => value === '' ? undefined : value,
@@ -113,6 +118,13 @@ const environmentSchema = z.object({
       code: 'custom',
       path: ['AUDIT_INTEGRITY_KEYS'],
       message: '生产环境必须由 Secret Manager 注入审计完整性密钥环',
+    });
+  }
+  if (environment.NODE_ENV === 'production' && environment.APPROVAL_DATA_ENCRYPTION_KEYS === undefined) {
+    context.addIssue({
+      code: 'custom',
+      path: ['APPROVAL_DATA_ENCRYPTION_KEYS'],
+      message: '生产环境必须由 Secret Manager 注入审批表单加密密钥环',
     });
   }
   if (environment.NODE_ENV === 'production' && environment.METRICS_BEARER_TOKEN === undefined) {

@@ -354,6 +354,13 @@ function normalizeAndValidateDefinition(
   return deepFreeze({ fields, nodes });
 }
 
+/** 持久化/迁移边界复核模板定义；返回重新规范化并深冻结的定义。 */
+export function validateAndFreezeApprovalTemplateDefinition(
+  definition: ApprovalTemplateDefinition,
+): ApprovalTemplateDefinition {
+  return normalizeAndValidateDefinition(definition);
+}
+
 function normalizeField(field: ApprovalFormField): ApprovalFormField {
   if (!isPlainObject(field)) throw new ApprovalDomainError('APPROVAL_FIELD_INVALID', '字段定义必须为纯对象');
   assertFieldKey(field.key, 'field.key');
