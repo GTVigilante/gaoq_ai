@@ -80,6 +80,23 @@ const approvalInstanceOutputSchema = z.object({
     completedAt: z.string().nullable(),
   }),
 });
+const preparedOperationOutputSchema = z.object({
+  operationId: z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/),
+  digest: z.string().length(43),
+  riskLevel: z.enum(['R1', 'R2']),
+  expiresAt: z.string(),
+  confirmationUrl: z.string().url(),
+});
+const approvalWriteOutputSchema = z.object({ instance: approvalSummarySchema });
+const approvalOperationInputSchema = {
+  instanceId: z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/),
+  expectedVersion: z.number().int().positive(),
+  prepareKey: z.string().regex(/^[A-Za-z0-9._:-]{8,128}$/),
+};
+const confirmationExecuteInputSchema = {
+  operationId: z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/),
+  confirmationCredential: z.string().regex(/^mcpc_[A-Za-z0-9_-]{43}$/),
+};
 
 @Injectable()
 export class McpRuntimeService {
@@ -277,6 +294,87 @@ export class McpRuntimeService {
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
       },
       async ({ instanceId }, extra) => this.tools.getApprovalInstance(instanceId, extra),
+    );
+
+    server.registerTool(
+      'approval_submit_prepare',
+      {
+        title: '准备提交审批',
+        description: '校验草稿和版本并生成 R1 服务端确认单；不会提交审批。',
+        inputSchema: approvalOperationInputSchema,
+        outputSchema: preparedOperationOutputSchema,
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      },
+      async ({ instanceId, expectedVersion, prepareKey }, extra) =>
+        this.tools.prepareApprovalSubmit(instanceId, expectedVersion, prepareKey, extra),
+    );
+
+    server.registerTool(
+      'approval_submit_execute',
+      {
+        title: '执行提交审批',
+        description: '仅在 ERP 用户确认后，使用一次性确认凭据幂等提交审批。风险等级 R1。',
+        inputSchema: confirmationExecuteInputSchema,
+        outputSchema: approvalWriteOutputSchema,
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      },
+      async ({ operationId, confirmationCredential }, extra) =>
+        this.tools.executeApprovalSubmit(operationId, confirmationCredential, extra),
+    );
+
+    server.registerTool(
+      'approval_withdraw_prepare',
+      {
+        title: '准备撤回审批',
+        description: '校验当前审批状态并生成 R1 服务端确认单；不会撤回审批。',
+        inputSchema: approvalOperationInputSchema,
+        outputSchema: preparedOperationOutputSchema,
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      },
+      async ({ instanceId, expectedVersion, prepareKey }, extra) =>
+        this.tools.prepareApprovalWithdraw(instanceId, expectedVersion, prepareKey, extra),
+    );
+
+    server.registerTool(
+      'approval_withdraw_execute',
+      {
+        title: '执行撤回审批',
+        description: '仅在 ERP 用户确认后，使用一次性确认凭据幂等撤回审批。风险等级 R1。',
+        inputSchema: confirmationExecuteInputSchema,
+        outputSchema: approvalWriteOutputSchema,
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+      },
+      async ({ operationId, confirmationCredential }, extra) =>
+        this.tools.executeApprovalWithdraw(operationId, confirmationCredential, extra),
+    );
+
+    server.registerTool(
+      'approval_decide_prepare',
+      {
+        title: '准备处理审批',
+        description: '校验审批任务并生成 R2 服务端确认单；不会形成通过或拒绝决策。',
+        inputSchema: {
+          ...approvalOperationInputSchema,
+          principalApproverId: z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/),
+          outcome: z.enum(['approved', 'rejected']),
+        },
+        outputSchema: preparedOperationOutputSchema,
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      },
+      async (input, extra) => this.tools.prepareApprovalDecision(input, extra),
+    );
+
+    server.registerTool(
+      'approval_decide_execute',
+      {
+        title: '执行审批决策',
+        description: '仅在 ERP 强认证与独立审批约束满足后执行决策。风险等级 R2；强认证未配置时失败关闭。',
+        inputSchema: confirmationExecuteInputSchema,
+        outputSchema: approvalWriteOutputSchema,
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+      },
+      async ({ operationId, confirmationCredential }, extra) =>
+        this.tools.executeApprovalDecision(operationId, confirmationCredential, extra),
     );
 
     server.registerTool(

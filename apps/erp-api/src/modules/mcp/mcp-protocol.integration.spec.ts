@@ -34,6 +34,12 @@ describe('MCP Streamable HTTP 协议集成', () => {
         content: [{ type: 'text' as const, text: '{"departments":[],"employees":[]}' }],
         structuredContent: { departments: [], employees: [] },
       }),
+      prepareApprovalSubmit: vi.fn(),
+      executeApprovalSubmit: vi.fn(),
+      prepareApprovalWithdraw: vi.fn(),
+      executeApprovalWithdraw: vi.fn(),
+      prepareApprovalDecision: vi.fn(),
+      executeApprovalDecision: vi.fn(),
     };
     const module = await Test.createTestingModule({
       controllers: [McpController],
@@ -105,6 +111,12 @@ describe('MCP Streamable HTTP 协议集成', () => {
       'get_my_permissions',
       'approval_get_inbox',
       'approval_get',
+      'approval_submit_prepare',
+      'approval_submit_execute',
+      'approval_withdraw_prepare',
+      'approval_withdraw_execute',
+      'approval_decide_prepare',
+      'approval_decide_execute',
       'get_org_chart',
     ]);
     const resources = await client.listResources();

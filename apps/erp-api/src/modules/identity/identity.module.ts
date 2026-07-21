@@ -103,6 +103,8 @@ import { TokenGrantService } from './token-grant.service.js';
     BearerAuthGuard,
     AccessTokenVerifier,
     AccessProfileRepository,
+    TokenGrantService,
+    BrowserRefreshCookieService,
   ],
 })
 export class IdentityModule {}

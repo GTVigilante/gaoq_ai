@@ -33,9 +33,18 @@
 .button:disabled { cursor: not-allowed; opacity: 0.45; }
 .button.primary { color: #0f172a; background: #67e8f9; }
 .button.secondary { color: #e2e8f0; background: #334155; }
+.digest { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.impact-list { display: grid; gap: 0.6rem; margin: 0; }
+.impact-list div { display: grid; grid-template-columns: 9rem 1fr; gap: 1rem; padding: 0.65rem 0; border-bottom: 1px solid #334155; }
+.impact-list dt { color: #94a3b8; }
+.impact-list dd { margin: 0; overflow-wrap: anywhere; }
+.warning { padding: 1rem; border: 1px solid #f59e0b; border-radius: 12px; color: #fde68a; background: #451a03; }
+.credential-box { display: grid; gap: 0.75rem; margin-top: 1.5rem; padding: 1rem; border: 1px solid #22d3ee; border-radius: 12px; background: #083344; }
+.credential-box code { overflow-wrap: anywhere; color: #cffafe; user-select: all; }
 
 @media (max-width: 560px) {
   .consent-meta div { grid-template-columns: 1fr; gap: 0.25rem; }
+  .impact-list div { grid-template-columns: 1fr; gap: 0.25rem; }
   .consent-actions { flex-direction: column-reverse; }
   .button { width: 100%; }
 }

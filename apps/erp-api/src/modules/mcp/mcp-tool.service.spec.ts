@@ -9,6 +9,7 @@ import { TenantContextService } from '../../core/tenant/tenant-context.service.j
 import type { OrgApplicationService } from '../org/application/org-application.service.js';
 import type { ApprovalApplicationService } from '../approval/application/approval-application.service.js';
 import { McpToolService } from './mcp-tool.service.js';
+import type { McpConfirmationService } from './mcp-confirmation.service.js';
 
 type McpExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 
@@ -38,14 +39,30 @@ function assemble() {
   const approvals = {
     getInbox: vi.fn().mockResolvedValue([]),
     getInstance: vi.fn().mockResolvedValue({ id: 'instance-001', formData: { remark: { redacted: true } } }),
+    submitInstance: vi.fn(),
+    withdrawInstance: vi.fn(),
+    decideInstance: vi.fn(),
+  };
+  const confirmations = {
+    prepare: vi.fn().mockResolvedValue({
+      operationId: '01J8ZQK7V0A2M4N6P8R0T2W4Y6',
+      digest: 'a'.repeat(43),
+      riskLevel: 'R1',
+      expiresAt: '2026-07-21T00:10:00.000Z',
+      confirmationUrl: 'https://erp.example.com/mcp/confirm?operation_id=01J8ZQK7V0A2M4N6P8R0T2W4Y6',
+    }),
+    claim: vi.fn(),
+    complete: vi.fn().mockResolvedValue(undefined),
+    release: vi.fn().mockResolvedValue(undefined),
   };
   const service = new McpToolService(
     context,
     audit as unknown as AuditService,
     organization as unknown as OrgApplicationService,
     approvals as unknown as ApprovalApplicationService,
+    confirmations as unknown as McpConfirmationService,
   );
-  return { context, audit, organization, approvals, service };
+  return { context, audit, organization, approvals, confirmations, service };
 }
 
 describe('McpToolService', () => {
@@ -134,5 +151,85 @@ describe('McpToolService', () => {
       action: 'mcp.tool.get_org_chart',
       outcome: 'success',
     }));
+  });
+
+  it('R1 提交准备只生成服务端确认单，不直接提交审批', async () => {
+    const store = assemble();
+    store.approvals.getInstance.mockResolvedValue({
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4Y6', status: 'draft', version: 1, formData: {},
+    });
+    const result = await store.service.prepareApprovalSubmit(
+      '01J8ZQK7V0A2M4N6P8R0T2W4Y6',
+      1,
+      'prepare-key-001',
+      extra(['erp:approval:instance:read', 'erp:approval:instance:submit']),
+    );
+    expect(result.structuredContent).toMatchObject({ riskLevel: 'R1' });
+    expect(store.confirmations.prepare).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: 'tenant-001', actorId: 'employee-001' }),
+      'prepare-key-001',
+      {
+        operation: 'approval.submit',
+        instanceId: '01J8ZQK7V0A2M4N6P8R0T2W4Y6',
+        expectedVersion: 1,
+      },
+      'R1',
+    );
+    expect(store.approvals.submitInstance).not.toHaveBeenCalled();
+  });
+
+  it('执行工具只消费确认服务返回的固化命令并使用服务端幂等键', async () => {
+    const store = assemble();
+    const submitInstance = vi.fn().mockResolvedValue({
+      instance: { id: '01J8ZQK7V0A2M4N6P8R0T2W4Y6', status: 'running', version: 2 },
+    });
+    store.approvals.submitInstance = submitInstance;
+    store.confirmations.claim.mockResolvedValue({
+      operationId: '01J8ZQK7V0A2M4N6P8R0T2W4Y7',
+      command: {
+        operation: 'approval.submit',
+        instanceId: '01J8ZQK7V0A2M4N6P8R0T2W4Y6',
+        expectedVersion: 1,
+      },
+      replayResult: null,
+    });
+    const result = await store.service.executeApprovalSubmit(
+      '01J8ZQK7V0A2M4N6P8R0T2W4Y7',
+      `mcpc_${'a'.repeat(43)}`,
+      extra(['erp:approval:instance:submit']),
+    );
+    expect(submitInstance).toHaveBeenCalledWith(
+      '01J8ZQK7V0A2M4N6P8R0T2W4Y6',
+      1,
+      'mcp:01J8ZQK7V0A2M4N6P8R0T2W4Y7',
+    );
+    const completed = store.confirmations.complete.mock.calls[0] as unknown as [
+      string,
+      Record<string, unknown>,
+    ];
+    expect(completed[0]).toBe('01J8ZQK7V0A2M4N6P8R0T2W4Y7');
+    expect(completed[1]).toHaveProperty('instance');
+    expect(result.structuredContent).toMatchObject({ instance: { status: 'running' } });
+  });
+
+  it('R2 决策准备拒绝发起人本人或其代理形成决策', async () => {
+    const store = assemble();
+    store.approvals.getInstance.mockResolvedValue({
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4Y6',
+      initiatorId: 'employee-001',
+      status: 'running',
+      version: 2,
+      formData: {},
+    });
+    const result = await store.service.prepareApprovalDecision({
+      instanceId: '01J8ZQK7V0A2M4N6P8R0T2W4Y6',
+      expectedVersion: 2,
+      principalApproverId: 'approver-001',
+      outcome: 'approved',
+      prepareKey: 'prepare-key-002',
+    }, extra(['erp:approval:instance:read', 'erp:approval:task:decide']));
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toContain('APPROVAL_R2_INDEPENDENCE_REQUIRED');
+    expect(store.confirmations.prepare).not.toHaveBeenCalled();
   });
 });
