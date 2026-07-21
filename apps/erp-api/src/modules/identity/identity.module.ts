@@ -102,6 +102,7 @@ import { TokenGrantService } from './token-grant.service.js';
     SsoAdapterRegistry,
     BearerAuthGuard,
     AccessTokenVerifier,
+    AccessProfileRepository,
   ],
 })
 export class IdentityModule {}

@@ -76,6 +76,35 @@ export class AccessProfileRepository {
     });
   }
 
+  /** 审批人解析专用：按固定角色白名单查询有效主体，可选限制在部门交集内。 */
+  async findActiveByRoles(
+    tenantId: string,
+    roleCodes: readonly string[],
+    departmentIds: readonly string[] | null,
+    mongoSession?: ClientSession,
+  ): Promise<readonly AccessProfileSnapshot[]> {
+    this.assertIds(tenantId, tenantId);
+    if (
+      roleCodes.length < 1 || roleCodes.length > 50 ||
+      roleCodes.some((code) => !ID_PATTERN.test(code)) ||
+      (departmentIds !== null && (
+        departmentIds.length < 1 || departmentIds.length > 500 ||
+        departmentIds.some((id) => !ID_PATTERN.test(id))
+      ))
+    ) throw new Error('审批角色解析参数非法');
+    const filter: Record<string, unknown> = {
+      tenantId,
+      status: 'active',
+      roleCodes: { $in: [...roleCodes] },
+      ...(departmentIds === null ? {} : { departmentIds: { $in: [...departmentIds] } }),
+    };
+    const query = this.accessProfiles.find(filter).sort({ actorId: 1 }).limit(501);
+    if (mongoSession !== undefined) query.session(mongoSession);
+    const records = await query.select(SNAPSHOT_PROJECTION).lean().exec();
+    if (records.length > 500) throw new Error('审批角色解析结果超过 500 人上限');
+    return Object.freeze(records.map((record) => this.toSnapshot(record)));
+  }
+
   /**
    * 停用租户内指定 actor 的授权快照。
    * 过滤条件强制包含 tenantId 与 expectedVersion（乐观锁），命中后 version + 1；
@@ -173,5 +202,18 @@ export class AccessProfileRepository {
     if (!ID_PATTERN.test(tenantId) || !ID_PATTERN.test(employeeId)) {
       throw new Error('授权快照生命周期标识非法');
     }
+  }
+
+  private toSnapshot(record: AccessProfile): AccessProfileSnapshot {
+    return Object.freeze({
+      tenantId: record.tenantId,
+      actorId: record.actorId,
+      employeeId: record.employeeId,
+      status: record.status,
+      roleCodes: Object.freeze([...record.roleCodes]),
+      scopes: Object.freeze([...record.scopes]),
+      departmentIds: Object.freeze([...record.departmentIds]),
+      version: record.version,
+    });
   }
 }
