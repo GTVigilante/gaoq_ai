@@ -222,6 +222,23 @@ export function completePayrollReconciliation(
   }, now);
 }
 
+export function recordPayrollReconciliationMismatch(
+  period: PayrollPeriod,
+  command: BaseCommand & {
+    readonly reconciliationEvidenceId: string;
+    readonly trustedReconciliation: boolean;
+  },
+  now: Date,
+): PayrollPeriod {
+  assertCommand(period, command);
+  requireStatus(period, ['reconciling']);
+  assertId(command.reconciliationEvidenceId, 'reconciliationEvidenceId');
+  if (!command.trustedReconciliation) {
+    invalid('PAYROLL_RECONCILIATION_UNTRUSTED', '只接受受信任对账服务的结果');
+  }
+  return next(period, { reconciliationEvidenceId: command.reconciliationEvidenceId }, now);
+}
+
 interface BaseCommand {
   readonly tenantId: string;
   readonly expectedVersion: number;

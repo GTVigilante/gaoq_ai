@@ -17,6 +17,9 @@ export interface PayrollEvent {
     | 'payroll.approval.requested'
     | 'payroll.approval.applied'
     | 'payroll.period.locked'
+    | 'payroll.disbursement.started'
+    | 'payroll.reconciliation.started'
+    | 'payroll.reconciliation.completed'
     | 'payroll.tax_filing.prepared'
     | 'payroll.tax_filing.approved'
     | 'payroll.tax_filing.submitted';
@@ -40,6 +43,7 @@ export class PayrollOutboxWriter {
       throw new Error('Payroll Outbox 拒绝跨租户事件');
     }
     this.assertTaxEvent(event);
+    this.assertReconciliationEvent(event);
     const eventId = createEventId(new Date(event.occurredAt));
     const eventType = `cn.gaoq.erp.${event.type}.v1`;
     const envelope: CloudEvent<Record<string, unknown>> & { readonly schemaVersion: '1' } = {
@@ -91,6 +95,41 @@ export class PayrollOutboxWriter {
       !base || data['status'] !== 'submitted' ||
       !safeId(data['taxSubmissionId']) || !safeId(data['taxSubmissionEvidenceId'])
     ) throw new Error('PAYROLL_TAX_OUTBOX_DATA_INVALID');
+  }
+
+  private assertReconciliationEvent(event: PayrollEvent): void {
+    if (
+      event.type !== 'payroll.disbursement.started' &&
+      event.type !== 'payroll.reconciliation.started' &&
+      event.type !== 'payroll.reconciliation.completed'
+    ) return;
+    const data = event.data;
+    const keys = Object.keys(data).sort().join(',');
+    const period = typeof data['period'] === 'string' &&
+      /^\d{4}-(0[1-9]|1[0-2])$/.test(data['period']);
+    if (event.type === 'payroll.disbursement.started') {
+      if (
+        keys !== 'batchId,period,status' || !period || !safeId(data['batchId']) ||
+        data['status'] !== 'disbursing'
+      ) throw new Error('PAYROLL_RECONCILIATION_OUTBOX_DATA_INVALID');
+      return;
+    }
+    if (event.type === 'payroll.reconciliation.started') {
+      if (
+        keys !== 'batchId,period,returnHash,status' || !period || !safeId(data['batchId']) ||
+        typeof data['returnHash'] !== 'string' ||
+        !/^[A-Za-z0-9_-]{43}$/.test(data['returnHash']) || data['status'] !== 'reconciling'
+      ) throw new Error('PAYROLL_RECONCILIATION_OUTBOX_DATA_INVALID');
+      return;
+    }
+    if (
+      keys !== 'batchId,differenceCount,evidenceHash,period,reconciliationId,status' ||
+      !period || !safeId(data['batchId']) || !safeId(data['reconciliationId']) ||
+      typeof data['evidenceHash'] !== 'string' ||
+      !/^[A-Za-z0-9_-]{43}$/.test(data['evidenceHash']) ||
+      !nonnegative(data['differenceCount']) ||
+      !['reconciled', 'frozen'].includes(String(data['status']))
+    ) throw new Error('PAYROLL_RECONCILIATION_OUTBOX_DATA_INVALID');
   }
 }
 

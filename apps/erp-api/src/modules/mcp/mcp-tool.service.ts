@@ -21,6 +21,7 @@ import { AttendanceApplicationService } from '../attendance/application/attendan
 import { PayrollRunService } from '../payroll/application/payroll-run.service.js';
 import { PayrollPayslipService } from '../payroll/application/payroll-payslip.service.js';
 import { PayrollTaxFilingService } from '../payroll/application/payroll-tax-filing.service.js';
+import { PayrollReconciliationService } from '../payroll/application/payroll-reconciliation.service.js';
 import { parseMcpIdentity, type McpIdentity } from './mcp-auth-context.js';
 import {
   McpConfirmationService,
@@ -64,6 +65,7 @@ export class McpToolService {
     private readonly payroll: PayrollRunService,
     private readonly payslips: PayrollPayslipService,
     private readonly taxFilings: PayrollTaxFilingService,
+    private readonly reconciliations: PayrollReconciliationService,
     private readonly confirmations: McpConfirmationService,
   ) {}
 
@@ -192,6 +194,23 @@ export class McpToolService {
         contentHash: taxFiling.contentHash,
       });
       return structuredResult({ taxFiling });
+    });
+  }
+
+  async getPayrollReconciliation(id: string, extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:payroll:reconciliation:read')) {
+        await this.auditTool(identity, 'payroll_reconciliation_get', 'R1', 'denied');
+        return scopeError('erp:payroll:reconciliation:read');
+      }
+      const reconciliation = await this.reconciliations.getStatus(id);
+      await this.auditTool(identity, 'payroll_reconciliation_get', 'R1', 'success', {
+        reconciliationId: reconciliation.id, status: reconciliation.status,
+        evidenceHash: reconciliation.evidenceHash,
+        differenceCount: reconciliation.differences.length,
+      });
+      return structuredResult({ reconciliation });
     });
   }
 

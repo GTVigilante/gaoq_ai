@@ -260,6 +260,24 @@ const payrollTaxFilingSchema = z.object({
   objectEvidenceId: z.string().nullable(), taxSubmissionId: z.string().nullable(),
   taxSubmissionEvidenceId: z.string().nullable(),
 });
+const payrollReconciliationSchema = z.object({
+  id: recruitmentIdSchema, periodId: recruitmentIdSchema, payrollRunId: recruitmentIdSchema,
+  batchId: recruitmentIdSchema, bankReturnId: recruitmentIdSchema,
+  taxFilingId: recruitmentIdSchema, status: z.enum(['balanced', 'frozen']),
+  differences: z.array(z.enum([
+    'PAYROLL_BANK_AMOUNT_MISMATCH', 'BANK_RETURN_AMOUNT_MISMATCH',
+    'BANK_RETURN_COUNT_MISMATCH', 'PAYROLL_TAX_AMOUNT_MISMATCH',
+    'PAYROLL_TAX_EMPLOYEE_COUNT_MISMATCH',
+  ])).max(5),
+  evidenceHash: z.string().length(43), employeeCount: z.number().int().min(1).max(5_000),
+  bankLineCount: z.number().int().min(1).max(5_000),
+  totalGrossMinor: z.number().int().nonnegative(), totalNetMinor: z.number().int().nonnegative(),
+  bankSubmittedMinor: z.number().int().nonnegative(),
+  bankReturnedMinor: z.number().int().nonnegative(),
+  totalTaxableEarningsMinor: z.number().int().nonnegative(),
+  payrollWithholdingTaxMinor: z.number().int(), filedWithholdingTaxMinor: z.number().int(),
+  version: z.number().int().positive(),
+});
 
 @Injectable()
 export class McpRuntimeService {
@@ -587,6 +605,24 @@ export class McpRuntimeService {
       },
     );
 
+    server.registerResource(
+      'payroll-reconciliation',
+      new ResourceTemplate('erp://payroll/reconciliations/{id}', { list: undefined }),
+      {
+        title: '工资四方对账控制摘要',
+        description: '只返回工资、代发、回盘和个税控制量及标准差异码，不返回员工、账户或外部正文。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getPayrollReconciliation(requiredResourceId(id), extra);
+        if (result.isError === true) throw new Error('无权读取四方对账摘要');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
     server.registerPrompt(
       'approval_submission_guide',
       {
@@ -736,6 +772,19 @@ export class McpRuntimeService {
       ({ filingId }) => ({ messages: [{ role: 'user', content: {
         type: 'text',
         text: `请读取个税申报 ${filingId} 的脱敏控制摘要，核对状态、版本、人数、计税收入、预扣税、内容摘要和证据标识是否齐全。不得索取税务正文、员工身份、证件或 WORM 对象地址；不得触发制备、强认证审批或税局提交。`,
+      } }] }),
+    );
+
+    server.registerPrompt(
+      'payroll_reconciliation_review_guide',
+      {
+        title: '工资四方对账差异分析指南',
+        description: '指导 AI 解释标准差异码和控制量，不执行解冻、补发或重报。',
+        argsSchema: { reconciliationId: recruitmentIdSchema },
+      },
+      ({ reconciliationId }) => ({ messages: [{ role: 'user', content: {
+        type: 'text',
+        text: `请读取四方对账 ${reconciliationId} 的脱敏摘要，逐项解释工资净额、银行提交、终态回盘、工资税额和已申报税额是否守恒。仅依据标准差异码提出调查方向；不得索取员工、账户、证件、银行文件或税务正文，不得执行解冻、补发、重报或修改证据。`,
       } }] }),
     );
 
@@ -1023,6 +1072,20 @@ export class McpRuntimeService {
         },
       },
       async ({ id }, extra) => this.tools.getPayrollTaxFiling(id, extra),
+    );
+
+    server.registerTool(
+      'payroll_reconciliation_get',
+      {
+        title: '查询工资四方对账控制摘要',
+        description: '返回工资、代发、回盘、个税控制量和标准差异码；不返回员工或外部正文。风险等级 R1。',
+        inputSchema: { id: recruitmentIdSchema },
+        outputSchema: z.object({ reconciliation: payrollReconciliationSchema }),
+        annotations: {
+          readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+        },
+      },
+      async ({ id }, extra) => this.tools.getPayrollReconciliation(id, extra),
     );
 
     server.registerTool(

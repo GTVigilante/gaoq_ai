@@ -16,7 +16,8 @@ export interface TreasuryEvent {
     | 'treasury.disbursement.submission_requested'
     | 'treasury.disbursement.submitted'
     | 'treasury.disbursement.recovery_requested'
-    | 'treasury.bank_return.applied';
+    | 'treasury.bank_return.applied'
+    | 'treasury.reconciliation.completed';
   readonly tenantId: string;
   readonly aggregateId: string;
   readonly version: number;
@@ -62,6 +63,18 @@ export class TreasuryOutboxWriter {
   private assertSafeEvent(event: TreasuryEvent): void {
     const data = event.data;
     const keys = Object.keys(data).sort().join(',');
+    if (event.type === 'treasury.reconciliation.completed') {
+      if (
+        keys !==
+          'differenceCount,evidenceHash,payrollPeriodId,payrollRunId,reconciliationId,status' ||
+        !safeId(data['payrollPeriodId']) || !safeId(data['payrollRunId']) ||
+        !safeId(data['reconciliationId']) || !nonnegativeInteger(data['differenceCount']) ||
+        typeof data['evidenceHash'] !== 'string' ||
+        !/^[A-Za-z0-9_-]{43}$/.test(data['evidenceHash']) ||
+        !['reconciled', 'frozen'].includes(String(data['status']))
+      ) throw new Error('TREASURY_OUTBOX_DATA_INVALID');
+      return;
+    }
     if (event.type === 'treasury.bank_return.applied') {
       if (
         keys !==

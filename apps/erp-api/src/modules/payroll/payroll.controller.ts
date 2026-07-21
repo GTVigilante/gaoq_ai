@@ -8,6 +8,10 @@ import { PayrollApprovalService } from './application/payroll-approval.service.j
 import { PayrollRunService, type PayrollPeriodSummary } from './application/payroll-run.service.js';
 import { PayrollPayslipService, type PayrollPayslipView } from './application/payroll-payslip.service.js';
 import {
+  PayrollReconciliationService,
+  type PayrollReconciliationSummary,
+} from './application/payroll-reconciliation.service.js';
+import {
   PayrollTaxFilingService,
   type PayrollTaxFilingSummary,
 } from './application/payroll-tax-filing.service.js';
@@ -32,8 +36,25 @@ export class PayrollController {
     private readonly payslips: PayrollPayslipService,
     private readonly masterData: PayrollMasterDataService,
     private readonly taxFilings: PayrollTaxFilingService,
+    private readonly reconciliations: PayrollReconciliationService,
     private readonly audit: AuditService,
   ) {}
+
+  /** 四方对账只读控制摘要；不返回员工、账户、税务正文或外部对象地址。 */
+  @Get('reconciliations/:id')
+  @RequiredScopes('erp:payroll:reconciliation:read')
+  async getReconciliation(@Param('id') id: string): Promise<PayrollReconciliationSummary> {
+    const result = await this.reconciliations.getStatus(id);
+    await this.audit.record({
+      action: 'payroll.reconciliation.read', resourceType: 'payroll_reconciliation',
+      resourceId: result.id, riskLevel: 'R1', outcome: 'success', metadata: {
+        periodId: result.periodId, payrollRunId: result.payrollRunId,
+        batchId: result.batchId, status: result.status,
+        differenceCount: result.differences.length, evidenceHash: result.evidenceHash,
+      },
+    });
+    return result;
+  }
 
   /** 只读脱敏状态；不返回 WORM 对象引用、身份凭证或税务正文。 */
   @Get('tax-filings/:id')

@@ -159,4 +159,26 @@ describe('TreasuryOutboxWriter', () => {
     expect(calls).toContain('"parentBatchId":"parent-batch-001"');
     expect(calls).not.toMatch(/employee|instruction|account|approvedBy|evidence/u);
   });
+
+  it('四方对账事件只公开证据摘要和差异数量', async () => {
+    const context = new TenantContextService();
+    const create = vi.fn().mockResolvedValue([]);
+    const writer = new TreasuryOutboxWriter(context, { create } as never);
+    const reconciled: TreasuryEvent = {
+      type: 'treasury.reconciliation.completed', tenantId: tenant.tenantId,
+      aggregateId: 'batch-001', version: 6, occurredAt: '2026-07-22T10:05:00.000Z',
+      data: {
+        payrollPeriodId: 'period-001', payrollRunId: 'run-001',
+        reconciliationId: 'reconciliation-001', evidenceHash: 'e'.repeat(43),
+        differenceCount: 0, status: 'reconciled',
+      },
+    };
+    await context.run({ tenant, actor }, () => writer.append(reconciled, session));
+    const calls = JSON.stringify(create.mock.calls);
+    expect(calls).toContain('"status":"reconciled"');
+    expect(calls).not.toMatch(/employee|account|taxSubmission|bankSubmission/u);
+    await expect(context.run({ tenant, actor }, () => writer.append({
+      ...reconciled, data: { ...reconciled.data, employeeId: 'employee-001' },
+    }, session))).rejects.toThrow('TREASURY_OUTBOX_DATA_INVALID');
+  });
 });

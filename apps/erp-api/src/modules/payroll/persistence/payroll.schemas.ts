@@ -281,3 +281,89 @@ PayrollTaxFilingRecordSchema.index(
   { tenantId: 1, taxSubmissionId: 1 },
   { unique: true, partialFilterExpression: { taxSubmissionId: { $type: 'string' } } },
 );
+
+const RECONCILIATION_DIFFERENCE_CODES = [
+  'PAYROLL_BANK_AMOUNT_MISMATCH',
+  'BANK_RETURN_AMOUNT_MISMATCH',
+  'BANK_RETURN_COUNT_MISMATCH',
+  'PAYROLL_TAX_AMOUNT_MISMATCH',
+  'PAYROLL_TAX_EMPLOYEE_COUNT_MISMATCH',
+] as const;
+
+/** 四方对账不可变控制快照；只保存聚合、摘要和外部证据引用。 */
+@Schema({ collection: 'payroll_reconciliations', timestamps: true, versionKey: false, id: false })
+export class PayrollReconciliationRecord {
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) id!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  tenantId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) periodId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) payrollRunId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  payrollResultHash!: string;
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) batchId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) bankReturnId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN }) returnHash!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  bankSubmissionId!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  disbursementObjectEvidenceId!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  bankSubmissionEvidenceId!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  bankReturnObjectEvidenceId!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  signatureEvidenceId!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  malwareScanEvidenceId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) taxFilingId!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  taxSubmissionId!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  taxSubmissionEvidenceId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN }) taxContentHash!: string;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  settlementChainHash!: string;
+  @Prop({ type: Number, required: true, immutable: true, min: 1, max: 5_000 })
+  employeeCount!: number;
+  @Prop({ type: Number, required: true, immutable: true, min: 1, max: 5_000 })
+  bankLineCount!: number;
+  @Prop({ type: Number, required: true, immutable: true, min: 0, max: Number.MAX_SAFE_INTEGER })
+  totalGrossMinor!: number;
+  @Prop({ type: Number, required: true, immutable: true, min: 0, max: Number.MAX_SAFE_INTEGER })
+  totalNetMinor!: number;
+  @Prop({ type: Number, required: true, immutable: true, min: 0, max: Number.MAX_SAFE_INTEGER })
+  bankSubmittedMinor!: number;
+  @Prop({ type: Number, required: true, immutable: true, min: 0, max: Number.MAX_SAFE_INTEGER })
+  bankReturnedMinor!: number;
+  @Prop({ type: Number, required: true, immutable: true, min: 0, max: Number.MAX_SAFE_INTEGER })
+  totalTaxableEarningsMinor!: number;
+  @Prop({
+    type: Number, required: true, immutable: true,
+    min: -Number.MAX_SAFE_INTEGER, max: Number.MAX_SAFE_INTEGER,
+  })
+  payrollWithholdingTaxMinor!: number;
+  @Prop({
+    type: Number, required: true, immutable: true,
+    min: -Number.MAX_SAFE_INTEGER, max: Number.MAX_SAFE_INTEGER,
+  })
+  filedWithholdingTaxMinor!: number;
+  @Prop({ type: [String], required: true, immutable: true, enum: RECONCILIATION_DIFFERENCE_CODES })
+  differences!: string[];
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN }) evidenceHash!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  reconciledBy!: string;
+  @Prop({ type: String, required: true, immutable: true, enum: ['balanced', 'frozen'] })
+  status!: 'balanced' | 'frozen';
+  @Prop({ type: Number, required: true, immutable: true, min: 1 }) version!: number;
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+export type PayrollReconciliationDocument = HydratedDocument<PayrollReconciliationRecord>;
+export const PayrollReconciliationRecordSchema = SchemaFactory.createForClass(
+  PayrollReconciliationRecord,
+);
+PayrollReconciliationRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
+PayrollReconciliationRecordSchema.index({ tenantId: 1, periodId: 1 }, { unique: true });
+PayrollReconciliationRecordSchema.index({ tenantId: 1, payrollRunId: 1 }, { unique: true });
+PayrollReconciliationRecordSchema.index({ tenantId: 1, batchId: 1 }, { unique: true });
+PayrollReconciliationRecordSchema.index({ tenantId: 1, status: 1, createdAt: 1 });

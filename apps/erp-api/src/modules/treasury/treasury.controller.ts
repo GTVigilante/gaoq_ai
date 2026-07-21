@@ -16,10 +16,12 @@ import {
   type TreasuryDisbursementSummary,
 } from './application/treasury-disbursement.service.js';
 import { TreasuryRecoveryService } from './application/treasury-recovery.service.js';
+import { TreasuryReconciliationService } from './application/treasury-reconciliation.service.js';
 import {
   AttestTreasuryBankAccountDto,
   ApproveTreasuryExportDto,
   CreateTreasuryRecoveryDto,
+  ExecuteTreasuryReconciliationDto,
   IngestTreasuryBankReturnDto,
   PrepareTreasuryDisbursementDto,
   SubmitTreasuryDisbursementDto,
@@ -32,8 +34,30 @@ export class TreasuryController {
     private readonly bankReturns: TreasuryBankReturnService,
     private readonly disbursements: TreasuryDisbursementService,
     private readonly recovery: TreasuryRecoveryService,
+    private readonly reconciliation: TreasuryReconciliationService,
     private readonly audit: AuditService,
   ) {}
+
+  /** R3：可信服务聚合锁定工资、银行提交、终态回盘和已提交个税；MCP 不执行。 */
+  @Post('disbursements/:id/reconciliation')
+  @RequiredScopes('erp:payroll:reconciliation:execute')
+  async reconcileDisbursement(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Body() body: ExecuteTreasuryReconciliationDto,
+  ) {
+    const result = await this.reconciliation.reconcile(this.key(key), id, body.expectedVersion);
+    await this.audit.record({
+      action: 'payroll.reconciliation.execute', resourceType: 'payroll_reconciliation',
+      resourceId: result.id, riskLevel: 'R3', outcome: 'success', metadata: {
+        periodId: result.periodId, payrollRunId: result.payrollRunId, batchId: result.batchId,
+        bankReturnId: result.bankReturnId, taxFilingId: result.taxFilingId,
+        status: result.status, differenceCount: result.differences.length,
+        evidenceHash: result.evidenceHash, version: result.version,
+      },
+    });
+    return result;
+  }
 
   /** R3：只从受保护终态回盘派生失败子批次；父批次、员工与金额不可由客户端选择。 */
   @Post('disbursements/:id/recovery')

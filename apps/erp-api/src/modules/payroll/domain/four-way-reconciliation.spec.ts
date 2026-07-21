@@ -18,12 +18,17 @@ const input = (): FourWayReconciliationInput => ({
     payrollPeriodId: '01J8ZQK7V0A2M4N6P8R0T2W4P1',
     payrollRunId: '01J8ZQK7V0A2M4N6P8R0T2W4R1', payrollResultHash: 'a'.repeat(43),
     status: 'reconciling', lineCount: 2, totalMinor: 1_679_000,
+    settledLineCount: 2, settledMinor: 1_679_000, settlementChainHash: 's'.repeat(43),
+    objectEvidenceId: 'treasury-worm-evidence-001',
     bankSubmissionId: 'bank-submission-001', bankSubmissionEvidenceId: 'bank-evidence-001',
   },
   bankReturn: {
     returnId: '01J8ZQK7V0A2M4N6P8R0T2W4N1', batchId: '01J8ZQK7V0A2M4N6P8R0T2W4B1',
     returnHash: 'b'.repeat(43), outcome: 'accepted', successfulCount: 2,
     successfulMinor: 1_679_000, failedCount: 0, failedMinor: 0,
+    objectEvidenceId: 'return-worm-evidence-001',
+    signatureEvidenceId: 'return-signature-evidence-001',
+    malwareScanEvidenceId: 'return-malware-evidence-001',
   },
   taxFiling: {
     filingId: '01J8ZQK7V0A2M4N6P8R0T2W4F1',
@@ -45,13 +50,23 @@ describe('工资四方对账领域核验', () => {
     });
     expect(result.evidenceHash).toMatch(/^[A-Za-z0-9_-]{43}$/u);
     expect(reconcilePayrollFourWay(input()).evidenceHash).toBe(result.evidenceHash);
+    const current = input();
+    const disbursementWithExtra = Object.assign(
+      {}, current.disbursement, { employeeId: 'must-not-bind' },
+    );
+    expect(reconcilePayrollFourWay({
+      ...current, disbursement: disbursementWithExtra,
+    }).evidenceHash).toBe(result.evidenceHash);
   });
 
   it('逐项列出金额、人数和回盘差异且不误判应发等于实发', () => {
     const current = input();
     const result = reconcilePayrollFourWay({
       ...current,
-      disbursement: { ...current.disbursement, totalMinor: 1_670_000, lineCount: 1 },
+      disbursement: {
+        ...current.disbursement, totalMinor: 1_670_000, lineCount: 1,
+        settledMinor: 1_670_000, settledLineCount: 1,
+      },
       taxFiling: {
         ...current.taxFiling, employeeCount: 1, totalWithholdingTaxMinor: 20_000,
       },
@@ -63,6 +78,25 @@ describe('工资四方对账领域核验', () => {
       'PAYROLL_TAX_EMPLOYEE_COUNT_MISMATCH',
     ]);
     expect(result.totalGrossMinor).not.toBe(result.totalNetMinor);
+  });
+
+  it('恢复子批次按整条结算链汇总后与整期工资守恒', () => {
+    const current = input();
+    const recovered = reconcilePayrollFourWay({
+      ...current,
+      disbursement: {
+        ...current.disbursement, lineCount: 1, totalMinor: 839_500,
+        settledLineCount: 2, settledMinor: 1_679_000,
+        settlementChainHash: 'r'.repeat(43),
+      },
+      bankReturn: {
+        ...current.bankReturn, successfulCount: 1, successfulMinor: 839_500,
+      },
+    });
+    expect(recovered).toMatchObject({
+      balanced: true, bankLineCount: 2,
+      bankSubmittedMinor: 1_679_000, bankReturnedMinor: 1_679_000,
+    });
   });
 
   it('错工资运行、错批次和不安全整数失败关闭', () => {

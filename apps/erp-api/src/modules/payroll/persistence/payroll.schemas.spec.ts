@@ -4,9 +4,11 @@ import { describe, expect, it } from 'vitest';
 import {
   PayrollCompensationProfileRecordSchema,
   PayrollPeriodRecordSchema,
+  PayrollReconciliationRecordSchema,
   PayrollRulePackRecordSchema,
   PayrollTaxFilingRecordSchema,
   type PayrollCompensationProfileRecord,
+  type PayrollReconciliationRecord,
   type PayrollTaxFilingRecord,
 } from './payroll.schemas.js';
 
@@ -16,6 +18,9 @@ const ProfileModel = mongoose.model<PayrollCompensationProfileRecord>(
 );
 const TaxFilingModel = mongoose.model<PayrollTaxFilingRecord>(
   'SpecPayrollTaxFiling', PayrollTaxFilingRecordSchema,
+);
+const ReconciliationModel = mongoose.model<PayrollReconciliationRecord>(
+  'SpecPayrollReconciliation', PayrollReconciliationRecordSchema,
 );
 
 describe('Payroll 持久化契约', () => {
@@ -51,6 +56,11 @@ describe('Payroll 持久化契约', () => {
       [{ tenantId: 1, periodId: 1 }, expect.objectContaining({ unique: true })],
       [{ tenantId: 1, taxSubmissionId: 1 }, expect.objectContaining({ unique: true })],
     ]));
+    for (const field of ['periodId', 'payrollRunId', 'batchId']) {
+      expect(PayrollReconciliationRecordSchema.indexes()).toContainEqual([
+        { tenantId: 1, [field]: 1 }, expect.objectContaining({ unique: true }),
+      ]);
+    }
   });
 
   it('个税清单只保存密文和控制摘要且限制安全整数', async () => {
@@ -71,5 +81,34 @@ describe('Payroll 持久化契约', () => {
       ...document.toObject(), totalTaxableEarningsMinor: Number.MAX_SAFE_INTEGER + 1,
     });
     await expect(unsafe.validate()).rejects.toThrow(/totalTaxableEarningsMinor/);
+  });
+
+  it('四方对账快照固化完整证据引用且拒绝未知差异码', async () => {
+    const base = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4C1', tenantId: 'tenant-001',
+      periodId: '01J8ZQK7V0A2M4N6P8R0T2W4P1',
+      payrollRunId: '01J8ZQK7V0A2M4N6P8R0T2W4R1', payrollResultHash: 'a'.repeat(43),
+      batchId: '01J8ZQK7V0A2M4N6P8R0T2W4B1', bankReturnId: '01J8ZQK7V0A2M4N6P8R0T2W4N1',
+      returnHash: 'b'.repeat(43), bankSubmissionId: 'bank-submission-001',
+      disbursementObjectEvidenceId: 'treasury-worm-001',
+      bankSubmissionEvidenceId: 'bank-evidence-001',
+      bankReturnObjectEvidenceId: 'return-worm-001',
+      signatureEvidenceId: 'return-signature-001', malwareScanEvidenceId: 'return-scan-001',
+      taxFilingId: '01J8ZQK7V0A2M4N6P8R0T2W4F1', taxSubmissionId: 'tax-submission-001',
+      taxSubmissionEvidenceId: 'tax-evidence-001', taxContentHash: 'c'.repeat(43),
+      settlementChainHash: 's'.repeat(43),
+      employeeCount: 2, bankLineCount: 2, totalGrossMinor: 2_000_000,
+      totalNetMinor: 1_679_000, bankSubmittedMinor: 1_679_000,
+      bankReturnedMinor: 1_679_000, totalTaxableEarningsMinor: 2_000_000,
+      payrollWithholdingTaxMinor: 21_000, filedWithholdingTaxMinor: 21_000,
+      differences: [], evidenceHash: 'e'.repeat(43), reconciledBy: 'reconciliation-service',
+      status: 'balanced', version: 1,
+    };
+    await expect(new ReconciliationModel(base).validate()).resolves.toBeUndefined();
+    await expect(new ReconciliationModel({
+      ...base, status: 'frozen', differences: ['UNCONTROLLED_DIFFERENCE'],
+    }).validate()).rejects.toThrow(/differences/);
+    expect(JSON.stringify(new ReconciliationModel(base).toObject()))
+      .not.toMatch(/employeeId|account|identityEvidence|objectRef/u);
   });
 });

@@ -73,4 +73,22 @@ describe('Payroll Tax Outbox 白名单', () => {
       .rejects.toThrow('PAYROLL_TAX_OUTBOX_DATA_INVALID');
     expect(store.records.create).not.toHaveBeenCalled();
   });
+
+  it('四方对账事件只发布状态、标准差异数量和摘要', async () => {
+    const store = setup();
+    const completed: PayrollEvent = {
+      ...base, type: 'payroll.reconciliation.completed', version: 9, data: {
+        period: '2026-07', batchId: '01J8ZQK7V0A2M4N6P8R0T2W4B1',
+        reconciliationId: '01J8ZQK7V0A2M4N6P8R0T2W4C1',
+        evidenceHash: 'e'.repeat(43), differenceCount: 1, status: 'frozen',
+      },
+    };
+    await store.context.run({ tenant, actor }, () => store.writer.append(completed, session));
+    const persisted = JSON.stringify(store.records.create.mock.calls);
+    expect(persisted).toContain('"differenceCount":1');
+    expect(persisted).not.toMatch(/employee|account|taxSubmission|bankSubmission/u);
+    await expect(store.context.run({ tenant, actor }, () => store.writer.append({
+      ...completed, data: { ...completed.data, employeeId: 'employee-001' },
+    }, session))).rejects.toThrow('PAYROLL_RECONCILIATION_OUTBOX_DATA_INVALID');
+  });
 });

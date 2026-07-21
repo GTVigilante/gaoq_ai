@@ -20,8 +20,9 @@ Phase 4 在 ERP 组织与劳动关系主数据之上，建立可重放的考勤�
 14. [隔离银行回盘、逐行复核与异常冻结](./13-treasury-bank-return-inbox.md)
 15. [个税申报清单、独立审批与税务网关](./14-payroll-tax-filing.md)
 16. [Payroll Tax 索引迁移 Runbook](./15-payroll-tax-index-migration-runbook.md)
-17. 应发/代发/回盘/个税四方对账
-18. 两个完整薪资周期影子计算、差异归因与财务签署
+17. [工资、代发、回盘与个税四方对账](./16-payroll-four-way-reconciliation.md)
+18. [Payroll 四方对账索引迁移 Runbook](./17-payroll-reconciliation-index-migration-runbook.md)
+19. 两个完整薪资周期影子计算、差异归因与财务签署
 
 ## 强制边界
 

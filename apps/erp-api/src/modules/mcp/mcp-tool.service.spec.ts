@@ -19,6 +19,7 @@ import type { AttendanceApplicationService } from '../attendance/application/att
 import type { PayrollRunService } from '../payroll/application/payroll-run.service.js';
 import type { PayrollPayslipService } from '../payroll/application/payroll-payslip.service.js';
 import type { PayrollTaxFilingService } from '../payroll/application/payroll-tax-filing.service.js';
+import type { PayrollReconciliationService } from '../payroll/application/payroll-reconciliation.service.js';
 import { McpToolService } from './mcp-tool.service.js';
 import type { McpConfirmationService } from './mcp-confirmation.service.js';
 
@@ -82,6 +83,7 @@ function assemble() {
   const payroll = { getPeriod: vi.fn() };
   const payslips = { getMyPayslip: vi.fn() };
   const taxFilings = { getStatus: vi.fn() };
+  const reconciliations = { getStatus: vi.fn() };
   const service = new McpToolService(
     context,
     audit as unknown as AuditService,
@@ -98,12 +100,13 @@ function assemble() {
     payroll as unknown as PayrollRunService,
     payslips as unknown as PayrollPayslipService,
     taxFilings as unknown as PayrollTaxFilingService,
+    reconciliations as unknown as PayrollReconciliationService,
     confirmations as unknown as McpConfirmationService,
   );
   return {
     context, audit, organization, approvals, recruitmentApplications,
     recruitmentInterviews, recruitmentManagement, recruitmentOffers, confirmations, service,
-    onboarding, knowledge, care, attendance, payroll, payslips, taxFilings,
+    onboarding, knowledge, care, attendance, payroll, payslips, taxFilings, reconciliations,
   };
 }
 
@@ -442,6 +445,36 @@ describe('McpToolService', () => {
       taxFiling: { id: filingId, status: 'submitted', employeeCount: 12 },
     });
     expect(JSON.stringify(result)).not.toMatch(/objectRef|identityEvidence|employeeId|preparedBy/iu);
+  });
+
+  it('四方对账 MCP 只读差异控制摘要且不暴露员工或账户', async () => {
+    const store = assemble();
+    const reconciliationId = '01J8ZQK7V0A2M4N6P8R0T2W4C1';
+    store.reconciliations.getStatus.mockResolvedValue({
+      id: reconciliationId, periodId: '01J8ZQK7V0A2M4N6P8R0T2W4P1',
+      payrollRunId: '01J8ZQK7V0A2M4N6P8R0T2W4R1',
+      batchId: '01J8ZQK7V0A2M4N6P8R0T2W4B1',
+      bankReturnId: '01J8ZQK7V0A2M4N6P8R0T2W4N1',
+      taxFilingId: '01J8ZQK7V0A2M4N6P8R0T2W4F1', status: 'frozen',
+      differences: ['PAYROLL_TAX_AMOUNT_MISMATCH'], evidenceHash: 'e'.repeat(43),
+      employeeCount: 12, bankLineCount: 12, totalGrossMinor: 12_000_000,
+      totalNetMinor: 9_500_000, bankSubmittedMinor: 9_500_000,
+      bankReturnedMinor: 9_500_000, totalTaxableEarningsMinor: 10_000_000,
+      payrollWithholdingTaxMinor: 800_000, filedWithholdingTaxMinor: 799_000, version: 1,
+    });
+    const denied = await store.service.getPayrollReconciliation(
+      reconciliationId, extra(['erp:mcp:server:connect']),
+    );
+    expect(denied.isError).toBe(true);
+    expect(store.reconciliations.getStatus).not.toHaveBeenCalled();
+    const result = await store.service.getPayrollReconciliation(
+      reconciliationId,
+      extra(['erp:mcp:server:connect', 'erp:payroll:reconciliation:read']),
+    );
+    expect(result.structuredContent).toMatchObject({
+      reconciliation: { status: 'frozen', differences: ['PAYROLL_TAX_AMOUNT_MISMATCH'] },
+    });
+    expect(JSON.stringify(result)).not.toMatch(/employeeId|account|identityEvidence|objectRef/iu);
   });
 
   it('考勤修订准备只校验本人事实并固化 R1 命令，不直接创建审批', async () => {

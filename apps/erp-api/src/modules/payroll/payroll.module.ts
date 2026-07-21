@@ -13,6 +13,7 @@ import { PayrollApprovalService } from './application/payroll-approval.service.j
 import { PayrollRunService } from './application/payroll-run.service.js';
 import { PayrollPayslipService } from './application/payroll-payslip.service.js';
 import { PayrollTaxFilingService } from './application/payroll-tax-filing.service.js';
+import { PayrollReconciliationService } from './application/payroll-reconciliation.service.js';
 import { HttpPayrollTaxImmutableArchive } from './integration/payroll-tax-archive-http.adapter.js';
 import { HttpPayrollTaxGateway } from './integration/payroll-tax-gateway-http.adapter.js';
 import { PayrollTaxGateway, PayrollTaxImmutableArchive } from './integration/payroll-tax.ports.js';
@@ -32,6 +33,8 @@ import {
   PayrollPeriodRecordSchema,
   PayrollRulePackRecord,
   PayrollRulePackRecordSchema,
+  PayrollReconciliationRecord,
+  PayrollReconciliationRecordSchema,
   PayrollTaxFilingRecord,
   PayrollTaxFilingRecordSchema,
 } from './persistence/payroll.schemas.js';
@@ -51,6 +54,7 @@ import {
       { name: PayrollInputSnapshotRecord.name, schema: PayrollInputSnapshotRecordSchema },
       { name: PayrollCalculationLineRecord.name, schema: PayrollCalculationLineRecordSchema },
       { name: PayrollTaxFilingRecord.name, schema: PayrollTaxFilingRecordSchema },
+      { name: PayrollReconciliationRecord.name, schema: PayrollReconciliationRecordSchema },
       { name: AttendanceMonthlySnapshotRecord.name, schema: AttendanceMonthlySnapshotRecordSchema },
       { name: OutboxRecord.name, schema: OutboxRecordSchema },
     ]),
@@ -62,6 +66,7 @@ import {
     PayrollApprovalService,
     PayrollMasterDataService,
     PayrollTaxFilingService,
+    PayrollReconciliationService,
     PayrollDataCryptoService,
     PayrollOutboxWriter,
     HttpPayrollTaxImmutableArchive,
@@ -69,6 +74,9 @@ import {
     { provide: PayrollTaxImmutableArchive, useExisting: HttpPayrollTaxImmutableArchive },
     { provide: PayrollTaxGateway, useExisting: HttpPayrollTaxGateway },
   ],
-  exports: [PayrollRunService, PayrollPayslipService, PayrollTaxFilingService],
+  exports: [
+    PayrollRunService, PayrollPayslipService,
+    PayrollTaxFilingService, PayrollReconciliationService,
+  ],
 })
 export class PayrollModule {}

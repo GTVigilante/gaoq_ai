@@ -10,6 +10,7 @@ import { TreasuryBankAccountService } from './application/treasury-bank-account.
 import { TreasuryBankReturnService } from './application/treasury-bank-return.service.js';
 import { TreasuryDisbursementService } from './application/treasury-disbursement.service.js';
 import { TreasuryRecoveryService } from './application/treasury-recovery.service.js';
+import { TreasuryReconciliationService } from './application/treasury-reconciliation.service.js';
 import { HttpTreasuryBankSubmissionGateway } from './integration/treasury-bank-submission-http.adapter.js';
 import { TreasuryBankSubmissionGateway } from './integration/treasury-bank-submission.ports.js';
 import { HttpTreasuryBankReturnInbox } from './integration/treasury-bank-return-http.adapter.js';
@@ -50,6 +51,7 @@ import { TreasuryController } from './treasury.controller.js';
     TreasuryBankReturnService,
     TreasuryDisbursementService,
     TreasuryRecoveryService,
+    TreasuryReconciliationService,
     TreasuryDataCryptoService,
     TreasuryOutboxWriter,
     HttpTreasuryBankSubmissionGateway,

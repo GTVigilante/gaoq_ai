@@ -159,7 +159,7 @@ export class TreasuryDisbursementBatchRecord extends ProtectedTreasuryRecord {
     enum: [
       'MALWARE_DETECTED', 'SIGNATURE_INVALID', 'UNKNOWN_LINE', 'DUPLICATE_LINE',
       'LINE_AMOUNT_MISMATCH',
-      'COUNT_MISMATCH', 'AMOUNT_MISMATCH', 'PARTIAL_SUCCESS', null,
+      'COUNT_MISMATCH', 'AMOUNT_MISMATCH', 'PARTIAL_SUCCESS', 'FOUR_WAY_MISMATCH', null,
     ],
   })
   freezeReason!: string | null;
