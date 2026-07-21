@@ -1,0 +1,34 @@
+# Phase 3 生产索引迁移 Runbook
+
+## 变更边界
+
+- 迁移标识固定为 `phase-3-indexes-v1`，清单直接从运行 Schema 生成并计算 SHA-256 校验和。
+- 只创建缺失索引，不删除未知索引；同名或同键异配置立即失败关闭。
+- apply 使用 30 分钟数据库租约，完成后重新读取并复验全部索引。
+- 唯一索引创建前必须先在影子库检查重复数据并保留快照；本脚本不会自动删除或合并业务数据。
+
+## 执行步骤
+
+1. 确认 Phase 1、Phase 2 索引迁移均为 `completed`，并完成 MongoDB 快照。
+2. 在与生产同版本的影子库部署构建产物，执行：
+
+   ```bash
+   pnpm --filter @gaoq/erp-api migrate:phase3:indexes -- --dry-run
+   ```
+
+3. 审核输出的 `checksum`、`missing`，并对所有待建唯一索引执行重复数据查询。
+4. 在变更窗口执行：
+
+   ```bash
+   pnpm --filter @gaoq/erp-api migrate:phase3:indexes
+   ```
+
+5. 要求输出 `verified` 等于清单索引总数，且 `system_migration_runs` 中对应记录为 `completed`。
+6. 执行候选申请、Offer、eSign 回调、Onboarding 重试及 Employment 唯一约束冒烟测试。
+
+## 失败处理
+
+- `PHASE3_INDEX_CONFLICT`：停止发布，比较数据库索引和当前 Schema；禁止自动删除索引。
+- `PHASE3_INDEX_MIGRATION_LOCKED`：确认另一执行者状态；只有租约过期后脚本才允许接管。
+- `PHASE3_INDEX_MANIFEST_CHANGED`：迁移标识对应的已执行清单被修改，必须创建新迁移版本。
+- 唯一键重复：停止迁移，由数据治理流程生成合并/纠错清单并单独审批；不得在迁移脚本中删除数据。

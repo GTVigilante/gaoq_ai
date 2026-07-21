@@ -11,6 +11,7 @@
     "start:worker": "node dist/worker-main.js",
     "migrate:phase1:indexes": "node dist/migrations/phase-1-indexes.js",
     "migrate:phase2:indexes": "node dist/migrations/phase-2-indexes.js",
+    "migrate:phase3:indexes": "node dist/migrations/phase-3-indexes.js",
     "typecheck": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && tsc --noEmit",
     "test": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && vitest run",
     "test:coverage": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && vitest run --coverage"
