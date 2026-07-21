@@ -7,11 +7,13 @@ import type { ExternalIdentityProfile } from './auth.types.js';
 import {
   DingTalkSsoAdapterToken,
   type SsoAuthorizationCodeInput,
+  type SsoAuthorizationUrlInput,
 } from './sso-adapter.js';
 import { SsoHttpClient } from './sso-http-client.js';
 
 const DINGTALK_TOKEN_URL = 'https://api.dingtalk.com/v1.0/oauth2/userAccessToken';
 const DINGTALK_PROFILE_URL = 'https://api.dingtalk.com/v1.0/contact/users/me';
+const DINGTALK_AUTHORIZE_URL = 'https://login.dingtalk.com/oauth2/auth';
 
 const tokenSchema = z.object({
   accessToken: z.string().min(1),
@@ -32,6 +34,22 @@ export class DingTalkSsoAdapter extends DingTalkSsoAdapterToken {
     private readonly http: SsoHttpClient,
   ) {
     super();
+  }
+
+  /** 构造固定钉钉域名的授权地址，并绑定 state 与 PKCE S256。 */
+  override buildAuthorizationUrl(input: SsoAuthorizationUrlInput): string {
+    const url = new URL(DINGTALK_AUTHORIZE_URL);
+    url.search = new URLSearchParams({
+      redirect_uri: this.requiredConfig('DINGTALK_REDIRECT_URI'),
+      response_type: 'code',
+      client_id: this.requiredConfig('DINGTALK_CLIENT_ID'),
+      scope: 'openid',
+      state: input.state,
+      prompt: 'consent',
+      code_challenge: input.codeChallenge,
+      code_challenge_method: 'S256',
+    }).toString();
+    return url.toString();
   }
 
   /** 用一次性授权码取得最小身份；手机号、邮箱不进入映射判定。 */
@@ -73,7 +91,7 @@ export class DingTalkSsoAdapter extends DingTalkSsoAdapterToken {
   }
 
   private requiredConfig(
-    key: 'DINGTALK_CLIENT_ID' | 'DINGTALK_CLIENT_SECRET',
+    key: 'DINGTALK_CLIENT_ID' | 'DINGTALK_CLIENT_SECRET' | 'DINGTALK_REDIRECT_URI',
   ): string {
     const value = this.config.get(key, { infer: true });
     if (value === undefined || value.length === 0) {

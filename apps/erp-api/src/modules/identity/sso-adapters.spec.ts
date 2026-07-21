@@ -43,6 +43,10 @@ describe('飞书 SSO 适配器', () => {
       http,
     );
 
+    const authorizationUrl = new URL(
+      adapter.buildAuthorizationUrl({ state: 'state-001', codeChallenge: 'challenge-001' }),
+    );
+
     await expect(adapter.exchangeAuthorizationCode({ code: 'one-time-code' })).resolves.toEqual({
       provider: 'feishu',
       externalTenantId: 'feishu-tenant',
@@ -54,6 +58,9 @@ describe('飞书 SSO 适配器', () => {
       url: 'https://open.feishu.cn/open-apis/authen/v1/user_info',
       headers: { authorization: 'Bearer provider-access-token' },
     });
+    expect(authorizationUrl.origin).toBe('https://accounts.feishu.cn');
+    expect(authorizationUrl.searchParams.get('state')).toBe('state-001');
+    expect(authorizationUrl.searchParams.get('code_challenge_method')).toBe('S256');
   });
 
   it('拒绝结构异常的授权码响应', async () => {
@@ -85,10 +92,17 @@ describe('钉钉 SSO 适配器', () => {
       mobile: '13800000000',
     });
     const adapter = new DingTalkSsoAdapter(
-      createConfig({ DINGTALK_CLIENT_ID: 'client-id', DINGTALK_CLIENT_SECRET: 'client-secret' }),
+      createConfig({
+        DINGTALK_CLIENT_ID: 'client-id',
+        DINGTALK_CLIENT_SECRET: 'client-secret',
+        DINGTALK_REDIRECT_URI: 'https://erp.example.com/sso/dingtalk/callback',
+      }),
       http,
     );
 
+    const authorizationUrl = new URL(
+      adapter.buildAuthorizationUrl({ state: 'state-002', codeChallenge: 'challenge-002' }),
+    );
     const profile = await adapter.exchangeAuthorizationCode({ code: 'one-time-code' });
 
     expect(profile).toEqual({
@@ -102,5 +116,8 @@ describe('钉钉 SSO 适配器', () => {
       url: 'https://api.dingtalk.com/v1.0/contact/users/me',
       headers: { 'x-acs-dingtalk-access-token': 'provider-access-token' },
     });
+    expect(authorizationUrl.origin).toBe('https://login.dingtalk.com');
+    expect(authorizationUrl.searchParams.get('state')).toBe('state-002');
+    expect(authorizationUrl.searchParams.get('code_challenge')).toBe('challenge-002');
   });
 });

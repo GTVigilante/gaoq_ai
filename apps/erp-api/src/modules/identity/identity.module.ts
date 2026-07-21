@@ -16,18 +16,30 @@ import {
   SsoAdapterRegistry,
 } from './sso-adapter.js';
 import { FetchSsoHttpClient, SsoHttpClient } from './sso-http-client.js';
+import { SsoAuthenticationService } from './sso-authentication.service.js';
+import { SsoStateService } from './sso-state.service.js';
+import { SsoTenantBindingRepository } from './sso-tenant-binding.repository.js';
+import {
+  SsoTenantBinding,
+  SsoTenantBindingSchema,
+} from './sso-tenant-binding.schema.js';
+import { SsoController } from './sso.controller.js';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: IdentitySession.name, schema: IdentitySessionSchema },
       { name: ExternalIdentity.name, schema: ExternalIdentitySchema },
+      { name: SsoTenantBinding.name, schema: SsoTenantBindingSchema },
     ]),
   ],
-  controllers: [SessionController],
+  controllers: [SessionController, SsoController],
   providers: [
     SessionService,
     ExternalIdentityRepository,
+    SsoTenantBindingRepository,
+    SsoStateService,
+    SsoAuthenticationService,
     BearerAuthGuard,
     SsoAdapterRegistry,
     { provide: SsoHttpClient, useClass: FetchSsoHttpClient },
@@ -38,6 +50,7 @@ import { FetchSsoHttpClient, SsoHttpClient } from './sso-http-client.js';
   exports: [
     SessionService,
     ExternalIdentityRepository,
+    SsoAuthenticationService,
     SsoAdapterRegistry,
     BearerAuthGuard,
     AccessTokenVerifier,

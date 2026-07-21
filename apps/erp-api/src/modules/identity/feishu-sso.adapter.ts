@@ -7,11 +7,13 @@ import type { ExternalIdentityProfile } from './auth.types.js';
 import {
   FeishuSsoAdapterToken,
   type SsoAuthorizationCodeInput,
+  type SsoAuthorizationUrlInput,
 } from './sso-adapter.js';
 import { SsoHttpClient } from './sso-http-client.js';
 
 const FEISHU_TOKEN_URL = 'https://open.feishu.cn/open-apis/authen/v2/oauth/token';
 const FEISHU_PROFILE_URL = 'https://open.feishu.cn/open-apis/authen/v1/user_info';
+const FEISHU_AUTHORIZE_URL = 'https://accounts.feishu.cn/open-apis/authen/v1/authorize';
 
 const tokenSchema = z.object({
   code: z.number().optional(),
@@ -35,6 +37,21 @@ export class FeishuSsoAdapter extends FeishuSsoAdapterToken {
     private readonly http: SsoHttpClient,
   ) {
     super();
+  }
+
+  /** 构造固定飞书域名的授权地址，并绑定 state 与 PKCE S256。 */
+  override buildAuthorizationUrl(input: SsoAuthorizationUrlInput): string {
+    const url = new URL(FEISHU_AUTHORIZE_URL);
+    url.search = new URLSearchParams({
+      client_id: this.requiredConfig('FEISHU_CLIENT_ID'),
+      redirect_uri: this.requiredConfig('FEISHU_REDIRECT_URI'),
+      response_type: 'code',
+      scope: 'auth:user.id:read',
+      state: input.state,
+      code_challenge: input.codeChallenge,
+      code_challenge_method: 'S256',
+    }).toString();
+    return url.toString();
   }
 
   /** 用一次性授权码取得最小身份；不返回、不记录飞书访问令牌。 */

@@ -7,9 +7,15 @@ export interface SsoAuthorizationCodeInput {
   readonly codeVerifier?: string;
 }
 
+export interface SsoAuthorizationUrlInput {
+  readonly state: string;
+  readonly codeChallenge: string;
+}
+
 /** 外部 SSO 适配端口；外部令牌只能在适配器内部短暂使用。 */
 export abstract class SsoAdapter {
   abstract readonly provider: SsoProviderCode;
+  abstract buildAuthorizationUrl(input: SsoAuthorizationUrlInput): string;
   abstract exchangeAuthorizationCode(
     input: SsoAuthorizationCodeInput,
   ): Promise<ExternalIdentityProfile>;
