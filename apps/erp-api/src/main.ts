@@ -40,6 +40,7 @@ const bootstrap = async (): Promise<void> => {
     exclude: [
       { path: 'mcp', method: RequestMethod.ALL },
       { path: '.well-known/oauth-protected-resource', method: RequestMethod.GET },
+      { path: '.well-known/jwks.json', method: RequestMethod.GET },
     ],
   });
   app.enableShutdownHooks();

@@ -22,6 +22,7 @@ class StubVerifier extends AccessTokenVerifier {
       tenantId: 'trusted-tenant',
       actorId: 'employee-001',
       actorType: 'user',
+      clientId: 'gaoq-web',
       roleCodes: ['employee'],
       scopes: ['mcp:connect'],
       departmentIds: ['department-001'],

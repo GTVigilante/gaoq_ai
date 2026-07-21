@@ -64,7 +64,7 @@ export class McpRuntimeService implements OnApplicationShutdown {
     }
     const auth: AuthInfo = {
       token: request.bearerToken,
-      clientId: token.actorId,
+      clientId: token.clientId,
       scopes: [...token.scopes],
       expiresAt: token.expiresAt,
       resource: new URL(token.resource[0] ?? ''),

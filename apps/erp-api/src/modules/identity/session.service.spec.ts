@@ -8,7 +8,7 @@ const createModel = () => ({
   findOne: vi.fn(),
   create: vi.fn(),
   updateOne: vi.fn<
-    (filter: unknown, update: unknown) => Promise<{ readonly modifiedCount: number }>
+    (filter: unknown, update: unknown, options: unknown) => Promise<{ readonly modifiedCount: number }>
   >(),
 });
 
@@ -81,12 +81,15 @@ describe('SessionService', () => {
     await expect(service.revoke('tenant-001', 'session-001')).resolves.toBe(true);
     const revokeFinishedAt = Date.now();
 
-    expect(model.create).toHaveBeenCalledWith({
-      tenantId: 'tenant-001',
-      sessionId: 'session-001',
-      actorId: 'actor-001',
-      expiresAt,
-    });
+    expect(model.create).toHaveBeenCalledWith(
+      [{
+        tenantId: 'tenant-001',
+        sessionId: 'session-001',
+        actorId: 'actor-001',
+        expiresAt,
+      }],
+      {},
+    );
     const [filter, update] = model.updateOne.mock.calls[0] ?? [];
     expect(filter).toEqual({
       tenantId: 'tenant-001',
@@ -96,5 +99,6 @@ describe('SessionService', () => {
     const revokedAt = (update as { readonly $set: { readonly revokedAt: Date } }).$set.revokedAt;
     expect(revokedAt.getTime()).toBeGreaterThanOrEqual(revokeStartedAt);
     expect(revokedAt.getTime()).toBeLessThanOrEqual(revokeFinishedAt);
+    expect(model.updateOne.mock.calls[0]?.[2]).toEqual({});
   });
 });

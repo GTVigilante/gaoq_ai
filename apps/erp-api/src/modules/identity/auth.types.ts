@@ -9,6 +9,7 @@ export interface VerifiedAccessToken {
   readonly tenantId: string;
   readonly actorId: string;
   readonly actorType: ActorType;
+  readonly clientId: string;
   readonly roleCodes: readonly string[];
   readonly scopes: readonly string[];
   readonly departmentIds: readonly string[];

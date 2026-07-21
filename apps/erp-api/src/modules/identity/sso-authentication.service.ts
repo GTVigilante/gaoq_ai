@@ -10,6 +10,7 @@ export interface VerifiedSsoIdentity {
   readonly actorId: string;
   readonly employeeId: string;
   readonly provider: SsoProviderCode;
+  readonly returnPath: string;
 }
 
 @Injectable()
@@ -48,6 +49,7 @@ export class SsoAuthenticationService {
       actorId: mapping.actorId,
       employeeId: mapping.employeeId,
       provider: profile.provider,
+      returnPath: state.returnPath,
     };
   }
 

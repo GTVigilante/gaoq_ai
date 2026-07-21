@@ -12,6 +12,8 @@ const validPayload = (): JWTPayload => ({
   tenant_id: 'tenant-001',
   actor_id: 'employee-001',
   actor_type: 'user',
+  client_id: 'gaoq-web',
+  azp: 'gaoq-web',
   roles: ['employee'],
   scope: 'mcp:connect profile:read',
   department_ids: ['department-001'],
@@ -41,5 +43,14 @@ describe('parseAndValidateClaims', () => {
     expect(() => parseAndValidateClaims(payload, 'https://erp.example.com/mcp')).toThrow(
       UnauthorizedException,
     );
+  });
+
+  it('拒绝 azp 与 client_id 不一致的客户端混淆令牌', () => {
+    expect(() =>
+      parseAndValidateClaims(
+        { ...validPayload(), azp: 'attacker-client' },
+        'https://erp.example.com/mcp',
+      ),
+    ).toThrow(UnauthorizedException);
   });
 });

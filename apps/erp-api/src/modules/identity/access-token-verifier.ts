@@ -16,6 +16,8 @@ const claimsSchema = z.object({
   tenant_id: z.string().min(1).max(128),
   actor_id: z.string().min(1).max(128),
   actor_type: actorTypeSchema,
+  client_id: z.string().min(1).max(128),
+  azp: z.string().min(1).max(128),
   roles: z.array(z.string().min(1).max(128)).max(100),
   scope: z.union([z.string(), z.array(z.string())]),
   department_ids: z.array(z.string().min(1).max(128)).max(500),
@@ -49,7 +51,8 @@ export class RemoteJwksAccessTokenVerifier extends AccessTokenVerifier {
       const { payload } = await jwtVerify(token, this.jwks, {
         issuer: this.config.get('AUTH_ISSUER', { infer: true }),
         audience: this.config.get('AUTH_AUDIENCE', { infer: true }),
-        algorithms: ['RS256', 'ES256'],
+        algorithms: ['RS256'],
+        typ: 'at+jwt',
         clockTolerance: 5,
       });
       const verified = parseAndValidateClaims(
@@ -91,6 +94,9 @@ export const parseAndValidateClaims = (
     throw new UnauthorizedException({ code: 'AUTH_WRONG_RESOURCE', message: '令牌资源不匹配' });
   }
   const scopes = typeof claims.scope === 'string' ? claims.scope.split(' ').filter(Boolean) : claims.scope;
+  if (claims.azp !== claims.client_id) {
+    throw new UnauthorizedException({ code: 'AUTH_CLIENT_MISMATCH', message: '令牌客户端不匹配' });
+  }
 
   return {
     issuer: claims.iss,
@@ -100,6 +106,7 @@ export const parseAndValidateClaims = (
     tenantId: claims.tenant_id,
     actorId: claims.actor_id,
     actorType: claims.actor_type,
+    clientId: claims.client_id,
     roleCodes: claims.roles,
     scopes,
     departmentIds: claims.department_ids,

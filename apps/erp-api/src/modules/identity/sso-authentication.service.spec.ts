@@ -57,6 +57,7 @@ describe('SsoAuthenticationService', () => {
       actorId: 'actor-001',
       employeeId: 'employee-001',
       provider: 'feishu',
+      returnPath: '/',
     });
     expect(consume).toHaveBeenCalledWith('state-001', 'feishu');
     expect(exchangeAuthorizationCode).toHaveBeenCalledWith({
