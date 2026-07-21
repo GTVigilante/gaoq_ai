@@ -195,7 +195,11 @@ describe('MCP Streamable HTTP 协议集成', () => {
     const offerResource = await client.readResource({
       uri: 'erp://recruitment/offers/01J8ZQK7V0A2M4N6P8R0T2W4Y6',
     });
-    expect(JSON.parse(offerResource.contents[0]?.text ?? '{}')).toMatchObject({
+    const firstContent = offerResource.contents[0];
+    const resourceText = firstContent !== undefined && 'text' in firstContent
+      ? firstContent.text
+      : '{}';
+    expect(JSON.parse(resourceText)).toMatchObject({
       offer: { status: 'approved', version: 3 },
     });
     expect(tools.getRecruitmentOffer).toHaveBeenCalledTimes(2);
