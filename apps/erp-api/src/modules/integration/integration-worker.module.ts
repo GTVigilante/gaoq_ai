@@ -3,6 +3,8 @@ import { Module } from '@nestjs/common';
 
 import { IntegrationModule } from './integration.module.js';
 import { ESignWebhookProcessor } from './esign-webhook.processor.js';
+import { ESignScheduler } from './esign-scheduler.js';
+import { ESignQueueMetricsPoller } from './esign-queue-metrics.poller.js';
 import { ESIGN_WEBHOOK_QUEUE } from './esign-webhook.queue.js';
 import { ORG_INTEGRATION_QUEUE } from './org-integration.queue.js';
 import { OrgIntegrationProcessor } from './org-integration.processor.js';
@@ -18,7 +20,7 @@ import { OrgQueueMetricsPoller } from './org-queue-metrics.poller.js';
   ],
   providers: [
     OrgIntegrationProcessor, OrgIntegrationScheduler, OrgQueueMetricsPoller,
-    ESignWebhookProcessor,
+    ESignWebhookProcessor, ESignScheduler, ESignQueueMetricsPoller,
   ],
 })
 export class IntegrationWorkerModule {}

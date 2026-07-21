@@ -90,3 +90,4 @@ ESignFlowRecordSchema.index(
   { tenantId: 1, provider: 1, appId: 1, externalFlowIdHash: 1 }, { unique: true },
 );
 ESignFlowRecordSchema.index({ tenantId: 1, status: 1, updatedAt: 1 });
+ESignFlowRecordSchema.index({ status: 1, reviewRequired: 1, updatedAt: 1 });

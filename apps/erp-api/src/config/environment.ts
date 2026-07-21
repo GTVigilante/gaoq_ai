@@ -45,6 +45,10 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(64).max(16_384).optional(),
   ),
+  /** eSign OpenAPI 只允许官方生产或沙箱域名，禁止自定义地址导致 SSRF。 */
+  ESIGN_API_BASE_URL: z.enum([
+    'https://openapi.esign.cn', 'https://smlopenapi.esign.cn',
+  ]).default('https://smlopenapi.esign.cn'),
   /** Prometheus 独立抓取凭据，仅由 Secret Manager 注入，不复用业务 OAuth token。 */
   METRICS_BEARER_TOKEN: z.preprocess(
     (value) => value === '' ? undefined : value,
@@ -133,6 +137,15 @@ const environmentSchema = z.object({
       code: 'custom',
       path: ['ESIGN_WEBHOOK_ENCRYPTION_KEYS'],
       message: '生产环境必须由 Secret Manager 注入 eSign Webhook 加密密钥环',
+    });
+  }
+  if (
+    environment.NODE_ENV === 'production' &&
+    environment.ESIGN_API_BASE_URL !== 'https://openapi.esign.cn'
+  ) {
+    context.addIssue({
+      code: 'custom', path: ['ESIGN_API_BASE_URL'],
+      message: '生产环境 eSign OpenAPI 必须使用官方生产域名',
     });
   }
   if (

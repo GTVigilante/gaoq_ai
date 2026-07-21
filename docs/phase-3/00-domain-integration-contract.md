@@ -86,6 +86,10 @@ draft → pending_approval → approved → sending → sent → accepted → si
 
 每 15 分钟补拉长期未更新流程。`provider_completed` 后仍必须下载 PDF、校验内容摘要和供应商签署结果、病毒扫描、存入不可变对象存储并写入证据账本。只有该证据交易成功后才进入 `completed` 并调用 Recruitment 应用服务标记 Offer `signed`。
 
+- OpenAPI 只允许官方 `https://smlopenapi.esign.cn` 和 `https://openapi.esign.cn`，生产强制后者。请求按官方七段式字符串计算 Content-MD5 和 HmacSHA256；MD5 仅用于供应商协议兼容，ERP 证据统一使用 SHA-256。
+- 补拉调用 `GET /v3/sign-flow/{id}/detail`；下载地址使用官方推荐的 `POST /v3/sign-flow/{id}/file-download-url`，有效期固定 300 秒；每个 PDF 再调用 `POST /v3/files/{fileId}/verify`。下载客户端禁止跳转，限定 eSign HTTPS 域名、50 MiB 上限和 `%PDF-` 魔数。
+- `integration_esign_evidence` 仅保存供应商文件 ID 摘要、PDF SHA-256、大小、扫描证据、验签结果摘要、WORM 对象引用与回执；不保存 PDF、文件名、下载短链、证书或签署人原文。WORM `objectKey` 必须幂等；扫描或归档 Adapter 未装配时必须失败关闭。
+
 ## 5. REST、事件与 MCP 同步交付
 
 每个用例必须同时登记以下四类契约：

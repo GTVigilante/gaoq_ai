@@ -184,6 +184,7 @@ AWAITING_SIGNATURE → PARTIAL_SIGNED → PROVIDER_COMPLETED → COMPLETED
 
 - 每 15 分钟对 `SENT/PARTIAL_SIGNED` 且超过 10 分钟未更新的流程主动调 `getFlow` 拉单，防止 webhook 丢失。
 - `SIGN_FLOW_COMPLETE + signFlowStatus=2` 只进入 `PROVIDER_COMPLETED`，不等于 ERP `COMPLETED`。已签 PDF 必须下载、验签、病毒扫描、记录 SHA-256 并进入不可变对象存储；证据归档成功后 ERP 才进入 `COMPLETED` 并允许 Offer 进入 `signed`。
+- 已签文件获取使用 V3 推荐的 POST 下载地址接口，短链有效期不超过 300 秒。只允许 eSign HTTPS 域名，禁止 HTTP 跳转；文件最大 50 MiB，必须通过 PDF 魔数、病毒扫描和供应商签名有效性核验。
 
 ---
 

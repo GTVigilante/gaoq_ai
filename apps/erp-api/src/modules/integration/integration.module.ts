@@ -23,8 +23,22 @@ import {
 import { DingTalkOrgPushAdapter } from './dingtalk-org-push.adapter.js';
 import { FeishuOrgPushAdapter } from './feishu-org-push.adapter.js';
 import { ESignBinding, ESignBindingSchema } from './esign-binding.schema.js';
+import { ESignAdapter, ESignCnAdapter } from './esign.adapter.js';
+import {
+  ESignEvidenceRecord,
+  ESignEvidenceRecordSchema,
+} from './esign-evidence.schema.js';
+import { ESignEvidenceService } from './esign-evidence.service.js';
+import {
+  ESignImmutableArchive,
+  ESignMalwareScanner,
+  UnavailableESignImmutableArchive,
+  UnavailableESignMalwareScanner,
+} from './esign-evidence.ports.js';
 import { ESignFlowRecord, ESignFlowRecordSchema } from './esign-flow.schema.js';
 import { ESignFlowService } from './esign-flow.service.js';
+import { ESignHttpClient, FetchESignHttpClient } from './esign-http.client.js';
+import { ESignReconciliationService } from './esign-reconciliation.service.js';
 import { ESignWebhookController } from './esign-webhook.controller.js';
 import { ESignWebhookCryptoService } from './esign-webhook-crypto.service.js';
 import {
@@ -123,6 +137,7 @@ import {
         schema: OrgEmployeeProvisioningRequestSchema,
       },
       { name: ESignBinding.name, schema: ESignBindingSchema },
+      { name: ESignEvidenceRecord.name, schema: ESignEvidenceRecordSchema },
       { name: ESignFlowRecord.name, schema: ESignFlowRecordSchema },
       { name: ESignWebhookInboxRecord.name, schema: ESignWebhookInboxRecordSchema },
     ]),
@@ -141,8 +156,18 @@ import {
     OrgProvisioningCryptoService,
     ESignSecretResolver,
     ESignFlowService,
+    ESignEvidenceService,
+    ESignReconciliationService,
     ESignWebhookCryptoService,
     ESignWebhookService,
+    ESignCnAdapter,
+    { provide: ESignAdapter, useExisting: ESignCnAdapter },
+    FetchESignHttpClient,
+    { provide: ESignHttpClient, useExisting: FetchESignHttpClient },
+    UnavailableESignMalwareScanner,
+    { provide: ESignMalwareScanner, useExisting: UnavailableESignMalwareScanner },
+    UnavailableESignImmutableArchive,
+    { provide: ESignImmutableArchive, useExisting: UnavailableESignImmutableArchive },
     AccessProfileRepository,
     ExternalIdentityRepository,
     EnvironmentOrgSecretResolver,
@@ -195,6 +220,9 @@ import {
     OrgPlatformHttpClient,
     ESignWebhookService,
     ESignFlowService,
+    ESignEvidenceService,
+    ESignReconciliationService,
+    ESignAdapter,
   ],
 })
 export class IntegrationModule {}
