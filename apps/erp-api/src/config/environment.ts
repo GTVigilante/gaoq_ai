@@ -55,6 +55,23 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(64).max(16_384).optional(),
   ),
+  /** 个税内部规范清单专用 WORM；与 Treasury 和税务提交网关权限域隔离。 */
+  PAYROLL_TAX_WORM_ARCHIVE_ENDPOINT: z.preprocess(
+    (value) => value === '' ? undefined : value, z.string().url().optional(),
+  ),
+  PAYROLL_TAX_WORM_ARCHIVE_BEARER_TOKEN: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/).optional(),
+  ),
+  PAYROLL_TAX_WORM_RETENTION_DAYS: z.coerce.number().int().min(3_650).max(36_500).default(3_650),
+  /** 隔离税务网关负责身份凭证解析、地区官方格式转换、签名与申报。 */
+  PAYROLL_TAX_GATEWAY_ENDPOINT: z.preprocess(
+    (value) => value === '' ? undefined : value, z.string().url().optional(),
+  ),
+  PAYROLL_TAX_GATEWAY_BEARER_TOKEN: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/).optional(),
+  ),
   /** 资金账号、支付指令、银行文件与回盘正文专用密钥环；不得复用薪酬密钥。 */
   TREASURY_DATA_ENCRYPTION_KEYS: z.preprocess(
     (value) => value === '' ? undefined : value,
@@ -338,6 +355,72 @@ const environmentSchema = z.object({
   ) context.addIssue({
     code: 'custom', path: ['TREASURY_BANK_RETURN_INBOX_BEARER_TOKEN'],
     message: 'Treasury 回盘 Inbox 不得复用 WORM 或银行提交凭据',
+  });
+  const payrollTaxInfrastructure = [
+    environment.PAYROLL_TAX_WORM_ARCHIVE_ENDPOINT,
+    environment.PAYROLL_TAX_WORM_ARCHIVE_BEARER_TOKEN,
+    environment.PAYROLL_TAX_GATEWAY_ENDPOINT,
+    environment.PAYROLL_TAX_GATEWAY_BEARER_TOKEN,
+  ];
+  if (
+    payrollTaxInfrastructure.some((value) => value !== undefined) &&
+    payrollTaxInfrastructure.some((value) => value === undefined)
+  ) context.addIssue({
+    code: 'custom', path: ['PAYROLL_TAX_WORM_ARCHIVE_ENDPOINT'],
+    message: 'Payroll Tax WORM 与税务网关端点及凭据必须成套配置',
+  });
+  if (
+    environment.NODE_ENV === 'production' &&
+    payrollTaxInfrastructure.some((value) => value === undefined)
+  ) context.addIssue({
+    code: 'custom', path: ['PAYROLL_TAX_WORM_ARCHIVE_ENDPOINT'],
+    message: '生产环境必须完整配置 Payroll Tax WORM 与税务网关',
+  });
+  const payrollTaxOrigins = [
+    environment.PAYROLL_TAX_WORM_ARCHIVE_ENDPOINT,
+    environment.PAYROLL_TAX_GATEWAY_ENDPOINT,
+  ].filter((value): value is string => value !== undefined).map((value) => new URL(value));
+  const forbiddenTaxOrigins = new Set([
+    issuer.origin,
+    ...[environment.TREASURY_WORM_ARCHIVE_ENDPOINT,
+      environment.TREASURY_BANK_SUBMISSION_ENDPOINT,
+      environment.TREASURY_BANK_RETURN_INBOX_ENDPOINT]
+      .filter((value): value is string => value !== undefined)
+      .map((value) => new URL(value).origin),
+  ]);
+  for (const endpoint of payrollTaxOrigins) {
+    if (
+      endpoint.protocol !== 'https:' || endpoint.username !== '' || endpoint.password !== '' ||
+      endpoint.search !== '' || endpoint.hash !== '' ||
+      (endpoint.port !== '' && endpoint.port !== '443') || forbiddenTaxOrigins.has(endpoint.origin)
+    ) context.addIssue({
+      code: 'custom', path: ['PAYROLL_TAX_WORM_ARCHIVE_ENDPOINT'],
+      message: 'Payroll Tax 外部服务必须使用相互隔离的标准 HTTPS 权限域',
+    });
+    forbiddenTaxOrigins.add(endpoint.origin);
+  }
+  const treasuryTokens = [
+    environment.TREASURY_WORM_ARCHIVE_BEARER_TOKEN,
+    environment.TREASURY_BANK_SUBMISSION_BEARER_TOKEN,
+    environment.TREASURY_BANK_RETURN_INBOX_BEARER_TOKEN,
+  ];
+  if (
+    environment.PAYROLL_TAX_WORM_ARCHIVE_BEARER_TOKEN !== undefined &&
+    (
+      environment.PAYROLL_TAX_WORM_ARCHIVE_BEARER_TOKEN ===
+        environment.PAYROLL_TAX_GATEWAY_BEARER_TOKEN ||
+      treasuryTokens.includes(environment.PAYROLL_TAX_WORM_ARCHIVE_BEARER_TOKEN)
+    )
+  ) context.addIssue({
+    code: 'custom', path: ['PAYROLL_TAX_WORM_ARCHIVE_BEARER_TOKEN'],
+    message: 'Payroll Tax WORM 不得复用税务网关或 Treasury 凭据',
+  });
+  if (
+    environment.PAYROLL_TAX_GATEWAY_BEARER_TOKEN !== undefined &&
+    treasuryTokens.includes(environment.PAYROLL_TAX_GATEWAY_BEARER_TOKEN)
+  ) context.addIssue({
+    code: 'custom', path: ['PAYROLL_TAX_GATEWAY_BEARER_TOKEN'],
+    message: 'Payroll Tax 税务网关不得复用 Treasury 凭据',
   });
   if (environment.NODE_ENV === 'production' && environment.ESIGN_WEBHOOK_ENCRYPTION_KEYS === undefined) {
     context.addIssue({

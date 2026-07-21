@@ -8,13 +8,20 @@ import { PayrollApprovalService } from './application/payroll-approval.service.j
 import { PayrollRunService, type PayrollPeriodSummary } from './application/payroll-run.service.js';
 import { PayrollPayslipService, type PayrollPayslipView } from './application/payroll-payslip.service.js';
 import {
+  PayrollTaxFilingService,
+  type PayrollTaxFilingSummary,
+} from './application/payroll-tax-filing.service.js';
+import {
   AttestCompensationProfileDto,
   AttestPayrollRulePackDto,
+  ApprovePayrollTaxFilingDto,
   ApplyPayrollApprovalDto,
   CreatePayrollPeriodDto,
   LockPayrollPeriodDto,
   PayrollVersionCommandDto,
+  PreparePayrollTaxFilingDto,
   StartPayrollCollectionDto,
+  SubmitPayrollTaxFilingDto,
 } from './application/payroll.dto.js';
 
 @Controller('payroll')
@@ -24,8 +31,75 @@ export class PayrollController {
     private readonly approvals: PayrollApprovalService,
     private readonly payslips: PayrollPayslipService,
     private readonly masterData: PayrollMasterDataService,
+    private readonly taxFilings: PayrollTaxFilingService,
     private readonly audit: AuditService,
   ) {}
+
+  /** 只读脱敏状态；不返回 WORM 对象引用、身份凭证或税务正文。 */
+  @Get('tax-filings/:id')
+  @RequiredScopes('erp:payroll:tax:read')
+  async getTaxFiling(@Param('id') id: string): Promise<PayrollTaxFilingSummary> {
+    const result = await this.taxFilings.getStatus(id);
+    await this.auditTaxFiling('payroll.tax_filing.read', result, 'R1');
+    return result;
+  }
+
+  /** R3：从锁定工资制备税务内部清单并写独立 WORM；不导出正文或直接申报。 */
+  @Post('periods/:id/tax-filings')
+  @RequiredScopes('erp:payroll:tax:prepare')
+  async prepareTaxFiling(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Body() body: PreparePayrollTaxFilingDto,
+  ): Promise<PayrollTaxFilingSummary> {
+    const result = await this.taxFilings.prepare(this.key(key), id, body.expectedVersion);
+    await this.audit.record({
+      action: 'payroll.tax_filing.prepare', resourceType: 'payroll_tax_filing',
+      resourceId: result.id, riskLevel: 'R3', outcome: 'success', metadata: {
+        periodId: result.periodId, payrollRunId: result.payrollRunId,
+        format: result.format, status: result.status, version: result.version,
+        contentHash: result.contentHash, employeeCount: result.employeeCount,
+        totalTaxableEarningsMinor: result.totalTaxableEarningsMinor,
+        totalWithholdingTaxMinor: result.totalWithholdingTaxMinor,
+        objectEvidenceId: result.objectEvidenceId ?? 'none',
+      },
+    });
+    return result;
+  }
+
+  /** R3：审批人与工资制单、复核、锁定及税务制备人员隔离；MCP 永不注册此动作。 */
+  @Post('tax-filings/:id/approval')
+  @RequiredScopes('erp:payroll:tax:approve')
+  async approveTaxFiling(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Body() body: ApprovePayrollTaxFilingDto,
+    @Req() request: ErpRequest,
+  ): Promise<PayrollTaxFilingSummary> {
+    if (request.verifiedAccessToken === undefined) throw new BadRequestException({
+      code: 'PAYROLL_TAX_APPROVAL_TOKEN_REQUIRED',
+      message: '个税申报审批必须使用已验证人员访问令牌',
+    });
+    const result = await this.taxFilings.approve(
+      this.key(key), id, body.expectedVersion, body.strongAuthEvidenceId,
+      request.verifiedAccessToken,
+    );
+    await this.auditTaxFiling('payroll.tax_filing.approve', result, 'R3');
+    return result;
+  }
+
+  /** R3：仅受信任税务连接器可提交 WORM 引用；MCP 永不注册此动作。 */
+  @Post('tax-filings/:id/submission')
+  @RequiredScopes('erp:payroll:tax:submit')
+  async submitTaxFiling(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Body() body: SubmitPayrollTaxFilingDto,
+  ): Promise<PayrollTaxFilingSummary> {
+    const result = await this.taxFilings.submit(this.key(key), id, body.expectedVersion);
+    await this.auditTaxFiling('payroll.tax_filing.submit', result, 'R3');
+    return result;
+  }
 
   @Post('periods')
   @RequiredScopes('erp:payroll:period:create')
@@ -172,6 +246,26 @@ export class PayrollController {
         activeRunId: period.activeRunId ?? 'none',
         inputSnapshotHash: period.inputSnapshotHash ?? 'none',
         resultHash: period.resultHash ?? 'none', employeeCount: period.employeeCount ?? 0,
+      },
+    });
+  }
+
+  private async auditTaxFiling(
+    action: string,
+    filing: PayrollTaxFilingSummary,
+    riskLevel: 'R1' | 'R3',
+  ): Promise<void> {
+    await this.audit.record({
+      action, resourceType: 'payroll_tax_filing', resourceId: filing.id,
+      riskLevel, outcome: 'success', metadata: {
+        periodId: filing.periodId, payrollRunId: filing.payrollRunId,
+        format: filing.format, status: filing.status, version: filing.version,
+        contentHash: filing.contentHash, employeeCount: filing.employeeCount,
+        totalTaxableEarningsMinor: filing.totalTaxableEarningsMinor,
+        totalWithholdingTaxMinor: filing.totalWithholdingTaxMinor,
+        objectEvidenceId: filing.objectEvidenceId ?? 'none',
+        taxSubmissionId: filing.taxSubmissionId ?? 'none',
+        taxSubmissionEvidenceId: filing.taxSubmissionEvidenceId ?? 'none',
       },
     });
   }

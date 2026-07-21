@@ -13,7 +13,7 @@ const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 abstract class ProtectedPayrollRecord {
   @Prop({ type: String, required: true, maxlength: 64, match: ID_PATTERN }) dataKeyId!: string;
   @Prop({ type: String, required: true, maxlength: 32, match: BASE64URL_PATTERN }) dataIv!: string;
-  @Prop({ type: String, required: true, maxlength: 1_398_102, match: BASE64URL_PATTERN })
+  @Prop({ type: String, required: true, maxlength: 11_184_811, match: BASE64URL_PATTERN })
   dataCiphertext!: string;
   @Prop({ type: String, required: true, minlength: 22, maxlength: 22, match: BASE64URL_PATTERN })
   dataAuthTag!: string;
@@ -224,3 +224,60 @@ export const PayrollCalculationLineRecordSchema = SchemaFactory.createForClass(
 );
 PayrollCalculationLineRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 PayrollCalculationLineRecordSchema.index({ tenantId: 1, runId: 1, employeeId: 1 }, { unique: true });
+
+/** 个税内部清单及税局回执控制记录；员工税务行只存在于 Payroll 密文和 WORM。 */
+@Schema({ collection: 'payroll_tax_filings', timestamps: true, versionKey: false, id: false })
+export class PayrollTaxFilingRecord extends ProtectedPayrollRecord {
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) id!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  tenantId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) periodId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) payrollRunId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  payrollResultHash!: string;
+  @Prop({ type: String, required: true, immutable: true, enum: ['CN_IIT_WITHHOLDING_MANIFEST_V1'] })
+  format!: 'CN_IIT_WITHHOLDING_MANIFEST_V1';
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN }) contentHash!: string;
+  @Prop({ type: Number, required: true, immutable: true, min: 1, max: 5_000 })
+  employeeCount!: number;
+  @Prop({
+    type: Number, required: true, immutable: true,
+    min: 0, max: Number.MAX_SAFE_INTEGER,
+  })
+  totalTaxableEarningsMinor!: number;
+  @Prop({
+    type: Number, required: true, immutable: true,
+    min: -Number.MAX_SAFE_INTEGER, max: Number.MAX_SAFE_INTEGER,
+  })
+  totalWithholdingTaxMinor!: number;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  preparedBy!: string;
+  @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN }) approvedBy!: string | null;
+  @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
+  strongAuthEvidenceId!: string | null;
+  @Prop({ type: String, default: null, maxlength: 512, match: /^[A-Za-z0-9][A-Za-z0-9/._:-]{0,511}$/ })
+  objectRef!: string | null;
+  @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
+  objectEvidenceId!: string | null;
+  @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
+  taxSubmissionId!: string | null;
+  @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
+  taxSubmissionEvidenceId!: string | null;
+  @Prop({
+    type: String, required: true,
+    enum: ['archiving', 'prepared', 'approved', 'submitting', 'submitted', 'rejected'],
+  })
+  status!: 'archiving' | 'prepared' | 'approved' | 'submitting' | 'submitted' | 'rejected';
+  @Prop({ type: Number, required: true, min: 1 }) version!: number;
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+export type PayrollTaxFilingDocument = HydratedDocument<PayrollTaxFilingRecord>;
+export const PayrollTaxFilingRecordSchema = SchemaFactory.createForClass(PayrollTaxFilingRecord);
+PayrollTaxFilingRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
+PayrollTaxFilingRecordSchema.index({ tenantId: 1, periodId: 1 }, { unique: true });
+PayrollTaxFilingRecordSchema.index({ tenantId: 1, status: 1, createdAt: 1 });
+PayrollTaxFilingRecordSchema.index(
+  { tenantId: 1, taxSubmissionId: 1 },
+  { unique: true, partialFilterExpression: { taxSubmissionId: { $type: 'string' } } },
+);

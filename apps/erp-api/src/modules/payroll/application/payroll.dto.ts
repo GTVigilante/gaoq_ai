@@ -17,6 +17,14 @@ export class PayrollVersionCommandDto {
   @IsInt() @Min(1) expectedVersion!: number;
 }
 
+export class PreparePayrollTaxFilingDto extends PayrollVersionCommandDto {}
+
+export class ApprovePayrollTaxFilingDto extends PayrollVersionCommandDto {
+  @Matches(ULID) strongAuthEvidenceId!: string;
+}
+
+export class SubmitPayrollTaxFilingDto extends PayrollVersionCommandDto {}
+
 export class ApplyPayrollApprovalDto extends PayrollVersionCommandDto {
   @Matches(ULID) approvalInstanceId!: string;
 }

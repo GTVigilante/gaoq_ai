@@ -248,6 +248,18 @@ const payrollPayslipSchema = z.object({
   netPayMinor: z.number().int().nonnegative(), inputHash: z.string().length(43),
   resultHash: z.string().length(43), publishedAt: z.string(),
 });
+const payrollTaxFilingSchema = z.object({
+  id: recruitmentIdSchema, periodId: recruitmentIdSchema,
+  payrollRunId: recruitmentIdSchema,
+  format: z.literal('CN_IIT_WITHHOLDING_MANIFEST_V1'),
+  status: z.enum(['archiving', 'prepared', 'approved', 'submitting', 'submitted', 'rejected']),
+  version: z.number().int().positive(), contentHash: z.string().length(43),
+  employeeCount: z.number().int().min(1).max(5_000),
+  totalTaxableEarningsMinor: z.number().int().nonnegative(),
+  totalWithholdingTaxMinor: z.number().int(),
+  objectEvidenceId: z.string().nullable(), taxSubmissionId: z.string().nullable(),
+  taxSubmissionEvidenceId: z.string().nullable(),
+});
 
 @Injectable()
 export class McpRuntimeService {
@@ -557,6 +569,24 @@ export class McpRuntimeService {
       },
     );
 
+    server.registerResource(
+      'payroll-tax-filing',
+      new ResourceTemplate('erp://payroll/tax-filings/{id}', { list: undefined }),
+      {
+        title: '个税申报脱敏控制摘要',
+        description: '只返回状态、控制总额、摘要与证据标识，不返回税务正文、身份凭证或 WORM 对象地址。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getPayrollTaxFiling(requiredResourceId(id), extra);
+        if (result.isError === true) throw new Error('无权读取个税申报状态');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
     server.registerPrompt(
       'approval_submission_guide',
       {
@@ -693,6 +723,19 @@ export class McpRuntimeService {
       ({ period }) => ({ messages: [{ role: 'user', content: {
         type: 'text',
         text: `请读取我 ${period} 的已发布薪资单，解释收入、个人扣款、预扣税和实发。不得推断或比较他人薪酬，不得触发重算、审批、锁定、导出或发薪。`,
+      } }] }),
+    );
+
+    server.registerPrompt(
+      'payroll_tax_filing_review_guide',
+      {
+        title: '个税申报控制摘要核对清单',
+        description: '指导 AI 核对状态、控制总额与证据链，不触发制备、审批或提交。',
+        argsSchema: { filingId: recruitmentIdSchema },
+      },
+      ({ filingId }) => ({ messages: [{ role: 'user', content: {
+        type: 'text',
+        text: `请读取个税申报 ${filingId} 的脱敏控制摘要，核对状态、版本、人数、计税收入、预扣税、内容摘要和证据标识是否齐全。不得索取税务正文、员工身份、证件或 WORM 对象地址；不得触发制备、强认证审批或税局提交。`,
       } }] }),
     );
 
@@ -966,6 +1009,20 @@ export class McpRuntimeService {
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       },
       async ({ period }, extra) => this.tools.getMyPayrollPayslip(period, extra),
+    );
+
+    server.registerTool(
+      'payroll_tax_filing_get',
+      {
+        title: '查询个税申报脱敏控制摘要',
+        description: '只返回申报状态、控制总额、摘要和证据标识；不返回正文、人员身份或外部对象地址。风险等级 R1。',
+        inputSchema: { id: recruitmentIdSchema },
+        outputSchema: z.object({ taxFiling: payrollTaxFilingSchema }),
+        annotations: {
+          readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+        },
+      },
+      async ({ id }, extra) => this.tools.getPayrollTaxFiling(id, extra),
     );
 
     server.registerTool(

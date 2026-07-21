@@ -10,7 +10,7 @@ const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const KEY_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 const BASE64URL_256_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
-const MAX_PLAINTEXT_BYTES = 1024 * 1024;
+const MAX_PLAINTEXT_BYTES = 8 * 1024 * 1024;
 
 const keyRingSchema = z.object({
   activeKeyId: z.string().regex(KEY_PATTERN),
@@ -30,7 +30,8 @@ const keyRingSchema = z.object({
 export type PayrollCryptoResourceType =
   | 'compensation_profile'
   | 'input_snapshot'
-  | 'calculation_line';
+  | 'calculation_line'
+  | 'tax_filing';
 
 export interface PayrollCryptoContext {
   readonly tenantId: string;
@@ -126,7 +127,8 @@ export class PayrollDataCryptoService {
     if (
       !ID_PATTERN.test(context.tenantId) || !ID_PATTERN.test(context.resourceId) ||
       !Number.isSafeInteger(context.version) || context.version < 1 ||
-      !['compensation_profile', 'input_snapshot', 'calculation_line'].includes(context.resourceType)
+      !['compensation_profile', 'input_snapshot', 'calculation_line', 'tax_filing']
+        .includes(context.resourceType)
     ) throw new Error('PAYROLL_DATA_CONTEXT_INVALID');
   }
 

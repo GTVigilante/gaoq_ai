@@ -36,6 +36,9 @@ describe('validateEnvironment', () => {
     expect(environment.TREASURY_WORM_RETENTION_DAYS).toBe(3_650);
     expect(environment.TREASURY_BANK_SUBMISSION_ENDPOINT).toBeUndefined();
     expect(environment.TREASURY_BANK_RETURN_INBOX_ENDPOINT).toBeUndefined();
+    expect(environment.PAYROLL_TAX_WORM_ARCHIVE_ENDPOINT).toBeUndefined();
+    expect(environment.PAYROLL_TAX_GATEWAY_ENDPOINT).toBeUndefined();
+    expect(environment.PAYROLL_TAX_WORM_RETENTION_DAYS).toBe(3_650);
     expect(environment.METRICS_BEARER_TOKEN).toBeUndefined();
     expect(environment.ESIGN_MALWARE_SCAN_ENDPOINT).toBeUndefined();
     expect(environment.ESIGN_WORM_ARCHIVE_ENDPOINT).toBeUndefined();
@@ -313,6 +316,49 @@ describe('validateEnvironment', () => {
     expect(() => validateEnvironment({
       ...base, TREASURY_BANK_RETURN_INBOX_ENDPOINT: 'https://inbox.example.net/v1/returns',
       TREASURY_BANK_RETURN_INBOX_BEARER_TOKEN: 'bank-submit-token-at-least-32-characters',
+    })).toThrow('不得复用');
+  });
+
+  it('Payroll Tax WORM 与税务网关必须成套配置并隔离权限域和凭据', () => {
+    const base = {
+      NODE_ENV: 'test', MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0', WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://erp.example.com', AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://erp.example.com/.well-known/jwks.json',
+      MCP_AUTHORIZATION_SERVER: 'https://erp.example.com',
+      MCP_ALLOWED_ORIGINS: 'https://erp.example.com',
+      TREASURY_WORM_ARCHIVE_ENDPOINT: 'https://treasury-worm.example.net/v1/objects',
+      TREASURY_WORM_ARCHIVE_BEARER_TOKEN: 'treasury-worm-token-at-least-32-characters',
+    };
+    expect(() => validateEnvironment({
+      ...base, PAYROLL_TAX_WORM_ARCHIVE_ENDPOINT: 'https://tax-worm.example.net/v1/objects',
+    })).toThrow('必须成套配置');
+    const configured = {
+      ...base,
+      PAYROLL_TAX_WORM_ARCHIVE_ENDPOINT: 'https://tax-worm.example.net/v1/objects',
+      PAYROLL_TAX_WORM_ARCHIVE_BEARER_TOKEN: 'tax-worm-token-that-is-at-least-32-characters',
+      PAYROLL_TAX_GATEWAY_ENDPOINT: 'https://tax-gateway.example.net/v1/submissions',
+      PAYROLL_TAX_GATEWAY_BEARER_TOKEN: 'tax-gateway-token-at-least-32-characters',
+    };
+    expect(validateEnvironment(configured)).toMatchObject({
+      PAYROLL_TAX_WORM_RETENTION_DAYS: 3_650,
+      PAYROLL_TAX_GATEWAY_ENDPOINT: 'https://tax-gateway.example.net/v1/submissions',
+    });
+    for (const endpoints of [
+      { PAYROLL_TAX_WORM_ARCHIVE_ENDPOINT: 'http://tax-worm.example.net/v1/objects' },
+      { PAYROLL_TAX_GATEWAY_ENDPOINT: 'https://tax-worm.example.net/v1/submissions' },
+      { PAYROLL_TAX_GATEWAY_ENDPOINT: 'https://erp.example.com/v1/submissions' },
+      { PAYROLL_TAX_GATEWAY_ENDPOINT: 'https://tax-gateway.example.net/v1/submissions?token=x' },
+    ]) expect(() => validateEnvironment({ ...configured, ...endpoints }))
+      .toThrow('相互隔离的标准 HTTPS 权限域');
+    expect(() => validateEnvironment({
+      ...configured,
+      PAYROLL_TAX_GATEWAY_BEARER_TOKEN: 'tax-worm-token-that-is-at-least-32-characters',
+    })).toThrow('不得复用');
+    expect(() => validateEnvironment({
+      ...configured,
+      PAYROLL_TAX_WORM_ARCHIVE_BEARER_TOKEN: 'treasury-worm-token-at-least-32-characters',
     })).toThrow('不得复用');
   });
 

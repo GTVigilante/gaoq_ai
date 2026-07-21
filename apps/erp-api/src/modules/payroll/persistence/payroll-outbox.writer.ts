@@ -16,7 +16,10 @@ export interface PayrollEvent {
     | 'payroll.rule_pack.attested'
     | 'payroll.approval.requested'
     | 'payroll.approval.applied'
-    | 'payroll.period.locked';
+    | 'payroll.period.locked'
+    | 'payroll.tax_filing.prepared'
+    | 'payroll.tax_filing.approved'
+    | 'payroll.tax_filing.submitted';
   readonly tenantId: string;
   readonly aggregateId: string;
   readonly version: number;
@@ -36,6 +39,7 @@ export class PayrollOutboxWriter {
     if (event.tenantId !== this.context.getTenantRequired().tenantId) {
       throw new Error('Payroll Outbox 拒绝跨租户事件');
     }
+    this.assertTaxEvent(event);
     const eventId = createEventId(new Date(event.occurredAt));
     const eventType = `cn.gaoq.erp.${event.type}.v1`;
     const envelope: CloudEvent<Record<string, unknown>> & { readonly schemaVersion: '1' } = {
@@ -53,4 +57,55 @@ export class PayrollOutboxWriter {
       nextAttemptAt: new Date(event.occurredAt),
     }], { session });
   }
+
+  private assertTaxEvent(event: PayrollEvent): void {
+    if (!event.type.startsWith('payroll.tax_filing.')) return;
+    const data = event.data;
+    const keys = Object.keys(data).sort().join(',');
+    const base =
+      typeof data['period'] === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(data['period']) &&
+      safeId(data['payrollRunId']) && typeof data['contentHash'] === 'string' &&
+      /^[A-Za-z0-9_-]{43}$/.test(data['contentHash']) &&
+      positive(data['employeeCount']) && nonnegative(data['totalTaxableEarningsMinor']) &&
+      integer(data['totalWithholdingTaxMinor']);
+    if (event.type === 'payroll.tax_filing.prepared') {
+      if (
+        keys !==
+          'contentHash,employeeCount,format,objectEvidenceId,payrollRunId,period,status,totalTaxableEarningsMinor,totalWithholdingTaxMinor' ||
+        !base || data['format'] !== 'CN_IIT_WITHHOLDING_MANIFEST_V1' ||
+        !safeId(data['objectEvidenceId']) || data['status'] !== 'prepared'
+      ) throw new Error('PAYROLL_TAX_OUTBOX_DATA_INVALID');
+      return;
+    }
+    if (event.type === 'payroll.tax_filing.approved') {
+      if (
+        keys !==
+          'contentHash,employeeCount,payrollRunId,period,status,strongAuthMethod,totalTaxableEarningsMinor,totalWithholdingTaxMinor' ||
+        !base || data['status'] !== 'approved' || data['strongAuthMethod'] !== 'webauthn_uv'
+      ) throw new Error('PAYROLL_TAX_OUTBOX_DATA_INVALID');
+      return;
+    }
+    if (
+      keys !==
+        'contentHash,employeeCount,payrollRunId,period,status,taxSubmissionEvidenceId,taxSubmissionId,totalTaxableEarningsMinor,totalWithholdingTaxMinor' ||
+      !base || data['status'] !== 'submitted' ||
+      !safeId(data['taxSubmissionId']) || !safeId(data['taxSubmissionEvidenceId'])
+    ) throw new Error('PAYROLL_TAX_OUTBOX_DATA_INVALID');
+  }
+}
+
+function safeId(value: string | number | null | undefined): boolean {
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value);
+}
+
+function integer(value: string | number | null | undefined): boolean {
+  return typeof value === 'number' && Number.isSafeInteger(value);
+}
+
+function nonnegative(value: string | number | null | undefined): boolean {
+  return integer(value) && Number(value) >= 0;
+}
+
+function positive(value: string | number | null | undefined): boolean {
+  return integer(value) && Number(value) > 0;
 }

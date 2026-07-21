@@ -259,6 +259,12 @@ export class PersonRepository extends TenantBoundRepository {
     return record === null ? null : this.toDomain(record);
   }
 
+  async findByIds(ids: readonly string[], session?: ClientSession): Promise<readonly Person[]> {
+    const query = this.records.find({ tenantId: this.tenantId(), id: { $in: [...ids] } });
+    if (session !== undefined) query.session(session);
+    return (await query.lean().exec()).map((record) => this.toDomain(record));
+  }
+
   async insert(person: Person, session: ClientSession): Promise<void> {
     this.assertEntityTenant(person.tenantId);
     await this.records.create([{
@@ -314,6 +320,21 @@ export class EmploymentRepository extends TenantBoundRepository {
     if (session !== undefined) query.session(session);
     const record = await query.lean().exec();
     return record === null ? null : this.toDomain(record);
+  }
+
+  async findOverlappingByEmployeeIds(
+    employeeIds: readonly string[],
+    effectiveFrom: string,
+    effectiveTo: string,
+    session?: ClientSession,
+  ): Promise<readonly Employment[]> {
+    const query = this.records.find({
+      tenantId: this.tenantId(), employeeId: { $in: [...employeeIds] },
+      effectiveFrom: { $lte: effectiveTo },
+      $or: [{ effectiveTo: null }, { effectiveTo: { $gte: effectiveFrom } }],
+    }).sort({ employeeId: 1, effectiveFrom: -1 });
+    if (session !== undefined) query.session(session);
+    return (await query.lean().exec()).map((record) => this.toDomain(record));
   }
 
   async insert(employment: Employment, session: ClientSession): Promise<void> {

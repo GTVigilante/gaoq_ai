@@ -18,6 +18,7 @@ import type { CareApplicationService } from '../care/application/care-applicatio
 import type { AttendanceApplicationService } from '../attendance/application/attendance-application.service.js';
 import type { PayrollRunService } from '../payroll/application/payroll-run.service.js';
 import type { PayrollPayslipService } from '../payroll/application/payroll-payslip.service.js';
+import type { PayrollTaxFilingService } from '../payroll/application/payroll-tax-filing.service.js';
 import { McpToolService } from './mcp-tool.service.js';
 import type { McpConfirmationService } from './mcp-confirmation.service.js';
 
@@ -80,6 +81,7 @@ function assemble() {
   };
   const payroll = { getPeriod: vi.fn() };
   const payslips = { getMyPayslip: vi.fn() };
+  const taxFilings = { getStatus: vi.fn() };
   const service = new McpToolService(
     context,
     audit as unknown as AuditService,
@@ -95,12 +97,13 @@ function assemble() {
     attendance as unknown as AttendanceApplicationService,
     payroll as unknown as PayrollRunService,
     payslips as unknown as PayrollPayslipService,
+    taxFilings as unknown as PayrollTaxFilingService,
     confirmations as unknown as McpConfirmationService,
   );
   return {
     context, audit, organization, approvals, recruitmentApplications,
     recruitmentInterviews, recruitmentManagement, recruitmentOffers, confirmations, service,
-    onboarding, knowledge, care, attendance, payroll, payslips,
+    onboarding, knowledge, care, attendance, payroll, payslips, taxFilings,
   };
 }
 
@@ -413,6 +416,32 @@ describe('McpToolService', () => {
     expect(result.structuredContent).toMatchObject({
       payslip: { period: '2026-07', netPayMinor: 839_500 },
     });
+  });
+
+  it('个税申报 MCP 只复用应用服务并返回控制摘要', async () => {
+    const store = assemble();
+    const filingId = '01J8ZQK7V0A2M4N6P8R0T2W4F1';
+    store.taxFilings.getStatus.mockResolvedValue({
+      id: filingId, periodId: '01J8ZQK7V0A2M4N6P8R0T2W4P1',
+      payrollRunId: '01J8ZQK7V0A2M4N6P8R0T2W4R1',
+      format: 'CN_IIT_WITHHOLDING_MANIFEST_V1', status: 'submitted', version: 4,
+      contentHash: 'a'.repeat(43), employeeCount: 12,
+      totalTaxableEarningsMinor: 12_000_000, totalWithholdingTaxMinor: 800_000,
+      objectEvidenceId: 'tax-worm-evidence-001', taxSubmissionId: 'tax-submission-001',
+      taxSubmissionEvidenceId: 'tax-evidence-001',
+    });
+    const denied = await store.service.getPayrollTaxFiling(
+      filingId, extra(['erp:mcp:server:connect']),
+    );
+    expect(denied.isError).toBe(true);
+    expect(store.taxFilings.getStatus).not.toHaveBeenCalled();
+    const result = await store.service.getPayrollTaxFiling(
+      filingId, extra(['erp:mcp:server:connect', 'erp:payroll:tax:read']),
+    );
+    expect(result.structuredContent).toMatchObject({
+      taxFiling: { id: filingId, status: 'submitted', employeeCount: 12 },
+    });
+    expect(JSON.stringify(result)).not.toMatch(/objectRef|identityEvidence|employeeId|preparedBy/iu);
   });
 
   it('考勤修订准备只校验本人事实并固化 R1 命令，不直接创建审批', async () => {

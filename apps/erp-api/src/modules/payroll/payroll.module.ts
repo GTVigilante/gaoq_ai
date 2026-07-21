@@ -12,6 +12,10 @@ import { PayrollMasterDataService } from './application/payroll-master-data.serv
 import { PayrollApprovalService } from './application/payroll-approval.service.js';
 import { PayrollRunService } from './application/payroll-run.service.js';
 import { PayrollPayslipService } from './application/payroll-payslip.service.js';
+import { PayrollTaxFilingService } from './application/payroll-tax-filing.service.js';
+import { HttpPayrollTaxImmutableArchive } from './integration/payroll-tax-archive-http.adapter.js';
+import { HttpPayrollTaxGateway } from './integration/payroll-tax-gateway-http.adapter.js';
+import { PayrollTaxGateway, PayrollTaxImmutableArchive } from './integration/payroll-tax.ports.js';
 import { PayrollController } from './payroll.controller.js';
 import { PayrollDataCryptoService } from './persistence/payroll-data-crypto.service.js';
 import { PayrollOutboxWriter } from './persistence/payroll-outbox.writer.js';
@@ -28,6 +32,8 @@ import {
   PayrollPeriodRecordSchema,
   PayrollRulePackRecord,
   PayrollRulePackRecordSchema,
+  PayrollTaxFilingRecord,
+  PayrollTaxFilingRecordSchema,
 } from './persistence/payroll.schemas.js';
 
 @Module({
@@ -44,6 +50,7 @@ import {
       { name: PayrollCalculationRunRecord.name, schema: PayrollCalculationRunRecordSchema },
       { name: PayrollInputSnapshotRecord.name, schema: PayrollInputSnapshotRecordSchema },
       { name: PayrollCalculationLineRecord.name, schema: PayrollCalculationLineRecordSchema },
+      { name: PayrollTaxFilingRecord.name, schema: PayrollTaxFilingRecordSchema },
       { name: AttendanceMonthlySnapshotRecord.name, schema: AttendanceMonthlySnapshotRecordSchema },
       { name: OutboxRecord.name, schema: OutboxRecordSchema },
     ]),
@@ -54,9 +61,14 @@ import {
     PayrollPayslipService,
     PayrollApprovalService,
     PayrollMasterDataService,
+    PayrollTaxFilingService,
     PayrollDataCryptoService,
     PayrollOutboxWriter,
+    HttpPayrollTaxImmutableArchive,
+    HttpPayrollTaxGateway,
+    { provide: PayrollTaxImmutableArchive, useExisting: HttpPayrollTaxImmutableArchive },
+    { provide: PayrollTaxGateway, useExisting: HttpPayrollTaxGateway },
   ],
-  exports: [PayrollRunService, PayrollPayslipService],
+  exports: [PayrollRunService, PayrollPayslipService, PayrollTaxFilingService],
 })
 export class PayrollModule {}

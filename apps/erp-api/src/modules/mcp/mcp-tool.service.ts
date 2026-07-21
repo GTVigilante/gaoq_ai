@@ -20,6 +20,7 @@ import { CareApplicationService } from '../care/application/care-application.ser
 import { AttendanceApplicationService } from '../attendance/application/attendance-application.service.js';
 import { PayrollRunService } from '../payroll/application/payroll-run.service.js';
 import { PayrollPayslipService } from '../payroll/application/payroll-payslip.service.js';
+import { PayrollTaxFilingService } from '../payroll/application/payroll-tax-filing.service.js';
 import { parseMcpIdentity, type McpIdentity } from './mcp-auth-context.js';
 import {
   McpConfirmationService,
@@ -62,6 +63,7 @@ export class McpToolService {
     private readonly attendance: AttendanceApplicationService,
     private readonly payroll: PayrollRunService,
     private readonly payslips: PayrollPayslipService,
+    private readonly taxFilings: PayrollTaxFilingService,
     private readonly confirmations: McpConfirmationService,
   ) {}
 
@@ -174,6 +176,22 @@ export class McpToolService {
         period, inputHash: payslip.inputHash, resultHash: payslip.resultHash,
       });
       return structuredResult({ payslip });
+    });
+  }
+
+  async getPayrollTaxFiling(id: string, extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:payroll:tax:read')) {
+        await this.auditTool(identity, 'payroll_tax_filing_get', 'R1', 'denied');
+        return scopeError('erp:payroll:tax:read');
+      }
+      const taxFiling = await this.taxFilings.getStatus(id);
+      await this.auditTool(identity, 'payroll_tax_filing_get', 'R1', 'success', {
+        filingId: taxFiling.id, status: taxFiling.status,
+        contentHash: taxFiling.contentHash,
+      });
+      return structuredResult({ taxFiling });
     });
   }
 

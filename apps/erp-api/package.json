@@ -18,6 +18,7 @@
     "migrate:phase4:attendance-indexes": "node dist/migrations/phase-4-attendance-indexes.js",
     "migrate:phase4:attendance-provider-indexes": "node dist/migrations/phase-4-attendance-provider-indexes.js",
     "migrate:phase4:payroll-core-indexes": "node dist/migrations/phase-4-payroll-core-indexes.js",
+    "migrate:phase4:payroll-tax-indexes": "node dist/migrations/phase-4-payroll-tax-indexes.js",
     "migrate:phase4:treasury-indexes": "node dist/migrations/phase-4-treasury-indexes.js",
     "migrate:phase4:treasury-recovery-indexes": "node dist/migrations/phase-4-treasury-recovery-indexes.js",
     "typecheck": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && tsc --noEmit",
