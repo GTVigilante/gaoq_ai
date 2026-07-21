@@ -68,8 +68,9 @@ describe('RecruitmentDataCryptoService', () => {
       .toThrow('密文或上下文无效');
     expect(() => crypto.unprotect({ ...context, resourceId: 'candidate-002' }, protectedData))
       .toThrow('密文或上下文无效');
+    const replacement = protectedData.ciphertext.endsWith('A') ? 'B' : 'A';
     expect(() => crypto.unprotect(context, {
-      ...protectedData, ciphertext: `${protectedData.ciphertext.slice(0, -1)}A`,
+      ...protectedData, ciphertext: `${protectedData.ciphertext.slice(0, -1)}${replacement}`,
     })).toThrow('密文或上下文无效');
   });
 

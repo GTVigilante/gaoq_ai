@@ -14,14 +14,15 @@ describe('OrgIntegrationScheduler', () => {
 
     await scheduler.onApplicationBootstrap();
 
-    expect(upsertJobScheduler).toHaveBeenCalledTimes(5);
+    expect(upsertJobScheduler).toHaveBeenCalledTimes(6);
     expect(upsertJobScheduler.mock.calls.map((call) => call[0])).toEqual([
       'org-integration:relay',
+      'org-integration:relay:calendar',
       'org-integration:deliver:dingtalk',
       'org-integration:deliver:feishu',
       'org-integration:provision',
       'org-integration:reconcile',
     ]);
-    expect(upsertJobScheduler.mock.calls[4]?.[1]).toEqual({ every: 86_400_000 });
+    expect(upsertJobScheduler.mock.calls[5]?.[1]).toEqual({ every: 86_400_000 });
   });
 });

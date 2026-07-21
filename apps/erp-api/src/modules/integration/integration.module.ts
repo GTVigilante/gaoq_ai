@@ -56,6 +56,11 @@ import {
   OrgReconciliationReport,
   OrgReconciliationReportSchema,
 } from './org-reconciliation.schema.js';
+import {
+  RecruitmentCalendarDeliveryRecord,
+  RecruitmentCalendarDeliveryRecordSchema,
+} from './recruitment-calendar-delivery.schema.js';
+import { RecruitmentCalendarOutboxRelayService } from './recruitment-calendar-outbox-relay.service.js';
 import { OrgReconciliationService } from './org-reconciliation.service.js';
 import {
   DINGTALK_ORG_PUSH_ADAPTER,
@@ -81,6 +86,10 @@ import {
       { name: OrgEmployeeRecord.name, schema: OrgEmployeeRecordSchema },
       { name: OrgReconciliationReport.name, schema: OrgReconciliationReportSchema },
       {
+        name: RecruitmentCalendarDeliveryRecord.name,
+        schema: RecruitmentCalendarDeliveryRecordSchema,
+      },
+      {
         name: OrgEmployeeProvisioningRequest.name,
         schema: OrgEmployeeProvisioningRequestSchema,
       },
@@ -88,6 +97,7 @@ import {
   ],
   providers: [
     OrgOutboxRelayService,
+    RecruitmentCalendarOutboxRelayService,
     OrgDeliveryService,
     OrgDeliveryOperationsService,
     OrgExternalIdentityResolver,
@@ -116,6 +126,7 @@ import {
   controllers: [IntegrationController, OrgEmployeeProvisioningController],
   exports: [
     OrgOutboxRelayService,
+    RecruitmentCalendarOutboxRelayService,
     OrgDeliveryService,
     OrgReconciliationService,
     OrgEmployeeProvisioningService,

@@ -3,6 +3,7 @@ export const ORG_INTEGRATION_QUEUE = 'org-integration';
 
 export const ORG_INTEGRATION_JOB_NAMES = [
   'relay',
+  'relay:calendar',
   'deliver:dingtalk',
   'deliver:feishu',
   'provision',

@@ -10,6 +10,7 @@ import {
   type OrgIntegrationJobName,
 } from './org-integration.queue.js';
 import { OrgOutboxRelayService } from './org-outbox-relay.service.js';
+import { RecruitmentCalendarOutboxRelayService } from './recruitment-calendar-outbox-relay.service.js';
 import { OrgReconciliationService } from './org-reconciliation.service.js';
 
 /** 组织集成 Worker：relay 与双平台投递相互独立，服务内部租约负责崩溃恢复。 */
@@ -19,6 +20,7 @@ export class OrgIntegrationProcessor extends WorkerHost {
 
   constructor(
     private readonly relay: OrgOutboxRelayService,
+    private readonly calendarRelay: RecruitmentCalendarOutboxRelayService,
     private readonly deliveries: OrgDeliveryService,
     private readonly provisioning: OrgEmployeeProvisioningService,
     private readonly reconciliation: OrgReconciliationService,
@@ -32,6 +34,8 @@ export class OrgIntegrationProcessor extends WorkerHost {
     switch (job.name) {
       case 'relay':
         return this.relay.relayBatch(this.workerId, 50);
+      case 'relay:calendar':
+        return this.calendarRelay.relayBatch(this.workerId, 50);
       case 'deliver:dingtalk':
         return this.deliveries.processBatch('dingtalk', this.workerId, 25);
       case 'deliver:feishu':
