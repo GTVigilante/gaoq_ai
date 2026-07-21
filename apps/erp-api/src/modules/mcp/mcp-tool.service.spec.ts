@@ -12,6 +12,7 @@ import type { RecruitmentApplicationService } from '../recruitment/application/r
 import type { RecruitmentInterviewService } from '../recruitment/application/recruitment-interview.service.js';
 import type { RecruitmentManagementService } from '../recruitment/application/recruitment-management.service.js';
 import type { RecruitmentOfferService } from '../recruitment/application/recruitment-offer.service.js';
+import type { OnboardingApplicationService } from '../onboarding/application/onboarding-application.service.js';
 import { McpToolService } from './mcp-tool.service.js';
 import type { McpConfirmationService } from './mcp-confirmation.service.js';
 
@@ -66,6 +67,7 @@ function assemble() {
     transitionPosition: vi.fn(),
   };
   const recruitmentOffers = { get: vi.fn(), requestSend: vi.fn() };
+  const onboarding = { get: vi.fn() };
   const service = new McpToolService(
     context,
     audit as unknown as AuditService,
@@ -75,11 +77,13 @@ function assemble() {
     recruitmentInterviews as unknown as RecruitmentInterviewService,
     recruitmentManagement as unknown as RecruitmentManagementService,
     recruitmentOffers as unknown as RecruitmentOfferService,
+    onboarding as unknown as OnboardingApplicationService,
     confirmations as unknown as McpConfirmationService,
   );
   return {
     context, audit, organization, approvals, recruitmentApplications,
     recruitmentInterviews, recruitmentManagement, recruitmentOffers, confirmations, service,
+    onboarding,
   };
 }
 
@@ -268,6 +272,27 @@ describe('McpToolService', () => {
     );
     expect(result.structuredContent).toMatchObject({ offer: { status: 'approved', version: 3 } });
     expect(JSON.stringify(result)).not.toMatch(/terms|salary|benefits|workLocation/iu);
+  });
+
+  it('入职 MCP 只读工具复用脱敏摘要并按 Scope 失败关闭', async () => {
+    const store = assemble();
+    store.onboarding.get.mockResolvedValue({
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4Y6', offerId: 'offer-001',
+      status: 'in_progress', tasks: { identity_verified: 'pending' }, version: 2,
+    });
+    const denied = await store.service.getOnboarding(
+      '01J8ZQK7V0A2M4N6P8R0T2W4Y6', extra(['erp:mcp:server:connect']),
+    );
+    expect(denied.isError).toBe(true);
+    expect(store.onboarding.get).not.toHaveBeenCalled();
+    const result = await store.service.getOnboarding(
+      '01J8ZQK7V0A2M4N6P8R0T2W4Y6',
+      extra(['erp:mcp:server:connect', 'erp:onboarding:read']),
+    );
+    expect(result.structuredContent).toMatchObject({
+      onboarding: { status: 'in_progress', version: 2 },
+    });
+    expect(JSON.stringify(result)).not.toMatch(/identityEvidence|signedEvidence|materialsEvidence/iu);
   });
 
   it('Offer 发送准备只固化标识和版本并要求 R2 确认', async () => {

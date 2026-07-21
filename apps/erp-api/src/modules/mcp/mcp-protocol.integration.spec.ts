@@ -68,6 +68,38 @@ describe('MCP Streamable HTTP 协议集成', () => {
           esignFlowId: null, signedEvidenceId: null, version: 3,
         } },
       }),
+      getOnboarding: vi.fn().mockResolvedValue({
+        content: [{ type: 'text' as const, text: JSON.stringify({
+          onboarding: {
+            id: '01J8ZQK7V0A2M4N6P8R0T2W4Y6',
+            offerId: '01J8ZQK7V0A2M4N6P8R0T2W4Y7',
+            applicationId: '01J8ZQK7V0A2M4N6P8R0T2W4Y8',
+            candidateId: '01J8ZQK7V0A2M4N6P8R0T2W4Y9',
+            departmentId: 'department-001', jobLevelId: 'level-001',
+            orgPositionId: null, proposedStartDate: '2026-08-01',
+            status: 'in_progress',
+            tasks: {
+              contract_archived: 'completed', identity_verified: 'pending',
+              materials_verified: 'pending', org_assignment_verified: 'pending',
+              mandatory_training_completed: 'pending',
+            },
+            employmentId: null, version: 1,
+          },
+        }) }],
+        structuredContent: { onboarding: {
+          id: '01J8ZQK7V0A2M4N6P8R0T2W4Y6',
+          offerId: '01J8ZQK7V0A2M4N6P8R0T2W4Y7',
+          applicationId: '01J8ZQK7V0A2M4N6P8R0T2W4Y8',
+          candidateId: '01J8ZQK7V0A2M4N6P8R0T2W4Y9',
+          departmentId: 'department-001', jobLevelId: 'level-001',
+          orgPositionId: null, proposedStartDate: '2026-08-01', status: 'in_progress',
+          tasks: {
+            contract_archived: 'completed', identity_verified: 'pending',
+            materials_verified: 'pending', org_assignment_verified: 'pending',
+            mandatory_training_completed: 'pending',
+          }, employmentId: null, version: 1,
+        } },
+      }),
       prepareRecruitmentRequisitionSubmit: vi.fn(),
       executeRecruitmentRequisitionSubmit: vi.fn(),
       prepareRecruitmentPositionTransition: vi.fn(),
@@ -157,6 +189,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       'recruitment_position_get',
       'recruitment_interview_get',
       'recruitment_offer_get',
+      'onboarding_get',
       'recruitment_requisition_submit_prepare',
       'recruitment_requisition_submit_execute',
       'recruitment_position_transition_prepare',
@@ -173,11 +206,13 @@ describe('MCP Streamable HTTP 协议集成', () => {
     expect(resourceTemplates.resourceTemplates).toEqual(expect.arrayContaining([
       expect.objectContaining({ uriTemplate: 'erp://recruitment/applications/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://recruitment/offers/{id}' }),
+      expect.objectContaining({ uriTemplate: 'erp://onboarding/instances/{id}' }),
     ]));
     const prompts = await client.listPrompts();
     expect(prompts.prompts).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'approval_submission_guide' }),
       expect.objectContaining({ name: 'recruitment_offer_send_guide' }),
+      expect.objectContaining({ name: 'onboarding_progress_guide' }),
     ]));
 
     const result = await client.callTool({ name: 'get_org_chart', arguments: {} });
@@ -203,5 +238,25 @@ describe('MCP Streamable HTTP 协议集成', () => {
       offer: { status: 'approved', version: 3 },
     });
     expect(tools.getRecruitmentOffer).toHaveBeenCalledTimes(2);
+
+    const onboardingResult = await client.callTool({
+      name: 'onboarding_get',
+      arguments: { id: '01J8ZQK7V0A2M4N6P8R0T2W4Y6' },
+    });
+    expect(onboardingResult.structuredContent).toMatchObject({
+      onboarding: { status: 'in_progress', version: 1 },
+    });
+    expect(JSON.stringify(onboardingResult)).not.toMatch(/EvidenceId|contractText|identityDocument/iu);
+    const onboardingResource = await client.readResource({
+      uri: 'erp://onboarding/instances/01J8ZQK7V0A2M4N6P8R0T2W4Y6',
+    });
+    const onboardingContent = onboardingResource.contents[0];
+    const onboardingText = onboardingContent !== undefined && 'text' in onboardingContent
+      ? onboardingContent.text
+      : '{}';
+    expect(JSON.parse(onboardingText)).toMatchObject({
+      onboarding: { tasks: { identity_verified: 'pending' } },
+    });
+    expect(tools.getOnboarding).toHaveBeenCalledTimes(2);
   });
 });

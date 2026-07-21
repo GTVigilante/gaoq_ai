@@ -14,6 +14,7 @@ import { RecruitmentApplicationService } from '../recruitment/application/recrui
 import { RecruitmentInterviewService } from '../recruitment/application/recruitment-interview.service.js';
 import { RecruitmentManagementService } from '../recruitment/application/recruitment-management.service.js';
 import { RecruitmentOfferService } from '../recruitment/application/recruitment-offer.service.js';
+import { OnboardingApplicationService } from '../onboarding/application/onboarding-application.service.js';
 import { parseMcpIdentity, type McpIdentity } from './mcp-auth-context.js';
 import {
   McpConfirmationService,
@@ -44,6 +45,7 @@ export class McpToolService {
     private readonly recruitmentInterviews: RecruitmentInterviewService,
     private readonly recruitmentManagement: RecruitmentManagementService,
     private readonly recruitmentOffers: RecruitmentOfferService,
+    private readonly onboarding: OnboardingApplicationService,
     private readonly confirmations: McpConfirmationService,
   ) {}
 
@@ -79,6 +81,13 @@ export class McpToolService {
     return this.getRecruitmentResource(
       extra, 'recruitment_offer_get', 'erp:recruitment:offer:read',
       'offer', () => this.recruitmentOffers.get(id),
+    );
+  }
+
+  async getOnboarding(id: string, extra: McpExtra): Promise<McpToolResult> {
+    return this.getRecruitmentResource(
+      extra, 'onboarding_get', 'erp:onboarding:read',
+      'onboarding', () => this.onboarding.get(id),
     );
   }
 

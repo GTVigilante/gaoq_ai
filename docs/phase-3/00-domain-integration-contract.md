@@ -144,6 +144,13 @@ draft → pending_approval → approved → sending → sent → accepted → si
 - Offer 发送 execute 只形成 `sending` 意图，不形成 `sent` 事实；AI 不得调用投递回写、候选人接受/拒绝、eSign 完成或入职终态方法。
 - 候选人创建、面试安排/评价和 Offer 条款创建含 L3/L4 原文。在服务端加密草稿引用机制交付前不注册对应 MCP 写工具，禁止为追求能力数量把原文写入 `mcp_operation_confirmations.commandJson`。
 
+### 5.4 Onboarding MCP 首批能力
+
+- Resource Template 固定为 `erp://onboarding/instances/{id}`，只读 Tool 固定为 `onboarding_get`；两者复用 Onboarding 应用服务、OAuth 身份、租户边界、部门数据范围和审计。
+- 输出仅含任务 `pending/completed` 状态、组织引用、拟入职业务日期、聚合状态、Employment 引用与版本；不得返回合同、身份材料、培训内容或各任务证据标识。
+- `onboarding_progress_guide` 明确提示 AI 不得索取证据原文、代报任务完成或执行劳动关系建档。完成建档属于 R3，永不注册 MCP Tool。
+- 在材料证据注册表、Identity/Knowledge 可信证明接口和相应消费者验收完成前，不注册入职任务写 Tool；不能让 AI 用任意字符串伪造证据引用。
+
 ## 6. 发布门禁
 
 - 跨租户、越权、授权撤回后继续处理、盲索引误合并、标准答案泄漏、未知 e签状态自动推进任一出现即 No-Go。

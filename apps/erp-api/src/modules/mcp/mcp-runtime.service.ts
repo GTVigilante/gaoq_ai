@@ -145,6 +145,27 @@ const recruitmentWriteOutputSchemas = {
   position: z.object({ position: recruitmentPositionSchema }),
   offer: z.object({ offer: recruitmentOfferSchema }),
 };
+const onboardingTaskStatusSchema = z.enum(['pending', 'completed']);
+const onboardingSchema = z.object({
+  id: recruitmentIdSchema,
+  offerId: recruitmentIdSchema,
+  applicationId: recruitmentIdSchema,
+  candidateId: recruitmentIdSchema,
+  departmentId: z.string(),
+  jobLevelId: z.string(),
+  orgPositionId: z.string().nullable(),
+  proposedStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  status: z.enum(['in_progress', 'ready', 'provisioning', 'completed', 'cancelled']),
+  tasks: z.object({
+    contract_archived: onboardingTaskStatusSchema,
+    identity_verified: onboardingTaskStatusSchema,
+    materials_verified: onboardingTaskStatusSchema,
+    org_assignment_verified: onboardingTaskStatusSchema,
+    mandatory_training_completed: onboardingTaskStatusSchema,
+  }),
+  employmentId: z.string().nullable(),
+  version: z.number().int().positive(),
+});
 
 @Injectable()
 export class McpRuntimeService {
@@ -328,6 +349,24 @@ export class McpRuntimeService {
       },
     );
 
+    server.registerResource(
+      'onboarding-instance',
+      new ResourceTemplate('erp://onboarding/instances/{id}', { list: undefined }),
+      {
+        title: '入职进度摘要',
+        description: '读取任务完成状态和组织引用；不返回身份材料、合同、培训内容或证据原文。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getOnboarding(requiredResourceId(id), extra);
+        if (result.isError === true) throw new Error('无权读取入职实例');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
     server.registerPrompt(
       'approval_submission_guide',
       {
@@ -359,6 +398,24 @@ export class McpRuntimeService {
           content: {
             type: 'text',
             text: `请查询 Offer ${offerId} 的脱敏摘要，确认状态为 approved、版本未变化且审批引用存在。不要索取或复述薪酬、福利和签署文件；发送前调用 recruitment_offer_send_prepare 并引导用户在 ERP 完成 R2 强认证确认。`,
+          },
+        }],
+      }),
+    );
+
+    server.registerPrompt(
+      'onboarding_progress_guide',
+      {
+        title: '入职进度检查清单',
+        description: '指导 AI 只读取脱敏任务状态；R3 建档和受信任证明不允许 AI 执行。',
+        argsSchema: { onboardingId: recruitmentIdSchema },
+      },
+      ({ onboardingId }) => ({
+        messages: [{
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `请读取入职实例 ${onboardingId} 的任务状态，列出仍待完成的项目。不要索取身份证、合同、材料或培训正文；不要代报任务完成，也不要尝试执行劳动关系建档。`,
           },
         }],
       }),
@@ -548,6 +605,18 @@ export class McpRuntimeService {
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
       },
       async ({ id }, extra) => this.tools.getRecruitmentOffer(id, extra),
+    );
+
+    server.registerTool(
+      'onboarding_get',
+      {
+        title: '查询入职进度摘要',
+        description: '返回任务状态、组织引用和建档状态，不返回任何证据原文。风险等级 R0。',
+        inputSchema: { id: recruitmentIdSchema },
+        outputSchema: z.object({ onboarding: onboardingSchema }),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      },
+      async ({ id }, extra) => this.tools.getOnboarding(id, extra),
     );
 
     server.registerTool(
