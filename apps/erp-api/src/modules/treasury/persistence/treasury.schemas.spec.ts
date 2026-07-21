@@ -57,6 +57,9 @@ describe('Treasury 持久化契约', () => {
     expect(TreasuryPaymentInstructionRecordSchema.path('amountMinor')).toBeUndefined();
     expect(TreasuryPaymentInstructionRecordSchema.path('creditorAccount')).toBeUndefined();
     expect(TreasuryDisbursementBatchRecordSchema.path('totalMinor')).toBeDefined();
+    expect(TreasuryDisbursementBatchRecordSchema.path('payrollResultHash')).toBeDefined();
+    expect(TreasuryDisbursementBatchRecordSchema.path('payableResultHash')).toBeDefined();
     expect(TreasuryDisbursementBatchRecordSchema.path('fileContent')).toBeUndefined();
+    expect(TreasuryDisbursementBatchRecordSchema.path('dataCiphertext')).toBeDefined();
   });
 });

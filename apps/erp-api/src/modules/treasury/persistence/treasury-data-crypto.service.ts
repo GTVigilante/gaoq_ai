@@ -52,6 +52,7 @@ const blindIndexRingSchema = z.object({
 export type TreasuryCryptoResourceType =
   | 'bank_account'
   | 'payment_instruction'
+  | 'batch_snapshot'
   | 'bank_file'
   | 'bank_return';
 
@@ -221,7 +222,7 @@ export class TreasuryDataCryptoService {
     if (
       !ID_PATTERN.test(context.tenantId) || !ID_PATTERN.test(context.resourceId) ||
       !Number.isSafeInteger(context.version) || context.version < 1 ||
-      !['bank_account', 'payment_instruction', 'bank_file', 'bank_return']
+      !['bank_account', 'payment_instruction', 'batch_snapshot', 'bank_file', 'bank_return']
         .includes(context.resourceType)
     ) throw this.invalidCiphertext();
   }

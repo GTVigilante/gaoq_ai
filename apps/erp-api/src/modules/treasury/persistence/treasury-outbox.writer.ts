@@ -8,7 +8,10 @@ import { TenantContextService } from '../../../core/tenant/tenant-context.servic
 import { OutboxRecord, type OutboxDocument } from '../../org/persistence/outbox.schema.js';
 
 export interface TreasuryEvent {
-  readonly type: 'treasury.bank_account.attested';
+  readonly type:
+    | 'treasury.bank_account.attested'
+    | 'treasury.disbursement.materialization_requested'
+    | 'treasury.disbursement.prepared';
   readonly tenantId: string;
   readonly aggregateId: string;
   readonly version: number;
@@ -28,32 +31,62 @@ export class TreasuryOutboxWriter {
     if (event.tenantId !== this.context.getTenantRequired().tenantId) {
       throw new Error('Treasury Outbox 拒绝跨租户事件');
     }
-    this.assertSafeData(event.data);
+    this.assertSafeEvent(event);
     const eventId = createEventId(new Date(event.occurredAt));
     const eventType = `cn.gaoq.erp.${event.type}.v1`;
+    const resourceType = event.type === 'treasury.bank_account.attested'
+      ? 'bank-account' : 'disbursement-batch';
     const envelope: CloudEvent<Record<string, unknown>> & { readonly schemaVersion: '1' } = {
       specversion: '1.0', id: eventId, source: '//gaoq-erp/treasury-module', type: eventType,
-      subject: `tenant/${event.tenantId}/treasury/bank-account/${event.aggregateId}`,
+      subject: `tenant/${event.tenantId}/treasury/${resourceType}/${event.aggregateId}`,
       time: event.occurredAt, datacontenttype: 'application/json', tenantId: event.tenantId,
       traceId: this.context.getActorRequired().traceId,
       idempotencyKey: `${event.tenantId}:${eventType}:${event.aggregateId}:${event.version}`,
       schemaVersion: '1', data: { tenantId: event.tenantId, ...event.data },
     };
     await this.records.create([{
-      eventId, tenantId: event.tenantId, aggregateType: 'treasury_bank_account',
+      eventId, tenantId: event.tenantId,
+      aggregateType: event.type === 'treasury.bank_account.attested'
+        ? 'treasury_bank_account' : 'treasury_disbursement_batch',
       aggregateId: event.aggregateId, aggregateVersion: event.version,
       eventType, envelope: { ...envelope }, status: 'pending', attempts: 0,
       nextAttemptAt: new Date(event.occurredAt),
     }], { session });
   }
 
-  private assertSafeData(data: TreasuryEvent['data']): void {
+  private assertSafeEvent(event: TreasuryEvent): void {
+    const data = event.data;
+    const keys = Object.keys(data).sort().join(',');
+    if (event.type === 'treasury.bank_account.attested') {
+      if (
+        keys !== 'ownerId,ownerType,status,version' ||
+        !['organization', 'employee'].includes(String(data['ownerType'])) ||
+        !safeId(data['ownerId']) || data['status'] !== 'active' || !positiveInteger(data['version'])
+      ) throw new Error('TREASURY_OUTBOX_DATA_INVALID');
+      return;
+    }
+    const baseValid = safeId(data['payrollPeriodId']) && safeId(data['payrollRunId']) &&
+      positiveInteger(data['lineCount']) && positiveInteger(data['totalMinor']);
+    if (event.type === 'treasury.disbursement.materialization_requested') {
+      if (
+        keys !== 'lineCount,payrollPeriodId,payrollRunId,status,totalMinor' ||
+        !baseValid || data['status'] !== 'materializing'
+      ) throw new Error('TREASURY_OUTBOX_DATA_INVALID');
+      return;
+    }
     if (
-      Object.keys(data).sort().join(',') !== 'ownerId,ownerType,status,version' ||
-      !['organization', 'employee'].includes(String(data['ownerType'])) ||
-      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(String(data['ownerId'])) ||
-      data['status'] !== 'active' || !Number.isSafeInteger(data['version']) ||
-      Number(data['version']) < 1
+      keys !==
+        'fileHash,lineCount,objectEvidenceId,payrollPeriodId,payrollRunId,status,totalMinor' ||
+      !baseValid || data['status'] !== 'prepared' || !safeId(data['objectEvidenceId']) ||
+      typeof data['fileHash'] !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(data['fileHash'])
     ) throw new Error('TREASURY_OUTBOX_DATA_INVALID');
   }
+}
+
+function safeId(value: string | number | null | undefined): boolean {
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value);
+}
+
+function positiveInteger(value: string | number | null | undefined): boolean {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 }

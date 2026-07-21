@@ -118,6 +118,22 @@ export interface PayrollPeriodSummary extends Record<string, unknown> {
   readonly totalNetMinor: number | null;
 }
 
+export interface LockedPayrollDisbursementSource {
+  readonly periodId: string;
+  readonly period: string;
+  readonly payrollRunId: string;
+  readonly payrollLockedBy: string;
+  readonly payrollVersion: number;
+  readonly resultHash: string;
+  readonly totalNetMinor: number;
+  readonly lines: readonly {
+    readonly calculationLineId: string;
+    readonly employeeId: string;
+    readonly netPayMinor: number;
+    readonly resultHash: string;
+  }[];
+}
+
 /** 工资周期与计算运行应用服务；仅系统任务可提交已冻结的规范输入。 */
 @Injectable()
 export class PayrollRunService {
@@ -307,6 +323,74 @@ export class PayrollRunService {
       code: 'PAYROLL_PERIOD_NOT_FOUND', message: '工资周期不存在',
     });
     return payrollPeriodSummary(payrollPeriodFromRecord(current));
+  }
+
+  /** Treasury 内部只读端口：只输出已锁定且通过逐行与运行级摘要复核的实发来源。 */
+  async getLockedDisbursementSource(
+    periodId: string,
+    expectedVersion: number,
+  ): Promise<LockedPayrollDisbursementSource> {
+    this.assertScope('erp:treasury:disbursement:prepare');
+    if (!ID_PATTERN.test(periodId) || !Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
+      throw new BadRequestException({
+        code: 'PAYROLL_DISBURSEMENT_SOURCE_REFERENCE_INVALID', message: '代发工资来源引用非法',
+      });
+    }
+    const period = await this.periods.findOne({
+      tenantId: this.tenantId(), id: periodId,
+    }).lean().exec();
+    if (
+      period === null || period.version !== expectedVersion || period.status !== 'locked' ||
+      period.activeRunId === null || period.lockedBy === null || period.resultHash === null ||
+      period.employeeCount === null || period.totalNetMinor === null
+    ) throw new ConflictException({
+      code: 'PAYROLL_DISBURSEMENT_SOURCE_NOT_LOCKED', message: '工资周期未锁定或版本已变化',
+    });
+    const records = await this.calculationLines.find({
+      tenantId: this.tenantId(), periodId: period.id, runId: period.activeRunId,
+    }).sort({ employeeId: 1 }).lean().exec();
+    if (
+      records.length !== period.employeeCount || records.length < 1 ||
+      new Set(records.map((record) => record.employeeId)).size !== records.length
+    ) throw new ConflictException({
+      code: 'PAYROLL_DISBURSEMENT_SOURCE_INTEGRITY_FAILED', message: '锁定工资员工行不完整',
+    });
+    const lines = records.map((record) => {
+      try {
+        const result = payrollResultSchema.parse(this.crypto.unprotect({
+          tenantId: this.tenantId(), resourceType: 'calculation_line',
+          resourceId: record.id, version: 1,
+        }, protectedValue(record)));
+        const { resultHash, ...withoutHash } = result;
+        if (resultHash !== record.resultHash || payrollDigest(withoutHash) !== resultHash) {
+          throw new Error('PAYROLL_RESULT_HASH_MISMATCH');
+        }
+        return Object.freeze({
+          calculationLineId: record.id, employeeId: record.employeeId,
+          netPayMinor: result.netPayMinor, resultHash,
+        });
+      } catch {
+        throw new ConflictException({
+          code: 'PAYROLL_DISBURSEMENT_SOURCE_INTEGRITY_FAILED', message: '锁定工资结果完整性失败',
+        });
+      }
+    });
+    const aggregateHash = payrollDigest(lines.map((line) => ({
+      employeeId: line.employeeId, resultHash: line.resultHash,
+    })));
+    const total = lines.reduce((sum, line) => sum + BigInt(line.netPayMinor), 0n);
+    if (
+      aggregateHash !== period.resultHash || total !== BigInt(period.totalNetMinor) ||
+      total > BigInt(Number.MAX_SAFE_INTEGER)
+    ) throw new ConflictException({
+      code: 'PAYROLL_DISBURSEMENT_SOURCE_INTEGRITY_FAILED', message: '锁定工资运行汇总不一致',
+    });
+    return Object.freeze({
+      periodId: period.id, period: period.period, payrollRunId: period.activeRunId,
+      payrollLockedBy: period.lockedBy, payrollVersion: period.version,
+      resultHash: period.resultHash, totalNetMinor: Number(total),
+      lines: Object.freeze(lines),
+    });
   }
 
   private async calculateLines(

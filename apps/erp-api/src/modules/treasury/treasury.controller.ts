@@ -6,12 +6,20 @@ import {
   TreasuryBankAccountService,
   type TreasuryBankAccountSummary,
 } from './application/treasury-bank-account.service.js';
-import { AttestTreasuryBankAccountDto } from './application/treasury.dto.js';
+import {
+  TreasuryDisbursementService,
+  type TreasuryDisbursementSummary,
+} from './application/treasury-disbursement.service.js';
+import {
+  AttestTreasuryBankAccountDto,
+  PrepareTreasuryDisbursementDto,
+} from './application/treasury.dto.js';
 
 @Controller('treasury')
 export class TreasuryController {
   constructor(
     private readonly accounts: TreasuryBankAccountService,
+    private readonly disbursements: TreasuryDisbursementService,
     private readonly audit: AuditService,
   ) {}
 
@@ -28,6 +36,27 @@ export class TreasuryController {
       resourceId: result.id, riskLevel: 'R3', outcome: 'success', metadata: {
         ownerType: result.ownerType, ownerId: result.ownerId,
         version: result.version, status: result.status,
+      },
+    });
+    return result;
+  }
+
+  /** 制备只产生 WORM 证据与密文支付指令，不导出或提交银行；MCP 永不注册。 */
+  @Post('disbursements')
+  @RequiredScopes('erp:treasury:disbursement:prepare')
+  async prepareDisbursement(
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: PrepareTreasuryDisbursementDto,
+  ): Promise<TreasuryDisbursementSummary> {
+    const result = await this.disbursements.prepare(this.key(key), body);
+    await this.audit.record({
+      action: 'treasury.disbursement.prepare', resourceType: 'treasury_disbursement_batch',
+      resourceId: result.id, riskLevel: 'R2', outcome: 'success', metadata: {
+        payrollPeriodId: result.payrollPeriodId, payrollRunId: result.payrollRunId,
+        status: result.status, version: result.version,
+        lineCount: result.lineCount, totalMinor: result.totalMinor,
+        fileHash: result.fileHash ?? 'none',
+        objectEvidenceId: result.objectEvidenceId ?? 'none',
       },
     });
     return result;

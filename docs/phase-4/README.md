@@ -1,6 +1,6 @@
 # Phase 4：考勤、薪酬、薪税与发放对账
 
-Phase 4 在 ERP 组织与劳动关系主数据之上，建立可重放的考勤月结、确定性薪资计算、审批锁定、银行/税务文件和三方对账闭环。旧系统在两个完整影子周期验收完成前仍是生产发薪事实源。
+Phase 4 在 ERP 组织与劳动关系主数据之上，建立可重放的考勤月结、确定性薪资计算、审批锁定、银行/税务文件和四方对账闭环。旧系统在两个完整影子周期验收完成前仍是生产发薪事实源。
 
 实现顺序：
 
@@ -16,7 +16,8 @@ Phase 4 在 ERP 组织与劳动关系主数据之上，建立可重放的考勤�
 10. [Treasury ISO 20022 代发与回盘冻结契约](./09-treasury-disbursement-contract.md)
 11. [Treasury 密钥与索引迁移 Runbook](./10-treasury-key-index-migration-runbook.md)
 12. [Treasury 银行账户版本应用契约](./11-treasury-bank-account-application.md)
-13. 两个完整薪资周期影子计算、差异归因与财务签署
+13. [锁定工资到受控代发文件](./12-treasury-disbursement-materialization.md)
+14. 两个完整薪资周期影子计算、差异归因与财务签署
 
 ## 强制边界
 

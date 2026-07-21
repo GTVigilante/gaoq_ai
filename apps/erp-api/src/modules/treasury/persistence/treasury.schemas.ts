@@ -74,9 +74,9 @@ export class TreasuryPaymentInstructionRecord extends ProtectedTreasuryRecord {
   @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) bankAccountId!: string;
   @Prop({
     type: String, required: true,
-    enum: ['prepared', 'submitted', 'succeeded', 'failed', 'frozen'],
+    enum: ['materializing', 'prepared', 'submitted', 'succeeded', 'failed', 'frozen'],
   })
-  status!: 'prepared' | 'submitted' | 'succeeded' | 'failed' | 'frozen';
+  status!: 'materializing' | 'prepared' | 'submitted' | 'succeeded' | 'failed' | 'frozen';
   @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
   bankLineReference!: string | null;
   createdAt!: Date;
@@ -96,19 +96,24 @@ TreasuryPaymentInstructionRecordSchema.index(
 );
 TreasuryPaymentInstructionRecordSchema.index({ tenantId: 1, batchId: 1, status: 1 });
 
-const BATCH_STATUSES: readonly DisbursementBatchStatus[] = [
-  'prepared', 'exported', 'submitted', 'reconciling', 'frozen', 'reconciled',
+export type TreasuryBatchPersistenceStatus = 'materializing' | DisbursementBatchStatus;
+const BATCH_STATUSES: readonly TreasuryBatchPersistenceStatus[] = [
+  'materializing', 'prepared', 'exported', 'submitted', 'reconciling', 'frozen', 'reconciled',
 ];
 
 /** 代发批次只保存控制总额、摘要和证据引用；绝不保存银行文件明文。 */
 @Schema({ collection: 'treasury_disbursement_batches', timestamps: true, versionKey: false, id: false })
-export class TreasuryDisbursementBatchRecord {
+export class TreasuryDisbursementBatchRecord extends ProtectedTreasuryRecord {
   @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) id!: string;
   @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
   tenantId!: string;
   @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
   payrollPeriodId!: string;
   @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) payrollRunId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  payrollResultHash!: string;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  payableResultHash!: string;
   @Prop({ type: Number, required: true, immutable: true, min: 1 }) batchSequence!: number;
   @Prop({ type: String, default: null, immutable: true, match: ULID_PATTERN })
   parentBatchId!: string | null;
@@ -116,7 +121,7 @@ export class TreasuryDisbursementBatchRecord {
   purpose!: 'regular' | 'supplement' | 'recovery';
   @Prop({ type: String, required: true, immutable: true, enum: ['ISO20022_PAIN_001_001_03'] })
   format!: 'ISO20022_PAIN_001_001_03';
-  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN }) fileHash!: string;
+  @Prop({ type: String, default: null, match: HASH_PATTERN }) fileHash!: string | null;
   @Prop({ type: Number, required: true, immutable: true, min: 1, max: 5_000 }) lineCount!: number;
   @Prop({ type: Number, required: true, immutable: true, min: 1 }) totalMinor!: number;
   @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
@@ -129,6 +134,8 @@ export class TreasuryDisbursementBatchRecord {
   strongAuthEvidenceId!: string | null;
   @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
   objectEvidenceId!: string | null;
+  @Prop({ type: String, default: null, maxlength: 512, match: /^[A-Za-z0-9][A-Za-z0-9/._:-]{0,511}$/ })
+  objectRef!: string | null;
   @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
   bankSubmissionId!: string | null;
   @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
@@ -146,7 +153,7 @@ export class TreasuryDisbursementBatchRecord {
     ],
   })
   freezeReason!: string | null;
-  @Prop({ type: String, required: true, enum: BATCH_STATUSES }) status!: DisbursementBatchStatus;
+  @Prop({ type: String, required: true, enum: BATCH_STATUSES }) status!: TreasuryBatchPersistenceStatus;
   @Prop({ type: Number, required: true, min: 1 }) version!: number;
   createdAt!: Date;
   updatedAt!: Date;

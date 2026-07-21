@@ -25,6 +25,7 @@ describe('TreasuryOutboxWriter', () => {
     await context.run({ tenant, actor }, () => writer.append(event, session));
     const calls = JSON.stringify(create.mock.calls);
     expect(calls).toContain('"aggregateType":"treasury_bank_account"');
+    expect(calls).toContain('"subject":"tenant/tenant-001/treasury/bank-account/account-001"');
     expect(calls).toContain('"tenantId":"tenant-001"');
     expect(calls).toContain('"ownerId":"employee-001"');
     expect(calls).not.toMatch(/accountBlind|6222|cipher/u);
@@ -42,5 +43,31 @@ describe('TreasuryOutboxWriter', () => {
       ...event, data: { ...event.data, account: '6222000000000001' },
     }, session))).rejects.toThrow('TREASURY_OUTBOX_DATA_INVALID');
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it('代发事件只允许批次汇总与 WORM 证据，不允许员工级字段', async () => {
+    const context = new TenantContextService();
+    const create = vi.fn().mockResolvedValue([]);
+    const writer = new TreasuryOutboxWriter(context, { create } as never);
+    const prepared: TreasuryEvent = {
+      type: 'treasury.disbursement.prepared', tenantId: 'tenant-001',
+      aggregateId: 'batch-001', version: 2, occurredAt: '2026-07-22T10:00:00.000Z',
+      data: {
+        payrollPeriodId: 'period-001', payrollRunId: 'run-001',
+        lineCount: 2, totalMinor: 1_839_600, fileHash: 'a'.repeat(43),
+        objectEvidenceId: 'receipt-001', status: 'prepared',
+      },
+    };
+    await context.run({ tenant, actor }, () => writer.append(prepared, session));
+    const calls = JSON.stringify(create.mock.calls);
+    expect(calls).toContain('"aggregateType":"treasury_disbursement_batch"');
+    expect(calls).toContain(
+      '"subject":"tenant/tenant-001/treasury/disbursement-batch/batch-001"',
+    );
+    expect(calls).toContain('"objectEvidenceId":"receipt-001"');
+    expect(calls).not.toMatch(/employee|account|cipher/u);
+    await expect(context.run({ tenant, actor }, () => writer.append({
+      ...prepared, data: { ...prepared.data, employeeId: 'employee-001' },
+    }, session))).rejects.toThrow('TREASURY_OUTBOX_DATA_INVALID');
   });
 });
