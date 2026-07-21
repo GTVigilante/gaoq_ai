@@ -19,7 +19,7 @@ describe('Treasury 持久化契约', () => {
     const document = new AccountModel({
       id: '01J8ZQK7V0A2M4N6P8R0T2W4Y8', tenantId: 'tenant-001',
       ownerType: 'employee', ownerId: 'employee-001', version: 1,
-      accountBlindIndexes: [`blind-key-001.${'a'.repeat(43)}`], dataHash: 'b'.repeat(43),
+      accountBlindIndexes: [`blind-key-001.${'a'.repeat(43)}`],
       approvalEvidenceId: 'approval-001', status: 'active',
       dataKeyId: 'treasury-key-001', dataIv: 'c'.repeat(16),
       dataCiphertext: 'd'.repeat(64), dataAuthTag: 'e'.repeat(22),
@@ -29,6 +29,7 @@ describe('Treasury 持久化契约', () => {
     expect(stored).not.toHaveProperty('account');
     expect(stored).not.toHaveProperty('accountName');
     expect(stored).not.toHaveProperty('clearingCode');
+    expect(stored).not.toHaveProperty('dataHash');
     await expect(new AccountModel({ ...stored, dataAuthTag: '' }).validate())
       .rejects.toThrow(/dataAuthTag/u);
   });

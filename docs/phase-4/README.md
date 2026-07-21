@@ -15,7 +15,8 @@ Phase 4 在 ERP 组织与劳动关系主数据之上，建立可重放的考勤�
 9. [员工本人薪资单、字段级权限与 MCP](./08-payroll-payslip-mcp.md)
 10. [Treasury ISO 20022 代发与回盘冻结契约](./09-treasury-disbursement-contract.md)
 11. [Treasury 密钥与索引迁移 Runbook](./10-treasury-key-index-migration-runbook.md)
-12. 两个完整薪资周期影子计算、差异归因与财务签署
+12. [Treasury 银行账户版本应用契约](./11-treasury-bank-account-application.md)
+13. 两个完整薪资周期影子计算、差异归因与财务签署
 
 ## 强制边界
 

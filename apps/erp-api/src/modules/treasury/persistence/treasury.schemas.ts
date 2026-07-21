@@ -32,11 +32,12 @@ export class TreasuryBankAccountRecord extends ProtectedTreasuryRecord {
   @Prop({ type: Number, required: true, immutable: true, min: 1 }) version!: number;
   @Prop({ type: [{ type: String, match: BLIND_INDEX_PATTERN }], required: true, immutable: true })
   accountBlindIndexes!: string[];
-  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN }) dataHash!: string;
   @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
   approvalEvidenceId!: string;
   @Prop({ type: String, required: true, enum: ['active', 'revoked'] })
   status!: 'active' | 'revoked';
+  @Prop({ type: String, default: null, match: ULID_PATTERN }) supersededById!: string | null;
+  @Prop({ type: Date, default: null }) revokedAt!: Date | null;
   createdAt!: Date;
   updatedAt!: Date;
 }
@@ -53,7 +54,8 @@ TreasuryBankAccountRecordSchema.index(
   { unique: true, partialFilterExpression: { status: 'active' } },
 );
 TreasuryBankAccountRecordSchema.index(
-  { tenantId: 1, accountBlindIndexes: 1 }, { unique: true },
+  { tenantId: 1, accountBlindIndexes: 1 },
+  { unique: true, partialFilterExpression: { status: 'active' } },
 );
 
 /** 员工级支付指令；账号快照、户名、清算行号和实发金额整体密文保存。 */
@@ -70,8 +72,6 @@ export class TreasuryPaymentInstructionRecord extends ProtectedTreasuryRecord {
   @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
   employeeId!: string;
   @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) bankAccountId!: string;
-  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
-  instructionHash!: string;
   @Prop({
     type: String, required: true,
     enum: ['prepared', 'submitted', 'succeeded', 'failed', 'frozen'],
