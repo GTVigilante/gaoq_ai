@@ -6,6 +6,7 @@ import { z } from 'zod';
 import type { AppEnvironment } from '../../config/environment.js';
 import type { VerifiedAccessToken } from './auth.types.js';
 import { ERP_AUTHORIZATION_SCOPE_PATTERN } from './authorization-scope.js';
+import { OAuthServiceClientRegistry } from './oauth-service-client-registry.js';
 import { SessionService } from './session.service.js';
 
 const actorTypeSchema = z.enum(['user', 'service', 'mcp_client', 'system_job']);
@@ -38,6 +39,7 @@ export class RemoteJwksAccessTokenVerifier extends AccessTokenVerifier {
   constructor(
     private readonly config: ConfigService<AppEnvironment, true>,
     private readonly sessions: SessionService,
+    private readonly serviceClients: OAuthServiceClientRegistry,
   ) {
     super();
     this.jwks = createRemoteJWKSet(new URL(this.config.get('AUTH_JWKS_URI', { infer: true })), {
@@ -69,6 +71,23 @@ export class RemoteJwksAccessTokenVerifier extends AccessTokenVerifier {
         ))
       ) {
         throw new UnauthorizedException({ code: 'AUTH_SESSION_INACTIVE', message: '会话不存在或已失效' });
+      }
+      if (
+        verified.actorType === 'mcp_client' &&
+        !this.serviceClients.isActiveTokenIdentity({
+          clientId: verified.clientId,
+          tenantId: verified.tenantId,
+          actorId: verified.actorId,
+          credentialId: verified.sessionId,
+          scopes: verified.scopes,
+          roleCodes: verified.roleCodes,
+          departmentIds: verified.departmentIds,
+        })
+      ) {
+        throw new UnauthorizedException({
+          code: 'AUTH_SERVICE_CLIENT_INACTIVE',
+          message: '服务客户端或凭据已失效',
+        });
       }
       return verified;
     } catch (error: unknown) {

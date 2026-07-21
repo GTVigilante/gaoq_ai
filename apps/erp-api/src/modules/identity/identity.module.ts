@@ -11,6 +11,7 @@ import {
 import { BearerAuthGuard } from './bearer-auth.guard.js';
 import { BrowserRefreshCookieService } from './browser-refresh-cookie.service.js';
 import { BrowserSsoStateCookieService } from './browser-sso-state-cookie.service.js';
+import { OAuthClientCredentialsGrantService } from './oauth-client-credentials-grant.service.js';
 import { DingTalkSsoAdapter } from './dingtalk-sso.adapter.js';
 import { ExternalIdentityRepository } from './external-identity.repository.js';
 import { ExternalIdentity, ExternalIdentitySchema } from './external-identity.schema.js';
@@ -22,6 +23,7 @@ import { OAuthAuthorizationTransactionService } from './oauth-authorization-tran
 import { OAuthClientRegistry } from './oauth-client-registry.js';
 import { OAuthController } from './oauth.controller.js';
 import { OAuthRateLimitService } from './oauth-rate-limit.service.js';
+import { OAuthServiceClientRegistry } from './oauth-service-client-registry.js';
 import { OAuthTokenGrantService } from './oauth-token-grant.service.js';
 import {
   IdentityRefreshToken,
@@ -72,7 +74,9 @@ import { TokenGrantService } from './token-grant.service.js';
     OAuthClientRegistry,
     OAuthAuthorizationTransactionService,
     OAuthTokenGrantService,
+    OAuthClientCredentialsGrantService,
     OAuthRateLimitService,
+    OAuthServiceClientRegistry,
     BrowserRefreshCookieService,
     BrowserSsoStateCookieService,
     AccessProfileRepository,

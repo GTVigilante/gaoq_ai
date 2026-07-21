@@ -95,4 +95,21 @@ describe('AuditService', () => {
       resourceType: 'x', riskLevel: 'R1', outcome: 'failure',
     })).rejects.toThrow('可信用户审计上下文非法');
   });
+
+  it('客户端凭据流使用 mcp_client 主体且拒绝不可信标识', async () => {
+    const sink = new CapturingAuditSink();
+    const service = new AuditService(sink, new TenantContextService());
+    await service.recordTrustedService('tenant-001', {
+      actorId: 'mcp-agent-001', traceId: 'trace-service-001',
+      action: 'identity.oauth.service-token.issue', resourceType: 'oauth_client',
+      resourceId: 'service-client-001', riskLevel: 'R1', outcome: 'success',
+    });
+    expect(sink.append).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: 'tenant-001', actorId: 'mcp-agent-001', actorType: 'mcp_client',
+    }));
+    await expect(service.recordTrustedService('tenant-001', {
+      actorId: '$where', traceId: 'trace-service-002', action: 'x', resourceType: 'x',
+      riskLevel: 'R1', outcome: 'failure',
+    })).rejects.toThrow('可信服务审计上下文非法');
+  });
 });

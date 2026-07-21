@@ -10,6 +10,10 @@ export type TrustedUserAuditRecordInput = AuditRecordInput & {
   readonly actorId: string;
   readonly traceId: string;
 };
+export type TrustedServiceAuditRecordInput = AuditRecordInput & {
+  readonly actorId: string;
+  readonly traceId: string;
+};
 
 @Injectable()
 export class AuditService {
@@ -60,6 +64,27 @@ export class AuditService {
       tenantId,
       actorId,
       actorType: 'user',
+      traceId,
+      occurredAt: new Date().toISOString(),
+    });
+  }
+
+  /** 公共协议端点完成客户端认证后，以显式可信服务身份记录审计。 */
+  async recordTrustedService(
+    tenantId: string,
+    input: TrustedServiceAuditRecordInput,
+  ): Promise<void> {
+    if (
+      !AUDIT_ID_PATTERN.test(tenantId) ||
+      !AUDIT_ID_PATTERN.test(input.actorId) ||
+      !AUDIT_ID_PATTERN.test(input.traceId)
+    ) throw new Error('可信服务审计上下文非法');
+    const { actorId, traceId, ...record } = input;
+    await this.sink.append({
+      ...record,
+      tenantId,
+      actorId,
+      actorType: 'mcp_client',
       traceId,
       occurredAt: new Date().toISOString(),
     });

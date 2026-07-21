@@ -141,7 +141,12 @@ export class McpRuntimeService {
         version: '0.1.0',
         description: 'GaoQ-OS 企业运营 MCP 服务',
       },
-      { capabilities: { logging: {} } },
+      {
+        capabilities: {
+          logging: {},
+          extensions: { 'io.modelcontextprotocol/oauth-client-credentials': {} },
+        },
+      },
     );
     this.registerCapabilities(server);
     return server;

@@ -78,6 +78,53 @@ MCP_OAUTH_CLIENTS_JSON=[{"clientId":"mcp-client-001","clientName":"本地 MCP �
 - Token 端点：`/api/auth/oauth/token`（仅接受 `application/x-www-form-urlencoded`）
 - 用户同意页：`/oauth/consent`，以 ERP HttpOnly 登录会话确认主体与租户
 
+### MCP OAuth 无人值守服务客户端
+
+服务代理使用 MCP OAuth Client Credentials 扩展
+`io.modelcontextprotocol/oauth-client-credentials`。授权服务器同时支持
+`client_secret_basic` 与优先推荐的 `private_key_jwt`（RS256 或 ES256），不接受请求体
+`client_secret`。每个客户端固定绑定一个 ERP 租户、服务主体、角色、部门数据范围与最小
+scope 集合，不能由调用方提交或覆盖租户。
+
+`MCP_SERVICE_CLIENTS_JSON` 最多配置 100 个客户端，每个客户端最多保留 5 个重叠轮换凭据：
+
+```json
+[
+  {
+    "clientId": "service-client-001",
+    "clientName": "组织只读代理",
+    "tenantId": "tenant-001",
+    "actorId": "mcp-agent-001",
+    "allowedScopes": ["erp:mcp:server:connect", "erp:org:chart:read"],
+    "roleCodes": ["service-reader"],
+    "departmentIds": ["department-001"],
+    "status": "active",
+    "authentication": {
+      "method": "client_secret_basic",
+      "credentials": [
+        {
+          "credentialId": "credential-001",
+          "secretSha256": "<43字符SHA-256-base64url摘要>",
+          "notBefore": "2026-07-01T00:00:00+08:00",
+          "expiresAt": "2026-10-01T00:00:00+08:00",
+          "status": "active"
+        }
+      ]
+    }
+  }
+]
+```
+
+- `client_secret_basic` 的原始 secret 必须是 43–128 字符高熵 base64url，只交付给调用方
+  和 Secret Manager；配置仅保存其 SHA-256 base64url 摘要。
+- `private_key_jwt` 配置只保存公开 JWK：RSA/RS256 或 P-256/ES256，且必须带
+  `kid`、`use: "sig"`、`key_ops: ["verify"]`；严禁保存 `d`、`p`、`q` 等私钥参数。
+- 轮换时先加入新凭据并保留短暂重叠窗口，客户端切换完成后将旧凭据设为 `revoked`。
+  当前注册表在进程启动时加载；吊销、scope、角色或部门范围调整必须滚动重启全部 API 实例，
+  全部实例加载新版本后，令牌验证链路会拒绝旧权限快照。紧急吊销不得只改环境变量而不重启。
+- `private_key_jwt` 断言有效期不得超过 5 分钟；`jti` 在 Redis 中以摘要键一次性消费，
+  Redis 不可用时拒绝签发，禁止降级绕过防重放。
+
 提交前执行：
 
 ```bash

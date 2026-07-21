@@ -5,12 +5,17 @@ import { describe, expect, it } from 'vitest';
 import type { AppEnvironment } from '../../config/environment.js';
 import { OAuthAuthorizationServerMetadataController } from './oauth-authorization-server-metadata.controller.js';
 import type { OAuthClientRegistry } from './oauth-client-registry.js';
+import type { OAuthServiceClientRegistry } from './oauth-service-client-registry.js';
 
 describe('OAuthAuthorizationServerMetadataController', () => {
   it('发布 RFC 8414 端点、PKCE S256 和实际支持的授权模式', () => {
     const controller = new OAuthAuthorizationServerMetadataController(
       { get: () => 'https://erp.example.com' } as unknown as ConfigService<AppEnvironment, true>,
       { listSupportedScopes: () => ['erp:mcp:server:connect', 'erp:org:chart:read'] } as unknown as OAuthClientRegistry,
+      {
+        listSupportedAuthMethods: () => ['client_secret_basic', 'private_key_jwt'],
+        listSupportedScopes: () => ['erp:mcp:server:connect'],
+      } as unknown as OAuthServiceClientRegistry,
     );
 
     const metadata = controller.metadata();
@@ -22,9 +27,10 @@ describe('OAuthAuthorizationServerMetadataController', () => {
       jwks_uri: 'https://erp.example.com/.well-known/jwks.json',
       response_types_supported: ['code'],
       response_modes_supported: ['query'],
-      grant_types_supported: ['authorization_code'],
+      grant_types_supported: ['authorization_code', 'client_credentials'],
       code_challenge_methods_supported: ['S256'],
-      token_endpoint_auth_methods_supported: ['none'],
+      token_endpoint_auth_methods_supported: ['none', 'client_secret_basic', 'private_key_jwt'],
+      token_endpoint_auth_signing_alg_values_supported: ['RS256', 'ES256'],
       scopes_supported: ['erp:mcp:server:connect', 'erp:org:chart:read'],
       client_id_metadata_document_supported: false,
       authorization_response_iss_parameter_supported: true,

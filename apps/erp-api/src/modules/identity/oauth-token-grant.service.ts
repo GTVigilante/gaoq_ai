@@ -66,6 +66,7 @@ export class OAuthTokenGrantService {
       signed = await this.signer.sign({
         tenantId: authorization.tenantId,
         actorId: authorization.actorId,
+        actorType: 'user',
         sessionId: authorization.sessionId,
         clientId: authorization.clientId,
         roleCodes: profile.roleCodes,

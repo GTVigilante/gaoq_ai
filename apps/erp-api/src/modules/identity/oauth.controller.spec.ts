@@ -8,6 +8,7 @@ import type { AuditService } from '../../core/audit/audit.service.js';
 import type { ErpRequest } from '../../core/http/request-context.js';
 import type { BrowserRefreshCookieService } from './browser-refresh-cookie.service.js';
 import type { OAuthAuthorizationTransactionService } from './oauth-authorization-transaction.service.js';
+import type { OAuthClientCredentialsGrantService } from './oauth-client-credentials-grant.service.js';
 import type { OAuthClientRegistry } from './oauth-client-registry.js';
 import { OAuthController } from './oauth.controller.js';
 import type { OAuthRateLimitService } from './oauth-rate-limit.service.js';
@@ -42,6 +43,10 @@ function fixture() {
   const exchange = vi.fn().mockResolvedValue({
     accessToken: 'signed-token', tokenType: 'Bearer', expiresIn: 600, scope: 'erp:mcp:server:connect',
   });
+  const issueClientCredentials = vi.fn().mockResolvedValue({
+    accessToken: 'service-token', tokenType: 'Bearer', expiresIn: 600,
+    scope: 'erp:mcp:server:connect',
+  });
   const resolveActive = vi.fn().mockReturnValue({
     clientId: 'mcp-client-001', redirectUris: ['https://claude.ai/callback'],
   });
@@ -60,13 +65,14 @@ function fixture() {
     { begin, describe, decide } as unknown as OAuthAuthorizationTransactionService,
     { authenticateBrowserForOAuth } as unknown as TokenGrantService,
     { exchange } as unknown as OAuthTokenGrantService,
+    { issue: issueClientCredentials } as unknown as OAuthClientCredentialsGrantService,
     { resolveActive, assertRedirect } as unknown as OAuthClientRegistry,
     { assertAllowed } as unknown as OAuthRateLimitService,
     { assertTrustedOrigin, readRequired, set } as unknown as BrowserRefreshCookieService,
     { recordTrustedUser } as unknown as AuditService,
   );
   return {
-    controller, begin, describe, decide, authenticateBrowserForOAuth, exchange,
+    controller, begin, describe, decide, authenticateBrowserForOAuth, exchange, issueClientCredentials,
     resolveActive, assertRedirect, assertAllowed, assertTrustedOrigin, readRequired, set,
     recordTrustedUser,
   };
@@ -259,5 +265,60 @@ describe('OAuthController', () => {
     await store.controller.token(body, basicRequest, response.response);
     expect(response.json).toHaveBeenLastCalledWith({ error: 'invalid_request' });
     expect(store.exchange).not.toHaveBeenCalled();
+  });
+
+  it('client_credentials 接受 Basic 并返回标准令牌响应', async () => {
+    const store = fixture();
+    const response = responseFixture();
+    const authorization = `Basic ${Buffer.from(`service-client-001:${'A'.repeat(43)}`).toString('base64')}`;
+
+    await store.controller.token({
+      grant_type: 'client_credentials', resource: 'https://erp.example.com/mcp',
+      scope: 'erp:mcp:server:connect',
+    }, publicRequest('trace-service-001', 'application/x-www-form-urlencoded', authorization), response.response);
+
+    expect(store.issueClientCredentials).toHaveBeenCalledWith({
+      authorization,
+      resource: 'https://erp.example.com/mcp',
+      scopes: ['erp:mcp:server:connect'],
+      traceId: 'trace-service-001',
+    });
+    expect(response.json).toHaveBeenCalledWith({
+      access_token: 'service-token', token_type: 'Bearer', expires_in: 600,
+      scope: 'erp:mcp:server:connect',
+    });
+  });
+
+  it('Basic 客户端认证失败返回 RFC 6749 要求的 401 challenge', async () => {
+    const store = fixture();
+    store.issueClientCredentials.mockRejectedValue(new HttpException({
+      code: 'OAUTH_INVALID_CLIENT', message: '客户端认证失败',
+    }, 401));
+    const response = responseFixture();
+
+    await store.controller.token({
+      grant_type: 'client_credentials', resource: 'https://erp.example.com/mcp',
+    }, publicRequest(
+      'trace-service-001', 'application/x-www-form-urlencoded',
+      `Basic ${Buffer.from(`service-client-001:${'B'.repeat(43)}`).toString('base64')}`,
+    ), response.response);
+
+    expect(response.setHeader).toHaveBeenCalledWith('WWW-Authenticate', 'Basic realm="oauth-token"');
+    expect(response.status).toHaveBeenCalledWith(401);
+    expect(response.json).toHaveBeenCalledWith({ error: 'invalid_client' });
+  });
+
+  it('client_credentials 拒绝 Basic 与 private_key_jwt 混用', async () => {
+    const store = fixture();
+    const response = responseFixture();
+    await store.controller.token({
+      grant_type: 'client_credentials', resource: 'https://erp.example.com/mcp',
+      client_id: 'service-client-001', client_assertion_type: 'urn:test', client_assertion: 'jwt',
+    }, publicRequest(
+      'trace-service-001', 'application/x-www-form-urlencoded', 'Basic invalid',
+    ), response.response);
+    expect(response.status).toHaveBeenCalledWith(400);
+    expect(response.json).toHaveBeenCalledWith({ error: 'invalid_request' });
+    expect(store.issueClientCredentials).not.toHaveBeenCalled();
   });
 });

@@ -53,7 +53,7 @@ describe('OAuthTokenGrantService', () => {
     });
     expect(store.sign).toHaveBeenCalledWith({
       tenantId: 'tenant-001', actorId: 'actor-001', sessionId: 'session-001',
-      clientId: 'mcp-client-001', roleCodes: ['employee'],
+      actorType: 'user', clientId: 'mcp-client-001', roleCodes: ['employee'],
       scopes: ['erp:mcp:server:connect', 'erp:org:chart:read'], departmentIds: ['department-001'],
     });
     expect(store.recordTrustedUser).toHaveBeenCalledWith('tenant-001', expect.objectContaining({

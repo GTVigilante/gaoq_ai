@@ -30,6 +30,8 @@ const environmentSchema = z.object({
   MCP_ALLOWED_ORIGINS: z.string().min(1),
   /** 预注册公共 MCP OAuth 客户端；仅含公开标识、回调和授权范围，不得包含密钥。 */
   MCP_OAUTH_CLIENTS_JSON: z.string().default('[]'),
+  /** 无人值守 MCP 服务客户端；只允许凭据摘要或公钥，禁止明文 secret 与私钥。 */
+  MCP_SERVICE_CLIENTS_JSON: z.string().default('[]'),
   DINGTALK_CLIENT_ID: z.string().optional(),
   DINGTALK_CLIENT_SECRET: z.string().optional(),
   DINGTALK_REDIRECT_URI: z.string().url().optional(),

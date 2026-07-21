@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import type { AppEnvironment } from '../../config/environment.js';
 import { PublicRoute, RawResponse } from '../../core/http/public-route.decorator.js';
 import { OAuthClientRegistry } from './oauth-client-registry.js';
+import { OAuthServiceClientRegistry } from './oauth-service-client-registry.js';
 
 /** RFC 8414 OAuth 授权服务器元数据，供 MCP 客户端验证 PKCE 与端点能力。 */
 @Controller('.well-known')
@@ -13,6 +14,7 @@ export class OAuthAuthorizationServerMetadataController {
   constructor(
     private readonly config: ConfigService<AppEnvironment, true>,
     private readonly clients: OAuthClientRegistry,
+    private readonly serviceClients: OAuthServiceClientRegistry,
   ) {}
 
   @Get('oauth-authorization-server')
@@ -25,10 +27,17 @@ export class OAuthAuthorizationServerMetadataController {
       jwks_uri: new URL('/.well-known/jwks.json', issuer).toString(),
       response_types_supported: ['code'],
       response_modes_supported: ['query'],
-      grant_types_supported: ['authorization_code'],
+      grant_types_supported: ['authorization_code', 'client_credentials'],
       code_challenge_methods_supported: ['S256'],
-      token_endpoint_auth_methods_supported: ['none'],
-      scopes_supported: this.clients.listSupportedScopes(),
+      token_endpoint_auth_methods_supported: [
+        'none',
+        ...this.serviceClients.listSupportedAuthMethods(),
+      ],
+      token_endpoint_auth_signing_alg_values_supported: ['RS256', 'ES256'],
+      scopes_supported: [...new Set([
+        ...this.clients.listSupportedScopes(),
+        ...this.serviceClients.listSupportedScopes(),
+      ])].sort(),
       client_id_metadata_document_supported: false,
       authorization_response_iss_parameter_supported: true,
     };

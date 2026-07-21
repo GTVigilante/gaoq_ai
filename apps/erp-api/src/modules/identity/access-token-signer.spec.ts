@@ -39,6 +39,7 @@ describe('SecretManagedRsaAccessTokenSigner', () => {
     const result = await signer.sign({
       tenantId: 'tenant-001',
       actorId: 'actor-001',
+      actorType: 'user',
       sessionId: 'session-001',
       clientId: 'gaoq-web',
       roleCodes: ['employee'],
@@ -78,6 +79,7 @@ describe('SecretManagedRsaAccessTokenSigner', () => {
       signer.sign({
         tenantId: 'tenant-001',
         actorId: 'actor-001',
+        actorType: 'user',
         sessionId: 'session-001',
         clientId: 'gaoq-web',
         roleCodes: [],

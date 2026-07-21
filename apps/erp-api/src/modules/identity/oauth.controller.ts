@@ -15,6 +15,7 @@ import { ConfigService } from '@nestjs/config';
 import { createTraceId } from '@gaoq/shared-utils';
 import { IsBoolean } from 'class-validator';
 import type { Request, Response } from 'express';
+import { decodeJwt } from 'jose';
 import { z } from 'zod';
 
 import type { AppEnvironment } from '../../config/environment.js';
@@ -22,6 +23,7 @@ import { AuditService } from '../../core/audit/audit.service.js';
 import { PublicRoute, RawResponse } from '../../core/http/public-route.decorator.js';
 import type { ErpRequest } from '../../core/http/request-context.js';
 import { BrowserRefreshCookieService } from './browser-refresh-cookie.service.js';
+import { OAuthClientCredentialsGrantService } from './oauth-client-credentials-grant.service.js';
 import { OAuthAuthorizationTransactionService } from './oauth-authorization-transaction.service.js';
 import { OAuthClientRegistry } from './oauth-client-registry.js';
 import { OAuthProtocolExceptionFilter } from './oauth-protocol-exception.filter.js';
@@ -34,13 +36,22 @@ export class OAuthDecisionRequest {
   approved!: boolean;
 }
 
-const oauthTokenRequestSchema = z.object({
-  grant_type: z.string().min(1).max(64),
+const authorizationCodeTokenRequestSchema = z.object({
+  grant_type: z.literal('authorization_code'),
   client_id: z.string().min(1).max(128),
   code: z.string().min(1).max(256),
   redirect_uri: z.string().min(1).max(2_048),
   resource: z.string().min(1).max(2_048),
   code_verifier: z.string().min(43).max(128),
+}).strict();
+
+const clientCredentialsTokenRequestSchema = z.object({
+  grant_type: z.literal('client_credentials'),
+  resource: z.string().min(1).max(2_048),
+  scope: z.string().min(1).max(12_900).optional(),
+  client_id: z.string().min(1).max(128).optional(),
+  client_assertion_type: z.string().min(1).max(128).optional(),
+  client_assertion: z.string().min(1).max(8_192).optional(),
 }).strict();
 
 const SAFE_STATE_PATTERN = /^[\x21-\x7E]{1,512}$/;
@@ -55,6 +66,7 @@ export class OAuthController {
     private readonly transactions: OAuthAuthorizationTransactionService,
     private readonly browserGrants: TokenGrantService,
     private readonly tokenGrants: OAuthTokenGrantService,
+    private readonly clientCredentialGrants: OAuthClientCredentialsGrantService,
     private readonly clients: OAuthClientRegistry,
     private readonly rateLimits: OAuthRateLimitService,
     private readonly cookies: BrowserRefreshCookieService,
@@ -196,7 +208,7 @@ export class OAuthController {
     response.status(200).json({ redirect_to: decision.redirectTo });
   }
 
-  /** 公共客户端 token endpoint；不接受 client_secret，仅支持授权码与 PKCE。 */
+  /** OAuth token endpoint：人员代理使用授权码，服务代理使用标准客户端认证。 */
   @Post('token')
   @UseFilters(OAuthProtocolExceptionFilter)
   async token(
@@ -205,6 +217,7 @@ export class OAuthController {
     @Res() response: Response,
   ): Promise<void> {
     response.setHeader('Cache-Control', 'no-store');
+    response.setHeader('Pragma', 'no-cache');
     try {
       await this.rateLimits.assertAllowed('token_ip', this.requestAddress(request));
     } catch (error) {
@@ -212,14 +225,28 @@ export class OAuthController {
       this.respondTokenError(response, error);
       return;
     }
-    if (
-      !request.is('application/x-www-form-urlencoded') ||
-      request.header('authorization') !== undefined
-    ) {
+    if (!request.is('application/x-www-form-urlencoded')) {
       response.status(400).json({ error: 'invalid_request' });
       return;
     }
-    const parsed = oauthTokenRequestSchema.safeParse(rawBody);
+    if (typeof rawBody !== 'object' || rawBody === null) {
+      response.status(400).json({ error: 'invalid_request' });
+      return;
+    }
+    const grantType = (rawBody as Record<string, unknown>)['grant_type'];
+    if (grantType !== 'authorization_code' && grantType !== 'client_credentials') {
+      response.status(400).json({ error: 'unsupported_grant_type' });
+      return;
+    }
+    if (grantType === 'client_credentials') {
+      await this.clientCredentialsToken(rawBody, request, response);
+      return;
+    }
+    if (request.header('authorization') !== undefined) {
+      response.status(400).json({ error: 'invalid_request' });
+      return;
+    }
+    const parsed = authorizationCodeTokenRequestSchema.safeParse(rawBody);
     if (!parsed.success) {
       response.status(400).json({ error: 'invalid_request' });
       return;
@@ -230,10 +257,6 @@ export class OAuthController {
     } catch (error) {
       if (!(error instanceof HttpException)) throw error;
       this.respondTokenError(response, error);
-      return;
-    }
-    if (body.grant_type !== 'authorization_code') {
-      response.status(400).json({ error: 'unsupported_grant_type' });
       return;
     }
     try {
@@ -257,6 +280,60 @@ export class OAuthController {
     }
   }
 
+  private async clientCredentialsToken(
+    rawBody: unknown,
+    request: ErpRequest,
+    response: Response,
+  ): Promise<void> {
+    const parsed = clientCredentialsTokenRequestSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      response.status(400).json({ error: 'invalid_request' });
+      return;
+    }
+    const body = parsed.data;
+    const authorization = request.header('authorization');
+    const basicAttempt = authorization !== undefined;
+    if (
+      (authorization !== undefined && !authorization.startsWith('Basic ')) ||
+      (authorization !== undefined && body.client_assertion !== undefined) ||
+      (authorization === undefined && body.client_assertion === undefined)
+    ) {
+      response.status(400).json({ error: 'invalid_request' });
+      return;
+    }
+    const rateLimitSubject = body.client_id ?? this.basicClientId(authorization) ??
+      this.assertionClientId(body.client_assertion) ?? 'unknown';
+    try {
+      await this.rateLimits.assertAllowed('token_client', rateLimitSubject);
+    } catch (error) {
+      if (!(error instanceof HttpException)) throw error;
+      this.respondTokenError(response, error, basicAttempt);
+      return;
+    }
+    try {
+      const grant = await this.clientCredentialGrants.issue({
+        ...(authorization === undefined ? {} : { authorization }),
+        ...(body.client_id === undefined ? {} : { clientId: body.client_id }),
+        ...(body.client_assertion_type === undefined
+          ? {}
+          : { clientAssertionType: body.client_assertion_type }),
+        ...(body.client_assertion === undefined ? {} : { clientAssertion: body.client_assertion }),
+        resource: body.resource,
+        ...(body.scope === undefined ? {} : { scopes: body.scope.split(' ') }),
+        traceId: request.traceId ?? createTraceId(),
+      });
+      response.status(200).json({
+        access_token: grant.accessToken,
+        token_type: grant.tokenType,
+        expires_in: grant.expiresIn,
+        scope: grant.scope,
+      });
+    } catch (error) {
+      if (!(error instanceof HttpException)) throw error;
+      this.respondTokenError(response, error, basicAttempt);
+    }
+  }
+
   private authorizationError(error: HttpException): string {
     const code = this.stableCode(error);
     if (code === 'OAUTH_RATE_LIMITED' || code.endsWith('_UNAVAILABLE')) {
@@ -274,6 +351,7 @@ export class OAuthController {
     }
     if (code === 'OAUTH_INVALID_CLIENT') return 'invalid_client';
     if (code === 'OAUTH_INVALID_GRANT') return 'invalid_grant';
+    if (code.includes('SCOPE')) return 'invalid_scope';
     return 'invalid_request';
   }
 
@@ -321,9 +399,44 @@ export class OAuthController {
     response.redirect(302, redirect.toString());
   }
 
-  private respondTokenError(response: Response, exception: HttpException): void {
+  private respondTokenError(
+    response: Response,
+    exception: HttpException,
+    basicAttempt = false,
+  ): void {
     this.setRetryAfter(response, exception);
-    response.status(this.protocolErrorStatus(exception)).json({ error: this.tokenError(exception) });
+    const oauthError = this.tokenError(exception);
+    if (basicAttempt && oauthError === 'invalid_client') {
+      response.setHeader('WWW-Authenticate', 'Basic realm="oauth-token"');
+      response.status(401).json({ error: oauthError });
+      return;
+    }
+    response.status(this.protocolErrorStatus(exception)).json({ error: oauthError });
+  }
+
+  private basicClientId(authorization: string | undefined): string | undefined {
+    if (authorization === undefined || authorization.length > 512) return undefined;
+    const match = /^Basic ([A-Za-z0-9+/]+={0,2})$/.exec(authorization);
+    if (match === null) return undefined;
+    try {
+      const decoded = Buffer.from(match[1] ?? '', 'base64').toString('utf8');
+      const separator = decoded.indexOf(':');
+      return separator > 0 ? decoded.slice(0, separator) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private assertionClientId(assertion: string | undefined): string | undefined {
+    if (assertion === undefined || assertion.length > 8_192) return undefined;
+    try {
+      const issuer = decodeJwt(assertion).iss;
+      return typeof issuer === 'string' && /^[A-Za-z0-9._-]{8,128}$/.test(issuer)
+        ? issuer
+        : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private setRetryAfter(response: Response, exception: HttpException | undefined): void {

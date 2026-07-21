@@ -91,6 +91,9 @@ describe('MCP Streamable HTTP 协议集成', () => {
     } catch (error) {
       throw new Error(`MCP 初始化失败：${JSON.stringify(exchanges)}`, { cause: error });
     }
+    expect(client.getServerCapabilities()?.extensions).toMatchObject({
+      'io.modelcontextprotocol/oauth-client-credentials': {},
+    });
 
     let listedTools;
     try {

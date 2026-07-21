@@ -68,6 +68,7 @@ export class TokenGrantService {
     const signed = await this.signer.sign({
       tenantId: identity.tenantId,
       actorId: identity.actorId,
+      actorType: 'user',
       sessionId,
       clientId: 'gaoq-web',
       roleCodes: profile.roleCodes,
@@ -104,6 +105,7 @@ export class TokenGrantService {
     const signed = await this.signer.sign({
       tenantId: resolved.tenantId,
       actorId: resolved.actorId,
+      actorType: 'user',
       sessionId: resolved.sessionId,
       clientId: resolved.clientId,
       roleCodes: resolved.profile.roleCodes,

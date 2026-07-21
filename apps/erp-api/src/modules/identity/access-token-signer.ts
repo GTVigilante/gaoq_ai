@@ -2,6 +2,7 @@ import { createPublicKey, randomUUID } from 'node:crypto';
 
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { ActorType } from '@gaoq/shared-types';
 import {
   exportJWK,
   importPKCS8,
@@ -16,6 +17,7 @@ import type { AppEnvironment } from '../../config/environment.js';
 export interface AccessTokenSigningInput {
   readonly tenantId: string;
   readonly actorId: string;
+  readonly actorType: ActorType;
   readonly sessionId: string;
   readonly clientId: string;
   readonly roleCodes: readonly string[];
@@ -53,7 +55,7 @@ export class SecretManagedRsaAccessTokenSigner extends AccessTokenSigner {
       resource: this.config.get('AUTH_RESOURCE', { infer: true }),
       tenant_id: input.tenantId,
       actor_id: input.actorId,
-      actor_type: 'user',
+      actor_type: input.actorType,
       roles: [...input.roleCodes],
       scope: input.scopes.join(' '),
       department_ids: [...input.departmentIds],
