@@ -35,7 +35,7 @@ export class RecruitmentOutboxWriter {
       id: eventId,
       source: '//gaoq-erp/recruitment-module',
       type: eventType,
-      subject: `tenant/${event.tenantId}/recruitment.application/${event.aggregateId}`,
+      subject: `tenant/${event.tenantId}/${event.aggregateType}/${event.aggregateId}`,
       time: event.occurredAt,
       datacontenttype: 'application/json',
       tenantId: event.tenantId,
@@ -44,7 +44,7 @@ export class RecruitmentOutboxWriter {
       schemaVersion: '1',
       data: {
         tenantId: event.tenantId,
-        applicationId: event.aggregateId,
+        aggregateId: event.aggregateId,
         version: event.version,
         ...event.payload,
       },
@@ -52,7 +52,7 @@ export class RecruitmentOutboxWriter {
     await this.records.create([{
       eventId,
       tenantId: event.tenantId,
-      aggregateType: 'recruitment.application',
+      aggregateType: event.aggregateType,
       aggregateId: event.aggregateId,
       aggregateVersion: event.version,
       eventType,

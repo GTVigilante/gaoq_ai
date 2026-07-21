@@ -282,7 +282,7 @@ RecruitmentPositionRecordSchema.pre('validate', function () {
   if (record.status === 'draft' && record.publishedAt !== null) {
     throw new Error('草稿职位不能存在发布时间');
   }
-  if (record.status !== 'draft' && record.publishedAt === null) {
+  if (['open', 'paused'].includes(record.status) && record.publishedAt === null) {
     throw new Error('已发布职位必须记录首次发布时间');
   }
   if ((record.status === 'closed') !== (record.closedAt !== null)) {
@@ -292,7 +292,7 @@ RecruitmentPositionRecordSchema.pre('validate', function () {
 
 RecruitmentPositionRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 RecruitmentPositionRecordSchema.index({ tenantId: 1, status: 1, departmentId: 1, createdAt: -1 });
-RecruitmentPositionRecordSchema.index({ tenantId: 1, requisitionId: 1, createdAt: 1 });
+RecruitmentPositionRecordSchema.index({ tenantId: 1, requisitionId: 1 }, { unique: true });
 
 /** 候选人对单一职位的一次申请事实；个人原文只存在候选人密文主档。 */
 @Schema({ collection: 'recruitment_applications', timestamps: true, versionKey: false, id: false })

@@ -375,6 +375,23 @@ export class ApprovalApplicationService {
     return Object.freeze(instances.map((instance) => instanceSummary(instance)));
   }
 
+  /** Recruitment 只读取审批终态；必须使用专用 Scope，禁止读取表单正文。 */
+  async getInstanceStatusForRecruitment(id: string): Promise<ApprovalInstanceSummary> {
+    const actor = this.context.getActorRequired();
+    if (!actor.scopes.includes('erp:recruitment:requisition:sync_approval')) {
+      throw new ForbiddenException({
+        code: 'APPROVAL_INTEGRATION_STATUS_DENIED', message: '无权同步招聘审批状态',
+      });
+    }
+    const instance = await this.requireInstance(id);
+    if (instance.templateSnapshot.templateCode !== 'recruitment_hc') {
+      throw new ForbiddenException({
+        code: 'APPROVAL_INTEGRATION_TEMPLATE_DENIED', message: '招聘集成只能读取 HC 审批状态',
+      });
+    }
+    return instanceSummary(instance);
+  }
+
   private async transition(
     operation: string,
     key: string,

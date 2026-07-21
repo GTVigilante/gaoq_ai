@@ -65,6 +65,7 @@ import { ApprovalNotificationOperationsController } from './approval-notificatio
   ],
   controllers: [ApprovalController, ApprovalNotificationOperationsController],
   exports: [
+    ApprovalApplicationService,
     ApprovalTemplateRepository,
     ApprovalInstanceRepository,
     ApprovalActionRepository,

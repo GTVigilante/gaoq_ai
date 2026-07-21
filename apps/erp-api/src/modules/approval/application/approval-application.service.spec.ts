@@ -39,9 +39,9 @@ function definition(): ApprovalTemplateDefinition {
   };
 }
 
-function template() {
+function template(code = 'EXPENSE') {
   const draft = createApprovalTemplateDraft({
-    id: 'template-001', tenantId: 'tenant-001', code: 'EXPENSE', name: '费用审批',
+    id: 'template-001', tenantId: 'tenant-001', code, name: '费用审批',
     riskLevel: 'R1', definition: definition(), actorId: 'editor-001',
   }, NOW);
   return publishApprovalTemplate(draft, {
@@ -49,10 +49,10 @@ function template() {
   }, NOW);
 }
 
-function draftInstance() {
+function draftInstance(templateCode = 'EXPENSE') {
   return createApprovalInstanceDraft({
     id: 'instance-001', tenantId: 'tenant-001', title: '费用申请', initiatorId: 'actor-001',
-    template: template(), formData: { amount: 123_45, remark: '仅财务可见' },
+    template: template(templateCode), formData: { amount: 123_45, remark: '仅财务可见' },
   }, NOW);
 }
 
@@ -128,6 +128,34 @@ function service(
 }
 
 describe('ApprovalApplicationService', () => {
+  it('招聘集成只能用专用 Scope 读取状态摘要', async () => {
+    const deps = dependencies();
+    const instance = draftInstance('recruitment_hc');
+    deps.instances.findById.mockResolvedValue(instance);
+    await expect(service(deps).getInstanceStatusForRecruitment(instance.id))
+      .rejects.toBeInstanceOf(ForbiddenException);
+    const result = await service(
+      deps,
+      trustedContext(['erp:recruitment:requisition:sync_approval']),
+    ).getInstanceStatusForRecruitment(instance.id);
+    expect(result).toMatchObject({
+      id: instance.id, status: 'draft', templateCode: 'recruitment_hc',
+    });
+    expect(result).not.toHaveProperty('formData');
+    expect(result).not.toHaveProperty('title');
+  });
+
+  it('招聘集成拒绝读取非 HC 审批，即使调用者拥有专用 Scope', async () => {
+    const deps = dependencies();
+    deps.instances.findById.mockResolvedValue(draftInstance());
+    await expect(service(
+      deps,
+      trustedContext(['erp:recruitment:requisition:sync_approval']),
+    ).getInstanceStatusForRecruitment('instance-001')).rejects.toMatchObject({
+      response: { code: 'APPROVAL_INTEGRATION_TEMPLATE_DENIED' },
+    });
+  });
+
   it('创建实例只返回脱敏摘要，聚合与事件共用幂等事务', async () => {
     const deps = dependencies();
     const result = await service(deps).createInstance('idempotency-key-001', {

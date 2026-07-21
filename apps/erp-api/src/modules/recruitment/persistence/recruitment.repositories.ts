@@ -12,6 +12,7 @@ import {
   type CandidateApplication,
   type CandidateApplicationStageEvent,
   type RecruitmentPosition,
+  type RecruitmentRequisition,
 } from '../domain/index.js';
 import {
   RecruitmentDataCryptoService,
@@ -28,6 +29,8 @@ import {
   type RecruitmentCandidateDocument,
   RecruitmentPositionRecord,
   type RecruitmentPositionDocument,
+  RecruitmentRequisitionRecord,
+  type RecruitmentRequisitionDocument,
 } from './recruitment.schemas.js';
 
 export class RecruitmentWriteConflictError extends Error {
@@ -219,6 +222,75 @@ export class RecruitmentPositionRepository extends TenantBoundRecruitmentReposit
       createdAt: record.createdAt.toISOString(), updatedAt: record.updatedAt.toISOString(),
     });
   }
+
+  async insert(position: RecruitmentPosition, session: ClientSession): Promise<void> {
+    this.assertTenant(position.tenantId);
+    await this.records.create([positionRecord(position)], { session });
+  }
+
+  async replace(
+    position: RecruitmentPosition,
+    expectedVersion: number,
+    session: ClientSession,
+  ): Promise<void> {
+    this.assertTenant(position.tenantId);
+    const record = positionRecord(position);
+    const updated = await this.records.updateOne(
+      { tenantId: this.tenantId(), id: position.id, version: expectedVersion },
+      { $set: {
+        status: record.status, version: record.version, publishedAt: record.publishedAt,
+        closedAt: record.closedAt, updatedAt: record.updatedAt,
+      } },
+      { session, timestamps: false, runValidators: true },
+    );
+    if (updated.matchedCount !== 1) throw new RecruitmentWriteConflictError();
+  }
+}
+
+@Injectable()
+export class RecruitmentRequisitionRepository extends TenantBoundRecruitmentRepository {
+  constructor(
+    context: TenantContextService,
+    @InjectModel(RecruitmentRequisitionRecord.name)
+    private readonly records: Model<RecruitmentRequisitionDocument>,
+  ) { super(context); }
+
+  async findById(id: string, session?: ClientSession): Promise<RecruitmentRequisition | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), id });
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record === null ? null : deepFreezeRecruitment({
+      id: record.id, tenantId: record.tenantId, departmentId: record.departmentId,
+      positionTitle: record.positionTitle, headcount: record.headcount,
+      justification: record.justification, status: record.status,
+      approvalInstanceId: record.approvalInstanceId, version: record.version,
+      createdBy: record.createdBy, createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString(),
+    });
+  }
+
+  async insert(requisition: RecruitmentRequisition, session: ClientSession): Promise<void> {
+    this.assertTenant(requisition.tenantId);
+    await this.records.create([requisitionRecord(requisition)], { session });
+  }
+
+  async replace(
+    requisition: RecruitmentRequisition,
+    expectedVersion: number,
+    session: ClientSession,
+  ): Promise<void> {
+    this.assertTenant(requisition.tenantId);
+    const record = requisitionRecord(requisition);
+    const updated = await this.records.updateOne(
+      { tenantId: this.tenantId(), id: requisition.id, version: expectedVersion },
+      { $set: {
+        status: record.status, approvalInstanceId: record.approvalInstanceId,
+        version: record.version, updatedAt: record.updatedAt,
+      } },
+      { session, timestamps: false, runValidators: true },
+    );
+    if (updated.matchedCount !== 1) throw new RecruitmentWriteConflictError();
+  }
 }
 
 @Injectable()
@@ -318,6 +390,22 @@ function applicationRecord(application: CandidateApplication): Record<string, un
     appliedAt: new Date(application.appliedAt),
     endedAt: application.endedAt === null ? null : new Date(application.endedAt),
     createdAt: new Date(application.appliedAt), updatedAt: new Date(application.updatedAt),
+  };
+}
+
+function positionRecord(position: RecruitmentPosition): Record<string, unknown> {
+  return {
+    ...position,
+    publishedAt: position.publishedAt === null ? null : new Date(position.publishedAt),
+    closedAt: position.closedAt === null ? null : new Date(position.closedAt),
+    createdAt: new Date(position.createdAt), updatedAt: new Date(position.updatedAt),
+  };
+}
+
+function requisitionRecord(requisition: RecruitmentRequisition): Record<string, unknown> {
+  return {
+    ...requisition,
+    createdAt: new Date(requisition.createdAt), updatedAt: new Date(requisition.updatedAt),
   };
 }
 

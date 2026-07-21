@@ -1,7 +1,21 @@
 import type { CandidateApplication, CandidateApplicationStageEvent } from './application.js';
+import type { RecruitmentPosition } from './position.js';
+import type { RecruitmentRequisition } from './requisition.js';
+
+export type RecruitmentEventType =
+  | 'recruitment.application.created'
+  | 'recruitment.application.stage_changed'
+  | 'recruitment.requisition.created'
+  | 'recruitment.requisition.submitted'
+  | 'recruitment.requisition.approved'
+  | 'recruitment.requisition.rejected'
+  | 'recruitment.requisition.closed'
+  | 'recruitment.position.created'
+  | 'recruitment.position.status_changed';
 
 export interface RecruitmentDomainEvent {
-  readonly type: 'recruitment.application.created' | 'recruitment.application.stage_changed';
+  readonly type: RecruitmentEventType;
+  readonly aggregateType: 'recruitment.application' | 'recruitment.requisition' | 'recruitment.position';
   readonly tenantId: string;
   readonly aggregateId: string;
   readonly version: number;
@@ -15,6 +29,7 @@ export function buildCandidateApplicationCreatedEvent(
 ): RecruitmentDomainEvent {
   return Object.freeze({
     type: 'recruitment.application.created',
+    aggregateType: 'recruitment.application',
     tenantId: application.tenantId,
     aggregateId: application.id,
     version: application.version,
@@ -35,6 +50,7 @@ export function buildCandidateApplicationStageEvent(
 ): RecruitmentDomainEvent {
   return Object.freeze({
     type: 'recruitment.application.stage_changed',
+    aggregateType: 'recruitment.application',
     tenantId: event.tenantId,
     aggregateId: event.applicationId,
     version: event.resultingVersion,
@@ -45,6 +61,46 @@ export function buildCandidateApplicationStageEvent(
       actorId: event.actorId,
       reasonCode: event.reasonCode,
       evidenceId: event.evidenceId,
+    }),
+  });
+}
+
+export function buildRecruitmentRequisitionEvent(
+  requisition: RecruitmentRequisition,
+  action: 'created' | 'submitted' | 'approved' | 'rejected' | 'closed',
+): RecruitmentDomainEvent {
+  return Object.freeze({
+    type: `recruitment.requisition.${action}`,
+    aggregateType: 'recruitment.requisition',
+    tenantId: requisition.tenantId,
+    aggregateId: requisition.id,
+    version: requisition.version,
+    occurredAt: requisition.updatedAt,
+    payload: Object.freeze({
+      departmentId: requisition.departmentId,
+      headcount: requisition.headcount,
+      status: requisition.status,
+      approvalInstanceId: requisition.approvalInstanceId,
+    }),
+  });
+}
+
+export function buildRecruitmentPositionEvent(
+  position: RecruitmentPosition,
+  action: 'created' | 'status_changed',
+): RecruitmentDomainEvent {
+  return Object.freeze({
+    type: `recruitment.position.${action}`,
+    aggregateType: 'recruitment.position',
+    tenantId: position.tenantId,
+    aggregateId: position.id,
+    version: position.version,
+    occurredAt: position.updatedAt,
+    payload: Object.freeze({
+      requisitionId: position.requisitionId,
+      departmentId: position.departmentId,
+      headcount: position.headcount,
+      status: position.status,
     }),
   });
 }

@@ -76,12 +76,22 @@ applied → screening → interview → offer_approval → offer_sent
 
 | 用例 | REST | 事件 | MCP | 风险 |
 | --- | --- | --- | --- | --- |
+| 创建与提交 HC | `POST /recruitment/requisitions` 及 `/:id/submit` | `recruitment.requisition.created/submitted.v1` | `recruitment_requisition_create/submit_prepare/execute` | R1/R2 |
+| 同步 HC 审批 | `POST /recruitment/requisitions/:id/sync-approval` | `recruitment.requisition.approved/rejected.v1` | 只读查询，不接受 AI 上报 outcome | R2 |
+| 创建与发布职位 | `POST /recruitment/requisitions/:id/positions` 及 `POST /recruitment/positions/:id/status` | `recruitment.position.created/status_changed.v1` | `recruitment_position_create/transition_prepare/execute` | R1 |
 | 创建候选人及申请 | `POST /recruitment/applications` | `recruitment.application.created.v1` | `recruitment_application_create_prepare/execute` | R1 |
 | 查询候选人状态 | `GET /recruitment/applications/:id` | 无 | Resource + `recruitment_application_get` | R0 |
 | 安排面试 | `POST /recruitment/applications/:id/interviews` | `recruitment.interview.scheduled.v1` | prepare/execute | R1 |
 | 提交面试评价 | `POST /recruitment/interviews/:id/feedback` | `recruitment.interview.feedback_submitted.v1` | prepare/execute | R1 |
 | 形成/发送 Offer | Offer 资源端点 | `recruitment.offer.*.v1` | 仅准备与查询；发送为 R2 | R2 |
 | 合同完成与入职转化 | Webhook/应用命令 | `esign.flow.completed.v1`、`onboarding.completed.v1` | 只读状态，不提供终态执行 Tool | R2/R3 |
+
+### 5.1 HC 审批模板与 Saga 契约
+
+- Approval 必须预先发布唯一编码 `recruitment_hc` 的 R2 模板；表单字段固定为 `requisition_id`、`department_id`、`position_title`、`headcount`、`justification`。发布前必须验证部门负责人、HRBP 和财务/编制负责人解析规则。
+- 提交链路使用一个客户端根幂等键派生审批创建、审批提交和招聘绑定三个幂等步骤。跨域调用不嵌套 Mongo 事务；任一步崩溃后以同一根键重试，必须回到同一审批实例。
+- Recruitment 只能通过 Approval 应用服务的专用 Scope 读取 `recruitment_hc` 状态摘要，不读表单原文；仅 `approved/rejected` 终态可以驱动 HC。
+- 一份 HC 对应一个业务职位，职位标题、部门和人数从 HC 锁定继承；多招聘渠道发布使用外部映射，不复制业务职位。
 
 ## 6. 发布门禁
 

@@ -4,17 +4,21 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { IdempotencyModule } from '../../core/idempotency/idempotency.module.js';
 import { TenantContextModule } from '../../core/tenant/tenant-context.module.js';
 import { OrgModule } from '../org/org.module.js';
+import { ApprovalModule } from '../approval/approval.module.js';
 import { OutboxRecord, OutboxRecordSchema } from '../org/persistence/outbox.schema.js';
 import { RecruitmentDataCryptoService } from './persistence/recruitment-data-crypto.service.js';
 import { RecruitmentOutboxWriter } from './persistence/recruitment-outbox.writer.js';
 import { RecruitmentApplicationService } from './application/recruitment-application.service.js';
+import { RecruitmentManagementService } from './application/recruitment-management.service.js';
 import { RecruitmentController } from './recruitment.controller.js';
+import { RecruitmentManagementController } from './recruitment-management.controller.js';
 import {
   CandidateApplicationRepository,
   CandidateApplicationStageRepository,
   CandidateConsentEvidenceRepository,
   RecruitmentCandidateRepository,
   RecruitmentPositionRepository,
+  RecruitmentRequisitionRepository,
 } from './persistence/recruitment.repositories.js';
 import {
   CandidateApplicationRecord,
@@ -35,6 +39,7 @@ import {
 @Module({
   imports: [
     IdempotencyModule,
+    ApprovalModule,
     TenantContextModule,
     OrgModule,
     MongooseModule.forFeature([
@@ -53,17 +58,22 @@ import {
     RecruitmentCandidateRepository,
     CandidateConsentEvidenceRepository,
     RecruitmentPositionRepository,
+    RecruitmentRequisitionRepository,
     CandidateApplicationRepository,
     CandidateApplicationStageRepository,
     RecruitmentApplicationService,
+    RecruitmentManagementService,
   ],
-  controllers: [RecruitmentController],
+  controllers: [RecruitmentController, RecruitmentManagementController],
   exports: [
     RecruitmentDataCryptoService,
     RecruitmentOutboxWriter,
     RecruitmentCandidateRepository,
     RecruitmentPositionRepository,
+    RecruitmentRequisitionRepository,
     CandidateApplicationRepository,
+    RecruitmentApplicationService,
+    RecruitmentManagementService,
   ],
 })
 export class RecruitmentModule {}

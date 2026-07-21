@@ -129,6 +129,9 @@ describe('RecruitmentSchemas', () => {
 
   it('职位发布和 HC 审批引用保持状态一致', async () => {
     await new PositionModel(position()).validate();
+    await new PositionModel({
+      ...position(), status: 'closed', closedAt: new Date('2026-07-21T09:00:00.000Z'),
+    }).validate();
     await expect(new PositionModel({
       ...position(), status: 'open', publishedAt: null,
     }).validate()).rejects.toThrow('必须记录首次发布时间');
@@ -163,7 +166,10 @@ describe('RecruitmentSchemas', () => {
       .find(([spec]) => spec.phoneBlindIndexes === 1);
     const emailIndex = RecruitmentCandidateRecordSchema.indexes()
       .find(([spec]) => spec.emailBlindIndexes === 1);
+    const requisitionPositionIndex = RecruitmentPositionRecordSchema.indexes()
+      .find(([spec]) => spec.requisitionId === 1);
     expect(phoneIndex?.[1]).toMatchObject({ unique: true, sparse: true });
     expect(emailIndex?.[1]).toMatchObject({ unique: true, sparse: true });
+    expect(requisitionPositionIndex?.[1]).toMatchObject({ unique: true });
   });
 });
