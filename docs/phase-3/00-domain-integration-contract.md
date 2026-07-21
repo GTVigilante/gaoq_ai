@@ -55,6 +55,19 @@ draft → pending_approval → approved → sending → sent → accepted → si
 - `sending` 仅代表已形成受保护发送意图；只有 Integration 的可信投递回执才能进入 `sent`，不得把 HTTP 202 或 Outbox 入队当作已送达。
 - 接受/拒绝必须由已验证候选人门户会话形成不可变证据；管理端和 MCP 不提供自报接受接口。`signed` 只接受 eSign 验签、租户映射、文件哈希与证据归档均完成后的内部命令。
 
+### 2.1 Care 离职状态机
+
+```text
+draft → pending_approval → approved → clearing → ready → scheduled → executing → completed
+                    └──────────────────────────────────────────────────────────→ cancelled
+```
+
+- Care 是离职清算和生效时刻的编排权威；Org 通用员工状态接口禁止直接进入 `terminated`。只有具备 `erp:care:employment:terminate` 的 Worker 窄接口可在同一 Mongo 事务关闭 `Employment`、终止 `Employee`、停用授权与外部身份并吊销会话/刷新令牌。非离职的转正、在职与停职迁移必须在同一事务同步当前 `Employee` 和开放 `Employment`，不得留下两套在职状态。
+- 最后工作日使用严格 `YYYY-MM-DD`；`accessDisableAt` 使用规范 UTC 时刻，并必须映射到租户 IANA 时区内的同一最后工作日。未到该时刻不得提前执行。
+- 交接接受、资产清退、财务清算、数据保留确认分别使用独立可信 Scope 和不可替换证据；证据及校友授权必须由生产 Adapter 校验，Adapter 未装配或无法确认时失败关闭。全部清算完成后才能排期。人工 REST 和 MCP 均不暴露 R3 执行能力。
+- 执行采用 `scheduled → executing → Org terminate → completed` 可恢复 Saga。队列任务按租户与案件唯一，重试读取最新版本；Org 以案件、执行证据和业务日期三元组校验重放。
+- 校友联系必须有明确目的、渠道、授权版本、授予时间和不超过五年的到期时间；撤回后立即停止非必要联系，不得复用员工在职授权。
+
 ## 3. 身份、隐私与保留
 
 - 候选人收集时必须保存授权版本、目的、来源、时间和到期时间；没有授权或授权已撤回时禁止创建新处理活动。
@@ -151,6 +164,12 @@ draft → pending_approval → approved → sending → sent → accepted → si
 - 输出仅含任务 `pending/completed` 状态、组织引用、拟入职业务日期、聚合状态、Employment 引用与版本；不得返回合同、身份材料、培训内容或各任务证据标识。
 - `onboarding_progress_guide` 明确提示 AI 不得索取证据原文、代报任务完成或执行劳动关系建档。完成建档属于 R3，永不注册 MCP Tool。
 - 在材料证据注册表、Identity/Knowledge 可信证明接口和相应消费者验收完成前，不注册入职任务写 Tool；不能让 AI 用任意字符串伪造证据引用。
+
+### 5.5 Knowledge 与 Care MCP
+
+- Knowledge 只读 Resource/Tool 仅返回课程发布摘要和培训任务进度；不得返回内容引用、题库引用、答卷提交、评分证据或完成证据。评分、完成和 Onboarding 证明回填不注册 MCP。
+- Care Resource Template 固定为 `erp://care/cases/{id}`，Tool 固定为 `care_case_get`。输出仅含员工/劳动关系引用、最后工作日、计划失效时刻、清算任务状态和版本；离职原因、审批实例与所有证据引用均不进入 MCP。
+- `care_offboarding_progress_guide` 必须明确禁止 AI 审批、代报清算证据、关闭劳动关系或停用身份；Care 不注册写 Tool。
 
 ## 6. 发布门禁
 

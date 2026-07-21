@@ -19,6 +19,8 @@ import {
   buildEmployeeStatusChangedEvent,
   buildEmployeeUpdatedEvent,
   buildEmploymentEstablishedEvent,
+  buildEmploymentTerminatedEvent,
+  buildEmploymentStatusChangedEvent,
   buildPersonCreatedEvent,
   buildJobLevelCreatedEvent,
   buildJobLevelUpdatedEvent,
@@ -32,6 +34,8 @@ import {
   createPosition,
   OrgDomainError,
   transitionEmployeeStatus,
+  terminateEmployment,
+  transitionEmploymentStatus,
   updateDepartment,
   updateEmployee,
   updateJobLevel,
@@ -70,6 +74,11 @@ const MAX_DEPARTMENT_DEPTH = 100;
 export interface OrgChart {
   readonly departments: readonly Department[];
   readonly employees: readonly Employee[];
+}
+
+export interface CareEmploymentSource {
+  readonly employee: Employee;
+  readonly employment: Employment;
 }
 
 /** 组织主数据应用服务：统一事务、引用校验、并发控制、Outbox 与数据权限。 */
@@ -116,6 +125,17 @@ export class OrgApplicationService {
         employee.departmentIds.some((departmentId) => visible.has(departmentId)),
       ),
     };
+  }
+
+  /** Care 只读取离职编排所需的当前组织与劳动关系，不返回身份或合同原文。 */
+  async getEmploymentForCare(employmentId: string): Promise<CareEmploymentSource> {
+    this.assertTrustedScope('erp:care:employment:read');
+    const employment = await this.employments.findById(employmentId);
+    if (employment === null) throw new NotFoundException({
+      code: 'ORG_EMPLOYMENT_NOT_FOUND', message: '劳动关系不存在',
+    });
+    const employee = await this.requireEmployee(employment.employeeId);
+    return Object.freeze({ employee, employment });
   }
 
   async createDepartment(
@@ -461,6 +481,9 @@ export class OrgApplicationService {
     readonly employee: Employee;
     readonly identityTermination?: EmployeeIdentityTerminationResult;
   }> {
+    if (input.status === 'terminated') throw new ConflictException({
+      code: 'ORG_CARE_WORKFLOW_REQUIRED', message: '员工离职必须通过 Care 清算与生效日编排',
+    });
     return this.run(async () => this.idempotency.execute(
       'org.employee.status_transition',
       key,
@@ -468,14 +491,23 @@ export class OrgApplicationService {
       async (session) => {
         const current = await this.requireEmployee(id, session);
         this.assertExpectedVersion(current.version, expectedVersion);
+        const currentEmployment = await this.employments.findOpenByEmployeeId(id, session);
         const now = new Date();
         const employee = transitionEmployeeStatus(current, input.status, now);
-        let identityTermination: EmployeeIdentityTerminationResult | undefined;
-        if (employee.status === 'terminated') {
-          identityTermination = await this.identities.terminateEmployee(
-            current.tenantId,
-            current.id,
-            session,
+        if (currentEmployment !== null) {
+          if (employee.status !== 'active' && employee.status !== 'suspended') {
+            throw new ConflictException({
+              code: 'ORG_EMPLOYMENT_STATUS_SYNC_INVALID',
+              message: '当前员工状态不能同步到劳动关系',
+            });
+          }
+          const employment = transitionEmploymentStatus(currentEmployment, {
+            tenantId: this.context.getTenantRequired().tenantId,
+            expectedVersion: currentEmployment.version, status: employee.status,
+          }, now);
+          await this.employments.replace(employment, currentEmployment.version, session);
+          await this.outbox.append(
+            buildEmploymentStatusChangedEvent(employment, currentEmployment.status, now), session,
           );
         }
         await this.employees.replace(employee, expectedVersion, session);
@@ -483,10 +515,78 @@ export class OrgApplicationService {
           buildEmployeeStatusChangedEvent(employee, current.status, now),
           session,
         );
-        return {
-          employee,
-          ...(identityTermination === undefined ? {} : { identityTermination }),
-        };
+        return { employee };
+      },
+    ));
+  }
+
+  /** Care 专用：同一事务关闭 Employment、终止 Employee、吊销全部身份并发布主数据事件。 */
+  async terminateEmploymentFromCare(
+    key: string,
+    input: {
+      readonly careCaseId: string;
+      readonly employeeId: string;
+      readonly employmentId: string;
+      readonly effectiveTo: string;
+      readonly executionEvidenceId: string;
+    },
+  ): Promise<{
+    readonly employee: Employee;
+    readonly employment: Employment;
+    readonly terminationEvidenceId: string;
+    readonly identityTermination?: EmployeeIdentityTerminationResult;
+  }> {
+    this.assertTrustedScope('erp:care:employment:terminate');
+    return this.run(async () => this.idempotency.execute(
+      'org.employment.terminate_from_care', key, input, async (session) => {
+        const [currentEmployee, currentEmployment] = await Promise.all([
+          this.requireEmployee(input.employeeId, session),
+          this.employments.findById(input.employmentId, session),
+        ]);
+        if (currentEmployment === null) throw new NotFoundException({
+          code: 'ORG_EMPLOYMENT_NOT_FOUND', message: '劳动关系不存在',
+        });
+        if (currentEmployment.employeeId !== currentEmployee.id) throw new ConflictException({
+          code: 'ORG_CARE_EMPLOYMENT_MISMATCH', message: '离职案件员工与劳动关系不一致',
+        });
+        if (currentEmployment.status === 'resigned') {
+          if (
+            currentEmployee.status !== 'terminated' ||
+            currentEmployment.terminationCareCaseId !== input.careCaseId ||
+            currentEmployment.terminationExecutionEvidenceId !== input.executionEvidenceId ||
+            currentEmployment.effectiveTo !== input.effectiveTo ||
+            currentEmployment.terminationEvidenceId === null
+          ) throw new ConflictException({
+            code: 'ORG_CARE_TERMINATION_MISMATCH', message: '劳动关系已由其他事实关闭',
+          });
+          return {
+            employee: currentEmployee, employment: currentEmployment,
+            terminationEvidenceId: currentEmployment.terminationEvidenceId,
+          };
+        }
+        if (currentEmployee.status === 'terminated') throw new ConflictException({
+          code: 'ORG_LEGACY_TERMINATION_INCONSISTENT',
+          message: '员工已离职但劳动关系仍开放，必须进入数据修复流程',
+        });
+        const now = new Date();
+        const terminationEvidenceId = createEventId(now);
+        const employee = transitionEmployeeStatus(currentEmployee, 'terminated', now);
+        const employment = terminateEmployment(currentEmployment, {
+          tenantId: this.context.getTenantRequired().tenantId,
+          expectedVersion: currentEmployment.version, effectiveTo: input.effectiveTo,
+          careCaseId: input.careCaseId, executionEvidenceId: input.executionEvidenceId,
+          terminationEvidenceId,
+        }, now);
+        const identityTermination = await this.identities.terminateEmployee(
+          currentEmployee.tenantId, currentEmployee.id, session,
+        );
+        await this.employments.replace(employment, currentEmployment.version, session);
+        await this.employees.replace(employee, currentEmployee.version, session);
+        await this.outbox.append(buildEmploymentTerminatedEvent(employment, now), session);
+        await this.outbox.append(
+          buildEmployeeStatusChangedEvent(employee, currentEmployee.status, now), session,
+        );
+        return { employee, employment, terminationEvidenceId, identityTermination };
       },
     ));
   }
@@ -537,7 +637,7 @@ export class OrgApplicationService {
     return value;
   }
 
-  private async requireEmployee(id: string, session: ClientSession): Promise<Employee> {
+  private async requireEmployee(id: string, session?: ClientSession): Promise<Employee> {
     const value = await this.employees.findById(id, session);
     if (value === null) throw this.notFound('employee', id);
     return value;
@@ -573,7 +673,7 @@ export class OrgApplicationService {
 
   private assertTrustedScope(scope: string): void {
     if (!this.context.getActorRequired().scopes.includes(scope)) throw new ForbiddenException({
-      code: 'ORG_TRUSTED_WORKFLOW_REQUIRED', message: '必须由受信任的入职工作流执行',
+      code: 'ORG_TRUSTED_WORKFLOW_REQUIRED', message: '必须由受信任的生命周期工作流执行',
     });
   }
 

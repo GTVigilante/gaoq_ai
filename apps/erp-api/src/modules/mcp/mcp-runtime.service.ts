@@ -178,6 +178,22 @@ const knowledgeAssignmentSchema = z.object({
   status: z.enum(['assigned', 'in_progress', 'completed', 'expired']),
   progressBps: z.number().int().min(0).max(10_000), version: z.number().int().positive(),
 });
+const careTaskStatusSchema = z.enum(['pending', 'completed']);
+const careCaseSchema = z.object({
+  id: z.string(), employeeId: z.string(), employmentId: z.string(),
+  lastWorkingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), accessDisableAt: z.string(),
+  status: z.enum([
+    'draft', 'pending_approval', 'approved', 'clearing', 'ready',
+    'scheduled', 'executing', 'completed', 'cancelled',
+  ]),
+  tasks: z.object({
+    handover_accepted: careTaskStatusSchema,
+    assets_cleared: careTaskStatusSchema,
+    finance_cleared: careTaskStatusSchema,
+    data_retention_confirmed: careTaskStatusSchema,
+  }),
+  version: z.number().int().positive(),
+});
 
 @Injectable()
 export class McpRuntimeService {
@@ -415,6 +431,24 @@ export class McpRuntimeService {
       },
     );
 
+    server.registerResource(
+      'care-case',
+      new ResourceTemplate('erp://care/cases/{id}', { list: undefined }),
+      {
+        title: '离职案件脱敏进度',
+        description: '读取清算任务与生效状态；不返回离职原因、审批正文或任何证据引用。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getCareCase(requiredResourceId(id), extra);
+        if (result.isError === true) throw new Error('无权读取离职案件');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
     server.registerPrompt(
       'approval_submission_guide',
       {
@@ -482,6 +516,24 @@ export class McpRuntimeService {
           content: {
             type: 'text',
             text: `请读取培训任务 ${assignmentId} 的脱敏摘要，说明进度、截止日期和状态。不要索取课程正文、题库、答案、答卷或证据；不要代替评分、完成任务或回填入职证明。`,
+          },
+        }],
+      }),
+    );
+
+    server.registerPrompt(
+      'care_offboarding_progress_guide',
+      {
+        title: '离职清算进度检查清单',
+        description: '只读取脱敏清算状态；AI 不审批、不代报证据、不执行离职或账号停用。',
+        argsSchema: { careCaseId: recruitmentIdSchema },
+      },
+      ({ careCaseId }) => ({
+        messages: [{
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `请读取离职案件 ${careCaseId} 的脱敏任务状态，列出待办和计划生效时间。不要索取离职原因、审批正文、交接材料或证据；不要代报清算完成，也不要执行劳动关系关闭或身份停用。`,
           },
         }],
       }),
@@ -707,6 +759,18 @@ export class McpRuntimeService {
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
       },
       async ({ id }, extra) => this.tools.getKnowledgeAssignment(id, extra),
+    );
+
+    server.registerTool(
+      'care_case_get',
+      {
+        title: '查询离职案件脱敏进度',
+        description: '返回清算任务、最后工作日和状态，不返回原因或证据。风险等级 R0。',
+        inputSchema: { id: recruitmentIdSchema },
+        outputSchema: z.object({ careCase: careCaseSchema }),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      },
+      async ({ id }, extra) => this.tools.getCareCase(id, extra),
     );
 
     server.registerTool(

@@ -128,6 +128,28 @@ describe('MCP Streamable HTTP 协议集成', () => {
           progressBps: 5_000, version: 2,
         } },
       }),
+      getCareCase: vi.fn().mockResolvedValue({
+        content: [{ type: 'text' as const, text: JSON.stringify({ careCase: {
+          id: '01J8ZQK7V0A2M4N6P8R0T2W4C1',
+          employeeId: '01J8ZQK7V0A2M4N6P8R0T2W4C2',
+          employmentId: '01J8ZQK7V0A2M4N6P8R0T2W4C3',
+          lastWorkingDate: '2026-07-31', accessDisableAt: '2026-07-31T10:00:00.000Z',
+          status: 'clearing', tasks: {
+            handover_accepted: 'completed', assets_cleared: 'pending',
+            finance_cleared: 'pending', data_retention_confirmed: 'completed',
+          }, version: 5,
+        } }) }],
+        structuredContent: { careCase: {
+          id: '01J8ZQK7V0A2M4N6P8R0T2W4C1',
+          employeeId: '01J8ZQK7V0A2M4N6P8R0T2W4C2',
+          employmentId: '01J8ZQK7V0A2M4N6P8R0T2W4C3',
+          lastWorkingDate: '2026-07-31', accessDisableAt: '2026-07-31T10:00:00.000Z',
+          status: 'clearing', tasks: {
+            handover_accepted: 'completed', assets_cleared: 'pending',
+            finance_cleared: 'pending', data_retention_confirmed: 'completed',
+          }, version: 5,
+        } },
+      }),
       prepareRecruitmentRequisitionSubmit: vi.fn(),
       executeRecruitmentRequisitionSubmit: vi.fn(),
       prepareRecruitmentPositionTransition: vi.fn(),
@@ -220,6 +242,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       'onboarding_get',
       'knowledge_course_get',
       'knowledge_assignment_get',
+      'care_case_get',
       'recruitment_requisition_submit_prepare',
       'recruitment_requisition_submit_execute',
       'recruitment_position_transition_prepare',
@@ -239,6 +262,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ uriTemplate: 'erp://onboarding/instances/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://knowledge/courses/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://knowledge/assignments/{id}' }),
+      expect.objectContaining({ uriTemplate: 'erp://care/cases/{id}' }),
     ]));
     const prompts = await client.listPrompts();
     expect(prompts.prompts).toEqual(expect.arrayContaining([
@@ -246,6 +270,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ name: 'recruitment_offer_send_guide' }),
       expect.objectContaining({ name: 'onboarding_progress_guide' }),
       expect.objectContaining({ name: 'knowledge_training_progress_guide' }),
+      expect.objectContaining({ name: 'care_offboarding_progress_guide' }),
     ]));
 
     const result = await client.callTool({ name: 'get_org_chart', arguments: {} });
@@ -312,5 +337,20 @@ describe('MCP Streamable HTTP 协议集成', () => {
     );
     expect(tools.getKnowledgeAssignment).toHaveBeenCalledOnce();
     expect(tools.getKnowledgeCourse).toHaveBeenCalledOnce();
+
+    const careResult = await client.callTool({
+      name: 'care_case_get',
+      arguments: { id: '01J8ZQK7V0A2M4N6P8R0T2W4C1' },
+    });
+    expect(careResult.structuredContent).toMatchObject({
+      careCase: { status: 'clearing', tasks: { assets_cleared: 'pending' } },
+    });
+    const careResource = await client.readResource({
+      uri: 'erp://care/cases/01J8ZQK7V0A2M4N6P8R0T2W4C1',
+    });
+    expect(JSON.stringify([careResult, careResource])).not.toMatch(
+      /reasonCode|separationType|approvalInstanceId|EvidenceId|execution/iu,
+    );
+    expect(tools.getCareCase).toHaveBeenCalledTimes(2);
   });
 });

@@ -16,6 +16,7 @@ import { RecruitmentManagementService } from '../recruitment/application/recruit
 import { RecruitmentOfferService } from '../recruitment/application/recruitment-offer.service.js';
 import { OnboardingApplicationService } from '../onboarding/application/onboarding-application.service.js';
 import { KnowledgeApplicationService } from '../knowledge/application/knowledge-application.service.js';
+import { CareApplicationService } from '../care/application/care-application.service.js';
 import { parseMcpIdentity, type McpIdentity } from './mcp-auth-context.js';
 import {
   McpConfirmationService,
@@ -48,6 +49,7 @@ export class McpToolService {
     private readonly recruitmentOffers: RecruitmentOfferService,
     private readonly onboarding: OnboardingApplicationService,
     private readonly knowledge: KnowledgeApplicationService,
+    private readonly care: CareApplicationService,
     private readonly confirmations: McpConfirmationService,
   ) {}
 
@@ -105,6 +107,21 @@ export class McpToolService {
       extra, 'knowledge_assignment_get', 'erp:knowledge:assignment:read',
       'assignment', () => this.knowledge.getAssignment(id),
     );
+  }
+
+  async getCareCase(id: string, extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      const required = ['erp:care:case:read', 'erp:care:employment:read'];
+      const missing = required.find((scope) => !identity.scopes.includes(scope));
+      if (missing !== undefined) {
+        await this.auditTool(identity, 'care_case_get', 'R0', 'denied');
+        return scopeError(missing);
+      }
+      const careCase = await this.care.getForMcp(id);
+      await this.auditTool(identity, 'care_case_get', 'R0', 'success');
+      return structuredResult({ careCase });
+    });
   }
 
   async prepareRecruitmentRequisitionSubmit(

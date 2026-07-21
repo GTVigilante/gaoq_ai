@@ -297,6 +297,25 @@ export class EmploymentRepository extends TenantBoundRepository {
     return record === null ? null : this.toDomain(record);
   }
 
+  async findById(id: string, session?: ClientSession): Promise<Employment | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), id });
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record === null ? null : this.toDomain(record);
+  }
+
+  async findOpenByEmployeeId(
+    employeeId: string,
+    session?: ClientSession,
+  ): Promise<Employment | null> {
+    const query = this.records.findOne({
+      tenantId: this.tenantId(), employeeId, effectiveTo: null,
+    });
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record === null ? null : this.toDomain(record);
+  }
+
   async insert(employment: Employment, session: ClientSession): Promise<void> {
     this.assertEntityTenant(employment.tenantId);
     await this.records.create([{
@@ -306,12 +325,35 @@ export class EmploymentRepository extends TenantBoundRepository {
     }], { session });
   }
 
+  async replace(
+    employment: Employment,
+    expectedVersion: number,
+    session: ClientSession,
+  ): Promise<void> {
+    this.assertEntityTenant(employment.tenantId);
+    const result = await this.records.updateOne(
+      { tenantId: this.tenantId(), id: employment.id, version: expectedVersion },
+      { $set: {
+        status: employment.status, effectiveTo: employment.effectiveTo,
+        terminationCareCaseId: employment.terminationCareCaseId,
+        terminationExecutionEvidenceId: employment.terminationExecutionEvidenceId,
+        terminationEvidenceId: employment.terminationEvidenceId,
+        version: employment.version, updatedAt: new Date(employment.updatedAt),
+      } },
+      { session, timestamps: false, runValidators: true },
+    );
+    if (result.matchedCount !== 1) throw new OrgWriteConflictError();
+  }
+
   private toDomain(record: OrgEmploymentRecord): Employment {
     return Object.freeze({
       id: record.id, tenantId: record.tenantId, personId: record.personId,
       employeeId: record.employeeId, onboardingInstanceId: record.onboardingInstanceId,
       onboardingCompletionEvidenceId: record.onboardingCompletionEvidenceId,
       offerId: record.offerId, signedEvidenceId: record.signedEvidenceId,
+      terminationCareCaseId: record.terminationCareCaseId,
+      terminationExecutionEvidenceId: record.terminationExecutionEvidenceId,
+      terminationEvidenceId: record.terminationEvidenceId,
       status: record.status, effectiveFrom: record.effectiveFrom,
       effectiveTo: record.effectiveTo, version: record.version,
       createdAt: record.createdAt.toISOString(), updatedAt: record.updatedAt.toISOString(),

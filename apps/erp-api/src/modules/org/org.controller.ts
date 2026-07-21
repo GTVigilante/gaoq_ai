@@ -187,6 +187,9 @@ export class OrgController {
     @Body() body: TransitionEmployeeStatusDto,
     @Res({ passthrough: true }) response: Response,
   ): Promise<{ readonly employee: Employee }> {
+    if (body.status === 'terminated') throw new BadRequestException({
+      code: 'ORG_CARE_WORKFLOW_REQUIRED', message: '员工离职必须通过 Care 清算与定时执行',
+    });
     const result = await this.organization.transitionEmployeeStatus(
       this.requireUlid(id),
       this.requireVersion(ifMatch),

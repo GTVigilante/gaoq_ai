@@ -92,7 +92,14 @@ const PHASE_THREE_SCHEMAS: readonly Schema[] = Object.freeze([
 
 /** 从 Phase 3 运行 Schema 生成冻结清单，禁止手写清单与运行模型漂移。 */
 export function buildPhaseThreeIndexManifest(): readonly PhaseThreeIndexDefinition[] {
-  return buildIndexManifestFromSchemas(PHASE_THREE_SCHEMAS);
+  const runtimeManifest = buildIndexManifestFromSchemas(PHASE_THREE_SCHEMAS);
+  // v1 已发布后新增的 Care 终止引用由独立追加迁移持有，避免历史 checksum 漂移。
+  return Object.freeze(runtimeManifest.filter((item) => !(
+    item.collection === 'org_employments' && (
+      item.key.terminationCareCaseId === 1 ||
+      (item.key.employeeId === 1 && Object.keys(item.key).length === 2)
+    )
+  )));
 }
 
 /** 为后续 Phase 3 模块生成独立、不可变的追加索引清单。 */

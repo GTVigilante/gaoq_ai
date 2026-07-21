@@ -126,6 +126,8 @@ function validEmployment(): Record<string, unknown> {
     employeeId: 'employee-1', onboardingInstanceId: 'onboarding-1', offerId: 'offer-1',
     onboardingCompletionEvidenceId: 'onboarding-evidence-1',
     signedEvidenceId: 'signed-evidence-1', status: 'probation',
+    terminationCareCaseId: null, terminationExecutionEvidenceId: null,
+    terminationEvidenceId: null,
     effectiveFrom: '2026-08-01', effectiveTo: null, version: 1,
   };
 }
@@ -284,6 +286,14 @@ describe('Person、Employment 与工号序列 Schema 校验', () => {
       unique: true,
       partialFilterExpression: { effectiveTo: null },
     });
+    expect(OrgEmploymentRecordSchema.indexes()).toContainEqual([
+      { tenantId: 1, terminationCareCaseId: 1 },
+      expect.objectContaining({ unique: true }),
+    ]);
+    expect(OrgEmploymentRecordSchema.indexes()).toContainEqual([
+      { tenantId: 1, employeeId: 1 },
+      expect.objectContaining({ unique: true, partialFilterExpression: { effectiveTo: null } }),
+    ]);
   });
 });
 

@@ -26,6 +26,7 @@ import { OrgModule } from './modules/org/org.module.js';
 import { RecruitmentModule } from './modules/recruitment/recruitment.module.js';
 import { OnboardingModule } from './modules/onboarding/onboarding.module.js';
 import { KnowledgeModule } from './modules/knowledge/knowledge.module.js';
+import { CareModule } from './modules/care/care.module.js';
 
 const mongoLogger = new Logger('MongoDB');
 
@@ -66,6 +67,7 @@ const mongoLogger = new Logger('MongoDB');
     RecruitmentModule,
     OnboardingModule,
     KnowledgeModule,
+    CareModule,
     TraceMiddlewareModule,
     TenantContextModule,
     ObservabilityModule,

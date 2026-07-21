@@ -410,6 +410,24 @@ export class ApprovalApplicationService {
     return instanceSummary(instance);
   }
 
+  /** Care 只读取离职模板终态，不读取清算或审批表单正文。 */
+  async getInstanceStatusForCare(id: string): Promise<ApprovalInstanceSummary> {
+    const actor = this.context.getActorRequired();
+    if (!actor.scopes.includes('erp:care:approval:sync')) {
+      throw new ForbiddenException({
+        code: 'APPROVAL_CARE_INTEGRATION_STATUS_DENIED', message: '无权同步离职审批状态',
+      });
+    }
+    const instance = await this.requireInstance(id);
+    if (instance.templateSnapshot.templateCode !== 'care_offboarding') {
+      throw new ForbiddenException({
+        code: 'APPROVAL_CARE_INTEGRATION_TEMPLATE_DENIED',
+        message: 'Care 集成只能读取离职审批状态',
+      });
+    }
+    return instanceSummary(instance);
+  }
+
   private async transition(
     operation: string,
     key: string,

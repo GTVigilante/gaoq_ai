@@ -23,7 +23,7 @@ export {
 } from './employee.js';
 export { createPerson } from './person.js';
 export type { CreatePersonInput, Person } from './person.js';
-export { createEmployment } from './employment.js';
+export { createEmployment, terminateEmployment, transitionEmploymentStatus } from './employment.js';
 export type { CreateEmploymentInput, Employment, EmploymentStatus } from './employment.js';
 export type {
   CreateEmployeeInput,
@@ -57,6 +57,8 @@ export {
   buildEmployeeStatusChangedEvent,
   buildEmployeeUpdatedEvent,
   buildEmploymentEstablishedEvent,
+  buildEmploymentTerminatedEvent,
+  buildEmploymentStatusChangedEvent,
   buildJobLevelCreatedEvent,
   buildJobLevelUpdatedEvent,
   buildPositionCreatedEvent,
@@ -76,6 +78,10 @@ export type {
   EmployeeUpdatedPayload,
   EmploymentEstablishedEvent,
   EmploymentEstablishedPayload,
+  EmploymentTerminatedEvent,
+  EmploymentTerminatedPayload,
+  EmploymentStatusChangedEvent,
+  EmploymentStatusChangedPayload,
   JobLevelCreatedEvent,
   JobLevelCreatedPayload,
   JobLevelUpdatedEvent,

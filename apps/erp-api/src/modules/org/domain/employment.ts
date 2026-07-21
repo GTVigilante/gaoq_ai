@@ -3,6 +3,10 @@ import { assertEntityId, assertTenantId, toIso } from './org.validation.js';
 
 export type EmploymentStatus = 'probation' | 'active' | 'suspended' | 'resigned';
 
+const EMPLOYMENT_STATUS_TRANSITIONS: Readonly<Record<EmploymentStatus, readonly EmploymentStatus[]>> = {
+  probation: ['active'], active: ['suspended'], suspended: ['active'], resigned: [],
+};
+
 /** 劳动关系聚合；合同正文和薪资不进入组织主数据。 */
 export interface Employment {
   readonly id: string;
@@ -13,6 +17,9 @@ export interface Employment {
   readonly onboardingCompletionEvidenceId: string;
   readonly offerId: string;
   readonly signedEvidenceId: string;
+  readonly terminationCareCaseId: string | null;
+  readonly terminationExecutionEvidenceId: string | null;
+  readonly terminationEvidenceId: string | null;
   readonly status: EmploymentStatus;
   readonly effectiveFrom: string;
   readonly effectiveTo: string | null;
@@ -64,12 +71,81 @@ export function createEmployment(input: CreateEmploymentInput, now: Date): Emplo
     onboardingCompletionEvidenceId: input.onboardingCompletionEvidenceId,
     offerId: input.offerId,
     signedEvidenceId: input.signedEvidenceId,
+    terminationCareCaseId: null,
+    terminationExecutionEvidenceId: null,
+    terminationEvidenceId: null,
     status: 'probation',
     effectiveFrom,
     effectiveTo: null,
     version: 1,
     createdAt: occurredAt,
     updatedAt: occurredAt,
+  });
+}
+
+/** Care 专用：关闭劳动关系；业务日期、案件和执行证据一经写入不可替换。 */
+export function terminateEmployment(
+  employment: Employment,
+  input: {
+    readonly tenantId: string;
+    readonly expectedVersion: number;
+    readonly effectiveTo: string;
+    readonly careCaseId: string;
+    readonly executionEvidenceId: string;
+    readonly terminationEvidenceId: string;
+  },
+  now: Date,
+): Employment {
+  assertTenantId(input.tenantId);
+  if (employment.tenantId !== input.tenantId) throw new OrgDomainError(
+    'EMPLOYMENT_CROSS_TENANT', '禁止跨租户关闭劳动关系',
+  );
+  if (employment.version !== input.expectedVersion) throw new OrgDomainError(
+    'EMPLOYMENT_VERSION_CONFLICT', '劳动关系版本冲突',
+  );
+  if (employment.status === 'resigned' || employment.effectiveTo !== null) throw new OrgDomainError(
+    'EMPLOYMENT_ALREADY_TERMINATED', '劳动关系已经关闭',
+  );
+  for (const [field, value] of Object.entries({
+    careCaseId: input.careCaseId,
+    executionEvidenceId: input.executionEvidenceId,
+    terminationEvidenceId: input.terminationEvidenceId,
+  })) assertEntityId(value, field);
+  const effectiveTo = assertLocalDate(input.effectiveTo, 'effectiveTo');
+  if (effectiveTo < employment.effectiveFrom) throw new OrgDomainError(
+    'EMPLOYMENT_END_BEFORE_START', '劳动关系结束日期不能早于生效日期',
+  );
+  return Object.freeze({
+    ...employment, status: 'resigned', effectiveTo,
+    terminationCareCaseId: input.careCaseId,
+    terminationExecutionEvidenceId: input.executionEvidenceId,
+    terminationEvidenceId: input.terminationEvidenceId,
+    version: employment.version + 1, updatedAt: toIso(now),
+  });
+}
+
+/** Employee 组织状态迁移时同步当前劳动关系；离职只能走 terminateEmployment。 */
+export function transitionEmploymentStatus(
+  employment: Employment,
+  input: {
+    readonly tenantId: string;
+    readonly expectedVersion: number;
+    readonly status: 'active' | 'suspended';
+  },
+  now: Date,
+): Employment {
+  assertTenantId(input.tenantId);
+  if (employment.tenantId !== input.tenantId) throw new OrgDomainError(
+    'EMPLOYMENT_CROSS_TENANT', '禁止跨租户迁移劳动关系状态',
+  );
+  if (employment.version !== input.expectedVersion) throw new OrgDomainError(
+    'EMPLOYMENT_VERSION_CONFLICT', '劳动关系版本冲突',
+  );
+  if (!EMPLOYMENT_STATUS_TRANSITIONS[employment.status].includes(input.status)) {
+    throw new OrgDomainError('EMPLOYMENT_STATUS_TRANSITION_INVALID', '劳动关系状态迁移非法');
+  }
+  return Object.freeze({
+    ...employment, status: input.status, version: employment.version + 1, updatedAt: toIso(now),
   });
 }
 

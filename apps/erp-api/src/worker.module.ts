@@ -11,6 +11,7 @@ import { WorkerMetricsServer } from './core/observability/worker-metrics.server.
 import { toBullMqConnection } from './infrastructure/redis/redis-options.js';
 import { IntegrationWorkerModule } from './modules/integration/integration-worker.module.js';
 import { ApprovalNotificationWorkerModule } from './modules/approval/notification/approval-notification-worker.module.js';
+import { CareWorkerModule } from './modules/care/care-worker.module.js';
 
 const mongoLogger = new Logger('WorkerMongoDB');
 
@@ -41,6 +42,7 @@ const mongoLogger = new Logger('WorkerMongoDB');
     }),
     IntegrationWorkerModule,
     ApprovalNotificationWorkerModule,
+    CareWorkerModule,
     AuditWorkerModule,
     ObservabilityModule,
   ],

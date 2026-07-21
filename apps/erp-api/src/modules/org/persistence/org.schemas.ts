@@ -278,6 +278,15 @@ export class OrgEmploymentRecord {
   @Prop({ type: String, required: true, immutable: true, maxlength: MAX_ID_LENGTH })
   signedEvidenceId!: string;
 
+  @Prop({ type: String, default: null, maxlength: MAX_ID_LENGTH })
+  terminationCareCaseId!: string | null;
+
+  @Prop({ type: String, default: null, maxlength: MAX_ID_LENGTH })
+  terminationExecutionEvidenceId!: string | null;
+
+  @Prop({ type: String, default: null, maxlength: MAX_ID_LENGTH })
+  terminationEvidenceId!: string | null;
+
   @Prop({
     type: String, enum: ['probation', 'active', 'suspended', 'resigned'], required: true,
   })
@@ -301,6 +310,14 @@ export const OrgEmploymentRecordSchema = SchemaFactory.createForClass(OrgEmploym
 OrgEmploymentRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 OrgEmploymentRecordSchema.index({ tenantId: 1, onboardingInstanceId: 1 }, { unique: true });
 OrgEmploymentRecordSchema.index({ tenantId: 1, employeeId: 1, effectiveFrom: -1 });
+OrgEmploymentRecordSchema.index(
+  { tenantId: 1, employeeId: 1 },
+  { unique: true, partialFilterExpression: { effectiveTo: null } },
+);
+OrgEmploymentRecordSchema.index(
+  { tenantId: 1, terminationCareCaseId: 1 },
+  { unique: true, partialFilterExpression: { terminationCareCaseId: { $type: 'string' } } },
+);
 OrgEmploymentRecordSchema.index(
   { tenantId: 1, personId: 1 },
   { unique: true, partialFilterExpression: { effectiveTo: null } },

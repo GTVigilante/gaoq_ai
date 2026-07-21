@@ -26,5 +26,12 @@ describe('Phase 3 索引迁移清单', () => {
     );
     expect(currentEmployment?.options.unique).toBe(true);
     expect(currentEmployment?.options.partialFilterExpression).toEqual({ effectiveTo: null });
+    expect(manifest.some((item) =>
+      item.collection === 'org_employments' && item.key.terminationCareCaseId === 1,
+    )).toBe(false);
+    expect(manifest.some((item) =>
+      item.collection === 'org_employments' && item.key.employeeId === 1 &&
+      Object.keys(item.key).length === 2,
+    )).toBe(false);
   });
 });

@@ -14,6 +14,7 @@ import type { RecruitmentManagementService } from '../recruitment/application/re
 import type { RecruitmentOfferService } from '../recruitment/application/recruitment-offer.service.js';
 import type { OnboardingApplicationService } from '../onboarding/application/onboarding-application.service.js';
 import type { KnowledgeApplicationService } from '../knowledge/application/knowledge-application.service.js';
+import type { CareApplicationService } from '../care/application/care-application.service.js';
 import { McpToolService } from './mcp-tool.service.js';
 import type { McpConfirmationService } from './mcp-confirmation.service.js';
 
@@ -70,6 +71,7 @@ function assemble() {
   const recruitmentOffers = { get: vi.fn(), requestSend: vi.fn() };
   const onboarding = { get: vi.fn() };
   const knowledge = { getCourse: vi.fn(), getAssignment: vi.fn() };
+  const care = { getForMcp: vi.fn() };
   const service = new McpToolService(
     context,
     audit as unknown as AuditService,
@@ -81,12 +83,13 @@ function assemble() {
     recruitmentOffers as unknown as RecruitmentOfferService,
     onboarding as unknown as OnboardingApplicationService,
     knowledge as unknown as KnowledgeApplicationService,
+    care as unknown as CareApplicationService,
     confirmations as unknown as McpConfirmationService,
   );
   return {
     context, audit, organization, approvals, recruitmentApplications,
     recruitmentInterviews, recruitmentManagement, recruitmentOffers, confirmations, service,
-    onboarding, knowledge,
+    onboarding, knowledge, care,
   };
 }
 
@@ -327,6 +330,29 @@ describe('McpToolService', () => {
     });
     expect(JSON.stringify([course, assignment])).not.toMatch(
       /questionBank|contentRef|submissionRef|EvidenceId|answer/iu,
+    );
+  });
+
+  it('Care MCP 只读取离职进度，不返回原因、审批或执行证据', async () => {
+    const store = assemble();
+    store.care.getForMcp.mockResolvedValue({
+      id: 'care-001', employeeId: 'employee-001', employmentId: 'employment-001',
+      lastWorkingDate: '2026-07-31', accessDisableAt: '2026-07-31T10:00:00.000Z',
+      status: 'clearing', tasks: { assets_cleared: 'pending' }, version: 4,
+    });
+    const denied = await store.service.getCareCase(
+      'care-001', extra(['erp:mcp:server:connect', 'erp:care:case:read']),
+    );
+    expect(denied.isError).toBe(true);
+    expect(store.care.getForMcp).not.toHaveBeenCalled();
+    const result = await store.service.getCareCase('care-001', extra([
+      'erp:mcp:server:connect', 'erp:care:case:read', 'erp:care:employment:read',
+    ]));
+    expect(result.structuredContent).toMatchObject({
+      careCase: { status: 'clearing', tasks: { assets_cleared: 'pending' } },
+    });
+    expect(JSON.stringify(result)).not.toMatch(
+      /reasonCode|separationType|approvalInstanceId|EvidenceId|execution/iu,
     );
   });
 

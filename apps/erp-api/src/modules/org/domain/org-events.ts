@@ -84,6 +84,20 @@ export interface EmploymentEstablishedPayload {
   readonly effectiveFrom: string;
 }
 
+export interface EmploymentTerminatedPayload {
+  readonly personId: string;
+  readonly employeeId: string;
+  readonly careCaseId: string;
+  readonly status: Employment['status'];
+  readonly effectiveTo: string;
+}
+
+export interface EmploymentStatusChangedPayload {
+  readonly employeeId: string;
+  readonly fromStatus: Employment['status'];
+  readonly toStatus: Employment['status'];
+}
+
 /** position.created 载荷。 */
 export interface PositionCreatedPayload {
   readonly code: string;
@@ -127,6 +141,14 @@ export type EmploymentEstablishedEvent = OrgEventBase<
   'employment.established',
   EmploymentEstablishedPayload
 >;
+export type EmploymentTerminatedEvent = OrgEventBase<
+  'employment.terminated',
+  EmploymentTerminatedPayload
+>;
+export type EmploymentStatusChangedEvent = OrgEventBase<
+  'employment.status_changed',
+  EmploymentStatusChangedPayload
+>;
 export type PositionCreatedEvent = OrgEventBase<'position.created', PositionCreatedPayload>;
 export type PositionUpdatedEvent = OrgEventBase<'position.updated', PositionUpdatedPayload>;
 export type JobLevelCreatedEvent = OrgEventBase<'job_level.created', JobLevelCreatedPayload>;
@@ -141,6 +163,8 @@ export type OrgDomainEvent =
   | EmployeeStatusChangedEvent
   | PersonCreatedEvent
   | EmploymentEstablishedEvent
+  | EmploymentTerminatedEvent
+  | EmploymentStatusChangedEvent
   | PositionCreatedEvent
   | PositionUpdatedEvent
   | JobLevelCreatedEvent
@@ -278,6 +302,40 @@ export function buildEmploymentEstablishedEvent(
       personId: employment.personId, employeeId: employment.employeeId,
       onboardingInstanceId: employment.onboardingInstanceId, offerId: employment.offerId,
       status: employment.status, effectiveFrom: employment.effectiveFrom,
+    },
+  };
+}
+
+export function buildEmploymentTerminatedEvent(
+  employment: Employment,
+  occurredAt: Date,
+): EmploymentTerminatedEvent {
+  if (
+    employment.terminationCareCaseId === null || employment.effectiveTo === null ||
+    employment.terminationEvidenceId === null
+  ) throw new Error('劳动关系终止事件缺少可信证明');
+  return {
+    type: 'employment.terminated', tenantId: employment.tenantId,
+    aggregateId: employment.id, version: employment.version,
+    occurredAt: occurredAt.toISOString(),
+    payload: {
+      personId: employment.personId, employeeId: employment.employeeId,
+      careCaseId: employment.terminationCareCaseId,
+      status: employment.status, effectiveTo: employment.effectiveTo,
+    },
+  };
+}
+
+export function buildEmploymentStatusChangedEvent(
+  employment: Employment,
+  fromStatus: Employment['status'],
+  occurredAt: Date,
+): EmploymentStatusChangedEvent {
+  return {
+    type: 'employment.status_changed', tenantId: employment.tenantId,
+    aggregateId: employment.id, version: employment.version,
+    occurredAt: occurredAt.toISOString(), payload: {
+      employeeId: employment.employeeId, fromStatus, toStatus: employment.status,
     },
   };
 }
