@@ -17,5 +17,11 @@
 
 - 组织/员工户名、账号、清算行号、员工实发金额和工资结果引用整体使用 Treasury AES-256-GCM；Mongo、响应、Outbox、审计和日志不得出现明文。
 - WORM 文件仅在进程内存及 HTTPS 请求体中出现；发送完成后清零 Buffer，禁止写临时文件。
-- 事件只有 `treasury.disbursement.materialization_requested.v1` 与 `treasury.disbursement.prepared.v1`，Writer 精确限制为批次汇总、文件摘要和 WORM 证据字段。
+- 物化事件只有 `treasury.disbursement.materialization_requested.v1` 与 `treasury.disbursement.prepared.v1`，Writer 精确限制为批次汇总、文件摘要和 WORM 证据字段。
 - REST 只返回批次 ID、工资引用、状态、版本、行数、总额、文件摘要和对象证据。该接口不导出文件、不提交银行；MCP 不注册制备、文件读取或资金写工具。
+
+## 导出批准
+
+- `POST /treasury/disbursements/:id/export-approval` 是 R3 人工动作，只接受拥有 `erp:treasury:disbursement:approve` 的已验证用户；WebAuthn 证据必须绑定当前访问令牌的租户、人员、会话及批次 ID。
+- 批次必须为 `prepared` 且同时具有文件摘要、WORM 证据和对象引用。批准人必须与工资锁定人、代发制备人不同，乐观版本命中后才转为 `exported`。
+- 事件只公开批次汇总、WORM 证据引用和 `webauthn_uv` 方法；不得公开批准人、凭据或强认证证据详情。批准不返回文件内容，也不等于提交银行。

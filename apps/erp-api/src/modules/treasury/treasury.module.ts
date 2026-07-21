@@ -3,6 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 
 import { IdempotencyModule } from '../../core/idempotency/idempotency.module.js';
 import { OrgModule } from '../org/org.module.js';
+import { StrongAuthModule } from '../identity/strong-auth/strong-auth.module.js';
 import { OutboxRecord, OutboxRecordSchema } from '../org/persistence/outbox.schema.js';
 import { PayrollModule } from '../payroll/payroll.module.js';
 import { TreasuryBankAccountService } from './application/treasury-bank-account.service.js';
@@ -28,6 +29,7 @@ import { TreasuryController } from './treasury.controller.js';
     IdempotencyModule,
     OrgModule,
     PayrollModule,
+    StrongAuthModule,
     MongooseModule.forFeature([
       { name: TreasuryBankAccountRecord.name, schema: TreasuryBankAccountRecordSchema },
       { name: TreasuryPaymentInstructionRecord.name, schema: TreasuryPaymentInstructionRecordSchema },

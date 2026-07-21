@@ -13,6 +13,7 @@ const RUN_ID = '01J8ZQK7V0A2M4N6P8R0T2W4R1';
 const DEBTOR_ID = '01J8ZQK7V0A2M4N6P8R0T2W4D1';
 const CREDITOR_ID = '01J8ZQK7V0A2M4N6P8R0T2W4C1';
 const CALCULATION_ID = '01J8ZQK7V0A2M4N6P8R0T2W4L1';
+const EVIDENCE_ID = '01J8ZQK7V0A2M4N6P8R0T2W4E1';
 const LINE_HASH = 'l'.repeat(43);
 const ZERO_LINE_HASH = 'z'.repeat(43);
 const RUN_HASH = payrollDigest([{ employeeId: 'employee-001', resultHash: LINE_HASH }]);
@@ -25,7 +26,9 @@ const input = {
 function actor(actorId = 'treasury-maker'): ActorContext {
   return {
     actorType: 'user', actorId, tenantId: tenant.tenantId,
-    roleCodes: ['treasury'], scopes: ['erp:treasury:disbursement:prepare'],
+    roleCodes: ['treasury'], scopes: [
+      'erp:treasury:disbursement:prepare', 'erp:treasury:disbursement:approve',
+    ],
     departmentIds: [], traceId: 'trace-001',
   };
 }
@@ -70,6 +73,11 @@ function assemble(lockedBy = 'payroll-locker') {
       netPayMinor: 839_500, resultHash: LINE_HASH,
     }],
   }) };
+  const strongAuth = { requireVerifiedEvidence: vi.fn().mockResolvedValue({
+    evidenceId: EVIDENCE_ID, credentialId: 'credential-001', tenantId: tenant.tenantId,
+    actorId: 'treasury-checker', sessionId: 'session-001', operationId: '',
+    method: 'webauthn_uv', verifiedAt: new Date().toISOString(),
+  }) };
   const debtor = {
     id: DEBTOR_ID, tenantId: 'tenant-001', ownerType: 'organization', ownerId: 'tenant-001',
     version: 1, dataKeyId: 'key', dataIv: 'iv',
@@ -87,11 +95,17 @@ function assemble(lockedBy = 'payroll-locker') {
   let batch: Record<string, unknown> | null = null;
   const batches = {
     create: vi.fn((documents: readonly Record<string, unknown>[]) => {
-      batch = { ...documents[0] };
+      batch = { ...documents[0], createdAt: new Date(), updatedAt: new Date() };
       return Promise.resolve([]);
     }),
     findOne: vi.fn().mockImplementation(() => query(() => batch)),
-    updateOne: vi.fn().mockResolvedValue({ modifiedCount: 1 }),
+    updateOne: vi.fn().mockImplementation((
+      _filter: unknown,
+      update: { readonly $set: Readonly<Record<string, unknown>> },
+    ) => {
+      batch = { ...batch, ...update.$set, updatedAt: new Date() };
+      return Promise.resolve({ modifiedCount: 1 });
+    }),
   };
   let instructionRecords: readonly Record<string, unknown>[] = [];
   const instructions = {
@@ -117,12 +131,12 @@ function assemble(lockedBy = 'payroll-locker') {
   }) };
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
   const service = new TreasuryDisbursementService(
-    idempotency as never, context, payroll as never, crypto as never,
+    idempotency as never, context, payroll as never, strongAuth as never, crypto as never,
     archive as never, outbox as never, accounts as never,
     instructions as never, batches as never,
   );
   return {
-    context, crypto, payroll, accounts, batches, instructions,
+    context, crypto, payroll, strongAuth, accounts, batches, instructions,
     idempotency, archive, archivedBody: () => archivedBody, outbox, service,
   };
 }
@@ -201,5 +215,27 @@ describe('TreasuryDisbursementService', () => {
       ownerId: { $in: ['employee-001'] },
     }));
     expect(store.instructions.create.mock.calls[0]?.[0]).toHaveLength(1);
+  });
+
+  it('只有独立批准人凭批次绑定的 WebAuthn 证据才能批准导出', async () => {
+    const store = assemble();
+    const prepared = await store.context.run({ tenant, actor: actor() }, () =>
+      store.service.prepare('treasury-disbursement-approval', input));
+    const checker = actor('treasury-checker');
+    const token = {
+      issuer: 'https://erp.example.test', subject: checker.actorId,
+      audience: ['erp-api'], resource: ['erp-api'], tenantId: tenant.tenantId,
+      actorId: checker.actorId, actorType: 'user' as const, clientId: 'erp-web',
+      roleCodes: checker.roleCodes, scopes: checker.scopes,
+      departmentIds: [], sessionId: 'session-001', expiresAt: Date.now() + 60_000,
+    };
+    const result = await store.context.run({ tenant, actor: checker }, () =>
+      store.service.approveExport('treasury-export-approval', prepared.id, {
+        expectedVersion: 2, strongAuthEvidenceId: EVIDENCE_ID,
+      }, token));
+    expect(result).toMatchObject({ status: 'exported', version: 3 });
+    expect(store.strongAuth.requireVerifiedEvidence).toHaveBeenCalledWith(expect.objectContaining({
+      evidenceId: EVIDENCE_ID, actorId: 'treasury-checker', sessionId: 'session-001',
+    }));
   });
 });

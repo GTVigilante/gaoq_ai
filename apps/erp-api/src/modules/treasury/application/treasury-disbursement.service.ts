@@ -14,12 +14,20 @@ import { z } from 'zod';
 
 import { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
+import type { VerifiedAccessToken } from '../../identity/auth.types.js';
+import { WebAuthnService } from '../../identity/strong-auth/webauthn.service.js';
 import {
   PayrollRunService,
   type LockedPayrollDisbursementSource,
 } from '../../payroll/application/payroll-run.service.js';
 import { payrollDigest } from '../../payroll/domain/index.js';
-import { generatePain001, Pain001Error } from '../domain/index.js';
+import {
+  approveDisbursementExport,
+  type DisbursementBatch,
+  DisbursementBatchError,
+  generatePain001,
+  Pain001Error,
+} from '../domain/index.js';
 import { TreasuryImmutableArchive } from '../integration/treasury-evidence.ports.js';
 import { TreasuryDataCryptoService } from '../persistence/treasury-data-crypto.service.js';
 import { TreasuryOutboxWriter } from '../persistence/treasury-outbox.writer.js';
@@ -31,7 +39,10 @@ import {
   TreasuryPaymentInstructionRecord,
   type TreasuryPaymentInstructionDocument,
 } from '../persistence/treasury.schemas.js';
-import type { PrepareTreasuryDisbursementDto } from './treasury.dto.js';
+import type {
+  ApproveTreasuryExportDto,
+  PrepareTreasuryDisbursementDto,
+} from './treasury.dto.js';
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const HASH_PATTERN = /^[A-Za-z0-9_-]{43}$/;
@@ -71,7 +82,7 @@ export interface TreasuryDisbursementSummary extends Record<string, unknown> {
   readonly id: string;
   readonly payrollPeriodId: string;
   readonly payrollRunId: string;
-  readonly status: 'materializing' | 'prepared';
+  readonly status: 'materializing' | 'prepared' | 'exported';
   readonly version: number;
   readonly lineCount: number;
   readonly totalMinor: number;
@@ -86,6 +97,7 @@ export class TreasuryDisbursementService {
     private readonly idempotency: IdempotencyService,
     private readonly context: TenantContextService,
     private readonly payroll: PayrollRunService,
+    private readonly strongAuth: WebAuthnService,
     private readonly crypto: TreasuryDataCryptoService,
     private readonly archive: TreasuryImmutableArchive,
     private readonly outbox: TreasuryOutboxWriter,
@@ -96,6 +108,71 @@ export class TreasuryDisbursementService {
     @InjectModel(TreasuryDisbursementBatchRecord.name)
     private readonly batches: Model<TreasuryDisbursementBatchDocument>,
   ) {}
+
+  async approveExport(
+    key: string,
+    batchId: string,
+    input: ApproveTreasuryExportDto,
+    token: VerifiedAccessToken,
+  ): Promise<TreasuryDisbursementSummary> {
+    const actor = this.context.getActorRequired();
+    if (!actor.scopes.includes('erp:treasury:disbursement:approve')) throw new ForbiddenException({
+      code: 'AUTH_SCOPE_DENIED', message: '缺少代发导出批准权限',
+    });
+    if (
+      actor.actorType !== 'user' || token.actorType !== 'user' ||
+      token.tenantId !== this.tenantId() || token.actorId !== actor.actorId
+    ) throw new ForbiddenException({
+      code: 'TREASURY_EXPORT_APPROVER_IDENTITY_INVALID', message: '代发导出批准身份上下文非法',
+    });
+    if (!ID_PATTERN.test(batchId)) throw new BadRequestException({
+      code: 'TREASURY_BATCH_ID_INVALID', message: '代发批次标识非法',
+    });
+    const evidence = await this.strongAuth.requireVerifiedEvidence({
+      evidenceId: input.strongAuthEvidenceId, tenantId: token.tenantId,
+      actorId: token.actorId, sessionId: token.sessionId, operationId: batchId,
+    });
+    return this.run(() => this.idempotency.execute(
+      'treasury.disbursement.approve_export', key,
+      { batchId, expectedVersion: input.expectedVersion, evidenceId: evidence.evidenceId },
+      async (session) => {
+        const current = await this.requireBatch(batchId, session);
+        if (
+          current.status === 'materializing' ||
+          current.fileHash === null || current.objectEvidenceId === null || current.objectRef === null
+        ) throw new ConflictException({
+          code: 'TREASURY_EXPORT_EVIDENCE_INCOMPLETE', message: '代发文件不可变证据不完整',
+        });
+        const now = new Date();
+        const next = approveDisbursementExport(batchFromRecord(current), {
+          tenantId: this.tenantId(), expectedVersion: input.expectedVersion,
+          approvedBy: actor.actorId, strongAuthEvidenceId: evidence.evidenceId,
+          objectEvidenceId: current.objectEvidenceId,
+        }, now);
+        const updated = await this.batches.updateOne({
+          tenantId: this.tenantId(), id: current.id,
+          status: current.status, version: current.version,
+        }, { $set: {
+          status: next.status, version: next.version,
+          exportApprovedBy: next.exportApprovedBy,
+          strongAuthEvidenceId: next.strongAuthEvidenceId,
+        } }, { session, runValidators: true });
+        if (updated.modifiedCount !== 1) throw new ConflictException({
+          code: 'TREASURY_EXPORT_APPROVAL_WRITE_CONFLICT', message: '代发导出批准发生并发冲突',
+        });
+        await this.outbox.append({
+          type: 'treasury.disbursement.export_approved', tenantId: this.tenantId(),
+          aggregateId: next.id, version: next.version, occurredAt: next.updatedAt, data: {
+            payrollPeriodId: next.payrollPeriodId, payrollRunId: next.payrollRunId,
+            lineCount: next.lineCount, totalMinor: next.totalMinor,
+            fileHash: next.fileHash, objectEvidenceId: current.objectEvidenceId,
+            status: 'exported', strongAuthMethod: evidence.method,
+          },
+        }, session);
+        return summaryFromDomain(next);
+      },
+    ));
+  }
 
   async prepare(
     key: string,
@@ -368,6 +445,19 @@ export class TreasuryDisbursementService {
     }, protectedValue(record)));
   }
 
+  private async requireBatch(
+    id: string,
+    session?: ClientSession,
+  ): Promise<TreasuryDisbursementBatchRecord> {
+    const query = this.batches.findOne({ tenantId: this.tenantId(), id });
+    if (session !== undefined) query.session(session);
+    const batch = await query.lean().exec();
+    if (batch === null) throw new NotFoundException({
+      code: 'TREASURY_BATCH_NOT_FOUND', message: '代发批次不存在',
+    });
+    return batch;
+  }
+
   private assertHumanPreparer(): void {
     const actor = this.context.getActorRequired();
     if (!actor.scopes.includes('erp:treasury:disbursement:prepare')) throw new ForbiddenException({
@@ -383,6 +473,12 @@ export class TreasuryDisbursementService {
       if (error instanceof Pain001Error) throw new ConflictException({
         code: error.code, message: error.message,
       });
+      if (error instanceof DisbursementBatchError) {
+        if (error.code.includes('CONTROL') || error.code.includes('TENANT')) {
+          throw new ForbiddenException({ code: error.code, message: error.message });
+        }
+        throw new ConflictException({ code: error.code, message: error.message });
+      }
       if (error instanceof z.ZodError) throw new ConflictException({
         code: 'TREASURY_PROTECTED_DATA_INVALID', message: '资金密文数据结构或完整性非法',
       });
@@ -422,6 +518,37 @@ function summary(batch: TreasuryDisbursementBatchRecord): TreasuryDisbursementSu
     status: 'prepared', version: batch.version, lineCount: batch.lineCount,
     totalMinor: batch.totalMinor, fileHash: batch.fileHash,
     objectEvidenceId: batch.objectEvidenceId,
+  });
+}
+
+function summaryFromDomain(batch: DisbursementBatch): TreasuryDisbursementSummary {
+  return Object.freeze({
+    id: batch.id, payrollPeriodId: batch.payrollPeriodId, payrollRunId: batch.payrollRunId,
+    status: batch.status === 'exported' ? 'exported' : 'prepared', version: batch.version,
+    lineCount: batch.lineCount, totalMinor: batch.totalMinor,
+    fileHash: batch.fileHash, objectEvidenceId: batch.objectEvidenceId,
+  });
+}
+
+function batchFromRecord(record: TreasuryDisbursementBatchRecord): DisbursementBatch {
+  if (record.fileHash === null || record.status === 'materializing') {
+    throw new Error('TREASURY_BATCH_FILE_HASH_REQUIRED');
+  }
+  return Object.freeze({
+    id: record.id, tenantId: record.tenantId,
+    payrollPeriodId: record.payrollPeriodId, payrollRunId: record.payrollRunId,
+    format: record.format, fileHash: record.fileHash, lineCount: record.lineCount,
+    totalMinor: record.totalMinor, preparedBy: record.preparedBy,
+    payrollLockedBy: record.payrollLockedBy, exportApprovedBy: record.exportApprovedBy,
+    strongAuthEvidenceId: record.strongAuthEvidenceId,
+    objectEvidenceId: record.objectEvidenceId, bankSubmissionId: record.bankSubmissionId,
+    bankSubmissionEvidenceId: record.bankSubmissionEvidenceId, returnHash: record.returnHash,
+    successfulCount: record.successfulCount, failedCount: record.failedCount,
+    successfulMinor: record.successfulMinor, failedMinor: record.failedMinor,
+    freezeReason: record.freezeReason,
+    status: record.status,
+    version: record.version, createdAt: record.createdAt.toISOString(),
+    updatedAt: record.updatedAt.toISOString(),
   });
 }
 

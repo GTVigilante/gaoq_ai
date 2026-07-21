@@ -11,7 +11,8 @@ export interface TreasuryEvent {
   readonly type:
     | 'treasury.bank_account.attested'
     | 'treasury.disbursement.materialization_requested'
-    | 'treasury.disbursement.prepared';
+    | 'treasury.disbursement.prepared'
+    | 'treasury.disbursement.export_approved';
   readonly tenantId: string;
   readonly aggregateId: string;
   readonly version: number;
@@ -71,6 +72,16 @@ export class TreasuryOutboxWriter {
       if (
         keys !== 'lineCount,payrollPeriodId,payrollRunId,status,totalMinor' ||
         !baseValid || data['status'] !== 'materializing'
+      ) throw new Error('TREASURY_OUTBOX_DATA_INVALID');
+      return;
+    }
+    if (event.type === 'treasury.disbursement.export_approved') {
+      if (
+        keys !==
+          'fileHash,lineCount,objectEvidenceId,payrollPeriodId,payrollRunId,status,strongAuthMethod,totalMinor' ||
+        !baseValid || data['status'] !== 'exported' || data['strongAuthMethod'] !== 'webauthn_uv' ||
+        !safeId(data['objectEvidenceId']) || typeof data['fileHash'] !== 'string' ||
+        !/^[A-Za-z0-9_-]{43}$/.test(data['fileHash'])
       ) throw new Error('TREASURY_OUTBOX_DATA_INVALID');
       return;
     }

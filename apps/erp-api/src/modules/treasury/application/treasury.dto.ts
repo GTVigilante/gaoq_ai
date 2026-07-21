@@ -19,3 +19,8 @@ export class PrepareTreasuryDisbursementDto {
   @Matches(ULID) debtorBankAccountId!: string;
   @Matches(/^\d{4}-\d{2}-\d{2}$/) requestedExecutionDate!: string;
 }
+
+export class ApproveTreasuryExportDto {
+  @IsInt() @Min(1) expectedVersion!: number;
+  @Matches(ULID) strongAuthEvidenceId!: string;
+}

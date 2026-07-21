@@ -70,4 +70,26 @@ describe('TreasuryOutboxWriter', () => {
       ...prepared, data: { ...prepared.data, employeeId: 'employee-001' },
     }, session))).rejects.toThrow('TREASURY_OUTBOX_DATA_INVALID');
   });
+
+  it('导出批准事件只公开强认证方法，不公开批准人或证据详情', async () => {
+    const context = new TenantContextService();
+    const create = vi.fn().mockResolvedValue([]);
+    const writer = new TreasuryOutboxWriter(context, { create } as never);
+    const approved: TreasuryEvent = {
+      type: 'treasury.disbursement.export_approved', tenantId: 'tenant-001',
+      aggregateId: 'batch-001', version: 3, occurredAt: '2026-07-22T10:01:00.000Z',
+      data: {
+        payrollPeriodId: 'period-001', payrollRunId: 'run-001', lineCount: 2,
+        totalMinor: 1_839_600, fileHash: 'a'.repeat(43),
+        objectEvidenceId: 'receipt-001', status: 'exported', strongAuthMethod: 'webauthn_uv',
+      },
+    };
+    await context.run({ tenant, actor }, () => writer.append(approved, session));
+    const calls = JSON.stringify(create.mock.calls);
+    expect(calls).toContain('"status":"exported"');
+    expect(calls).not.toMatch(/approvedBy|strongAuthEvidenceId|credentialId/u);
+    await expect(context.run({ tenant, actor }, () => writer.append({
+      ...approved, data: { ...approved.data, approvedBy: 'treasury-checker' },
+    }, session))).rejects.toThrow('TREASURY_OUTBOX_DATA_INVALID');
+  });
 });
