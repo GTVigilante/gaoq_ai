@@ -297,6 +297,12 @@ export class ApprovalActionRecord {
   @Prop({ type: String, default: null, immutable: true, maxlength: MAX_ID_LENGTH })
   addedApproverId!: string | null;
 
+  @Prop({
+    type: [{ type: String, maxlength: MAX_ID_LENGTH }], required: true, default: [], immutable: true,
+    validate: { validator: hasUniqueElements, message: 'canceledApproverIds 不得重复' },
+  })
+  canceledApproverIds!: string[];
+
   @Prop({ type: Date, required: true, immutable: true })
   occurredAt!: Date;
 }
@@ -322,6 +328,9 @@ ApprovalActionRecordSchema.pre('validate', function () {
     record.actionType === 'instance.approver_added' &&
     (record.nodeId === null || record.addedApproverId === null)
   ) throw new Error('加签动作字段不完整');
+  if (record.actionType !== 'instance.withdrawn' && record.canceledApproverIds.length > 0) {
+    throw new Error('非撤回动作不能包含取消审批人');
+  }
 });
 
 ApprovalActionRecordSchema.index({ actionId: 1 }, { unique: true });

@@ -32,6 +32,8 @@ import {
   ApprovalNotificationRecordSchema,
 } from './notification/approval-notification.schema.js';
 import { ApprovalNotificationWriter } from './notification/approval-notification.writer.js';
+import { ApprovalNotificationOperationsService } from './notification/approval-notification-operations.service.js';
+import { ApprovalNotificationOperationsController } from './approval-notification-operations.controller.js';
 
 /** Phase 2 审批模块：领域状态机、加密持久化、可靠事件和多通道契约的统一边界。 */
 @Module({
@@ -59,8 +61,9 @@ import { ApprovalNotificationWriter } from './notification/approval-notification
     ApprovalDelegationRepository,
     ApprovalOutboxWriter,
     ApprovalNotificationWriter,
+    ApprovalNotificationOperationsService,
   ],
-  controllers: [ApprovalController],
+  controllers: [ApprovalController, ApprovalNotificationOperationsController],
   exports: [
     ApprovalTemplateRepository,
     ApprovalInstanceRepository,

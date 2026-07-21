@@ -24,7 +24,9 @@ describe('OrgPlatformTokenService', () => {
       service.getAccess('tenant-a', 'feishu'),
       service.getAccess('tenant-a', 'feishu'),
     ]);
-    expect(first).toEqual({ accessToken: 'tenant-token', externalTenantId: 'tenant-key' });
+    expect(first).toEqual({
+      accessToken: 'tenant-token', externalTenantId: 'tenant-key', clientId: 'app-id',
+    });
     expect(second).toEqual(first);
     await service.getAccess('tenant-a', 'feishu');
     expect(resolve).toHaveBeenCalledOnce();
@@ -51,6 +53,7 @@ describe('OrgPlatformTokenService', () => {
     await expect(service.getAccess('tenant-a', 'dingtalk')).resolves.toEqual({
       accessToken: 'dingtalk-token',
       externalTenantId: 'corp-id',
+      clientId: 'app-key',
     });
     expect(request).toHaveBeenCalledWith(expect.objectContaining({
       origin: 'https://api.dingtalk.com',

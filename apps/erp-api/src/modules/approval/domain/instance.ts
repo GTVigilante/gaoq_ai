@@ -92,7 +92,12 @@ export type ApprovalAction =
       readonly approverId: string;
       readonly occurredAt: string;
     }
-  | { readonly type: 'instance.withdrawn'; readonly actorId: string; readonly occurredAt: string }
+  | {
+      readonly type: 'instance.withdrawn';
+      readonly actorId: string;
+      readonly canceledApproverIds: readonly string[];
+      readonly occurredAt: string;
+    }
   | { readonly type: 'instance.archived'; readonly actorId: string; readonly occurredAt: string };
 
 export interface ApprovalTransitionResult {
@@ -387,6 +392,11 @@ export function withdrawApprovalInstance(
   if (input.actorId !== instance.initiatorId || !['draft', 'running'].includes(instance.status)) {
     throw new ApprovalDomainError('APPROVAL_WITHDRAW_DENIED', '当前审批不可由该主体撤回');
   }
+  const activeNode = currentApprovalNode(instance);
+  const decided = new Set(
+    activeNode?.decisions.map((decision) => decision.principalApproverId) ?? [],
+  );
+  const canceledApproverIds = activeNode?.actorIds.filter((actorId) => !decided.has(actorId)) ?? [];
   const occurredAt = toApprovalIso(now);
   const next = deepFreeze({
     ...instance,
@@ -398,7 +408,12 @@ export function withdrawApprovalInstance(
   });
   return Object.freeze({
     instance: next,
-    action: Object.freeze({ type: 'instance.withdrawn', actorId: input.actorId, occurredAt }),
+    action: Object.freeze({
+      type: 'instance.withdrawn',
+      actorId: input.actorId,
+      canceledApproverIds: Object.freeze(canceledApproverIds),
+      occurredAt,
+    }),
   });
 }
 

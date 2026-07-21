@@ -46,6 +46,7 @@ export class ApprovalNotificationWriter {
       riskLevel: instance.templateSnapshot.riskLevel,
       status: 'pending' as const,
       attempts: 0,
+      operatorRetryCount: 0,
       nextAttemptAt: now,
       lockedAt: null,
       lockedBy: null,
@@ -76,7 +77,7 @@ function notificationRecipients(
     case 'instance.approver_added':
       return [action.approverId];
     case 'instance.withdrawn':
-      return [instance.initiatorId];
+      return action.canceledApproverIds;
     case 'instance.archived':
       return [];
   }

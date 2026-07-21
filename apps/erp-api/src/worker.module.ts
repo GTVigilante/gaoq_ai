@@ -10,6 +10,7 @@ import { ObservabilityModule } from './core/observability/observability.module.j
 import { WorkerMetricsServer } from './core/observability/worker-metrics.server.js';
 import { toBullMqConnection } from './infrastructure/redis/redis-options.js';
 import { IntegrationWorkerModule } from './modules/integration/integration-worker.module.js';
+import { ApprovalNotificationWorkerModule } from './modules/approval/notification/approval-notification-worker.module.js';
 
 const mongoLogger = new Logger('WorkerMongoDB');
 
@@ -39,6 +40,7 @@ const mongoLogger = new Logger('WorkerMongoDB');
       }),
     }),
     IntegrationWorkerModule,
+    ApprovalNotificationWorkerModule,
     AuditWorkerModule,
     ObservabilityModule,
   ],

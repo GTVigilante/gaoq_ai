@@ -40,7 +40,10 @@ export type ApprovalDomainEvent =
   | ApprovalEvent<'approval_instance.approver_added', {
       readonly actorId: string; readonly nodeId: string; readonly approverId: string;
     }>
-  | ApprovalEvent<'approval_instance.withdrawn', { readonly actorId: string }>
+  | ApprovalEvent<'approval_instance.withdrawn', {
+      readonly actorId: string;
+      readonly canceledApproverIds: readonly string[];
+    }>
   | ApprovalEvent<'approval_instance.archived', { readonly actorId: string }>;
 
 /** 模板事件只披露版本元数据和摘要，不外发字段定义。 */
@@ -140,7 +143,14 @@ export function buildApprovalActionEvent(
         payload: { actorId: action.actorId, nodeId: action.nodeId, approverId: action.approverId },
       };
     case 'instance.withdrawn':
-      return { ...common, type: 'approval_instance.withdrawn', payload: { actorId: action.actorId } };
+      return {
+        ...common,
+        type: 'approval_instance.withdrawn',
+        payload: {
+          actorId: action.actorId,
+          canceledApproverIds: action.canceledApproverIds,
+        },
+      };
     case 'instance.archived':
       return { ...common, type: 'approval_instance.archived', payload: { actorId: action.actorId } };
   }

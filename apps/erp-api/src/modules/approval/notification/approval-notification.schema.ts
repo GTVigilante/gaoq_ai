@@ -41,6 +41,9 @@ export class ApprovalNotificationRecord {
   @Prop({ type: Number, required: true, min: 0, max: MAX_ATTEMPTS })
   attempts!: number;
 
+  @Prop({ type: Number, required: true, default: 0, min: 0 })
+  operatorRetryCount!: number;
+
   @Prop({ type: Date, required: true })
   nextAttemptAt!: Date;
 

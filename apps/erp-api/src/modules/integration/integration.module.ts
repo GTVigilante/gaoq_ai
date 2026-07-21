@@ -119,6 +119,8 @@ import {
     OrgDeliveryService,
     OrgReconciliationService,
     OrgEmployeeProvisioningService,
+    OrgPlatformTokenService,
+    OrgPlatformHttpClient,
   ],
 })
 export class IntegrationModule {}

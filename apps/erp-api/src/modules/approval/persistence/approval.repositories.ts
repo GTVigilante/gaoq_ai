@@ -384,6 +384,7 @@ export class ApprovalActionRepository extends TenantBoundApprovalRepository {
       fromApproverId: null,
       toApproverId: null,
       addedApproverId: null,
+      canceledApproverIds: [],
       occurredAt: new Date(action.occurredAt),
     };
     const details = actionRecordDetails(action);
@@ -544,7 +545,9 @@ function actionRecordDetails(action: ApprovalAction): Record<string, unknown> {
     case 'instance.approver_added':
       return { nodeId: action.nodeId, addedApproverId: action.approverId };
     case 'instance.submitted':
+      return {};
     case 'instance.withdrawn':
+      return { canceledApproverIds: [...action.canceledApproverIds] };
     case 'instance.archived':
       return {};
   }

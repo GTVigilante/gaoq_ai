@@ -24,6 +24,7 @@ function record(): Record<string, unknown> {
     riskLevel: 'R1',
     status: 'pending',
     attempts: 0,
+    operatorRetryCount: 0,
     nextAttemptAt: new Date('2026-07-21T00:00:00.000Z'),
     lockedAt: null,
     lockedBy: null,

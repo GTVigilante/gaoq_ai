@@ -21,11 +21,14 @@ interface CachedAccessToken {
   readonly value: string;
   readonly expiresAt: number;
   readonly externalTenantId: string;
+  readonly clientId: string;
 }
 
 export interface OrgPlatformAccess {
   readonly accessToken: string;
   readonly externalTenantId: string;
+  /** 非密钥的应用标识；钉钉机器人发信协议需要作为 robotCode。 */
+  readonly clientId: string;
 }
 
 /**
@@ -46,7 +49,7 @@ export class OrgPlatformTokenService {
     const key = `${tenantId}:${channel}`;
     const cached = this.cache.get(key);
     if (cached !== undefined && cached.expiresAt > Date.now()) {
-      return { accessToken: cached.value, externalTenantId: cached.externalTenantId };
+      return this.toAccess(cached);
     }
     let pending = this.refreshing.get(key);
     if (pending === undefined) {
@@ -56,7 +59,7 @@ export class OrgPlatformTokenService {
     try {
       const token = await pending;
       this.cache.set(key, token);
-      return { accessToken: token.value, externalTenantId: token.externalTenantId };
+      return this.toAccess(token);
     } finally {
       if (this.refreshing.get(key) === pending) this.refreshing.delete(key);
     }
@@ -89,7 +92,12 @@ export class OrgPlatformTokenService {
       if (!parsed.success) {
         throw new OrgPushError('DINGTALK_TOKEN_RESPONSE_INVALID', 'retryable', '钉钉令牌响应无效');
       }
-      return this.cached(parsed.data.accessToken, parsed.data.expireIn, credential.externalTenantId);
+      return this.cached(
+        parsed.data.accessToken,
+        parsed.data.expireIn,
+        credential.externalTenantId,
+        credential.clientId,
+      );
     }
     const response = await this.http.request({
       origin: 'https://open.feishu.cn',
@@ -105,15 +113,30 @@ export class OrgPlatformTokenService {
       parsed.data.tenant_access_token,
       parsed.data.expire,
       credential.externalTenantId,
+      credential.clientId,
     );
   }
 
-  private cached(value: string, expiresInSeconds: number, externalTenantId: string): CachedAccessToken {
+  private cached(
+    value: string,
+    expiresInSeconds: number,
+    externalTenantId: string,
+    clientId: string,
+  ): CachedAccessToken {
     const safeLifetimeSeconds = Math.max(1, expiresInSeconds - 60);
     return {
       value,
       externalTenantId,
+      clientId,
       expiresAt: Date.now() + safeLifetimeSeconds * 1_000,
+    };
+  }
+
+  private toAccess(token: CachedAccessToken): OrgPlatformAccess {
+    return {
+      accessToken: token.value,
+      externalTenantId: token.externalTenantId,
+      clientId: token.clientId,
     };
   }
 }

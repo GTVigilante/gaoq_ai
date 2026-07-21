@@ -8,6 +8,7 @@ import {
   decideApprovalInstance,
   publishApprovalTemplate,
   submitApprovalInstance,
+  withdrawApprovalInstance,
   type ApprovalTemplateDefinition,
 } from '../domain/index.js';
 import type { ApprovalNotificationDocument } from './approval-notification.schema.js';
@@ -102,5 +103,21 @@ describe('ApprovalNotificationWriter', () => {
     expect(documents.every((item) => item.recipientActorId === 'initiator-001')).toBe(true);
     await expect(writer('tenant-other').service.append(rejected.instance, rejected.action, SESSION))
       .rejects.toThrow('拒绝跨租户聚合');
+  });
+
+  it('撤回运行中审批会通知被取消待办的审批人，不给发起人发送自操作通知', async () => {
+    const submitted = submitApprovalInstance(draft(), {
+      tenantId: 'tenant-001', expectedVersion: 1, actorId: 'initiator-001',
+      resolvedNodes: [{ nodeId: 'joint', actorIds: ['approver-a', 'approver-b'] }],
+    }, NOW).instance;
+    const withdrawn = withdrawApprovalInstance(submitted, {
+      tenantId: 'tenant-001', expectedVersion: 2, actorId: 'initiator-001',
+    }, new Date('2026-07-21T00:02:00.000Z'));
+    const target = writer();
+    await expect(target.service.append(withdrawn.instance, withdrawn.action, SESSION)).resolves.toBe(4);
+    const documents = target.create.mock.calls[0]?.[0] as readonly Record<string, unknown>[];
+    expect(new Set(documents.map((item) => item.recipientActorId)))
+      .toEqual(new Set(['approver-a', 'approver-b']));
+    expect(documents.some((item) => item.recipientActorId === 'initiator-001')).toBe(false);
   });
 });

@@ -57,7 +57,7 @@ function action(): Record<string, unknown> {
     instanceId: 'instance-001', aggregateVersion: 2, actionType: 'instance.submitted',
     actorId: 'employee-001', principalApproverId: null, nodeId: null, outcome: null,
     resultingStatus: null, delegated: false, fromApproverId: null, toApproverId: null,
-    addedApproverId: null, occurredAt: NOW,
+    addedApproverId: null, canceledApproverIds: [], occurredAt: NOW,
   };
 }
 
