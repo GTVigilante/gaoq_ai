@@ -13,7 +13,7 @@ Phase 4 在 ERP 组织与劳动关系主数据之上，建立可重放的考勤�
 7. [Payroll Core 索引迁移 Runbook](./06-payroll-core-index-migration-runbook.md)
 8. [财务审批与 WebAuthn 双人锁定](./07-payroll-approval-locking.md)
 9. [员工本人薪资单、字段级权限与 MCP](./08-payroll-payslip-mcp.md)
-10. 银行代发、回盘、税务文件、异常冻结和三方对账
+10. [Treasury ISO 20022 代发与回盘冻结契约](./09-treasury-disbursement-contract.md)
 11. 两个完整薪资周期影子计算、差异归因与财务签署
 
 ## 强制边界
