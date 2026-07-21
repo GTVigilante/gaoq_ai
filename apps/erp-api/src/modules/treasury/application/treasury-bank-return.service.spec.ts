@@ -29,7 +29,7 @@ function assemble(lines = [{
   instructionId: 'instruction-001', outcome: 'succeeded' as const,
   amountMinor: 839_500, bankLineReference: 'bank-line-001',
 }], protection = { signatureVerified: true, malwareClean: true },
-receivedAt = new Date().toISOString()) {
+receivedAt = new Date().toISOString(), sequence = 1) {
   const context = new TenantContextService();
   let batch: Record<string, unknown> = {
     id: BATCH_ID, tenantId: tenant.tenantId, payrollPeriodId: 'period-001',
@@ -75,7 +75,7 @@ receivedAt = new Date().toISOString()) {
   }) };
   const manifest = {
     returnId: RETURN_ID, tenantId: tenant.tenantId, batchId: BATCH_ID,
-    bankSubmissionId: 'bank-submission-001', sequence: 1, returnHash: 'r'.repeat(43),
+    bankSubmissionId: 'bank-submission-001', sequence, returnHash: 'r'.repeat(43),
     objectRef: 'worm/treasury/returns/return-001', objectEvidenceId: 'return-object-001',
     signatureEvidenceId: 'signature-001', ...protection,
     malwareScanEvidenceId: 'scan-001', receivedAt, lines,
@@ -147,5 +147,14 @@ describe('TreasuryBankReturnService', () => {
       store.service.ingest('treasury-return-future', BATCH_ID, 4)))
       .rejects.toThrow('银行回盘接收时间非法');
     expect(store.returns.create).not.toHaveBeenCalled();
+  });
+
+  it('当前终态回盘契约拒绝把乱序清单当作首份回盘', async () => {
+    const store = assemble(undefined, undefined, undefined, 2);
+    await expect(store.context.run({ tenant, actor }, () =>
+      store.service.ingest('treasury-return-out-of-order', BATCH_ID, 4)))
+      .rejects.toThrow('乱序回盘已拒绝');
+    expect(store.returns.create).not.toHaveBeenCalled();
+    expect(store.batches.updateOne).not.toHaveBeenCalled();
   });
 });

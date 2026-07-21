@@ -13,6 +13,7 @@ Return Inbox 与 ERP、WORM、银行提交网关必须使用不同 HTTPS Origin 
 - `POST /treasury/disbursements/:id/returns` 只允许拥有 `erp:treasury:return:ingest` 的受信任 `service` 或 `system_job` 调用；普通用户与 MCP 均不可调用。
 - ERP 仅向 Inbox 发送可信租户、批次 ID 和银行提交 ID。确定性幂等键绑定三者，不发送账户、员工、金额或文件内容。
 - Inbox 清单必须严格绑定同一租户、ULID 批次和银行提交回执；回盘 ID 为 ULID，接收时间不得超前服务器时间五分钟。
+- 当前状态机只接收一份终态回盘，因此序号必须为 1；乱序或增量清单失败关闭且不推进、不冻结批次。未来支持多阶段回盘时必须先扩展显式序列状态机，禁止仅放宽校验。
 - 清单必须关联回盘 SHA-256、WORM 对象及证据、签名证据、恶意文件扫描证据。响应出现额外字段、原始正文、错批次、错提交、非法 JSON 或超限时拒绝处理。
 
 ## ERP 逐行复核与冻结

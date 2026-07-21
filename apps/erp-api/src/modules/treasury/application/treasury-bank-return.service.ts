@@ -114,6 +114,10 @@ export class TreasuryBankReturnService {
     const manifest = await this.inbox.claim({
       tenantId: this.tenantId(), batchId, bankSubmissionId: current.bankSubmissionId,
     });
+    if (manifest.sequence !== 1) throw new ConflictException({
+      code: 'TREASURY_BANK_RETURN_SEQUENCE_INVALID',
+      message: '当前终态回盘契约只接受首序号，乱序回盘已拒绝',
+    });
     return this.run(() => this.idempotency.execute(
       'treasury.bank_return.ingest', key, {
         batchId, expectedVersion, returnId: manifest.returnId, returnHash: manifest.returnHash,
