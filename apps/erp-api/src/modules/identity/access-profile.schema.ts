@@ -1,6 +1,8 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import type { HydratedDocument } from 'mongoose';
 
+import { ERP_AUTHORIZATION_SCOPE_PATTERN } from './authorization-scope.js';
+
 /** 授权权限快照状态：active 生效中，disabled 已停用。 */
 export const ACCESS_PROFILE_STATUSES = ['active', 'disabled'] as const;
 export type AccessProfileStatus = (typeof ACCESS_PROFILE_STATUSES)[number];
@@ -52,7 +54,7 @@ export class AccessProfile {
 
   /** 数据范围标识集合，最多 200 个。 */
   @Prop({
-    type: [STRING_ARRAY_ELEMENT],
+    type: [{ ...STRING_ARRAY_ELEMENT, match: ERP_AUTHORIZATION_SCOPE_PATTERN }],
     required: true,
     default: [],
     validate: maxLengthValidator(200),

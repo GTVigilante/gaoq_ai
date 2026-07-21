@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import type { AppEnvironment } from '../../config/environment.js';
 import type { VerifiedAccessToken } from './auth.types.js';
+import { ERP_AUTHORIZATION_SCOPE_PATTERN } from './authorization-scope.js';
 import { SessionService } from './session.service.js';
 
 const actorTypeSchema = z.enum(['user', 'service', 'mcp_client', 'system_job']);
@@ -19,7 +20,7 @@ const claimsSchema = z.object({
   client_id: z.string().min(1).max(128),
   azp: z.string().min(1).max(128),
   roles: z.array(z.string().min(1).max(128)).max(100),
-  scope: z.union([z.string(), z.array(z.string())]),
+  scope: z.union([z.string().min(1), z.array(z.string().min(1).max(128)).min(1).max(100)]),
   department_ids: z.array(z.string().min(1).max(128)).max(500),
   sid: z.string().min(1).max(128),
   resource: z.union([z.string().url(), z.array(z.string().url()).min(1)]),
@@ -94,6 +95,13 @@ export const parseAndValidateClaims = (
     throw new UnauthorizedException({ code: 'AUTH_WRONG_RESOURCE', message: '令牌资源不匹配' });
   }
   const scopes = typeof claims.scope === 'string' ? claims.scope.split(' ').filter(Boolean) : claims.scope;
+  if (
+    scopes.length === 0 ||
+    new Set(scopes).size !== scopes.length ||
+    !scopes.every((scope) => ERP_AUTHORIZATION_SCOPE_PATTERN.test(scope))
+  ) {
+    throw new UnauthorizedException({ code: 'AUTH_INVALID_SCOPE', message: '令牌权限范围非法' });
+  }
   if (claims.azp !== claims.client_id) {
     throw new UnauthorizedException({ code: 'AUTH_CLIENT_MISMATCH', message: '令牌客户端不匹配' });
   }

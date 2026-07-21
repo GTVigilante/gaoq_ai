@@ -55,12 +55,12 @@ describe('McpToolService', () => {
   it('权限查询只返回服务端身份快照，不返回租户参数或访问令牌', async () => {
     const store = assemble();
 
-    const result = await store.service.getMyPermissions(extra(['mcp:connect']));
+    const result = await store.service.getMyPermissions(extra(['erp:mcp:server:connect']));
 
     expect(result.structuredContent).toEqual({
       actorId: 'employee-001',
       roleCodes: ['employee'],
-      scopes: ['mcp:connect'],
+      scopes: ['erp:mcp:server:connect'],
       departmentIds: ['department-001'],
     });
     expect(JSON.stringify(result)).not.toContain('opaque-redacted');
@@ -68,10 +68,10 @@ describe('McpToolService', () => {
     expect(store.audit.record).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'success' }));
   });
 
-  it('缺少 org:read 时以工具错误拒绝，且不调用组织应用服务', async () => {
+  it('缺少 erp:org:chart:read 时以工具错误拒绝，且不调用组织应用服务', async () => {
     const store = assemble();
 
-    const result = await store.service.getOrgChart(extra(['mcp:connect']));
+    const result = await store.service.getOrgChart(extra(['erp:mcp:server:connect']));
 
     expect(result.isError).toBe(true);
     expect(result.content[0]).toMatchObject({ type: 'text' });
@@ -93,7 +93,7 @@ describe('McpToolService', () => {
       });
     });
 
-    const result = await store.service.getOrgChart(extra(['mcp:connect', 'org:read']));
+    const result = await store.service.getOrgChart(extra(['erp:mcp:server:connect', 'erp:org:chart:read']));
 
     expect(result.isError).not.toBe(true);
     expect(result.structuredContent).toMatchObject({

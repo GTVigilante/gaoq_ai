@@ -81,7 +81,7 @@ export class OrgApplicationService {
       this.departments.findAll(),
       this.employees.findAll(),
     ]);
-    if (actor.scopes.includes('org:read:all')) {
+    if (actor.scopes.includes('erp:org:chart:read_all')) {
       return { departments, employees };
     }
     const visible = new Set(actor.departmentIds);

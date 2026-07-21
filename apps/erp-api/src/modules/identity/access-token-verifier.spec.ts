@@ -15,7 +15,7 @@ const validPayload = (): JWTPayload => ({
   client_id: 'gaoq-web',
   azp: 'gaoq-web',
   roles: ['employee'],
-  scope: 'mcp:connect profile:read',
+  scope: 'erp:mcp:server:connect erp:identity:profile:read',
   department_ids: ['department-001'],
   sid: 'session-001',
   resource: 'https://erp.example.com/mcp',
@@ -27,7 +27,7 @@ describe('parseAndValidateClaims', () => {
     expect(token).toMatchObject({
       tenantId: 'tenant-001',
       actorId: 'employee-001',
-      scopes: ['mcp:connect', 'profile:read'],
+      scopes: ['erp:mcp:server:connect', 'erp:identity:profile:read'],
     });
   });
 
@@ -49,6 +49,19 @@ describe('parseAndValidateClaims', () => {
     expect(() =>
       parseAndValidateClaims(
         { ...validPayload(), azp: 'attacker-client' },
+        'https://erp.example.com/mcp',
+      ),
+    ).toThrow(UnauthorizedException);
+  });
+
+  it.each([
+    'org:read',
+    'erp:mcp:server:connect erp:mcp:server:connect',
+    [],
+  ])('拒绝格式非法、重复或空 scope：%j', (scope) => {
+    expect(() =>
+      parseAndValidateClaims(
+        { ...validPayload(), scope },
         'https://erp.example.com/mcp',
       ),
     ).toThrow(UnauthorizedException);

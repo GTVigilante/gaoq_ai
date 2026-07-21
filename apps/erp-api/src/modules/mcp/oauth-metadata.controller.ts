@@ -16,7 +16,7 @@ export class OauthMetadataController {
     return {
       resource: this.config.get('AUTH_RESOURCE', { infer: true }),
       authorization_servers: [this.config.get('MCP_AUTHORIZATION_SERVER', { infer: true })],
-      scopes_supported: ['mcp:connect', 'org:read', 'org:read:all', 'profile:read'],
+      scopes_supported: ['erp:mcp:server:connect', 'erp:org:chart:read', 'erp:org:chart:read_all', 'erp:identity:profile:read'],
       bearer_methods_supported: ['header'],
       resource_documentation: 'gaoq://mcp/guide',
     };

@@ -36,12 +36,15 @@ export class ApiExceptionFilter implements ExceptionFilter {
       timestamp: new Date().toISOString(),
     };
 
-    if (status === 401 && request.path === '/mcp') {
+    if ((status === 401 || status === 403) && request.path === '/mcp') {
       const metadataUrl = new URL(
         '/.well-known/oauth-protected-resource',
         this.config.get('AUTH_RESOURCE', { infer: true }),
       );
-      response.setHeader('WWW-Authenticate', `Bearer resource_metadata="${metadataUrl.toString()}"`);
+      const challenge = status === 401
+        ? `Bearer resource_metadata="${metadataUrl.toString()}", scope="erp:mcp:server:connect"`
+        : `Bearer error="insufficient_scope", resource_metadata="${metadataUrl.toString()}", scope="erp:mcp:server:connect"`;
+      response.setHeader('WWW-Authenticate', challenge);
     }
 
     if (!(exception instanceof HttpException)) {

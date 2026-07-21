@@ -64,6 +64,20 @@ pnpm --filter @gaoq/erp-api dev:worker
 - API 就绪探针：`http://localhost:3001/api/health/ready`
 - Worker：独立进程消费 Outbox、钉钉与飞书组织同步任务，不开放 HTTP 端口
 
+### MCP OAuth 公共客户端
+
+远程 MCP 客户端使用 OAuth 2.1 Authorization Code + PKCE S256。客户端必须预注册，配置只包含公开标识、精确回调、允许的 scope 和租户白名单，禁止放入 client secret：
+
+```dotenv
+MCP_OAUTH_CLIENTS_JSON=[{"clientId":"mcp-client-001","clientName":"本地 MCP 客户端","redirectUris":["http://127.0.0.1:6274/callback"],"allowedScopes":["erp:mcp:server:connect","erp:org:chart:read"],"tenantIds":["tenant-001"],"status":"active"}]
+```
+
+- 受保护资源发现：`/.well-known/oauth-protected-resource`
+- 授权服务器发现：`/.well-known/oauth-authorization-server`
+- 授权端点：`/api/auth/oauth/authorize`
+- Token 端点：`/api/auth/oauth/token`（仅接受 `application/x-www-form-urlencoded`）
+- 用户同意页：`/oauth/consent`，以 ERP HttpOnly 登录会话确认主体与租户
+
 提交前执行：
 
 ```bash

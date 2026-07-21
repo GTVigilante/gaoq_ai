@@ -42,7 +42,7 @@ describe('SecretManagedRsaAccessTokenSigner', () => {
       sessionId: 'session-001',
       clientId: 'gaoq-web',
       roleCodes: ['employee'],
-      scopes: ['mcp:connect', 'profile:read'],
+      scopes: ['erp:mcp:server:connect', 'erp:identity:profile:read'],
       departmentIds: ['department-001'],
     });
     const jwks = await signer.getPublicJwks();

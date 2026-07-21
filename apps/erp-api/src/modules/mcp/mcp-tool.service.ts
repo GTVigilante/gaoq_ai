@@ -51,7 +51,7 @@ export class McpToolService {
   async getOrgChart(extra: McpExtra): Promise<McpToolResult> {
     const identity = parseMcpIdentity(extra.authInfo);
     return this.run(identity, async () => {
-      if (!identity.scopes.includes('org:read')) {
+      if (!identity.scopes.includes('erp:org:chart:read')) {
         await this.audit.record({
           action: 'mcp.tool.get_org_chart',
           resourceType: 'mcp_tool',
@@ -64,7 +64,7 @@ export class McpToolService {
           isError: true,
           content: [{
             type: 'text',
-            text: JSON.stringify({ code: 'AUTH_INSUFFICIENT_SCOPE', message: '需要 org:read' }),
+            text: JSON.stringify({ code: 'AUTH_INSUFFICIENT_SCOPE', message: '需要 erp:org:chart:read' }),
           }],
         };
       }

@@ -70,4 +70,29 @@ describe('AuditService', () => {
       action: 'x', resourceType: 'x', riskLevel: 'R0', outcome: 'failure', traceId: 'trace-2',
     })).rejects.toThrow('系统审计上下文非法');
   });
+
+  it('公共 OAuth 端点可在独立验明用户后记录可信主体审计', async () => {
+    const sink = new CapturingAuditSink();
+    const service = new AuditService(sink, new TenantContextService());
+
+    await service.recordTrustedUser('tenant-001', {
+      actorId: 'actor-001',
+      traceId: 'trace-oauth-001',
+      action: 'identity.oauth.authorize',
+      resourceType: 'oauth_client',
+      resourceId: 'mcp-client-001',
+      riskLevel: 'R1',
+      outcome: 'success',
+      metadata: { approved: true, scopeCount: 2 },
+    });
+
+    expect(sink.append).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: 'tenant-001', actorId: 'actor-001', actorType: 'user',
+      traceId: 'trace-oauth-001',
+    }));
+    await expect(service.recordTrustedUser('$where', {
+      actorId: 'actor-001', traceId: 'trace-oauth-002', action: 'x',
+      resourceType: 'x', riskLevel: 'R1', outcome: 'failure',
+    })).rejects.toThrow('可信用户审计上下文非法');
+  });
 });

@@ -17,6 +17,12 @@ import { ExternalIdentity, ExternalIdentitySchema } from './external-identity.sc
 import { FeishuSsoAdapter } from './feishu-sso.adapter.js';
 import { IdentitySession, IdentitySessionSchema } from './session.schema.js';
 import { JwksController } from './jwks.controller.js';
+import { OAuthAuthorizationServerMetadataController } from './oauth-authorization-server-metadata.controller.js';
+import { OAuthAuthorizationTransactionService } from './oauth-authorization-transaction.service.js';
+import { OAuthClientRegistry } from './oauth-client-registry.js';
+import { OAuthController } from './oauth.controller.js';
+import { OAuthRateLimitService } from './oauth-rate-limit.service.js';
+import { OAuthTokenGrantService } from './oauth-token-grant.service.js';
 import {
   IdentityRefreshToken,
   IdentityRefreshTokenSchema,
@@ -51,11 +57,22 @@ import { TokenGrantService } from './token-grant.service.js';
       { name: IdentityRefreshToken.name, schema: IdentityRefreshTokenSchema },
     ]),
   ],
-  controllers: [SessionController, SsoController, TokenController, JwksController],
+  controllers: [
+    SessionController,
+    SsoController,
+    TokenController,
+    JwksController,
+    OAuthController,
+    OAuthAuthorizationServerMetadataController,
+  ],
   providers: [
     SessionService,
     RefreshTokenService,
     TokenGrantService,
+    OAuthClientRegistry,
+    OAuthAuthorizationTransactionService,
+    OAuthTokenGrantService,
+    OAuthRateLimitService,
     BrowserRefreshCookieService,
     BrowserSsoStateCookieService,
     AccessProfileRepository,

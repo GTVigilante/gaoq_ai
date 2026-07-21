@@ -39,7 +39,7 @@ describe('TenantContextInterceptor', () => {
         tenantId: 'tenant-001',
         identitySource: 'access_token',
         roleCodes: ['employee'],
-        scopes: ['profile:read'],
+        scopes: ['erp:identity:profile:read'],
         departmentIds: ['department-001'],
       },
     });

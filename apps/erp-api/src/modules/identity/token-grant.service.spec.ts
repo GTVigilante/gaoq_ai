@@ -18,7 +18,7 @@ const profile = Object.freeze({
   employeeId: 'employee-001',
   status: 'active' as const,
   roleCodes: Object.freeze(['employee']),
-  scopes: Object.freeze(['mcp:connect', 'profile:read']),
+  scopes: Object.freeze(['erp:mcp:server:connect', 'erp:identity:profile:read']),
   departmentIds: Object.freeze(['department-001']),
   version: 1,
 });
@@ -90,7 +90,7 @@ describe('TokenGrantService', () => {
     expect(grant).toMatchObject({
       accessToken: 'signed-access-token',
       refreshToken: `rt_${'A'.repeat(64)}`,
-      scope: 'mcp:connect profile:read',
+      scope: 'erp:mcp:server:connect erp:identity:profile:read',
       returnPath: '/workspace',
     });
     expect(fixture.open).toHaveBeenCalledOnce();
@@ -142,7 +142,7 @@ describe('TokenGrantService', () => {
     await expect(fixture.service.refresh(`rt_${'A'.repeat(64)}`)).resolves.toMatchObject({
       accessToken: 'signed-access-token',
       refreshToken: `rt_${'B'.repeat(64)}`,
-      scope: 'mcp:connect profile:read',
+      scope: 'erp:mcp:server:connect erp:identity:profile:read',
     });
     expect(fixture.resolveActive).toHaveBeenCalledWith(
       'tenant-001',
@@ -150,6 +150,34 @@ describe('TokenGrantService', () => {
       mongoSession,
     );
     expect(fixture.sign).toHaveBeenCalledOnce();
+  });
+
+  it('OAuth 同意只从轮换后的可信浏览器会话取得租户与权限快照', async () => {
+    const fixture = createFixture();
+    fixture.rotate.mockResolvedValue({
+      status: 'rotated',
+      refreshToken: `rt_${'B'.repeat(64)}`,
+      tenantId: 'tenant-001',
+      actorId: 'actor-001',
+      sessionId: 'session-001',
+      clientId: 'gaoq-web',
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+
+    const identity = await fixture.service.authenticateBrowserForOAuth(`rt_${'A'.repeat(64)}`);
+
+    expect(identity).toEqual({
+      refreshToken: `rt_${'B'.repeat(64)}`,
+      tenantId: 'tenant-001',
+      actorId: 'actor-001',
+      sessionId: 'session-001',
+      roleCodes: ['employee'],
+      scopes: ['erp:mcp:server:connect', 'erp:identity:profile:read'],
+      departmentIds: ['department-001'],
+    });
+    expect(fixture.sign).not.toHaveBeenCalled();
+    expect(Object.isFrozen(identity)).toBe(true);
+    expect(Object.isFrozen(identity.scopes)).toBe(true);
   });
 
   it('会话或权限停用时在事务内吊销新 family，不签发访问令牌', async () => {

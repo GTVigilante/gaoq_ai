@@ -63,7 +63,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
         actorType: 'user',
         clientId: 'official-sdk-test-client',
         roleCodes: ['employee'],
-        scopes: ['mcp:connect', 'org:read'],
+        scopes: ['erp:mcp:server:connect', 'erp:org:chart:read'],
         departmentIds: ['department-001'],
         sessionId: 'session-001',
         expiresAt: 1_900_000_000,

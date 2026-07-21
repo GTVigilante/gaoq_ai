@@ -24,6 +24,34 @@ describe('validateEnvironment', () => {
     expect(environment.PORT).toBe(3001);
     expect(environment.AUTH_ACCESS_TOKEN_TTL_SECONDS).toBe(600);
     expect(environment.AUTH_SIGNING_PRIVATE_KEY_BASE64).toBeUndefined();
+    expect(environment.MCP_OAUTH_CLIENTS_JSON).toBe('[]');
+  });
+
+  it('拒绝授权服务器与 issuer 错位或 resource 携带 fragment', () => {
+    const base = {
+      NODE_ENV: 'test',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0',
+      WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://erp.example.com',
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://erp.example.com/.well-known/jwks.json',
+      MCP_AUTHORIZATION_SERVER: 'https://erp.example.com',
+      MCP_ALLOWED_ORIGINS: 'https://client.example.com',
+    };
+    expect(() => validateEnvironment({
+      ...base, MCP_AUTHORIZATION_SERVER: 'https://auth.example.com',
+    })).toThrow('必须与无路径 AUTH_ISSUER 同源');
+    expect(() => validateEnvironment({
+      ...base, MCP_AUTHORIZATION_SERVER: 'https://erp.example.com?unsafe=1',
+    })).toThrow('必须与无路径 AUTH_ISSUER 同源');
+    expect(() => validateEnvironment({
+      ...base, AUTH_JWKS_URI: 'https://keys.example.com/jwks.json',
+    })).toThrow('必须指向 issuer');
+    expect(() => validateEnvironment({
+      ...base, AUTH_RESOURCE: 'https://erp.example.com/mcp#token',
+    })).toThrow('AUTH_RESOURCE 禁止凭据与 fragment');
   });
 
   it('拒绝缺失的外部资源连接信息', () => {

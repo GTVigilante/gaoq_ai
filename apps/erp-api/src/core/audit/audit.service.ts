@@ -6,6 +6,10 @@ import { AuditEventSink, type AuditRecordInput } from './audit.types.js';
 const AUDIT_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 
 export type SystemAuditRecordInput = AuditRecordInput & { readonly traceId: string };
+export type TrustedUserAuditRecordInput = AuditRecordInput & {
+  readonly actorId: string;
+  readonly traceId: string;
+};
 
 @Injectable()
 export class AuditService {
@@ -38,6 +42,24 @@ export class AuditService {
       tenantId,
       actorId: 'system:integration-worker',
       actorType: 'system_job',
+      traceId,
+      occurredAt: new Date().toISOString(),
+    });
+  }
+
+  /** 公共协议端点完成独立身份校验后，以显式可信用户上下文记录审计。 */
+  async recordTrustedUser(tenantId: string, input: TrustedUserAuditRecordInput): Promise<void> {
+    if (
+      !AUDIT_ID_PATTERN.test(tenantId) ||
+      !AUDIT_ID_PATTERN.test(input.actorId) ||
+      !AUDIT_ID_PATTERN.test(input.traceId)
+    ) throw new Error('可信用户审计上下文非法');
+    const { actorId, traceId, ...record } = input;
+    await this.sink.append({
+      ...record,
+      tenantId,
+      actorId,
+      actorType: 'user',
       traceId,
       occurredAt: new Date().toISOString(),
     });

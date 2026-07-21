@@ -14,7 +14,7 @@ const validProfile = () => ({
   employeeId: 'employee-001',
   status: 'active',
   roleCodes: ['employee'],
-  scopes: ['profile:read'],
+  scopes: ['erp:identity:profile:read'],
   departmentIds: ['department-001'],
   version: 1,
 });
@@ -34,6 +34,15 @@ describe('AccessProfileSchema', () => {
       ...validProfile(),
       scopes: ['   '],
       version: 0,
+    });
+
+    await expect(document.validate()).rejects.toThrow();
+  });
+
+  it('拒绝不符合 erp:{domain}:{resource}:{action} 格式的授权范围', async () => {
+    const document = new AccessProfileValidationModel({
+      ...validProfile(),
+      scopes: ['org:read'],
     });
 
     await expect(document.validate()).rejects.toThrow();

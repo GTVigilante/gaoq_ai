@@ -40,13 +40,13 @@ export class OrgController {
   ) {}
 
   @Get('chart')
-  @RequiredScopes('org:read')
+  @RequiredScopes('erp:org:chart:read')
   async getChart(): Promise<OrgChart> {
     return this.organization.getOrgChart();
   }
 
   @Post('departments')
-  @RequiredScopes('org:write')
+  @RequiredScopes('erp:org:master:write')
   async createDepartment(
     @Headers('idempotency-key') key: string | undefined,
     @Body() body: CreateDepartmentDto,
@@ -59,7 +59,7 @@ export class OrgController {
   }
 
   @Patch('departments/:id')
-  @RequiredScopes('org:write')
+  @RequiredScopes('erp:org:master:write')
   async updateDepartment(
     @Param('id') id: string,
     @Headers('if-match') ifMatch: string | undefined,
@@ -79,7 +79,7 @@ export class OrgController {
   }
 
   @Post('positions')
-  @RequiredScopes('org:write')
+  @RequiredScopes('erp:org:master:write')
   async createPosition(
     @Headers('idempotency-key') key: string | undefined,
     @Body() body: CreatePositionDto,
@@ -92,7 +92,7 @@ export class OrgController {
   }
 
   @Patch('positions/:id')
-  @RequiredScopes('org:write')
+  @RequiredScopes('erp:org:master:write')
   async updatePosition(
     @Param('id') id: string,
     @Headers('if-match') ifMatch: string | undefined,
@@ -112,7 +112,7 @@ export class OrgController {
   }
 
   @Post('job-levels')
-  @RequiredScopes('org:write')
+  @RequiredScopes('erp:org:master:write')
   async createJobLevel(
     @Headers('idempotency-key') key: string | undefined,
     @Body() body: CreateJobLevelDto,
@@ -125,7 +125,7 @@ export class OrgController {
   }
 
   @Patch('job-levels/:id')
-  @RequiredScopes('org:write')
+  @RequiredScopes('erp:org:master:write')
   async updateJobLevel(
     @Param('id') id: string,
     @Headers('if-match') ifMatch: string | undefined,
@@ -145,7 +145,7 @@ export class OrgController {
   }
 
   @Post('employees')
-  @RequiredScopes('org:write')
+  @RequiredScopes('erp:org:master:write')
   async createEmployee(
     @Headers('idempotency-key') key: string | undefined,
     @Body() body: CreateEmployeeDto,
@@ -158,7 +158,7 @@ export class OrgController {
   }
 
   @Patch('employees/:id')
-  @RequiredScopes('org:write')
+  @RequiredScopes('erp:org:master:write')
   async updateEmployee(
     @Param('id') id: string,
     @Headers('if-match') ifMatch: string | undefined,
@@ -179,7 +179,7 @@ export class OrgController {
 
   @Post('employees/:id/status-transitions')
   @HttpCode(200)
-  @RequiredScopes('org:write')
+  @RequiredScopes('erp:org:master:write')
   async transitionEmployeeStatus(
     @Param('id') id: string,
     @Headers('if-match') ifMatch: string | undefined,

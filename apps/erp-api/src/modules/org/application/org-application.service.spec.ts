@@ -24,7 +24,7 @@ const trustedContext = {
     actorType: 'user' as const,
     tenantId: 'tenant-001',
     roleCodes: ['employee'],
-    scopes: ['org:read', 'org:write'],
+    scopes: ['erp:org:chart:read', 'erp:org:master:write'],
     departmentIds: ['dept-a'],
     traceId: 'trace-001',
   },

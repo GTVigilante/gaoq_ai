@@ -14,7 +14,7 @@ describe('TenantContextService', () => {
           actorType: 'user',
           tenantId: 'tenant-001',
           roleCodes: ['employee'],
-          scopes: ['profile:read'],
+          scopes: ['erp:identity:profile:read'],
           departmentIds: ['department-001'],
           traceId: 'trace-001',
         },

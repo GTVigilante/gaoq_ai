@@ -24,7 +24,7 @@ class StubVerifier extends AccessTokenVerifier {
       actorType: 'user',
       clientId: 'gaoq-web',
       roleCodes: ['employee'],
-      scopes: ['mcp:connect'],
+      scopes: ['erp:mcp:server:connect'],
       departmentIds: ['department-001'],
       sessionId: 'session-001',
       expiresAt: 4_102_444_800,
@@ -68,7 +68,7 @@ describe('BearerAuthGuard', () => {
 
   it('拒绝端点要求但令牌未授予的 scope', async () => {
     const reflector = new Reflector();
-    Reflect.defineMetadata(REQUIRED_SCOPES_KEY, ['org:write'], handler);
+    Reflect.defineMetadata(REQUIRED_SCOPES_KEY, ['erp:org:master:write'], handler);
     const guard = new BearerAuthGuard(reflector, new StubVerifier());
     const request = {
       header: () => 'Bearer signed.token.value',

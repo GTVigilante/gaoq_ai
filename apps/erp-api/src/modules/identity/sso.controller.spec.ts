@@ -118,7 +118,7 @@ describe('SsoController', () => {
       refreshToken: `rt_${'A'.repeat(64)}`,
       tokenType: 'Bearer',
       expiresIn: 600,
-      scope: 'profile:read',
+      scope: 'erp:identity:profile:read',
       returnPath: '/workspace',
     });
 
