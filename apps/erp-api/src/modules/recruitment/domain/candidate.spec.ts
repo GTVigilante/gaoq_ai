@@ -1,0 +1,72 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  anonymizeCandidate,
+  createCandidate,
+  normalizeCandidateEmail,
+  normalizeCandidatePhone,
+  withdrawCandidateConsent,
+} from './candidate.js';
+
+const NOW = new Date('2026-07-21T08:00:00.000Z');
+
+function candidate() {
+  return createCandidate({
+    id: 'candidate-001',
+    tenantId: 'tenant-001',
+    name: ' 张 三 ',
+    phone: '+86 138-0013-8000',
+    email: 'Candidate@Example.COM',
+    consentVersion: 'privacy-v1',
+    consentPurpose: '招聘评估与候选人联络',
+    consentSource: 'portal',
+    consentExpiresAt: new Date('2027-07-21T08:00:00.000Z'),
+    retentionExpiresAt: new Date('2028-07-21T08:00:00.000Z'),
+  }, NOW);
+}
+
+describe('Candidate', () => {
+  it('候选人不携带职位，并规范化用于加密与盲索引的联系字段', () => {
+    const created = candidate();
+    expect(created).toMatchObject({
+      name: '张 三', phone: '+8613800138000', email: 'candidate@example.com', status: 'active',
+    });
+    expect(created).not.toHaveProperty('positionId');
+    expect(Object.isFrozen(created)).toBe(true);
+    expect(normalizeCandidatePhone('+1 (415) 555-2671')).toBe('+14155552671');
+    expect(normalizeCandidateEmail(' User@Example.COM ')).toBe('user@example.com');
+  });
+
+  it('手机号与邮箱至少提供一项，且授权与保留期必须有效', () => {
+    expect(() => createCandidate({
+      id: 'candidate-001', tenantId: 'tenant-001', name: '张三',
+      consentVersion: 'privacy-v1', consentPurpose: '招聘评估', consentSource: 'portal',
+      consentExpiresAt: new Date('2027-07-21T08:00:00.000Z'),
+      retentionExpiresAt: new Date('2028-07-21T08:00:00.000Z'),
+    }, NOW)).toThrow('手机号和邮箱至少提供一项');
+    expect(() => normalizeCandidatePhone('13800138000')).toThrow('E.164');
+  });
+
+  it('授权撤回后停止非必要处理，并可匿名化直接身份字段', () => {
+    const withdrawn = withdrawCandidateConsent(candidate(), {
+      tenantId: 'tenant-001', expectedVersion: 1,
+    }, new Date('2026-08-01T00:00:00.000Z'));
+    expect(withdrawn).toMatchObject({ status: 'consent_withdrawn', version: 2 });
+    expect(withdrawn.consent.withdrawnAt).not.toBeNull();
+    const anonymized = anonymizeCandidate(withdrawn, {
+      tenantId: 'tenant-001', expectedVersion: 2,
+    }, new Date('2026-08-02T00:00:00.000Z'));
+    expect(anonymized).toMatchObject({
+      status: 'anonymized', name: null, phone: null, email: null, version: 3,
+    });
+  });
+
+  it('拒绝跨租户和乐观锁冲突', () => {
+    expect(() => withdrawCandidateConsent(candidate(), {
+      tenantId: 'tenant-002', expectedVersion: 1,
+    }, NOW)).toThrow('租户不匹配');
+    expect(() => withdrawCandidateConsent(candidate(), {
+      tenantId: 'tenant-001', expectedVersion: 9,
+    }, NOW)).toThrow('版本冲突');
+  });
+});

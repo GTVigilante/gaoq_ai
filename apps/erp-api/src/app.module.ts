@@ -23,6 +23,7 @@ import { IntegrationModule } from './modules/integration/integration.module.js';
 import { McpModule } from './modules/mcp/mcp.module.js';
 import { McpOriginGuard } from './modules/mcp/mcp-origin.guard.js';
 import { OrgModule } from './modules/org/org.module.js';
+import { RecruitmentModule } from './modules/recruitment/recruitment.module.js';
 
 const mongoLogger = new Logger('MongoDB');
 
@@ -60,6 +61,7 @@ const mongoLogger = new Logger('MongoDB');
     IntegrationModule,
     McpModule,
     OrgModule,
+    RecruitmentModule,
     TraceMiddlewareModule,
     TenantContextModule,
     ObservabilityModule,

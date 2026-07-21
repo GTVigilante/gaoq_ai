@@ -30,6 +30,16 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(64).max(16_384).optional(),
   ),
+  /** 招聘 L3/L4 数据密钥环，与审批和盲索引密钥域隔离。 */
+  RECRUITMENT_DATA_ENCRYPTION_KEYS: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(64).max(16_384).optional(),
+  ),
+  /** 招聘精确去重 HMAC 密钥环；不得复用数据加密密钥。 */
+  RECRUITMENT_BLIND_INDEX_KEYS: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(64).max(16_384).optional(),
+  ),
   /** Prometheus 独立抓取凭据，仅由 Secret Manager 注入，不复用业务 OAuth token。 */
   METRICS_BEARER_TOKEN: z.preprocess(
     (value) => value === '' ? undefined : value,
@@ -135,6 +145,17 @@ const environmentSchema = z.object({
       code: 'custom',
       path: ['APPROVAL_DATA_ENCRYPTION_KEYS'],
       message: '生产环境必须由 Secret Manager 注入审批表单加密密钥环',
+    });
+  }
+  if (
+    environment.NODE_ENV === 'production' &&
+    (environment.RECRUITMENT_DATA_ENCRYPTION_KEYS === undefined ||
+      environment.RECRUITMENT_BLIND_INDEX_KEYS === undefined)
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['RECRUITMENT_DATA_ENCRYPTION_KEYS'],
+      message: '生产环境必须由 Secret Manager 注入招聘数据与盲索引独立密钥环',
     });
   }
   if (environment.NODE_ENV === 'production' && environment.METRICS_BEARER_TOKEN === undefined) {

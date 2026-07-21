@@ -28,6 +28,8 @@ describe('validateEnvironment', () => {
     expect(environment.AUTH_SIGNING_PRIVATE_KEY_BASE64).toBeUndefined();
     expect(environment.AUDIT_INTEGRITY_KEYS).toBeUndefined();
     expect(environment.APPROVAL_DATA_ENCRYPTION_KEYS).toBeUndefined();
+    expect(environment.RECRUITMENT_DATA_ENCRYPTION_KEYS).toBeUndefined();
+    expect(environment.RECRUITMENT_BLIND_INDEX_KEYS).toBeUndefined();
     expect(environment.METRICS_BEARER_TOKEN).toBeUndefined();
     expect(environment.MCP_OAUTH_CLIENTS_JSON).toBe('[]');
   });
@@ -134,6 +136,25 @@ describe('validateEnvironment', () => {
       MCP_AUTHORIZATION_SERVER: 'https://erp.example.com',
       MCP_ALLOWED_ORIGINS: 'https://erp.example.com',
     })).toThrow('生产环境必须由 Secret Manager 注入指标抓取凭据');
+  });
+
+  it('生产环境拒绝缺失招聘数据与盲索引独立密钥环', () => {
+    expect(() => validateEnvironment({
+      NODE_ENV: 'production',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0',
+      WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://erp.example.com',
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://erp.example.com/.well-known/jwks.json',
+      AUTH_SIGNING_PRIVATE_KEY_BASE64: 'a'.repeat(64),
+      AUTH_SIGNING_KEY_ID: 'signing-key-001',
+      AUDIT_INTEGRITY_KEYS: 'b'.repeat(64),
+      APPROVAL_DATA_ENCRYPTION_KEYS: 'c'.repeat(64),
+      MCP_AUTHORIZATION_SERVER: 'https://erp.example.com',
+      MCP_ALLOWED_ORIGINS: 'https://erp.example.com',
+    })).toThrow('招聘数据与盲索引独立密钥环');
   });
 
   it('生产环境具备指标凭据时仍拒绝缺失独立 WORM 配置', () => {
