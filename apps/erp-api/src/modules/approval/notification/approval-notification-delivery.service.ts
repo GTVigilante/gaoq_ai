@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import type { Model } from 'mongoose';
 
+import { elapsedSeconds, MetricsService } from '../../../core/observability/metrics.service.js';
 import { AccessProfileRepository } from '../../identity/access-profile.repository.js';
 import { ExternalIdentityRepository } from '../../identity/external-identity.repository.js';
 import { OrgPlatformTokenService } from '../../integration/org-platform-token.service.js';
@@ -47,6 +48,7 @@ export class ApprovalNotificationDeliveryService {
     private readonly identities: ExternalIdentityRepository,
     private readonly tokens: OrgPlatformTokenService,
     private readonly adapters: ApprovalNotificationAdapterRegistry,
+    private readonly metrics: MetricsService,
   ) {}
 
   async processBatch(
@@ -61,12 +63,15 @@ export class ApprovalNotificationDeliveryService {
     for (let index = 0; index < limit; index += 1) {
       const claimed = await this.claimNext(channel, workerId, new Date());
       if (claimed === null) break;
+      const startedAt = process.hrtime.bigint();
       try {
         const externalMessageId = await this.deliver(claimed);
         await this.markSent(claimed, workerId, externalMessageId, new Date());
         sent += 1;
+        this.metrics.recordApprovalNotification(channel, 'sent', elapsedSeconds(startedAt));
       } catch (error) {
-        await this.markFailure(claimed, workerId, error, new Date());
+        const outcome = await this.markFailure(claimed, workerId, error, new Date());
+        this.metrics.recordApprovalNotification(channel, outcome, elapsedSeconds(startedAt));
       }
     }
     return sent;
@@ -157,7 +162,7 @@ export class ApprovalNotificationDeliveryService {
     workerId: string,
     error: unknown,
     now: Date,
-  ): Promise<void> {
+  ): Promise<'retry' | 'dead'> {
     const attempts = Math.min(claimed.attempts + 1, APPROVAL_NOTIFICATION_MAX_ATTEMPTS);
     const business = error instanceof ApprovalNotificationDeliveryError ||
       (error instanceof OrgPushError && error.category === 'business' && error.status !== 401);
@@ -178,6 +183,7 @@ export class ApprovalNotificationDeliveryService {
       },
       { runValidators: true },
     );
+    return terminal ? 'dead' : 'retry';
   }
 }
 

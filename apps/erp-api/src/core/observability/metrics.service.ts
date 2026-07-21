@@ -3,6 +3,8 @@ import { collectDefaultMetrics, Counter, Gauge, Histogram, Registry } from 'prom
 
 type AuditOutcome = 'success' | 'failure';
 type VerificationOutcome = 'success' | 'failure';
+type ApprovalNotificationOutcome = 'sent' | 'retry' | 'dead';
+type McpConfirmationStage = 'prepare' | 'confirm' | 'execute';
 
 /** 低基数 Prometheus 指标注册中心；严禁使用租户、用户、资源 ID 作为标签。 */
 @Injectable()
@@ -75,6 +77,25 @@ export class MetricsService {
     labelNames: ['queue'] as const,
     registers: [this.registry],
   });
+  private readonly approvalNotifications = new Counter({
+    name: 'gaoq_approval_notification_delivery_total',
+    help: '审批通知双平台投递结果总数。',
+    labelNames: ['channel', 'outcome'] as const,
+    registers: [this.registry],
+  });
+  private readonly approvalNotificationDuration = new Histogram({
+    name: 'gaoq_approval_notification_delivery_duration_seconds',
+    help: '审批通知单次投递耗时（秒）。',
+    labelNames: ['channel', 'outcome'] as const,
+    buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+    registers: [this.registry],
+  });
+  private readonly mcpConfirmations = new Counter({
+    name: 'gaoq_mcp_confirmation_total',
+    help: 'MCP 服务端确认各阶段结果总数。',
+    labelNames: ['stage', 'risk_level', 'outcome'] as const,
+    registers: [this.registry],
+  });
 
   constructor() {
     collectDefaultMetrics({ register: this.registry, prefix: 'gaoq_process_' });
@@ -132,6 +153,23 @@ export class MetricsService {
 
   recordQueueMetricsPollFailure(queue: string): void {
     this.queuePollFailures.inc({ queue });
+  }
+
+  recordApprovalNotification(
+    channel: 'dingtalk' | 'feishu',
+    outcome: ApprovalNotificationOutcome,
+    durationSeconds: number,
+  ): void {
+    this.approvalNotifications.inc({ channel, outcome });
+    this.approvalNotificationDuration.observe({ channel, outcome }, durationSeconds);
+  }
+
+  recordMcpConfirmation(
+    stage: McpConfirmationStage,
+    riskLevel: 'R1' | 'R2',
+    outcome: 'success' | 'failure' | 'denied',
+  ): void {
+    this.mcpConfirmations.inc({ stage, risk_level: riskLevel, outcome });
   }
 }
 

@@ -15,6 +15,8 @@ describe('MetricsService', () => {
     metrics.recordAuditWormExport('success', new Date('2026-07-21T06:00:00.000Z'));
     metrics.setQueueJobs('org-integration', { waiting: 2, active: 1, delayed: 3, failed: 4 });
     metrics.recordQueueMetricsPollFailure('org-integration');
+    metrics.recordApprovalNotification('feishu', 'retry', 0.5);
+    metrics.recordMcpConfirmation('confirm', 'R2', 'denied');
 
     const output = await metrics.render();
     expect(metrics.contentType).toContain('text/plain');
@@ -27,6 +29,8 @@ describe('MetricsService', () => {
     expect(output).toContain('gaoq_audit_worm_last_success_timestamp_seconds 1784613600');
     expect(output).toContain('gaoq_queue_jobs{queue="org-integration",state="failed"} 4');
     expect(output).toContain('gaoq_queue_metrics_poll_failures_total{queue="org-integration"} 1');
+    expect(output).toContain('gaoq_approval_notification_delivery_total{channel="feishu",outcome="retry"} 1');
+    expect(output).toContain('gaoq_mcp_confirmation_total{stage="confirm",risk_level="R2",outcome="denied"} 1');
     expect(output).not.toContain('tenant_id');
     expect(output).not.toContain('user_id');
   });

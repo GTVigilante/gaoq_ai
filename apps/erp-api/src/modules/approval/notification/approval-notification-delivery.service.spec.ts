@@ -6,6 +6,7 @@ import type { ExternalIdentityRepository } from '../../identity/external-identit
 import type { OrgPlatformTokenService } from '../../integration/org-platform-token.service.js';
 import { OrgPushError } from '../../integration/org-push.adapter.js';
 import type { ApprovalNotificationAdapterRegistry } from './approval-notification.adapter.js';
+import type { MetricsService } from '../../../core/observability/metrics.service.js';
 import { ApprovalNotificationDeliveryService } from './approval-notification-delivery.service.js';
 import type { ApprovalNotificationDocument } from './approval-notification.schema.js';
 
@@ -57,6 +58,7 @@ function assemble(overrides: {
     accessToken: 'token-001', externalTenantId: 'external-tenant-001', clientId: 'app-001',
   });
   const invalidate = vi.fn();
+  const recordApprovalNotification = vi.fn();
   const send = overrides.sendError === undefined
     ? vi.fn().mockResolvedValue({ externalMessageId: 'message-001' })
     : vi.fn().mockRejectedValue(overrides.sendError);
@@ -66,10 +68,11 @@ function assemble(overrides: {
     { findBoundByEmployee } as unknown as ExternalIdentityRepository,
     { getAccess, invalidate } as unknown as OrgPlatformTokenService,
     { get: () => ({ send }) } as unknown as ApprovalNotificationAdapterRegistry,
+    { recordApprovalNotification } as unknown as MetricsService,
   );
   return {
     service, findOneAndUpdate, updateOne, resolveActive, findBoundByEmployee,
-    getAccess, invalidate, send,
+    getAccess, invalidate, send, recordApprovalNotification,
   };
 }
 
@@ -86,6 +89,9 @@ describe('ApprovalNotificationDeliveryService', () => {
       externalUserId: 'user-001',
     });
     expectUpdate(target.updateOne, { status: 'sent', externalMessageId: 'message-001' });
+    expect(target.recordApprovalNotification).toHaveBeenCalledWith(
+      'feishu', 'sent', expect.any(Number),
+    );
   });
 
   it('停用收件人直接进入死信且不调用平台', async () => {
@@ -95,6 +101,9 @@ describe('ApprovalNotificationDeliveryService', () => {
     expectUpdate(target.updateOne, {
       status: 'dead', attempts: 1, lastErrorCode: 'APPROVAL_RECIPIENT_INACTIVE',
     });
+    expect(target.recordApprovalNotification).toHaveBeenCalledWith(
+      'feishu', 'dead', expect.any(Number),
+    );
   });
 
   it('平台瞬时故障退避重试，不触碰审批聚合', async () => {
