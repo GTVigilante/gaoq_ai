@@ -309,6 +309,9 @@ export class CandidateApplicationRecord {
   @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
   positionId!: string;
 
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
+  consentEvidenceId!: string;
+
   @Prop({ type: String, required: true, immutable: true, maxlength: 64, match: RECRUITMENT_CODE_PATTERN })
   sourceChannel!: string;
 

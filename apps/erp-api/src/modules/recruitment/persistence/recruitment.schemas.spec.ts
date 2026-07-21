@@ -61,6 +61,7 @@ function application(): Record<string, unknown> {
     tenantId: 'tenant-001',
     candidateId: CANDIDATE_ID,
     positionId: POSITION_ID,
+    consentEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4Z0',
     sourceChannel: 'portal',
     stage: 'applied',
     active: true,

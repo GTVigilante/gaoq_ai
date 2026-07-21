@@ -1,0 +1,354 @@
+import { Injectable } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { createEventId } from '@gaoq/shared-utils';
+import type { ClientSession, Model } from 'mongoose';
+
+import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
+import {
+  deepFreezeRecruitment,
+  normalizeCandidateEmail,
+  normalizeCandidatePhone,
+  type Candidate,
+  type CandidateApplication,
+  type CandidateApplicationStageEvent,
+  type RecruitmentPosition,
+} from '../domain/index.js';
+import {
+  RecruitmentDataCryptoService,
+  type ProtectedRecruitmentData,
+} from './recruitment-data-crypto.service.js';
+import {
+  CandidateApplicationRecord,
+  type CandidateApplicationDocument,
+  CandidateApplicationStageRecord,
+  type CandidateApplicationStageDocument,
+  CandidateConsentEvidenceRecord,
+  type CandidateConsentEvidenceDocument,
+  RecruitmentCandidateRecord,
+  type RecruitmentCandidateDocument,
+  RecruitmentPositionRecord,
+  type RecruitmentPositionDocument,
+} from './recruitment.schemas.js';
+
+export class RecruitmentWriteConflictError extends Error {
+  constructor() {
+    super('招聘数据版本冲突');
+    this.name = 'RecruitmentWriteConflictError';
+  }
+}
+
+abstract class TenantBoundRecruitmentRepository {
+  constructor(protected readonly context: TenantContextService) {}
+
+  protected tenantId(): string {
+    return this.context.getTenantRequired().tenantId;
+  }
+
+  protected assertTenant(tenantId: string): void {
+    if (tenantId !== this.tenantId()) throw new Error('招聘仓储拒绝跨租户实体');
+  }
+}
+
+@Injectable()
+export class RecruitmentCandidateRepository extends TenantBoundRecruitmentRepository {
+  constructor(
+    context: TenantContextService,
+    @InjectModel(RecruitmentCandidateRecord.name)
+    private readonly records: Model<RecruitmentCandidateDocument>,
+    private readonly crypto: RecruitmentDataCryptoService,
+  ) {
+    super(context);
+  }
+
+  async findById(id: string, session?: ClientSession): Promise<Candidate | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), id });
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record === null ? null : this.toDomain(record);
+  }
+
+  async findByContacts(
+    phone: string | null,
+    email: string | null,
+    session?: ClientSession,
+  ): Promise<readonly Candidate[]> {
+    const alternatives: Record<string, unknown>[] = [];
+    if (phone !== null) alternatives.push({
+      phoneBlindIndexes: { $in: this.crypto.blindIndexes(this.tenantId(), 'phone', phone) },
+    });
+    if (email !== null) alternatives.push({
+      emailBlindIndexes: { $in: this.crypto.blindIndexes(this.tenantId(), 'email', email) },
+    });
+    if (alternatives.length === 0) return [];
+    const query = this.records.find({
+      tenantId: this.tenantId(), status: { $ne: 'anonymized' }, $or: alternatives,
+    });
+    if (session !== undefined) query.session(session);
+    return (await query.lean().exec()).map((record) => this.toDomain(record));
+  }
+
+  async insert(candidate: Candidate, session: ClientSession): Promise<void> {
+    this.assertTenant(candidate.tenantId);
+    await this.records.create([this.toRecord(candidate)], { session });
+  }
+
+  async replace(candidate: Candidate, expectedVersion: number, session: ClientSession): Promise<void> {
+    this.assertTenant(candidate.tenantId);
+    const record = this.toRecord(candidate);
+    const updated = await this.records.updateOne(
+      { tenantId: this.tenantId(), id: candidate.id, version: expectedVersion },
+      { $set: {
+        status: record.status,
+        identityKeyId: record.identityKeyId,
+        identityIv: record.identityIv,
+        identityCiphertext: record.identityCiphertext,
+        identityAuthTag: record.identityAuthTag,
+        phoneBlindIndexes: record.phoneBlindIndexes,
+        emailBlindIndexes: record.emailBlindIndexes,
+        consent: record.consent,
+        retentionExpiresAt: record.retentionExpiresAt,
+        version: record.version,
+        updatedAt: record.updatedAt,
+      } },
+      { session, timestamps: false, runValidators: true },
+    );
+    if (updated.matchedCount !== 1) throw new RecruitmentWriteConflictError();
+  }
+
+  private toRecord(candidate: Candidate): Record<string, unknown> {
+    if (candidate.status === 'anonymized') return {
+      id: candidate.id, tenantId: candidate.tenantId, status: candidate.status,
+      identityKeyId: null, identityIv: null, identityCiphertext: null, identityAuthTag: null,
+      phoneBlindIndexes: [], emailBlindIndexes: [], consent: consentRecord(candidate),
+      retentionExpiresAt: new Date(candidate.retentionExpiresAt), version: candidate.version,
+      createdAt: new Date(candidate.createdAt), updatedAt: new Date(candidate.updatedAt),
+    };
+    if (candidate.name === null) throw integrityError();
+    const protectedData = this.crypto.protect({
+      tenantId: candidate.tenantId, resourceType: 'candidate_identity', resourceId: candidate.id,
+    }, { name: candidate.name, phone: candidate.phone, email: candidate.email });
+    return {
+      id: candidate.id, tenantId: candidate.tenantId, status: candidate.status,
+      identityKeyId: protectedData.keyId, identityIv: protectedData.iv,
+      identityCiphertext: protectedData.ciphertext, identityAuthTag: protectedData.authTag,
+      phoneBlindIndexes: candidate.phone === null ? [] :
+        this.crypto.blindIndexes(candidate.tenantId, 'phone', candidate.phone),
+      emailBlindIndexes: candidate.email === null ? [] :
+        this.crypto.blindIndexes(candidate.tenantId, 'email', candidate.email),
+      consent: consentRecord(candidate), retentionExpiresAt: new Date(candidate.retentionExpiresAt),
+      version: candidate.version, createdAt: new Date(candidate.createdAt),
+      updatedAt: new Date(candidate.updatedAt),
+    };
+  }
+
+  private toDomain(record: RecruitmentCandidateRecord): Candidate {
+    if (record.status === 'anonymized') return deepFreezeRecruitment({
+      id: record.id, tenantId: record.tenantId, status: record.status,
+      name: null, phone: null, email: null, consent: consentDomain(record),
+      retentionExpiresAt: record.retentionExpiresAt.toISOString(), version: record.version,
+      createdAt: record.createdAt.toISOString(), updatedAt: record.updatedAt.toISOString(),
+    });
+    const decrypted = this.crypto.unprotect({
+      tenantId: record.tenantId, resourceType: 'candidate_identity', resourceId: record.id,
+    }, protectedIdentity(record));
+    if (!isRecord(decrypted) || typeof decrypted.name !== 'string') throw integrityError();
+    if (decrypted.phone !== null && typeof decrypted.phone !== 'string') throw integrityError();
+    if (decrypted.email !== null && typeof decrypted.email !== 'string') throw integrityError();
+    const phone = decrypted.phone === null ? null : normalizeCandidatePhone(decrypted.phone);
+    const email = decrypted.email === null ? null : normalizeCandidateEmail(decrypted.email);
+    const name = decrypted.name.normalize('NFKC').trim();
+    if (
+      name.length < 1 || name.length > 128 || (phone === null && email === null) ||
+      !sameStrings(
+        record.phoneBlindIndexes,
+        phone === null ? [] : this.crypto.blindIndexes(record.tenantId, 'phone', phone),
+      ) ||
+      !sameStrings(
+        record.emailBlindIndexes,
+        email === null ? [] : this.crypto.blindIndexes(record.tenantId, 'email', email),
+      )
+    ) throw integrityError();
+    return deepFreezeRecruitment({
+      id: record.id, tenantId: record.tenantId, status: record.status,
+      name, phone, email,
+      consent: consentDomain(record), retentionExpiresAt: record.retentionExpiresAt.toISOString(),
+      version: record.version, createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString(),
+    });
+  }
+}
+
+@Injectable()
+export class CandidateConsentEvidenceRepository extends TenantBoundRecruitmentRepository {
+  constructor(
+    context: TenantContextService,
+    @InjectModel(CandidateConsentEvidenceRecord.name)
+    private readonly records: Model<CandidateConsentEvidenceDocument>,
+  ) {
+    super(context);
+  }
+
+  async appendGranted(candidate: Candidate, actorId: string, session: ClientSession): Promise<void> {
+    this.assertTenant(candidate.tenantId);
+    await this.records.create([{
+      id: candidate.consent.evidenceId, tenantId: candidate.tenantId, candidateId: candidate.id,
+      action: 'granted', consentVersion: candidate.consent.version,
+      purpose: candidate.consent.purpose, source: candidate.consent.source, actorId,
+      occurredAt: new Date(candidate.consent.capturedAt), expiresAt: new Date(candidate.consent.expiresAt),
+    }], { session });
+  }
+}
+
+@Injectable()
+export class RecruitmentPositionRepository extends TenantBoundRecruitmentRepository {
+  constructor(
+    context: TenantContextService,
+    @InjectModel(RecruitmentPositionRecord.name)
+    private readonly records: Model<RecruitmentPositionDocument>,
+  ) { super(context); }
+
+  async findById(id: string, session?: ClientSession): Promise<RecruitmentPosition | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), id });
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record === null ? null : deepFreezeRecruitment({
+      id: record.id, tenantId: record.tenantId, requisitionId: record.requisitionId,
+      title: record.title, departmentId: record.departmentId, jobLevelId: record.jobLevelId,
+      location: record.location, headcount: record.headcount, status: record.status,
+      version: record.version, publishedAt: toIso(record.publishedAt), closedAt: toIso(record.closedAt),
+      createdAt: record.createdAt.toISOString(), updatedAt: record.updatedAt.toISOString(),
+    });
+  }
+}
+
+@Injectable()
+export class CandidateApplicationRepository extends TenantBoundRecruitmentRepository {
+  constructor(
+    context: TenantContextService,
+    @InjectModel(CandidateApplicationRecord.name)
+    private readonly records: Model<CandidateApplicationDocument>,
+  ) { super(context); }
+
+  async findById(id: string, session?: ClientSession): Promise<CandidateApplication | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), id });
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record === null ? null : applicationDomain(record);
+  }
+
+  async insert(application: CandidateApplication, session: ClientSession): Promise<void> {
+    this.assertTenant(application.tenantId);
+    await this.records.create([applicationRecord(application)], { session });
+  }
+
+  async replace(
+    application: CandidateApplication,
+    expectedVersion: number,
+    session: ClientSession,
+  ): Promise<void> {
+    this.assertTenant(application.tenantId);
+    const record = applicationRecord(application);
+    const updated = await this.records.updateOne(
+      { tenantId: this.tenantId(), id: application.id, version: expectedVersion },
+      { $set: {
+        stage: record.stage, active: record.active,
+        completedInterviewId: record.completedInterviewId, offerId: record.offerId,
+        acceptanceEvidenceId: record.acceptanceEvidenceId,
+        onboardingInstanceId: record.onboardingInstanceId, employmentId: record.employmentId,
+        version: record.version, endedAt: record.endedAt, updatedAt: record.updatedAt,
+      } },
+      { session, timestamps: false, runValidators: true },
+    );
+    if (updated.matchedCount !== 1) throw new RecruitmentWriteConflictError();
+  }
+}
+
+@Injectable()
+export class CandidateApplicationStageRepository extends TenantBoundRecruitmentRepository {
+  constructor(
+    context: TenantContextService,
+    @InjectModel(CandidateApplicationStageRecord.name)
+    private readonly records: Model<CandidateApplicationStageDocument>,
+  ) { super(context); }
+
+  async append(event: CandidateApplicationStageEvent, session: ClientSession): Promise<void> {
+    this.assertTenant(event.tenantId);
+    await this.records.create([{
+      id: createEventId(new Date(event.occurredAt)), tenantId: event.tenantId,
+      applicationId: event.applicationId, from: event.from, to: event.to, actorId: event.actorId,
+      reasonCode: event.reasonCode, evidenceId: event.evidenceId,
+      resultingVersion: event.resultingVersion, occurredAt: new Date(event.occurredAt),
+    }], { session });
+  }
+}
+
+function consentRecord(candidate: Candidate): Record<string, unknown> {
+  return {
+    evidenceId: candidate.consent.evidenceId, version: candidate.consent.version,
+    purpose: candidate.consent.purpose, source: candidate.consent.source,
+    capturedAt: new Date(candidate.consent.capturedAt), expiresAt: new Date(candidate.consent.expiresAt),
+    withdrawnAt: candidate.consent.withdrawnAt === null ? null : new Date(candidate.consent.withdrawnAt),
+  };
+}
+
+function consentDomain(record: RecruitmentCandidateRecord): Candidate['consent'] {
+  return deepFreezeRecruitment({
+    evidenceId: record.consent.evidenceId, version: record.consent.version,
+    purpose: record.consent.purpose, source: record.consent.source,
+    capturedAt: record.consent.capturedAt.toISOString(), expiresAt: record.consent.expiresAt.toISOString(),
+    withdrawnAt: toIso(record.consent.withdrawnAt),
+  });
+}
+
+function protectedIdentity(record: RecruitmentCandidateRecord): ProtectedRecruitmentData {
+  if (
+    record.identityKeyId === null || record.identityIv === null ||
+    record.identityCiphertext === null || record.identityAuthTag === null
+  ) throw integrityError();
+  return {
+    keyId: record.identityKeyId, iv: record.identityIv,
+    ciphertext: record.identityCiphertext, authTag: record.identityAuthTag,
+  };
+}
+
+function applicationRecord(application: CandidateApplication): Record<string, unknown> {
+  return {
+    ...application,
+    active: !['hired', 'rejected', 'withdrawn'].includes(application.stage),
+    appliedAt: new Date(application.appliedAt),
+    endedAt: application.endedAt === null ? null : new Date(application.endedAt),
+    createdAt: new Date(application.appliedAt), updatedAt: new Date(application.updatedAt),
+  };
+}
+
+function applicationDomain(record: CandidateApplicationRecord): CandidateApplication {
+  return deepFreezeRecruitment({
+    id: record.id, tenantId: record.tenantId, candidateId: record.candidateId,
+    positionId: record.positionId, consentEvidenceId: record.consentEvidenceId,
+    sourceChannel: record.sourceChannel, stage: record.stage,
+    completedInterviewId: record.completedInterviewId, offerId: record.offerId,
+    acceptanceEvidenceId: record.acceptanceEvidenceId,
+    onboardingInstanceId: record.onboardingInstanceId, employmentId: record.employmentId,
+    version: record.version, appliedAt: record.appliedAt.toISOString(),
+    endedAt: toIso(record.endedAt), updatedAt: record.updatedAt.toISOString(),
+  });
+}
+
+function toIso(value: Date | null): string | null {
+  return value?.toISOString() ?? null;
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  const sortedLeft = [...left].sort();
+  const sortedRight = [...right].sort();
+  return sortedLeft.every((value, index) => value === sortedRight[index]);
+}
+
+function integrityError(): Error {
+  return new Error('RECRUITMENT_DATA_INTEGRITY_INVALID');
+}

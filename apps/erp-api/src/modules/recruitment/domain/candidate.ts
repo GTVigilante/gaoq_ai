@@ -118,6 +118,53 @@ export function withdrawCandidateConsent(
   });
 }
 
+/** 记录再次授权并更新当前有效快照；历史授权由追加证据集合保留。 */
+export function grantCandidateConsent(
+  candidate: Candidate,
+  input: {
+    readonly tenantId: string;
+    readonly expectedVersion: number;
+    readonly evidenceId: string;
+    readonly consentVersion: string;
+    readonly purpose: string;
+    readonly source: CandidateConsent['source'];
+    readonly expiresAt: Date;
+    readonly retentionExpiresAt: Date;
+  },
+  now: Date,
+): Candidate {
+  assertCandidateCommand(candidate, input.tenantId, input.expectedVersion);
+  if (candidate.status === 'anonymized') {
+    throw new RecruitmentDomainError('CANDIDATE_ANONYMIZED', '匿名候选人不能恢复直接身份数据');
+  }
+  assertRecruitmentId(input.evidenceId, 'evidenceId');
+  assertRecruitmentCode(input.consentVersion, 'consentVersion');
+  const purpose = input.purpose.normalize('NFKC').trim();
+  if (
+    purpose.length < 3 || purpose.length > 256 || input.expiresAt <= now ||
+    input.retentionExpiresAt <= now
+  ) {
+    throw new RecruitmentDomainError('CANDIDATE_CONSENT_INVALID', '候选人授权目的或有效期无效');
+  }
+  const occurredAt = toRecruitmentIso(now);
+  return deepFreezeRecruitment({
+    ...candidate,
+    status: 'active' as const,
+    consent: {
+      evidenceId: input.evidenceId,
+      version: input.consentVersion,
+      purpose,
+      source: input.source,
+      capturedAt: occurredAt,
+      expiresAt: toRecruitmentIso(input.expiresAt),
+      withdrawnAt: null,
+    },
+    retentionExpiresAt: toRecruitmentIso(input.retentionExpiresAt),
+    version: candidate.version + 1,
+    updatedAt: occurredAt,
+  });
+}
+
 /** 到期匿名化删除直接身份字段，但保留无个人原文的流程统计引用。 */
 export function anonymizeCandidate(
   candidate: Candidate,

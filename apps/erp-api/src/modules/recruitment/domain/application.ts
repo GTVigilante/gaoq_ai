@@ -25,6 +25,7 @@ export interface CandidateApplication {
   readonly tenantId: string;
   readonly candidateId: string;
   readonly positionId: string;
+  readonly consentEvidenceId: string;
   readonly sourceChannel: string;
   readonly stage: CandidateApplicationStage;
   readonly completedInterviewId: string | null;
@@ -56,6 +57,7 @@ export function createCandidateApplication(
     readonly tenantId: string;
     readonly candidateId: string;
     readonly positionId: string;
+    readonly consentEvidenceId: string;
     readonly sourceChannel: string;
   },
   now: Date,
@@ -65,6 +67,7 @@ export function createCandidateApplication(
     tenantId: input.tenantId,
     candidateId: input.candidateId,
     positionId: input.positionId,
+    consentEvidenceId: input.consentEvidenceId,
   })) assertRecruitmentId(value, field);
   assertRecruitmentCode(input.sourceChannel, 'sourceChannel');
   const occurredAt = toRecruitmentIso(now);

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   anonymizeCandidate,
   createCandidate,
+  grantCandidateConsent,
   normalizeCandidateEmail,
   normalizeCandidatePhone,
   withdrawCandidateConsent,
@@ -70,5 +71,20 @@ describe('Candidate', () => {
     expect(() => withdrawCandidateConsent(candidate(), {
       tenantId: 'tenant-001', expectedVersion: 9,
     }, NOW)).toThrow('版本冲突');
+  });
+
+  it('再次应聘追加新授权并替换当前授权快照', () => {
+    const updated = grantCandidateConsent(candidate(), {
+      tenantId: 'tenant-001', expectedVersion: 1,
+      evidenceId: 'consent-evidence-002', consentVersion: 'privacy-v2',
+      purpose: '新职位招聘评估', source: 'portal',
+      expiresAt: new Date('2028-01-01T00:00:00.000Z'),
+      retentionExpiresAt: new Date('2029-01-01T00:00:00.000Z'),
+    }, new Date('2026-08-01T00:00:00.000Z'));
+    expect(updated).toMatchObject({
+      status: 'active', version: 2,
+      consent: { evidenceId: 'consent-evidence-002', version: 'privacy-v2' },
+      retentionExpiresAt: '2029-01-01T00:00:00.000Z',
+    });
   });
 });

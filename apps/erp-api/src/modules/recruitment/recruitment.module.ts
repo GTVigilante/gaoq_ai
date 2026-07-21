@@ -7,6 +7,15 @@ import { OrgModule } from '../org/org.module.js';
 import { OutboxRecord, OutboxRecordSchema } from '../org/persistence/outbox.schema.js';
 import { RecruitmentDataCryptoService } from './persistence/recruitment-data-crypto.service.js';
 import { RecruitmentOutboxWriter } from './persistence/recruitment-outbox.writer.js';
+import { RecruitmentApplicationService } from './application/recruitment-application.service.js';
+import { RecruitmentController } from './recruitment.controller.js';
+import {
+  CandidateApplicationRepository,
+  CandidateApplicationStageRepository,
+  CandidateConsentEvidenceRepository,
+  RecruitmentCandidateRepository,
+  RecruitmentPositionRepository,
+} from './persistence/recruitment.repositories.js';
 import {
   CandidateApplicationRecord,
   CandidateApplicationRecordSchema,
@@ -38,7 +47,23 @@ import {
       { name: OutboxRecord.name, schema: OutboxRecordSchema },
     ]),
   ],
-  providers: [RecruitmentDataCryptoService, RecruitmentOutboxWriter],
-  exports: [RecruitmentDataCryptoService, RecruitmentOutboxWriter],
+  providers: [
+    RecruitmentDataCryptoService,
+    RecruitmentOutboxWriter,
+    RecruitmentCandidateRepository,
+    CandidateConsentEvidenceRepository,
+    RecruitmentPositionRepository,
+    CandidateApplicationRepository,
+    CandidateApplicationStageRepository,
+    RecruitmentApplicationService,
+  ],
+  controllers: [RecruitmentController],
+  exports: [
+    RecruitmentDataCryptoService,
+    RecruitmentOutboxWriter,
+    RecruitmentCandidateRepository,
+    RecruitmentPositionRepository,
+    CandidateApplicationRepository,
+  ],
 })
 export class RecruitmentModule {}

@@ -22,6 +22,7 @@ export function buildCandidateApplicationCreatedEvent(
     payload: Object.freeze({
       candidateId: application.candidateId,
       positionId: application.positionId,
+      consentEvidenceId: application.consentEvidenceId,
       sourceChannel: application.sourceChannel,
       stage: application.stage,
     }),

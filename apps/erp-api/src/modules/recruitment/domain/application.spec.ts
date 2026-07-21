@@ -10,6 +10,7 @@ function application() {
     tenantId: 'tenant-001',
     candidateId: 'candidate-001',
     positionId: 'position-001',
+    consentEvidenceId: 'consent-evidence-001',
     sourceChannel: 'portal',
   }, NOW);
 }
@@ -33,7 +34,8 @@ describe('CandidateApplication', () => {
     const first = application();
     const second = createCandidateApplication({
       id: 'application-002', tenantId: 'tenant-001', candidateId: first.candidateId,
-      positionId: 'position-002', sourceChannel: 'referral',
+      positionId: 'position-002', consentEvidenceId: 'consent-evidence-002',
+      sourceChannel: 'referral',
     }, NOW);
     expect(first.candidateId).toBe(second.candidateId);
     expect(first.positionId).not.toBe(second.positionId);

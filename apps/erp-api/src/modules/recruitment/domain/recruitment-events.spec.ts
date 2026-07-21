@@ -10,7 +10,8 @@ describe('RecruitmentDomainEvents', () => {
   it('创建和阶段事件不含候选人原文或 Offer 敏感条款', () => {
     const application = createCandidateApplication({
       id: 'application-001', tenantId: 'tenant-001', candidateId: 'candidate-001',
-      positionId: 'position-001', sourceChannel: 'portal',
+      positionId: 'position-001', consentEvidenceId: 'consent-evidence-001',
+      sourceChannel: 'portal',
     }, new Date('2026-07-21T08:00:00.000Z'));
     const transition = transitionCandidateApplication(application, {
       tenantId: 'tenant-001', expectedVersion: 1, actorId: 'actor-001',
