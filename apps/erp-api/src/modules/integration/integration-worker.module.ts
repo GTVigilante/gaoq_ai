@@ -2,6 +2,8 @@ import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 
 import { IntegrationModule } from './integration.module.js';
+import { ESignWebhookProcessor } from './esign-webhook.processor.js';
+import { ESIGN_WEBHOOK_QUEUE } from './esign-webhook.queue.js';
 import { ORG_INTEGRATION_QUEUE } from './org-integration.queue.js';
 import { OrgIntegrationProcessor } from './org-integration.processor.js';
 import { OrgIntegrationScheduler } from './org-integration.scheduler.js';
@@ -12,7 +14,11 @@ import { OrgQueueMetricsPoller } from './org-queue-metrics.poller.js';
   imports: [
     IntegrationModule,
     BullModule.registerQueue({ name: ORG_INTEGRATION_QUEUE }),
+    BullModule.registerQueue({ name: ESIGN_WEBHOOK_QUEUE }),
   ],
-  providers: [OrgIntegrationProcessor, OrgIntegrationScheduler, OrgQueueMetricsPoller],
+  providers: [
+    OrgIntegrationProcessor, OrgIntegrationScheduler, OrgQueueMetricsPoller,
+    ESignWebhookProcessor,
+  ],
 })
 export class IntegrationWorkerModule {}

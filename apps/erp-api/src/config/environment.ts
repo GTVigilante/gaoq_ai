@@ -40,6 +40,11 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(64).max(16_384).optional(),
   ),
+  /** eSign Webhook L4 加密密钥环，仅由 Secret Manager 注入。 */
+  ESIGN_WEBHOOK_ENCRYPTION_KEYS: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(64).max(16_384).optional(),
+  ),
   /** Prometheus 独立抓取凭据，仅由 Secret Manager 注入，不复用业务 OAuth token。 */
   METRICS_BEARER_TOKEN: z.preprocess(
     (value) => value === '' ? undefined : value,
@@ -121,6 +126,13 @@ const environmentSchema = z.object({
       code: 'custom',
       path: ['AUTH_SIGNING_PRIVATE_KEY_BASE64'],
       message: '生产环境必须由 Secret Manager 注入签名私钥与 key id',
+    });
+  }
+  if (environment.NODE_ENV === 'production' && environment.ESIGN_WEBHOOK_ENCRYPTION_KEYS === undefined) {
+    context.addIssue({
+      code: 'custom',
+      path: ['ESIGN_WEBHOOK_ENCRYPTION_KEYS'],
+      message: '生产环境必须由 Secret Manager 注入 eSign Webhook 加密密钥环',
     });
   }
   if (

@@ -158,32 +158,32 @@
 
 ### 6.1 适配器抽象
 
-`ESignAdapter` 接口：`createFlow / getFlow / signUrl / downloadFile / verifyWebhook`。首发仅 `esign-adapter`（e签宝）；`fadada-adapter` 作为后续适配器按同一接口实现，切换经 ADR 评审。
+`ESignAdapter` 接口：`createFlow / getFlow / signUrl / downloadFile`；Webhook 验签是入站边界能力，不与出站 Adapter 请求混用。首发仅 `esign-adapter`（e签宝）；`fadada-adapter` 作为后续适配器按同一接口实现，切换经 ADR 评审。
 
 ### 6.2 签署流程状态机（ERP 侧权威）
 
 ```
-DRAFT → SENT → PARTIAL_SIGNED → COMPLETED
-   │        │          │
-   │        ▼          ▼
-   │     REJECTED   EXPIRED
-   ▼
- CANCELLED
+AWAITING_SIGNATURE → PARTIAL_SIGNED → PROVIDER_COMPLETED → COMPLETED
+        │                 │
+        ├→ REJECTED      ├→ EXPIRED
+        └→ CANCELLED     └→ REVIEW_REQUIRED（旁路标记）
 ```
 
 - 状态迁移只允许由两类输入驱动：适配器回传（webhook/拉单）或 ERP 用户显式操作（发起、撤销）。
-- 外部状态与内部状态的映射表由适配器维护；外部新增未知状态必须落入 `UNKNOWN` 并告警，禁止静默忽略。
+- 外部状态与内部状态的映射表由适配器维护；外部新增未知状态必须设置 `REVIEW_REQUIRED` 并告警，保持当前状态，禁止把未知值伪造成业务状态或静默忽略。
 
 ### 6.3 Webhook 处理
 
-- 入口：`/integrations/esign/webhooks`，经网关来源限制 + e签宝签名校验 + 时间戳防重放（窗口 ±5 分钟）。租户必须在验签后根据受信任的应用/企业标识解析，禁止信任URL或请求参数中的`tenantId`。
+- 入口：`POST /webhooks/esign`，回调 URL 固定不带 query。经网关来源限制后，按 e签宝 V3 规则对 `X-Tsign-Open-Timestamp + raw body bytes` 执行 HMAC-SHA256，请求时间戳窗口为 ±5 分钟。事件发生时间可因供应商重试早于请求时间，不用它代替请求防重放。租户只能在验签后根据唯一 `appId` 绑定解析，禁止信任 URL、query、header 或 body 中的 `tenantId`。
 - 处理模型：webhook 只做三件事——验签、写 inbox、返回 200；业务处理异步进行。
-- 重放：以 `eventId` 幂等；同一 flowId 的事件按外部时间戳排序后应用，乱序事件缓存等待。
+- 入箱只保存 AES-256-GCM 密文，AAD 绑定租户和 Inbox ID；外部 flowId 同样加密，只用 SHA-256 摘要作精确关联。
+- 重放：以 `appId + raw body` 的 SHA-256 事件标识幂等；同一 flowId 只应用不早于已提交时间的事件，乱序事件标记 `ignored` 并保留审计。
+- 只白名单处理官方 action `SIGN_MISSON_COMPLETE` 和 `SIGN_FLOW_COMPLETE`（保留供应商官方拼写）；流程状态 `2/3/5/7` 分别投影为供应商完成/撤销/过期/拒签。未知 action 仅入箱告警，未知状态仅转人工复核，都不推进业务终态。
 
 ### 6.4 兜底对账
 
 - 每 15 分钟对 `SENT/PARTIAL_SIGNED` 且超过 10 分钟未更新的流程主动调 `getFlow` 拉单，防止 webhook 丢失。
-- 完成文件（已签署 PDF）下载后入 ERP 对象存储并归档，归档后 ERP 为权威副本；哈希（SHA-256）落库备查。
+- `SIGN_FLOW_COMPLETE + signFlowStatus=2` 只进入 `PROVIDER_COMPLETED`，不等于 ERP `COMPLETED`。已签 PDF 必须下载、验签、病毒扫描、记录 SHA-256 并进入不可变对象存储；证据归档成功后 ERP 才进入 `COMPLETED` 并允许 Offer 进入 `signed`。
 
 ---
 

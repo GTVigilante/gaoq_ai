@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { BullModule } from '@nestjs/bullmq';
 import { MongooseModule } from '@nestjs/mongoose';
 
 import { AuditModule } from '../../core/audit/audit.module.js';
@@ -21,6 +22,17 @@ import {
 } from '../org/persistence/org.schemas.js';
 import { DingTalkOrgPushAdapter } from './dingtalk-org-push.adapter.js';
 import { FeishuOrgPushAdapter } from './feishu-org-push.adapter.js';
+import { ESignBinding, ESignBindingSchema } from './esign-binding.schema.js';
+import { ESignFlowRecord, ESignFlowRecordSchema } from './esign-flow.schema.js';
+import { ESignFlowService } from './esign-flow.service.js';
+import { ESignWebhookController } from './esign-webhook.controller.js';
+import { ESignWebhookCryptoService } from './esign-webhook-crypto.service.js';
+import {
+  ESignWebhookInboxRecord,
+  ESignWebhookInboxRecordSchema,
+} from './esign-webhook-inbox.schema.js';
+import { ESIGN_WEBHOOK_QUEUE } from './esign-webhook.queue.js';
+import { ESignSecretResolver, ESignWebhookService } from './esign-webhook.service.js';
 import { IntegrationController } from './integration.controller.js';
 import { OrgEmployeeProvisioningController } from './org-employee-provisioning.controller.js';
 import { OrgEmployeeProvisioningService } from './org-employee-provisioning.service.js';
@@ -90,6 +102,7 @@ import {
     IdempotencyModule,
     TenantContextModule,
     RecruitmentModule,
+    BullModule.registerQueue({ name: ESIGN_WEBHOOK_QUEUE }),
     MongooseModule.forFeature([
       { name: OutboxRecord.name, schema: OutboxRecordSchema },
       { name: OrgDeliveryRecord.name, schema: OrgDeliveryRecordSchema },
@@ -109,6 +122,9 @@ import {
         name: OrgEmployeeProvisioningRequest.name,
         schema: OrgEmployeeProvisioningRequestSchema,
       },
+      { name: ESignBinding.name, schema: ESignBindingSchema },
+      { name: ESignFlowRecord.name, schema: ESignFlowRecordSchema },
+      { name: ESignWebhookInboxRecord.name, schema: ESignWebhookInboxRecordSchema },
     ]),
   ],
   providers: [
@@ -123,6 +139,10 @@ import {
     OrgReconciliationService,
     OrgEmployeeProvisioningService,
     OrgProvisioningCryptoService,
+    ESignSecretResolver,
+    ESignFlowService,
+    ESignWebhookCryptoService,
+    ESignWebhookService,
     AccessProfileRepository,
     ExternalIdentityRepository,
     EnvironmentOrgSecretResolver,
@@ -161,7 +181,9 @@ import {
       ) => new RecruitmentCalendarAdapterRegistry(dingtalk, feishu),
     },
   ],
-  controllers: [IntegrationController, OrgEmployeeProvisioningController],
+  controllers: [
+    IntegrationController, OrgEmployeeProvisioningController, ESignWebhookController,
+  ],
   exports: [
     OrgOutboxRelayService,
     RecruitmentCalendarOutboxRelayService,
@@ -171,6 +193,8 @@ import {
     OrgEmployeeProvisioningService,
     OrgPlatformTokenService,
     OrgPlatformHttpClient,
+    ESignWebhookService,
+    ESignFlowService,
   ],
 })
 export class IntegrationModule {}

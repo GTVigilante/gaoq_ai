@@ -80,9 +80,11 @@ draft → pending_approval → approved → sending → sent → accepted → si
 
 ### 4.3 e签宝
 
-统一 `ESignAdapter`：`createFlow / getFlow / signUrl / downloadFile / verifyWebhook`。Webhook 只做来源限制、签名和 ±5 分钟时间窗校验、可信企业映射租户、加密写 inbox、快速返回；异步 Worker 按 `eventId` 幂等并按外部时间应用。
+统一出站 `ESignAdapter`：`createFlow / getFlow / signUrl / downloadFile`；入站验签由独立 Webhook 边界完成。`POST /webhooks/esign` 禁止 query，对请求时间戳与 raw body 执行 HMAC-SHA256，只在验签后以唯一 appId 绑定解析租户；原文加密写 inbox 后原样返回供应商 200 契约。
 
-内部状态为 `draft → sent → partial_signed → completed`，分支为 `rejected/expired/cancelled/unknown`。未知状态告警且不推进。每 15 分钟补拉长期未更新流程；完成 PDF 存入受控对象存储并记录 SHA-256、供应商证据引用和归档时间。
+内部状态为 `awaiting_signature → partial_signed → provider_completed → completed`，分支为 `rejected/expired/cancelled`。官方 action 白名单为 `SIGN_MISSON_COMPLETE` 和 `SIGN_FLOW_COMPLETE`，完成回调的 `signFlowStatus=2/3/5/7` 分别映射 `provider_completed/cancelled/expired/rejected`。未知 action 标记 Inbox `ignored`，未知状态或冲突终态设置 `reviewRequired`，均禁止自动前进或回退。
+
+每 15 分钟补拉长期未更新流程。`provider_completed` 后仍必须下载 PDF、校验内容摘要和供应商签署结果、病毒扫描、存入不可变对象存储并写入证据账本。只有该证据交易成功后才进入 `completed` 并调用 Recruitment 应用服务标记 Offer `signed`。
 
 ## 5. REST、事件与 MCP 同步交付
 

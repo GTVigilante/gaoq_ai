@@ -12,7 +12,7 @@ import type { AppEnvironment } from './config/environment.js';
  * 启动 ERP API，并统一设置安全响应头、跨域策略和输入校验。
  */
 const bootstrap = async (): Promise<void> => {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create(AppModule, { bufferLogs: true, rawBody: true });
   const config = app.get<ConfigService<AppEnvironment, true>>(ConfigService);
   const allowedOrigins = [
     config.get('WEB_ORIGIN', { infer: true }),
