@@ -10,6 +10,8 @@ import {
   CandidateApplicationRecordSchema,
   CandidateApplicationStageRecord,
   CandidateApplicationStageRecordSchema,
+  CandidateConsentEvidenceRecord,
+  CandidateConsentEvidenceRecordSchema,
   RecruitmentCandidateRecord,
   RecruitmentCandidateRecordSchema,
   RecruitmentPositionRecord,
@@ -26,6 +28,7 @@ import {
     OrgModule,
     MongooseModule.forFeature([
       { name: RecruitmentCandidateRecord.name, schema: RecruitmentCandidateRecordSchema },
+      { name: CandidateConsentEvidenceRecord.name, schema: CandidateConsentEvidenceRecordSchema },
       { name: RecruitmentRequisitionRecord.name, schema: RecruitmentRequisitionRecordSchema },
       { name: RecruitmentPositionRecord.name, schema: RecruitmentPositionRecordSchema },
       { name: CandidateApplicationRecord.name, schema: CandidateApplicationRecordSchema },

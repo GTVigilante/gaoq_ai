@@ -17,6 +17,7 @@ function candidate() {
     name: ' 张 三 ',
     phone: '+86 138-0013-8000',
     email: 'Candidate@Example.COM',
+    consentEvidenceId: 'consent-evidence-001',
     consentVersion: 'privacy-v1',
     consentPurpose: '招聘评估与候选人联络',
     consentSource: 'portal',
@@ -40,6 +41,7 @@ describe('Candidate', () => {
   it('手机号与邮箱至少提供一项，且授权与保留期必须有效', () => {
     expect(() => createCandidate({
       id: 'candidate-001', tenantId: 'tenant-001', name: '张三',
+      consentEvidenceId: 'consent-evidence-001',
       consentVersion: 'privacy-v1', consentPurpose: '招聘评估', consentSource: 'portal',
       consentExpiresAt: new Date('2027-07-21T08:00:00.000Z'),
       retentionExpiresAt: new Date('2028-07-21T08:00:00.000Z'),

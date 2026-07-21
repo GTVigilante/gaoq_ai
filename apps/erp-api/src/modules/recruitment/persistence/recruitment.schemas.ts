@@ -21,6 +21,9 @@ const APPLICATION_STAGES: readonly CandidateApplicationStage[] = [
 
 @Schema({ _id: false, id: false })
 class CandidateConsentRecord {
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
+  evidenceId!: string;
+
   @Prop({ type: String, required: true, maxlength: 64, match: RECRUITMENT_CODE_PATTERN })
   version!: string;
 
@@ -122,6 +125,56 @@ RecruitmentCandidateRecordSchema.index(
   { unique: true, sparse: true },
 );
 RecruitmentCandidateRecordSchema.index({ tenantId: 1, status: 1, retentionExpiresAt: 1 });
+
+/** 候选人授权追加证据；不包含姓名、联系方式或简历正文。 */
+@Schema({
+  collection: 'recruitment_candidate_consent_evidence',
+  timestamps: true,
+  versionKey: false,
+  id: false,
+})
+export class CandidateConsentEvidenceRecord {
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
+  id!: string;
+
+  @Prop({ ...STRING_ID, immutable: true })
+  tenantId!: string;
+
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
+  candidateId!: string;
+
+  @Prop({ type: String, enum: ['granted', 'withdrawn'], required: true, immutable: true })
+  action!: 'granted' | 'withdrawn';
+
+  @Prop({ type: String, required: true, immutable: true, maxlength: 64, match: RECRUITMENT_CODE_PATTERN })
+  consentVersion!: string;
+
+  @Prop({ type: String, required: true, immutable: true, minlength: 3, maxlength: 256 })
+  purpose!: string;
+
+  @Prop({ type: String, enum: ['portal', 'channel', 'manual_import'], required: true, immutable: true })
+  source!: 'portal' | 'channel' | 'manual_import';
+
+  @Prop({ ...STRING_ID, immutable: true })
+  actorId!: string;
+
+  @Prop({ type: Date, required: true, immutable: true })
+  occurredAt!: Date;
+
+  @Prop({ type: Date, required: true, immutable: true })
+  expiresAt!: Date;
+
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+
+export type CandidateConsentEvidenceDocument = HydratedDocument<CandidateConsentEvidenceRecord>;
+export const CandidateConsentEvidenceRecordSchema = SchemaFactory.createForClass(
+  CandidateConsentEvidenceRecord,
+);
+
+CandidateConsentEvidenceRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
+CandidateConsentEvidenceRecordSchema.index({ tenantId: 1, candidateId: 1, occurredAt: 1, id: 1 });
 
 /** HC 招聘需求；审批实例只以引用关联，审批聚合仍由 Approval 权威管理。 */
 @Schema({ collection: 'recruitment_requisitions', timestamps: true, versionKey: false, id: false })

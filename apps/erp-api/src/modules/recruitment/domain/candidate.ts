@@ -12,6 +12,7 @@ const E164_PATTERN = /^\+[1-9][0-9]{7,14}$/;
 const EMAIL_PATTERN = /^[^\s@]{1,64}@[^\s@]{1,190}$/;
 
 export interface CandidateConsent {
+  readonly evidenceId: string;
   readonly version: string;
   readonly purpose: string;
   readonly source: 'portal' | 'channel' | 'manual_import';
@@ -42,6 +43,7 @@ export function createCandidate(
     readonly name: string;
     readonly phone?: string;
     readonly email?: string;
+    readonly consentEvidenceId: string;
     readonly consentVersion: string;
     readonly consentPurpose: string;
     readonly consentSource: CandidateConsent['source'];
@@ -52,6 +54,7 @@ export function createCandidate(
 ): Candidate {
   assertRecruitmentId(input.id, 'id');
   assertRecruitmentId(input.tenantId, 'tenantId');
+  assertRecruitmentId(input.consentEvidenceId, 'consentEvidenceId');
   assertRecruitmentCode(input.consentVersion, 'consentVersion');
   const name = input.name.normalize('NFKC').trim();
   if (name.length < 1 || name.length > 128) {
@@ -80,6 +83,7 @@ export function createCandidate(
     phone,
     email,
     consent: {
+      evidenceId: input.consentEvidenceId,
       version: input.consentVersion,
       purpose,
       source: input.consentSource,

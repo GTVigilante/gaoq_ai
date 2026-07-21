@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CandidateApplicationRecordSchema,
   CandidateApplicationStageRecordSchema,
+  CandidateConsentEvidenceRecordSchema,
   RecruitmentCandidateRecordSchema,
   RecruitmentPositionRecordSchema,
   RecruitmentRequisitionRecordSchema,
@@ -44,6 +45,7 @@ function candidate(): Record<string, unknown> {
     phoneBlindIndexes: [`blind-key-001.${'d'.repeat(43)}`],
     emailBlindIndexes: [`blind-key-001.${'e'.repeat(43)}`],
     consent: {
+      evidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4Z0',
       version: 'privacy-v1', purpose: '招聘评估与候选人联络', source: 'portal',
       capturedAt: new Date('2026-07-21T08:00:00.000Z'),
       expiresAt: new Date('2027-07-21T08:00:00.000Z'), withdrawnAt: null,
@@ -144,6 +146,7 @@ describe('RecruitmentSchemas', () => {
   it('全部业务索引以 tenantId 开头，盲索引唯一且密文不建索引', () => {
     const schemas: readonly Schema[] = [
       RecruitmentCandidateRecordSchema,
+      CandidateConsentEvidenceRecordSchema,
       RecruitmentRequisitionRecordSchema,
       RecruitmentPositionRecordSchema,
       CandidateApplicationRecordSchema,
