@@ -56,7 +56,11 @@ const blindIndexRingSchema = z.object({
 
 export interface RecruitmentCryptoContext {
   readonly tenantId: string;
-  readonly resourceType: 'candidate_identity' | 'offer_terms' | 'interview_location';
+  readonly resourceType:
+    | 'candidate_identity'
+    | 'offer_terms'
+    | 'interview_location'
+    | 'interview_feedback';
   readonly resourceId: string;
 }
 
@@ -219,7 +223,9 @@ export class RecruitmentDataCryptoService {
     if (
       !RECRUITMENT_ID_PATTERN.test(context.tenantId) ||
       !RECRUITMENT_ID_PATTERN.test(context.resourceId) ||
-      !['candidate_identity', 'offer_terms', 'interview_location'].includes(context.resourceType)
+      ![
+        'candidate_identity', 'offer_terms', 'interview_location', 'interview_feedback',
+      ].includes(context.resourceType)
     ) throw this.invalidPayload();
   }
 

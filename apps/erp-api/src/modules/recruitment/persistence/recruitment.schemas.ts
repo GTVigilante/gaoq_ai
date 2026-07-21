@@ -4,6 +4,8 @@ import type { HydratedDocument } from 'mongoose';
 
 import type {
   CandidateApplicationStage,
+  RecruitmentInterviewMode,
+  RecruitmentInterviewStatus,
   RecruitmentPositionStatus,
 } from '../domain/index.js';
 import { RECRUITMENT_CODE_PATTERN, RECRUITMENT_ID_PATTERN } from '../domain/index.js';
@@ -437,6 +439,145 @@ CandidateApplicationStageRecordSchema.index(
   { unique: true },
 );
 CandidateApplicationStageRecordSchema.index({ tenantId: 1, applicationId: 1, occurredAt: 1 });
+
+/** 面试轮次；地点或会议链接只保存 L3 密文。 */
+@Schema({ collection: 'recruitment_interviews', timestamps: true, versionKey: false, id: false })
+export class RecruitmentInterviewRecord {
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
+  id!: string;
+
+  @Prop({ ...STRING_ID, immutable: true })
+  tenantId!: string;
+
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
+  applicationId!: string;
+
+  @Prop({ type: Number, required: true, immutable: true, min: 1, max: 100 })
+  roundNumber!: number;
+
+  @Prop({ type: String, enum: ['phone', 'video', 'onsite'], required: true, immutable: true })
+  mode!: RecruitmentInterviewMode;
+
+  @Prop({ type: Date, required: true, immutable: true })
+  startsAt!: Date;
+
+  @Prop({ type: Date, required: true, immutable: true })
+  endsAt!: Date;
+
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128 })
+  timezone!: string;
+
+  @Prop({ type: [{ ...STRING_ID }], required: true, immutable: true })
+  interviewerIds!: string[];
+
+  @Prop({ ...STRING_ID, immutable: true })
+  logisticsKeyId!: string;
+
+  @Prop({ type: String, required: true, immutable: true, maxlength: 32, match: BASE64URL_PATTERN })
+  logisticsIv!: string;
+
+  @Prop({ type: String, required: true, immutable: true, maxlength: 16_384, match: BASE64URL_PATTERN })
+  logisticsCiphertext!: string;
+
+  @Prop({
+    type: String, required: true, immutable: true,
+    minlength: 22, maxlength: 22, match: BASE64URL_PATTERN,
+  })
+  logisticsAuthTag!: string;
+
+  @Prop({ type: String, enum: ['scheduled', 'completed', 'cancelled'], required: true })
+  status!: RecruitmentInterviewStatus;
+
+  @Prop({ type: Number, required: true, min: 1 })
+  version!: number;
+
+  @Prop({ type: Date, default: null })
+  completedAt!: Date | null;
+
+  @Prop({ type: Date, default: null })
+  cancelledAt!: Date | null;
+
+  @Prop({ ...STRING_ID, immutable: true })
+  createdBy!: string;
+
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+
+export type RecruitmentInterviewDocument = HydratedDocument<RecruitmentInterviewRecord>;
+export const RecruitmentInterviewRecordSchema = SchemaFactory.createForClass(
+  RecruitmentInterviewRecord,
+);
+
+RecruitmentInterviewRecordSchema.pre('validate', function () {
+  const record = this as RecruitmentInterviewRecord;
+  if (record.endsAt.getTime() <= record.startsAt.getTime()) throw new Error('面试时间区间无效');
+  if (new Set(record.interviewerIds).size !== record.interviewerIds.length) {
+    throw new Error('面试官不得重复');
+  }
+  if ((record.status === 'completed') !== (record.completedAt !== null)) {
+    throw new Error('面试完成状态与完成时间不一致');
+  }
+  if ((record.status === 'cancelled') !== (record.cancelledAt !== null)) {
+    throw new Error('面试取消状态与取消时间不一致');
+  }
+});
+
+RecruitmentInterviewRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
+RecruitmentInterviewRecordSchema.index(
+  { tenantId: 1, applicationId: 1, roundNumber: 1 },
+  { unique: true },
+);
+RecruitmentInterviewRecordSchema.index({ tenantId: 1, interviewerIds: 1, startsAt: 1 });
+
+/** 面试官评价追加证据；原文不可覆盖且只保存密文。 */
+@Schema({ collection: 'recruitment_interview_feedback', timestamps: true, versionKey: false, id: false })
+export class RecruitmentInterviewFeedbackRecord {
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
+  id!: string;
+
+  @Prop({ ...STRING_ID, immutable: true })
+  tenantId!: string;
+
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
+  interviewId!: string;
+
+  @Prop({ ...STRING_ID, immutable: true })
+  interviewerId!: string;
+
+  @Prop({ ...STRING_ID, immutable: true })
+  evaluationKeyId!: string;
+
+  @Prop({ type: String, required: true, immutable: true, maxlength: 32, match: BASE64URL_PATTERN })
+  evaluationIv!: string;
+
+  @Prop({ type: String, required: true, immutable: true, maxlength: 65_536, match: BASE64URL_PATTERN })
+  evaluationCiphertext!: string;
+
+  @Prop({
+    type: String, required: true, immutable: true,
+    minlength: 22, maxlength: 22, match: BASE64URL_PATTERN,
+  })
+  evaluationAuthTag!: string;
+
+  @Prop({ type: Date, required: true, immutable: true })
+  submittedAt!: Date;
+
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+
+export type RecruitmentInterviewFeedbackDocument = HydratedDocument<RecruitmentInterviewFeedbackRecord>;
+export const RecruitmentInterviewFeedbackRecordSchema = SchemaFactory.createForClass(
+  RecruitmentInterviewFeedbackRecord,
+);
+
+RecruitmentInterviewFeedbackRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
+RecruitmentInterviewFeedbackRecordSchema.index(
+  { tenantId: 1, interviewId: 1, interviewerId: 1 },
+  { unique: true },
+);
+RecruitmentInterviewFeedbackRecordSchema.index({ tenantId: 1, interviewId: 1, submittedAt: 1 });
 
 function applicationStageRank(stage: CandidateApplicationStage): number {
   const rank: Readonly<Record<CandidateApplicationStage, number>> = {

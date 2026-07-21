@@ -6,10 +6,14 @@ import {
   CandidateApplicationStageRecordSchema,
   CandidateConsentEvidenceRecordSchema,
   RecruitmentCandidateRecordSchema,
+  RecruitmentInterviewFeedbackRecordSchema,
+  RecruitmentInterviewRecordSchema,
   RecruitmentPositionRecordSchema,
   RecruitmentRequisitionRecordSchema,
   type CandidateApplicationRecord,
   type RecruitmentCandidateRecord,
+  type RecruitmentInterviewFeedbackRecord,
+  type RecruitmentInterviewRecord,
   type RecruitmentPositionRecord,
   type RecruitmentRequisitionRecord,
 } from './recruitment.schemas.js';
@@ -26,6 +30,12 @@ const PositionModel = mongoose.model<RecruitmentPositionRecord>(
 );
 const RequisitionModel = mongoose.model<RecruitmentRequisitionRecord>(
   'SpecRecruitmentRequisition', RecruitmentRequisitionRecordSchema,
+);
+const InterviewModel = mongoose.model<RecruitmentInterviewRecord>(
+  'SpecRecruitmentInterview', RecruitmentInterviewRecordSchema,
+);
+const FeedbackModel = mongoose.model<RecruitmentInterviewFeedbackRecord>(
+  'SpecRecruitmentInterviewFeedback', RecruitmentInterviewFeedbackRecordSchema,
 );
 
 const CANDIDATE_ID = '01J8ZQK7V0A2M4N6P8R0T2W4Y6';
@@ -147,6 +157,38 @@ describe('RecruitmentSchemas', () => {
     }).validate()).rejects.toThrow('审批实例引用不一致');
   });
 
+  it('面试地点与评价只定义密文字段，终态时间失败关闭', async () => {
+    const encrypted = {
+      keyId: 'recruitment-key-001', iv: 'a'.repeat(16),
+      ciphertext: 'b'.repeat(64), authTag: 'c'.repeat(22),
+    };
+    const interview = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4X1', tenantId: 'tenant-001',
+      applicationId: APPLICATION_ID, roundNumber: 1, mode: 'video',
+      startsAt: new Date('2026-07-22T08:00:00.000Z'),
+      endsAt: new Date('2026-07-22T09:00:00.000Z'), timezone: 'Asia/Shanghai',
+      interviewerIds: ['employee-001'], logisticsKeyId: encrypted.keyId,
+      logisticsIv: encrypted.iv, logisticsCiphertext: encrypted.ciphertext,
+      logisticsAuthTag: encrypted.authTag, status: 'scheduled', version: 1,
+      completedAt: null, cancelledAt: null, createdBy: 'actor-001',
+    };
+    await new InterviewModel(interview).validate();
+    await expect(new InterviewModel({
+      ...interview, status: 'completed', completedAt: null,
+    }).validate()).rejects.toThrow('完成状态与完成时间不一致');
+    await new FeedbackModel({
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4X2', tenantId: 'tenant-001',
+      interviewId: interview.id, interviewerId: 'employee-001',
+      evaluationKeyId: encrypted.keyId, evaluationIv: encrypted.iv,
+      evaluationCiphertext: encrypted.ciphertext, evaluationAuthTag: encrypted.authTag,
+      submittedAt: new Date('2026-07-22T09:01:00.000Z'),
+    }).validate();
+    expect(RecruitmentInterviewRecordSchema.path('location')).toBeUndefined();
+    expect(RecruitmentInterviewFeedbackRecordSchema.path('notes')).toBeUndefined();
+    expect(RecruitmentInterviewFeedbackRecordSchema.path('recommendation')).toBeUndefined();
+    expect(RecruitmentInterviewFeedbackRecordSchema.path('score')).toBeUndefined();
+  });
+
   it('全部业务索引以 tenantId 开头，盲索引唯一且密文不建索引', () => {
     const schemas: readonly Schema[] = [
       RecruitmentCandidateRecordSchema,
@@ -155,6 +197,8 @@ describe('RecruitmentSchemas', () => {
       RecruitmentPositionRecordSchema,
       CandidateApplicationRecordSchema,
       CandidateApplicationStageRecordSchema,
+      RecruitmentInterviewRecordSchema,
+      RecruitmentInterviewFeedbackRecordSchema,
     ];
     for (const schema of schemas) {
       for (const [spec] of schema.indexes()) {

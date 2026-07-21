@@ -7,9 +7,21 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AppEnvironment } from '../../../config/environment.js';
 import type { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import { createCandidate } from '../domain/candidate.js';
+import {
+  createRecruitmentInterview,
+  submitRecruitmentInterviewFeedback,
+} from '../domain/interview.js';
 import { RecruitmentDataCryptoService } from './recruitment-data-crypto.service.js';
-import { RecruitmentCandidateRepository } from './recruitment.repositories.js';
-import type { RecruitmentCandidateDocument } from './recruitment.schemas.js';
+import {
+  RecruitmentCandidateRepository,
+  RecruitmentInterviewFeedbackRepository,
+  RecruitmentInterviewRepository,
+} from './recruitment.repositories.js';
+import type {
+  RecruitmentCandidateDocument,
+  RecruitmentInterviewDocument,
+  RecruitmentInterviewFeedbackDocument,
+} from './recruitment.schemas.js';
 
 const candidate = createCandidate({
   id: '01J8ZQK7V0A2M4N6P8R0T2W4Y6',
@@ -85,5 +97,41 @@ describe('RecruitmentCandidateRepository', () => {
     );
     await expect(reader.findById(candidate.id)).rejects.toThrow('RECRUITMENT_DATA_INTEGRITY_INVALID');
     expect(findOne).toHaveBeenCalledWith({ tenantId: 'tenant-001', id: candidate.id });
+  });
+});
+
+describe('RecruitmentInterviewRepositories', () => {
+  it('面试地点和评价原文在交给 Mongo Model 前已加密', async () => {
+    const dataCrypto = crypto();
+    const interviewCreate = vi.fn().mockResolvedValue(undefined);
+    const feedbackCreate = vi.fn().mockResolvedValue(undefined);
+    const scheduled = createRecruitmentInterview({
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4X1', tenantId: 'tenant-001',
+      applicationId: '01J8ZQK7V0A2M4N6P8R0T2W4Y7', roundNumber: 1, mode: 'video',
+      startsAt: new Date('2026-07-22T08:00:00.000Z'),
+      endsAt: new Date('2026-07-22T09:00:00.000Z'), timezone: 'Asia/Shanghai',
+      interviewerIds: ['employee-001'], location: 'https://meeting.example/secret-room',
+      actorId: 'actor-001',
+    }, new Date('2026-07-21T00:00:00.000Z'));
+    const feedback = submitRecruitmentInterviewFeedback(scheduled, {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4X2', tenantId: 'tenant-001', actorId: 'employee-001',
+      recommendation: 'hire', score: 4, notes: '候选人经验与岗位高度匹配',
+    }, new Date('2026-07-22T09:01:00.000Z'));
+    await new RecruitmentInterviewRepository(
+      context(), { create: interviewCreate } as unknown as Model<RecruitmentInterviewDocument>,
+      dataCrypto,
+    ).insert(scheduled, { id: 'session' } as never);
+    await new RecruitmentInterviewFeedbackRepository(
+      context(), { create: feedbackCreate } as unknown as Model<RecruitmentInterviewFeedbackDocument>,
+      dataCrypto,
+    ).append(feedback, { id: 'session' } as never);
+    const storedInterview = interviewCreate.mock.calls[0]?.[0] as unknown;
+    const storedFeedback = feedbackCreate.mock.calls[0]?.[0] as unknown;
+    expect(JSON.stringify(storedInterview)).not.toContain('meeting.example');
+    expect(JSON.stringify(storedFeedback)).not.toContain('候选人经验');
+    const interviewRecords = storedInterview as readonly [{ readonly logisticsCiphertext: unknown }];
+    const feedbackRecords = storedFeedback as readonly [{ readonly evaluationCiphertext: unknown }];
+    expect(typeof interviewRecords[0].logisticsCiphertext).toBe('string');
+    expect(typeof feedbackRecords[0].evaluationCiphertext).toBe('string');
   });
 });

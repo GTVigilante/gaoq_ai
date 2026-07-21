@@ -1,4 +1,5 @@
 import type { CandidateApplication, CandidateApplicationStageEvent } from './application.js';
+import type { RecruitmentInterview, RecruitmentInterviewFeedback } from './interview.js';
 import type { RecruitmentPosition } from './position.js';
 import type { RecruitmentRequisition } from './requisition.js';
 
@@ -11,11 +12,20 @@ export type RecruitmentEventType =
   | 'recruitment.requisition.rejected'
   | 'recruitment.requisition.closed'
   | 'recruitment.position.created'
-  | 'recruitment.position.status_changed';
+  | 'recruitment.position.status_changed'
+  | 'recruitment.interview.scheduled'
+  | 'recruitment.interview.feedback_submitted'
+  | 'recruitment.interview.completed'
+  | 'recruitment.interview.cancelled';
 
 export interface RecruitmentDomainEvent {
   readonly type: RecruitmentEventType;
-  readonly aggregateType: 'recruitment.application' | 'recruitment.requisition' | 'recruitment.position';
+  readonly aggregateType:
+    | 'recruitment.application'
+    | 'recruitment.requisition'
+    | 'recruitment.position'
+    | 'recruitment.interview'
+    | 'recruitment.interview_feedback';
   readonly tenantId: string;
   readonly aggregateId: string;
   readonly version: number;
@@ -101,6 +111,47 @@ export function buildRecruitmentPositionEvent(
       departmentId: position.departmentId,
       headcount: position.headcount,
       status: position.status,
+    }),
+  });
+}
+
+/** 面试事件不携带地点、会议链接或评价原文。 */
+export function buildRecruitmentInterviewEvent(
+  interview: RecruitmentInterview,
+  action: 'scheduled' | 'completed' | 'cancelled',
+): RecruitmentDomainEvent {
+  return Object.freeze({
+    type: `recruitment.interview.${action}`,
+    aggregateType: 'recruitment.interview',
+    tenantId: interview.tenantId,
+    aggregateId: interview.id,
+    version: interview.version,
+    occurredAt: interview.updatedAt,
+    payload: Object.freeze({
+      applicationId: interview.applicationId,
+      roundNumber: interview.roundNumber,
+      status: interview.status,
+      startsAt: interview.startsAt,
+      endsAt: interview.endsAt,
+    }),
+  });
+}
+
+export function buildRecruitmentInterviewFeedbackEvent(
+  interview: RecruitmentInterview,
+  feedback: RecruitmentInterviewFeedback,
+): RecruitmentDomainEvent {
+  return Object.freeze({
+    type: 'recruitment.interview.feedback_submitted',
+    aggregateType: 'recruitment.interview_feedback',
+    tenantId: feedback.tenantId,
+    aggregateId: feedback.id,
+    version: 1,
+    occurredAt: feedback.submittedAt,
+    payload: Object.freeze({
+      applicationId: interview.applicationId,
+      feedbackId: feedback.id,
+      interviewerId: feedback.interviewerId,
     }),
   });
 }

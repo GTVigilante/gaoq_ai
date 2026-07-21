@@ -11,6 +11,8 @@ import {
   type Candidate,
   type CandidateApplication,
   type CandidateApplicationStageEvent,
+  type RecruitmentInterview,
+  type RecruitmentInterviewFeedback,
   type RecruitmentPosition,
   type RecruitmentRequisition,
 } from '../domain/index.js';
@@ -27,6 +29,10 @@ import {
   type CandidateConsentEvidenceDocument,
   RecruitmentCandidateRecord,
   type RecruitmentCandidateDocument,
+  RecruitmentInterviewFeedbackRecord,
+  type RecruitmentInterviewFeedbackDocument,
+  RecruitmentInterviewRecord,
+  type RecruitmentInterviewDocument,
   RecruitmentPositionRecord,
   type RecruitmentPositionDocument,
   RecruitmentRequisitionRecord,
@@ -351,6 +357,119 @@ export class CandidateApplicationStageRepository extends TenantBoundRecruitmentR
       reasonCode: event.reasonCode, evidenceId: event.evidenceId,
       resultingVersion: event.resultingVersion, occurredAt: new Date(event.occurredAt),
     }], { session });
+  }
+}
+
+@Injectable()
+export class RecruitmentInterviewRepository extends TenantBoundRecruitmentRepository {
+  constructor(
+    context: TenantContextService,
+    @InjectModel(RecruitmentInterviewRecord.name)
+    private readonly records: Model<RecruitmentInterviewDocument>,
+    private readonly crypto: RecruitmentDataCryptoService,
+  ) { super(context); }
+
+  async findById(id: string, session?: ClientSession): Promise<RecruitmentInterview | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), id });
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    if (record === null) return null;
+    const logistics = this.crypto.unprotect({
+      tenantId: record.tenantId, resourceType: 'interview_location', resourceId: record.id,
+    }, {
+      keyId: record.logisticsKeyId, iv: record.logisticsIv,
+      ciphertext: record.logisticsCiphertext, authTag: record.logisticsAuthTag,
+    });
+    if (
+      !isRecord(logistics) || typeof logistics.location !== 'string' ||
+      logistics.mode !== record.mode
+    ) throw integrityError();
+    return deepFreezeRecruitment({
+      id: record.id, tenantId: record.tenantId, applicationId: record.applicationId,
+      roundNumber: record.roundNumber, mode: record.mode,
+      startsAt: record.startsAt.toISOString(), endsAt: record.endsAt.toISOString(),
+      timezone: record.timezone, interviewerIds: [...record.interviewerIds],
+      location: logistics.location, status: record.status, version: record.version,
+      completedAt: toIso(record.completedAt), cancelledAt: toIso(record.cancelledAt),
+      createdBy: record.createdBy, createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString(),
+    });
+  }
+
+  async insert(interview: RecruitmentInterview, session: ClientSession): Promise<void> {
+    this.assertTenant(interview.tenantId);
+    const protectedData = this.crypto.protect({
+      tenantId: interview.tenantId, resourceType: 'interview_location', resourceId: interview.id,
+    }, { mode: interview.mode, location: interview.location });
+    await this.records.create([{
+      id: interview.id, tenantId: interview.tenantId, applicationId: interview.applicationId,
+      roundNumber: interview.roundNumber, mode: interview.mode,
+      startsAt: new Date(interview.startsAt), endsAt: new Date(interview.endsAt),
+      timezone: interview.timezone, interviewerIds: [...interview.interviewerIds],
+      logisticsKeyId: protectedData.keyId, logisticsIv: protectedData.iv,
+      logisticsCiphertext: protectedData.ciphertext, logisticsAuthTag: protectedData.authTag,
+      status: interview.status, version: interview.version,
+      completedAt: null, cancelledAt: null, createdBy: interview.createdBy,
+      createdAt: new Date(interview.createdAt), updatedAt: new Date(interview.updatedAt),
+    }], { session });
+  }
+
+  async replace(
+    interview: RecruitmentInterview,
+    expectedVersion: number,
+    session: ClientSession,
+  ): Promise<void> {
+    this.assertTenant(interview.tenantId);
+    const updated = await this.records.updateOne(
+      { tenantId: this.tenantId(), id: interview.id, version: expectedVersion },
+      { $set: {
+        status: interview.status, version: interview.version,
+        completedAt: interview.completedAt === null ? null : new Date(interview.completedAt),
+        cancelledAt: interview.cancelledAt === null ? null : new Date(interview.cancelledAt),
+        updatedAt: new Date(interview.updatedAt),
+      } },
+      { session, timestamps: false, runValidators: true },
+    );
+    if (updated.matchedCount !== 1) throw new RecruitmentWriteConflictError();
+  }
+}
+
+@Injectable()
+export class RecruitmentInterviewFeedbackRepository extends TenantBoundRecruitmentRepository {
+  constructor(
+    context: TenantContextService,
+    @InjectModel(RecruitmentInterviewFeedbackRecord.name)
+    private readonly records: Model<RecruitmentInterviewFeedbackDocument>,
+    private readonly crypto: RecruitmentDataCryptoService,
+  ) { super(context); }
+
+  async append(feedback: RecruitmentInterviewFeedback, session: ClientSession): Promise<void> {
+    this.assertTenant(feedback.tenantId);
+    const protectedData = this.crypto.protect({
+      tenantId: feedback.tenantId, resourceType: 'interview_feedback', resourceId: feedback.id,
+    }, {
+      recommendation: feedback.recommendation, score: feedback.score, notes: feedback.notes,
+    });
+    await this.records.create([{
+      id: feedback.id, tenantId: feedback.tenantId, interviewId: feedback.interviewId,
+      interviewerId: feedback.interviewerId,
+      evaluationKeyId: protectedData.keyId, evaluationIv: protectedData.iv,
+      evaluationCiphertext: protectedData.ciphertext, evaluationAuthTag: protectedData.authTag,
+      submittedAt: new Date(feedback.submittedAt),
+    }], { session });
+  }
+
+  async findInterviewerIds(
+    interviewId: string,
+    session?: ClientSession,
+  ): Promise<readonly string[]> {
+    const query = this.records.find(
+      { tenantId: this.tenantId(), interviewId },
+      { interviewerId: 1, _id: 0 },
+    );
+    if (session !== undefined) query.session(session);
+    const records = await query.lean().exec();
+    return Object.freeze(records.map((record) => record.interviewerId));
   }
 }
 

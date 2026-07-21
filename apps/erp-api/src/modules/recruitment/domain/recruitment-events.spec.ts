@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import { createCandidateApplication, transitionCandidateApplication } from './application.js';
 import { createRecruitmentPosition } from './position.js';
+import { createRecruitmentInterview, submitRecruitmentInterviewFeedback } from './interview.js';
 import {
   buildCandidateApplicationCreatedEvent,
   buildCandidateApplicationStageEvent,
   buildRecruitmentPositionEvent,
   buildRecruitmentRequisitionEvent,
+  buildRecruitmentInterviewEvent,
+  buildRecruitmentInterviewFeedbackEvent,
 } from './recruitment-events.js';
 import { createRecruitmentRequisition } from './requisition.js';
 
@@ -61,5 +64,31 @@ describe('RecruitmentDomainEvents', () => {
       aggregateId: position.id, version: 1,
     });
     expect(JSON.stringify(events)).not.toMatch(/小红书经纪人|业务增长|上海/u);
+  });
+
+  it('面试和评价事件不泄漏会议链接或评价原文', () => {
+    const now = new Date('2026-07-21T08:00:00.000Z');
+    const interview = createRecruitmentInterview({
+      id: 'interview-001', tenantId: 'tenant-001', applicationId: 'application-001',
+      roundNumber: 1, mode: 'video', startsAt: new Date('2026-07-22T08:00:00.000Z'),
+      endsAt: new Date('2026-07-22T09:00:00.000Z'), timezone: 'Asia/Shanghai',
+      interviewerIds: ['employee-001'], location: 'https://meeting.example/secret',
+      actorId: 'actor-001',
+    }, now);
+    const feedback = submitRecruitmentInterviewFeedback(interview, {
+      id: 'feedback-001', tenantId: 'tenant-001', actorId: 'employee-001',
+      recommendation: 'hire', score: 4, notes: '候选人能力匹配，建议继续',
+    }, now);
+    const events = [
+      buildRecruitmentInterviewEvent(interview, 'scheduled'),
+      buildRecruitmentInterviewFeedbackEvent(interview, feedback),
+    ];
+    expect(events[0]).toMatchObject({
+      type: 'recruitment.interview.scheduled', aggregateType: 'recruitment.interview',
+    });
+    expect(events[1]).toMatchObject({ type: 'recruitment.interview.feedback_submitted' });
+    expect(JSON.stringify(events)).not.toMatch(
+      /meeting\.example|候选人能力匹配|location|notes|recommendation|score|"hire"/iu,
+    );
   });
 });
