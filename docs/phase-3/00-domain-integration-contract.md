@@ -41,6 +41,7 @@ applied → screening → interview → offer_approval → offer_sent
 - 招聘职位只表达招聘需求，不能当作正式组织岗位；入职完成前必须显式核验 `orgPositionId`、部门和职级引用。
 - 劳动关系生效日是严格 `YYYY-MM-DD` 的业务日期，不得转换成 UTC 时间点后再推导日期。
 - 入职任务证据为追加写且不可替换；合同归档、身份核验、必修培训只接受对应受信任系统证明，人工接口不得自报完成。
+- Knowledge 进度入口只接受具备 `erp:integration:knowledge:progress` 的受信任服务身份，提交绝对进度、唯一源事件和发生时间；不接受客户端增量累加。考试评分、任务完成和入职证明回填使用独立 Scope，且不注册 MCP 写工具。
 - 完成采用可重入 Saga：`ready → provisioning → Org 建档 → completed → Recruitment hired`；每一步使用派生幂等键，任何中断均可续跑。
 
 Offer 子状态机：

@@ -13,6 +13,7 @@ import type { RecruitmentInterviewService } from '../recruitment/application/rec
 import type { RecruitmentManagementService } from '../recruitment/application/recruitment-management.service.js';
 import type { RecruitmentOfferService } from '../recruitment/application/recruitment-offer.service.js';
 import type { OnboardingApplicationService } from '../onboarding/application/onboarding-application.service.js';
+import type { KnowledgeApplicationService } from '../knowledge/application/knowledge-application.service.js';
 import { McpToolService } from './mcp-tool.service.js';
 import type { McpConfirmationService } from './mcp-confirmation.service.js';
 
@@ -68,6 +69,7 @@ function assemble() {
   };
   const recruitmentOffers = { get: vi.fn(), requestSend: vi.fn() };
   const onboarding = { get: vi.fn() };
+  const knowledge = { getCourse: vi.fn(), getAssignment: vi.fn() };
   const service = new McpToolService(
     context,
     audit as unknown as AuditService,
@@ -78,12 +80,13 @@ function assemble() {
     recruitmentManagement as unknown as RecruitmentManagementService,
     recruitmentOffers as unknown as RecruitmentOfferService,
     onboarding as unknown as OnboardingApplicationService,
+    knowledge as unknown as KnowledgeApplicationService,
     confirmations as unknown as McpConfirmationService,
   );
   return {
     context, audit, organization, approvals, recruitmentApplications,
     recruitmentInterviews, recruitmentManagement, recruitmentOffers, confirmations, service,
-    onboarding,
+    onboarding, knowledge,
   };
 }
 
@@ -293,6 +296,38 @@ describe('McpToolService', () => {
       onboarding: { status: 'in_progress', version: 2 },
     });
     expect(JSON.stringify(result)).not.toMatch(/identityEvidence|signedEvidence|materialsEvidence/iu);
+  });
+
+  it('知识 MCP 只读取脱敏课程与任务投影，不暴露题库、答卷或证据引用', async () => {
+    const store = assemble();
+    store.knowledge.getCourse.mockResolvedValue({
+      id: 'course-001', courseCode: 'SECURITY', revision: 1, title: '安全培训',
+      examRequired: true, passingScoreBps: 8_000, status: 'published', version: 2,
+    });
+    store.knowledge.getAssignment.mockResolvedValue({
+      id: 'assignment-001', onboardingInstanceId: 'onboarding-001',
+      courseVersionId: 'course-001', mandatory: true, examRequired: true,
+      dueDate: '2026-08-31', status: 'in_progress', progressBps: 5_000, version: 2,
+    });
+    const denied = await store.service.getKnowledgeCourse(
+      'course-001', extra(['erp:mcp:server:connect']),
+    );
+    expect(denied.isError).toBe(true);
+    expect(store.knowledge.getCourse).not.toHaveBeenCalled();
+    const course = await store.service.getKnowledgeCourse(
+      'course-001', extra(['erp:mcp:server:connect', 'erp:knowledge:course:read']),
+    );
+    const assignment = await store.service.getKnowledgeAssignment(
+      'assignment-001',
+      extra(['erp:mcp:server:connect', 'erp:knowledge:assignment:read']),
+    );
+    expect(course.structuredContent).toMatchObject({ course: { status: 'published' } });
+    expect(assignment.structuredContent).toMatchObject({
+      assignment: { progressBps: 5_000, status: 'in_progress' },
+    });
+    expect(JSON.stringify([course, assignment])).not.toMatch(
+      /questionBank|contentRef|submissionRef|EvidenceId|answer/iu,
+    );
   });
 
   it('Offer 发送准备只固化标识和版本并要求 R2 确认', async () => {

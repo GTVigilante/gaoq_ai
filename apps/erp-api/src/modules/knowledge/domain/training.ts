@@ -215,6 +215,7 @@ export function completeTrainingAssignment(
     readonly expectedVersion: number;
     readonly completionEvidenceId: string;
     readonly passedExamAttemptId?: string;
+    readonly examPassedVerified: boolean;
   },
   now: Date,
 ): TrainingAssignment {
@@ -223,7 +224,14 @@ export function completeTrainingAssignment(
   if (assignment.progressBps !== 10_000) invalid(
     'KNOWLEDGE_CONTENT_INCOMPLETE', '课程内容尚未完成',
   );
-  if (assignment.examRequired) assertId(input.passedExamAttemptId, 'passedExamAttemptId');
+  if (assignment.examRequired) {
+    assertId(input.passedExamAttemptId, 'passedExamAttemptId');
+    if (!input.examPassedVerified) invalid(
+      'KNOWLEDGE_PASSED_EXAM_REQUIRED', '必须引用该培训任务已通过的可信考试记录',
+    );
+  } else if (input.passedExamAttemptId !== undefined || input.examPassedVerified) {
+    invalid('KNOWLEDGE_EXAM_EVIDENCE_UNEXPECTED', '免试课程不能绑定考试记录');
+  }
   return Object.freeze({
     ...assignment, status: 'completed',
     passedExamAttemptId: input.passedExamAttemptId ?? null,

@@ -50,6 +50,7 @@ describe('Knowledge 培训与考试领域', () => {
     const completed = completeTrainingAssignment(progressed, {
       tenantId: 'tenant-001', expectedVersion: 2,
       completionEvidenceId: 'completion-001', passedExamAttemptId: attempt.id,
+      examPassedVerified: attempt.passed,
     }, NOW);
     expect(completed).toMatchObject({ status: 'completed', passedExamAttemptId: 'attempt-001' });
     expect(attempt).not.toHaveProperty('answers');

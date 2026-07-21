@@ -15,6 +15,7 @@ import { RecruitmentInterviewService } from '../recruitment/application/recruitm
 import { RecruitmentManagementService } from '../recruitment/application/recruitment-management.service.js';
 import { RecruitmentOfferService } from '../recruitment/application/recruitment-offer.service.js';
 import { OnboardingApplicationService } from '../onboarding/application/onboarding-application.service.js';
+import { KnowledgeApplicationService } from '../knowledge/application/knowledge-application.service.js';
 import { parseMcpIdentity, type McpIdentity } from './mcp-auth-context.js';
 import {
   McpConfirmationService,
@@ -46,6 +47,7 @@ export class McpToolService {
     private readonly recruitmentManagement: RecruitmentManagementService,
     private readonly recruitmentOffers: RecruitmentOfferService,
     private readonly onboarding: OnboardingApplicationService,
+    private readonly knowledge: KnowledgeApplicationService,
     private readonly confirmations: McpConfirmationService,
   ) {}
 
@@ -88,6 +90,20 @@ export class McpToolService {
     return this.getRecruitmentResource(
       extra, 'onboarding_get', 'erp:onboarding:read',
       'onboarding', () => this.onboarding.get(id),
+    );
+  }
+
+  async getKnowledgeCourse(id: string, extra: McpExtra): Promise<McpToolResult> {
+    return this.getRecruitmentResource(
+      extra, 'knowledge_course_get', 'erp:knowledge:course:read',
+      'course', () => this.knowledge.getCourse(id),
+    );
+  }
+
+  async getKnowledgeAssignment(id: string, extra: McpExtra): Promise<McpToolResult> {
+    return this.getRecruitmentResource(
+      extra, 'knowledge_assignment_get', 'erp:knowledge:assignment:read',
+      'assignment', () => this.knowledge.getAssignment(id),
     );
   }
 

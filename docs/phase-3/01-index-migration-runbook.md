@@ -2,7 +2,7 @@
 
 ## 变更边界
 
-- 迁移标识固定为 `phase-3-indexes-v1`，清单直接从运行 Schema 生成并计算 SHA-256 校验和。
+- 招聘/eSign/组织/入职迁移标识固定为 `phase-3-indexes-v1`；Knowledge 使用独立追加迁移 `phase-3-knowledge-indexes-v1`。已发布清单不得通过追加 Schema 改写 checksum。
 - 只创建缺失索引，不删除未知索引；同名或同键异配置立即失败关闭。
 - apply 使用 30 分钟数据库租约，完成后重新读取并复验全部索引。
 - 唯一索引创建前必须先在影子库检查重复数据并保留快照；本脚本不会自动删除或合并业务数据。
@@ -24,7 +24,14 @@
    ```
 
 5. 要求输出 `verified` 等于清单索引总数，且 `system_migration_runs` 中对应记录为 `completed`。
-6. 执行候选申请、Offer、eSign 回调、Onboarding 重试及 Employment 唯一约束冒烟测试。
+6. 对 Knowledge 追加清单重复执行 dry-run、唯一键查重和变更审核后运行：
+
+   ```bash
+   pnpm --filter @gaoq/erp-api migrate:phase3:knowledge-indexes -- --dry-run
+   pnpm --filter @gaoq/erp-api migrate:phase3:knowledge-indexes
+   ```
+
+7. 执行候选申请、Offer、eSign 回调、Onboarding 重试、Employment 唯一约束、培训进度源事件重放和答卷提交重放冒烟测试。
 
 ## 失败处理
 

@@ -166,6 +166,18 @@ const onboardingSchema = z.object({
   employmentId: z.string().nullable(),
   version: z.number().int().positive(),
 });
+const knowledgeCourseSchema = z.object({
+  id: z.string(), courseCode: z.string(), revision: z.number().int().positive(), title: z.string(),
+  examRequired: z.boolean(), passingScoreBps: z.number().int().min(0).max(10_000).nullable(),
+  status: z.enum(['draft', 'published', 'retired']), version: z.number().int().positive(),
+});
+const knowledgeAssignmentSchema = z.object({
+  id: z.string(), onboardingInstanceId: z.string(), courseVersionId: z.string(),
+  mandatory: z.boolean(), examRequired: z.boolean(),
+  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  status: z.enum(['assigned', 'in_progress', 'completed', 'expired']),
+  progressBps: z.number().int().min(0).max(10_000), version: z.number().int().positive(),
+});
 
 @Injectable()
 export class McpRuntimeService {
@@ -367,6 +379,42 @@ export class McpRuntimeService {
       },
     );
 
+    server.registerResource(
+      'knowledge-course',
+      new ResourceTemplate('erp://knowledge/courses/{id}', { list: undefined }),
+      {
+        title: '课程版本脱敏摘要',
+        description: '读取课程发布和考试配置状态；不返回内容、题库、答案或证据引用。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getKnowledgeCourse(requiredResourceId(id), extra);
+        if (result.isError === true) throw new Error('无权读取课程版本');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
+    server.registerResource(
+      'knowledge-assignment',
+      new ResourceTemplate('erp://knowledge/assignments/{id}', { list: undefined }),
+      {
+        title: '培训任务脱敏摘要',
+        description: '读取进度和状态；不返回考试提交、评分证据或完成证据引用。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getKnowledgeAssignment(requiredResourceId(id), extra);
+        if (result.isError === true) throw new Error('无权读取培训任务');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
     server.registerPrompt(
       'approval_submission_guide',
       {
@@ -416,6 +464,24 @@ export class McpRuntimeService {
           content: {
             type: 'text',
             text: `请读取入职实例 ${onboardingId} 的任务状态，列出仍待完成的项目。不要索取身份证、合同、材料或培训正文；不要代报任务完成，也不要尝试执行劳动关系建档。`,
+          },
+        }],
+      }),
+    );
+
+    server.registerPrompt(
+      'knowledge_training_progress_guide',
+      {
+        title: '培训进度检查清单',
+        description: '指导 AI 只读取课程与任务摘要，不接触答案、题库和可信证明写入。',
+        argsSchema: { assignmentId: recruitmentIdSchema },
+      },
+      ({ assignmentId }) => ({
+        messages: [{
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `请读取培训任务 ${assignmentId} 的脱敏摘要，说明进度、截止日期和状态。不要索取课程正文、题库、答案、答卷或证据；不要代替评分、完成任务或回填入职证明。`,
           },
         }],
       }),
@@ -617,6 +683,30 @@ export class McpRuntimeService {
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
       },
       async ({ id }, extra) => this.tools.getOnboarding(id, extra),
+    );
+
+    server.registerTool(
+      'knowledge_course_get',
+      {
+        title: '查询课程版本脱敏摘要',
+        description: '返回课程状态和考试配置，不返回内容、题库或答案。风险等级 R0。',
+        inputSchema: { id: recruitmentIdSchema },
+        outputSchema: z.object({ course: knowledgeCourseSchema }),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      },
+      async ({ id }, extra) => this.tools.getKnowledgeCourse(id, extra),
+    );
+
+    server.registerTool(
+      'knowledge_assignment_get',
+      {
+        title: '查询培训任务脱敏摘要',
+        description: '返回进度、截止日期与状态，不返回答卷或证据引用。风险等级 R0。',
+        inputSchema: { id: recruitmentIdSchema },
+        outputSchema: z.object({ assignment: knowledgeAssignmentSchema }),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      },
+      async ({ id }, extra) => this.tools.getKnowledgeAssignment(id, extra),
     );
 
     server.registerTool(

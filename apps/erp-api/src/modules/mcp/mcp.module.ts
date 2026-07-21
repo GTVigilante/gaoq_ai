@@ -7,6 +7,7 @@ import { IdentityModule } from '../identity/identity.module.js';
 import { StrongAuthModule } from '../identity/strong-auth/strong-auth.module.js';
 import { RecruitmentModule } from '../recruitment/recruitment.module.js';
 import { OnboardingModule } from '../onboarding/onboarding.module.js';
+import { KnowledgeModule } from '../knowledge/knowledge.module.js';
 import { McpConfirmationController } from './mcp-confirmation.controller.js';
 import {
   McpConfirmationRecord,
@@ -27,6 +28,7 @@ import { McpToolService } from './mcp-tool.service.js';
     OrgModule,
     RecruitmentModule,
     OnboardingModule,
+    KnowledgeModule,
     MongooseModule.forFeature([
       { name: McpConfirmationRecord.name, schema: McpConfirmationRecordSchema },
     ]),

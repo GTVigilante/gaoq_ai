@@ -100,6 +100,34 @@ describe('MCP Streamable HTTP 协议集成', () => {
           }, employmentId: null, version: 1,
         } },
       }),
+      getKnowledgeCourse: vi.fn().mockResolvedValue({
+        content: [{ type: 'text' as const, text: JSON.stringify({ course: {
+          id: '01J8ZQK7V0A2M4N6P8R0T2W4A1', courseCode: 'SECURITY', revision: 1,
+          title: '安全培训', examRequired: true, passingScoreBps: 8_000,
+          status: 'published', version: 2,
+        } }) }],
+        structuredContent: { course: {
+          id: '01J8ZQK7V0A2M4N6P8R0T2W4A1', courseCode: 'SECURITY', revision: 1,
+          title: '安全培训', examRequired: true, passingScoreBps: 8_000,
+          status: 'published', version: 2,
+        } },
+      }),
+      getKnowledgeAssignment: vi.fn().mockResolvedValue({
+        content: [{ type: 'text' as const, text: JSON.stringify({ assignment: {
+          id: '01J8ZQK7V0A2M4N6P8R0T2W4A2',
+          onboardingInstanceId: '01J8ZQK7V0A2M4N6P8R0T2W4Y6',
+          courseVersionId: '01J8ZQK7V0A2M4N6P8R0T2W4A1', mandatory: true,
+          examRequired: true, dueDate: '2026-08-31', status: 'in_progress',
+          progressBps: 5_000, version: 2,
+        } }) }],
+        structuredContent: { assignment: {
+          id: '01J8ZQK7V0A2M4N6P8R0T2W4A2',
+          onboardingInstanceId: '01J8ZQK7V0A2M4N6P8R0T2W4Y6',
+          courseVersionId: '01J8ZQK7V0A2M4N6P8R0T2W4A1', mandatory: true,
+          examRequired: true, dueDate: '2026-08-31', status: 'in_progress',
+          progressBps: 5_000, version: 2,
+        } },
+      }),
       prepareRecruitmentRequisitionSubmit: vi.fn(),
       executeRecruitmentRequisitionSubmit: vi.fn(),
       prepareRecruitmentPositionTransition: vi.fn(),
@@ -190,6 +218,8 @@ describe('MCP Streamable HTTP 协议集成', () => {
       'recruitment_interview_get',
       'recruitment_offer_get',
       'onboarding_get',
+      'knowledge_course_get',
+      'knowledge_assignment_get',
       'recruitment_requisition_submit_prepare',
       'recruitment_requisition_submit_execute',
       'recruitment_position_transition_prepare',
@@ -207,12 +237,15 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ uriTemplate: 'erp://recruitment/applications/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://recruitment/offers/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://onboarding/instances/{id}' }),
+      expect.objectContaining({ uriTemplate: 'erp://knowledge/courses/{id}' }),
+      expect.objectContaining({ uriTemplate: 'erp://knowledge/assignments/{id}' }),
     ]));
     const prompts = await client.listPrompts();
     expect(prompts.prompts).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'approval_submission_guide' }),
       expect.objectContaining({ name: 'recruitment_offer_send_guide' }),
       expect.objectContaining({ name: 'onboarding_progress_guide' }),
+      expect.objectContaining({ name: 'knowledge_training_progress_guide' }),
     ]));
 
     const result = await client.callTool({ name: 'get_org_chart', arguments: {} });
@@ -258,5 +291,26 @@ describe('MCP Streamable HTTP 协议集成', () => {
       onboarding: { tasks: { identity_verified: 'pending' } },
     });
     expect(tools.getOnboarding).toHaveBeenCalledTimes(2);
+
+    const knowledgeResult = await client.callTool({
+      name: 'knowledge_assignment_get',
+      arguments: { id: '01J8ZQK7V0A2M4N6P8R0T2W4A2' },
+    });
+    expect(knowledgeResult.structuredContent).toMatchObject({
+      assignment: { progressBps: 5_000, status: 'in_progress' },
+    });
+    const knowledgeResource = await client.readResource({
+      uri: 'erp://knowledge/courses/01J8ZQK7V0A2M4N6P8R0T2W4A1',
+    });
+    const knowledgeContent = knowledgeResource.contents[0];
+    const knowledgeText = knowledgeContent !== undefined && 'text' in knowledgeContent
+      ? knowledgeContent.text
+      : '{}';
+    expect(JSON.parse(knowledgeText)).toMatchObject({ course: { status: 'published' } });
+    expect(JSON.stringify([knowledgeResult, knowledgeResource])).not.toMatch(
+      /questionBank|contentRef|submissionRef|EvidenceId|answer/iu,
+    );
+    expect(tools.getKnowledgeAssignment).toHaveBeenCalledOnce();
+    expect(tools.getKnowledgeCourse).toHaveBeenCalledOnce();
   });
 });

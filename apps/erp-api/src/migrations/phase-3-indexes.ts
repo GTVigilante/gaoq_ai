@@ -39,11 +39,15 @@ import {
 } from './phase-1-indexes.js';
 
 const MIGRATION_ID = 'phase-3-indexes-v1';
-const LOCK_ID = `${MIGRATION_ID}:lock`;
 const LOCK_TTL_MS = 30 * 60 * 1_000;
 const INDEX_NAME_PATTERN = /^[A-Za-z0-9._:-]{1,127}$/;
 
 export type PhaseThreeIndexDefinition = PhaseOneIndexDefinition;
+
+export interface AdditiveIndexMigrationConfig {
+  readonly migrationId: string;
+  readonly manifest: readonly PhaseThreeIndexDefinition[];
+}
 
 interface MigrationLock {
   readonly _id: string;
@@ -88,8 +92,15 @@ const PHASE_THREE_SCHEMAS: readonly Schema[] = Object.freeze([
 
 /** 从 Phase 3 运行 Schema 生成冻结清单，禁止手写清单与运行模型漂移。 */
 export function buildPhaseThreeIndexManifest(): readonly PhaseThreeIndexDefinition[] {
+  return buildIndexManifestFromSchemas(PHASE_THREE_SCHEMAS);
+}
+
+/** 为后续 Phase 3 模块生成独立、不可变的追加索引清单。 */
+export function buildIndexManifestFromSchemas(
+  schemas: readonly Schema[],
+): readonly PhaseThreeIndexDefinition[] {
   const manifest: PhaseThreeIndexDefinition[] = [];
-  for (const schema of PHASE_THREE_SCHEMAS) {
+  for (const schema of schemas) {
     const collection = schema.get('collection');
     if (typeof collection !== 'string' || collection.length < 1) {
       throw new Error('PHASE3_INDEX_COLLECTION_INVALID');
@@ -125,9 +136,29 @@ export async function runPhaseThreeIndexMigration(
   readonly verified: number;
   readonly missing: number;
 }> {
+  return runAdditiveIndexMigration(connection, dryRun, {
+    migrationId: MIGRATION_ID,
+    manifest: buildPhaseThreeIndexManifest(),
+  });
+}
+
+/** 执行具备 checksum、租约、冲突关闭与执行后复验的通用追加索引迁移。 */
+export async function runAdditiveIndexMigration(
+  connection: Connection,
+  dryRun: boolean,
+  config: AdditiveIndexMigrationConfig,
+): Promise<{
+  readonly checksum: string;
+  readonly created: number;
+  readonly verified: number;
+  readonly missing: number;
+}> {
   const database = connection.db;
   if (database === undefined) throw new Error('PHASE3_INDEX_DATABASE_UNAVAILABLE');
-  const manifest = buildPhaseThreeIndexManifest();
+  if (!/^phase-3-[a-z0-9-]{1,96}-v[1-9][0-9]*$/.test(config.migrationId)) {
+    throw new Error('PHASE3_INDEX_MIGRATION_ID_INVALID');
+  }
+  const manifest = config.manifest;
   const checksum = createHash('sha256').update(stableJson(manifest), 'utf8').digest('base64url');
   const grouped = groupManifest(manifest);
   const plans = await loadPlans(connection, grouped);
@@ -139,16 +170,17 @@ export async function runPhaseThreeIndexMigration(
   });
 
   const owner = randomUUID();
-  await acquireLock(connection, owner);
+  const lockId = `${config.migrationId}:lock`;
+  await acquireLock(connection, lockId, owner);
   let created = 0;
   try {
     const runs = database.collection<MigrationRun>('system_migration_runs');
-    const previous = await runs.findOne({ _id: MIGRATION_ID });
+    const previous = await runs.findOne({ _id: config.migrationId });
     if (previous !== null && previous.checksum !== checksum) {
       throw new Error('PHASE3_INDEX_MANIFEST_CHANGED');
     }
     await runs.updateOne(
-      { _id: MIGRATION_ID },
+      { _id: config.migrationId },
       {
         $set: { checksum, status: 'running', startedAt: new Date() },
         $unset: { completedAt: '', failureCode: '' },
@@ -169,7 +201,7 @@ export async function runPhaseThreeIndexMigration(
       (plan) => plan.missing.length > 0 || plan.conflicts.length > 0,
     )) throw new Error('PHASE3_INDEX_VERIFY_FAILED');
     await runs.updateOne(
-      { _id: MIGRATION_ID, checksum },
+      { _id: config.migrationId, checksum },
       {
         $set: {
           status: 'completed', completedAt: new Date(),
@@ -181,13 +213,13 @@ export async function runPhaseThreeIndexMigration(
     return Object.freeze({ checksum, created, verified: manifest.length, missing });
   } catch (error) {
     await database.collection<MigrationRun>('system_migration_runs').updateOne(
-      { _id: MIGRATION_ID, checksum },
+      { _id: config.migrationId, checksum },
       { $set: { status: 'failed', failureCode: safeFailureCode(error) } },
     );
     throw error;
   } finally {
     await database.collection<MigrationLock>('system_migration_locks').deleteOne({
-      _id: LOCK_ID,
+      _id: lockId,
       owner,
     });
   }
@@ -211,19 +243,19 @@ async function loadPlans(
   return plans;
 }
 
-async function acquireLock(connection: Connection, owner: string): Promise<void> {
+async function acquireLock(connection: Connection, lockId: string, owner: string): Promise<void> {
   const database = connection.db;
   if (database === undefined) throw new Error('PHASE3_INDEX_DATABASE_UNAVAILABLE');
   const locks = database.collection<MigrationLock>('system_migration_locks');
   const now = new Date();
   try {
-    await locks.insertOne({ _id: LOCK_ID, owner, expiresAt: new Date(now.getTime() + LOCK_TTL_MS) });
+    await locks.insertOne({ _id: lockId, owner, expiresAt: new Date(now.getTime() + LOCK_TTL_MS) });
     return;
   } catch (error) {
     if (!isRecord(error) || error.code !== 11_000) throw error;
   }
   const claimed = await locks.findOneAndUpdate(
-    { _id: LOCK_ID, expiresAt: { $lte: now } },
+    { _id: lockId, expiresAt: { $lte: now } },
     { $set: { owner, expiresAt: new Date(now.getTime() + LOCK_TTL_MS) } },
     { returnDocument: 'after' },
   );
