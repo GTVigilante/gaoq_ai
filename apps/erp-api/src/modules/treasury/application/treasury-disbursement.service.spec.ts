@@ -116,28 +116,39 @@ function assemble(lockedBy = 'payroll-locker') {
     find: vi.fn().mockImplementation(() => query(() => instructionRecords)),
     updateMany: vi.fn().mockResolvedValue({ modifiedCount: 1 }),
   };
+  const idempotencyResults = new Map<string, Record<string, unknown>>();
   const idempotency = { execute: vi.fn(async (
-    _operation: string,
-    _key: string,
+    operation: string,
+    key: string,
     _request: unknown,
     handler: (value: ClientSession) => Promise<Record<string, unknown>>,
-  ) => handler(session)) };
+  ) => {
+    const cacheKey = `${operation}:${key}`;
+    const existing = idempotencyResults.get(cacheKey);
+    if (existing !== undefined) return existing;
+    const result = await handler(session);
+    idempotencyResults.set(cacheKey, result);
+    return result;
+  }) };
   let archivedBody = '';
   const archive = { put: vi.fn((request: { readonly bytes: Buffer }) => {
     archivedBody = request.bytes.toString('utf8');
     return Promise.resolve({
-      objectRef: 'worm/treasury/object-001', receiptId: 'receipt-001', immutable: true,
+      objectRef: 'worm/treasury/object-001', receiptId: 'receipt-001', immutable: true as const,
     });
+  }) };
+  const bankGateway = { submit: vi.fn().mockResolvedValue({
+    submissionId: 'bank-submission-001', evidenceId: 'bank-evidence-001', accepted: true,
   }) };
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
   const service = new TreasuryDisbursementService(
     idempotency as never, context, payroll as never, strongAuth as never, crypto as never,
-    archive as never, outbox as never, accounts as never,
+    archive, bankGateway, outbox as never, accounts as never,
     instructions as never, batches as never,
   );
   return {
     context, crypto, payroll, strongAuth, accounts, batches, instructions,
-    idempotency, archive, archivedBody: () => archivedBody, outbox, service,
+    idempotency, archive, bankGateway, archivedBody: () => archivedBody, outbox, service,
   };
 }
 
@@ -237,5 +248,77 @@ describe('TreasuryDisbursementService', () => {
     expect(store.strongAuth.requireVerifiedEvidence).toHaveBeenCalledWith(expect.objectContaining({
       evidenceId: EVIDENCE_ID, actorId: 'treasury-checker', sessionId: 'session-001',
     }));
+  });
+
+  it('只有可信服务取得绑定回执后才把批次与全部指令转为 submitted', async () => {
+    const store = assemble();
+    const prepared = await store.context.run({ tenant, actor: actor() }, () =>
+      store.service.prepare('treasury-disbursement-submission', input));
+    const checker = actor('treasury-checker');
+    const token = {
+      issuer: 'https://erp.example.test', subject: checker.actorId,
+      audience: ['erp-api'], resource: ['erp-api'], tenantId: tenant.tenantId,
+      actorId: checker.actorId, actorType: 'user' as const, clientId: 'erp-web',
+      roleCodes: checker.roleCodes, scopes: checker.scopes,
+      departmentIds: [], sessionId: 'session-001', expiresAt: Date.now() + 60_000,
+    };
+    const exported = await store.context.run({ tenant, actor: checker }, () =>
+      store.service.approveExport('treasury-export-for-submit', prepared.id, {
+        expectedVersion: 2, strongAuthEvidenceId: EVIDENCE_ID,
+      }, token));
+    const connector: ActorContext = {
+      actorType: 'service', actorId: 'bank-connector', tenantId: tenant.tenantId,
+      roleCodes: [], scopes: ['erp:treasury:disbursement:submit'],
+      departmentIds: [], traceId: 'trace-bank-001',
+    };
+    const result = await store.context.run({ tenant, actor: connector }, () =>
+      store.service.submit('treasury-bank-submit', exported.id, { expectedVersion: 3 }));
+    expect(result).toMatchObject({
+      status: 'submitted', version: 4, bankSubmissionId: 'bank-submission-001',
+      bankSubmissionEvidenceId: 'bank-evidence-001',
+    });
+    expect(store.bankGateway.submit).toHaveBeenCalledWith(expect.objectContaining({
+      batchId: exported.id, fileHash: exported.fileHash, lineCount: 1, totalMinor: 839_500,
+    }));
+    expect(store.instructions.updateMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: 'prepared' }),
+      { $set: { status: 'submitted' } }, expect.any(Object),
+    );
+    await expect(store.context.run({ tenant, actor: connector }, () =>
+      store.service.submit('treasury-bank-submit', exported.id, { expectedVersion: 3 })))
+      .resolves.toEqual(result);
+    expect(store.bankGateway.submit).toHaveBeenCalledOnce();
+  });
+
+  it('银行网关首次失败后保留 submitting，幂等记录过期后仍可恢复且不另建批次', async () => {
+    const store = assemble();
+    const prepared = await store.context.run({ tenant, actor: actor() }, () =>
+      store.service.prepare('treasury-disbursement-retry', input));
+    const checker = actor('treasury-checker');
+    const token = {
+      issuer: 'https://erp.example.test', subject: checker.actorId,
+      audience: ['erp-api'], resource: ['erp-api'], tenantId: tenant.tenantId,
+      actorId: checker.actorId, actorType: 'user' as const, clientId: 'erp-web',
+      roleCodes: checker.roleCodes, scopes: checker.scopes,
+      departmentIds: [], sessionId: 'session-001', expiresAt: Date.now() + 60_000,
+    };
+    const exported = await store.context.run({ tenant, actor: checker }, () =>
+      store.service.approveExport('treasury-export-retry', prepared.id, {
+        expectedVersion: 2, strongAuthEvidenceId: EVIDENCE_ID,
+      }, token));
+    const connector: ActorContext = {
+      actorType: 'service', actorId: 'bank-connector', tenantId: tenant.tenantId,
+      roleCodes: [], scopes: ['erp:treasury:disbursement:submit'],
+      departmentIds: [], traceId: 'trace-bank-001',
+    };
+    store.bankGateway.submit.mockRejectedValueOnce(new Error('TREASURY_BANK_SUBMISSION_HTTP_503'));
+    await expect(store.context.run({ tenant, actor: connector }, () =>
+      store.service.submit('treasury-bank-retry-after-ttl', exported.id, { expectedVersion: 3 })))
+      .rejects.toThrow('TREASURY_BANK_SUBMISSION_HTTP_503');
+    await expect(store.context.run({ tenant, actor: connector }, () =>
+      store.service.submit('treasury-bank-retry', exported.id, { expectedVersion: 3 })))
+      .resolves.toMatchObject({ status: 'submitted', version: 4 });
+    expect(store.bankGateway.submit).toHaveBeenCalledTimes(2);
+    expect(store.batches.create).toHaveBeenCalledOnce();
   });
 });

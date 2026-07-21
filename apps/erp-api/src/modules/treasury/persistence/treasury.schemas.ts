@@ -96,9 +96,10 @@ TreasuryPaymentInstructionRecordSchema.index(
 );
 TreasuryPaymentInstructionRecordSchema.index({ tenantId: 1, batchId: 1, status: 1 });
 
-export type TreasuryBatchPersistenceStatus = 'materializing' | DisbursementBatchStatus;
+export type TreasuryBatchPersistenceStatus = 'materializing' | 'submitting' | DisbursementBatchStatus;
 const BATCH_STATUSES: readonly TreasuryBatchPersistenceStatus[] = [
-  'materializing', 'prepared', 'exported', 'submitted', 'reconciling', 'frozen', 'reconciled',
+  'materializing', 'prepared', 'exported', 'submitting',
+  'submitted', 'reconciling', 'frozen', 'reconciled',
 ];
 
 /** 代发批次只保存控制总额、摘要和证据引用；绝不保存银行文件明文。 */

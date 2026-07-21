@@ -75,6 +75,15 @@ const environmentSchema = z.object({
     z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/).optional(),
   ),
   TREASURY_WORM_RETENTION_DAYS: z.coerce.number().int().min(3_650).max(36_500).default(3_650),
+  /** 银行代发提交网关；只接收 WORM 对象引用与控制摘要，不接收 ERP 银行凭据。 */
+  TREASURY_BANK_SUBMISSION_ENDPOINT: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().url().optional(),
+  ),
+  TREASURY_BANK_SUBMISSION_BEARER_TOKEN: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/).optional(),
+  ),
   /** eSign Webhook L4 加密密钥环，仅由 Secret Manager 注入。 */
   ESIGN_WEBHOOK_ENCRYPTION_KEYS: z.preprocess(
     (value) => value === '' ? undefined : value,
@@ -235,6 +244,45 @@ const environmentSchema = z.object({
     ) context.addIssue({
       code: 'custom', path: ['TREASURY_WORM_ARCHIVE_ENDPOINT'],
       message: 'Treasury WORM 必须为独立权限域 HTTPS，且禁止凭据、查询、fragment 和非标准端口',
+    });
+  }
+  const treasuryBank = [
+    environment.TREASURY_BANK_SUBMISSION_ENDPOINT,
+    environment.TREASURY_BANK_SUBMISSION_BEARER_TOKEN,
+  ];
+  if (
+    treasuryBank.some((value) => value !== undefined) &&
+    treasuryBank.some((value) => value === undefined)
+  ) context.addIssue({
+    code: 'custom', path: ['TREASURY_BANK_SUBMISSION_ENDPOINT'],
+    message: 'Treasury 银行提交端点与凭据必须成套配置',
+  });
+  if (
+    environment.NODE_ENV === 'production' && treasuryBank.some((value) => value === undefined)
+  ) context.addIssue({
+    code: 'custom', path: ['TREASURY_BANK_SUBMISSION_ENDPOINT'],
+    message: '生产环境必须完整配置 Treasury 独立银行提交网关',
+  });
+  if (
+    environment.TREASURY_BANK_SUBMISSION_BEARER_TOKEN !== undefined &&
+    environment.TREASURY_BANK_SUBMISSION_BEARER_TOKEN ===
+      environment.TREASURY_WORM_ARCHIVE_BEARER_TOKEN
+  ) context.addIssue({
+    code: 'custom', path: ['TREASURY_BANK_SUBMISSION_BEARER_TOKEN'],
+    message: 'Treasury 银行提交与 WORM 归档不得复用同一凭据',
+  });
+  if (environment.TREASURY_BANK_SUBMISSION_ENDPOINT !== undefined) {
+    const endpoint = new URL(environment.TREASURY_BANK_SUBMISSION_ENDPOINT);
+    const archiveOrigin = environment.TREASURY_WORM_ARCHIVE_ENDPOINT === undefined
+      ? null : new URL(environment.TREASURY_WORM_ARCHIVE_ENDPOINT).origin;
+    if (
+      endpoint.protocol !== 'https:' || endpoint.username !== '' || endpoint.password !== '' ||
+      endpoint.search !== '' || endpoint.hash !== '' ||
+      (endpoint.port !== '' && endpoint.port !== '443') || endpoint.origin === issuer.origin ||
+      endpoint.origin === archiveOrigin
+    ) context.addIssue({
+      code: 'custom', path: ['TREASURY_BANK_SUBMISSION_ENDPOINT'],
+      message: 'Treasury 银行提交网关必须为独立权限域 HTTPS，且禁止凭据、查询、fragment 和非标准端口',
     });
   }
   if (environment.NODE_ENV === 'production' && environment.ESIGN_WEBHOOK_ENCRYPTION_KEYS === undefined) {

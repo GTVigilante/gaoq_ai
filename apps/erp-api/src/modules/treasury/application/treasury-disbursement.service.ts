@@ -27,7 +27,9 @@ import {
   DisbursementBatchError,
   generatePain001,
   Pain001Error,
+  recordBankSubmission,
 } from '../domain/index.js';
+import { TreasuryBankSubmissionGateway } from '../integration/treasury-bank-submission.ports.js';
 import { TreasuryImmutableArchive } from '../integration/treasury-evidence.ports.js';
 import { TreasuryDataCryptoService } from '../persistence/treasury-data-crypto.service.js';
 import { TreasuryOutboxWriter } from '../persistence/treasury-outbox.writer.js';
@@ -42,6 +44,7 @@ import {
 import type {
   ApproveTreasuryExportDto,
   PrepareTreasuryDisbursementDto,
+  SubmitTreasuryDisbursementDto,
 } from './treasury.dto.js';
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -82,12 +85,14 @@ export interface TreasuryDisbursementSummary extends Record<string, unknown> {
   readonly id: string;
   readonly payrollPeriodId: string;
   readonly payrollRunId: string;
-  readonly status: 'materializing' | 'prepared' | 'exported';
+  readonly status: 'materializing' | 'prepared' | 'exported' | 'submitting' | 'submitted';
   readonly version: number;
   readonly lineCount: number;
   readonly totalMinor: number;
   readonly fileHash: string | null;
   readonly objectEvidenceId: string | null;
+  readonly bankSubmissionId: string | null;
+  readonly bankSubmissionEvidenceId: string | null;
 }
 
 /** 锁定工资到受控代发文件的两阶段编排；不返回文件、账号或员工级金额。 */
@@ -100,6 +105,7 @@ export class TreasuryDisbursementService {
     private readonly strongAuth: WebAuthnService,
     private readonly crypto: TreasuryDataCryptoService,
     private readonly archive: TreasuryImmutableArchive,
+    private readonly bankGateway: TreasuryBankSubmissionGateway,
     private readonly outbox: TreasuryOutboxWriter,
     @InjectModel(TreasuryBankAccountRecord.name)
     private readonly accounts: Model<TreasuryBankAccountDocument>,
@@ -108,6 +114,120 @@ export class TreasuryDisbursementService {
     @InjectModel(TreasuryDisbursementBatchRecord.name)
     private readonly batches: Model<TreasuryDisbursementBatchDocument>,
   ) {}
+
+  async submit(
+    key: string,
+    batchId: string,
+    input: SubmitTreasuryDisbursementDto,
+  ): Promise<TreasuryDisbursementSummary> {
+    const actor = this.context.getActorRequired();
+    if (!actor.scopes.includes('erp:treasury:disbursement:submit')) throw new ForbiddenException({
+      code: 'AUTH_SCOPE_DENIED', message: '缺少代发银行提交权限',
+    });
+    if (actor.actorType !== 'service' && actor.actorType !== 'system_job') {
+      throw new ForbiddenException({
+        code: 'TREASURY_BANK_SUBMISSION_SERVICE_REQUIRED', message: '只允许受信任银行提交服务执行',
+      });
+    }
+    if (!ID_PATTERN.test(batchId)) throw new BadRequestException({
+      code: 'TREASURY_BATCH_ID_INVALID', message: '代发批次标识非法',
+    });
+    const staged = await this.run(() => this.idempotency.execute(
+      'treasury.disbursement.stage_submission', key,
+      { batchId, expectedVersion: input.expectedVersion }, async (session) => {
+        const exported = await this.requireBatch(batchId, session);
+        if (
+          exported.status === 'submitted' && exported.version === input.expectedVersion + 1 &&
+          exported.bankSubmissionId !== null && exported.bankSubmissionEvidenceId !== null
+        ) return summaryFromRecord(exported, 'submitted');
+        if (
+          exported.status === 'submitting' && exported.version === input.expectedVersion &&
+          exported.fileHash !== null && exported.objectRef !== null
+        ) return summaryFromRecord(exported, 'submitting');
+        if (
+          exported.status !== 'exported' || exported.version !== input.expectedVersion ||
+          exported.fileHash === null || exported.objectRef === null ||
+          exported.objectEvidenceId === null || exported.strongAuthEvidenceId === null ||
+          exported.exportApprovedBy === null
+        ) throw new ConflictException({
+          code: 'TREASURY_BANK_SUBMISSION_STATE_INVALID',
+          message: '代发批次未完成有效导出批准或版本已变化',
+        });
+        const updated = await this.batches.updateOne({
+          tenantId: this.tenantId(), id: exported.id,
+          status: 'exported', version: input.expectedVersion,
+        }, { $set: { status: 'submitting' } }, { session, runValidators: true });
+        if (updated.modifiedCount !== 1) throw new ConflictException({
+          code: 'TREASURY_BANK_SUBMISSION_STAGE_CONFLICT', message: '代发提交暂存发生并发冲突',
+        });
+        await this.outbox.append({
+          type: 'treasury.disbursement.submission_requested', tenantId: this.tenantId(),
+          aggregateId: exported.id, version: exported.version,
+          occurredAt: new Date().toISOString(), data: {
+            payrollPeriodId: exported.payrollPeriodId, payrollRunId: exported.payrollRunId,
+            lineCount: exported.lineCount, totalMinor: exported.totalMinor,
+            fileHash: exported.fileHash, status: 'submitting',
+          },
+        }, session);
+        return summaryFromRecord(exported, 'submitting');
+      },
+    ));
+    const exported = await this.requireBatch(staged.id);
+    if (
+      exported.status === 'submitted' && exported.bankSubmissionId !== null &&
+      exported.bankSubmissionEvidenceId !== null
+    ) return summaryFromRecord(exported, 'submitted');
+    if (
+      exported.status !== 'submitting' || exported.version !== input.expectedVersion ||
+      exported.fileHash === null || exported.objectRef === null
+    ) throw new ConflictException({
+      code: 'TREASURY_BANK_SUBMISSION_STAGE_INVALID', message: '代发提交暂存状态非法',
+    });
+    const receipt = await this.bankGateway.submit({
+      tenantId: this.tenantId(), batchId: exported.id, objectRef: exported.objectRef,
+      fileHash: exported.fileHash, lineCount: exported.lineCount, totalMinor: exported.totalMinor,
+    });
+    return this.run(() => this.idempotency.execute(
+      'treasury.disbursement.finalize_submission', deriveKey(key, 'finalize-submission'), {
+        batchId, expectedVersion: input.expectedVersion,
+        submissionId: receipt.submissionId, evidenceId: receipt.evidenceId,
+      }, async (session) => {
+        const current = await this.requireBatch(batchId, session);
+        const next = recordBankSubmission(batchFromRecord(current, true), {
+          tenantId: this.tenantId(), expectedVersion: input.expectedVersion,
+          bankSubmissionId: receipt.submissionId,
+          bankSubmissionEvidenceId: receipt.evidenceId, trustedConnector: receipt.accepted,
+        }, new Date());
+        const updated = await this.batches.updateOne({
+          tenantId: this.tenantId(), id: current.id,
+          status: current.status, version: current.version,
+        }, { $set: {
+          status: next.status, version: next.version,
+          bankSubmissionId: next.bankSubmissionId,
+          bankSubmissionEvidenceId: next.bankSubmissionEvidenceId,
+        } }, { session, runValidators: true });
+        if (updated.modifiedCount !== 1) throw new ConflictException({
+          code: 'TREASURY_BANK_SUBMISSION_WRITE_CONFLICT', message: '代发提交发生并发冲突',
+        });
+        const instructionUpdate = await this.instructions.updateMany({
+          tenantId: this.tenantId(), batchId: current.id, status: 'prepared',
+        }, { $set: { status: 'submitted' } }, { session, runValidators: true });
+        if (instructionUpdate.modifiedCount !== current.lineCount) throw new ConflictException({
+          code: 'TREASURY_SUBMISSION_INSTRUCTION_WRITE_CONFLICT', message: '支付指令提交状态更新不完整',
+        });
+        await this.outbox.append({
+          type: 'treasury.disbursement.submitted', tenantId: this.tenantId(),
+          aggregateId: next.id, version: next.version, occurredAt: next.updatedAt, data: {
+            payrollPeriodId: next.payrollPeriodId, payrollRunId: next.payrollRunId,
+            lineCount: next.lineCount, totalMinor: next.totalMinor, fileHash: next.fileHash,
+            bankSubmissionId: receipt.submissionId,
+            bankSubmissionEvidenceId: receipt.evidenceId, status: 'submitted',
+          },
+        }, session);
+        return summaryFromDomain(next);
+      },
+    ));
+  }
 
   async approveExport(
     key: string,
@@ -307,6 +427,7 @@ export class TreasuryDisbursementService {
       id: batchId, payrollPeriodId: source.periodId, payrollRunId: source.payrollRunId,
       status: 'materializing', version: 1, lineCount: payable.length,
       totalMinor: Number(total), fileHash: null, objectEvidenceId: null,
+      bankSubmissionId: null, bankSubmissionEvidenceId: null,
     });
   }
 
@@ -407,6 +528,7 @@ export class TreasuryDisbursementService {
           tenantId: this.tenantId(), id: batch.id, status: 'materializing', version: 1,
         }, { $set: {
           fileHash: document.contentHash, objectEvidenceId: receipt.receiptId,
+          bankSubmissionId: null, bankSubmissionEvidenceId: null,
           objectRef: receipt.objectRef, status: 'prepared', version: 2,
         } }, { session, runValidators: true });
         if (updated.modifiedCount !== 1) throw new ConflictException({
@@ -433,6 +555,7 @@ export class TreasuryDisbursementService {
           payrollRunId: batch.payrollRunId, status: 'prepared', version: 2,
           lineCount: batch.lineCount, totalMinor: batch.totalMinor,
           fileHash: document.contentHash, objectEvidenceId: receipt.receiptId,
+          bankSubmissionId: null, bankSubmissionEvidenceId: null,
         });
       },
     ));
@@ -518,20 +641,31 @@ function summary(batch: TreasuryDisbursementBatchRecord): TreasuryDisbursementSu
     status: 'prepared', version: batch.version, lineCount: batch.lineCount,
     totalMinor: batch.totalMinor, fileHash: batch.fileHash,
     objectEvidenceId: batch.objectEvidenceId,
+    bankSubmissionId: batch.bankSubmissionId,
+    bankSubmissionEvidenceId: batch.bankSubmissionEvidenceId,
   });
 }
 
 function summaryFromDomain(batch: DisbursementBatch): TreasuryDisbursementSummary {
   return Object.freeze({
     id: batch.id, payrollPeriodId: batch.payrollPeriodId, payrollRunId: batch.payrollRunId,
-    status: batch.status === 'exported' ? 'exported' : 'prepared', version: batch.version,
+    status: batch.status === 'submitted' ? 'submitted'
+      : batch.status === 'exported' ? 'exported' : 'prepared', version: batch.version,
     lineCount: batch.lineCount, totalMinor: batch.totalMinor,
     fileHash: batch.fileHash, objectEvidenceId: batch.objectEvidenceId,
+    bankSubmissionId: batch.bankSubmissionId,
+    bankSubmissionEvidenceId: batch.bankSubmissionEvidenceId,
   });
 }
 
-function batchFromRecord(record: TreasuryDisbursementBatchRecord): DisbursementBatch {
-  if (record.fileHash === null || record.status === 'materializing') {
+function batchFromRecord(
+  record: TreasuryDisbursementBatchRecord,
+  allowSubmitting = false,
+): DisbursementBatch {
+  if (
+    record.fileHash === null || record.status === 'materializing' ||
+    (record.status === 'submitting' && !allowSubmitting)
+  ) {
     throw new Error('TREASURY_BATCH_FILE_HASH_REQUIRED');
   }
   return Object.freeze({
@@ -546,9 +680,22 @@ function batchFromRecord(record: TreasuryDisbursementBatchRecord): DisbursementB
     successfulCount: record.successfulCount, failedCount: record.failedCount,
     successfulMinor: record.successfulMinor, failedMinor: record.failedMinor,
     freezeReason: record.freezeReason,
-    status: record.status,
+    status: record.status === 'submitting' ? 'exported' : record.status,
     version: record.version, createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
+  });
+}
+
+function summaryFromRecord(
+  batch: TreasuryDisbursementBatchRecord,
+  status: 'submitting' | 'submitted',
+): TreasuryDisbursementSummary {
+  return Object.freeze({
+    id: batch.id, payrollPeriodId: batch.payrollPeriodId, payrollRunId: batch.payrollRunId,
+    status, version: batch.version, lineCount: batch.lineCount, totalMinor: batch.totalMinor,
+    fileHash: batch.fileHash, objectEvidenceId: batch.objectEvidenceId,
+    bankSubmissionId: batch.bankSubmissionId,
+    bankSubmissionEvidenceId: batch.bankSubmissionEvidenceId,
   });
 }
 

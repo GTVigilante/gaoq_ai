@@ -92,4 +92,27 @@ describe('TreasuryOutboxWriter', () => {
       ...approved, data: { ...approved.data, approvedBy: 'treasury-checker' },
     }, session))).rejects.toThrow('TREASURY_OUTBOX_DATA_INVALID');
   });
+
+  it('银行提交事件只公开批次与可信提交回执引用', async () => {
+    const context = new TenantContextService();
+    const create = vi.fn().mockResolvedValue([]);
+    const writer = new TreasuryOutboxWriter(context, { create } as never);
+    const submitted: TreasuryEvent = {
+      type: 'treasury.disbursement.submitted', tenantId: 'tenant-001',
+      aggregateId: 'batch-001', version: 4, occurredAt: '2026-07-22T10:02:00.000Z',
+      data: {
+        payrollPeriodId: 'period-001', payrollRunId: 'run-001', lineCount: 2,
+        totalMinor: 1_839_600, fileHash: 'a'.repeat(43), status: 'submitted',
+        bankSubmissionId: 'bank-submission-001',
+        bankSubmissionEvidenceId: 'bank-evidence-001',
+      },
+    };
+    await context.run({ tenant, actor }, () => writer.append(submitted, session));
+    const calls = JSON.stringify(create.mock.calls);
+    expect(calls).toContain('"bankSubmissionEvidenceId":"bank-evidence-001"');
+    expect(calls).not.toMatch(/objectRef|authorization|account|employee/u);
+    await expect(context.run({ tenant, actor }, () => writer.append({
+      ...submitted, data: { ...submitted.data, objectRef: 'worm/private-object' },
+    }, session))).rejects.toThrow('TREASURY_OUTBOX_DATA_INVALID');
+  });
 });

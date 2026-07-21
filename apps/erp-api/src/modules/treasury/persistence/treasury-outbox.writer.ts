@@ -12,7 +12,9 @@ export interface TreasuryEvent {
     | 'treasury.bank_account.attested'
     | 'treasury.disbursement.materialization_requested'
     | 'treasury.disbursement.prepared'
-    | 'treasury.disbursement.export_approved';
+    | 'treasury.disbursement.export_approved'
+    | 'treasury.disbursement.submission_requested'
+    | 'treasury.disbursement.submitted';
   readonly tenantId: string;
   readonly aggregateId: string;
   readonly version: number;
@@ -82,6 +84,24 @@ export class TreasuryOutboxWriter {
         !baseValid || data['status'] !== 'exported' || data['strongAuthMethod'] !== 'webauthn_uv' ||
         !safeId(data['objectEvidenceId']) || typeof data['fileHash'] !== 'string' ||
         !/^[A-Za-z0-9_-]{43}$/.test(data['fileHash'])
+      ) throw new Error('TREASURY_OUTBOX_DATA_INVALID');
+      return;
+    }
+    if (event.type === 'treasury.disbursement.submitted') {
+      if (
+        keys !==
+          'bankSubmissionEvidenceId,bankSubmissionId,fileHash,lineCount,payrollPeriodId,payrollRunId,status,totalMinor' ||
+        !baseValid || data['status'] !== 'submitted' ||
+        !safeId(data['bankSubmissionId']) || !safeId(data['bankSubmissionEvidenceId']) ||
+        typeof data['fileHash'] !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(data['fileHash'])
+      ) throw new Error('TREASURY_OUTBOX_DATA_INVALID');
+      return;
+    }
+    if (event.type === 'treasury.disbursement.submission_requested') {
+      if (
+        keys !== 'fileHash,lineCount,payrollPeriodId,payrollRunId,status,totalMinor' ||
+        !baseValid || data['status'] !== 'submitting' ||
+        typeof data['fileHash'] !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(data['fileHash'])
       ) throw new Error('TREASURY_OUTBOX_DATA_INVALID');
       return;
     }

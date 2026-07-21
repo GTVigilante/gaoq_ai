@@ -15,6 +15,7 @@ import {
   AttestTreasuryBankAccountDto,
   ApproveTreasuryExportDto,
   PrepareTreasuryDisbursementDto,
+  SubmitTreasuryDisbursementDto,
 } from './application/treasury.dto.js';
 
 @Controller('treasury')
@@ -24,6 +25,27 @@ export class TreasuryController {
     private readonly disbursements: TreasuryDisbursementService,
     private readonly audit: AuditService,
   ) {}
+
+  /** R3：仅可信提交服务可调用；网关只接收 WORM 引用，MCP 永不注册。 */
+  @Post('disbursements/:id/submission')
+  @RequiredScopes('erp:treasury:disbursement:submit')
+  async submitDisbursement(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Body() body: SubmitTreasuryDisbursementDto,
+  ): Promise<TreasuryDisbursementSummary> {
+    const result = await this.disbursements.submit(this.key(key), id, body);
+    await this.audit.record({
+      action: 'treasury.disbursement.submit', resourceType: 'treasury_disbursement_batch',
+      resourceId: result.id, riskLevel: 'R3', outcome: 'success', metadata: {
+        payrollPeriodId: result.payrollPeriodId, payrollRunId: result.payrollRunId,
+        status: result.status, version: result.version, fileHash: result.fileHash ?? 'none',
+        bankSubmissionId: result.bankSubmissionId ?? 'none',
+        bankSubmissionEvidenceId: result.bankSubmissionEvidenceId ?? 'none',
+      },
+    });
+    return result;
+  }
 
   /** R3：强认证 operationId 必须绑定批次 ID；批准人必须独立，MCP 永不注册。 */
   @Post('disbursements/:id/export-approval')

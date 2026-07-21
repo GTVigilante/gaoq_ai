@@ -25,3 +25,10 @@
 - `POST /treasury/disbursements/:id/export-approval` 是 R3 人工动作，只接受拥有 `erp:treasury:disbursement:approve` 的已验证用户；WebAuthn 证据必须绑定当前访问令牌的租户、人员、会话及批次 ID。
 - 批次必须为 `prepared` 且同时具有文件摘要、WORM 证据和对象引用。批准人必须与工资锁定人、代发制备人不同，乐观版本命中后才转为 `exported`。
 - 事件只公开批次汇总、WORM 证据引用和 `webauthn_uv` 方法；不得公开批准人、凭据或强认证证据详情。批准不返回文件内容，也不等于提交银行。
+
+## 银行提交
+
+- `POST /treasury/disbursements/:id/submission` 只允许拥有 `erp:treasury:disbursement:submit` 的受信任 `service` 或 `system_job` 调用；普通用户即使持有同名 Scope 也被拒绝，MCP 永不注册。
+- 独立银行网关只接收批次 ID、WORM 对象引用、文件摘要、行数与控制总额；ERP 不回读或重传银行文件，银行凭据仅存在于网关权限域。
+- 网关以确定性幂等键提交。回执必须为 `accepted=true`，并反向绑定批次、对象引用、摘要、行数与总额；错批、错文件、未受理、超大或非 JSON 回执全部失败关闭。
+- 有效回执之后，第二阶段事务才以乐观版本把批次及全部支付指令转为 `submitted`，同时保存提交 ID、证据 ID 和白名单事件。网关失败或回执非法只保留可恢复的 `submitting` 暂存状态，绝不伪造 `submitted`。

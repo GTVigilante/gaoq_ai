@@ -8,6 +8,8 @@ import { OutboxRecord, OutboxRecordSchema } from '../org/persistence/outbox.sche
 import { PayrollModule } from '../payroll/payroll.module.js';
 import { TreasuryBankAccountService } from './application/treasury-bank-account.service.js';
 import { TreasuryDisbursementService } from './application/treasury-disbursement.service.js';
+import { HttpTreasuryBankSubmissionGateway } from './integration/treasury-bank-submission-http.adapter.js';
+import { TreasuryBankSubmissionGateway } from './integration/treasury-bank-submission.ports.js';
 import { HttpTreasuryImmutableArchive } from './integration/treasury-evidence-http.adapter.js';
 import { TreasuryImmutableArchive } from './integration/treasury-evidence.ports.js';
 import { TreasuryDataCryptoService } from './persistence/treasury-data-crypto.service.js';
@@ -44,7 +46,9 @@ import { TreasuryController } from './treasury.controller.js';
     TreasuryDisbursementService,
     TreasuryDataCryptoService,
     TreasuryOutboxWriter,
+    HttpTreasuryBankSubmissionGateway,
     HttpTreasuryImmutableArchive,
+    { provide: TreasuryBankSubmissionGateway, useExisting: HttpTreasuryBankSubmissionGateway },
     { provide: TreasuryImmutableArchive, useExisting: HttpTreasuryImmutableArchive },
   ],
   exports: [TreasuryBankAccountService, TreasuryDisbursementService, TreasuryDataCryptoService],

@@ -24,3 +24,7 @@ export class ApproveTreasuryExportDto {
   @IsInt() @Min(1) expectedVersion!: number;
   @Matches(ULID) strongAuthEvidenceId!: string;
 }
+
+export class SubmitTreasuryDisbursementDto {
+  @IsInt() @Min(1) expectedVersion!: number;
+}
