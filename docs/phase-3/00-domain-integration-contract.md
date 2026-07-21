@@ -57,6 +57,11 @@ applied → screening → interview → offer_approval → offer_sent
 
 面试和入职日程由 ERP 发出不可变业务标识，经日历适配器创建外部事件；外部编辑只作为回执，不覆盖 ERP 时间与参与人。消息正文不含简历、评价、Offer 条款或签署文件，只发送受保护链接。
 
+- 排期必须携带候选申请强 `If-Match`，仅 `interview` 阶段可新建轮次；面试官标识必须逐一解析为 ERP 当前 `probation/active` 员工。
+- 访问令牌的 `actorId` 必须经有效 AccessProfile 映射为 `employeeId`，禁止直接将 actor 标识当作面试官标识。
+- 每位面试官每轮只能追加一份评价；推荐、分数和备注作为单一 L3 载荷整体加密。评价、取消和完成共用面试版本锁，防止取消后并发写入评价。
+- 日历投递由事务 Outbox 触发；事件只含面试标识和时间摘要，Integration Worker 通过专用最小 Scope 读取加密地点投影。日历失败只进入重试/人工介入，不回滚 ERP 排期。
+
 ### 4.3 e签宝
 
 统一 `ESignAdapter`：`createFlow / getFlow / signUrl / downloadFile / verifyWebhook`。Webhook 只做来源限制、签名和 ±5 分钟时间窗校验、可信企业映射租户、加密写 inbox、快速返回；异步 Worker 按 `eventId` 幂等并按外部时间应用。

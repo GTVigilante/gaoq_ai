@@ -45,6 +45,11 @@ export interface RecruitmentInterviewFeedback {
   readonly submittedAt: string;
 }
 
+export interface RecruitmentInterviewFeedbackResult {
+  readonly interview: RecruitmentInterview;
+  readonly feedback: RecruitmentInterviewFeedback;
+}
+
 export function createRecruitmentInterview(
   input: {
     readonly id: string;
@@ -83,9 +88,10 @@ export function createRecruitmentInterview(
   const endsAt = input.endsAt.getTime();
   if (
     !Number.isFinite(startsAt) || !Number.isFinite(endsAt) ||
-    endsAt <= startsAt || endsAt - startsAt > 12 * 60 * 60 * 1_000
+    startsAt <= now.getTime() || endsAt <= startsAt ||
+    endsAt - startsAt > 12 * 60 * 60 * 1_000
   ) throw new RecruitmentDomainError(
-    'RECRUITMENT_INTERVIEW_TIME_INVALID', '面试结束时间必须晚于开始且时长不超过 12 小时',
+    'RECRUITMENT_INTERVIEW_TIME_INVALID', '面试必须在未来开始、正向结束且时长不超过 12 小时',
   );
   if (!/^(?:UTC|[A-Za-z_]+\/[A-Za-z0-9_+.-]+)$/.test(input.timezone)) {
     throw new RecruitmentDomainError('RECRUITMENT_TIMEZONE_INVALID', '时区必须使用 IANA 标识');
@@ -107,17 +113,18 @@ export function submitRecruitmentInterviewFeedback(
   input: {
     readonly id: string;
     readonly tenantId: string;
-    readonly actorId: string;
+    readonly expectedVersion: number;
+    readonly interviewerId: string;
     readonly recommendation: InterviewRecommendation;
     readonly score: number;
     readonly notes: string;
   },
   now: Date,
-): RecruitmentInterviewFeedback {
-  assertRecruitmentTenant(interview.tenantId, input.tenantId);
+): RecruitmentInterviewFeedbackResult {
+  assertInterviewCommand(interview, input.tenantId, input.expectedVersion);
   assertRecruitmentId(input.id, 'id');
-  assertRecruitmentId(input.actorId, 'actorId');
-  if (interview.status !== 'scheduled' || !interview.interviewerIds.includes(input.actorId)) {
+  assertRecruitmentId(input.interviewerId, 'interviewerId');
+  if (interview.status !== 'scheduled' || !interview.interviewerIds.includes(input.interviewerId)) {
     throw new RecruitmentDomainError(
       'RECRUITMENT_FEEDBACK_SUBMIT_DENIED', '只有该轮有效面试官可提交评价',
     );
@@ -129,11 +136,16 @@ export function submitRecruitmentInterviewFeedback(
     throw new RecruitmentDomainError('RECRUITMENT_FEEDBACK_SCORE_INVALID', '面试评分必须为 1..5 的整数');
   }
   assertRecruitmentLabel(input.notes, 'notes', 8_192);
-  return deepFreezeRecruitment({
+  const submittedAt = toRecruitmentIso(now);
+  const feedback = deepFreezeRecruitment({
     id: input.id, tenantId: input.tenantId, interviewId: interview.id,
-    interviewerId: input.actorId, recommendation: input.recommendation,
-    score: input.score, notes: input.notes.trim(), submittedAt: toRecruitmentIso(now),
+    interviewerId: input.interviewerId, recommendation: input.recommendation,
+    score: input.score, notes: input.notes.trim(), submittedAt,
   });
+  const updatedInterview = deepFreezeRecruitment({
+    ...interview, version: interview.version + 1, updatedAt: submittedAt,
+  });
+  return deepFreezeRecruitment({ interview: updatedInterview, feedback });
 }
 
 export function completeRecruitmentInterview(

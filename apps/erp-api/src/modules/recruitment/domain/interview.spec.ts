@@ -32,13 +32,16 @@ describe('RecruitmentInterview', () => {
 
   it('只有本轮面试官可提交自己的不可变评价', () => {
     const feedback = submitRecruitmentInterviewFeedback(interview(), {
-      id: 'feedback-001', tenantId: 'tenant-001', actorId: 'employee-001',
+      id: 'feedback-001', tenantId: 'tenant-001', interviewerId: 'employee-001',
+      expectedVersion: 1,
       recommendation: 'hire', score: 4, notes: '能力符合要求，建议进入下一轮',
     }, NOW);
-    expect(feedback).toMatchObject({ interviewerId: 'employee-001', score: 4 });
+    expect(feedback.feedback).toMatchObject({ interviewerId: 'employee-001', score: 4 });
+    expect(feedback.interview).toMatchObject({ version: 2, status: 'scheduled' });
     expect(Object.isFrozen(feedback)).toBe(true);
     expect(() => submitRecruitmentInterviewFeedback(interview(), {
-      id: 'feedback-002', tenantId: 'tenant-001', actorId: 'employee-003',
+      id: 'feedback-002', tenantId: 'tenant-001', interviewerId: 'employee-003',
+      expectedVersion: 1,
       recommendation: 'hire', score: 4, notes: '越权评价',
     }, NOW)).toThrowError(/RECRUITMENT_FEEDBACK_SUBMIT_DENIED|\u53ea有/u);
   });

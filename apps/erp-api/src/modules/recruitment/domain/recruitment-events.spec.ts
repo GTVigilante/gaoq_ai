@@ -76,12 +76,13 @@ describe('RecruitmentDomainEvents', () => {
       actorId: 'actor-001',
     }, now);
     const feedback = submitRecruitmentInterviewFeedback(interview, {
-      id: 'feedback-001', tenantId: 'tenant-001', actorId: 'employee-001',
+      id: 'feedback-001', tenantId: 'tenant-001', interviewerId: 'employee-001',
+      expectedVersion: 1,
       recommendation: 'hire', score: 4, notes: '候选人能力匹配，建议继续',
     }, now);
     const events = [
       buildRecruitmentInterviewEvent(interview, 'scheduled'),
-      buildRecruitmentInterviewFeedbackEvent(interview, feedback),
+      buildRecruitmentInterviewFeedbackEvent(feedback.interview, feedback.feedback),
     ];
     expect(events[0]).toMatchObject({
       type: 'recruitment.interview.scheduled', aggregateType: 'recruitment.interview',

@@ -114,7 +114,8 @@ describe('RecruitmentInterviewRepositories', () => {
       actorId: 'actor-001',
     }, new Date('2026-07-21T00:00:00.000Z'));
     const feedback = submitRecruitmentInterviewFeedback(scheduled, {
-      id: '01J8ZQK7V0A2M4N6P8R0T2W4X2', tenantId: 'tenant-001', actorId: 'employee-001',
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4X2', tenantId: 'tenant-001', interviewerId: 'employee-001',
+      expectedVersion: 1,
       recommendation: 'hire', score: 4, notes: '候选人经验与岗位高度匹配',
     }, new Date('2026-07-22T09:01:00.000Z'));
     await new RecruitmentInterviewRepository(
@@ -124,7 +125,7 @@ describe('RecruitmentInterviewRepositories', () => {
     await new RecruitmentInterviewFeedbackRepository(
       context(), { create: feedbackCreate } as unknown as Model<RecruitmentInterviewFeedbackDocument>,
       dataCrypto,
-    ).append(feedback, { id: 'session' } as never);
+    ).append(feedback.feedback, { id: 'session' } as never);
     const storedInterview = interviewCreate.mock.calls[0]?.[0] as unknown;
     const storedFeedback = feedbackCreate.mock.calls[0]?.[0] as unknown;
     expect(JSON.stringify(storedInterview)).not.toContain('meeting.example');

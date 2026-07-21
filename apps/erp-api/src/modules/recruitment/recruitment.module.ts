@@ -3,6 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 
 import { IdempotencyModule } from '../../core/idempotency/idempotency.module.js';
 import { TenantContextModule } from '../../core/tenant/tenant-context.module.js';
+import { IdentityModule } from '../identity/identity.module.js';
 import { OrgModule } from '../org/org.module.js';
 import { ApprovalModule } from '../approval/approval.module.js';
 import { OutboxRecord, OutboxRecordSchema } from '../org/persistence/outbox.schema.js';
@@ -10,8 +11,10 @@ import { RecruitmentDataCryptoService } from './persistence/recruitment-data-cry
 import { RecruitmentOutboxWriter } from './persistence/recruitment-outbox.writer.js';
 import { RecruitmentApplicationService } from './application/recruitment-application.service.js';
 import { RecruitmentManagementService } from './application/recruitment-management.service.js';
+import { RecruitmentInterviewService } from './application/recruitment-interview.service.js';
 import { RecruitmentController } from './recruitment.controller.js';
 import { RecruitmentManagementController } from './recruitment-management.controller.js';
+import { RecruitmentInterviewController } from './recruitment-interview.controller.js';
 import {
   CandidateApplicationRepository,
   CandidateApplicationStageRepository,
@@ -45,6 +48,7 @@ import {
 @Module({
   imports: [
     IdempotencyModule,
+    IdentityModule,
     ApprovalModule,
     TenantContextModule,
     OrgModule,
@@ -76,8 +80,11 @@ import {
     RecruitmentInterviewFeedbackRepository,
     RecruitmentApplicationService,
     RecruitmentManagementService,
+    RecruitmentInterviewService,
   ],
-  controllers: [RecruitmentController, RecruitmentManagementController],
+  controllers: [
+    RecruitmentController, RecruitmentManagementController, RecruitmentInterviewController,
+  ],
   exports: [
     RecruitmentDataCryptoService,
     RecruitmentOutboxWriter,
@@ -88,6 +95,7 @@ import {
     RecruitmentInterviewRepository,
     RecruitmentApplicationService,
     RecruitmentManagementService,
+    RecruitmentInterviewService,
   ],
 })
 export class RecruitmentModule {}
