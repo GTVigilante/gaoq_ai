@@ -9,6 +9,8 @@ import type { ClientSession } from 'mongoose';
 
 import { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
+import { IdentityLifecycleService } from '../../identity/identity-lifecycle.service.js';
+import type { EmployeeIdentityTerminationResult } from '../../identity/identity-lifecycle.service.js';
 import {
   buildDepartmentCreatedEvent,
   buildDepartmentUpdatedEvent,
@@ -72,6 +74,7 @@ export class OrgApplicationService {
     private readonly positions: PositionRepository,
     private readonly jobLevels: JobLevelRepository,
     private readonly outbox: OrgOutboxWriter,
+    private readonly identities: IdentityLifecycleService,
   ) {}
 
   /** 返回按已验证令牌部门范围裁剪的组织视图。 */
@@ -304,7 +307,10 @@ export class OrgApplicationService {
     expectedVersion: number,
     key: string,
     input: TransitionEmployeeStatusDto,
-  ): Promise<{ readonly employee: Employee }> {
+  ): Promise<{
+    readonly employee: Employee;
+    readonly identityTermination?: EmployeeIdentityTerminationResult;
+  }> {
     return this.run(async () => this.idempotency.execute(
       'org.employee.status_transition',
       key,
@@ -314,12 +320,23 @@ export class OrgApplicationService {
         this.assertExpectedVersion(current.version, expectedVersion);
         const now = new Date();
         const employee = transitionEmployeeStatus(current, input.status, now);
+        let identityTermination: EmployeeIdentityTerminationResult | undefined;
+        if (employee.status === 'terminated') {
+          identityTermination = await this.identities.terminateEmployee(
+            current.tenantId,
+            current.id,
+            session,
+          );
+        }
         await this.employees.replace(employee, expectedVersion, session);
         await this.outbox.append(
           buildEmployeeStatusChangedEvent(employee, current.status, now),
           session,
         );
-        return { employee };
+        return {
+          employee,
+          ...(identityTermination === undefined ? {} : { identityTermination }),
+        };
       },
     ));
   }

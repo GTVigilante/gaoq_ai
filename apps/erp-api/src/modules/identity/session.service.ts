@@ -4,6 +4,8 @@ import type { ClientSession, Model } from 'mongoose';
 
 import { IdentitySession, type IdentitySessionDocument } from './session.schema.js';
 
+const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+
 export interface OpenIdentitySessionInput {
   readonly tenantId: string;
   readonly sessionId: string;
@@ -66,5 +68,42 @@ export class SessionService {
       mongoSession === undefined ? {} : { session: mongoSession },
     );
     return result.modifiedCount === 1;
+  }
+
+  /** 离职编排在既有事务内吊销租户中一组主体的全部活动会话。 */
+  async revokeAllByActors(
+    tenantId: string,
+    actorIds: readonly string[],
+    mongoSession: ClientSession,
+  ): Promise<number> {
+    const normalized = this.normalizeActors(tenantId, actorIds);
+    const result = await this.sessions.updateMany(
+      {
+        tenantId,
+        actorId: { $in: normalized },
+        revokedAt: { $exists: false },
+      },
+      { $set: { revokedAt: new Date() } },
+      { session: mongoSession },
+    );
+    return result.modifiedCount;
+  }
+
+  private normalizeActors(tenantId: string, actorIds: readonly string[]): readonly string[] {
+    const untrustedActors: unknown = actorIds;
+    if (!ID_PATTERN.test(tenantId) || !Array.isArray(untrustedActors)) {
+      throw new Error('批量会话吊销参数非法');
+    }
+    const normalized: string[] = [];
+    if (untrustedActors.length < 1 || untrustedActors.length > 100) {
+      throw new Error('批量会话吊销参数非法');
+    }
+    for (const actorId of untrustedActors as readonly unknown[]) {
+      if (typeof actorId !== 'string' || !ID_PATTERN.test(actorId)) {
+        throw new Error('批量会话吊销参数非法');
+      }
+      normalized.push(actorId);
+    }
+    return [...new Set(normalized)];
   }
 }

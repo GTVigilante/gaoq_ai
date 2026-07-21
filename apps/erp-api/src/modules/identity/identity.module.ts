@@ -17,6 +17,7 @@ import { ExternalIdentityRepository } from './external-identity.repository.js';
 import { ExternalIdentity, ExternalIdentitySchema } from './external-identity.schema.js';
 import { FeishuSsoAdapter } from './feishu-sso.adapter.js';
 import { IdentitySession, IdentitySessionSchema } from './session.schema.js';
+import { IdentityLifecycleService } from './identity-lifecycle.service.js';
 import { JwksController } from './jwks.controller.js';
 import { OAuthAuthorizationServerMetadataController } from './oauth-authorization-server-metadata.controller.js';
 import { OAuthAuthorizationTransactionService } from './oauth-authorization-transaction.service.js';
@@ -69,6 +70,7 @@ import { TokenGrantService } from './token-grant.service.js';
   ],
   providers: [
     SessionService,
+    IdentityLifecycleService,
     RefreshTokenService,
     TokenGrantService,
     OAuthClientRegistry,
@@ -94,6 +96,7 @@ import { TokenGrantService } from './token-grant.service.js';
   ],
   exports: [
     SessionService,
+    IdentityLifecycleService,
     ExternalIdentityRepository,
     SsoAuthenticationService,
     SsoAdapterRegistry,

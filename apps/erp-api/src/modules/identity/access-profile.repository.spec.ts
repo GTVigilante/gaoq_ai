@@ -1,4 +1,4 @@
-import type { Model } from 'mongoose';
+import type { ClientSession, Model } from 'mongoose';
 import { describe, expect, it, vi } from 'vitest';
 
 import { AccessProfileRepository } from './access-profile.repository.js';
@@ -154,5 +154,43 @@ describe('AccessProfileRepository', () => {
       );
       expect(ok).toBe(false);
     });
+  });
+
+  it('离职反查使用固定租户/员工投影并透传事务', async () => {
+    const model = createModelMock();
+    const exec = vi.fn().mockResolvedValue({ actorId: 'actor-001' });
+    const lean = vi.fn().mockReturnValue({ exec });
+    const session = vi.fn().mockReturnValue({ lean });
+    const select = vi.fn().mockReturnValue({ session });
+    model.findOne.mockReturnValue({ select });
+    const mongoSession = {} as ClientSession;
+    await expect(createRepository(model).findActorIdByEmployee(
+      'tenant-001', 'employee-001', mongoSession,
+    )).resolves.toBe('actor-001');
+    expect(model.findOne).toHaveBeenCalledWith({ tenantId: 'tenant-001', employeeId: 'employee-001' });
+    expect(select).toHaveBeenCalledWith('actorId -_id');
+    expect(session).toHaveBeenCalledWith(mongoSession);
+  });
+
+  it('离职仅停用员工 active 快照、推进版本并返回命中状态', async () => {
+    const model = createModelMock();
+    model.updateOne.mockResolvedValue({ modifiedCount: 1 });
+    const mongoSession = {} as ClientSession;
+    await expect(createRepository(model).disableByEmployee(
+      'tenant-001', 'employee-001', mongoSession,
+    )).resolves.toBe(true);
+    expect(model.updateOne).toHaveBeenCalledWith(
+      { tenantId: 'tenant-001', employeeId: 'employee-001', status: 'active' },
+      { $set: { status: 'disabled' }, $inc: { version: 1 } },
+      { session: mongoSession },
+    );
+  });
+
+  it('离职授权原语拒绝操作符形态标识且不访问数据库', async () => {
+    const model = createModelMock();
+    await expect(createRepository(model).disableByEmployee(
+      'tenant-001', '$ne', {} as ClientSession,
+    )).rejects.toThrow('标识非法');
+    expect(model.updateOne).not.toHaveBeenCalled();
   });
 });

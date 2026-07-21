@@ -34,6 +34,7 @@ export type RefreshRotationResult =
 
 const hashToken = (token: string): string => createHash('sha256').update(token).digest('base64url');
 const generateToken = (): string => `rt_${randomBytes(48).toString('base64url')}`;
+const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 
 @Injectable()
 export class RefreshTokenService {
@@ -142,6 +143,25 @@ export class RefreshTokenService {
     );
   }
 
+  /** 离职编排在既有事务内吊销租户中一组主体的全部活动刷新令牌。 */
+  async revokeAllByActors(
+    tenantId: string,
+    actorIds: readonly string[],
+    mongoSession: ClientSession,
+  ): Promise<number> {
+    const normalized = this.normalizeActors(tenantId, actorIds);
+    const result = await this.tokens.updateMany(
+      {
+        tenantId,
+        actorId: { $in: normalized },
+        revokedAt: { $exists: false },
+      },
+      { $set: { revokedAt: new Date() } },
+      { session: mongoSession },
+    );
+    return result.modifiedCount;
+  }
+
   private async handleInvalidOrReplay(
     tokenHash: string,
     mongoSession: ClientSession,
@@ -158,5 +178,23 @@ export class RefreshTokenService {
     );
     await this.sessions.revoke(existing.tenantId, existing.sessionId, mongoSession);
     return { status: 'replay' };
+  }
+
+  private normalizeActors(tenantId: string, actorIds: readonly string[]): readonly string[] {
+    const untrustedActors: unknown = actorIds;
+    if (!ID_PATTERN.test(tenantId) || !Array.isArray(untrustedActors)) {
+      throw new Error('批量刷新令牌吊销参数非法');
+    }
+    const normalized: string[] = [];
+    if (untrustedActors.length < 1 || untrustedActors.length > 100) {
+      throw new Error('批量刷新令牌吊销参数非法');
+    }
+    for (const actorId of untrustedActors as readonly unknown[]) {
+      if (typeof actorId !== 'string' || !ID_PATTERN.test(actorId)) {
+        throw new Error('批量刷新令牌吊销参数非法');
+      }
+      normalized.push(actorId);
+    }
+    return [...new Set(normalized)];
   }
 }

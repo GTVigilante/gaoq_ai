@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
+import type { IdentityLifecycleService } from '../../identity/identity-lifecycle.service.js';
 import type { Department, Employee } from '../domain/index.js';
 import type {
   DepartmentRepository,
@@ -90,6 +91,10 @@ function assemble() {
     replace: vi.fn().mockResolvedValue(undefined),
   };
   const outbox = { append: vi.fn().mockResolvedValue({}) };
+  const terminateEmployee = vi.fn().mockResolvedValue({
+    actorIds: [], accessProfileDisabled: false, externalIdentitiesDisabled: 0,
+    sessionsRevoked: 0, refreshTokensRevoked: 0,
+  });
   const execute = vi.fn(
     (_operation: string, _key: string, _request: unknown, handler: (value: ClientSession) => Promise<unknown>) =>
       handler(session),
@@ -102,6 +107,7 @@ function assemble() {
     positionRepo as unknown as PositionRepository,
     jobLevelRepo as unknown as JobLevelRepository,
     outbox as unknown as OrgOutboxWriter,
+    { terminateEmployee } as unknown as IdentityLifecycleService,
   );
   return {
     context,
@@ -112,6 +118,7 @@ function assemble() {
     positionRepo,
     jobLevelRepo,
     outbox,
+    terminateEmployee,
   };
 }
 
@@ -219,5 +226,34 @@ describe('OrgApplicationService', () => {
     expect((error as ConflictException).getResponse()).toMatchObject({
       code: 'ORG_UNIQUE_CONFLICT',
     });
+  });
+
+  it('离职迁移在同一事务中先封禁全部身份，再写员工和 Outbox', async () => {
+    const store = assemble();
+    store.employeeRepo.findById.mockResolvedValue(employee('employee-001', ['dept-a']));
+    await store.context.run(trustedContext, () => store.service.transitionEmployeeStatus(
+      'employee-001', 1, 'key-terminate-001', { status: 'terminated' },
+    ));
+    expect(store.terminateEmployee).toHaveBeenCalledWith(
+      'tenant-001', 'employee-001', session,
+    );
+    expect(store.employeeRepo.replace).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'terminated' }), 1, session,
+    );
+    expect(store.terminateEmployee.mock.invocationCallOrder[0]).toBeLessThan(
+      store.employeeRepo.replace.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER,
+    );
+    expect(store.employeeRepo.replace.mock.invocationCallOrder[0]).toBeLessThan(
+      store.outbox.append.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER,
+    );
+  });
+
+  it('非离职状态迁移不错误停用身份', async () => {
+    const store = assemble();
+    store.employeeRepo.findById.mockResolvedValue(employee('employee-001', ['dept-a']));
+    await store.context.run(trustedContext, () => store.service.transitionEmployeeStatus(
+      'employee-001', 1, 'key-suspend-001', { status: 'suspended' },
+    ));
+    expect(store.terminateEmployee).not.toHaveBeenCalled();
   });
 });

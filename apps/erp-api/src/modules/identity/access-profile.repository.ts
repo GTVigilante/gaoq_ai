@@ -8,6 +8,8 @@ import {
   type AccessProfileStatus,
 } from './access-profile.schema.js';
 
+const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+
 /** 鉴权使用的授权权限快照：不可变普通对象，数组已复制并冻结。 */
 export interface AccessProfileSnapshot {
   readonly tenantId: string;
@@ -80,5 +82,42 @@ export class AccessProfileRepository {
       { $set: { status: 'disabled' }, $inc: { version: 1 } },
     );
     return result.modifiedCount === 1;
+  }
+
+  /** 固定投影反查员工授权主体，包含已停用快照以覆盖异常残留会话。 */
+  async findActorIdByEmployee(
+    tenantId: string,
+    employeeId: string,
+    mongoSession: ClientSession,
+  ): Promise<string | null> {
+    this.assertIds(tenantId, employeeId);
+    const record = await this.accessProfiles
+      .findOne({ tenantId, employeeId })
+      .select('actorId -_id')
+      .session(mongoSession)
+      .lean()
+      .exec();
+    return record?.actorId ?? null;
+  }
+
+  /** 离职事务内停用员工当前有效授权快照并推进版本。 */
+  async disableByEmployee(
+    tenantId: string,
+    employeeId: string,
+    mongoSession: ClientSession,
+  ): Promise<boolean> {
+    this.assertIds(tenantId, employeeId);
+    const result = await this.accessProfiles.updateOne(
+      { tenantId, employeeId, status: 'active' },
+      { $set: { status: 'disabled' }, $inc: { version: 1 } },
+      { session: mongoSession },
+    );
+    return result.modifiedCount === 1;
+  }
+
+  private assertIds(tenantId: string, employeeId: string): void {
+    if (!ID_PATTERN.test(tenantId) || !ID_PATTERN.test(employeeId)) {
+      throw new Error('授权快照生命周期标识非法');
+    }
   }
 }

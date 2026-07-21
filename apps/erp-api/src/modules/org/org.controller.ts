@@ -194,8 +194,23 @@ export class OrgController {
       body,
     );
     this.setVersion(response, result.employee.version);
-    await this.auditSuccess('org.employee.status_transition', 'org_employee', result.employee.id);
-    return result;
+    await this.audit.record({
+      action: 'org.employee.status_transition',
+      resourceType: 'org_employee',
+      resourceId: result.employee.id,
+      riskLevel: result.employee.status === 'terminated' ? 'R2' : 'R1',
+      outcome: 'success',
+      ...(result.identityTermination === undefined ? {} : {
+        metadata: {
+          accessProfileDisabled: result.identityTermination.accessProfileDisabled,
+          externalIdentitiesDisabled: result.identityTermination.externalIdentitiesDisabled,
+          actorCount: result.identityTermination.actorIds.length,
+          sessionsRevoked: result.identityTermination.sessionsRevoked,
+          refreshTokensRevoked: result.identityTermination.refreshTokensRevoked,
+        },
+      }),
+    });
+    return { employee: result.employee };
   }
 
   private requireIdempotencyKey(value: string | undefined): string {

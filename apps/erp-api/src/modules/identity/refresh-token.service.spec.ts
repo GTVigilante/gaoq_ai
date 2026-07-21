@@ -120,4 +120,32 @@ describe('RefreshTokenService', () => {
     expect(fixture.updateMany).not.toHaveBeenCalled();
     expect(fixture.revoke).not.toHaveBeenCalled();
   });
+
+  it('离职批量吊销强制租户、去重主体、未吊销过滤与事务透传', async () => {
+    const fixture = createFixture();
+    fixture.updateMany.mockResolvedValue({ modifiedCount: 5 });
+    await expect(fixture.service.revokeAllByActors(
+      'tenant-001', ['actor-001', 'actor-001', 'actor-002'], mongoSession,
+    )).resolves.toBe(5);
+    const revokeCall = fixture.updateMany.mock.calls.at(-1);
+    expect(revokeCall?.[0]).toEqual({
+      tenantId: 'tenant-001',
+      actorId: { $in: ['actor-001', 'actor-002'] },
+      revokedAt: { $exists: false },
+    });
+    const revokeUpdate = revokeCall?.[1] as { readonly $set: { readonly revokedAt: unknown } };
+    expect(revokeUpdate.$set.revokedAt).toBeInstanceOf(Date);
+    expect(revokeCall?.[2]).toEqual({ session: mongoSession });
+  });
+
+  it('批量刷新令牌吊销拒绝空数组和操作符形态主体且不访问数据库', async () => {
+    const fixture = createFixture();
+    await expect(fixture.service.revokeAllByActors(
+      'tenant-001', [], mongoSession,
+    )).rejects.toThrow('参数非法');
+    await expect(fixture.service.revokeAllByActors(
+      'tenant-001', ['$ne'], mongoSession,
+    )).rejects.toThrow('参数非法');
+    expect(fixture.updateMany).not.toHaveBeenCalled();
+  });
 });
