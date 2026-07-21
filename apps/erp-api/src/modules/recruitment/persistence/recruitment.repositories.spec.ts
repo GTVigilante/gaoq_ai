@@ -11,16 +11,19 @@ import {
   createRecruitmentInterview,
   submitRecruitmentInterviewFeedback,
 } from '../domain/interview.js';
+import { createRecruitmentOffer } from '../domain/offer.js';
 import { RecruitmentDataCryptoService } from './recruitment-data-crypto.service.js';
 import {
   RecruitmentCandidateRepository,
   RecruitmentInterviewFeedbackRepository,
   RecruitmentInterviewRepository,
+  RecruitmentOfferRepository,
 } from './recruitment.repositories.js';
 import type {
   RecruitmentCandidateDocument,
   RecruitmentInterviewDocument,
   RecruitmentInterviewFeedbackDocument,
+  RecruitmentOfferDocument,
 } from './recruitment.schemas.js';
 
 const candidate = createCandidate({
@@ -134,5 +137,34 @@ describe('RecruitmentInterviewRepositories', () => {
     const feedbackRecords = storedFeedback as readonly [{ readonly evaluationCiphertext: unknown }];
     expect(typeof interviewRecords[0].logisticsCiphertext).toBe('string');
     expect(typeof feedbackRecords[0].evaluationCiphertext).toBe('string');
+  });
+});
+
+describe('RecruitmentOfferRepository', () => {
+  it('Offer L4 条款在交给 Mongo Model 前已整体加密', async () => {
+    const create = vi.fn().mockResolvedValue(undefined);
+    const offer = createRecruitmentOffer({
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4X3', tenantId: 'tenant-001',
+      applicationId: '01J8ZQK7V0A2M4N6P8R0T2W4Y7',
+      candidateId: '01J8ZQK7V0A2M4N6P8R0T2W4Y6',
+      positionId: '01J8ZQK7V0A2M4N6P8R0T2W4Y8',
+      completedInterviewId: '01J8ZQK7V0A2M4N6P8R0T2W4X1',
+      terms: {
+        currency: 'CNY', monthlyBaseSalaryMinor: 3_000_000, salaryMonths: 13,
+        annualVariableTargetMinor: 6_000_000, signingBonusMinor: 1_000_000,
+        proposedStartDate: '2026-08-15', probationMonths: 3,
+        employmentType: 'full_time', workLocation: '上海', benefitsSummary: '标准福利计划',
+      },
+      expiresAt: new Date('2026-08-01T00:00:00.000Z'),
+      retentionExpiresAt: new Date('2033-08-01T00:00:00.000Z'), actorId: 'actor-001',
+    }, new Date('2026-07-21T00:00:00.000Z'));
+    await new RecruitmentOfferRepository(
+      context(), { create } as unknown as Model<RecruitmentOfferDocument>, crypto(),
+    ).insert(offer, { id: 'session' } as never);
+    const stored = create.mock.calls[0]?.[0] as unknown;
+    expect(JSON.stringify(stored)).not.toContain('标准福利计划');
+    expect(JSON.stringify(stored)).not.toContain('monthlyBaseSalaryMinor');
+    const records = stored as readonly [{ readonly termsCiphertext: unknown }];
+    expect(typeof records[0].termsCiphertext).toBe('string');
   });
 });

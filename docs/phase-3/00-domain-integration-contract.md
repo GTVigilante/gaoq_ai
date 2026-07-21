@@ -36,6 +36,17 @@ applied → screening → interview → offer_approval → offer_sent
 - `rejected/withdrawn/hired` 为终态。人才库是带目的、授权和到期时间的候选人关系，不伪装成申请阶段。
 - 进入 `offer_approval` 必须已有完成的面试；进入 `offer_sent` 必须关联已通过的审批实例；进入 `preboarding` 必须有候选人接受证据；进入 `hired` 必须由 Onboarding 完成门禁驱动。
 
+Offer 子状态机：
+
+```text
+draft → pending_approval → approved → sending → sent → accepted → signed
+             │                         │       │       │
+             └→ rejected              └───────┴───────┴→ expired/cancelled/declined
+```
+
+- `sending` 仅代表已形成受保护发送意图；只有 Integration 的可信投递回执才能进入 `sent`，不得把 HTTP 202 或 Outbox 入队当作已送达。
+- 接受/拒绝必须由已验证候选人门户会话形成不可变证据；管理端和 MCP 不提供自报接受接口。`signed` 只接受 eSign 验签、租户映射、文件哈希与证据归档均完成后的内部命令。
+
 ## 3. 身份、隐私与保留
 
 - 候选人收集时必须保存授权版本、目的、来源、时间和到期时间；没有授权或授权已撤回时禁止创建新处理活动。
@@ -102,6 +113,15 @@ applied → screening → interview → offer_approval → offer_sent
 - 提交链路使用一个客户端根幂等键派生审批创建、审批提交和招聘绑定三个幂等步骤。跨域调用不嵌套 Mongo 事务；任一步崩溃后以同一根键重试，必须回到同一审批实例。
 - Recruitment 只能通过 Approval 应用服务的专用 Scope 读取 `recruitment_hc` 状态摘要，不读表单原文；仅 `approved/rejected` 终态可以驱动 HC。
 - 一份 HC 对应一个业务职位，职位标题、部门和人数从 HC 锁定继承；多招聘渠道发布使用外部映射，不复制业务职位。
+
+### 5.2 Offer 审批、发送与证据契约
+
+- 管理端端点固定为 `POST /recruitment/applications/:applicationId/offers`、`GET /recruitment/offers/:id`、`POST /recruitment/offers/:id/submit`、`POST /recruitment/offers/:id/sync-approval` 和 `POST /recruitment/offers/:id/send`。所有写接口强制 `Idempotency-Key` 与强 `If-Match`；发送返回 202 和 `sending`，不接收客户端提交的投递证据。
+- Approval 必须预先发布唯一编码 `recruitment_offer` 的 R2 模板。字段固定为 `offer_id`、`application_id`、`department_id`、`currency`、`monthly_base_salary_minor`、`salary_months`、`annual_variable_target_minor`、`signing_bonus_minor`、`proposed_start_date`、`probation_months`、`employment_type`、`work_location`、`benefits_summary`。薪酬、地点和福利字段按 L4 配置；审批实例正文加密，Recruitment 只从专用状态接口读取终态摘要。
+- 当前财务值对象只启用 ISO 4217 `CNY`；金额字段均为非负安全整数分，月基本工资必须大于零。扩展其他币种前必须同时补充最小货币单位、舍入、汇率权威源和财务对账规则，不能只放宽三字母正则。
+- Offer 条款使用 Recruitment L4 密钥域 AES-256-GCM 整体加密，AAD 绑定租户、`offer_terms` 和 Offer ID。数据库、列表、REST 响应、审计、Outbox、日志及 MCP 均不得保存或返回条款原文。
+- 创建 Offer 必须以申请强版本引用该申请已完成面试；提交审批在同一 Recruitment 事务内将申请推进到 `offer_approval`。审批拒绝将申请推进到 `rejected`；可信投递证据将申请推进到 `offer_sent`；候选人接受/拒绝分别推进到 `offer_accepted`/`withdrawn`。
+- 审批创建、审批提交和 Offer 绑定由客户端根幂等键派生三个不同幂等键；通用幂等层只保存请求 SHA-256 与脱敏响应，不保存 L4 请求正文。投递、候选人决定和 eSign 完成仅通过应用服务的专用内部 Scope 调用，不注册普通管理端 REST。
 
 ## 6. 发布门禁
 

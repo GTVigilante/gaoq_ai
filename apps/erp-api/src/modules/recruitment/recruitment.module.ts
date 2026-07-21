@@ -12,9 +12,11 @@ import { RecruitmentOutboxWriter } from './persistence/recruitment-outbox.writer
 import { RecruitmentApplicationService } from './application/recruitment-application.service.js';
 import { RecruitmentManagementService } from './application/recruitment-management.service.js';
 import { RecruitmentInterviewService } from './application/recruitment-interview.service.js';
+import { RecruitmentOfferService } from './application/recruitment-offer.service.js';
 import { RecruitmentController } from './recruitment.controller.js';
 import { RecruitmentManagementController } from './recruitment-management.controller.js';
 import { RecruitmentInterviewController } from './recruitment-interview.controller.js';
+import { RecruitmentOfferController } from './recruitment-offer.controller.js';
 import {
   CandidateApplicationRepository,
   CandidateApplicationStageRepository,
@@ -22,6 +24,7 @@ import {
   RecruitmentCandidateRepository,
   RecruitmentInterviewFeedbackRepository,
   RecruitmentInterviewRepository,
+  RecruitmentOfferRepository,
   RecruitmentPositionRepository,
   RecruitmentRequisitionRepository,
 } from './persistence/recruitment.repositories.js';
@@ -38,6 +41,8 @@ import {
   RecruitmentInterviewFeedbackRecordSchema,
   RecruitmentInterviewRecord,
   RecruitmentInterviewRecordSchema,
+  RecruitmentOfferRecord,
+  RecruitmentOfferRecordSchema,
   RecruitmentPositionRecord,
   RecruitmentPositionRecordSchema,
   RecruitmentRequisitionRecord,
@@ -64,6 +69,7 @@ import {
         name: RecruitmentInterviewFeedbackRecord.name,
         schema: RecruitmentInterviewFeedbackRecordSchema,
       },
+      { name: RecruitmentOfferRecord.name, schema: RecruitmentOfferRecordSchema },
       { name: OutboxRecord.name, schema: OutboxRecordSchema },
     ]),
   ],
@@ -78,12 +84,15 @@ import {
     CandidateApplicationStageRepository,
     RecruitmentInterviewRepository,
     RecruitmentInterviewFeedbackRepository,
+    RecruitmentOfferRepository,
     RecruitmentApplicationService,
     RecruitmentManagementService,
     RecruitmentInterviewService,
+    RecruitmentOfferService,
   ],
   controllers: [
     RecruitmentController, RecruitmentManagementController, RecruitmentInterviewController,
+    RecruitmentOfferController,
   ],
   exports: [
     RecruitmentDataCryptoService,
@@ -93,9 +102,11 @@ import {
     RecruitmentRequisitionRepository,
     CandidateApplicationRepository,
     RecruitmentInterviewRepository,
+    RecruitmentOfferRepository,
     RecruitmentApplicationService,
     RecruitmentManagementService,
     RecruitmentInterviewService,
+    RecruitmentOfferService,
   ],
 })
 export class RecruitmentModule {}

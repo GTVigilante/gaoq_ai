@@ -13,8 +13,11 @@ import {
   type CandidateApplicationStageEvent,
   type RecruitmentInterview,
   type RecruitmentInterviewFeedback,
+  type RecruitmentOffer,
+  type RecruitmentOfferTerms,
   type RecruitmentPosition,
   type RecruitmentRequisition,
+  validateRecruitmentOfferTerms,
 } from '../domain/index.js';
 import {
   RecruitmentDataCryptoService,
@@ -33,6 +36,8 @@ import {
   type RecruitmentInterviewFeedbackDocument,
   RecruitmentInterviewRecord,
   type RecruitmentInterviewDocument,
+  RecruitmentOfferRecord,
+  type RecruitmentOfferDocument,
   RecruitmentPositionRecord,
   type RecruitmentPositionDocument,
   RecruitmentRequisitionRecord,
@@ -473,6 +478,91 @@ export class RecruitmentInterviewFeedbackRepository extends TenantBoundRecruitme
   }
 }
 
+@Injectable()
+export class RecruitmentOfferRepository extends TenantBoundRecruitmentRepository {
+  constructor(
+    context: TenantContextService,
+    @InjectModel(RecruitmentOfferRecord.name)
+    private readonly records: Model<RecruitmentOfferDocument>,
+    private readonly crypto: RecruitmentDataCryptoService,
+  ) { super(context); }
+
+  async findById(id: string, session?: ClientSession): Promise<RecruitmentOffer | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), id });
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    if (record === null) return null;
+    const value = this.crypto.unprotect({
+      tenantId: record.tenantId, resourceType: 'offer_terms', resourceId: record.id,
+    }, {
+      keyId: record.termsKeyId, iv: record.termsIv,
+      ciphertext: record.termsCiphertext, authTag: record.termsAuthTag,
+    });
+    if (!isOfferTerms(value)) throw integrityError();
+    let terms: RecruitmentOfferTerms;
+    try {
+      terms = validateRecruitmentOfferTerms(value);
+    } catch {
+      throw integrityError();
+    }
+    return deepFreezeRecruitment({
+      id: record.id, tenantId: record.tenantId, applicationId: record.applicationId,
+      candidateId: record.candidateId, positionId: record.positionId,
+      completedInterviewId: record.completedInterviewId, terms,
+      expiresAt: record.expiresAt.toISOString(),
+      retentionExpiresAt: record.retentionExpiresAt.toISOString(), status: record.status,
+      approvalInstanceId: record.approvalInstanceId, sendRequestId: record.sendRequestId,
+      sentEvidenceId: record.sentEvidenceId,
+      acceptanceEvidenceId: record.acceptanceEvidenceId, esignFlowId: record.esignFlowId,
+      signedEvidenceId: record.signedEvidenceId, version: record.version,
+      createdBy: record.createdBy, createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString(),
+    });
+  }
+
+  async insert(offer: RecruitmentOffer, session: ClientSession): Promise<void> {
+    this.assertTenant(offer.tenantId);
+    const protectedData = this.crypto.protect({
+      tenantId: offer.tenantId, resourceType: 'offer_terms', resourceId: offer.id,
+    }, offer.terms);
+    await this.records.create([{
+      id: offer.id, tenantId: offer.tenantId, applicationId: offer.applicationId,
+      candidateId: offer.candidateId, positionId: offer.positionId,
+      completedInterviewId: offer.completedInterviewId,
+      termsKeyId: protectedData.keyId, termsIv: protectedData.iv,
+      termsCiphertext: protectedData.ciphertext, termsAuthTag: protectedData.authTag,
+      expiresAt: new Date(offer.expiresAt), retentionExpiresAt: new Date(offer.retentionExpiresAt),
+      status: offer.status, approvalInstanceId: offer.approvalInstanceId,
+      sendRequestId: offer.sendRequestId, sentEvidenceId: offer.sentEvidenceId,
+      acceptanceEvidenceId: offer.acceptanceEvidenceId, esignFlowId: offer.esignFlowId,
+      signedEvidenceId: offer.signedEvidenceId, version: offer.version,
+      createdBy: offer.createdBy, createdAt: new Date(offer.createdAt),
+      updatedAt: new Date(offer.updatedAt),
+    }], { session });
+  }
+
+  async replace(
+    offer: RecruitmentOffer,
+    expectedVersion: number,
+    session: ClientSession,
+  ): Promise<void> {
+    this.assertTenant(offer.tenantId);
+    const updated = await this.records.updateOne(
+      { tenantId: this.tenantId(), id: offer.id, version: expectedVersion },
+      { $set: {
+        status: offer.status, approvalInstanceId: offer.approvalInstanceId,
+        sendRequestId: offer.sendRequestId, sentEvidenceId: offer.sentEvidenceId,
+        acceptanceEvidenceId: offer.acceptanceEvidenceId, esignFlowId: offer.esignFlowId,
+        signedEvidenceId: offer.signedEvidenceId, version: offer.version,
+        retentionExpiresAt: new Date(offer.retentionExpiresAt),
+        updatedAt: new Date(offer.updatedAt),
+      } },
+      { session, timestamps: false, runValidators: true },
+    );
+    if (updated.matchedCount !== 1) throw new RecruitmentWriteConflictError();
+  }
+}
+
 function consentRecord(candidate: Candidate): Record<string, unknown> {
   return {
     evidenceId: candidate.consent.evidenceId, version: candidate.consent.version,
@@ -547,6 +637,20 @@ function toIso(value: Date | null): string | null {
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isOfferTerms(value: unknown): value is RecruitmentOfferTerms {
+  if (!isRecord(value)) return false;
+  return value.currency === 'CNY' &&
+    typeof value.monthlyBaseSalaryMinor === 'number' &&
+    typeof value.salaryMonths === 'number' &&
+    typeof value.annualVariableTargetMinor === 'number' &&
+    typeof value.signingBonusMinor === 'number' &&
+    typeof value.proposedStartDate === 'string' &&
+    typeof value.probationMonths === 'number' &&
+    typeof value.employmentType === 'string' &&
+    typeof value.workLocation === 'string' &&
+    typeof value.benefitsSummary === 'string';
 }
 
 function sameStrings(left: readonly string[], right: readonly string[]): boolean {

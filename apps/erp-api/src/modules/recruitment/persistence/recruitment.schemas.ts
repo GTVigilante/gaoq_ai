@@ -6,6 +6,7 @@ import type {
   CandidateApplicationStage,
   RecruitmentInterviewMode,
   RecruitmentInterviewStatus,
+  RecruitmentOfferStatus,
   RecruitmentPositionStatus,
 } from '../domain/index.js';
 import { RECRUITMENT_CODE_PATTERN, RECRUITMENT_ID_PATTERN } from '../domain/index.js';
@@ -19,6 +20,10 @@ const TERMINAL_APPLICATION_STAGES: readonly CandidateApplicationStage[] = [
 const APPLICATION_STAGES: readonly CandidateApplicationStage[] = [
   'applied', 'screening', 'interview', 'offer_approval', 'offer_sent',
   'offer_accepted', 'preboarding', 'hired', 'rejected', 'withdrawn',
+];
+const OFFER_STATUSES: readonly RecruitmentOfferStatus[] = [
+  'draft', 'pending_approval', 'approved', 'rejected', 'sending', 'sent',
+  'accepted', 'declined', 'expired', 'cancelled', 'signed',
 ];
 
 @Schema({ _id: false, id: false })
@@ -578,6 +583,110 @@ RecruitmentInterviewFeedbackRecordSchema.index(
   { unique: true },
 );
 RecruitmentInterviewFeedbackRecordSchema.index({ tenantId: 1, interviewId: 1, submittedAt: 1 });
+
+/** Offer 权威记录；L4 条款整体加密，状态字段只保存证据引用。 */
+@Schema({ collection: 'recruitment_offers', timestamps: true, versionKey: false, id: false })
+export class RecruitmentOfferRecord {
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
+  id!: string;
+
+  @Prop({ ...STRING_ID, immutable: true })
+  tenantId!: string;
+
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
+  applicationId!: string;
+
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
+  candidateId!: string;
+
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
+  positionId!: string;
+
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
+  completedInterviewId!: string;
+
+  @Prop({ ...STRING_ID, immutable: true })
+  termsKeyId!: string;
+
+  @Prop({ type: String, required: true, immutable: true, maxlength: 32, match: BASE64URL_PATTERN })
+  termsIv!: string;
+
+  @Prop({
+    type: String, required: true, immutable: true, maxlength: 131_072, match: BASE64URL_PATTERN,
+  })
+  termsCiphertext!: string;
+
+  @Prop({
+    type: String, required: true, immutable: true,
+    minlength: 22, maxlength: 22, match: BASE64URL_PATTERN,
+  })
+  termsAuthTag!: string;
+
+  @Prop({ type: Date, required: true, immutable: true })
+  expiresAt!: Date;
+
+  @Prop({ type: Date, required: true })
+  retentionExpiresAt!: Date;
+
+  @Prop({ type: String, enum: OFFER_STATUSES, required: true })
+  status!: RecruitmentOfferStatus;
+
+  @Prop({ type: String, default: null, match: ULID_PATTERN })
+  approvalInstanceId!: string | null;
+
+  @Prop({ type: String, default: null, maxlength: 128, match: RECRUITMENT_ID_PATTERN })
+  sendRequestId!: string | null;
+
+  @Prop({ type: String, default: null, maxlength: 128, match: RECRUITMENT_ID_PATTERN })
+  sentEvidenceId!: string | null;
+
+  @Prop({ type: String, default: null, maxlength: 128, match: RECRUITMENT_ID_PATTERN })
+  acceptanceEvidenceId!: string | null;
+
+  @Prop({ type: String, default: null, maxlength: 128, match: RECRUITMENT_ID_PATTERN })
+  esignFlowId!: string | null;
+
+  @Prop({ type: String, default: null, maxlength: 128, match: RECRUITMENT_ID_PATTERN })
+  signedEvidenceId!: string | null;
+
+  @Prop({ type: Number, required: true, min: 1 })
+  version!: number;
+
+  @Prop({ ...STRING_ID, immutable: true })
+  createdBy!: string;
+
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+
+export type RecruitmentOfferDocument = HydratedDocument<RecruitmentOfferRecord>;
+export const RecruitmentOfferRecordSchema = SchemaFactory.createForClass(RecruitmentOfferRecord);
+
+RecruitmentOfferRecordSchema.pre('validate', function () {
+  const record = this as RecruitmentOfferRecord;
+  const needsApproval = !['draft'].includes(record.status);
+  if (needsApproval !== (record.approvalInstanceId !== null)) {
+    throw new Error('Offer 状态与审批实例引用不一致');
+  }
+  if (['sending', 'sent', 'accepted', 'declined', 'signed'].includes(record.status) !==
+    (record.sendRequestId !== null)) throw new Error('Offer 发送状态与发送请求不一致');
+  if (['sent', 'accepted', 'declined', 'signed'].includes(record.status) !==
+    (record.sentEvidenceId !== null)) throw new Error('Offer 已发送状态必须引用投递证据');
+  if (['accepted', 'declined', 'signed'].includes(record.status) !==
+    (record.acceptanceEvidenceId !== null)) throw new Error('Offer 候选人决定必须引用接受证据');
+  const signed = record.status === 'signed';
+  if (signed !== (record.esignFlowId !== null) || signed !== (record.signedEvidenceId !== null)) {
+    throw new Error('Offer 签署状态必须引用完整 eSign 证据');
+  }
+  if (record.retentionExpiresAt.getTime() <= record.expiresAt.getTime()) {
+    throw new Error('Offer 保留期必须晚于有效期');
+  }
+});
+
+RecruitmentOfferRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
+RecruitmentOfferRecordSchema.index({ tenantId: 1, applicationId: 1 }, { unique: true });
+RecruitmentOfferRecordSchema.index({ tenantId: 1, status: 1, expiresAt: 1 });
+RecruitmentOfferRecordSchema.index({ tenantId: 1, retentionExpiresAt: 1 });
 
 function applicationStageRank(stage: CandidateApplicationStage): number {
   const rank: Readonly<Record<CandidateApplicationStage, number>> = {

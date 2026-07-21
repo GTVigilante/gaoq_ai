@@ -1,5 +1,6 @@
 import type { CandidateApplication, CandidateApplicationStageEvent } from './application.js';
 import type { RecruitmentInterview, RecruitmentInterviewFeedback } from './interview.js';
+import type { RecruitmentOffer } from './offer.js';
 import type { RecruitmentPosition } from './position.js';
 import type { RecruitmentRequisition } from './requisition.js';
 
@@ -16,7 +17,17 @@ export type RecruitmentEventType =
   | 'recruitment.interview.scheduled'
   | 'recruitment.interview.feedback_submitted'
   | 'recruitment.interview.completed'
-  | 'recruitment.interview.cancelled';
+  | 'recruitment.interview.cancelled'
+  | 'recruitment.offer.created'
+  | 'recruitment.offer.submitted'
+  | 'recruitment.offer.approved'
+  | 'recruitment.offer.rejected'
+  | 'recruitment.offer.send_requested'
+  | 'recruitment.offer.sent'
+  | 'recruitment.offer.accepted'
+  | 'recruitment.offer.declined'
+  | 'recruitment.offer.expired'
+  | 'recruitment.offer.signed';
 
 export interface RecruitmentDomainEvent {
   readonly type: RecruitmentEventType;
@@ -25,7 +36,8 @@ export interface RecruitmentDomainEvent {
     | 'recruitment.requisition'
     | 'recruitment.position'
     | 'recruitment.interview'
-    | 'recruitment.interview_feedback';
+    | 'recruitment.interview_feedback'
+    | 'recruitment.offer';
   readonly tenantId: string;
   readonly aggregateId: string;
   readonly version: number;
@@ -152,6 +164,42 @@ export function buildRecruitmentInterviewFeedbackEvent(
       applicationId: interview.applicationId,
       feedbackId: feedback.id,
       interviewerId: feedback.interviewerId,
+    }),
+  });
+}
+
+/** Offer 事件只传递状态与证据引用，绝不复制 L4 条款或候选人身份原文。 */
+export function buildRecruitmentOfferEvent(
+  offer: RecruitmentOffer,
+  action:
+    | 'created'
+    | 'submitted'
+    | 'approved'
+    | 'rejected'
+    | 'send_requested'
+    | 'sent'
+    | 'accepted'
+    | 'declined'
+    | 'expired'
+    | 'signed',
+): RecruitmentDomainEvent {
+  return Object.freeze({
+    type: `recruitment.offer.${action}`,
+    aggregateType: 'recruitment.offer',
+    tenantId: offer.tenantId,
+    aggregateId: offer.id,
+    version: offer.version,
+    occurredAt: offer.updatedAt,
+    payload: Object.freeze({
+      applicationId: offer.applicationId,
+      positionId: offer.positionId,
+      status: offer.status,
+      approvalInstanceId: offer.approvalInstanceId,
+      sendRequestId: offer.sendRequestId,
+      sentEvidenceId: offer.sentEvidenceId,
+      acceptanceEvidenceId: offer.acceptanceEvidenceId,
+      esignFlowId: offer.esignFlowId,
+      signedEvidenceId: offer.signedEvidenceId,
     }),
   });
 }

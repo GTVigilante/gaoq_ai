@@ -156,6 +156,27 @@ describe('ApprovalApplicationService', () => {
     });
   });
 
+  it('Offer 集成使用独立 Scope 和模板白名单且不返回 L4 表单', async () => {
+    const deps = dependencies();
+    const instance = draftInstance('recruitment_offer');
+    deps.instances.findById.mockResolvedValue(instance);
+    await expect(service(
+      deps,
+      trustedContext(['erp:recruitment:requisition:sync_approval']),
+    ).getInstanceStatusForRecruitmentOffer(instance.id)).rejects.toMatchObject({
+      response: { code: 'APPROVAL_OFFER_INTEGRATION_STATUS_DENIED' },
+    });
+    const result = await service(
+      deps,
+      trustedContext(['erp:recruitment:offer:sync_approval']),
+    ).getInstanceStatusForRecruitmentOffer(instance.id);
+    expect(result).toMatchObject({
+      id: instance.id, status: 'draft', templateCode: 'recruitment_offer',
+    });
+    expect(result).not.toHaveProperty('formData');
+    expect(result).not.toHaveProperty('title');
+  });
+
   it('创建实例只返回脱敏摘要，聚合与事件共用幂等事务', async () => {
     const deps = dependencies();
     const result = await service(deps).createInstance('idempotency-key-001', {

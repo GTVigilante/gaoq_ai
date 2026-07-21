@@ -392,6 +392,24 @@ export class ApprovalApplicationService {
     return instanceSummary(instance);
   }
 
+  /** Offer 工作流只读取专用模板终态，不读取 L4 表单正文。 */
+  async getInstanceStatusForRecruitmentOffer(id: string): Promise<ApprovalInstanceSummary> {
+    const actor = this.context.getActorRequired();
+    if (!actor.scopes.includes('erp:recruitment:offer:sync_approval')) {
+      throw new ForbiddenException({
+        code: 'APPROVAL_OFFER_INTEGRATION_STATUS_DENIED', message: '无权同步 Offer 审批状态',
+      });
+    }
+    const instance = await this.requireInstance(id);
+    if (instance.templateSnapshot.templateCode !== 'recruitment_offer') {
+      throw new ForbiddenException({
+        code: 'APPROVAL_OFFER_INTEGRATION_TEMPLATE_DENIED',
+        message: 'Offer 集成只能读取 Offer 审批状态',
+      });
+    }
+    return instanceSummary(instance);
+  }
+
   private async transition(
     operation: string,
     key: string,

@@ -8,12 +8,14 @@ import {
   RecruitmentCandidateRecordSchema,
   RecruitmentInterviewFeedbackRecordSchema,
   RecruitmentInterviewRecordSchema,
+  RecruitmentOfferRecordSchema,
   RecruitmentPositionRecordSchema,
   RecruitmentRequisitionRecordSchema,
   type CandidateApplicationRecord,
   type RecruitmentCandidateRecord,
   type RecruitmentInterviewFeedbackRecord,
   type RecruitmentInterviewRecord,
+  type RecruitmentOfferRecord,
   type RecruitmentPositionRecord,
   type RecruitmentRequisitionRecord,
 } from './recruitment.schemas.js';
@@ -36,6 +38,9 @@ const InterviewModel = mongoose.model<RecruitmentInterviewRecord>(
 );
 const FeedbackModel = mongoose.model<RecruitmentInterviewFeedbackRecord>(
   'SpecRecruitmentInterviewFeedback', RecruitmentInterviewFeedbackRecordSchema,
+);
+const OfferModel = mongoose.model<RecruitmentOfferRecord>(
+  'SpecRecruitmentOffer', RecruitmentOfferRecordSchema,
 );
 
 const CANDIDATE_ID = '01J8ZQK7V0A2M4N6P8R0T2W4Y6';
@@ -189,6 +194,34 @@ describe('RecruitmentSchemas', () => {
     expect(RecruitmentInterviewFeedbackRecordSchema.path('score')).toBeUndefined();
   });
 
+  it('Offer 条款只保存 L4 密文且所有状态证据失败关闭', async () => {
+    const offer = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4X3', tenantId: 'tenant-001',
+      applicationId: APPLICATION_ID, candidateId: CANDIDATE_ID, positionId: POSITION_ID,
+      completedInterviewId: '01J8ZQK7V0A2M4N6P8R0T2W4X1',
+      termsKeyId: 'recruitment-key-001', termsIv: 'a'.repeat(16),
+      termsCiphertext: 'b'.repeat(64), termsAuthTag: 'c'.repeat(22),
+      expiresAt: new Date('2026-08-01T00:00:00.000Z'),
+      retentionExpiresAt: new Date('2033-08-01T00:00:00.000Z'),
+      status: 'draft', approvalInstanceId: null, sendRequestId: null,
+      sentEvidenceId: null, acceptanceEvidenceId: null, esignFlowId: null,
+      signedEvidenceId: null, version: 1, createdBy: 'actor-001',
+    };
+    await new OfferModel(offer).validate();
+    await expect(new OfferModel({
+      ...offer, status: 'sent', approvalInstanceId: '01J8ZQK7V0A2M4N6P8R0T2W4X4',
+    }).validate()).rejects.toThrow('发送请求');
+    await expect(new OfferModel({
+      ...offer, status: 'signed', approvalInstanceId: '01J8ZQK7V0A2M4N6P8R0T2W4X4',
+      sendRequestId: 'send-request-001', sentEvidenceId: 'sent-evidence-001',
+      acceptanceEvidenceId: 'accept-evidence-001', esignFlowId: 'esign-flow-001',
+    }).validate()).rejects.toThrow('eSign');
+    for (const field of [
+      'terms', 'currency', 'monthlyBaseSalaryMinor', 'benefitsSummary', 'workLocation',
+    ]) expect(RecruitmentOfferRecordSchema.path(field)).toBeUndefined();
+    expect(RecruitmentOfferRecordSchema.path('termsCiphertext')).toBeDefined();
+  });
+
   it('全部业务索引以 tenantId 开头，盲索引唯一且密文不建索引', () => {
     const schemas: readonly Schema[] = [
       RecruitmentCandidateRecordSchema,
@@ -199,6 +232,7 @@ describe('RecruitmentSchemas', () => {
       CandidateApplicationStageRecordSchema,
       RecruitmentInterviewRecordSchema,
       RecruitmentInterviewFeedbackRecordSchema,
+      RecruitmentOfferRecordSchema,
     ];
     for (const schema of schemas) {
       for (const [spec] of schema.indexes()) {
