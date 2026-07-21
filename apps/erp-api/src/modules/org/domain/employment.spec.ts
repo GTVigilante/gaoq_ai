@@ -22,7 +22,7 @@ describe('Person 与 Employment 分层', () => {
       employeeId: 'employee-001', onboardingInstanceId: 'onboarding-001',
       onboardingCompletionEvidenceId: 'onboarding-evidence-001',
       offerId: 'offer-001', signedEvidenceId: 'evidence-001',
-      effectiveFrom: new Date('2026-08-01T00:00:00.000Z'),
+      effectiveFrom: '2026-08-01',
     }, NOW);
     expect(employment).toMatchObject({ status: 'probation', effectiveTo: null, version: 1 });
   });

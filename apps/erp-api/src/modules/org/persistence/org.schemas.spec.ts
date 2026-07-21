@@ -126,7 +126,7 @@ function validEmployment(): Record<string, unknown> {
     employeeId: 'employee-1', onboardingInstanceId: 'onboarding-1', offerId: 'offer-1',
     onboardingCompletionEvidenceId: 'onboarding-evidence-1',
     signedEvidenceId: 'signed-evidence-1', status: 'probation',
-    effectiveFrom: new Date('2026-08-01T00:00:00.000Z'), effectiveTo: null, version: 1,
+    effectiveFrom: '2026-08-01', effectiveTo: null, version: 1,
   };
 }
 

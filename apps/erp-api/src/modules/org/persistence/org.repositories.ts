@@ -301,8 +301,6 @@ export class EmploymentRepository extends TenantBoundRepository {
     this.assertEntityTenant(employment.tenantId);
     await this.records.create([{
       ...employment,
-      effectiveFrom: new Date(employment.effectiveFrom),
-      effectiveTo: employment.effectiveTo === null ? null : new Date(employment.effectiveTo),
       createdAt: new Date(employment.createdAt),
       updatedAt: new Date(employment.updatedAt),
     }], { session });
@@ -314,8 +312,8 @@ export class EmploymentRepository extends TenantBoundRepository {
       employeeId: record.employeeId, onboardingInstanceId: record.onboardingInstanceId,
       onboardingCompletionEvidenceId: record.onboardingCompletionEvidenceId,
       offerId: record.offerId, signedEvidenceId: record.signedEvidenceId,
-      status: record.status, effectiveFrom: record.effectiveFrom.toISOString(),
-      effectiveTo: record.effectiveTo?.toISOString() ?? null, version: record.version,
+      status: record.status, effectiveFrom: record.effectiveFrom,
+      effectiveTo: record.effectiveTo, version: record.version,
       createdAt: record.createdAt.toISOString(), updatedAt: record.updatedAt.toISOString(),
     });
   }

@@ -315,10 +315,6 @@ export class OrgApplicationService {
     this.assertTrustedScope('erp:onboarding:employment:establish');
     return this.run(async () => this.idempotency.execute(
       'org.employment.establish_from_onboarding', key, input, async (session) => {
-        const effectiveFrom = new Date(input.effectiveFrom);
-        if (Number.isNaN(effectiveFrom.getTime())) throw new BadRequestException({
-          code: 'ORG_EMPLOYMENT_EFFECTIVE_DATE_INVALID', message: '劳动关系生效日期非法',
-        });
         const existing = await this.employments.findByOnboardingInstanceId(
           input.onboardingInstanceId,
           session,
@@ -328,7 +324,7 @@ export class OrgApplicationService {
             existing.offerId !== input.offerId ||
             existing.signedEvidenceId !== input.signedEvidenceId ||
             existing.onboardingCompletionEvidenceId !== input.onboardingCompletionEvidenceId ||
-            existing.effectiveFrom !== effectiveFrom.toISOString()
+            existing.effectiveFrom !== input.effectiveFrom
           ) {
             throw new ConflictException({
               code: 'ORG_ONBOARDING_EMPLOYMENT_MISMATCH',
@@ -386,7 +382,7 @@ export class OrgApplicationService {
           id: createEventId(now), tenantId, personId: person.id, employeeId: employee.id,
           onboardingInstanceId: input.onboardingInstanceId, offerId: input.offerId,
           onboardingCompletionEvidenceId: input.onboardingCompletionEvidenceId,
-          signedEvidenceId: input.signedEvidenceId, effectiveFrom,
+          signedEvidenceId: input.signedEvidenceId, effectiveFrom: input.effectiveFrom,
         }, now);
 
         if (personCreated) {
@@ -403,6 +399,30 @@ export class OrgApplicationService {
         };
       },
     ));
+  }
+
+  /** Onboarding 组织分配任务专用：只校验权威组织引用，不暴露组织仓储。 */
+  async validateOnboardingAssignment(input: {
+    readonly departmentId: string;
+    readonly orgPositionId: string;
+    readonly jobLevelId: string | null;
+  }): Promise<{ readonly verified: true }> {
+    this.assertTrustedScope('erp:onboarding:org:validate');
+    const [department, position, jobLevel] = await Promise.all([
+      this.departments.findById(input.departmentId),
+      this.positions.findById(input.orgPositionId),
+      input.jobLevelId === null ? Promise.resolve(null) : this.jobLevels.findById(input.jobLevelId),
+    ]);
+    if (department === null || department.status !== 'active') throw new BadRequestException({
+      code: 'ORG_INVALID_DEPARTMENT_REFERENCE', message: '入职部门不存在或未启用',
+    });
+    if (position === null || position.status !== 'active') throw new BadRequestException({
+      code: 'ORG_INVALID_POSITION_REFERENCE', message: '入职岗位不存在或未启用',
+    });
+    if (input.jobLevelId !== null && jobLevel === null) throw new BadRequestException({
+      code: 'ORG_INVALID_JOB_LEVEL_REFERENCE', message: '入职职级不存在',
+    });
+    return { verified: true };
   }
 
   async updateEmployee(

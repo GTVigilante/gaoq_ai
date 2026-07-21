@@ -283,11 +283,11 @@ export class OrgEmploymentRecord {
   })
   status!: OrgEmploymentStatus;
 
-  @Prop({ type: Date, required: true, immutable: true })
-  effectiveFrom!: Date;
+  @Prop({ type: String, required: true, immutable: true, match: /^\d{4}-\d{2}-\d{2}$/ })
+  effectiveFrom!: string;
 
-  @Prop({ type: Date, default: null })
-  effectiveTo!: Date | null;
+  @Prop({ type: String, default: null, match: /^\d{4}-\d{2}-\d{2}$/ })
+  effectiveTo!: string | null;
 
   @Prop({ type: Number, required: true, validate: { validator: isPositiveInteger } })
   version!: number;

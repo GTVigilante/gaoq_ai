@@ -39,6 +39,9 @@ applied → screening → interview → offer_approval → offer_sent
 - Onboarding 完成时只调用组织域应用服务；服务在同一事务建立 `Person`、`Employee`、`Employment`，Onboarding 不得直接写组织集合。
 - `Person` 只保存候选人来源与身份核验证据引用，不复制身份证、联系方式或材料原文；工号由组织域按租户年度序列原子分配。
 - 招聘职位只表达招聘需求，不能当作正式组织岗位；入职完成前必须显式核验 `orgPositionId`、部门和职级引用。
+- 劳动关系生效日是严格 `YYYY-MM-DD` 的业务日期，不得转换成 UTC 时间点后再推导日期。
+- 入职任务证据为追加写且不可替换；合同归档、身份核验、必修培训只接受对应受信任系统证明，人工接口不得自报完成。
+- 完成采用可重入 Saga：`ready → provisioning → Org 建档 → completed → Recruitment hired`；每一步使用派生幂等键，任何中断均可续跑。
 
 Offer 子状态机：
 

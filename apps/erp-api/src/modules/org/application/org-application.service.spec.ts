@@ -301,7 +301,7 @@ describe('OrgApplicationService', () => {
         offerId: 'offer-001', signedEvidenceId: 'signed-evidence-001',
         identityEvidenceId: 'identity-evidence-001', displayName: '新员工',
         primaryDepartmentId: 'dept-a', orgPositionId: 'position-a',
-        jobLevelId: 'level-a', effectiveFrom: '2026-08-01T00:00:00.000Z',
+        jobLevelId: 'level-a', effectiveFrom: '2026-08-01',
       }),
     );
 
@@ -340,7 +340,7 @@ describe('OrgApplicationService', () => {
         offerId: 'offer-001', signedEvidenceId: 'signed-evidence-001',
         identityEvidenceId: 'identity-evidence-new', displayName: '新员工',
         primaryDepartmentId: 'dept-a', orgPositionId: 'position-a',
-        jobLevelId: null, effectiveFrom: '2026-08-01T00:00:00.000Z',
+        jobLevelId: null, effectiveFrom: '2026-08-01',
       }),
     )).rejects.toBeInstanceOf(ConflictException);
     expect(store.employeeRepo.insert).not.toHaveBeenCalled();
