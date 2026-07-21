@@ -160,7 +160,7 @@ export class PayrollRunService {
         aggregateId: created.id, version: created.version,
         occurredAt: created.createdAt, data: { period: created.period, status: created.status },
       }, session);
-      return periodSummary(created);
+      return payrollPeriodSummary(created);
       },
     ));
   }
@@ -179,7 +179,7 @@ export class PayrollRunService {
         if (current === null) throw new NotFoundException({
           code: 'PAYROLL_PERIOD_NOT_FOUND', message: '工资周期不存在',
         });
-        const next = startPayrollCollection(toPeriodDomain(current), {
+        const next = startPayrollCollection(payrollPeriodFromRecord(current), {
           tenantId: this.tenantId(), expectedVersion,
         }, new Date());
         await this.replacePeriod(current, next, session);
@@ -188,7 +188,7 @@ export class PayrollRunService {
           aggregateId: next.id, version: next.version,
           occurredAt: next.updatedAt, data: { period: next.period, status: next.status },
         }, session);
-        return periodSummary(next);
+        return payrollPeriodSummary(next);
       },
     ));
   }
@@ -272,7 +272,7 @@ export class PayrollRunService {
           ...protectedRecord(resultCiphertext),
         }], { session });
       }
-      const next = recordPayrollCalculation(toPeriodDomain(current), {
+      const next = recordPayrollCalculation(payrollPeriodFromRecord(current), {
         tenantId: this.tenantId(), expectedVersion: input.expectedVersion,
         run: {
           id: runId, inputSnapshotHash, resultHash, employeeCount: calculated.length,
@@ -292,7 +292,7 @@ export class PayrollRunService {
           totalNetMinor: totals.totalNetMinor,
         },
       }, session);
-      return periodSummary(next);
+      return payrollPeriodSummary(next);
       },
     ));
   }
@@ -306,7 +306,7 @@ export class PayrollRunService {
     if (current === null) throw new NotFoundException({
       code: 'PAYROLL_PERIOD_NOT_FOUND', message: '工资周期不存在',
     });
-    return periodSummary(toPeriodDomain(current));
+    return payrollPeriodSummary(payrollPeriodFromRecord(current));
   }
 
   private async calculateLines(
@@ -429,7 +429,7 @@ export class PayrollRunService {
   ): Promise<void> {
     const result = await this.periods.updateOne(
       { tenantId: this.tenantId(), id: current.id, version: current.version, status: current.status },
-      { $set: toMutablePeriodRecord(next) },
+      { $set: toMutablePayrollPeriodRecord(next) },
       { session, runValidators: true },
     );
     if (result.modifiedCount !== 1) throw new Error('PAYROLL_PERIOD_WRITE_CONFLICT');
@@ -511,11 +511,11 @@ function toRuleSnapshot(record: PayrollRulePackRecord): PayrollRulePackSnapshot 
 function toPeriodRecord(period: PayrollPeriod): Record<string, unknown> {
   return {
     id: period.id, tenantId: period.tenantId, period: period.period, currency: period.currency,
-    status: period.status, preparedBy: period.preparedBy, ...toMutablePeriodRecord(period),
+    status: period.status, preparedBy: period.preparedBy, ...toMutablePayrollPeriodRecord(period),
   };
 }
 
-function toMutablePeriodRecord(period: PayrollPeriod): Record<string, unknown> {
+export function toMutablePayrollPeriodRecord(period: PayrollPeriod): Record<string, unknown> {
   return {
     status: period.status, activeRunId: period.activeRun?.id ?? null,
     inputSnapshotHash: period.activeRun?.inputSnapshotHash ?? null,
@@ -535,7 +535,7 @@ function toMutablePeriodRecord(period: PayrollPeriod): Record<string, unknown> {
   };
 }
 
-function toPeriodDomain(record: PayrollPeriodRecord): PayrollPeriod {
+export function payrollPeriodFromRecord(record: PayrollPeriodRecord): PayrollPeriod {
   const activeRun = record.activeRunId === null ? null : Object.freeze({
     id: record.activeRunId,
     inputSnapshotHash: required(record.inputSnapshotHash), resultHash: required(record.resultHash),
@@ -557,7 +557,7 @@ function toPeriodDomain(record: PayrollPeriodRecord): PayrollPeriod {
   });
 }
 
-function periodSummary(period: PayrollPeriod): PayrollPeriodSummary {
+export function payrollPeriodSummary(period: PayrollPeriod): PayrollPeriodSummary {
   return Object.freeze({
     id: period.id, period: period.period, status: period.status, version: period.version,
     activeRunId: period.activeRun?.id ?? null,

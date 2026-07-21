@@ -1,13 +1,18 @@
-import { BadRequestException, Body, Controller, Get, Headers, Param, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Headers, Param, Post, Req } from '@nestjs/common';
 
 import { AuditService } from '../../core/audit/audit.service.js';
+import type { ErpRequest } from '../../core/http/request-context.js';
 import { RequiredScopes } from '../identity/auth.decorators.js';
 import { PayrollMasterDataService } from './application/payroll-master-data.service.js';
+import { PayrollApprovalService } from './application/payroll-approval.service.js';
 import { PayrollRunService, type PayrollPeriodSummary } from './application/payroll-run.service.js';
 import {
   AttestCompensationProfileDto,
   AttestPayrollRulePackDto,
+  ApplyPayrollApprovalDto,
   CreatePayrollPeriodDto,
+  LockPayrollPeriodDto,
+  PayrollVersionCommandDto,
   StartPayrollCollectionDto,
 } from './application/payroll.dto.js';
 
@@ -15,6 +20,7 @@ import {
 export class PayrollController {
   constructor(
     private readonly runs: PayrollRunService,
+    private readonly approvals: PayrollApprovalService,
     private readonly masterData: PayrollMasterDataService,
     private readonly audit: AuditService,
   ) {}
@@ -27,6 +33,52 @@ export class PayrollController {
   ): Promise<PayrollPeriodSummary> {
     const result = await this.runs.createPeriod(this.key(key), body.period);
     await this.auditPeriod('payroll.period.create', result, 'R2');
+    return result;
+  }
+
+  @Post('periods/:id/approval')
+  @RequiredScopes('erp:payroll:approval:request', 'erp:approval:instance:submit')
+  async requestApproval(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Body() body: PayrollVersionCommandDto,
+  ): Promise<PayrollPeriodSummary> {
+    const result = await this.approvals.requestApproval(this.key(key), id, body.expectedVersion);
+    await this.auditPeriod('payroll.approval.request', result, 'R2');
+    return result;
+  }
+
+  @Post('periods/:id/approval-result')
+  @RequiredScopes('erp:payroll:approval:sync')
+  async applyApproval(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Body() body: ApplyPayrollApprovalDto,
+  ): Promise<PayrollPeriodSummary> {
+    const result = await this.approvals.applyApproval(
+      this.key(key), id, body.expectedVersion, body.approvalInstanceId,
+    );
+    await this.auditPeriod('payroll.approval.apply', result, 'R2');
+    return result;
+  }
+
+  /** R3：强认证 ceremony 的 operationId 必须使用工资周期 id；MCP 永不注册此动作。 */
+  @Post('periods/:id/lock')
+  @RequiredScopes('erp:payroll:period:lock')
+  async lockPeriod(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Body() body: LockPayrollPeriodDto,
+    @Req() request: ErpRequest,
+  ): Promise<PayrollPeriodSummary> {
+    if (request.verifiedAccessToken === undefined) throw new BadRequestException({
+      code: 'PAYROLL_LOCK_TOKEN_REQUIRED', message: '工资锁定必须使用已验证人员访问令牌',
+    });
+    const result = await this.approvals.lockPeriod(
+      this.key(key), id, body.expectedVersion, body.strongAuthEvidenceId,
+      request.verifiedAccessToken,
+    );
+    await this.auditPeriod('payroll.period.lock', result, 'R3');
     return result;
   }
 
@@ -96,7 +148,7 @@ export class PayrollController {
   private async auditPeriod(
     action: string,
     period: PayrollPeriodSummary,
-    riskLevel: 'R0' | 'R2',
+    riskLevel: 'R0' | 'R2' | 'R3',
   ): Promise<void> {
     await this.audit.record({
       action, resourceType: 'payroll_period', resourceId: period.id,

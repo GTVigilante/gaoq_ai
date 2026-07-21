@@ -2,10 +2,13 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 
 import { IdempotencyModule } from '../../core/idempotency/idempotency.module.js';
+import { ApprovalModule } from '../approval/approval.module.js';
+import { StrongAuthModule } from '../identity/strong-auth/strong-auth.module.js';
 import { AttendanceMonthlySnapshotRecord, AttendanceMonthlySnapshotRecordSchema } from '../attendance/persistence/attendance.schemas.js';
 import { OrgModule } from '../org/org.module.js';
 import { OutboxRecord, OutboxRecordSchema } from '../org/persistence/outbox.schema.js';
 import { PayrollMasterDataService } from './application/payroll-master-data.service.js';
+import { PayrollApprovalService } from './application/payroll-approval.service.js';
 import { PayrollRunService } from './application/payroll-run.service.js';
 import { PayrollController } from './payroll.controller.js';
 import { PayrollDataCryptoService } from './persistence/payroll-data-crypto.service.js';
@@ -28,6 +31,8 @@ import {
 @Module({
   imports: [
     IdempotencyModule,
+    ApprovalModule,
+    StrongAuthModule,
     OrgModule,
     MongooseModule.forFeature([
       { name: PayrollRulePackRecord.name, schema: PayrollRulePackRecordSchema },
@@ -43,6 +48,7 @@ import {
   controllers: [PayrollController],
   providers: [
     PayrollRunService,
+    PayrollApprovalService,
     PayrollMasterDataService,
     PayrollDataCryptoService,
     PayrollOutboxWriter,

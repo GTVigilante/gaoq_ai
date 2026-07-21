@@ -44,6 +44,9 @@ import { ApprovalOutboxWriter } from '../persistence/approval-outbox.writer.js';
 import { ApprovalActorResolverService } from './approval-actor-resolver.service.js';
 import { ApprovalNotificationWriter } from '../notification/approval-notification.writer.js';
 
+const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
+const HASH_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+
 export interface ApprovalTemplateSummary extends Record<string, unknown> {
   readonly id: string;
   readonly code: string;
@@ -104,6 +107,18 @@ export interface AttendanceMonthReopenDecision {
   readonly employeeId: string;
   readonly month: string;
   readonly previousSnapshotId: string;
+  readonly formDataHash: string;
+}
+
+export interface PayrollPeriodApprovalDecision {
+  readonly id: string;
+  readonly outcome: 'approved' | 'rejected';
+  readonly decidedBy: string;
+  readonly completedAt: string;
+  readonly periodId: string;
+  readonly runId: string;
+  readonly inputSnapshotHash: string;
+  readonly resultHash: string;
   readonly formDataHash: string;
 }
 
@@ -491,6 +506,49 @@ export class ApprovalApplicationService {
     });
   }
 
+  /** Payroll 只读取专用审批的可信终态和固定摘要，不暴露工资明细或审批正文。 */
+  async getPayrollPeriodDecision(id: string): Promise<PayrollPeriodApprovalDecision> {
+    const actor = this.context.getActorRequired();
+    if (!actor.scopes.includes('erp:payroll:approval:sync')) throw new ForbiddenException({
+      code: 'APPROVAL_PAYROLL_INTEGRATION_STATUS_DENIED', message: '无权同步工资审批状态',
+    });
+    const instance = await this.requireInstance(id);
+    if (instance.templateSnapshot.templateCode !== 'payroll_period_approval') {
+      throw new ForbiddenException({
+        code: 'APPROVAL_PAYROLL_INTEGRATION_TEMPLATE_DENIED',
+        message: '工资审批模板与执行动作不匹配',
+      });
+    }
+    if (
+      (instance.status !== 'approved' && instance.status !== 'rejected') ||
+      instance.completedAt === null
+    ) throw new ConflictException({
+      code: 'APPROVAL_PAYROLL_DECISION_INCOMPLETE', message: '工资审批尚未形成可信终态',
+    });
+    const outcome = instance.status;
+    const finalDecision = instance.resolvedNodes
+      .flatMap((node) => node.decisions)
+      .filter((decision) => decision.outcome === outcome)
+      .sort((left, right) => left.decidedAt < right.decidedAt ? -1 : 1)
+      .at(-1);
+    if (finalDecision === undefined || finalDecision.decidedAt !== instance.completedAt) {
+      throw new ConflictException({
+        code: 'APPROVAL_PAYROLL_DECISION_INVALID', message: '工资审批终态证据不完整',
+      });
+    }
+    return Object.freeze({
+      id: instance.id, outcome, decidedBy: finalDecision.decidedBy,
+      completedAt: instance.completedAt,
+      periodId: requiredPayrollFormString(instance.formData, 'period_id', ULID_PATTERN),
+      runId: requiredPayrollFormString(instance.formData, 'run_id', ULID_PATTERN),
+      inputSnapshotHash: requiredPayrollFormString(
+        instance.formData, 'input_snapshot_hash', HASH_PATTERN,
+      ),
+      resultHash: requiredPayrollFormString(instance.formData, 'result_hash', HASH_PATTERN),
+      formDataHash: instance.formDataHash,
+    });
+  }
+
   private async requireApprovedAttendanceInstance(
     id: string,
     templateCode: 'attendance_correction' | 'attendance_month_reopen',
@@ -617,6 +675,18 @@ function requiredFormMinutes(form: ApprovalFormData, field: string): number {
       code: 'APPROVAL_ATTENDANCE_FORM_INVALID', message: `考勤审批字段 ${field} 非法或缺失`,
     });
   }
+  return value;
+}
+
+function requiredPayrollFormString(
+  form: ApprovalFormData,
+  field: string,
+  pattern: RegExp,
+): string {
+  const value = form[field];
+  if (typeof value !== 'string' || !pattern.test(value)) throw new ConflictException({
+    code: 'APPROVAL_PAYROLL_FORM_INVALID', message: `工资审批字段 ${field} 非法或缺失`,
+  });
   return value;
 }
 

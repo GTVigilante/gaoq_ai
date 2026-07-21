@@ -46,6 +46,14 @@ export interface VerifiedStrongAuthEvidence {
   readonly verifiedAt: string;
 }
 
+export interface StrongAuthEvidenceQuery {
+  readonly evidenceId: string;
+  readonly tenantId: string;
+  readonly actorId: string;
+  readonly sessionId: string;
+  readonly operationId: string;
+}
+
 /** WebAuthn 强认证服务；服务端生成随机 challenge，严格校验 RP、Origin 和 UV 标志。 */
 @Injectable()
 export class WebAuthnService {
@@ -319,6 +327,37 @@ export class WebAuthnService {
       operationId,
       method: 'webauthn_uv',
       verifiedAt: verifiedAt.toISOString(),
+    });
+  }
+
+  /** 业务服务复核短时强认证证据；所有绑定字段必须来自已验证访问令牌和固化操作。 */
+  async requireVerifiedEvidence(
+    input: StrongAuthEvidenceQuery,
+  ): Promise<VerifiedStrongAuthEvidence> {
+    const now = new Date();
+    const evidence = await this.ceremonies.findOne({
+      ceremonyId: input.evidenceId,
+      tenantId: input.tenantId,
+      actorId: input.actorId,
+      sessionId: input.sessionId,
+      operationId: input.operationId,
+      type: 'authentication',
+      status: 'verified',
+      credentialId: { $type: 'string' },
+      verifiedAt: { $gte: new Date(now.getTime() - CEREMONY_TTL_MS), $lte: now },
+      expiresAt: { $gt: now },
+    }).lean().exec();
+    if (
+      evidence === null || evidence.credentialId === null || evidence.verifiedAt === null ||
+      evidence.operationId === null
+    ) throw new ForbiddenException({
+      code: 'PASSKEY_EVIDENCE_INVALID', message: '强认证证据不存在、已过期或与当前操作不匹配',
+    });
+    return Object.freeze({
+      evidenceId: evidence.ceremonyId, credentialId: evidence.credentialId,
+      tenantId: evidence.tenantId, actorId: evidence.actorId, sessionId: evidence.sessionId,
+      operationId: evidence.operationId, method: 'webauthn_uv',
+      verifiedAt: evidence.verifiedAt.toISOString(),
     });
   }
 

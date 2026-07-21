@@ -249,6 +249,34 @@ describe('ApprovalApplicationService', () => {
     expect(result).not.toHaveProperty('reasonCode');
   });
 
+  it('工资审批终态只输出运行摘要绑定和最终决策人', async () => {
+    const deps = dependencies();
+    const completedAt = '2026-07-31T10:00:00.000Z';
+    const approved = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4A3', status: 'approved', completedAt,
+      formDataHash: 'c'.repeat(43), templateSnapshot: { templateCode: 'payroll_period_approval' },
+      formData: {
+        period_id: '01J8ZQK7V0A2M4N6P8R0T2W4P1',
+        run_id: '01J8ZQK7V0A2M4N6P8R0T2W4P2',
+        input_snapshot_hash: 'a'.repeat(43), result_hash: 'b'.repeat(43),
+      },
+      resolvedNodes: [{ decisions: [{
+        decidedBy: 'finance-001', principalApproverId: 'finance-001',
+        outcome: 'approved', decidedAt: completedAt, delegated: false,
+      }] }],
+    } as unknown as ApprovalInstance;
+    deps.instances.findById.mockResolvedValue(approved);
+    const result = await service(
+      deps, trustedContext(['erp:payroll:approval:sync']),
+    ).getPayrollPeriodDecision(approved.id);
+    expect(result).toEqual({
+      id: approved.id, outcome: 'approved', decidedBy: 'finance-001', completedAt,
+      periodId: '01J8ZQK7V0A2M4N6P8R0T2W4P1', runId: '01J8ZQK7V0A2M4N6P8R0T2W4P2',
+      inputSnapshotHash: 'a'.repeat(43), resultHash: 'b'.repeat(43),
+      formDataHash: 'c'.repeat(43),
+    });
+  });
+
   it('创建实例只返回脱敏摘要，聚合与事件共用幂等事务', async () => {
     const deps = dependencies();
     const result = await service(deps).createInstance('idempotency-key-001', {

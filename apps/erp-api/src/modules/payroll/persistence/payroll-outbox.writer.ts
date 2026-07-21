@@ -13,7 +13,10 @@ export interface PayrollEvent {
     | 'payroll.period.collecting'
     | 'payroll.run.completed'
     | 'payroll.compensation_profile.attested'
-    | 'payroll.rule_pack.attested';
+    | 'payroll.rule_pack.attested'
+    | 'payroll.approval.requested'
+    | 'payroll.approval.applied'
+    | 'payroll.period.locked';
   readonly tenantId: string;
   readonly aggregateId: string;
   readonly version: number;

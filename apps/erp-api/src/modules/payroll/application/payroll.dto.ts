@@ -13,6 +13,18 @@ export class StartPayrollCollectionDto {
   @IsInt() @Min(1) expectedVersion!: number;
 }
 
+export class PayrollVersionCommandDto {
+  @IsInt() @Min(1) expectedVersion!: number;
+}
+
+export class ApplyPayrollApprovalDto extends PayrollVersionCommandDto {
+  @Matches(ULID) approvalInstanceId!: string;
+}
+
+export class LockPayrollPeriodDto extends PayrollVersionCommandDto {
+  @Matches(ULID) strongAuthEvidenceId!: string;
+}
+
 export class PayrollAmountComponentDto {
   @Matches(/^[A-Z][A-Z0-9_]{0,63}$/) code!: string;
   @IsInt() @Min(0) @Max(Number.MAX_SAFE_INTEGER) amountMinor!: number;

@@ -56,6 +56,27 @@ beforeEach(() => {
 });
 
 describe('WebAuthnService', () => {
+  it('业务证据复核同时绑定租户、人员、会话和操作', async () => {
+    const verifiedAt = new Date();
+    const findOne = vi.fn().mockReturnValue(query({
+      ceremonyId: CEREMONY_ID, credentialId: CREDENTIAL_ID,
+      tenantId: identity.tenantId, actorId: identity.actorId,
+      sessionId: identity.sessionId, operationId: OPERATION_ID, verifiedAt,
+    }));
+    const service = createService({}, { findOne });
+    const result = await service.requireVerifiedEvidence({
+      evidenceId: CEREMONY_ID, tenantId: identity.tenantId, actorId: identity.actorId,
+      sessionId: identity.sessionId, operationId: OPERATION_ID,
+    });
+    expect(result).toMatchObject({
+      evidenceId: CEREMONY_ID, operationId: OPERATION_ID, method: 'webauthn_uv',
+    });
+    expect(findOne).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: identity.tenantId, actorId: identity.actorId,
+      sessionId: identity.sessionId, operationId: OPERATION_ID,
+    }));
+  });
+
   it('注册参数强制常驻凭据、用户验证和受控算法', async () => {
     webauthn.generateRegistrationOptions.mockResolvedValue({ challenge: 'a'.repeat(43) });
     const create = vi.fn().mockResolvedValue(undefined);
