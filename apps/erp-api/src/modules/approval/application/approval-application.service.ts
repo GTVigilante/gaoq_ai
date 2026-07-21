@@ -428,6 +428,28 @@ export class ApprovalApplicationService {
     return instanceSummary(instance);
   }
 
+  /** Attendance 只读取专用修订/重开模板终态，不读取打卡明细或审批表单正文。 */
+  async getInstanceStatusForAttendance(
+    id: string,
+    expectedTemplate: 'attendance_correction' | 'attendance_month_reopen',
+  ): Promise<ApprovalInstanceSummary> {
+    const actor = this.context.getActorRequired();
+    if (!actor.scopes.includes('erp:attendance:approval:sync')) {
+      throw new ForbiddenException({
+        code: 'APPROVAL_ATTENDANCE_INTEGRATION_STATUS_DENIED',
+        message: '无权同步考勤审批状态',
+      });
+    }
+    const instance = await this.requireInstance(id);
+    if (instance.templateSnapshot.templateCode !== expectedTemplate) {
+      throw new ForbiddenException({
+        code: 'APPROVAL_ATTENDANCE_INTEGRATION_TEMPLATE_DENIED',
+        message: '考勤集成只能读取匹配的修订或月结重开审批状态',
+      });
+    }
+    return instanceSummary(instance);
+  }
+
   private async transition(
     operation: string,
     key: string,

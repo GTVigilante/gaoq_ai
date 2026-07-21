@@ -17,6 +17,7 @@ import { RecruitmentOfferService } from '../recruitment/application/recruitment-
 import { OnboardingApplicationService } from '../onboarding/application/onboarding-application.service.js';
 import { KnowledgeApplicationService } from '../knowledge/application/knowledge-application.service.js';
 import { CareApplicationService } from '../care/application/care-application.service.js';
+import { AttendanceApplicationService } from '../attendance/application/attendance-application.service.js';
 import { parseMcpIdentity, type McpIdentity } from './mcp-auth-context.js';
 import {
   McpConfirmationService,
@@ -50,6 +51,7 @@ export class McpToolService {
     private readonly onboarding: OnboardingApplicationService,
     private readonly knowledge: KnowledgeApplicationService,
     private readonly care: CareApplicationService,
+    private readonly attendance: AttendanceApplicationService,
     private readonly confirmations: McpConfirmationService,
   ) {}
 
@@ -121,6 +123,19 @@ export class McpToolService {
       const careCase = await this.care.getForMcp(id);
       await this.auditTool(identity, 'care_case_get', 'R0', 'success');
       return structuredResult({ careCase });
+    });
+  }
+
+  async getMyAttendanceMonth(month: string, extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:attendance:month:read_self')) {
+        await this.auditTool(identity, 'attendance_month_get', 'R0', 'denied');
+        return scopeError('erp:attendance:month:read_self');
+      }
+      const attendanceMonth = await this.attendance.getMyMonth(month);
+      await this.auditTool(identity, 'attendance_month_get', 'R0', 'success');
+      return structuredResult({ attendanceMonth });
     });
   }
 

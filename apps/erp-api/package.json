@@ -15,6 +15,7 @@
     "migrate:phase3:knowledge-indexes": "node dist/migrations/phase-3-knowledge-indexes.js",
     "migrate:phase3:care-indexes": "node dist/migrations/phase-3-care-indexes.js",
     "migrate:phase3:recruitment-channel-indexes": "node dist/migrations/phase-3-recruitment-channel-indexes.js",
+    "migrate:phase4:attendance-indexes": "node dist/migrations/phase-4-attendance-indexes.js",
     "typecheck": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && tsc --noEmit",
     "test": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && vitest run",
     "test:coverage": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && vitest run --coverage"

@@ -150,6 +150,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
           }, version: 5,
         } },
       }),
+      getMyAttendanceMonth: vi.fn(),
       prepareRecruitmentRequisitionSubmit: vi.fn(),
       executeRecruitmentRequisitionSubmit: vi.fn(),
       prepareRecruitmentPositionTransition: vi.fn(),
@@ -243,6 +244,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       'knowledge_course_get',
       'knowledge_assignment_get',
       'care_case_get',
+      'attendance_month_get',
       'recruitment_requisition_submit_prepare',
       'recruitment_requisition_submit_execute',
       'recruitment_position_transition_prepare',
@@ -263,6 +265,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ uriTemplate: 'erp://knowledge/courses/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://knowledge/assignments/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://care/cases/{id}' }),
+      expect.objectContaining({ uriTemplate: 'erp://attendance/months/{month}/me' }),
     ]));
     const prompts = await client.listPrompts();
     expect(prompts.prompts).toEqual(expect.arrayContaining([
@@ -271,6 +274,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ name: 'onboarding_progress_guide' }),
       expect.objectContaining({ name: 'knowledge_training_progress_guide' }),
       expect.objectContaining({ name: 'care_offboarding_progress_guide' }),
+      expect.objectContaining({ name: 'attendance_month_review_guide' }),
     ]));
 
     const result = await client.callTool({ name: 'get_org_chart', arguments: {} });

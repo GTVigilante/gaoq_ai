@@ -40,6 +40,16 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(64).max(16_384).optional(),
   ),
+  /** 考勤 L4 明细密钥环，与招聘、审批和盲索引密钥域隔离。 */
+  ATTENDANCE_DATA_ENCRYPTION_KEYS: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(64).max(16_384).optional(),
+  ),
+  /** 考勤外部事件精确去重 HMAC 密钥环；不得复用数据加密密钥。 */
+  ATTENDANCE_BLIND_INDEX_KEYS: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(64).max(16_384).optional(),
+  ),
   /** eSign Webhook L4 加密密钥环，仅由 Secret Manager 注入。 */
   ESIGN_WEBHOOK_ENCRYPTION_KEYS: z.preprocess(
     (value) => value === '' ? undefined : value,
@@ -235,6 +245,17 @@ const environmentSchema = z.object({
       code: 'custom',
       path: ['RECRUITMENT_DATA_ENCRYPTION_KEYS'],
       message: '生产环境必须由 Secret Manager 注入招聘数据与盲索引独立密钥环',
+    });
+  }
+  if (
+    environment.NODE_ENV === 'production' &&
+    (environment.ATTENDANCE_DATA_ENCRYPTION_KEYS === undefined ||
+      environment.ATTENDANCE_BLIND_INDEX_KEYS === undefined)
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['ATTENDANCE_DATA_ENCRYPTION_KEYS'],
+      message: '生产环境必须由 Secret Manager 注入考勤数据与盲索引独立密钥环',
     });
   }
   if (environment.NODE_ENV === 'production' && environment.METRICS_BEARER_TOKEN === undefined) {

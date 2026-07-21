@@ -15,6 +15,7 @@ import type { RecruitmentOfferService } from '../recruitment/application/recruit
 import type { OnboardingApplicationService } from '../onboarding/application/onboarding-application.service.js';
 import type { KnowledgeApplicationService } from '../knowledge/application/knowledge-application.service.js';
 import type { CareApplicationService } from '../care/application/care-application.service.js';
+import type { AttendanceApplicationService } from '../attendance/application/attendance-application.service.js';
 import { McpToolService } from './mcp-tool.service.js';
 import type { McpConfirmationService } from './mcp-confirmation.service.js';
 
@@ -72,6 +73,7 @@ function assemble() {
   const onboarding = { get: vi.fn() };
   const knowledge = { getCourse: vi.fn(), getAssignment: vi.fn() };
   const care = { getForMcp: vi.fn() };
+  const attendance = { getMyMonth: vi.fn() };
   const service = new McpToolService(
     context,
     audit as unknown as AuditService,
@@ -84,12 +86,13 @@ function assemble() {
     onboarding as unknown as OnboardingApplicationService,
     knowledge as unknown as KnowledgeApplicationService,
     care as unknown as CareApplicationService,
+    attendance as unknown as AttendanceApplicationService,
     confirmations as unknown as McpConfirmationService,
   );
   return {
     context, audit, organization, approvals, recruitmentApplications,
     recruitmentInterviews, recruitmentManagement, recruitmentOffers, confirmations, service,
-    onboarding, knowledge, care,
+    onboarding, knowledge, care, attendance,
   };
 }
 

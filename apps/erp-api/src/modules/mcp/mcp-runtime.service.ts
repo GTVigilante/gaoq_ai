@@ -194,6 +194,15 @@ const careCaseSchema = z.object({
   }),
   version: z.number().int().positive(),
 });
+const attendanceMonthSchema = z.object({
+  id: z.string(), employeeId: z.string(), month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  snapshotVersion: z.number().int().positive(), rulesetVersion: z.string(),
+  sourceCutoffAt: z.string(), workedMinutes: z.number().int().nonnegative(),
+  leaveMinutes: z.number().int().nonnegative(), overtimeMinutes: z.number().int().nonnegative(),
+  absentMinutes: z.number().int().nonnegative(), sourceFactCount: z.number().int().nonnegative(),
+  correctionCount: z.number().int().nonnegative(), snapshotHash: z.string().length(43),
+  closedAt: z.string(),
+});
 
 @Injectable()
 export class McpRuntimeService {
@@ -449,6 +458,24 @@ export class McpRuntimeService {
       },
     );
 
+    server.registerResource(
+      'my-attendance-month',
+      new ResourceTemplate('erp://attendance/months/{month}/me', { list: undefined }),
+      {
+        title: '我的考勤月结摘要',
+        description: '只返回当前已验证员工的月度汇总；不返回打卡时间、地点、设备或修订原因。',
+        mimeType: 'application/json',
+      },
+      async (uri, { month }, extra) => {
+        const result = await this.tools.getMyAttendanceMonth(requiredMonth(month), extra);
+        if (result.isError === true) throw new Error('无权读取本人考勤月结');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
     server.registerPrompt(
       'approval_submission_guide',
       {
@@ -534,6 +561,24 @@ export class McpRuntimeService {
           content: {
             type: 'text',
             text: `请读取离职案件 ${careCaseId} 的脱敏任务状态，列出待办和计划生效时间。不要索取离职原因、审批正文、交接材料或证据；不要代报清算完成，也不要执行劳动关系关闭或身份停用。`,
+          },
+        }],
+      }),
+    );
+
+    server.registerPrompt(
+      'attendance_month_review_guide',
+      {
+        title: '本人考勤月结核对清单',
+        description: '指导 AI 仅解释本人月度汇总；修订和重开必须进入 ERP 审批流程。',
+        argsSchema: { month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/) },
+      },
+      ({ month }) => ({
+        messages: [{
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `请读取我 ${month} 的考勤月结摘要，解释各分钟汇总和快照版本。不要索取或推断打卡时间、地点、设备和修订原因；若有异议，请引导我在 ERP 发起考勤修订审批，AI 不得直接改事实或重开月结。`,
           },
         }],
       }),
@@ -774,6 +819,18 @@ export class McpRuntimeService {
     );
 
     server.registerTool(
+      'attendance_month_get',
+      {
+        title: '查询本人考勤月结摘要',
+        description: '由已验证主体反查 ERP 员工，只返回月度汇总和快照完整性标识。风险等级 R0。',
+        inputSchema: { month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/) },
+        outputSchema: z.object({ attendanceMonth: attendanceMonthSchema }),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      },
+      async ({ month }, extra) => this.tools.getMyAttendanceMonth(month, extra),
+    );
+
+    server.registerTool(
       'recruitment_requisition_submit_prepare',
       {
         title: '准备提交 HC 审批',
@@ -874,6 +931,13 @@ export class McpRuntimeService {
 function requiredResourceId(value: string | string[] | undefined): string {
   if (typeof value !== 'string' || !/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(value)) {
     throw new Error('MCP_RECRUITMENT_RESOURCE_ID_INVALID');
+  }
+  return value;
+}
+
+function requiredMonth(value: string | string[] | undefined): string {
+  if (typeof value !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) {
+    throw new Error('MCP_ATTENDANCE_MONTH_INVALID');
   }
   return value;
 }
