@@ -11,7 +11,7 @@ export class SsoTenantBinding {
   @Prop({ type: String, required: true, immutable: true })
   loginSlug!: string;
 
-  @Prop({ type: String, enum: ['dingtalk', 'feishu'], required: true, immutable: true })
+  @Prop({ type: String, enum: ['dingtalk', 'feishu', 'op'], required: true, immutable: true })
   provider!: SsoProviderCode;
 
   @Prop({ type: String, required: true, immutable: true })

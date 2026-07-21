@@ -33,6 +33,7 @@ export class SsoAuthenticationService {
     const profile = await this.adapters.get(input.provider).exchangeAuthorizationCode({
       code: input.code,
       codeVerifier: state.codeVerifier,
+      expectedExternalTenantId: state.externalTenantId,
     });
     if (profile.externalTenantId !== state.externalTenantId) {
       throw this.invalidIdentity();

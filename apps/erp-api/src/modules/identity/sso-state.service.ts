@@ -60,7 +60,7 @@ const returnPathSchema = z
 const storedStateSchema = z
   .object({
     tenantId: z.string().min(1).max(128),
-    provider: z.enum(['dingtalk', 'feishu']),
+    provider: z.enum(['dingtalk', 'feishu', 'op']),
     externalTenantId: z.string().min(1).max(128),
     codeVerifier: z.string().min(1).max(128),
     returnPath: returnPathSchema,

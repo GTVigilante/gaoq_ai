@@ -129,6 +129,19 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().url().optional(),
   ),
+  /** OP SSO 使用独立 OAuth 客户端，不复用组织下发或 Webhook HMAC 凭据。 */
+  OP_SSO_CLIENT_ID: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(8).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/).optional(),
+  ),
+  OP_SSO_CLIENT_SECRET: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(32).max(2_048).optional(),
+  ),
+  OP_SSO_REDIRECT_URI: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().url().optional(),
+  ),
   /** eSign OpenAPI 只允许官方生产或沙箱域名，禁止自定义地址导致 SSRF。 */
   ESIGN_API_BASE_URL: z.enum([
     'https://openapi.esign.cn', 'https://smlopenapi.esign.cn',
@@ -465,6 +478,30 @@ const environmentSchema = z.object({
     ) context.addIssue({
       code: 'custom', path: ['OP_API_BASE_URL'],
       message: 'OP API 必须是独立权限域的标准 HTTPS 根地址，禁止凭据、路径、query、fragment 和非标准端口',
+    });
+  }
+  const opSsoConfigured = [
+    environment.OP_SSO_CLIENT_ID,
+    environment.OP_SSO_CLIENT_SECRET,
+    environment.OP_SSO_REDIRECT_URI,
+  ].filter((value) => value !== undefined).length;
+  if (opSsoConfigured !== 0 && opSsoConfigured !== 3) context.addIssue({
+    code: 'custom', path: ['OP_SSO_CLIENT_ID'],
+    message: 'OP SSO clientId、clientSecret 与 redirectUri 必须成套配置',
+  });
+  if (environment.NODE_ENV === 'production' && opSsoConfigured !== 3) context.addIssue({
+    code: 'custom', path: ['OP_SSO_CLIENT_ID'],
+    message: '生产环境必须由 Secret Manager 注入 OP SSO 独立客户端凭据',
+  });
+  if (environment.OP_SSO_REDIRECT_URI !== undefined) {
+    const redirect = new URL(environment.OP_SSO_REDIRECT_URI);
+    const expected = new URL('/api/auth/sso/op/callback', issuer).toString();
+    if (
+      redirect.protocol !== 'https:' || redirect.username !== '' || redirect.password !== '' ||
+      redirect.search !== '' || redirect.hash !== '' || redirect.toString() !== expected
+    ) context.addIssue({
+      code: 'custom', path: ['OP_SSO_REDIRECT_URI'],
+      message: 'OP SSO redirectUri 必须精确指向 ERP issuer 的 HTTPS 回调地址',
     });
   }
   if (

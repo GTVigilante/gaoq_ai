@@ -16,6 +16,7 @@ import { DingTalkSsoAdapter } from './dingtalk-sso.adapter.js';
 import { ExternalIdentityRepository } from './external-identity.repository.js';
 import { ExternalIdentity, ExternalIdentitySchema } from './external-identity.schema.js';
 import { FeishuSsoAdapter } from './feishu-sso.adapter.js';
+import { OpSsoAdapter } from './op-sso.adapter.js';
 import { IdentitySession, IdentitySessionSchema } from './session.schema.js';
 import { IdentityLifecycleService } from './identity-lifecycle.service.js';
 import { JwksController } from './jwks.controller.js';
@@ -36,6 +37,7 @@ import { SessionService } from './session.service.js';
 import {
   DingTalkSsoAdapterToken,
   FeishuSsoAdapterToken,
+  OpSsoAdapterToken,
   SsoAdapterRegistry,
 } from './sso-adapter.js';
 import { FetchSsoHttpClient, SsoHttpClient } from './sso-http-client.js';
@@ -91,6 +93,7 @@ import { TokenGrantService } from './token-grant.service.js';
     { provide: SsoHttpClient, useClass: FetchSsoHttpClient },
     { provide: DingTalkSsoAdapterToken, useClass: DingTalkSsoAdapter },
     { provide: FeishuSsoAdapterToken, useClass: FeishuSsoAdapter },
+    { provide: OpSsoAdapterToken, useClass: OpSsoAdapter },
     { provide: AccessTokenSigner, useClass: SecretManagedRsaAccessTokenSigner },
     { provide: AccessTokenVerifier, useClass: RemoteJwksAccessTokenVerifier },
   ],

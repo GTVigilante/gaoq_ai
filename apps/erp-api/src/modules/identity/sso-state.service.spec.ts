@@ -156,6 +156,16 @@ describe('SsoStateService', () => {
     await expectInvalidState(() => service.consume(issued.state, 'feishu'));
   });
 
+  it('OP 使用与钉钉飞书相同的一次性 state 与 PKCE 存储约束', async () => {
+    const redis = createRedis();
+    redis.set.mockResolvedValue('OK');
+    const service = createService(redis);
+    const issued = await service.issue({ ...validInput, provider: 'op' });
+    redis.getdel.mockResolvedValue(readStoredRaw(redis));
+
+    await expect(service.consume(issued.state, 'op')).resolves.toMatchObject({ provider: 'op' });
+  });
+
   it('Redis 中的坏 JSON 抛 SSO_STATE_INVALID', async () => {
     const redis = createRedis();
     redis.getdel.mockResolvedValue('{broken json');

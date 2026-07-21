@@ -5,11 +5,13 @@ import type { ExternalIdentityProfile, SsoProviderCode } from './auth.types.js';
 export interface SsoAuthorizationCodeInput {
   readonly code: string;
   readonly codeVerifier?: string;
+  readonly expectedExternalTenantId: string;
 }
 
 export interface SsoAuthorizationUrlInput {
   readonly state: string;
   readonly codeChallenge: string;
+  readonly externalTenantId: string;
 }
 
 /** 外部 SSO 适配端口；外部令牌只能在适配器内部短暂使用。 */
@@ -23,15 +25,21 @@ export abstract class SsoAdapter {
 
 export abstract class DingTalkSsoAdapterToken extends SsoAdapter {}
 export abstract class FeishuSsoAdapterToken extends SsoAdapter {}
+export abstract class OpSsoAdapterToken extends SsoAdapter {}
 
 @Injectable()
 export class SsoAdapterRegistry {
   private readonly adapters: ReadonlyMap<SsoProviderCode, SsoAdapter>;
 
-  constructor(dingtalk: DingTalkSsoAdapterToken, feishu: FeishuSsoAdapterToken) {
+  constructor(
+    dingtalk: DingTalkSsoAdapterToken,
+    feishu: FeishuSsoAdapterToken,
+    op: OpSsoAdapterToken,
+  ) {
     this.adapters = new Map([
       [dingtalk.provider, dingtalk],
       [feishu.provider, feishu],
+      [op.provider, op],
     ]);
   }
 

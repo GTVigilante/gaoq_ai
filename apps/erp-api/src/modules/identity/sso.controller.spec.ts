@@ -81,6 +81,7 @@ describe('SsoController', () => {
     expect(buildAuthorizationUrl).toHaveBeenCalledWith({
       state: 'state-001',
       codeChallenge: 'challenge-001',
+      externalTenantId: 'external-tenant-001',
     });
     expect(setStateCookie).toHaveBeenCalledWith(response, 'state-001');
   });
@@ -100,6 +101,16 @@ describe('SsoController', () => {
       controller.start('custom', { tenantSlug: 'gaoq-group', returnPath: '/' }, response),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(resolveActive).not.toHaveBeenCalled();
+  });
+
+  it('允许已登记的 OP SSO provider 进入统一 state 与 PKCE 流程', async () => {
+    const { controller, resolveActive, response } = createController({
+      tenantId: 'tenant-001', provider: 'op', externalTenantId: 'op-tenant-001',
+    });
+    await expect(
+      controller.start('op', { tenantSlug: 'gaoq-group', returnPath: '/' }, response),
+    ).resolves.toMatchObject({ expiresIn: 300 });
+    expect(resolveActive).toHaveBeenCalledWith('gaoq-group', 'op');
   });
 
   it('回调验证浏览器 state 绑定并只把刷新令牌写入 Cookie', async () => {

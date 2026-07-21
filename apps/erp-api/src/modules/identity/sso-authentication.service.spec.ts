@@ -63,6 +63,7 @@ describe('SsoAuthenticationService', () => {
     expect(exchangeAuthorizationCode).toHaveBeenCalledWith({
       code: 'code-001',
       codeVerifier: 'verifier-001',
+      expectedExternalTenantId: 'external-tenant-001',
     });
     expect(findBoundByExternalProfile).toHaveBeenCalledWith(
       'tenant-001',

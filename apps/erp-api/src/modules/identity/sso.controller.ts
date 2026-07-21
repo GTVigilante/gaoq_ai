@@ -78,7 +78,10 @@ export class SsoController {
     });
     this.stateCookie.set(response, issued.state);
     return {
-      authorizationUrl: this.adapters.get(provider).buildAuthorizationUrl(issued),
+      authorizationUrl: this.adapters.get(provider).buildAuthorizationUrl({
+        ...issued,
+        externalTenantId: binding.externalTenantId,
+      }),
       expiresIn: 300,
     };
   }
@@ -114,7 +117,7 @@ export class SsoController {
   }
 
   private parseProvider(value: string): SsoProviderCode {
-    if (value !== 'dingtalk' && value !== 'feishu') {
+    if (value !== 'dingtalk' && value !== 'feishu' && value !== 'op') {
       throw new BadRequestException({ code: 'SSO_PROVIDER_INVALID', message: 'SSO 提供者无效' });
     }
     return value;

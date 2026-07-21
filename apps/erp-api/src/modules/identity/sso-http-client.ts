@@ -45,13 +45,35 @@ export class FetchSsoHttpClient extends SsoHttpClient {
       ) {
         throw new Error(`上游响应异常：${response.status}`);
       }
-      const text = await response.text();
-      if (Buffer.byteLength(text, 'utf8') > MAX_RESPONSE_BYTES) {
-        throw new Error('上游响应过大');
-      }
+      const text = await this.readBoundedBody(response);
       return JSON.parse(text) as unknown;
     } catch {
       throw new BadGatewayException({ code: 'SSO_UPSTREAM_ERROR', message: '身份提供者暂时不可用' });
     }
+  }
+
+  /** 对未声明 Content-Length 的身份提供者响应实施流式硬上限。 */
+  private async readBoundedBody(response: Response): Promise<string> {
+    const reader = response.body?.getReader();
+    if (reader === undefined) throw new Error('上游响应为空');
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+    try {
+      while (true) {
+        const result = await reader.read();
+        if (result.done) break;
+        const chunk: unknown = result.value;
+        if (!(chunk instanceof Uint8Array)) throw new Error('上游响应块无效');
+        totalBytes += chunk.byteLength;
+        if (totalBytes > MAX_RESPONSE_BYTES) {
+          await reader.cancel();
+          throw new Error('上游响应过大');
+        }
+        chunks.push(chunk);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    return Buffer.concat(chunks, totalBytes).toString('utf8');
   }
 }

@@ -18,7 +18,7 @@ export interface VerifiedAccessToken {
 }
 
 /** 外部 SSO 提供者编码。 */
-export type SsoProviderCode = 'dingtalk' | 'feishu';
+export type SsoProviderCode = 'dingtalk' | 'feishu' | 'op';
 
 /** 外部平台返回的最小身份，不得直接成为 ERP 授权依据。 */
 export interface ExternalIdentityProfile {
