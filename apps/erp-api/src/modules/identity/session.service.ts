@@ -4,6 +4,13 @@ import type { Model } from 'mongoose';
 
 import { IdentitySession, type IdentitySessionDocument } from './session.schema.js';
 
+export interface OpenIdentitySessionInput {
+  readonly tenantId: string;
+  readonly sessionId: string;
+  readonly actorId: string;
+  readonly expiresAt: Date;
+}
+
 @Injectable()
 export class SessionService {
   constructor(
@@ -11,13 +18,28 @@ export class SessionService {
     private readonly sessions: Model<IdentitySessionDocument>,
   ) {}
 
-  /** 查询租户内会话是否已吊销；不存在的服务令牌会话视为未吊销。 */
-  async isRevoked(tenantId: string, sessionId: string): Promise<boolean> {
+  /**
+   * 检查租户内会话是否可用。人员令牌必须存在本地会话，服务令牌可由外部授权服务器独立管理。
+   */
+  async isActive(tenantId: string, sessionId: string, requireExisting: boolean): Promise<boolean> {
     const session = await this.sessions
       .findOne({ tenantId, sessionId }, { revokedAt: 1, expiresAt: 1 })
       .lean()
       .exec();
-    return session?.revokedAt !== undefined || (session !== null && session.expiresAt <= new Date());
+    if (session === null) {
+      return !requireExisting;
+    }
+    return session.revokedAt === undefined && session.expiresAt > new Date();
+  }
+
+  /** 创建新的人员会话；sessionId 必须由授权设施生成且不可复用。 */
+  async open(input: OpenIdentitySessionInput): Promise<void> {
+    await this.sessions.create({
+      tenantId: input.tenantId,
+      sessionId: input.sessionId,
+      actorId: input.actorId,
+      expiresAt: input.expiresAt,
+    });
   }
 
   /** 吊销指定租户的会话，不允许跨租户更新。 */

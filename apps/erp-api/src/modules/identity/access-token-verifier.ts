@@ -56,8 +56,15 @@ export class RemoteJwksAccessTokenVerifier extends AccessTokenVerifier {
         payload,
         this.config.get('AUTH_RESOURCE', { infer: true }),
       );
-      if (await this.sessions.isRevoked(verified.tenantId, verified.sessionId)) {
-        throw new UnauthorizedException('会话已吊销');
+      const requireExistingSession = verified.actorType === 'user';
+      if (
+        !(await this.sessions.isActive(
+          verified.tenantId,
+          verified.sessionId,
+          requireExistingSession,
+        ))
+      ) {
+        throw new UnauthorizedException({ code: 'AUTH_SESSION_INACTIVE', message: '会话不存在或已失效' });
       }
       return verified;
     } catch (error: unknown) {
