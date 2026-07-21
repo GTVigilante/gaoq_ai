@@ -8,11 +8,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { ConfigService } from '@nestjs/config';
 import { createEventId } from '@gaoq/shared-utils';
 import type { ClientSession, Model } from 'mongoose';
 import { z } from 'zod';
 
 import { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
+import type { AppEnvironment } from '../../../config/environment.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import type { VerifiedAccessToken } from '../../identity/auth.types.js';
 import { WebAuthnService } from '../../identity/strong-auth/webauthn.service.js';
@@ -106,6 +108,7 @@ export class TreasuryDisbursementService {
     private readonly crypto: TreasuryDataCryptoService,
     private readonly archive: TreasuryImmutableArchive,
     private readonly bankGateway: TreasuryBankSubmissionGateway,
+    private readonly config: ConfigService<AppEnvironment, true>,
     private readonly outbox: TreasuryOutboxWriter,
     @InjectModel(TreasuryBankAccountRecord.name)
     private readonly accounts: Model<TreasuryBankAccountDocument>,
@@ -132,6 +135,12 @@ export class TreasuryDisbursementService {
     if (!ID_PATTERN.test(batchId)) throw new BadRequestException({
       code: 'TREASURY_BATCH_ID_INVALID', message: '代发批次标识非法',
     });
+    if (this.config.get('TREASURY_BANK_SUBMISSION_MODE', { infer: true }) === 'production') {
+      throw new ConflictException({
+        code: 'TREASURY_PRODUCTION_CUTOVER_NOT_AUTHORIZED',
+        message: 'Phase 6 总体 Go/No-Go 与生产切换授权尚未落地，真实银行提交失败关闭',
+      });
+    }
     const staged = await this.run(() => this.idempotency.execute(
       'treasury.disbursement.stage_submission', key,
       { batchId, expectedVersion: input.expectedVersion }, async (session) => {

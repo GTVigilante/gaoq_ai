@@ -72,6 +72,8 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/).optional(),
   ),
+  /** Phase 6 总体 Go/No-Go 门禁落地前必须保持 sandbox；production 当前失败关闭。 */
+  PAYROLL_TAX_GATEWAY_MODE: z.enum(['sandbox', 'production']).default('sandbox'),
   /** 资金账号、支付指令、银行文件与回盘正文专用密钥环；不得复用薪酬密钥。 */
   TREASURY_DATA_ENCRYPTION_KEYS: z.preprocess(
     (value) => value === '' ? undefined : value,
@@ -101,6 +103,8 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/).optional(),
   ),
+  /** Phase 6 总体 Go/No-Go 门禁落地前必须保持 sandbox；production 当前失败关闭。 */
+  TREASURY_BANK_SUBMISSION_MODE: z.enum(['sandbox', 'production']).default('sandbox'),
   /** 银行回盘隔离 Inbox；在返回规范清单前完成验签、扫描与 WORM 留档。 */
   TREASURY_BANK_RETURN_INBOX_ENDPOINT: z.preprocess(
     (value) => value === '' ? undefined : value,

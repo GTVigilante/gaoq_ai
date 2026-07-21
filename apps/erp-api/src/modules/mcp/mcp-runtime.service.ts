@@ -278,6 +278,41 @@ const payrollReconciliationSchema = z.object({
   payrollWithholdingTaxMinor: z.number().int(), filedWithholdingTaxMinor: z.number().int(),
   version: z.number().int().positive(),
 });
+const payrollShadowCycleSchema = z.object({
+  id: recruitmentIdSchema, periodId: recruitmentIdSchema, payrollRunId: recruitmentIdSchema,
+  period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/), sourceSystem: z.string(),
+  sourceManifestHash: z.string().length(43), payrollResultHash: z.string().length(43),
+  comparisonHash: z.string().length(43),
+  status: z.enum([
+    'needs_explanation', 'ready_for_payroll_signoff', 'ready_for_finance_signoff', 'signed',
+  ]),
+  erpEmployeeCount: z.number().int().min(1).max(5_000),
+  legacyEmployeeCount: z.number().int().min(1).max(5_000),
+  erpTotalGrossMinor: z.number().int().nonnegative(),
+  legacyTotalGrossMinor: z.number().int().nonnegative(),
+  erpTotalTaxMinor: z.number().int(), legacyTotalTaxMinor: z.number().int(),
+  erpTotalNetMinor: z.number().int().nonnegative(),
+  legacyTotalNetMinor: z.number().int().nonnegative(),
+  differenceCodes: z.array(z.enum([
+    'LEGACY_EMPLOYEE_MISSING', 'ERP_EMPLOYEE_MISSING', 'GROSS_AMOUNT_MISMATCH',
+    'WITHHOLDING_TAX_MISMATCH', 'NET_AMOUNT_MISMATCH',
+  ])).max(5),
+  differenceCount: z.number().int().nonnegative(),
+  explainedDifferenceCount: z.number().int().nonnegative(),
+  unresolvedDifferenceCount: z.number().int().nonnegative(),
+  totalAbsoluteDifferenceMinor: z.number().int().nonnegative(),
+  payrollSignoffId: recruitmentIdSchema.nullable(),
+  financeSignoffId: recruitmentIdSchema.nullable(),
+  cutoverReadinessId: recruitmentIdSchema.nullable(),
+  version: z.number().int().positive(),
+});
+const payrollCutoverReadinessSchema = z.object({
+  id: recruitmentIdSchema, firstCycleId: recruitmentIdSchema, secondCycleId: recruitmentIdSchema,
+  startPeriod: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  endPeriod: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  evidenceHash: z.string().length(43), status: z.literal('eligible'),
+  version: z.number().int().positive(),
+});
 
 @Injectable()
 export class McpRuntimeService {
@@ -623,6 +658,42 @@ export class McpRuntimeService {
       },
     );
 
+    server.registerResource(
+      'payroll-shadow-cycle',
+      new ResourceTemplate('erp://payroll/shadow-cycles/{id}', { list: undefined }),
+      {
+        title: '工资影子周期脱敏控制摘要',
+        description: '只返回新旧工资控制量、标准差异码、解释进度和签署状态，不返回员工级差异。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getPayrollShadowCycle(requiredResourceId(id), extra);
+        if (result.isError === true) throw new Error('无权读取工资影子周期');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
+    server.registerResource(
+      'payroll-cutover-readiness',
+      new ResourceTemplate('erp://payroll/cutover-readiness/{id}', { list: undefined }),
+      {
+        title: '工资两期可切换资格证据',
+        description: '只返回连续两期签署范围与证据摘要；该资源不代表已经切换事实源。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getPayrollCutoverReadiness(requiredResourceId(id), extra);
+        if (result.isError === true) throw new Error('无权读取工资可切换资格');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
     server.registerPrompt(
       'approval_submission_guide',
       {
@@ -785,6 +856,32 @@ export class McpRuntimeService {
       ({ reconciliationId }) => ({ messages: [{ role: 'user', content: {
         type: 'text',
         text: `请读取四方对账 ${reconciliationId} 的脱敏摘要，逐项解释工资净额、银行提交、终态回盘、工资税额和已申报税额是否守恒。仅依据标准差异码提出调查方向；不得索取员工、账户、证件、银行文件或税务正文，不得执行解冻、补发、重报或修改证据。`,
+      } }] }),
+    );
+
+    server.registerPrompt(
+      'payroll_shadow_cycle_review_guide',
+      {
+        title: '工资影子周期差异核对指南',
+        description: '指导 AI 只读检查新旧工资控制量、标准差异与签署门禁。',
+        argsSchema: { cycleId: recruitmentIdSchema },
+      },
+      ({ cycleId }) => ({ messages: [{ role: 'user', content: {
+        type: 'text',
+        text: `请读取工资影子周期 ${cycleId} 的脱敏摘要，核对新旧人数、工资总额、税额、实发额、标准差异码、已解释/未解释数量及财务签署状态。不得索取员工级差异、薪酬明细、解释正文或 WORM 地址；不得导入、归因、签署或切换事实源。`,
+      } }] }),
+    );
+
+    server.registerPrompt(
+      'payroll_cutover_readiness_review_guide',
+      {
+        title: '工资两期可切换资格核对指南',
+        description: '指导 AI 只读验证连续两期证据，不执行 Go/No-Go 或系统切换。',
+        argsSchema: { readinessId: recruitmentIdSchema },
+      },
+      ({ readinessId }) => ({ messages: [{ role: 'user', content: {
+        type: 'text',
+        text: `请读取工资可切换资格 ${readinessId}，核对两个影子周期是否连续、证据摘要和状态是否完整。该资格只是 Phase 4 门禁证据，不代表总体 Go/No-Go 已通过；不得执行连接切换、真实代发或修改证据。`,
       } }] }),
     );
 
@@ -1086,6 +1183,34 @@ export class McpRuntimeService {
         },
       },
       async ({ id }, extra) => this.tools.getPayrollReconciliation(id, extra),
+    );
+
+    server.registerTool(
+      'payroll_shadow_cycle_get',
+      {
+        title: '查询工资影子周期脱敏摘要',
+        description: '只返回新旧工资控制量、标准差异码、解释进度和签署状态。风险等级 R1。',
+        inputSchema: { id: recruitmentIdSchema },
+        outputSchema: z.object({ shadowCycle: payrollShadowCycleSchema }),
+        annotations: {
+          readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+        },
+      },
+      async ({ id }, extra) => this.tools.getPayrollShadowCycle(id, extra),
+    );
+
+    server.registerTool(
+      'payroll_cutover_readiness_get',
+      {
+        title: '查询工资两期可切换资格证据',
+        description: '只返回连续两期范围与证据摘要，不执行切换。风险等级 R1。',
+        inputSchema: { id: recruitmentIdSchema },
+        outputSchema: z.object({ cutoverReadiness: payrollCutoverReadinessSchema }),
+        annotations: {
+          readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+        },
+      },
+      async ({ id }, extra) => this.tools.getPayrollCutoverReadiness(id, extra),
     );
 
     server.registerTool(

@@ -1,5 +1,6 @@
 import type { ActorContext } from '@gaoq/shared-types';
 import type { ClientSession } from 'mongoose';
+import { ConfigService } from '@nestjs/config';
 import { describe, expect, it, vi } from 'vitest';
 
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
@@ -48,6 +49,7 @@ function query<T>(resolve: () => T | Promise<T>) {
 
 function assemble(options: {
   missingEmployment?: boolean; lockedBy?: string; gatewayFailsOnce?: boolean;
+  gatewayMode?: 'sandbox' | 'production';
 } = {}) {
   const context = new TenantContextService();
   const resultWithoutHash = {
@@ -131,7 +133,9 @@ function assemble(options: {
   ) => handler(session)) };
   const service = new PayrollTaxFilingService(
     idempotency as never, context, employments as never, persons as never,
-    strongAuth as never, crypto as never, archive, gateway, outbox as never,
+    strongAuth as never, crypto as never, archive, gateway,
+    new ConfigService({ PAYROLL_TAX_GATEWAY_MODE: options.gatewayMode ?? 'sandbox' }) as never,
+    outbox as never,
     periods as never, lines as never, filings as never,
   );
   return {
@@ -141,6 +145,14 @@ function assemble(options: {
 }
 
 describe('PayrollTaxFilingService', () => {
+  it('Phase 6 总体切换授权未实现前真实税务模式始终失败关闭', async () => {
+    const store = assemble({ gatewayMode: 'production' });
+    await expect(store.context.run({ tenant, actor: connector }, () => store.service.submit(
+      'payroll-tax-production-submit', '01J8ZQK7V0A2M4N6P8R0T2W4F1', 3,
+    ))).rejects.toThrow('真实税务申报失败关闭');
+    expect(store.gateway.submit).not.toHaveBeenCalled();
+  });
+
   it('从锁定工资与组织身份凭证生成确定性清单并写入独立 WORM', async () => {
     const store = assemble();
     const result = await store.context.run({ tenant, actor }, () =>

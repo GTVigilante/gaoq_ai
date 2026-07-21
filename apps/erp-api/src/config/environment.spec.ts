@@ -35,9 +35,11 @@ describe('validateEnvironment', () => {
     expect(environment.TREASURY_WORM_ARCHIVE_ENDPOINT).toBeUndefined();
     expect(environment.TREASURY_WORM_RETENTION_DAYS).toBe(3_650);
     expect(environment.TREASURY_BANK_SUBMISSION_ENDPOINT).toBeUndefined();
+    expect(environment.TREASURY_BANK_SUBMISSION_MODE).toBe('sandbox');
     expect(environment.TREASURY_BANK_RETURN_INBOX_ENDPOINT).toBeUndefined();
     expect(environment.PAYROLL_TAX_WORM_ARCHIVE_ENDPOINT).toBeUndefined();
     expect(environment.PAYROLL_TAX_GATEWAY_ENDPOINT).toBeUndefined();
+    expect(environment.PAYROLL_TAX_GATEWAY_MODE).toBe('sandbox');
     expect(environment.PAYROLL_TAX_WORM_RETENTION_DAYS).toBe(3_650);
     expect(environment.METRICS_BEARER_TOKEN).toBeUndefined();
     expect(environment.ESIGN_MALWARE_SCAN_ENDPOINT).toBeUndefined();

@@ -31,7 +31,9 @@ export type PayrollCryptoResourceType =
   | 'compensation_profile'
   | 'input_snapshot'
   | 'calculation_line'
-  | 'tax_filing';
+  | 'tax_filing'
+  | 'shadow_cycle'
+  | 'shadow_difference';
 
 export interface PayrollCryptoContext {
   readonly tenantId: string;
@@ -127,7 +129,10 @@ export class PayrollDataCryptoService {
     if (
       !ID_PATTERN.test(context.tenantId) || !ID_PATTERN.test(context.resourceId) ||
       !Number.isSafeInteger(context.version) || context.version < 1 ||
-      !['compensation_profile', 'input_snapshot', 'calculation_line', 'tax_filing']
+      ![
+        'compensation_profile', 'input_snapshot', 'calculation_line', 'tax_filing',
+        'shadow_cycle', 'shadow_difference',
+      ]
         .includes(context.resourceType)
     ) throw new Error('PAYROLL_DATA_CONTEXT_INVALID');
   }

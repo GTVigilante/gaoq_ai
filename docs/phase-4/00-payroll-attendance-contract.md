@@ -16,6 +16,8 @@
 | `DisbursementBatch` | Treasury | 只从已锁定周期形成；文件摘要、行数、总额、双人导出和对象证据齐全 |
 | `BankReturnInbox` | Treasury | 验签/解密后入箱，原始文件受控归档；匹配不唯一或部分成功冻结批次 |
 | `PayrollReconciliation` | Payroll + Treasury + Tax | 应发、代发、回盘、个税四方金额与人数逐项守恒 |
+| `PayrollShadowCycle` | Payroll + 旧系统连接器 | 新旧完整员工集逐行零容差比较；来源、运行与证据摘要不可变 |
+| `PayrollCutoverReadiness` | Payroll | 仅由相邻两个已解释且独立财务签署的完整周期生成，不执行事实源切换 |
 
 所有集合、缓存键、对象键、队列任务、事件和审计必须从已验证身份或系统任务取得 `tenantId`。客户端提交的租户、员工、金额汇总、审批结果或银行状态均不可信。
 
@@ -89,6 +91,10 @@ draft → collecting → calculating → review → pending_approval → approve
 | 审批与锁定工资 | Approval + 内部命令 | `payroll.period.approved/locked.v1` | 只读状态，不开放执行 | R2/R3 |
 | 受控聚合分析 | `POST /payroll/analytics` | 无 | `payroll_aggregate_analyze`，最小分组阈值 | R1 |
 | 生成代发/处理回盘 | Treasury 内部端点 | `treasury.batch.*.v1` | 不开放 | R3 |
+| 导入旧系统影子清单 | `POST /payroll/periods/{id}/shadow-cycles` | `payroll.shadow_cycle.compared.v1` | 不开放 | R3 |
+| 影子差异归因 | `POST /payroll/shadow-cycles/{cycleId}/differences/{differenceId}/explanation` | `payroll.shadow_difference.explained.v1` | 不开放 | R2 |
+| 薪酬/财务双签影子周期 | 两个角色隔离的 `payroll-signoff` / `finance-signoff` 端点 | `payroll.shadow_cycle.signed.v1` | 不开放 | R3 |
+| 查询影子周期与两期资格 | 脱敏 `GET` | `payroll.cutover_readiness.eligible.v1` | 只读 Tools + Resources | R1 |
 
 MCP Server 必须继续使用 MCP 2025-11-25、OAuth 2.1 Resource Server、JSON Schema、结构化内容、风险注解和审计。任何 AI 客户端都只能通过应用服务读取脱敏投影；禁止 MCP 直接查数据库、接触银行/税务文件、执行发薪或绕过 Approval。
 

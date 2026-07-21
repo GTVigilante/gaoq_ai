@@ -20,6 +20,7 @@ import type { PayrollRunService } from '../payroll/application/payroll-run.servi
 import type { PayrollPayslipService } from '../payroll/application/payroll-payslip.service.js';
 import type { PayrollTaxFilingService } from '../payroll/application/payroll-tax-filing.service.js';
 import type { PayrollReconciliationService } from '../payroll/application/payroll-reconciliation.service.js';
+import type { PayrollShadowService } from '../payroll/application/payroll-shadow.service.js';
 import { McpToolService } from './mcp-tool.service.js';
 import type { McpConfirmationService } from './mcp-confirmation.service.js';
 
@@ -84,6 +85,7 @@ function assemble() {
   const payslips = { getMyPayslip: vi.fn() };
   const taxFilings = { getStatus: vi.fn() };
   const reconciliations = { getStatus: vi.fn() };
+  const shadows = { getCycle: vi.fn(), getReadiness: vi.fn() };
   const service = new McpToolService(
     context,
     audit as unknown as AuditService,
@@ -101,12 +103,13 @@ function assemble() {
     payslips as unknown as PayrollPayslipService,
     taxFilings as unknown as PayrollTaxFilingService,
     reconciliations as unknown as PayrollReconciliationService,
+    shadows as unknown as PayrollShadowService,
     confirmations as unknown as McpConfirmationService,
   );
   return {
     context, audit, organization, approvals, recruitmentApplications,
     recruitmentInterviews, recruitmentManagement, recruitmentOffers, confirmations, service,
-    onboarding, knowledge, care, attendance, payroll, payslips, taxFilings, reconciliations,
+    onboarding, knowledge, care, attendance, payroll, payslips, taxFilings, reconciliations, shadows,
   };
 }
 
@@ -475,6 +478,49 @@ describe('McpToolService', () => {
       reconciliation: { status: 'frozen', differences: ['PAYROLL_TAX_AMOUNT_MISMATCH'] },
     });
     expect(JSON.stringify(result)).not.toMatch(/employeeId|account|identityEvidence|objectRef/iu);
+  });
+
+  it('影子周期 MCP 只返回控制面与两期资格，永不读取行级差异', async () => {
+    const store = assemble();
+    const cycleId = '01J8ZQK7V0A2M4N6P8R0T2W4C1';
+    const readinessId = '01J8ZQK7V0A2M4N6P8R0T2W4G1';
+    store.shadows.getCycle.mockResolvedValue({
+      id: cycleId, periodId: '01J8ZQK7V0A2M4N6P8R0T2W4P1',
+      payrollRunId: '01J8ZQK7V0A2M4N6P8R0T2W4R1', period: '2026-07',
+      sourceSystem: 'legacy-payroll', sourceManifestHash: 'm'.repeat(43),
+      payrollResultHash: 'p'.repeat(43), comparisonHash: 'c'.repeat(43), status: 'signed',
+      erpEmployeeCount: 12, legacyEmployeeCount: 12,
+      erpTotalGrossMinor: 12_000_000, legacyTotalGrossMinor: 12_000_000,
+      erpTotalTaxMinor: 800_000, legacyTotalTaxMinor: 800_000,
+      erpTotalNetMinor: 9_500_000, legacyTotalNetMinor: 9_500_000,
+      differenceCodes: [], differenceCount: 0, explainedDifferenceCount: 0,
+      unresolvedDifferenceCount: 0, totalAbsoluteDifferenceMinor: 0,
+      payrollSignoffId: '01J8ZQK7V0A2M4N6P8R0T2W4S1',
+      financeSignoffId: '01J8ZQK7V0A2M4N6P8R0T2W4S2',
+      cutoverReadinessId: readinessId, version: 1,
+    });
+    store.shadows.getReadiness.mockResolvedValue({
+      id: readinessId, firstCycleId: '01J8ZQK7V0A2M4N6P8R0T2W4C0', secondCycleId: cycleId,
+      startPeriod: '2026-06', endPeriod: '2026-07', evidenceHash: 'e'.repeat(43),
+      status: 'eligible', version: 1,
+    });
+    const denied = await store.service.getPayrollShadowCycle(
+      cycleId, extra(['erp:mcp:server:connect']),
+    );
+    expect(denied.isError).toBe(true);
+    expect(store.shadows.getCycle).not.toHaveBeenCalled();
+    const scopes = extra(['erp:mcp:server:connect', 'erp:payroll:shadow:read']);
+    const cycle = await store.service.getPayrollShadowCycle(cycleId, scopes);
+    const readiness = await store.service.getPayrollCutoverReadiness(readinessId, scopes);
+    expect(cycle.structuredContent).toMatchObject({
+      shadowCycle: { status: 'signed', unresolvedDifferenceCount: 0 },
+    });
+    expect(readiness.structuredContent).toMatchObject({
+      cutoverReadiness: { status: 'eligible', endPeriod: '2026-07' },
+    });
+    expect(JSON.stringify([cycle, readiness])).not.toMatch(
+      /employeeId|deltaMinor|explanationEvidence|signedBy|strongAuthEvidence/iu,
+    );
   });
 
   it('考勤修订准备只校验本人事实并固化 R1 命令，不直接创建审批', async () => {

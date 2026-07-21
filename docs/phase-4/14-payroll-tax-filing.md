@@ -1,5 +1,7 @@
 # 个税申报清单、独立审批与税务网关
 
+> Phase 4 安全门禁：`PAYROLL_TAX_GATEWAY_MODE` 默认并必须保持 `sandbox`。应用服务和 HTTP Adapter 对 `production` 双重失败关闭；沙箱请求与回执必须双向绑定 `submissionMode=sandbox`，外部网关必须使用税务沙箱租户与沙箱凭据。真实申报只能在 Phase 6 总体 Go/No-Go 和统一切换授权落地后开放，两个工资影子周期资格本身不足以授权真实申报。
+
 ## 责任边界
 
 ERP 从锁定工资结果、有效劳动关系和 `Person.identityEvidenceId` 生成确定性的 `CN_IIT_WITHHOLDING_MANIFEST_V1` 内部清单。该清单是税务隔离网关的输入契约，不冒充任何地区税局官方格式；地区格式转换、证件明文解析、税局客户端和税局凭据只存在于受控税务网关权限域。

@@ -14,6 +14,7 @@ import { PayrollRunService } from './application/payroll-run.service.js';
 import { PayrollPayslipService } from './application/payroll-payslip.service.js';
 import { PayrollTaxFilingService } from './application/payroll-tax-filing.service.js';
 import { PayrollReconciliationService } from './application/payroll-reconciliation.service.js';
+import { PayrollShadowService } from './application/payroll-shadow.service.js';
 import { HttpPayrollTaxImmutableArchive } from './integration/payroll-tax-archive-http.adapter.js';
 import { HttpPayrollTaxGateway } from './integration/payroll-tax-gateway-http.adapter.js';
 import { PayrollTaxGateway, PayrollTaxImmutableArchive } from './integration/payroll-tax.ports.js';
@@ -37,6 +38,16 @@ import {
   PayrollReconciliationRecordSchema,
   PayrollTaxFilingRecord,
   PayrollTaxFilingRecordSchema,
+  PayrollShadowCycleRecord,
+  PayrollShadowCycleRecordSchema,
+  PayrollShadowDifferenceRecord,
+  PayrollShadowDifferenceRecordSchema,
+  PayrollShadowExplanationRecord,
+  PayrollShadowExplanationRecordSchema,
+  PayrollShadowSignoffRecord,
+  PayrollShadowSignoffRecordSchema,
+  PayrollCutoverReadinessRecord,
+  PayrollCutoverReadinessRecordSchema,
 } from './persistence/payroll.schemas.js';
 
 @Module({
@@ -55,6 +66,11 @@ import {
       { name: PayrollCalculationLineRecord.name, schema: PayrollCalculationLineRecordSchema },
       { name: PayrollTaxFilingRecord.name, schema: PayrollTaxFilingRecordSchema },
       { name: PayrollReconciliationRecord.name, schema: PayrollReconciliationRecordSchema },
+      { name: PayrollShadowCycleRecord.name, schema: PayrollShadowCycleRecordSchema },
+      { name: PayrollShadowDifferenceRecord.name, schema: PayrollShadowDifferenceRecordSchema },
+      { name: PayrollShadowExplanationRecord.name, schema: PayrollShadowExplanationRecordSchema },
+      { name: PayrollShadowSignoffRecord.name, schema: PayrollShadowSignoffRecordSchema },
+      { name: PayrollCutoverReadinessRecord.name, schema: PayrollCutoverReadinessRecordSchema },
       { name: AttendanceMonthlySnapshotRecord.name, schema: AttendanceMonthlySnapshotRecordSchema },
       { name: OutboxRecord.name, schema: OutboxRecordSchema },
     ]),
@@ -67,6 +83,7 @@ import {
     PayrollMasterDataService,
     PayrollTaxFilingService,
     PayrollReconciliationService,
+    PayrollShadowService,
     PayrollDataCryptoService,
     PayrollOutboxWriter,
     HttpPayrollTaxImmutableArchive,
@@ -77,6 +94,7 @@ import {
   exports: [
     PayrollRunService, PayrollPayslipService,
     PayrollTaxFilingService, PayrollReconciliationService,
+    PayrollShadowService,
   ],
 })
 export class PayrollModule {}

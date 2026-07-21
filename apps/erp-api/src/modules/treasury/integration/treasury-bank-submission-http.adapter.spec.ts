@@ -14,6 +14,7 @@ function config(overrides?: Readonly<Record<string, string>>) {
   const values: Readonly<Record<string, string>> = {
     TREASURY_BANK_SUBMISSION_ENDPOINT: 'https://bank-gateway.example.internal/v1/submissions',
     TREASURY_BANK_SUBMISSION_BEARER_TOKEN: 'bank-gateway-token-at-least-32-characters',
+    TREASURY_BANK_SUBMISSION_MODE: 'sandbox',
     ...overrides,
   };
   return { get: (key: string) => values[key] } as unknown as ConfigService<AppEnvironment, true>;
@@ -23,7 +24,8 @@ function receipt(changes?: Readonly<Record<string, unknown>>) {
   return {
     submissionId: 'bank-submission-001', evidenceId: 'bank-evidence-001', accepted: true,
     batchId: input.batchId, objectRef: input.objectRef, fileHash: input.fileHash,
-    lineCount: input.lineCount, totalMinor: input.totalMinor, ...changes,
+    lineCount: input.lineCount, totalMinor: input.totalMinor, submissionMode: 'sandbox',
+    ...changes,
   };
 }
 
@@ -41,7 +43,7 @@ describe('Treasury 银行提交 HTTPS Adapter', () => {
     const call = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     if (typeof call[1].body !== 'string') throw new Error('测试请求体必须是 JSON 字符串');
     expect(call[0]).toBe('https://bank-gateway.example.internal/v1/submissions');
-    expect(JSON.parse(call[1].body)).toEqual(input);
+    expect(JSON.parse(call[1].body)).toEqual({ ...input, submissionMode: 'sandbox' });
     expect(call[1].body).not.toMatch(/creditor|debtor|account|xml/u);
     expect((call[1].headers as Record<string, string>)['idempotency-key'])
       .toMatch(/^[A-Za-z0-9_-]{43}$/u);
@@ -75,5 +77,16 @@ describe('Treasury 银行提交 HTTPS Adapter', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 503 })));
     await expect(new HttpTreasuryBankSubmissionGateway(config()).submit(input))
       .rejects.toThrow('TREASURY_BANK_SUBMISSION_HTTP_503');
+  });
+
+  it('Adapter 防御性拒绝 production，且要求上游回执回显 sandbox', async () => {
+    await expect(new HttpTreasuryBankSubmissionGateway(config({
+      TREASURY_BANK_SUBMISSION_MODE: 'production',
+    })).submit(input)).rejects.toThrow('TREASURY_BANK_PRODUCTION_SUBMISSION_NOT_AUTHORIZED');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(receipt({
+      submissionMode: 'production',
+    })), { status: 202, headers: { 'content-type': 'application/json' } })));
+    await expect(new HttpTreasuryBankSubmissionGateway(config()).submit(input))
+      .rejects.toThrow('TREASURY_BANK_SUBMISSION_RECEIPT_INVALID');
   });
 });

@@ -91,4 +91,49 @@ describe('Payroll Tax Outbox 白名单', () => {
       ...completed, data: { ...completed.data, employeeId: 'employee-001' },
     }, session))).rejects.toThrow('PAYROLL_RECONCILIATION_OUTBOX_DATA_INVALID');
   });
+
+  it('影子比较、签署与两期资格事件拒绝员工及人员身份字段', async () => {
+    const store = setup();
+    const events: readonly PayrollEvent[] = [
+      {
+        ...base, type: 'payroll.shadow_cycle.compared', data: {
+          period: '2026-07', payrollRunId: '01J8ZQK7V0A2M4N6P8R0T2W4R1',
+          comparisonHash: 'c'.repeat(43), sourceManifestHash: 'm'.repeat(43),
+          erpEmployeeCount: 2, legacyEmployeeCount: 2, differenceCount: 0,
+          totalAbsoluteDifferenceMinor: 0, status: 'ready_for_payroll_signoff',
+        },
+      },
+      {
+        ...base, version: 2, type: 'payroll.shadow_cycle.signed', data: {
+          period: '2026-07', comparisonHash: 'c'.repeat(43), differenceCount: 0,
+          explanationSetHash: 'x'.repeat(43), signoffEvidenceHash: 'p'.repeat(43),
+          signoffRole: 'payroll_owner', strongAuthMethod: 'webauthn_uv',
+          status: 'payroll_signed',
+        },
+      },
+      {
+        ...base, version: 3, type: 'payroll.shadow_cycle.signed', data: {
+          period: '2026-07', comparisonHash: 'c'.repeat(43), differenceCount: 0,
+          explanationSetHash: 'x'.repeat(43), signoffEvidenceHash: 's'.repeat(43),
+          signoffRole: 'finance_owner', strongAuthMethod: 'webauthn_uv', status: 'signed',
+        },
+      },
+      {
+        ...base, version: 1, type: 'payroll.cutover_readiness.eligible', data: {
+          firstCycleId: '01J8ZQK7V0A2M4N6P8R0T2W4C0',
+          secondCycleId: '01J8ZQK7V0A2M4N6P8R0T2W4C1',
+          startPeriod: '2026-06', endPeriod: '2026-07',
+          evidenceHash: 'e'.repeat(43), status: 'eligible',
+        },
+      },
+    ];
+    await store.context.run({ tenant, actor }, async () => {
+      for (const event of events) await store.writer.append(event, session);
+    });
+    const persisted = JSON.stringify(store.records.create.mock.calls);
+    expect(persisted).not.toMatch(/employeeId|signedBy|strongAuthEvidenceId|sourceExportId/u);
+    await expect(store.context.run({ tenant, actor }, () => store.writer.append({
+      ...events[0]!, data: { ...events[0]!.data, employeeId: 'employee-001' },
+    }, session))).rejects.toThrow('PAYROLL_SHADOW_OUTBOX_DATA_INVALID');
+  });
 });

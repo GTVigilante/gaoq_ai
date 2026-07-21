@@ -22,7 +22,11 @@ export interface PayrollEvent {
     | 'payroll.reconciliation.completed'
     | 'payroll.tax_filing.prepared'
     | 'payroll.tax_filing.approved'
-    | 'payroll.tax_filing.submitted';
+    | 'payroll.tax_filing.submitted'
+    | 'payroll.shadow_cycle.compared'
+    | 'payroll.shadow_difference.explained'
+    | 'payroll.shadow_cycle.signed'
+    | 'payroll.cutover_readiness.eligible';
   readonly tenantId: string;
   readonly aggregateId: string;
   readonly version: number;
@@ -44,6 +48,7 @@ export class PayrollOutboxWriter {
     }
     this.assertTaxEvent(event);
     this.assertReconciliationEvent(event);
+    this.assertShadowEvent(event);
     const eventId = createEventId(new Date(event.occurredAt));
     const eventType = `cn.gaoq.erp.${event.type}.v1`;
     const envelope: CloudEvent<Record<string, unknown>> & { readonly schemaVersion: '1' } = {
@@ -131,6 +136,55 @@ export class PayrollOutboxWriter {
       !['reconciled', 'frozen'].includes(String(data['status']))
     ) throw new Error('PAYROLL_RECONCILIATION_OUTBOX_DATA_INVALID');
   }
+
+  private assertShadowEvent(event: PayrollEvent): void {
+    if (!event.type.startsWith('payroll.shadow_') &&
+      event.type !== 'payroll.cutover_readiness.eligible') return;
+    const data = event.data;
+    const keys = Object.keys(data).sort().join(',');
+    if (event.type === 'payroll.shadow_cycle.compared') {
+      if (
+        keys !== 'comparisonHash,differenceCount,erpEmployeeCount,legacyEmployeeCount,payrollRunId,period,sourceManifestHash,status,totalAbsoluteDifferenceMinor' ||
+        !month(data['period']) || !safeId(data['payrollRunId']) ||
+        !hash(data['comparisonHash']) || !hash(data['sourceManifestHash']) ||
+        !positive(data['erpEmployeeCount']) || !positive(data['legacyEmployeeCount']) ||
+        !nonnegative(data['differenceCount']) || !nonnegative(data['totalAbsoluteDifferenceMinor']) ||
+        !['needs_explanation', 'ready_for_payroll_signoff'].includes(String(data['status']))
+      ) throw new Error('PAYROLL_SHADOW_OUTBOX_DATA_INVALID');
+      return;
+    }
+    if (event.type === 'payroll.shadow_difference.explained') {
+      if (
+        keys !== 'comparisonHash,differenceCount,explainedDifferenceCount,period,status,unresolvedDifferenceCount' ||
+        !month(data['period']) || !hash(data['comparisonHash']) ||
+        !nonnegative(data['differenceCount']) || !nonnegative(data['explainedDifferenceCount']) ||
+        !nonnegative(data['unresolvedDifferenceCount']) ||
+        Number(data['explainedDifferenceCount']) + Number(data['unresolvedDifferenceCount']) !==
+          Number(data['differenceCount']) ||
+        !['needs_explanation', 'ready_for_payroll_signoff'].includes(String(data['status']))
+      ) throw new Error('PAYROLL_SHADOW_OUTBOX_DATA_INVALID');
+      return;
+    }
+    if (event.type === 'payroll.shadow_cycle.signed') {
+      if (
+        keys !== 'comparisonHash,differenceCount,explanationSetHash,period,signoffEvidenceHash,signoffRole,status,strongAuthMethod' ||
+        !month(data['period']) || !hash(data['comparisonHash']) ||
+        !hash(data['explanationSetHash']) || !hash(data['signoffEvidenceHash']) ||
+        !nonnegative(data['differenceCount']) ||
+        !['payroll_owner', 'finance_owner'].includes(String(data['signoffRole'])) ||
+        (data['signoffRole'] === 'payroll_owner'
+          ? data['status'] !== 'payroll_signed' : data['status'] !== 'signed') ||
+        data['strongAuthMethod'] !== 'webauthn_uv'
+      ) throw new Error('PAYROLL_SHADOW_OUTBOX_DATA_INVALID');
+      return;
+    }
+    if (
+      keys !== 'endPeriod,evidenceHash,firstCycleId,secondCycleId,startPeriod,status' ||
+      !month(data['startPeriod']) || !month(data['endPeriod']) ||
+      !safeId(data['firstCycleId']) || !safeId(data['secondCycleId']) ||
+      !hash(data['evidenceHash']) || data['status'] !== 'eligible'
+    ) throw new Error('PAYROLL_SHADOW_OUTBOX_DATA_INVALID');
+  }
 }
 
 function safeId(value: string | number | null | undefined): boolean {
@@ -147,4 +201,12 @@ function nonnegative(value: string | number | null | undefined): boolean {
 
 function positive(value: string | number | null | undefined): boolean {
   return integer(value) && Number(value) > 0;
+}
+
+function hash(value: string | number | null | undefined): boolean {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{43}$/.test(value);
+}
+
+function month(value: string | number | null | undefined): boolean {
+  return typeof value === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(value);
 }

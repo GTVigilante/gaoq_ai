@@ -7,9 +7,14 @@ import {
   PayrollReconciliationRecordSchema,
   PayrollRulePackRecordSchema,
   PayrollTaxFilingRecordSchema,
+  PayrollShadowCycleRecordSchema,
+  PayrollShadowExplanationRecordSchema,
+  PayrollShadowSignoffRecordSchema,
+  PayrollCutoverReadinessRecordSchema,
   type PayrollCompensationProfileRecord,
   type PayrollReconciliationRecord,
   type PayrollTaxFilingRecord,
+  type PayrollShadowCycleRecord,
 } from './payroll.schemas.js';
 
 const mongoose = new Mongoose();
@@ -21,6 +26,9 @@ const TaxFilingModel = mongoose.model<PayrollTaxFilingRecord>(
 );
 const ReconciliationModel = mongoose.model<PayrollReconciliationRecord>(
   'SpecPayrollReconciliation', PayrollReconciliationRecordSchema,
+);
+const ShadowCycleModel = mongoose.model<PayrollShadowCycleRecord>(
+  'SpecPayrollShadowCycle', PayrollShadowCycleRecordSchema,
 );
 
 describe('Payroll 持久化契约', () => {
@@ -110,5 +118,34 @@ describe('Payroll 持久化契约', () => {
     }).validate()).rejects.toThrow(/differences/);
     expect(JSON.stringify(new ReconciliationModel(base).toObject()))
       .not.toMatch(/employeeId|account|identityEvidence|objectRef/u);
+  });
+
+  it('影子周期只保存密文与控制量，并以租户前缀约束全部业务唯一键', async () => {
+    const document = new ShadowCycleModel({
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4C2', tenantId: 'tenant-001',
+      periodId: '01J8ZQK7V0A2M4N6P8R0T2W4P2',
+      payrollRunId: '01J8ZQK7V0A2M4N6P8R0T2W4R2', period: '2026-07',
+      sourceSystem: 'legacy-payroll', sourceExportId: 'legacy-export-001',
+      sourceObjectEvidenceId: 'legacy-worm-001',
+      sourceSignatureEvidenceId: 'legacy-signature-001',
+      sourceManifestHash: 'm'.repeat(43), payrollResultHash: 'p'.repeat(43),
+      comparisonHash: 'c'.repeat(43), erpEmployeeCount: 1, legacyEmployeeCount: 1,
+      erpTotalGrossMinor: 100_000, legacyTotalGrossMinor: 100_000,
+      erpTotalTaxMinor: 1_000, legacyTotalTaxMinor: 1_000,
+      erpTotalNetMinor: 90_000, legacyTotalNetMinor: 90_000,
+      differenceCount: 0, differenceCodes: [], totalAbsoluteDifferenceMinor: 0,
+      importedBy: 'legacy-connector', version: 1,
+      dataKeyId: 'payroll-key-001', dataIv: 'a'.repeat(16),
+      dataCiphertext: 'b'.repeat(32), dataAuthTag: 'c'.repeat(22),
+    });
+    await expect(document.validate()).resolves.toBeUndefined();
+    expect(document.toObject()).not.toHaveProperty('lines');
+    expect(JSON.stringify(document.toObject())).not.toContain('employeeId');
+    for (const schema of [
+      PayrollShadowCycleRecordSchema, PayrollShadowExplanationRecordSchema,
+      PayrollShadowSignoffRecordSchema, PayrollCutoverReadinessRecordSchema,
+    ]) for (const [key, options] of schema.indexes()) {
+      if (options.unique === true) expect(Object.keys(key)[0]).toBe('tenantId');
+    }
   });
 });

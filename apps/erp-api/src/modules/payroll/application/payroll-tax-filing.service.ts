@@ -8,11 +8,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { ConfigService } from '@nestjs/config';
 import { createEventId } from '@gaoq/shared-utils';
 import type { ClientSession, Model } from 'mongoose';
 import { z } from 'zod';
 
 import { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
+import type { AppEnvironment } from '../../../config/environment.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import {
   EmploymentRepository,
@@ -88,6 +90,7 @@ export class PayrollTaxFilingService {
     private readonly crypto: PayrollDataCryptoService,
     private readonly archive: PayrollTaxImmutableArchive,
     private readonly gateway: PayrollTaxGateway,
+    private readonly config: ConfigService<AppEnvironment, true>,
     private readonly outbox: PayrollOutboxWriter,
     @InjectModel(PayrollPeriodRecord.name)
     private readonly periods: Model<PayrollPeriodDocument>,
@@ -193,6 +196,12 @@ export class PayrollTaxFilingService {
       throw new ForbiddenException({
         code: 'PAYROLL_TAX_SUBMISSION_SERVICE_REQUIRED',
         message: '只允许受信任税务连接器执行个税申报提交',
+      });
+    }
+    if (this.config.get('PAYROLL_TAX_GATEWAY_MODE', { infer: true }) === 'production') {
+      throw new ConflictException({
+        code: 'PAYROLL_TAX_PRODUCTION_CUTOVER_NOT_AUTHORIZED',
+        message: 'Phase 6 总体 Go/No-Go 与生产切换授权尚未落地，真实税务申报失败关闭',
       });
     }
     if (!ULID.test(filingId) || !Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {

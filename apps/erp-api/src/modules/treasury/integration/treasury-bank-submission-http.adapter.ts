@@ -20,6 +20,7 @@ const receiptSchema = z.object({
   objectRef: z.string().regex(OBJECT_REF_PATTERN), fileHash: z.string().regex(HASH_PATTERN),
   lineCount: z.number().int().min(1).max(5_000),
   totalMinor: z.number().int().safe().positive(),
+  submissionMode: z.literal('sandbox'),
 }).strict();
 
 /** 独立银行提交 HTTPS Adapter；只传 WORM 引用和批次控制量，不处理账户或文件正文。 */
@@ -34,10 +35,14 @@ export class HttpTreasuryBankSubmissionGateway extends TreasuryBankSubmissionGat
     assertInput(input);
     const endpoint = this.config.get('TREASURY_BANK_SUBMISSION_ENDPOINT', { infer: true });
     const token = this.config.get('TREASURY_BANK_SUBMISSION_BEARER_TOKEN', { infer: true });
+    const submissionMode = this.config.get('TREASURY_BANK_SUBMISSION_MODE', { infer: true });
     if (endpoint === undefined || token === undefined) {
       throw new Error('TREASURY_BANK_SUBMISSION_UNAVAILABLE');
     }
-    const body = JSON.stringify(input);
+    if (submissionMode !== 'sandbox') {
+      throw new Error('TREASURY_BANK_PRODUCTION_SUBMISSION_NOT_AUTHORIZED');
+    }
+    const body = JSON.stringify({ ...input, submissionMode });
     const response = await safeFetch(safeEndpoint(endpoint), {
       method: 'POST', redirect: 'error', signal: AbortSignal.timeout(60_000),
       headers: {
@@ -46,7 +51,7 @@ export class HttpTreasuryBankSubmissionGateway extends TreasuryBankSubmissionGat
         'content-length': String(Buffer.byteLength(body)),
         'idempotency-key': digest([
           'treasury-bank-submit', input.tenantId, input.batchId, input.objectRef,
-          input.fileHash, String(input.lineCount), String(input.totalMinor),
+          input.fileHash, String(input.lineCount), String(input.totalMinor), submissionMode,
         ]),
       },
       body,
@@ -55,7 +60,8 @@ export class HttpTreasuryBankSubmissionGateway extends TreasuryBankSubmissionGat
     if (
       !parsed.success || parsed.data.batchId !== input.batchId ||
       parsed.data.objectRef !== input.objectRef || parsed.data.fileHash !== input.fileHash ||
-      parsed.data.lineCount !== input.lineCount || parsed.data.totalMinor !== input.totalMinor
+      parsed.data.lineCount !== input.lineCount || parsed.data.totalMinor !== input.totalMinor ||
+      parsed.data.submissionMode !== submissionMode
     ) throw new Error('TREASURY_BANK_SUBMISSION_RECEIPT_INVALID');
     return Object.freeze({
       submissionId: parsed.data.submissionId,

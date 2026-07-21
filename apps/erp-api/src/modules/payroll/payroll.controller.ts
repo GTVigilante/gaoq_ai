@@ -16,6 +16,12 @@ import {
   type PayrollTaxFilingSummary,
 } from './application/payroll-tax-filing.service.js';
 import {
+  PayrollShadowService,
+  type PayrollCutoverReadinessSummary,
+  type PayrollShadowCycleSummary,
+  type PayrollShadowDifferenceView,
+} from './application/payroll-shadow.service.js';
+import {
   AttestCompensationProfileDto,
   AttestPayrollRulePackDto,
   ApprovePayrollTaxFilingDto,
@@ -26,6 +32,9 @@ import {
   PreparePayrollTaxFilingDto,
   StartPayrollCollectionDto,
   SubmitPayrollTaxFilingDto,
+  ExplainShadowPayrollDifferenceDto,
+  ImportShadowPayrollCycleDto,
+  SignShadowPayrollCycleDto,
 } from './application/payroll.dto.js';
 
 @Controller('payroll')
@@ -37,8 +46,123 @@ export class PayrollController {
     private readonly masterData: PayrollMasterDataService,
     private readonly taxFilings: PayrollTaxFilingService,
     private readonly reconciliations: PayrollReconciliationService,
+    private readonly shadows: PayrollShadowService,
     private readonly audit: AuditService,
   ) {}
+
+  /** 影子周期脱敏控制摘要；不返回员工级差异、解释正文或 WORM 地址。 */
+  @Get('shadow-cycles/:id')
+  @RequiredScopes('erp:payroll:shadow:read')
+  async getShadowCycle(@Param('id') id: string): Promise<PayrollShadowCycleSummary> {
+    const result = await this.shadows.getCycle(id);
+    await this.auditShadow('payroll.shadow_cycle.read', result, 'R1');
+    return result;
+  }
+
+  /** L4：仅 ERP 受控财务界面可读，MCP 不暴露行级员工与金额差异。 */
+  @Get('shadow-cycles/:id/differences')
+  @RequiredScopes('erp:payroll:shadow:difference:read')
+  async getShadowDifferences(@Param('id') id: string): Promise<readonly PayrollShadowDifferenceView[]> {
+    const result = await this.shadows.getDifferences(id);
+    await this.audit.record({
+      action: 'payroll.shadow_difference.read', resourceType: 'payroll_shadow_cycle',
+      resourceId: id, riskLevel: 'R1', outcome: 'success', metadata: {
+        differenceCount: result.length,
+        explainedDifferenceCount: result.filter((item) => item.explanationCode !== null).length,
+      },
+    });
+    return result;
+  }
+
+  /** 只读两期可切换资格证据；此接口绝不执行事实源切换。 */
+  @Get('cutover-readiness/:id')
+  @RequiredScopes('erp:payroll:shadow:read')
+  async getCutoverReadiness(@Param('id') id: string): Promise<PayrollCutoverReadinessSummary> {
+    const result = await this.shadows.getReadiness(id);
+    await this.audit.record({
+      action: 'payroll.cutover_readiness.read', resourceType: 'payroll_cutover_readiness',
+      resourceId: result.id, riskLevel: 'R1', outcome: 'success', metadata: {
+        firstCycleId: result.firstCycleId, secondCycleId: result.secondCycleId,
+        startPeriod: result.startPeriod, endPeriod: result.endPeriod,
+        evidenceHash: result.evidenceHash, status: result.status,
+      },
+    });
+    return result;
+  }
+
+  /** R3：受信任旧系统连接器导入带 WORM 与验签证据的完整工资清单。 */
+  @Post('periods/:id/shadow-cycles')
+  @RequiredScopes('erp:payroll:shadow:import')
+  async importShadowCycle(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Body() body: ImportShadowPayrollCycleDto,
+  ): Promise<PayrollShadowCycleSummary> {
+    const result = await this.shadows.importCycle(this.key(key), {
+      periodId: id, sourceSystem: body.sourceSystem, sourceExportId: body.sourceExportId,
+      sourceObjectEvidenceId: body.sourceObjectEvidenceId,
+      sourceSignatureEvidenceId: body.sourceSignatureEvidenceId,
+      sourceManifestHash: body.sourceManifestHash, lines: body.lines,
+    });
+    await this.auditShadow('payroll.shadow_cycle.import', result, 'R3');
+    return result;
+  }
+
+  /** R2：追加标准差异归因与独立证据引用；不修改比较结果。 */
+  @Post('shadow-cycles/:cycleId/differences/:differenceId/explanation')
+  @RequiredScopes('erp:payroll:shadow:explain')
+  async explainShadowDifference(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('cycleId') cycleId: string,
+    @Param('differenceId') differenceId: string,
+    @Body() body: ExplainShadowPayrollDifferenceDto,
+  ): Promise<PayrollShadowCycleSummary> {
+    const result = await this.shadows.explainDifference(
+      this.key(key), cycleId, differenceId, body.explanationCode, body.evidenceId,
+    );
+    await this.auditShadow('payroll.shadow_difference.explain', result, 'R2');
+    return result;
+  }
+
+  /** R3：独立薪酬负责人先签比较证据；MCP 永不注册此动作。 */
+  @Post('shadow-cycles/:id/payroll-signoff')
+  @RequiredScopes('erp:payroll:shadow:sign_payroll')
+  async signShadowCycleByPayroll(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Body() body: SignShadowPayrollCycleDto,
+    @Req() request: ErpRequest,
+  ): Promise<PayrollShadowCycleSummary> {
+    if (request.verifiedAccessToken === undefined) throw new BadRequestException({
+      code: 'SHADOW_PAYROLL_SIGNOFF_TOKEN_REQUIRED',
+      message: '影子周期薪酬签署必须使用已验证人员访问令牌',
+    });
+    const result = await this.shadows.signCycle(
+      this.key(key), id, body.strongAuthEvidenceId, request.verifiedAccessToken, 'payroll_owner',
+    );
+    await this.auditShadow('payroll.shadow_cycle.sign_payroll', result, 'R3');
+    return result;
+  }
+
+  /** R3：薪酬签署后由独立财务负责人复签；MCP 永不注册此动作。 */
+  @Post('shadow-cycles/:id/finance-signoff')
+  @RequiredScopes('erp:payroll:shadow:sign_finance')
+  async signShadowCycleByFinance(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Body() body: SignShadowPayrollCycleDto,
+    @Req() request: ErpRequest,
+  ): Promise<PayrollShadowCycleSummary> {
+    if (request.verifiedAccessToken === undefined) throw new BadRequestException({
+      code: 'SHADOW_PAYROLL_SIGNOFF_TOKEN_REQUIRED',
+      message: '影子周期财务签署必须使用已验证人员访问令牌',
+    });
+    const result = await this.shadows.signCycle(
+      this.key(key), id, body.strongAuthEvidenceId, request.verifiedAccessToken, 'finance_owner',
+    );
+    await this.auditShadow('payroll.shadow_cycle.sign_finance', result, 'R3');
+    return result;
+  }
 
   /** 四方对账只读控制摘要；不返回员工、账户、税务正文或外部对象地址。 */
   @Get('reconciliations/:id')
@@ -287,6 +411,28 @@ export class PayrollController {
         objectEvidenceId: filing.objectEvidenceId ?? 'none',
         taxSubmissionId: filing.taxSubmissionId ?? 'none',
         taxSubmissionEvidenceId: filing.taxSubmissionEvidenceId ?? 'none',
+      },
+    });
+  }
+
+  private async auditShadow(
+    action: string,
+    cycle: PayrollShadowCycleSummary,
+    riskLevel: 'R1' | 'R2' | 'R3',
+  ): Promise<void> {
+    await this.audit.record({
+      action, resourceType: 'payroll_shadow_cycle', resourceId: cycle.id,
+      riskLevel, outcome: 'success', metadata: {
+        periodId: cycle.periodId, payrollRunId: cycle.payrollRunId, period: cycle.period,
+        sourceSystem: cycle.sourceSystem, sourceManifestHash: cycle.sourceManifestHash,
+        comparisonHash: cycle.comparisonHash, status: cycle.status,
+        differenceCount: cycle.differenceCount,
+        explainedDifferenceCount: cycle.explainedDifferenceCount,
+        unresolvedDifferenceCount: cycle.unresolvedDifferenceCount,
+        totalAbsoluteDifferenceMinor: cycle.totalAbsoluteDifferenceMinor,
+        payrollSignoffId: cycle.payrollSignoffId ?? 'none',
+        financeSignoffId: cycle.financeSignoffId ?? 'none',
+        cutoverReadinessId: cycle.cutoverReadinessId ?? 'none',
       },
     });
   }

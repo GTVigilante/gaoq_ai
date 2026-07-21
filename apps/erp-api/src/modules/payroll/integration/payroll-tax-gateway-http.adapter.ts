@@ -18,6 +18,7 @@ const receiptSchema = z.object({
   contentHash: z.string().regex(HASH), employeeCount: z.number().int().min(1).max(5_000),
   totalTaxableEarningsMinor: z.number().int().safe().nonnegative(),
   totalWithholdingTaxMinor: z.number().int().safe(),
+  submissionMode: z.literal('sandbox'),
 }).strict();
 
 @Injectable()
@@ -40,8 +41,10 @@ export class HttpPayrollTaxGateway extends PayrollTaxGateway {
     ) throw new Error('PAYROLL_TAX_GATEWAY_INPUT_INVALID');
     const endpoint = this.config.get('PAYROLL_TAX_GATEWAY_ENDPOINT', { infer: true });
     const token = this.config.get('PAYROLL_TAX_GATEWAY_BEARER_TOKEN', { infer: true });
+    const submissionMode = this.config.get('PAYROLL_TAX_GATEWAY_MODE', { infer: true });
     if (endpoint === undefined || token === undefined) throw new Error('PAYROLL_TAX_GATEWAY_UNAVAILABLE');
-    const body = JSON.stringify(input);
+    if (submissionMode !== 'sandbox') throw new Error('PAYROLL_TAX_PRODUCTION_SUBMISSION_NOT_AUTHORIZED');
+    const body = JSON.stringify({ ...input, submissionMode });
     const response = await safeFetch(safePayrollTaxEndpoint(endpoint), {
       method: 'POST', redirect: 'error', signal: AbortSignal.timeout(60_000), body,
       headers: {
@@ -52,14 +55,18 @@ export class HttpPayrollTaxGateway extends PayrollTaxGateway {
           'payroll-tax-submit', input.tenantId, input.filingId, input.period, input.objectRef,
           input.contentHash, String(input.employeeCount),
           String(input.totalTaxableEarningsMinor), String(input.totalWithholdingTaxMinor),
+          submissionMode,
         ]),
       },
     });
     const parsed = receiptSchema.safeParse(await readBoundedJson(
       response, 'PAYROLL_TAX_GATEWAY_RECEIPT_INVALID', 'PAYROLL_TAX_GATEWAY_RECEIPT_TOO_LARGE',
     ));
-    if (!parsed.success || Object.entries(input).some(([key, value]) =>
-      parsed.data[key as keyof typeof parsed.data] !== value)) {
+    if (
+      !parsed.success || parsed.data.submissionMode !== submissionMode ||
+      Object.entries(input).some(([key, value]) =>
+        parsed.data[key as keyof typeof parsed.data] !== value)
+    ) {
       throw new Error('PAYROLL_TAX_GATEWAY_RECEIPT_INVALID');
     }
     return Object.freeze({

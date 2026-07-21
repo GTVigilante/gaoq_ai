@@ -22,7 +22,8 @@ Phase 4 在 ERP 组织与劳动关系主数据之上，建立可重放的考勤�
 16. [Payroll Tax 索引迁移 Runbook](./15-payroll-tax-index-migration-runbook.md)
 17. [工资、代发、回盘与个税四方对账](./16-payroll-four-way-reconciliation.md)
 18. [Payroll 四方对账索引迁移 Runbook](./17-payroll-reconciliation-index-migration-runbook.md)
-19. 两个完整薪资周期影子计算、差异归因与财务签署
+19. [两个完整工资影子周期、差异归因与财务签署](./18-payroll-shadow-cycles.md)
+20. [Payroll 影子周期索引迁移 Runbook](./19-payroll-shadow-index-migration-runbook.md)
 
 ## 强制边界
 

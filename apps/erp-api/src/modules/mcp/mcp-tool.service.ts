@@ -22,6 +22,7 @@ import { PayrollRunService } from '../payroll/application/payroll-run.service.js
 import { PayrollPayslipService } from '../payroll/application/payroll-payslip.service.js';
 import { PayrollTaxFilingService } from '../payroll/application/payroll-tax-filing.service.js';
 import { PayrollReconciliationService } from '../payroll/application/payroll-reconciliation.service.js';
+import { PayrollShadowService } from '../payroll/application/payroll-shadow.service.js';
 import { parseMcpIdentity, type McpIdentity } from './mcp-auth-context.js';
 import {
   McpConfirmationService,
@@ -66,6 +67,7 @@ export class McpToolService {
     private readonly payslips: PayrollPayslipService,
     private readonly taxFilings: PayrollTaxFilingService,
     private readonly reconciliations: PayrollReconciliationService,
+    private readonly shadows: PayrollShadowService,
     private readonly confirmations: McpConfirmationService,
   ) {}
 
@@ -211,6 +213,39 @@ export class McpToolService {
         differenceCount: reconciliation.differences.length,
       });
       return structuredResult({ reconciliation });
+    });
+  }
+
+  async getPayrollShadowCycle(id: string, extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:payroll:shadow:read')) {
+        await this.auditTool(identity, 'payroll_shadow_cycle_get', 'R1', 'denied');
+        return scopeError('erp:payroll:shadow:read');
+      }
+      const shadowCycle = await this.shadows.getCycle(id);
+      await this.auditTool(identity, 'payroll_shadow_cycle_get', 'R1', 'success', {
+        cycleId: shadowCycle.id, period: shadowCycle.period, status: shadowCycle.status,
+        comparisonHash: shadowCycle.comparisonHash,
+        unresolvedDifferenceCount: shadowCycle.unresolvedDifferenceCount,
+      });
+      return structuredResult({ shadowCycle });
+    });
+  }
+
+  async getPayrollCutoverReadiness(id: string, extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:payroll:shadow:read')) {
+        await this.auditTool(identity, 'payroll_cutover_readiness_get', 'R1', 'denied');
+        return scopeError('erp:payroll:shadow:read');
+      }
+      const cutoverReadiness = await this.shadows.getReadiness(id);
+      await this.auditTool(identity, 'payroll_cutover_readiness_get', 'R1', 'success', {
+        readinessId: cutoverReadiness.id, startPeriod: cutoverReadiness.startPeriod,
+        endPeriod: cutoverReadiness.endPeriod, evidenceHash: cutoverReadiness.evidenceHash,
+      });
+      return structuredResult({ cutoverReadiness });
     });
   }
 

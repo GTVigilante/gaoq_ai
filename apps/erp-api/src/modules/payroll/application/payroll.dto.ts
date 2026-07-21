@@ -81,3 +81,40 @@ export class AttestPayrollRulePackDto {
   @Matches(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/) sourceReference!: string;
   @Matches(ULID) approvalEvidenceId!: string;
 }
+
+export class LegacyShadowPayrollLineDto {
+  @Matches(ID) employeeId!: string;
+  @Matches(ID) sourceLineId!: string;
+  @IsInt() @Min(0) @Max(Number.MAX_SAFE_INTEGER) grossPayMinor!: number;
+  @IsInt() @Min(Number.MIN_SAFE_INTEGER) @Max(Number.MAX_SAFE_INTEGER)
+  withholdingTaxMinor!: number;
+  @IsInt() @Min(0) @Max(Number.MAX_SAFE_INTEGER) netPayMinor!: number;
+  @Matches(/^[A-Za-z0-9_-]{43}$/) resultHash!: string;
+}
+
+export class ImportShadowPayrollCycleDto {
+  @Matches(ID) sourceSystem!: string;
+  @Matches(ID) sourceExportId!: string;
+  @Matches(ID) sourceObjectEvidenceId!: string;
+  @Matches(ID) sourceSignatureEvidenceId!: string;
+  @Matches(/^[A-Za-z0-9_-]{43}$/) sourceManifestHash!: string;
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(5_000)
+  @ValidateNested({ each: true }) @Type(() => LegacyShadowPayrollLineDto)
+  lines!: LegacyShadowPayrollLineDto[];
+}
+
+export class ExplainShadowPayrollDifferenceDto {
+  @Matches(/^(LEGACY_RULE_VERSION|LEGACY_INPUT_CUTOFF|LEGACY_ROUNDING|LEGACY_MASTER_DATA|APPROVED_MANUAL_ADJUSTMENT|OTHER_VERIFIED)$/)
+  explanationCode!:
+    | 'LEGACY_RULE_VERSION'
+    | 'LEGACY_INPUT_CUTOFF'
+    | 'LEGACY_ROUNDING'
+    | 'LEGACY_MASTER_DATA'
+    | 'APPROVED_MANUAL_ADJUSTMENT'
+    | 'OTHER_VERIFIED';
+  @Matches(ID) evidenceId!: string;
+}
+
+export class SignShadowPayrollCycleDto {
+  @Matches(ULID) strongAuthEvidenceId!: string;
+}

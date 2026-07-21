@@ -1,5 +1,6 @@
 import type { ActorContext } from '@gaoq/shared-types';
 import type { ClientSession } from 'mongoose';
+import { ConfigService } from '@nestjs/config';
 import { describe, expect, it, vi } from 'vitest';
 
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
@@ -44,7 +45,10 @@ function query<T>(resolve: () => T | Promise<T>) {
   return value;
 }
 
-function assemble(lockedBy = 'payroll-locker') {
+function assemble(
+  lockedBy = 'payroll-locker',
+  submissionMode: 'sandbox' | 'production' = 'sandbox',
+) {
   const context = new TenantContextService();
   const protectedValues = new Map<string, unknown>([
     ['debtor-cipher', {
@@ -143,7 +147,9 @@ function assemble(lockedBy = 'payroll-locker') {
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
   const service = new TreasuryDisbursementService(
     idempotency as never, context, payroll as never, strongAuth as never, crypto as never,
-    archive, bankGateway, outbox as never, accounts as never,
+    archive, bankGateway,
+    new ConfigService({ TREASURY_BANK_SUBMISSION_MODE: submissionMode }) as never,
+    outbox as never, accounts as never,
     instructions as never, batches as never,
   );
   return {
@@ -153,6 +159,19 @@ function assemble(lockedBy = 'payroll-locker') {
 }
 
 describe('TreasuryDisbursementService', () => {
+  it('Phase 6 总体切换授权未实现前真实银行模式始终失败关闭', async () => {
+    const store = assemble('payroll-locker', 'production');
+    const connector: ActorContext = {
+      actorType: 'service', actorId: 'bank-connector', tenantId: tenant.tenantId,
+      roleCodes: [], scopes: ['erp:treasury:disbursement:submit'],
+      departmentIds: [], traceId: 'trace-bank-production-gate',
+    };
+    await expect(store.context.run({ tenant, actor: connector }, () => store.service.submit(
+      'treasury-production-submit', '01J8ZQK7V0A2M4N6P8R0T2W4B1', { expectedVersion: 3 },
+    ))).rejects.toThrow('真实银行提交失败关闭');
+    expect(store.bankGateway.submit).not.toHaveBeenCalled();
+  });
+
   it('从锁定工资形成密文指令，WORM 成功后才把批次转为 prepared', async () => {
     const store = assemble();
     const result = await store.context.run({ tenant, actor: actor() }, () =>

@@ -367,3 +367,180 @@ PayrollReconciliationRecordSchema.index({ tenantId: 1, periodId: 1 }, { unique: 
 PayrollReconciliationRecordSchema.index({ tenantId: 1, payrollRunId: 1 }, { unique: true });
 PayrollReconciliationRecordSchema.index({ tenantId: 1, batchId: 1 }, { unique: true });
 PayrollReconciliationRecordSchema.index({ tenantId: 1, status: 1, createdAt: 1 });
+
+const SHADOW_DIFFERENCE_CODES = [
+  'LEGACY_EMPLOYEE_MISSING',
+  'ERP_EMPLOYEE_MISSING',
+  'GROSS_AMOUNT_MISMATCH',
+  'WITHHOLDING_TAX_MISMATCH',
+  'NET_AMOUNT_MISMATCH',
+] as const;
+
+/** 单个薪资影子周期的不可变控制证据；旧系统行清单只保存在本记录密文与独立 WORM。 */
+@Schema({ collection: 'payroll_shadow_cycles', timestamps: true, versionKey: false, id: false })
+export class PayrollShadowCycleRecord extends ProtectedPayrollRecord {
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) id!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  tenantId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) periodId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) payrollRunId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: MONTH_PATTERN }) period!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  sourceSystem!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  sourceExportId!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  sourceObjectEvidenceId!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  sourceSignatureEvidenceId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  sourceManifestHash!: string;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  payrollResultHash!: string;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  comparisonHash!: string;
+  @Prop({ type: Number, required: true, immutable: true, min: 1, max: 5_000 })
+  erpEmployeeCount!: number;
+  @Prop({ type: Number, required: true, immutable: true, min: 1, max: 5_000 })
+  legacyEmployeeCount!: number;
+  @Prop({ type: Number, required: true, immutable: true, min: 0, max: Number.MAX_SAFE_INTEGER })
+  erpTotalGrossMinor!: number;
+  @Prop({ type: Number, required: true, immutable: true, min: 0, max: Number.MAX_SAFE_INTEGER })
+  legacyTotalGrossMinor!: number;
+  @Prop({ type: Number, required: true, immutable: true }) erpTotalTaxMinor!: number;
+  @Prop({ type: Number, required: true, immutable: true }) legacyTotalTaxMinor!: number;
+  @Prop({ type: Number, required: true, immutable: true, min: 0, max: Number.MAX_SAFE_INTEGER })
+  erpTotalNetMinor!: number;
+  @Prop({ type: Number, required: true, immutable: true, min: 0, max: Number.MAX_SAFE_INTEGER })
+  legacyTotalNetMinor!: number;
+  @Prop({ type: Number, required: true, immutable: true, min: 0, max: 15_000 })
+  differenceCount!: number;
+  @Prop({ type: [String], required: true, immutable: true, enum: SHADOW_DIFFERENCE_CODES })
+  differenceCodes!: string[];
+  @Prop({ type: Number, required: true, immutable: true, min: 0, max: Number.MAX_SAFE_INTEGER })
+  totalAbsoluteDifferenceMinor!: number;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  importedBy!: string;
+  @Prop({ type: Number, required: true, immutable: true, min: 1 }) version!: number;
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+export type PayrollShadowCycleDocument = HydratedDocument<PayrollShadowCycleRecord>;
+export const PayrollShadowCycleRecordSchema = SchemaFactory.createForClass(PayrollShadowCycleRecord);
+PayrollShadowCycleRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
+PayrollShadowCycleRecordSchema.index({ tenantId: 1, periodId: 1 }, { unique: true });
+PayrollShadowCycleRecordSchema.index({ tenantId: 1, payrollRunId: 1 }, { unique: true });
+PayrollShadowCycleRecordSchema.index({ tenantId: 1, sourceSystem: 1, sourceExportId: 1 }, { unique: true });
+PayrollShadowCycleRecordSchema.index({ tenantId: 1, period: 1 });
+
+/** 行级差异为不可变 L4 密文；明文只保留标准码与完整性摘要。 */
+@Schema({ collection: 'payroll_shadow_differences', timestamps: true, versionKey: false, id: false })
+export class PayrollShadowDifferenceRecord extends ProtectedPayrollRecord {
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) id!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  tenantId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) cycleId!: string;
+  @Prop({ type: String, required: true, immutable: true, enum: SHADOW_DIFFERENCE_CODES })
+  code!: string;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  evidenceHash!: string;
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+export type PayrollShadowDifferenceDocument = HydratedDocument<PayrollShadowDifferenceRecord>;
+export const PayrollShadowDifferenceRecordSchema = SchemaFactory.createForClass(
+  PayrollShadowDifferenceRecord,
+);
+PayrollShadowDifferenceRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
+PayrollShadowDifferenceRecordSchema.index({ tenantId: 1, cycleId: 1, evidenceHash: 1 }, { unique: true });
+PayrollShadowDifferenceRecordSchema.index({ tenantId: 1, cycleId: 1, code: 1 });
+
+const SHADOW_EXPLANATION_CODES = [
+  'LEGACY_RULE_VERSION', 'LEGACY_INPUT_CUTOFF', 'LEGACY_ROUNDING',
+  'LEGACY_MASTER_DATA', 'APPROVED_MANUAL_ADJUSTMENT', 'OTHER_VERIFIED',
+] as const;
+
+/** 差异解释采用追加式证据，一条差异只能形成一次最终归因。 */
+@Schema({ collection: 'payroll_shadow_explanations', timestamps: true, versionKey: false, id: false })
+export class PayrollShadowExplanationRecord {
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) id!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  tenantId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) cycleId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) differenceId!: string;
+  @Prop({ type: String, required: true, immutable: true, enum: SHADOW_EXPLANATION_CODES })
+  explanationCode!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  evidenceId!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  explainedBy!: string;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN }) evidenceHash!: string;
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+export type PayrollShadowExplanationDocument = HydratedDocument<PayrollShadowExplanationRecord>;
+export const PayrollShadowExplanationRecordSchema = SchemaFactory.createForClass(
+  PayrollShadowExplanationRecord,
+);
+PayrollShadowExplanationRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
+PayrollShadowExplanationRecordSchema.index({ tenantId: 1, differenceId: 1 }, { unique: true });
+PayrollShadowExplanationRecordSchema.index({ tenantId: 1, cycleId: 1, createdAt: 1 });
+
+/** 财务 WebAuthn 签署为不可变记录，与导入、工资制单、审批、锁定及归因人员隔离。 */
+@Schema({ collection: 'payroll_shadow_signoffs', timestamps: true, versionKey: false, id: false })
+export class PayrollShadowSignoffRecord {
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) id!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  tenantId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) cycleId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: MONTH_PATTERN }) period!: string;
+  @Prop({
+    type: String, required: true, immutable: true, enum: ['payroll_owner', 'finance_owner'],
+  })
+  role!: 'payroll_owner' | 'finance_owner';
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  comparisonHash!: string;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  explanationSetHash!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  signedBy!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  strongAuthEvidenceId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN }) evidenceHash!: string;
+  @Prop({ type: Date, required: true, immutable: true }) signedAt!: Date;
+  @Prop({ type: Number, required: true, immutable: true, min: 1 }) version!: number;
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+export type PayrollShadowSignoffDocument = HydratedDocument<PayrollShadowSignoffRecord>;
+export const PayrollShadowSignoffRecordSchema = SchemaFactory.createForClass(
+  PayrollShadowSignoffRecord,
+);
+PayrollShadowSignoffRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
+PayrollShadowSignoffRecordSchema.index({ tenantId: 1, cycleId: 1, role: 1 }, { unique: true });
+PayrollShadowSignoffRecordSchema.index({ tenantId: 1, period: 1, role: 1 }, { unique: true });
+
+/** 连续两个完整周期通过后的可切换证据；仅表达资格，不执行事实源切换。 */
+@Schema({ collection: 'payroll_cutover_readiness', timestamps: true, versionKey: false, id: false })
+export class PayrollCutoverReadinessRecord {
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) id!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  tenantId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) firstCycleId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) secondCycleId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: MONTH_PATTERN }) startPeriod!: string;
+  @Prop({ type: String, required: true, immutable: true, match: MONTH_PATTERN }) endPeriod!: string;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN }) evidenceHash!: string;
+  @Prop({ type: String, required: true, immutable: true, enum: ['eligible'] }) status!: 'eligible';
+  @Prop({ type: Date, required: true, immutable: true }) generatedAt!: Date;
+  @Prop({ type: Number, required: true, immutable: true, min: 1 }) version!: number;
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+export type PayrollCutoverReadinessDocument = HydratedDocument<PayrollCutoverReadinessRecord>;
+export const PayrollCutoverReadinessRecordSchema = SchemaFactory.createForClass(
+  PayrollCutoverReadinessRecord,
+);
+PayrollCutoverReadinessRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
+PayrollCutoverReadinessRecordSchema.index({ tenantId: 1, secondCycleId: 1 }, { unique: true });
+PayrollCutoverReadinessRecordSchema.index({ tenantId: 1, endPeriod: 1 }, { unique: true });
