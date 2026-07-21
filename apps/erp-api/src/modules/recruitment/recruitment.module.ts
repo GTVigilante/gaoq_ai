@@ -4,7 +4,9 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { IdempotencyModule } from '../../core/idempotency/idempotency.module.js';
 import { TenantContextModule } from '../../core/tenant/tenant-context.module.js';
 import { OrgModule } from '../org/org.module.js';
+import { OutboxRecord, OutboxRecordSchema } from '../org/persistence/outbox.schema.js';
 import { RecruitmentDataCryptoService } from './persistence/recruitment-data-crypto.service.js';
+import { RecruitmentOutboxWriter } from './persistence/recruitment-outbox.writer.js';
 import {
   CandidateApplicationRecord,
   CandidateApplicationRecordSchema,
@@ -33,9 +35,10 @@ import {
       { name: RecruitmentPositionRecord.name, schema: RecruitmentPositionRecordSchema },
       { name: CandidateApplicationRecord.name, schema: CandidateApplicationRecordSchema },
       { name: CandidateApplicationStageRecord.name, schema: CandidateApplicationStageRecordSchema },
+      { name: OutboxRecord.name, schema: OutboxRecordSchema },
     ]),
   ],
-  providers: [RecruitmentDataCryptoService],
-  exports: [RecruitmentDataCryptoService],
+  providers: [RecruitmentDataCryptoService, RecruitmentOutboxWriter],
+  exports: [RecruitmentDataCryptoService, RecruitmentOutboxWriter],
 })
 export class RecruitmentModule {}
