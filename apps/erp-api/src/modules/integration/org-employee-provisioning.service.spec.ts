@@ -13,6 +13,7 @@ import type { OrgExternalVersionStateDocument } from './org-delivery.schemas.js'
 import type { OrgPlatformCredentialService } from './org-platform-credential.service.js';
 import type { OrgProvisioningCryptoService } from './org-provisioning-crypto.service.js';
 import { OrgPushAdapterRegistry, OrgPushError } from './org-push.adapter.js';
+import type { AttendanceProviderMappingRepository } from './attendance-provider-mapping.repository.js';
 
 const trusted = {
   tenant: { tenantId: 'tenant-001', source: 'access_token' as const },
@@ -82,6 +83,7 @@ function assemble() {
   const dingtalk = { channel: 'dingtalk' as const, provisionEmployee };
   const feishu = { channel: 'feishu' as const, provisionEmployee };
   const recordSystem = vi.fn().mockResolvedValue(undefined);
+  const ensureAttendanceMapping = vi.fn().mockResolvedValue(undefined);
   const withTransaction = vi.fn(async (handler: () => Promise<void>) => handler());
   const endSession = vi.fn().mockResolvedValue(undefined);
   const startSession = vi.fn().mockResolvedValue({ withTransaction, endSession });
@@ -99,6 +101,7 @@ function assemble() {
     { findBoundByEmployee, bindProvisioned } as unknown as ExternalIdentityRepository,
     { resolveExternalTenantId } as unknown as OrgPlatformCredentialService,
     new OrgPushAdapterRegistry(dingtalk as never, feishu as never),
+    { ensure: ensureAttendanceMapping } as unknown as AttendanceProviderMappingRepository,
     { recordSystem } as unknown as AuditService,
   );
   return {
@@ -121,6 +124,7 @@ function assemble() {
     findBoundByEmployee,
     bindProvisioned,
     provisionEmployee,
+    ensureAttendanceMapping,
     recordSystem,
     withTransaction,
     endSession,
@@ -264,6 +268,9 @@ describe('OrgEmployeeProvisioningService', () => {
       'tenant-001',
       expect.objectContaining({ externalUserId: 'gq_external_user_001', unionId: 'union-001' }),
       expect.anything(),
+    );
+    expect(store.ensureAttendanceMapping).toHaveBeenCalledWith(
+      'tenant-001', 'feishu', 'employee-001', 'gq_external_user_001', expect.anything(),
     );
     const completed = store.requestUpdateOne.mock.calls[0]?.[1] as {
       readonly $set: Record<string, unknown>;

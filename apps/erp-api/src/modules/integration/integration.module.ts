@@ -6,6 +6,7 @@ import { AuditModule } from '../../core/audit/audit.module.js';
 import { IdempotencyModule } from '../../core/idempotency/idempotency.module.js';
 import { TenantContextModule } from '../../core/tenant/tenant-context.module.js';
 import { AccessProfileRepository } from '../identity/access-profile.repository.js';
+import { AttendanceModule } from '../attendance/attendance.module.js';
 import { AccessProfile, AccessProfileSchema } from '../identity/access-profile.schema.js';
 import { ExternalIdentityRepository } from '../identity/external-identity.repository.js';
 import {
@@ -141,6 +142,22 @@ import { RecruitmentChannelPositionRelayService } from './recruitment-channel-po
 import { RecruitmentChannelPositionDeliveryService } from './recruitment-channel-position-delivery.service.js';
 import { RecruitmentChannelStageRelayService } from './recruitment-channel-stage-relay.service.js';
 import { RecruitmentChannelStageDeliveryService } from './recruitment-channel-stage-delivery.service.js';
+import {
+  AttendanceProviderRegistry,
+  DingTalkAttendanceProvider,
+  FeishuAttendanceProvider,
+} from './attendance-provider.adapter.js';
+import { AttendanceProviderPullService } from './attendance-provider-pull.service.js';
+import { AttendanceProviderMappingRepository } from './attendance-provider-mapping.repository.js';
+import { ATTENDANCE_PROVIDER_QUEUE } from './attendance-provider.queue.js';
+import {
+  AttendanceProviderEmployeeMappingRecord,
+  AttendanceProviderEmployeeMappingRecordSchema,
+  AttendanceProviderInboxRecord,
+  AttendanceProviderInboxRecordSchema,
+  AttendanceProviderStateRecord,
+  AttendanceProviderStateRecordSchema,
+} from './attendance-provider.schemas.js';
 
 /** 外部集成底座：Outbox 扇出、双平台投递、版本防乱序、重试与对账。 */
 @Module({
@@ -148,10 +165,12 @@ import { RecruitmentChannelStageDeliveryService } from './recruitment-channel-st
     AuditModule,
     IdempotencyModule,
     TenantContextModule,
+    AttendanceModule,
     RecruitmentModule,
     OrgModule,
     BullModule.registerQueue({ name: ESIGN_WEBHOOK_QUEUE }),
     BullModule.registerQueue({ name: RECRUITMENT_CHANNEL_QUEUE }),
+    BullModule.registerQueue({ name: ATTENDANCE_PROVIDER_QUEUE }),
     MongooseModule.forFeature([
       { name: OutboxRecord.name, schema: OutboxRecordSchema },
       { name: OrgDeliveryRecord.name, schema: OrgDeliveryRecordSchema },
@@ -195,6 +214,12 @@ import { RecruitmentChannelStageDeliveryService } from './recruitment-channel-st
         name: RecruitmentChannelStageDeliveryRecord.name,
         schema: RecruitmentChannelStageDeliveryRecordSchema,
       },
+      { name: AttendanceProviderStateRecord.name, schema: AttendanceProviderStateRecordSchema },
+      {
+        name: AttendanceProviderEmployeeMappingRecord.name,
+        schema: AttendanceProviderEmployeeMappingRecordSchema,
+      },
+      { name: AttendanceProviderInboxRecord.name, schema: AttendanceProviderInboxRecordSchema },
     ]),
   ],
   providers: [
@@ -221,6 +246,8 @@ import { RecruitmentChannelStageDeliveryService } from './recruitment-channel-st
     RecruitmentChannelPositionDeliveryService,
     RecruitmentChannelStageRelayService,
     RecruitmentChannelStageDeliveryService,
+    AttendanceProviderPullService,
+    AttendanceProviderMappingRepository,
     ESignCnAdapter,
     { provide: ESignAdapter, useExisting: ESignCnAdapter },
     FetchESignHttpClient,
@@ -239,6 +266,8 @@ import { RecruitmentChannelStageDeliveryService } from './recruitment-channel-st
     FeishuOrgPushAdapter,
     DingTalkRecruitmentCalendarAdapter,
     FeishuRecruitmentCalendarAdapter,
+    DingTalkAttendanceProvider,
+    FeishuAttendanceProvider,
     { provide: DINGTALK_ORG_PUSH_ADAPTER, useExisting: DingTalkOrgPushAdapter },
     { provide: FEISHU_ORG_PUSH_ADAPTER, useExisting: FeishuOrgPushAdapter },
     { provide: RECRUITMENT_CHANNEL_ADAPTERS, useValue: [] },
@@ -282,6 +311,16 @@ import { RecruitmentChannelStageDeliveryService } from './recruitment-channel-st
         verifiers: readonly RecruitmentChannelEvidenceVerifier[],
       ) => new RecruitmentChannelRegistry(adapters, normalizers, verifiers),
     },
+    {
+      provide: AttendanceProviderRegistry,
+      inject: [DingTalkAttendanceProvider, FeishuAttendanceProvider],
+      useFactory: (
+        dingtalk: DingTalkAttendanceProvider,
+        feishu: FeishuAttendanceProvider,
+      ) => new AttendanceProviderRegistry(
+        [dingtalk, feishu], [dingtalk, feishu], [dingtalk, feishu],
+      ),
+    },
   ],
   controllers: [
     IntegrationController, OrgEmployeeProvisioningController, ESignWebhookController,
@@ -306,6 +345,8 @@ import { RecruitmentChannelStageDeliveryService } from './recruitment-channel-st
     RecruitmentChannelPositionDeliveryService,
     RecruitmentChannelStageRelayService,
     RecruitmentChannelStageDeliveryService,
+    AttendanceProviderPullService,
+    AttendanceProviderRegistry,
   ],
 })
 export class IntegrationModule {}

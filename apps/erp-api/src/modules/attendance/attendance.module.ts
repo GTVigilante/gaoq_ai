@@ -46,6 +46,6 @@ import {
     AttendanceMonthlySnapshotRepository,
     AttendanceOutboxWriter,
   ],
-  exports: [AttendanceApplicationService],
+  exports: [AttendanceApplicationService, AttendanceDataCryptoService],
 })
 export class AttendanceModule {}

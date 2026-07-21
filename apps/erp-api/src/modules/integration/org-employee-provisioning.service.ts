@@ -36,6 +36,7 @@ import {
   type OrgProvisioningContact,
 } from './org-provisioning-crypto.service.js';
 import { OrgPushAdapterRegistry, OrgPushError, type OrgPushChannel } from './org-push.adapter.js';
+import { AttendanceProviderMappingRepository } from './attendance-provider-mapping.repository.js';
 
 const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
@@ -88,6 +89,7 @@ export class OrgEmployeeProvisioningService {
     private readonly identities: ExternalIdentityRepository,
     private readonly credentials: OrgPlatformCredentialService,
     private readonly adapters: OrgPushAdapterRegistry,
+    private readonly attendanceMappings: AttendanceProviderMappingRepository,
     private readonly audit: AuditService,
   ) {}
 
@@ -459,6 +461,9 @@ export class OrgEmployeeProvisioningService {
             employeeId: claim.employeeId,
           },
           session,
+        );
+        await this.attendanceMappings.ensure(
+          claim.tenantId, claim.channel, claim.employeeId, externalUserId, session,
         );
         const result = await this.requests.updateOne(
           {

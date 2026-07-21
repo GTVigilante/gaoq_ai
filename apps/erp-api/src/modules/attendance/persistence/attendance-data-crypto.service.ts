@@ -51,7 +51,13 @@ const blindIndexRingSchema = z.object({
 
 export interface AttendanceCryptoContext {
   readonly tenantId: string;
-  readonly resourceType: 'source_fact' | 'correction' | 'monthly_snapshot';
+  readonly resourceType:
+    | 'source_fact'
+    | 'correction'
+    | 'monthly_snapshot'
+    | 'provider_cursor'
+    | 'provider_inbox'
+    | 'provider_mapping';
   readonly resourceId: string;
 }
 
@@ -138,8 +144,31 @@ export class AttendanceDataCryptoService {
     providerCode: string,
     externalEventId: string,
   ): readonly string[] {
+    return this.blindFingerprints(
+      tenantId, providerCode, externalEventId, 'gaoq-attendance-source-event-v1',
+    );
+  }
+
+  /** Provider 外部事件与员工标识使用相互隔离的盲索引命名空间。 */
+  providerFingerprints(
+    tenantId: string,
+    namespace: 'event' | 'employee',
+    providerCode: string,
+    externalId: string,
+  ): readonly string[] {
+    return this.blindFingerprints(
+      tenantId, providerCode, externalId, `gaoq-attendance-provider-${namespace}-v1`,
+    );
+  }
+
+  private blindFingerprints(
+    tenantId: string,
+    providerCode: string,
+    externalId: string,
+    domain: string,
+  ): readonly string[] {
     this.assertContext({ tenantId, resourceType: 'source_fact', resourceId: 'blind-index' });
-    if (!ID_PATTERN.test(providerCode) || externalEventId.length < 1 || externalEventId.length > 256) {
+    if (!ID_PATTERN.test(providerCode) || externalId.length < 1 || externalId.length > 256) {
       throw this.invalidCiphertext();
     }
     const ring = this.loadBlindIndexRing();
@@ -147,7 +176,7 @@ export class AttendanceDataCryptoService {
       const key = this.decodeKey(configured.keyBase64url);
       try {
         return `${configured.keyId}.${createHmac('sha256', key).update(JSON.stringify([
-          'gaoq-attendance-source-event-v1', tenantId, providerCode, externalEventId,
+          domain, tenantId, providerCode, externalId,
         ])).digest('base64url')}`;
       } finally {
         key.fill(0);
@@ -197,7 +226,10 @@ export class AttendanceDataCryptoService {
   private assertContext(context: AttendanceCryptoContext): void {
     if (
       !ID_PATTERN.test(context.tenantId) || !ID_PATTERN.test(context.resourceId) ||
-      !['source_fact', 'correction', 'monthly_snapshot'].includes(context.resourceType)
+      ![
+        'source_fact', 'correction', 'monthly_snapshot',
+        'provider_cursor', 'provider_inbox', 'provider_mapping',
+      ].includes(context.resourceType)
     ) throw this.invalidCiphertext();
   }
 

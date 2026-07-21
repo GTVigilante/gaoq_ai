@@ -61,6 +61,14 @@ describe('AttendanceDataCryptoService', () => {
       crypto.sourceEventFingerprints('tenant-001', 'feishu', 'external-event-001'),
     );
     expect(JSON.stringify(first)).not.toContain('external-event-001');
+    expect(first).not.toEqual(
+      crypto.providerFingerprints('tenant-001', 'event', 'dingtalk', 'external-event-001'),
+    );
+    expect(crypto.providerFingerprints(
+      'tenant-001', 'event', 'dingtalk', 'external-event-001',
+    )).not.toEqual(crypto.providerFingerprints(
+      'tenant-001', 'employee', 'dingtalk', 'external-event-001',
+    ));
   });
 
   it('缺失或错误密钥环时失败关闭', () => {

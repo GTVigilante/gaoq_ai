@@ -35,6 +35,6 @@ MCP 使用当前 OAuth 身份反查 `AccessProfile.employeeId`，不接受租户
 
 ## 当前明确未完成
 
-- 钉钉/飞书 Webhook 验签、加密 Inbox、水位线补拉与 Adapter/Normalizer/EvidenceVerifier 注册表尚未进入本纵切。
-- Employment 有效区间、班次规则、跨天归属和来源水位线对账仍需在 Attendance Adapter 纵切补齐。
+- 钉钉/飞书增量补拉、加密 Inbox、水位线与 Adapter/Normalizer/EvidenceVerifier 注册表已实现，详见 `03-attendance-provider-integration.md`；真实 Provider 沙箱证据未取得前保持禁用和 No-Go。
+- Employment 有效区间、班次规则、跨天归属和来源水位线对账仍需在 Attendance 规则纵切补齐。Provider 的单条上下班卡不会自行推导工时，避免把传输层推断当成薪资事实。
 - 没有真实 Provider 沙箱和真实 Replica Set 时，只能完成代码门禁与迁移 dry-run，不能签署生产 Go。
