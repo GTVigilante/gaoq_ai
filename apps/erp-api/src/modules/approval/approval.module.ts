@@ -26,6 +26,7 @@ import {
   ApprovalTemplateRecordSchema,
 } from './persistence/approval.schemas.js';
 import { ApprovalOutboxWriter } from './persistence/approval-outbox.writer.js';
+import { ApprovalController } from './approval.controller.js';
 
 /** Phase 2 审批模块：领域状态机、加密持久化、可靠事件和多通道契约的统一边界。 */
 @Module({
@@ -54,6 +55,7 @@ import { ApprovalOutboxWriter } from './persistence/approval-outbox.writer.js';
     ApprovalActorResolverService,
     ApprovalApplicationService,
   ],
+  controllers: [ApprovalController],
   exports: [
     ApprovalTemplateRepository,
     ApprovalInstanceRepository,
