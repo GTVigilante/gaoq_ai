@@ -55,6 +55,7 @@ export interface EmployeeCreatedPayload {
 export interface EmployeeUpdatedPayload {
   readonly employeeNo: string;
   readonly displayName: string;
+  readonly status: EmployeeStatus;
   readonly departmentIds: readonly string[];
   readonly primaryDepartmentId: string;
   readonly positionIds: readonly string[];
@@ -206,6 +207,7 @@ export function buildEmployeeUpdatedEvent(
     payload: {
       employeeNo: employee.employeeNo,
       displayName: employee.displayName,
+      status: employee.status,
       departmentIds: [...employee.departmentIds],
       primaryDepartmentId: employee.primaryDepartmentId,
       positionIds: [...employee.positionIds],

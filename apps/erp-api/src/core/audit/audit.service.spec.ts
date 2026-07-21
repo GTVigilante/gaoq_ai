@@ -46,4 +46,28 @@ describe('AuditService', () => {
       }),
     );
   });
+
+  it('后台任务显式记录系统主体且拒绝操作符形态租户', async () => {
+    const context = new TenantContextService();
+    const sink = new CapturingAuditSink();
+    const service = new AuditService(sink, context);
+
+    await service.recordSystem('tenant-001', {
+      action: 'integration.org.reconciliation',
+      resourceType: 'org_reconciliation_report',
+      riskLevel: 'R1',
+      outcome: 'success',
+      traceId: 'trace-system-001',
+    });
+
+    expect(sink.append).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: 'tenant-001',
+      actorId: 'system:integration-worker',
+      actorType: 'system_job',
+      traceId: 'trace-system-001',
+    }));
+    await expect(service.recordSystem('$ne', {
+      action: 'x', resourceType: 'x', riskLevel: 'R0', outcome: 'failure', traceId: 'trace-2',
+    })).rejects.toThrow('系统审计上下文非法');
+  });
 });

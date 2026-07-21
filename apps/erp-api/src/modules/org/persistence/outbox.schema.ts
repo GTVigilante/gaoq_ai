@@ -8,7 +8,7 @@ const MAX_ID_LENGTH = 128;
 const DISPATCHED_TTL_SECONDS = 30 * 24 * 60 * 60;
 /** 禁止写入 envelope 的敏感键名（上游 token、密钥、原始敏感报文）。 */
 const FORBIDDEN_ENVELOPE_KEY =
-  /token|secret|password|credential|authorization|idcard|bankcard/i;
+  /token|secret|password|credential|authorization|idcard|bankcard|mobile|phone|email/i;
 /** envelope 敏感键递归扫描的最大深度，防止深层构造拖垮校验。 */
 const MAX_SCAN_DEPTH = 6;
 

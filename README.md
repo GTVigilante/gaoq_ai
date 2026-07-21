@@ -55,11 +55,14 @@ cp .env.example .env
 pnpm install
 docker compose up -d
 pnpm dev
+# 另开终端启动后台任务 Worker
+pnpm --filter @gaoq/erp-api dev:worker
 ```
 
 - Web：`http://localhost:3000`
 - API 存活探针：`http://localhost:3001/api/health/live`
 - API 就绪探针：`http://localhost:3001/api/health/ready`
+- Worker：独立进程消费 Outbox、钉钉与飞书组织同步任务，不开放 HTTP 端口
 
 提交前执行：
 

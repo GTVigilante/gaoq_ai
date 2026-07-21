@@ -17,6 +17,7 @@ import { toBullMqConnection } from './infrastructure/redis/redis-options.js';
 import type { Connection } from 'mongoose';
 import { IdentityModule } from './modules/identity/identity.module.js';
 import { BearerAuthGuard } from './modules/identity/bearer-auth.guard.js';
+import { IntegrationModule } from './modules/integration/integration.module.js';
 import { McpModule } from './modules/mcp/mcp.module.js';
 import { McpOriginGuard } from './modules/mcp/mcp-origin.guard.js';
 import { OrgModule } from './modules/org/org.module.js';
@@ -53,6 +54,7 @@ const mongoLogger = new Logger('MongoDB');
     }),
     RedisModule,
     IdentityModule,
+    IntegrationModule,
     McpModule,
     OrgModule,
     TraceMiddlewareModule,

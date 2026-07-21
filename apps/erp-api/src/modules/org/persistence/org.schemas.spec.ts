@@ -278,6 +278,10 @@ describe('OutboxRecordSchema 校验', () => {
       new OutboxModel({ ...validOutbox(), envelope: { payload: { upstreamSecret: 'y' } } }),
       'envelope',
     );
+    await expectInvalid(
+      new OutboxModel({ ...validOutbox(), envelope: { payload: { mobile: '13800000000' } } }),
+      'envelope',
+    );
   });
 
   it('attempts 必须为非负整数', async () => {

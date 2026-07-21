@@ -23,7 +23,7 @@ const profileSchema = z.object({
   code: z.number().optional(),
   tenant_key: z.string().min(1),
   union_id: z.string().min(1),
-  user_id: z.string().min(1).optional(),
+  user_id: z.string().min(1),
   open_id: z.string().min(1),
   name: z.string().min(1).max(256),
 });
@@ -89,7 +89,7 @@ export class FeishuSsoAdapter extends FeishuSsoAdapterToken {
       provider: this.provider,
       externalTenantId: profile.tenant_key,
       unionId: profile.union_id,
-      externalUserId: profile.user_id ?? profile.open_id,
+      externalUserId: profile.user_id,
       displayName: profile.name,
     };
   }

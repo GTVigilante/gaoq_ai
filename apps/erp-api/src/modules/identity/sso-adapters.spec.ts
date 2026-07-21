@@ -79,6 +79,29 @@ describe('飞书 SSO 适配器', () => {
       UnauthorizedException,
     );
   });
+
+  it('缺少跨应用 user_id 时拒绝绑定，不降级为 open_id', async () => {
+    const http = new StubHttpClient();
+    http.postJson.mockResolvedValue({ code: 0, access_token: 'provider-access-token' });
+    http.getJson.mockResolvedValue({
+      code: 0,
+      tenant_key: 'feishu-tenant',
+      union_id: 'union-001',
+      open_id: 'open-001',
+      name: '员工甲',
+    });
+    const adapter = new FeishuSsoAdapter(
+      createConfig({
+        FEISHU_CLIENT_ID: 'client-id',
+        FEISHU_CLIENT_SECRET: 'client-secret',
+        FEISHU_REDIRECT_URI: 'https://erp.example.com/sso/feishu/callback',
+      }),
+      http,
+    );
+
+    await expect(adapter.exchangeAuthorizationCode({ code: 'one-time-code' }))
+      .rejects.toBeInstanceOf(UnauthorizedException);
+  });
 });
 
 describe('钉钉 SSO 适配器', () => {
