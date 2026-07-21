@@ -1,0 +1,223 @@
+import { BadRequestException, ConflictException } from '@nestjs/common';
+import type { ClientSession } from 'mongoose';
+import { describe, expect, it, vi } from 'vitest';
+
+import type { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
+import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
+import type { Department, Employee } from '../domain/index.js';
+import type {
+  DepartmentRepository,
+  EmployeeRepository,
+  JobLevelRepository,
+  PositionRepository,
+} from '../persistence/org.repositories.js';
+import type { OrgOutboxWriter } from '../persistence/outbox.writer.js';
+import { OrgApplicationService } from './org-application.service.js';
+
+const session = {} as ClientSession;
+const NOW = '2026-07-21T00:00:00.000Z';
+
+const trustedContext = {
+  tenant: { tenantId: 'tenant-001', source: 'access_token' as const },
+  actor: {
+    actorId: 'employee-001',
+    actorType: 'user' as const,
+    tenantId: 'tenant-001',
+    roleCodes: ['employee'],
+    scopes: ['org:read', 'org:write'],
+    departmentIds: ['dept-a'],
+    traceId: 'trace-001',
+  },
+};
+
+function department(id: string, parentId: string | null, version = 1): Department {
+  return {
+    id,
+    tenantId: 'tenant-001',
+    code: id.toUpperCase(),
+    name: id,
+    status: 'active',
+    parentId,
+    managerId: null,
+    sortOrder: 0,
+    version,
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+}
+
+function employee(id: string, departmentIds: readonly string[]): Employee {
+  return {
+    id,
+    tenantId: 'tenant-001',
+    employeeNo: id.toUpperCase(),
+    displayName: id,
+    status: 'active',
+    departmentIds,
+    primaryDepartmentId: departmentIds[0] ?? 'missing',
+    positionIds: [],
+    jobLevelId: null,
+    version: 1,
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+}
+
+function assemble() {
+  const context = new TenantContextService();
+  const departmentRepo = {
+    findAll: vi.fn().mockResolvedValue([]),
+    findById: vi.fn().mockResolvedValue(null),
+    findByIds: vi.fn().mockResolvedValue([]),
+    insert: vi.fn().mockResolvedValue(undefined),
+    replace: vi.fn().mockResolvedValue(undefined),
+  };
+  const employeeRepo = {
+    findAll: vi.fn().mockResolvedValue([]),
+    findById: vi.fn().mockResolvedValue(null),
+    insert: vi.fn().mockResolvedValue(undefined),
+    replace: vi.fn().mockResolvedValue(undefined),
+  };
+  const positionRepo = {
+    findById: vi.fn().mockResolvedValue(null),
+    findByIds: vi.fn().mockResolvedValue([]),
+    insert: vi.fn().mockResolvedValue(undefined),
+    replace: vi.fn().mockResolvedValue(undefined),
+  };
+  const jobLevelRepo = {
+    findById: vi.fn().mockResolvedValue(null),
+    insert: vi.fn().mockResolvedValue(undefined),
+    replace: vi.fn().mockResolvedValue(undefined),
+  };
+  const outbox = { append: vi.fn().mockResolvedValue({}) };
+  const execute = vi.fn(
+    (_operation: string, _key: string, _request: unknown, handler: (value: ClientSession) => Promise<unknown>) =>
+      handler(session),
+  );
+  const service = new OrgApplicationService(
+    { execute } as unknown as IdempotencyService,
+    context,
+    departmentRepo as unknown as DepartmentRepository,
+    employeeRepo as unknown as EmployeeRepository,
+    positionRepo as unknown as PositionRepository,
+    jobLevelRepo as unknown as JobLevelRepository,
+    outbox as unknown as OrgOutboxWriter,
+  );
+  return {
+    context,
+    service,
+    execute,
+    departmentRepo,
+    employeeRepo,
+    positionRepo,
+    jobLevelRepo,
+    outbox,
+  };
+}
+
+describe('OrgApplicationService', () => {
+  it('组织图只返回主体部门及其后代，过滤旁支员工', async () => {
+    const store = assemble();
+    store.departmentRepo.findAll.mockResolvedValue([
+      department('dept-a', null),
+      department('dept-a-child', 'dept-a'),
+      department('dept-b', null),
+    ]);
+    store.employeeRepo.findAll.mockResolvedValue([
+      employee('employee-a', ['dept-a-child']),
+      employee('employee-b', ['dept-b']),
+    ]);
+
+    const chart = await store.context.run(trustedContext, () => store.service.getOrgChart());
+
+    expect(chart.departments.map((item) => item.id)).toEqual(['dept-a', 'dept-a-child']);
+    expect(chart.employees.map((item) => item.id)).toEqual(['employee-a']);
+  });
+
+  it('创建部门只使用可信租户，并在同一 session 写聚合与 Outbox', async () => {
+    const store = assemble();
+
+    const result = await store.context.run(trustedContext, () =>
+      store.service.createDepartment('key-department-1', {
+        code: 'FIN',
+        name: '财务部',
+      }),
+    );
+
+    expect(result.department.tenantId).toBe('tenant-001');
+    expect(result.department.id).toMatch(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/);
+    expect(store.departmentRepo.insert).toHaveBeenCalledWith(result.department, session);
+    expect(store.outbox.append.mock.calls[0]?.[1]).toBe(session);
+    expect(store.execute).toHaveBeenCalledWith(
+      'org.department.create',
+      'key-department-1',
+      expect.objectContaining({ code: 'FIN' }),
+      expect.any(Function),
+    );
+  });
+
+  it('更新部门时拒绝跨层级形成环', async () => {
+    const store = assemble();
+    store.departmentRepo.findById.mockImplementation((id: string) => {
+      if (id === 'dept-a') return Promise.resolve(department('dept-a', null));
+      if (id === 'dept-b') return Promise.resolve(department('dept-b', 'dept-a'));
+      return Promise.resolve(null);
+    });
+
+    const failure = store.context.run(trustedContext, () =>
+      store.service.updateDepartment('dept-a', 1, 'key-department-2', { parentId: 'dept-b' }),
+    );
+
+    const error = await failure.catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(BadRequestException);
+    expect((error as BadRequestException).getResponse()).toMatchObject({
+      code: 'ORG_DEPARTMENT_CYCLE',
+    });
+    expect(store.departmentRepo.replace).not.toHaveBeenCalled();
+  });
+
+  it('创建员工时所有部门和岗位引用必须存在且启用', async () => {
+    const store = assemble();
+    store.departmentRepo.findByIds.mockResolvedValue([]);
+
+    const failure = store.context.run(trustedContext, () =>
+      store.service.createEmployee('key-employee-1', {
+        employeeNo: 'E001',
+        displayName: '测试员工',
+        departmentIds: ['01K00000000000000000000000'],
+        primaryDepartmentId: '01K00000000000000000000000',
+      }),
+    );
+
+    await expect(failure).rejects.toBeInstanceOf(BadRequestException);
+    expect(store.employeeRepo.insert).not.toHaveBeenCalled();
+    expect(store.outbox.append).not.toHaveBeenCalled();
+  });
+
+  it('更新使用强版本前置条件，版本不一致返回冲突且不写库', async () => {
+    const store = assemble();
+    store.departmentRepo.findById.mockResolvedValue(department('dept-a', null, 2));
+
+    const failure = store.context.run(trustedContext, () =>
+      store.service.updateDepartment('dept-a', 1, 'key-department-3', { name: '新名称' }),
+    );
+
+    await expect(failure).rejects.toBeInstanceOf(ConflictException);
+    expect(store.departmentRepo.replace).not.toHaveBeenCalled();
+  });
+
+  it('业务唯一键冲突映射为稳定 ORG_UNIQUE_CONFLICT', async () => {
+    const store = assemble();
+    store.departmentRepo.insert.mockRejectedValue(Object.assign(new Error('E11000'), { code: 11000 }));
+
+    const failure = store.context.run(trustedContext, () =>
+      store.service.createDepartment('key-department-4', { code: 'FIN', name: '财务部' }),
+    );
+
+    const error = await failure.catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      code: 'ORG_UNIQUE_CONFLICT',
+    });
+  });
+});

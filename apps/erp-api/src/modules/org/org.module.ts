@@ -1,6 +1,10 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 
+import { IdempotencyModule } from '../../core/idempotency/idempotency.module.js';
+import { OrgApplicationService } from './application/org-application.service.js';
+import { OrgController } from './org.controller.js';
+
 import {
   OrgDepartmentRecord,
   OrgDepartmentRecordSchema,
@@ -22,6 +26,7 @@ import { OrgOutboxWriter } from './persistence/outbox.writer.js';
 
 @Module({
   imports: [
+    IdempotencyModule,
     MongooseModule.forFeature([
       { name: OrgDepartmentRecord.name, schema: OrgDepartmentRecordSchema },
       { name: OrgEmployeeRecord.name, schema: OrgEmployeeRecordSchema },
@@ -31,12 +36,14 @@ import { OrgOutboxWriter } from './persistence/outbox.writer.js';
     ]),
   ],
   providers: [
+    OrgApplicationService,
     DepartmentRepository,
     EmployeeRepository,
     PositionRepository,
     JobLevelRepository,
     OrgOutboxWriter,
   ],
+  controllers: [OrgController],
   exports: [
     DepartmentRepository,
     EmployeeRepository,

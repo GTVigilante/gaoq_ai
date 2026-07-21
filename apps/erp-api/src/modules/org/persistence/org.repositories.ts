@@ -64,6 +64,21 @@ export class DepartmentRepository extends TenantBoundRepository {
     return (await query.lean().exec()).map((record) => this.toDomain(record));
   }
 
+  async findAll(session?: ClientSession): Promise<readonly Department[]> {
+    const query = this.records.find({ tenantId: this.tenantId() }).sort({ sortOrder: 1, id: 1 });
+    if (session !== undefined) query.session(session);
+    return (await query.lean().exec()).map((record) => this.toDomain(record));
+  }
+
+  async findByIds(ids: readonly string[], session: ClientSession): Promise<readonly Department[]> {
+    const records = await this.records
+      .find({ tenantId: this.tenantId(), id: { $in: [...ids] } })
+      .session(session)
+      .lean()
+      .exec();
+    return records.map((record) => this.toDomain(record));
+  }
+
   async insert(department: Department, session: ClientSession): Promise<void> {
     this.assertEntityTenant(department.tenantId);
     await this.records.create([this.toRecord(department)], { session });
@@ -151,6 +166,12 @@ export class EmployeeRepository extends TenantBoundRepository {
     return records.map((record) => this.toDomain(record));
   }
 
+  async findAll(session?: ClientSession): Promise<readonly Employee[]> {
+    const query = this.records.find({ tenantId: this.tenantId() }).sort({ employeeNo: 1 });
+    if (session !== undefined) query.session(session);
+    return (await query.lean().exec()).map((record) => this.toDomain(record));
+  }
+
   async insert(employee: Employee, session: ClientSession): Promise<void> {
     this.assertEntityTenant(employee.tenantId);
     await this.records.create([this.toRecord(employee)], { session });
@@ -234,6 +255,19 @@ export class PositionRepository extends TenantBoundRepository {
   async insert(position: Position, session: ClientSession): Promise<void> {
     this.assertEntityTenant(position.tenantId);
     await this.records.create([this.toRecord(position)], { session });
+  }
+
+  async findByIds(ids: readonly string[], session: ClientSession): Promise<readonly Position[]> {
+    const records = await this.records
+      .find({ tenantId: this.tenantId(), id: { $in: [...ids] } })
+      .session(session)
+      .lean()
+      .exec();
+    return records.map((record) => Object.freeze({
+      id: record.id, tenantId: record.tenantId, code: record.code, name: record.name,
+      status: record.status, version: record.version, createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString(),
+    }));
   }
 
   async replace(position: Position, expectedVersion: number, session: ClientSession): Promise<void> {
