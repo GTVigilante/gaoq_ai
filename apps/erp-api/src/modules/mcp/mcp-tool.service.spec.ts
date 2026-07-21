@@ -17,6 +17,7 @@ import type { KnowledgeApplicationService } from '../knowledge/application/knowl
 import type { CareApplicationService } from '../care/application/care-application.service.js';
 import type { AttendanceApplicationService } from '../attendance/application/attendance-application.service.js';
 import type { PayrollRunService } from '../payroll/application/payroll-run.service.js';
+import type { PayrollPayslipService } from '../payroll/application/payroll-payslip.service.js';
 import { McpToolService } from './mcp-tool.service.js';
 import type { McpConfirmationService } from './mcp-confirmation.service.js';
 
@@ -78,6 +79,7 @@ function assemble() {
     getMyMonth: vi.fn(), validateCorrectionRequest: vi.fn(), requestCorrection: vi.fn(),
   };
   const payroll = { getPeriod: vi.fn() };
+  const payslips = { getMyPayslip: vi.fn() };
   const service = new McpToolService(
     context,
     audit as unknown as AuditService,
@@ -92,12 +94,13 @@ function assemble() {
     care as unknown as CareApplicationService,
     attendance as unknown as AttendanceApplicationService,
     payroll as unknown as PayrollRunService,
+    payslips as unknown as PayrollPayslipService,
     confirmations as unknown as McpConfirmationService,
   );
   return {
     context, audit, organization, approvals, recruitmentApplications,
     recruitmentInterviews, recruitmentManagement, recruitmentOffers, confirmations, service,
-    onboarding, knowledge, care, attendance, payroll,
+    onboarding, knowledge, care, attendance, payroll, payslips,
   };
 }
 
@@ -385,6 +388,31 @@ describe('McpToolService', () => {
       payrollPeriod: { period: '2026-07', employeeCount: 12, status: 'review' },
     });
     expect(JSON.stringify(result)).not.toMatch(/employeeId|baseSalary|calculationLine|profile/iu);
+  });
+
+  it('薪资单 MCP 只复用本人应用服务且要求独立 L4 Scope', async () => {
+    const store = assemble();
+    store.payslips.getMyPayslip.mockResolvedValue({
+      period: '2026-07', currency: 'CNY', taxableEarnings: [], nonTaxableEarnings: [],
+      grossPayMinor: 1_000_000, employeeSocialInsuranceMinor: 100_000,
+      employeeHousingFundMinor: 50_000, otherPreTaxWithholdingMinor: 0,
+      specialAdditionalDeductionMinor: 0,
+      postTaxDeductionMinor: 0, withholdingTaxMinor: 10_500, netPayMinor: 839_500,
+      inputHash: 'a'.repeat(43), resultHash: 'b'.repeat(43),
+      publishedAt: '2026-07-31T10:00:00.000Z',
+    });
+    const denied = await store.service.getMyPayrollPayslip(
+      '2026-07', extra(['erp:mcp:server:connect']),
+    );
+    expect(denied.isError).toBe(true);
+    expect(store.payslips.getMyPayslip).not.toHaveBeenCalled();
+    const result = await store.service.getMyPayrollPayslip(
+      '2026-07', extra(['erp:mcp:server:connect', 'erp:payroll:sheet:read_self']),
+    );
+    expect(store.payslips.getMyPayslip).toHaveBeenCalledWith('2026-07');
+    expect(result.structuredContent).toMatchObject({
+      payslip: { period: '2026-07', netPayMinor: 839_500 },
+    });
   });
 
   it('考勤修订准备只校验本人事实并固化 R1 命令，不直接创建审批', async () => {

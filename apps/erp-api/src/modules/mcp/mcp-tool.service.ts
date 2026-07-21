@@ -19,6 +19,7 @@ import { KnowledgeApplicationService } from '../knowledge/application/knowledge-
 import { CareApplicationService } from '../care/application/care-application.service.js';
 import { AttendanceApplicationService } from '../attendance/application/attendance-application.service.js';
 import { PayrollRunService } from '../payroll/application/payroll-run.service.js';
+import { PayrollPayslipService } from '../payroll/application/payroll-payslip.service.js';
 import { parseMcpIdentity, type McpIdentity } from './mcp-auth-context.js';
 import {
   McpConfirmationService,
@@ -60,6 +61,7 @@ export class McpToolService {
     private readonly care: CareApplicationService,
     private readonly attendance: AttendanceApplicationService,
     private readonly payroll: PayrollRunService,
+    private readonly payslips: PayrollPayslipService,
     private readonly confirmations: McpConfirmationService,
   ) {}
 
@@ -157,6 +159,21 @@ export class McpToolService {
       const payrollPeriod = await this.payroll.getPeriod(id);
       await this.auditTool(identity, 'payroll_period_get', 'R0', 'success');
       return structuredResult({ payrollPeriod });
+    });
+  }
+
+  async getMyPayrollPayslip(period: string, extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:payroll:sheet:read_self')) {
+        await this.auditTool(identity, 'payroll_payslip_get_self', 'R1', 'denied');
+        return scopeError('erp:payroll:sheet:read_self');
+      }
+      const payslip = await this.payslips.getMyPayslip(period);
+      await this.auditTool(identity, 'payroll_payslip_get_self', 'R1', 'success', {
+        period, inputHash: payslip.inputHash, resultHash: payslip.resultHash,
+      });
+      return structuredResult({ payslip });
     });
   }
 

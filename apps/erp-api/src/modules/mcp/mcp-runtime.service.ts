@@ -235,6 +235,19 @@ const payrollPeriodSchema = z.object({
   totalTaxMinor: z.number().int().nullable(),
   totalNetMinor: z.number().int().nonnegative().nullable(),
 });
+const payrollComponentSchema = z.object({ code: z.string(), amountMinor: z.number().int().nonnegative() });
+const payrollPayslipSchema = z.object({
+  period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/), currency: z.literal('CNY'),
+  taxableEarnings: z.array(payrollComponentSchema), nonTaxableEarnings: z.array(payrollComponentSchema),
+  grossPayMinor: z.number().int().nonnegative(),
+  employeeSocialInsuranceMinor: z.number().int().nonnegative(),
+  employeeHousingFundMinor: z.number().int().nonnegative(),
+  specialAdditionalDeductionMinor: z.number().int().nonnegative(),
+  otherPreTaxWithholdingMinor: z.number().int().nonnegative(),
+  postTaxDeductionMinor: z.number().int().nonnegative(), withholdingTaxMinor: z.number().int(),
+  netPayMinor: z.number().int().nonnegative(), inputHash: z.string().length(43),
+  resultHash: z.string().length(43), publishedAt: z.string(),
+});
 
 @Injectable()
 export class McpRuntimeService {
@@ -526,6 +539,24 @@ export class McpRuntimeService {
       },
     );
 
+    server.registerResource(
+      'my-payroll-payslip',
+      new ResourceTemplate('erp://payroll/payslips/{period}/me', { list: undefined }),
+      {
+        title: '我的已发布薪资单',
+        description: '只按当前已验证员工返回已锁定月份的本人薪资单；属于 L4 数据。',
+        mimeType: 'application/json',
+      },
+      async (uri, { period }, extra) => {
+        const result = await this.tools.getMyPayrollPayslip(requiredMonth(period), extra);
+        if (result.isError === true) throw new Error('无权读取本人薪资单');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
     server.registerPrompt(
       'approval_submission_guide',
       {
@@ -650,6 +681,19 @@ export class McpRuntimeService {
           },
         }],
       }),
+    );
+
+    server.registerPrompt(
+      'payroll_payslip_review_guide',
+      {
+        title: '本人薪资单核对清单',
+        description: '指导 AI 只解释本人已发布薪资单，不推断他人薪酬或触发写操作。',
+        argsSchema: { period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/) },
+      },
+      ({ period }) => ({ messages: [{ role: 'user', content: {
+        type: 'text',
+        text: `请读取我 ${period} 的已发布薪资单，解释收入、个人扣款、预扣税和实发。不得推断或比较他人薪酬，不得触发重算、审批、锁定、导出或发薪。`,
+      } }] }),
     );
 
     server.registerTool(
@@ -910,6 +954,18 @@ export class McpRuntimeService {
         },
       },
       async ({ id }, extra) => this.tools.getPayrollPeriod(id, extra),
+    );
+
+    server.registerTool(
+      'payroll_payslip_get_self',
+      {
+        title: '查询本人已发布薪资单',
+        description: '从已验证主体反查 ERP 员工，仅返回已锁定月份的本人 L4 薪资单。风险等级 R1。',
+        inputSchema: { period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/) },
+        outputSchema: z.object({ payslip: payrollPayslipSchema }),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      },
+      async ({ period }, extra) => this.tools.getMyPayrollPayslip(period, extra),
     );
 
     server.registerTool(

@@ -6,6 +6,7 @@ import { RequiredScopes } from '../identity/auth.decorators.js';
 import { PayrollMasterDataService } from './application/payroll-master-data.service.js';
 import { PayrollApprovalService } from './application/payroll-approval.service.js';
 import { PayrollRunService, type PayrollPeriodSummary } from './application/payroll-run.service.js';
+import { PayrollPayslipService, type PayrollPayslipView } from './application/payroll-payslip.service.js';
 import {
   AttestCompensationProfileDto,
   AttestPayrollRulePackDto,
@@ -21,6 +22,7 @@ export class PayrollController {
   constructor(
     private readonly runs: PayrollRunService,
     private readonly approvals: PayrollApprovalService,
+    private readonly payslips: PayrollPayslipService,
     private readonly masterData: PayrollMasterDataService,
     private readonly audit: AuditService,
   ) {}
@@ -33,6 +35,19 @@ export class PayrollController {
   ): Promise<PayrollPeriodSummary> {
     const result = await this.runs.createPeriod(this.key(key), body.period);
     await this.auditPeriod('payroll.period.create', result, 'R2');
+    return result;
+  }
+
+  @Get('payslips/:period/me')
+  @RequiredScopes('erp:payroll:sheet:read_self')
+  async getMyPayslip(@Param('period') period: string): Promise<PayrollPayslipView> {
+    const result = await this.payslips.getMyPayslip(period);
+    await this.audit.record({
+      action: 'payroll.payslip.read_self', resourceType: 'payroll_payslip',
+      resourceId: period, riskLevel: 'R1', outcome: 'success', metadata: {
+        period: result.period, inputHash: result.inputHash, resultHash: result.resultHash,
+      },
+    });
     return result;
   }
 

@@ -12,7 +12,7 @@ Phase 4 在 ERP 组织与劳动关系主数据之上，建立可重放的考勤�
 6. [薪酬结构、法定规则、权威输入快照与确定性运行](./05-payroll-core-implementation.md)
 7. [Payroll Core 索引迁移 Runbook](./06-payroll-core-index-migration-runbook.md)
 8. [财务审批与 WebAuthn 双人锁定](./07-payroll-approval-locking.md)
-9. 员工薪资单与字段级权限
+9. [员工本人薪资单、字段级权限与 MCP](./08-payroll-payslip-mcp.md)
 10. 银行代发、回盘、税务文件、异常冻结和三方对账
 11. 两个完整薪资周期影子计算、差异归因与财务签署
 

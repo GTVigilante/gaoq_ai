@@ -152,6 +152,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       }),
       getMyAttendanceMonth: vi.fn(),
       getPayrollPeriod: vi.fn(),
+      getMyPayrollPayslip: vi.fn(),
       prepareAttendanceCorrectionRequest: vi.fn(),
       executeAttendanceCorrectionRequest: vi.fn(),
       prepareRecruitmentRequisitionSubmit: vi.fn(),
@@ -249,6 +250,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       'care_case_get',
       'attendance_month_get',
       'payroll_period_get',
+      'payroll_payslip_get_self',
       'attendance_correction_prepare',
       'attendance_correction_execute',
       'recruitment_requisition_submit_prepare',
@@ -273,6 +275,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ uriTemplate: 'erp://care/cases/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://attendance/months/{month}/me' }),
       expect.objectContaining({ uriTemplate: 'erp://payroll/periods/{id}' }),
+      expect.objectContaining({ uriTemplate: 'erp://payroll/payslips/{period}/me' }),
     ]));
     const prompts = await client.listPrompts();
     expect(prompts.prompts).toEqual(expect.arrayContaining([
@@ -283,6 +286,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ name: 'care_offboarding_progress_guide' }),
       expect.objectContaining({ name: 'attendance_month_review_guide' }),
       expect.objectContaining({ name: 'payroll_period_review_guide' }),
+      expect.objectContaining({ name: 'payroll_payslip_review_guide' }),
     ]));
 
     const result = await client.callTool({ name: 'get_org_chart', arguments: {} });
