@@ -21,6 +21,7 @@ import type {
 import type { ApprovalOutboxWriter } from '../persistence/approval-outbox.writer.js';
 import type { ApprovalActorResolverService } from './approval-actor-resolver.service.js';
 import { ApprovalApplicationService } from './approval-application.service.js';
+import type { ApprovalNotificationWriter } from '../notification/approval-notification.writer.js';
 
 const NOW = new Date('2026-07-21T00:00:00.000Z');
 const SESSION = {} as ClientSession;
@@ -103,6 +104,7 @@ function dependencies(overrides: Record<string, unknown> = {}) {
       resolve: vi.fn().mockResolvedValue([{ nodeId: 'manager', actorIds: ['manager-001'] }]),
     },
     outbox: { append: vi.fn() },
+    notifications: { append: vi.fn() },
     ...overrides,
   };
 }
@@ -121,6 +123,7 @@ function service(
     deps.delegations as unknown as ApprovalDelegationRepository,
     deps.resolvers as unknown as ApprovalActorResolverService,
     deps.outbox as unknown as ApprovalOutboxWriter,
+    deps.notifications as unknown as ApprovalNotificationWriter,
   );
 }
 
@@ -156,6 +159,11 @@ describe('ApprovalApplicationService', () => {
     );
     expect(deps.outbox.append).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'approval_instance.submitted' }), SESSION,
+    );
+    expect(deps.notifications.append).toHaveBeenCalledWith(
+      expect.objectContaining({ version: 2 }),
+      expect.objectContaining({ type: 'instance.submitted' }),
+      SESSION,
     );
   });
 

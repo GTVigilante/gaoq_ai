@@ -42,6 +42,7 @@ import {
 } from '../persistence/approval.repositories.js';
 import { ApprovalOutboxWriter } from '../persistence/approval-outbox.writer.js';
 import { ApprovalActorResolverService } from './approval-actor-resolver.service.js';
+import { ApprovalNotificationWriter } from '../notification/approval-notification.writer.js';
 
 export interface ApprovalTemplateSummary extends Record<string, unknown> {
   readonly id: string;
@@ -94,6 +95,7 @@ export class ApprovalApplicationService {
     private readonly delegations: ApprovalDelegationRepository,
     private readonly resolvers: ApprovalActorResolverService,
     private readonly outbox: ApprovalOutboxWriter,
+    private readonly notifications: ApprovalNotificationWriter,
   ) {}
 
   async createTemplate(
@@ -387,6 +389,7 @@ export class ApprovalApplicationService {
       await this.instances.replace(result.instance, result.instance.version - 1, session);
       await this.actions.append(result.instance, result.action, session);
       await this.outbox.append(buildApprovalActionEvent(result.instance, result.action), session);
+      await this.notifications.append(result.instance, result.action, session);
       return { instance: instanceSummary(result.instance) };
     }));
   }

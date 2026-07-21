@@ -27,6 +27,11 @@ import {
 } from './persistence/approval.schemas.js';
 import { ApprovalOutboxWriter } from './persistence/approval-outbox.writer.js';
 import { ApprovalController } from './approval.controller.js';
+import {
+  ApprovalNotificationRecord,
+  ApprovalNotificationRecordSchema,
+} from './notification/approval-notification.schema.js';
+import { ApprovalNotificationWriter } from './notification/approval-notification.writer.js';
 
 /** Phase 2 审批模块：领域状态机、加密持久化、可靠事件和多通道契约的统一边界。 */
 @Module({
@@ -40,6 +45,7 @@ import { ApprovalController } from './approval.controller.js';
       { name: ApprovalInstanceRecord.name, schema: ApprovalInstanceRecordSchema },
       { name: ApprovalActionRecord.name, schema: ApprovalActionRecordSchema },
       { name: ApprovalDelegationRecord.name, schema: ApprovalDelegationRecordSchema },
+      { name: ApprovalNotificationRecord.name, schema: ApprovalNotificationRecordSchema },
       { name: OutboxRecord.name, schema: OutboxRecordSchema },
     ]),
   ],
@@ -52,8 +58,7 @@ import { ApprovalController } from './approval.controller.js';
     ApprovalActionRepository,
     ApprovalDelegationRepository,
     ApprovalOutboxWriter,
-    ApprovalActorResolverService,
-    ApprovalApplicationService,
+    ApprovalNotificationWriter,
   ],
   controllers: [ApprovalController],
   exports: [
@@ -62,6 +67,7 @@ import { ApprovalController } from './approval.controller.js';
     ApprovalActionRepository,
     ApprovalDelegationRepository,
     ApprovalOutboxWriter,
+    ApprovalNotificationWriter,
   ],
 })
 export class ApprovalModule {}
