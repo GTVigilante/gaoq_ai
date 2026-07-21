@@ -61,4 +61,21 @@ describe('OrgEmployeeProvisioningController', () => {
     });
     expect(JSON.stringify(record.mock.calls)).not.toContain('private@example.com');
   });
+
+  it('业务已成功但持久审计失败时不得追加虚假的业务失败审计', async () => {
+    const submit = vi.fn().mockResolvedValue({
+      requestId: '01K00000000000000000000000',
+      status: 'pending',
+      sensitiveExpiresAt: '2026-07-21T12:00:00.000Z',
+    });
+    const record = vi.fn().mockRejectedValue(new Error('审计不可用'));
+    const controller = new OrgEmployeeProvisioningController(
+      { submit } as unknown as OrgEmployeeProvisioningService,
+      { record } as unknown as AuditService,
+    );
+
+    await expect(controller.submit('idempotency-key-001', body)).rejects.toThrow('审计不可用');
+    expect(record).toHaveBeenCalledOnce();
+    expect(record).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'success' }));
+  });
 });

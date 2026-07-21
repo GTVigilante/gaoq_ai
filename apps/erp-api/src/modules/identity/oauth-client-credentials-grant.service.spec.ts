@@ -86,6 +86,21 @@ describe('OAuthClientCredentialsGrantService', () => {
     }));
   });
 
+  it('令牌已签名但成功审计失败时不得追加虚假的签名失败审计', async () => {
+    const store = createService([basicClient()]);
+    store.audit.recordTrustedService.mockRejectedValueOnce(new Error('审计不可用'));
+    await expect(store.service.issue({
+      authorization: `Basic ${Buffer.from(`service-client-001:${SECRET}`).toString('base64')}`,
+      resource: RESOURCE,
+      scopes: ['erp:org:chart:read'],
+      traceId: TRACE_ID,
+    })).rejects.toThrow('审计不可用');
+    expect(store.audit.recordTrustedService).toHaveBeenCalledOnce();
+    expect(store.audit.recordTrustedService).toHaveBeenCalledWith(
+      'tenant-001', expect.objectContaining({ outcome: 'success' }),
+    );
+  });
+
   it.each([
     'wrong-secret-value-that-is-still-long-enough-1234567890',
     'short',

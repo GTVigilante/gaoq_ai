@@ -21,17 +21,9 @@ export class OrgEmployeeProvisioningController {
     @Body() body: CreateOrgEmployeeProvisioningRequestDto,
   ) {
     const key = idempotencyKey ?? '';
+    let result;
     try {
-      const result = await this.provisioning.submit(body, key);
-      await this.audit.record({
-        action: 'integration.org_employee.provision.submit',
-        resourceType: 'org_employee_provisioning',
-        resourceId: result.requestId,
-        riskLevel: 'R3',
-        outcome: 'success',
-        metadata: { channel: body.channel, status: result.status },
-      });
-      return result;
+      result = await this.provisioning.submit(body, key);
     } catch (error) {
       await this.audit.record({
         action: 'integration.org_employee.provision.submit',
@@ -43,6 +35,15 @@ export class OrgEmployeeProvisioningController {
       });
       throw error;
     }
+    await this.audit.record({
+      action: 'integration.org_employee.provision.submit',
+      resourceType: 'org_employee_provisioning',
+      resourceId: result.requestId,
+      riskLevel: 'R3',
+      outcome: 'success',
+      metadata: { channel: body.channel, status: result.status },
+    });
+    return result;
   }
 
   @Get(':requestId')

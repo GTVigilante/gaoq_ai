@@ -10,12 +10,17 @@ import {
 describe('Phase 1 索引迁移清单', () => {
   it('覆盖全部 16 个 Phase 1 集合且集合内索引名唯一', () => {
     const manifest = buildPhaseOneIndexManifest();
-    expect(manifest).toHaveLength(53);
-    expect(new Set(manifest.map((index) => index.collection))).toHaveLength(16);
+    expect(manifest).toHaveLength(59);
+    expect(new Set(manifest.map((index) => index.collection))).toHaveLength(18);
     expect(new Set(manifest.map((index) => `${index.collection}:${index.name}`))).toHaveLength(
       manifest.length,
     );
     expect(manifest).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        collection: 'security_audit_events',
+        name: 'tenantId_1_sequence_1',
+        options: { unique: true },
+      }),
       expect.objectContaining({
         collection: 'integration_org_employee_provisioning_requests',
         name: 'purgeAt_1',

@@ -4,6 +4,10 @@ import { pathToFileURL } from 'node:url';
 import { createConnection, type Connection, type IndexOptions, type Schema } from 'mongoose';
 
 import { IdempotencyRecordSchema } from '../core/idempotency/idempotency.schema.js';
+import {
+  AuditChainHeadRecordSchema,
+  AuditEventRecordSchema,
+} from '../core/audit/audit.schema.js';
 import { AccessProfileSchema } from '../modules/identity/access-profile.schema.js';
 import { ExternalIdentitySchema } from '../modules/identity/external-identity.schema.js';
 import { IdentityRefreshTokenSchema } from '../modules/identity/refresh-token.schema.js';
@@ -24,7 +28,7 @@ import {
 } from '../modules/org/persistence/org.schemas.js';
 import { OutboxRecordSchema } from '../modules/org/persistence/outbox.schema.js';
 
-const MIGRATION_ID = 'phase-1-indexes-v1';
+const MIGRATION_ID = 'phase-1-indexes-v2';
 const LOCK_ID = `${MIGRATION_ID}:lock`;
 const LOCK_TTL_MS = 30 * 60 * 1_000;
 const INDEX_NAME_PATTERN = /^[A-Za-z0-9._:-]{1,127}$/;
@@ -83,6 +87,8 @@ interface MigrationRun {
 }
 
 const PHASE_ONE_SCHEMAS: readonly Schema[] = Object.freeze([
+  AuditEventRecordSchema,
+  AuditChainHeadRecordSchema,
   IdempotencyRecordSchema,
   AccessProfileSchema,
   ExternalIdentitySchema,

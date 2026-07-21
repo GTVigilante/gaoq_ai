@@ -146,4 +146,20 @@ describe('OrgReconciliationService', () => {
       metadata: { channel: 'dingtalk', errorCode: 'DINGTALK_SNAPSHOT_INVALID' },
     }));
   });
+
+  it('报告完成后的审计故障不得把 completed 回写为 failed', async () => {
+    const store = fixture();
+    store.dingtalk.fetchSnapshotMock.mockResolvedValue({
+      departments: new Map(), employees: new Map(),
+    });
+    store.recordSystem.mockRejectedValueOnce(new Error('审计不可用'));
+
+    await expect(store.service.runDaily(new Date('2026-07-21T00:00:00.000Z')))
+      .rejects.toMatchObject({ code: 'ORG_RECONCILIATION_PARTIAL_FAILURE' });
+    expect(store.reportUpdateOne).toHaveBeenCalledOnce();
+    expect(store.reportUpdateOne.mock.calls[0]?.[1]).toMatchObject({
+      $set: { status: 'completed' },
+    });
+    expect(store.recordSystem).toHaveBeenCalledOnce();
+  });
 });

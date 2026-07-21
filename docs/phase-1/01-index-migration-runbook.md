@@ -12,7 +12,7 @@
 1. 在与生产同版本的预发环境执行 `pnpm --filter @gaoq/erp-api build`。
 2. 由 CI/CD 短期身份注入 `MONGODB_URI`，先运行 `pnpm --filter @gaoq/erp-api migrate:phase1:indexes -- --dry-run`。
 3. dry-run 无冲突后，在单一发布任务运行 `pnpm --filter @gaoq/erp-api migrate:phase1:indexes`。
-4. 确认输出 `verified` 等于清单索引总数，并检查 `system_migration_runs/phase-1-indexes-v1` 为 `completed`。
+4. 确认输出 `verified` 等于清单索引总数，并检查 `system_migration_runs/phase-1-indexes-v2` 为 `completed`。
 5. 再滚动发布 API 与 Worker；不得并行启动多个迁移任务，租约只用于防误操作，不替代发布编排。
 
 ## 3. 失败处理
@@ -27,4 +27,4 @@
 
 - 保存 dry-run 与 apply 的脱敏 JSON 输出、Git commit、CI run、执行环境、开始/完成时间和审批人。
 - 在脱敏副本验证唯一索引重复数据失败路径、TTL/partialFilterExpression、重复执行幂等性和应用查询 explain。
-- 当前清单覆盖身份、组织、集成、Outbox、幂等和首次开户共 16 个集合、53 个声明索引；新增集合或索引必须新增迁移版本与测试。
+- 当前清单覆盖审计、身份、组织、集成、Outbox、幂等和首次开户共 18 个集合、59 个声明索引；新增集合或索引必须新增迁移版本与测试。

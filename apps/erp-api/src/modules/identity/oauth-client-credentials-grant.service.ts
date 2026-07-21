@@ -80,8 +80,9 @@ export class OAuthClientCredentialsGrantService {
     }
 
     const scopes = this.clients.filterAllowedScopes(authenticated.client, input.scopes);
+    let signed;
     try {
-      const signed = await this.signer.sign({
+      signed = await this.signer.sign({
         tenantId: authenticated.client.tenantId,
         actorId: authenticated.client.actorId,
         actorType: 'mcp_client',
@@ -91,25 +92,25 @@ export class OAuthClientCredentialsGrantService {
         scopes,
         departmentIds: authenticated.client.departmentIds,
       });
-      await this.audit.recordTrustedService(authenticated.client.tenantId, {
-        actorId: authenticated.client.actorId,
-        traceId: input.traceId,
-        action: 'identity.oauth.service-token.issue',
-        resourceType: 'oauth_client',
-        resourceId: authenticated.client.clientId,
-        riskLevel: 'R1',
-        outcome: 'success',
-        metadata: {
-          authenticationMethod: authenticated.client.authentication.method,
-          credentialId: authenticated.credentialId,
-          scopeCount: scopes.length,
-        },
-      });
-      return { ...signed, scope: scopes.join(' ') };
     } catch (error) {
       await this.recordFailure(authenticated.client, input.traceId, 'signing_failed');
       throw error;
     }
+    await this.audit.recordTrustedService(authenticated.client.tenantId, {
+      actorId: authenticated.client.actorId,
+      traceId: input.traceId,
+      action: 'identity.oauth.service-token.issue',
+      resourceType: 'oauth_client',
+      resourceId: authenticated.client.clientId,
+      riskLevel: 'R1',
+      outcome: 'success',
+      metadata: {
+        authenticationMethod: authenticated.client.authentication.method,
+        credentialId: authenticated.credentialId,
+        scopeCount: scopes.length,
+      },
+    });
+    return { ...signed, scope: scopes.join(' ') };
   }
 
   private authenticateBasic(

@@ -1,0 +1,95 @@
+import type { Connection, Model } from 'mongoose';
+import { describe, expect, it, vi } from 'vitest';
+
+import type { AuditIntegrityService } from './audit-integrity.service.js';
+import type {
+  AuditChainHeadRecordDocument,
+  AuditEventRecordDocument,
+} from './audit.schema.js';
+import { MongoAuditEventSink } from './mongo-audit-event.sink.js';
+
+const auditEvent = {
+  tenantId: 'tenant-001', actorId: 'employee-001', actorType: 'user' as const,
+  action: 'employee.profile.update', resourceType: 'employee.profile',
+  resourceId: 'employee-001', riskLevel: 'R2' as const, outcome: 'success' as const,
+  occurredAt: '2026-07-21T05:00:00.000Z', traceId: 'trace-001',
+  metadata: { count: 1 },
+};
+
+const query = (value: unknown) => ({
+  session: () => ({ lean: () => ({ exec: () => Promise.resolve(value) }) }),
+});
+
+function assemble() {
+  const normalized = {
+    tenantId: auditEvent.tenantId, actorId: auditEvent.actorId,
+    actorType: auditEvent.actorType, action: auditEvent.action,
+    resourceType: auditEvent.resourceType, resourceId: auditEvent.resourceId,
+    riskLevel: auditEvent.riskLevel, outcome: auditEvent.outcome,
+    occurredAt: auditEvent.occurredAt, traceId: auditEvent.traceId,
+    metadataCanonical: '{"count":1}',
+  };
+  const normalize = vi.fn().mockReturnValue(normalized);
+  const sign = vi.fn().mockReturnValue({ keyId: 'audit-key-001', eventHash: 'a'.repeat(43) });
+  const headFindOne = vi.fn().mockReturnValue(query(null));
+  const headUpdateOne = vi.fn().mockResolvedValue({ modifiedCount: 0, upsertedCount: 1 });
+  const eventCreate = vi.fn().mockResolvedValue([]);
+  const withTransaction = vi.fn(async (handler: () => Promise<void>) => handler());
+  const endSession = vi.fn().mockResolvedValue(undefined);
+  const startSession = vi.fn().mockResolvedValue({ withTransaction, endSession });
+  const sink = new MongoAuditEventSink(
+    { startSession } as unknown as Connection,
+    { create: eventCreate } as unknown as Model<AuditEventRecordDocument>,
+    { findOne: headFindOne, updateOne: headUpdateOne } as unknown as Model<AuditChainHeadRecordDocument>,
+    { normalize, sign } as unknown as AuditIntegrityService,
+  );
+  return {
+    sink, normalize, sign, headFindOne, headUpdateOne, eventCreate,
+    withTransaction, endSession, startSession,
+  };
+}
+
+describe('MongoAuditEventSink', () => {
+  it('在同一事务追加规范事件并推进租户链头', async () => {
+    const store = assemble();
+    await store.sink.append(auditEvent);
+    expect(store.withTransaction).toHaveBeenCalledOnce();
+    expect(store.eventCreate).toHaveBeenCalledOnce();
+    const createCall = store.eventCreate.mock.calls[0] as unknown as [unknown[], { session: unknown }];
+    expect(createCall[0]).toEqual([
+      expect.objectContaining({
+        tenantId: 'tenant-001', sequence: 1,
+        previousHash: '0'.repeat(43), metadataCanonical: '{"count":1}',
+        keyId: 'audit-key-001', eventHash: 'a'.repeat(43),
+      }),
+    ]);
+    expect(createCall[1]).toHaveProperty('session');
+    expect(JSON.stringify(store.eventCreate.mock.calls)).not.toContain('metadata":{"count"');
+    const updateCall = store.headUpdateOne.mock.calls[0] as unknown as [unknown, unknown, unknown];
+    expect(updateCall[0]).toEqual({ tenantId: 'tenant-001' });
+    expect(updateCall[1]).toMatchObject({ $set: { sequence: 1 } });
+    expect(updateCall[2]).toMatchObject({ upsert: true, runValidators: true });
+    expect(store.endSession).toHaveBeenCalledOnce();
+  });
+
+  it('链头并发冲突最多重试三次并使用新的事务会话', async () => {
+    const store = assemble();
+    store.headUpdateOne
+      .mockResolvedValueOnce({ modifiedCount: 0, upsertedCount: 0 })
+      .mockResolvedValueOnce({ modifiedCount: 1, upsertedCount: 0 });
+    await store.sink.append(auditEvent);
+    expect(store.startSession).toHaveBeenCalledTimes(2);
+    expect(store.eventCreate).toHaveBeenCalledTimes(2);
+    expect(store.endSession).toHaveBeenCalledTimes(2);
+  });
+
+  it('规范化或密钥失败时失败关闭且不触达数据库', async () => {
+    const store = assemble();
+    store.normalize.mockImplementationOnce(() => {
+      throw new Error('AUDIT_EVENT_INVALID');
+    });
+    await expect(store.sink.append(auditEvent)).rejects.toThrow('AUDIT_EVENT_INVALID');
+    expect(store.startSession).not.toHaveBeenCalled();
+    expect(store.eventCreate).not.toHaveBeenCalled();
+  });
+});

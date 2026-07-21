@@ -32,6 +32,9 @@ const MAX_EXPECTED_OBJECTS = 20_000;
 const RECONCILIATION_LEASE_MS = 2 * 60 * 60 * 1_000;
 const ERROR_CODE_PATTERN = /^[A-Z0-9_:-]{1,128}$/;
 
+/** 对账报告已完成但后置审计不可用；禁止将完成报告回写为失败。 */
+class ReconciliationPostCommitAuditError extends Error {}
+
 interface MappingView {
   readonly aggregateType: OrgDeliveryAggregateType;
   readonly aggregateId: string;
@@ -160,17 +163,22 @@ export class OrgReconciliationService {
         } },
         { timestamps: false },
       );
-      await this.audit.recordSystem(tenantId, {
-        action: 'integration.org.reconciliation',
-        resourceType: 'org_reconciliation_report',
-        resourceId: `${channel}:${runDate}`,
-        riskLevel: 'R1',
-        outcome: 'success',
-        traceId: `reconcile-${randomUUID()}`,
-        metadata: { channel, differenceCount: differences.length },
-      });
+      try {
+        await this.audit.recordSystem(tenantId, {
+          action: 'integration.org.reconciliation',
+          resourceType: 'org_reconciliation_report',
+          resourceId: `${channel}:${runDate}`,
+          riskLevel: 'R1',
+          outcome: 'success',
+          traceId: `reconcile-${randomUUID()}`,
+          metadata: { channel, differenceCount: differences.length },
+        });
+      } catch {
+        throw new ReconciliationPostCommitAuditError('对账已完成但审计不可用');
+      }
       return true;
     } catch (error) {
+      if (error instanceof ReconciliationPostCommitAuditError) throw error;
       const code = error instanceof OrgPushError && ERROR_CODE_PATTERN.test(error.code)
         ? error.code
         : 'ORG_RECONCILIATION_FAILED';

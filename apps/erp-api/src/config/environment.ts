@@ -19,6 +19,11 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(8).max(128).regex(/^[A-Za-z0-9._-]+$/).optional(),
   ),
+  /** 审计 HMAC 密钥环，仅由 Secret Manager 注入，仓库内必须保持为空。 */
+  AUDIT_INTEGRITY_KEYS: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(64).max(16_384).optional(),
+  ),
   AUTH_ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().min(300).max(900).default(600),
   AUTH_REFRESH_TOKEN_TTL_SECONDS: z.coerce
     .number()
@@ -76,6 +81,13 @@ const environmentSchema = z.object({
       code: 'custom',
       path: ['AUTH_SIGNING_PRIVATE_KEY_BASE64'],
       message: '生产环境必须由 Secret Manager 注入签名私钥与 key id',
+    });
+  }
+  if (environment.NODE_ENV === 'production' && environment.AUDIT_INTEGRITY_KEYS === undefined) {
+    context.addIssue({
+      code: 'custom',
+      path: ['AUDIT_INTEGRITY_KEYS'],
+      message: '生产环境必须由 Secret Manager 注入审计完整性密钥环',
     });
   }
 });
