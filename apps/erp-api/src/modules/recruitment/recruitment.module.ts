@@ -13,6 +13,7 @@ import { RecruitmentApplicationService } from './application/recruitment-applica
 import { RecruitmentManagementService } from './application/recruitment-management.service.js';
 import { RecruitmentInterviewService } from './application/recruitment-interview.service.js';
 import { RecruitmentOfferService } from './application/recruitment-offer.service.js';
+import { RecruitmentOnboardingBridgeService } from './application/recruitment-onboarding-bridge.service.js';
 import { RecruitmentController } from './recruitment.controller.js';
 import { RecruitmentManagementController } from './recruitment-management.controller.js';
 import { RecruitmentInterviewController } from './recruitment-interview.controller.js';
@@ -97,6 +98,7 @@ import {
     RecruitmentManagementService,
     RecruitmentInterviewService,
     RecruitmentOfferService,
+    RecruitmentOnboardingBridgeService,
   ],
   controllers: [
     RecruitmentController, RecruitmentManagementController, RecruitmentInterviewController,
@@ -116,6 +118,7 @@ import {
     RecruitmentManagementService,
     RecruitmentInterviewService,
     RecruitmentOfferService,
+    RecruitmentOnboardingBridgeService,
   ],
 })
 export class RecruitmentModule {}
