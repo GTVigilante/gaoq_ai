@@ -1,0 +1,44 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "gaoq-erp.fullname" . }}-api
+  labels:
+    {{- include "gaoq-erp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.apiMinAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "gaoq-erp.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: api
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "gaoq-erp.fullname" . }}-worker
+  labels:
+    {{- include "gaoq-erp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.workerMinAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "gaoq-erp.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: worker
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "gaoq-erp.fullname" . }}-web
+  labels:
+    {{- include "gaoq-erp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.webMinAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "gaoq-erp.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: web

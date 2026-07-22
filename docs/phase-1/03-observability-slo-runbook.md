@@ -23,6 +23,8 @@
 
 Prometheus 规则位于 `deploy/observability/phase-1-alerts.yml`。生产导入前必须用目标 Prometheus 版本的 `promtool check rules` 校验，并把 `critical` 路由到安全值班与平台值班双通道。
 
+生产 Kubernetes 抓取网络边界由 [`deploy/helm/gaoq-erp`](../../deploy/helm/gaoq-erp/README.md) 强制：监控命名空间和 Prometheus Pod 必须同时匹配受控标签；API 只开放 `3001`，Worker 只开放 `9464`，Web 不向监控开放后端端口。真实集群必须验证网络插件执行了 NetworkPolicy，不能只检查 YAML。
+
 ## 3. WORM 锚定契约
 
 Worker 每六小时选择最久未锚定的租户，先完整验链，再生成固定字段顺序的 `gaoq.audit.anchor.v1` 载荷。载荷包含租户、序号、链头哈希、审计 HMAC key id、链更新时间和请求保留期；随后由独立 Ed25519 密钥签名。

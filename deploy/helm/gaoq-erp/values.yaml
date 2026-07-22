@@ -1,0 +1,91 @@
+nameOverride: ''
+fullnameOverride: ''
+
+release:
+  commitSha: ''
+  deploymentManifestHash: ''
+  rolloutId: ''
+
+images:
+  api:
+    repository: ''
+    digest: ''
+  worker:
+    repository: ''
+    digest: ''
+  web:
+    repository: ''
+    digest: ''
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+runtime:
+  apiConfigMapName: ''
+  apiSecretName: ''
+  workerConfigMapName: ''
+  workerSecretName: ''
+
+serviceAccount:
+  name: ''
+
+replicas:
+  api: 3
+  worker: 2
+  web: 3
+
+resources:
+  api:
+    requests: { cpu: 500m, memory: 768Mi, ephemeral-storage: 256Mi }
+    limits: { cpu: '2', memory: 2Gi, ephemeral-storage: 1Gi }
+  worker:
+    requests: { cpu: 500m, memory: 768Mi, ephemeral-storage: 256Mi }
+    limits: { cpu: '2', memory: 2Gi, ephemeral-storage: 1Gi }
+  web:
+    requests: { cpu: 250m, memory: 384Mi, ephemeral-storage: 128Mi }
+    limits: { cpu: '1', memory: 1Gi, ephemeral-storage: 512Mi }
+
+autoscaling:
+  api:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 12
+    cpuUtilization: 65
+    memoryUtilization: 75
+  web:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 12
+    cpuUtilization: 65
+    memoryUtilization: 75
+
+podDisruptionBudget:
+  apiMinAvailable: 2
+  workerMinAvailable: 1
+  webMinAvailable: 2
+
+ingress:
+  enabled: false
+  className: ''
+  annotations: {}
+  apiHost: ''
+  webHost: ''
+  tlsSecretName: ''
+  apiPath: /api
+  webPath: /
+
+networkPolicy:
+  ingressNamespaceLabels: {}
+  ingressPodLabels: {}
+  monitoringNamespaceLabels: {}
+  monitoringPodLabels: {}
+  dnsNamespaceLabels:
+    kubernetes.io/metadata.name: kube-system
+  dnsPodLabels:
+    k8s-app: kube-dns
+  httpsEgressCidrs: []
+  mongodbCidrs: []
+  redisCidrs: []
+
+nodeSelector: {}
+tolerations: []
+topologySpreadKey: topology.kubernetes.io/zone

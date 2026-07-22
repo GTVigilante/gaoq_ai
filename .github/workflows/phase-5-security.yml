@@ -17,6 +17,60 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  kubernetes-deployment:
+    name: Kubernetes 生产编排契约
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - name: 安装校验过摘要的 Helm 4.2.0
+        shell: bash
+        run: |
+          mkdir --parents "$RUNNER_TEMP/helm-bin"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$RUNNER_TEMP/helm.tar.gz" \
+            https://get.helm.sh/helm-v4.2.0-linux-amd64.tar.gz
+          echo "97dbeb971be4ac4b27e3839976d9564c0fb35c6f3b1da89dd1e292d236af4096  $RUNNER_TEMP/helm.tar.gz" \
+            | sha256sum --check --strict
+          tar --extract --gzip --file "$RUNNER_TEMP/helm.tar.gz" \
+            --directory "$RUNNER_TEMP/helm-bin"
+
+      - name: 安装校验过摘要的 Kubeconform 0.7.0
+        shell: bash
+        run: |
+          mkdir --parents "$RUNNER_TEMP/kubeconform-bin"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$RUNNER_TEMP/kubeconform.tar.gz" \
+            https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz
+          echo "c31518ddd122663b3f3aa874cfe8178cb0988de944f29c74a0b9260920d115d3  $RUNNER_TEMP/kubeconform.tar.gz" \
+            | sha256sum --check --strict
+          tar --extract --gzip --file "$RUNNER_TEMP/kubeconform.tar.gz" \
+            --directory "$RUNNER_TEMP/kubeconform-bin" kubeconform
+
+      - name: 校验并渲染生产编排
+        shell: bash
+        run: |
+          node scripts/validate-kubernetes-deployment.mjs
+          "$RUNNER_TEMP/helm-bin/linux-amd64/helm" lint deploy/helm/gaoq-erp \
+            --strict --values deploy/helm/gaoq-erp/ci-values.yaml
+          "$RUNNER_TEMP/helm-bin/linux-amd64/helm" template ci deploy/helm/gaoq-erp \
+            --values deploy/helm/gaoq-erp/ci-values.yaml \
+            > "$RUNNER_TEMP/gaoq-erp-rendered.yaml"
+          node scripts/validate-kubernetes-deployment.mjs "$RUNNER_TEMP/gaoq-erp-rendered.yaml"
+          "$RUNNER_TEMP/kubeconform-bin/kubeconform" \
+            -strict -summary -kubernetes-version 1.30.0 \
+            -schema-location 'https://raw.githubusercontent.com/yannh/kubernetes-json-schema/987aa4ee419358d6ae108f54f6c42f4e90f22b70/{{.NormalizedKubernetesVersion}}-standalone-strict/{{.ResourceKind}}.json' \
+            "$RUNNER_TEMP/gaoq-erp-rendered.yaml"
+
   dependency-review:
     name: 依赖变更审查
     if: github.event_name == 'pull_request'

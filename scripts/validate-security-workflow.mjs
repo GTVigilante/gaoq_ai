@@ -62,6 +62,16 @@ for (const marker of [
   'node scripts/release/validate-phase-5-go-no-go-evidence.mjs --self-test',
   'mcp-catalog-contract:',
   'pnpm mcp:catalog:self-test',
+  'kubernetes-deployment:',
+  'https://get.helm.sh/helm-v4.2.0-linux-amd64.tar.gz',
+  '97dbeb971be4ac4b27e3839976d9564c0fb35c6f3b1da89dd1e292d236af4096',
+  'node scripts/validate-kubernetes-deployment.mjs',
+  'helm" lint deploy/helm/gaoq-erp',
+  'helm" template ci deploy/helm/gaoq-erp',
+  'yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz',
+  'c31518ddd122663b3f3aa874cfe8178cb0988de944f29c74a0b9260920d115d3',
+  '-strict -summary -kubernetes-version 1.30.0',
+  '987aa4ee419358d6ae108f54f6c42f4e90f22b70/{{.NormalizedKubernetesVersion}}-standalone-strict/{{.ResourceKind}}.json',
 ]) {
   if (!workflow.includes(marker)) throw new Error('PHASE5_SECURITY_GATE_INCOMPLETE');
 }

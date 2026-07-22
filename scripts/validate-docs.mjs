@@ -18,6 +18,9 @@ const requiredDocuments = [
   'docs/phase-6/00-unified-cutover-contract.md',
   'docs/phase-6/01-hypercare-archive-contract.md',
   'docs/phase-6/02-production-execution-runbook.md',
+  'docs/phase-6/03-production-execution-authorization.md',
+  'docs/phase-6/04-kubernetes-deployment-baseline.md',
+  'deploy/helm/gaoq-erp/README.md',
 ];
 
 const forbiddenPrdPatterns = [

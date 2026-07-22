@@ -43,7 +43,7 @@
 - **前端**: React + Next.js App Router + Ant Design
 - **移动端**: React + Ant Design Mobile (H5/小程序)
 - **AI接口**: MCP当前稳定规范（Streamable HTTP / stdio）+ OAuth 2.1
-- **部署**: 中国境内云私有VPC + Docker + Nginx/API Gateway + 对象存储 + KMS
+- **部署**: 中国境内云私有VPC + Kubernetes/Helm + WAF/API Gateway + 托管MongoDB/Redis + 对象存储/WORM + KMS/Secret Manager
 
 ## 开发门禁
 
@@ -137,3 +137,5 @@ scope 集合，不能由调用方提交或覆盖租户。
 pnpm check
 pnpm build
 ```
+
+生产 Kubernetes 编排基线位于 [`deploy/helm/gaoq-erp`](./deploy/helm/gaoq-erp/README.md)。Chart 只生成受控工作负载清单，不创建云资源或 Secret，也不自动执行生产发布。

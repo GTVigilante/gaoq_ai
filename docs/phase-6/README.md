@@ -8,6 +8,7 @@ Phase 6 只接受真实生产证据，不把 CI 自测、模拟数据或 AI 结�
 - [四周 Hypercare 与旧系统归档契约](./01-hypercare-archive-contract.md)
 - [现场执行与证据运行手册](./02-production-execution-runbook.md)
 - [生产资金执行授权契约](./03-production-execution-authorization.md)
+- [Kubernetes 生产编排基线](./04-kubernetes-deployment-baseline.md)
 
 ## 完成定义
 

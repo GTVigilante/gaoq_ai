@@ -1,0 +1,42 @@
+release:
+  commitSha: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  deploymentManifestHash: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  rolloutId: ci-render-001
+images:
+  api:
+    repository: registry.example.invalid/gaoq/erp-api
+    digest: sha256:1111111111111111111111111111111111111111111111111111111111111111
+  worker:
+    repository: registry.example.invalid/gaoq/erp-worker
+    digest: sha256:2222222222222222222222222222222222222222222222222222222222222222
+  web:
+    repository: registry.example.invalid/gaoq/erp-web
+    digest: sha256:3333333333333333333333333333333333333333333333333333333333333333
+runtime:
+  apiConfigMapName: gaoq-erp-api-runtime-config
+  apiSecretName: gaoq-erp-api-runtime-secrets
+  workerConfigMapName: gaoq-erp-worker-runtime-config
+  workerSecretName: gaoq-erp-worker-runtime-secrets
+serviceAccount:
+  name: gaoq-erp
+ingress:
+  enabled: true
+  className: internal-gateway
+  apiHost: api.erp.example.invalid
+  webHost: erp.example.invalid
+  tlsSecretName: gaoq-erp-ingress-tls
+networkPolicy:
+  ingressNamespaceLabels:
+    kubernetes.io/metadata.name: ingress-system
+  ingressPodLabels:
+    app.kubernetes.io/component: gateway
+  monitoringNamespaceLabels:
+    kubernetes.io/metadata.name: monitoring
+  monitoringPodLabels:
+    app.kubernetes.io/name: prometheus
+  httpsEgressCidrs:
+    - 10.20.0.0/24
+  mongodbCidrs:
+    - 10.20.10.0/24
+  redisCidrs:
+    - 10.20.20.0/24
