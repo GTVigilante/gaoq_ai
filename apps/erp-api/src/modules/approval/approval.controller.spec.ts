@@ -23,6 +23,25 @@ function summary() {
 }
 
 describe('ApprovalController', () => {
+  it('模板目录使用发起 Scope 并记录最小 R0 审计', async () => {
+    const templates = [{ id: INSTANCE_ID, code: 'EXPENSE', fields: [] }];
+    const listPublishedTemplateForms = vi.fn().mockResolvedValue(templates);
+    const record = vi.fn().mockResolvedValue(undefined);
+    const controller = new ApprovalController(
+      { listPublishedTemplateForms } as unknown as ApprovalApplicationService,
+      { record } as unknown as AuditService,
+    );
+    await expect(controller.listPublishedTemplates()).resolves.toEqual(templates);
+    expect(record).toHaveBeenCalledWith({
+      action: 'approval.template.catalog.read', resourceType: 'approval_template_catalog',
+      resourceId: 'published', riskLevel: 'R0', outcome: 'success', metadata: { count: 1 },
+    });
+    const method = Object.getOwnPropertyDescriptor(
+      ApprovalController.prototype, 'listPublishedTemplates',
+    )?.value as object;
+    expect(Reflect.getMetadata(REQUIRED_SCOPES_KEY, method)).toEqual(['erp:approval:instance:submit']);
+  });
+
   it('读取时间线使用严格 ULID、细粒度 Scope 和最小审计', async () => {
     const timeline = [{ actionId: INSTANCE_ID, actionType: 'instance.submitted' }];
     const getTimeline = vi.fn().mockResolvedValue(timeline);

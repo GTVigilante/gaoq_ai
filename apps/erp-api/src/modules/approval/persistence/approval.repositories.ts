@@ -115,6 +115,17 @@ export class ApprovalTemplateRepository extends TenantBoundApprovalRepository {
     return record === null ? null : this.toDomain(record);
   }
 
+  /** 租户内已发布模板目录；限制规模，避免浏览器或 AI 无界拉取。 */
+  async findPublished(): Promise<readonly ApprovalTemplate[]> {
+    const records = await this.records.find({ tenantId: this.tenantId(), status: 'published' })
+      .sort({ code: 1 })
+      .limit(201)
+      .lean()
+      .exec();
+    if (records.length > 200) throw integrityError();
+    return Object.freeze(records.map((record) => this.toDomain(record)));
+  }
+
   async findLatestByCode(code: string, session?: ClientSession): Promise<ApprovalTemplate | null> {
     const query = this.records.findOne({ tenantId: this.tenantId(), code }).sort({ revision: -1 });
     if (session !== undefined) query.session(session);

@@ -709,6 +709,24 @@ export class McpToolService {
     });
   }
 
+  /** MCP Resource 使用的已发布模板表单目录；不注册为 Tool，避免能力目录重复。 */
+  async getApprovalTemplateCatalog(extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:approval:instance:submit')) {
+        await this.auditTool(identity, 'approval_template_catalog', 'R0', 'denied');
+        return scopeError('erp:approval:instance:submit');
+      }
+      const templates = await this.approvals.listPublishedTemplateForms();
+      const data: Record<string, unknown> = { templates };
+      await this.auditTool(identity, 'approval_template_catalog', 'R0', 'success', { count: templates.length });
+      return {
+        content: [{ type: 'text', text: JSON.stringify(data) }],
+        structuredContent: data,
+      };
+    });
+  }
+
   async getApprovalInstance(instanceId: string, extra: McpExtra): Promise<McpToolResult> {
     const identity = parseMcpIdentity(extra.authInfo);
     return this.run(identity, async () => {

@@ -35,6 +35,7 @@ import {
   type ApprovalTimelineEntry,
   type ApprovalView,
 } from '../../lib/approval-contract';
+import { ApprovalInitiation } from './approval-initiation';
 
 interface IdentityProfile {
   readonly actorId: string;
@@ -161,7 +162,10 @@ export function ApprovalWorkbench() {
           <Typography.Title id="approval-title" level={1}>审批中心</Typography.Title>
           <Typography.Paragraph>待办和字段均由服务端按部门数据范围裁剪；写操作使用强版本与幂等键。</Typography.Paragraph>
         </div>
-        <Button icon={<ReloadOutlined />} onClick={() => { void load(); }} loading={loading}>刷新</Button>
+        <Space>
+          <ApprovalInitiation onSubmitted={load} />
+          <Button icon={<ReloadOutlined />} onClick={() => { void load(); }} loading={loading}>刷新</Button>
+        </Space>
       </Flex>
       {error === null ? null : <Alert className="console-alert" type="error" showIcon message={error.message} description={error.traceId === null ? '请重新登录或联系管理员。' : `追踪标识：${error.traceId}`} />}
       <Card bordered={false}>

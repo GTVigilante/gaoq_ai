@@ -56,6 +56,7 @@ function assemble() {
   const organization = { getOrgChart: vi.fn().mockResolvedValue({ departments: [], employees: [] }) };
   const approvals = {
     getInbox: vi.fn().mockResolvedValue([]),
+    listPublishedTemplateForms: vi.fn().mockResolvedValue([{ code: 'EXPENSE', fields: [] }]),
     getInstance: vi.fn().mockResolvedValue({ id: 'instance-001', formData: { remark: { redacted: true } } }),
     getTimeline: vi.fn().mockResolvedValue([{ actionId: '01K00000000000000000000000', actionType: 'instance.submitted' }]),
     submitInstance: vi.fn(),
@@ -151,6 +152,18 @@ describe('McpToolService', () => {
     ]));
     expect(result.structuredContent).toEqual({ items: [] });
     expect(store.approvals.getInbox).toHaveBeenCalled();
+  });
+
+  it('模板目录 Resource 复用应用服务并按发起 Scope 失败关闭', async () => {
+    const store = assemble();
+    const denied = await store.service.getApprovalTemplateCatalog(extra(['erp:mcp:server:connect']));
+    expect(denied.isError).toBe(true);
+    expect(store.approvals.listPublishedTemplateForms).not.toHaveBeenCalled();
+    const result = await store.service.getApprovalTemplateCatalog(extra([
+      'erp:mcp:server:connect', 'erp:approval:instance:submit',
+    ]));
+    expect(result.structuredContent).toEqual({ templates: [{ code: 'EXPENSE', fields: [] }] });
+    expect(JSON.stringify(result)).not.toContain('tenant-001');
   });
 
   it('审批详情沿用应用层 L3/L4 脱敏投影', async () => {

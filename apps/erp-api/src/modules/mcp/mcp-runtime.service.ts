@@ -586,6 +586,25 @@ export class McpRuntimeService {
     );
 
     server.registerResource(
+      'approval-published-templates',
+      'erp://approval/templates/published',
+      {
+        title: '可发起审批模板目录',
+        description: '返回已发布模板的字段白名单；不包含流程节点、审批人、租户或表单数据。',
+        mimeType: 'application/json',
+      },
+      async (uri, extra) => {
+        const result = await this.tools.getApprovalTemplateCatalog(extra);
+        if (result.isError === true) throw new Error('无权读取审批模板目录');
+        return { contents: [{
+          uri: uri.toString(),
+          mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? { templates: [] }),
+        }] };
+      },
+    );
+
+    server.registerResource(
       'recruitment-application',
       new ResourceTemplate('erp://recruitment/applications/{id}', { list: undefined }),
       {

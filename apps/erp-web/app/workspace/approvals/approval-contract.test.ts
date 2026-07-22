@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseApprovalSummaries, parseApprovalTimeline, parseApprovalView } from '../../lib/approval-contract.js';
+import {
+  parseApprovalSummaries,
+  parseApprovalTimeline,
+  parseApprovalView,
+  parsePublishedTemplateForms,
+} from '../../lib/approval-contract.js';
 
 const SUMMARY = {
   id: '01K00000000000000000000000', status: 'running', templateCode: 'expense_claim',
@@ -38,5 +43,33 @@ describe('审批工作台响应契约', () => {
       .toThrowError('APPROVAL_TIMELINE_INVALID');
     expect(() => parseApprovalTimeline([{ ...action, actionType: 'instance.deleted' }]))
       .toThrowError('APPROVAL_TIMELINE_INVALID');
+  });
+
+  it('已发布模板只接受可填写字段投影并深冻结', () => {
+    const template = {
+      id: '01K00000000000000000000002', code: 'expense_claim', name: '费用报销',
+      revision: 2, riskLevel: 'R1', definitionHash: 'a'.repeat(43), version: 3,
+      fields: [{
+        key: 'amount', label: '金额', type: 'money_minor', required: true, sensitivity: 'L2',
+      }],
+    } as const;
+    const parsed = parsePublishedTemplateForms([template]);
+    expect(parsed).toEqual([template]);
+    expect(Object.isFrozen(parsed)).toBe(true);
+    expect(Object.isFrozen(parsed[0]?.fields)).toBe(true);
+  });
+
+  it('已发布模板拒绝租户、流程节点和解析器信息', () => {
+    const template = {
+      id: '01K00000000000000000000002', code: 'expense_claim', name: '费用报销',
+      revision: 2, riskLevel: 'R1', definitionHash: 'a'.repeat(43), version: 3,
+      fields: [{ key: 'reason', label: '事由', type: 'text', required: true, sensitivity: 'L1' }],
+    } as const;
+    expect(() => parsePublishedTemplateForms([{ ...template, tenantId: 'tenant-001' }]))
+      .toThrowError('APPROVAL_TEMPLATE_CATALOG_INVALID');
+    expect(() => parsePublishedTemplateForms([{ ...template, nodes: [] }]))
+      .toThrowError('APPROVAL_TEMPLATE_CATALOG_INVALID');
+    expect(() => parsePublishedTemplateForms([{ ...template, resolver: { type: 'initiator_manager' } }]))
+      .toThrowError('APPROVAL_TEMPLATE_CATALOG_INVALID');
   });
 });

@@ -19,6 +19,7 @@ import {
   type ApprovalInstanceView,
   type ApprovalTimelineEntry,
   type ApprovalTemplateSummary,
+  type ApprovalPublishedTemplateFormView,
 } from './application/approval-application.service.js';
 import {
   AddApprovalSignerDto,
@@ -38,6 +39,21 @@ export class ApprovalController {
     private readonly approvals: ApprovalApplicationService,
     private readonly audit: AuditService,
   ) {}
+
+  @Get('templates/published')
+  @RequiredScopes('erp:approval:instance:submit')
+  async listPublishedTemplates(): Promise<readonly ApprovalPublishedTemplateFormView[]> {
+    const templates = await this.approvals.listPublishedTemplateForms();
+    await this.audit.record({
+      action: 'approval.template.catalog.read',
+      resourceType: 'approval_template_catalog',
+      resourceId: 'published',
+      riskLevel: 'R0',
+      outcome: 'success',
+      metadata: { count: templates.length },
+    });
+    return templates;
+  }
 
   @Post('templates')
   @RequiredScopes('erp:approval:template:write')

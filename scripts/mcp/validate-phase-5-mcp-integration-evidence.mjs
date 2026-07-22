@@ -210,7 +210,7 @@ function fixture() {
       endedAt: '2026-07-22T01:00:00.000Z' },
     clients: Object.entries(CLIENTS).map(([profile, authFlow], index) => ({ profile, authFlow,
       initialized: true, protocolVersion: '2025-11-25', catalogHash: catalog.catalogHash,
-      toolCount: 41, resourceCount: 2, resourceTemplateCount: 18, promptCount: 16,
+      toolCount: 41, resourceCount: 3, resourceTemplateCount: 18, promptCount: 16,
       toolCalls: 20, structuredOutputFailures: 0, schemaFailures: 0,
       errorContractFailures: 0, timeoutCancellationFailures: 0, idempotencyFailures: 0,
       auditEvents: 20, evidenceHash: hash(`client-${index}`) })),

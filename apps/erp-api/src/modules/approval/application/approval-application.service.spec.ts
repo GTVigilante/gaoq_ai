@@ -109,6 +109,7 @@ function dependencies(overrides: Record<string, unknown> = {}) {
     profiles: { resolveActive: vi.fn().mockResolvedValue({ actorId: 'actor-001' }) },
     templates: {
       findPublishedByCode: vi.fn().mockResolvedValue(template()),
+      findPublished: vi.fn().mockResolvedValue([template()]),
       findLatestByCode: vi.fn().mockResolvedValue(null),
       findById: vi.fn().mockResolvedValue(template()),
       insert: vi.fn(),
@@ -145,6 +146,19 @@ function service(
 }
 
 describe('ApprovalApplicationService', () => {
+  it('已发布模板目录只返回表单字段，不泄漏审批节点、审批人或租户', async () => {
+    const deps = dependencies();
+    const result = await service(deps).listPublishedTemplateForms();
+    expect(result).toEqual([expect.objectContaining({
+      code: 'EXPENSE', name: '费用审批', revision: 1, riskLevel: 'R1',
+      fields: definition().fields,
+    })]);
+    expect(JSON.stringify(result)).not.toContain('tenant-001');
+    expect(JSON.stringify(result)).not.toContain('employee-manager');
+    expect(JSON.stringify(result)).not.toContain('resolver');
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
   it('时间线先复用实例读取授权，再返回不含表单正文的动作投影', async () => {
     const timeline = [{
       actionId: '01K00000000000000000000000', aggregateVersion: 1,

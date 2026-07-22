@@ -35,10 +35,49 @@ export interface ApprovalTimelineEntry {
   readonly occurredAt: string;
 }
 
+export type ApprovalFormFieldType =
+  | 'text'
+  | 'number'
+  | 'money_minor'
+  | 'boolean'
+  | 'date'
+  | 'single_select'
+  | 'multi_select'
+  | 'employee'
+  | 'department'
+  | 'file_reference';
+
+export interface ApprovalFormFieldView {
+  readonly key: string;
+  readonly label: string;
+  readonly type: ApprovalFormFieldType;
+  readonly required: boolean;
+  readonly sensitivity: 'L1' | 'L2' | 'L3' | 'L4';
+  readonly options?: readonly { readonly key: string; readonly label: string }[];
+  readonly maximumLength?: number;
+}
+
+export interface ApprovalPublishedTemplateForm {
+  readonly id: string;
+  readonly code: string;
+  readonly name: string;
+  readonly revision: number;
+  readonly riskLevel: 'R1' | 'R2';
+  readonly definitionHash: string;
+  readonly fields: readonly ApprovalFormFieldView[];
+  readonly version: number;
+}
+
 const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/u;
 const CODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const FIELD_PATTERN = /^[a-z][a-z0-9_]{0,63}$/u;
+const DEFINITION_HASH_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
 const STATUSES = new Set<ApprovalStatus>(['draft', 'running', 'approved', 'rejected', 'withdrawn', 'archived']);
+const FIELD_TYPES = new Set<ApprovalFormFieldType>([
+  'text', 'number', 'money_minor', 'boolean', 'date', 'single_select',
+  'multi_select', 'employee', 'department', 'file_reference',
+]);
 
 /** 在渲染前校验审批待办契约，拒绝未知状态和越界字段。 */
 export function parseApprovalSummaries(value: unknown): readonly ApprovalSummary[] {
@@ -107,6 +146,39 @@ export function parseApprovalTimeline(value: unknown): readonly ApprovalTimeline
   }));
 }
 
+/** 校验可发起模板的最小投影；流程、解析器、审批人和租户字段一律拒绝。 */
+export function parsePublishedTemplateForms(value: unknown): readonly ApprovalPublishedTemplateForm[] {
+  if (!Array.isArray(value) || value.length > 200) throw new Error('APPROVAL_TEMPLATE_CATALOG_INVALID');
+  return Object.freeze(value.map((item) => {
+    const record = objectRecord(item, 'APPROVAL_TEMPLATE_CATALOG_INVALID');
+    if (
+      typeof record.id !== 'string' || !ULID_PATTERN.test(record.id) ||
+      typeof record.code !== 'string' || !CODE_PATTERN.test(record.code) ||
+      typeof record.name !== 'string' || record.name.trim().length < 1 || record.name.length > 128 ||
+      !positiveInteger(record.revision) ||
+      (record.riskLevel !== 'R1' && record.riskLevel !== 'R2') ||
+      typeof record.definitionHash !== 'string' || !DEFINITION_HASH_PATTERN.test(record.definitionHash) ||
+      !Array.isArray(record.fields) || record.fields.length < 1 || record.fields.length > 100 ||
+      !positiveInteger(record.version) ||
+      ['tenantId', 'nodes', 'resolver', 'approvedBy'].some((key) => Object.hasOwn(record, key))
+    ) throw new Error('APPROVAL_TEMPLATE_CATALOG_INVALID');
+    const fields = Object.freeze(record.fields.map((field) => parseTemplateField(field)));
+    if (new Set(fields.map((field) => field.key)).size !== fields.length) {
+      throw new Error('APPROVAL_TEMPLATE_CATALOG_INVALID');
+    }
+    return Object.freeze({
+      id: record.id,
+      code: record.code,
+      name: record.name.trim(),
+      revision: record.revision as number,
+      riskLevel: record.riskLevel,
+      definitionHash: record.definitionHash,
+      fields,
+      version: record.version as number,
+    });
+  }));
+}
+
 function parseApprovalSummary(value: unknown): ApprovalSummary {
   const record = objectRecord(value, 'APPROVAL_SUMMARY_INVALID');
   if (
@@ -127,6 +199,48 @@ function parseApprovalSummary(value: unknown): ApprovalSummary {
     version: record.version as number,
     submittedAt: record.submittedAt as string | null,
     completedAt: record.completedAt as string | null,
+  });
+}
+
+function parseTemplateField(value: unknown): ApprovalFormFieldView {
+  const field = objectRecord(value, 'APPROVAL_TEMPLATE_FIELD_INVALID');
+  if (
+    typeof field.key !== 'string' || !FIELD_PATTERN.test(field.key) ||
+    typeof field.label !== 'string' || field.label.trim().length < 1 || field.label.length > 128 ||
+    typeof field.type !== 'string' || !FIELD_TYPES.has(field.type as ApprovalFormFieldType) ||
+    typeof field.required !== 'boolean' ||
+    !['L1', 'L2', 'L3', 'L4'].includes(String(field.sensitivity)) ||
+    !(field.maximumLength === undefined || (
+      field.type === 'text' && positiveInteger(field.maximumLength) && Number(field.maximumLength) <= 10_000
+    ))
+  ) throw new Error('APPROVAL_TEMPLATE_FIELD_INVALID');
+  const selection = field.type === 'single_select' || field.type === 'multi_select';
+  let options: readonly { readonly key: string; readonly label: string }[] | undefined;
+  if (selection) {
+    if (!Array.isArray(field.options)) throw new Error('APPROVAL_TEMPLATE_FIELD_INVALID');
+    options = Object.freeze(field.options.map((value: unknown) => {
+      const option = objectRecord(value, 'APPROVAL_TEMPLATE_FIELD_INVALID');
+      if (
+        typeof option.key !== 'string' || !CODE_PATTERN.test(option.key) ||
+        typeof option.label !== 'string' || option.label.trim().length < 1 || option.label.length > 128
+      ) throw new Error('APPROVAL_TEMPLATE_FIELD_INVALID');
+      return Object.freeze({ key: option.key, label: option.label.trim() });
+    }));
+  } else if (field.options !== undefined) {
+    throw new Error('APPROVAL_TEMPLATE_FIELD_INVALID');
+  }
+  if (options !== undefined && (
+    options.length < 1 || options.length > 200 ||
+    new Set(options.map((option) => option.key)).size !== options.length
+  )) throw new Error('APPROVAL_TEMPLATE_FIELD_INVALID');
+  return Object.freeze({
+    key: field.key,
+    label: field.label.trim(),
+    type: field.type as ApprovalFormFieldType,
+    required: field.required,
+    sensitivity: field.sensitivity as ApprovalFormFieldView['sensitivity'],
+    ...(options === undefined ? {} : { options }),
+    ...(field.maximumLength === undefined ? {} : { maximumLength: field.maximumLength as number }),
   });
 }
 

@@ -81,6 +81,29 @@ function runningInstance() {
 }
 
 describe('审批租户仓储', () => {
+  it('已发布模板目录固定租户、状态、排序和上限', async () => {
+    const stored = {
+      id: 'template-001', tenantId: 'tenant-001', code: 'EXPENSE', name: '费用审批',
+      riskLevel: 'R2', revision: 1, status: 'published',
+      definitionJson: JSON.stringify(definition()), definitionHash: publishedTemplate().definitionHash,
+      approvedBy: 'publisher-001', publishedAt: NOW, retiredAt: null, version: 2,
+      createdBy: 'editor-001', updatedBy: 'publisher-001', createdAt: NOW, updatedAt: NOW,
+    };
+    const exec = vi.fn().mockResolvedValue([stored]);
+    const lean = vi.fn().mockReturnValue({ exec });
+    const limit = vi.fn().mockReturnValue({ lean });
+    const sort = vi.fn().mockReturnValue({ limit });
+    const find = vi.fn().mockReturnValue({ sort });
+    const repository = new ApprovalTemplateRepository(
+      context(), { find } as unknown as Model<ApprovalTemplateDocument>,
+    );
+    const templates = await repository.findPublished();
+    expect(find).toHaveBeenCalledWith({ tenantId: 'tenant-001', status: 'published' });
+    expect(sort).toHaveBeenCalledWith({ code: 1 });
+    expect(limit).toHaveBeenCalledWith(201);
+    expect(templates).toEqual([expect.objectContaining({ code: 'EXPENSE', status: 'published' })]);
+  });
+
   it('时间线查询固定可信租户、聚合版本顺序与最大记录数', async () => {
     const exec = vi.fn().mockResolvedValue([{
       actionId: '01K00000000000000000000000', tenantId: 'tenant-001', instanceId: 'instance-001',

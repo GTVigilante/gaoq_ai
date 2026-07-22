@@ -32,6 +32,7 @@ import {
   type ApprovalInstance,
   type ApprovalTemplate,
   type ApprovalTemplateDefinition,
+  type ApprovalFormField,
 } from '../domain/index.js';
 import {
   ApprovalActionRepository,
@@ -55,6 +56,17 @@ export interface ApprovalTemplateSummary extends Record<string, unknown> {
   readonly status: ApprovalTemplate['status'];
   readonly riskLevel: 'R1' | 'R2';
   readonly definitionHash: string;
+  readonly version: number;
+}
+
+export interface ApprovalPublishedTemplateFormView {
+  readonly id: string;
+  readonly code: string;
+  readonly name: string;
+  readonly revision: number;
+  readonly riskLevel: 'R1' | 'R2';
+  readonly definitionHash: string;
+  readonly fields: readonly ApprovalFormField[];
   readonly version: number;
 }
 
@@ -215,6 +227,21 @@ export class ApprovalApplicationService {
         return { template: templateSummary(published) };
       },
     ));
+  }
+
+  /** 返回可发起模板的最小表单投影；不暴露节点解析器、审批人或租户。 */
+  async listPublishedTemplateForms(): Promise<readonly ApprovalPublishedTemplateFormView[]> {
+    const templates = await this.templates.findPublished();
+    return deepFreeze(templates.map((template) => ({
+      id: template.id,
+      code: template.code,
+      name: template.name,
+      revision: template.revision,
+      riskLevel: template.riskLevel,
+      definitionHash: template.definitionHash,
+      fields: template.definition.fields.map((field) => ({ ...field })),
+      version: template.version,
+    })));
   }
 
   async createInstance(
