@@ -3,6 +3,8 @@ import { MongooseModule } from '@nestjs/mongoose';
 
 import { IdempotencyModule } from '../../core/idempotency/idempotency.module.js';
 import { OrgModule } from '../org/org.module.js';
+import { ApprovalModule } from '../approval/approval.module.js';
+import { IdentityModule } from '../identity/identity.module.js';
 import { StrongAuthModule } from '../identity/strong-auth/strong-auth.module.js';
 import { OutboxRecord, OutboxRecordSchema } from '../org/persistence/outbox.schema.js';
 import { PayrollModule } from '../payroll/payroll.module.js';
@@ -34,6 +36,8 @@ import { TreasuryController } from './treasury.controller.js';
 @Module({
   imports: [
     IdempotencyModule,
+    ApprovalModule,
+    IdentityModule,
     OrgModule,
     PayrollModule,
     StrongAuthModule,

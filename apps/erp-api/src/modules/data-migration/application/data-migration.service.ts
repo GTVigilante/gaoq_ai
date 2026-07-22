@@ -74,6 +74,10 @@ import {
   TreasuryBankAccountService,
   type ImportTreasuryBankAccountFromMigrationInput,
 } from '../../treasury/application/treasury-bank-account.service.js';
+import {
+  TreasuryDisbursementService,
+  type ImportTreasuryDisbursementFromMigrationInput,
+} from '../../treasury/application/treasury-disbursement.service.js';
 import type {
   CreateDepartmentDto,
   CreateEmployeeDto,
@@ -191,6 +195,8 @@ export class DataMigrationService {
     private readonly payrollTax?: PayrollTaxFilingService,
     @Inject(TreasuryBankAccountService)
     private readonly treasuryAccounts?: TreasuryBankAccountService,
+    @Inject(TreasuryDisbursementService)
+    private readonly treasuryDisbursements?: TreasuryDisbursementService,
   ) {}
 
   async start(input: CreateDataMigrationRunDto) {
@@ -582,6 +588,17 @@ export class DataMigrationService {
       );
       assertSingleMigrationEvidence(input, payload);
       await Promise.all(specs.map(async (spec) =>
+        this.requireMapping(run, spec.entityType, spec.sourceAssociationId)));
+      return;
+    } else if (input.entityType === 'treasury.disbursement_batch') {
+      const payload = treasuryDisbursementPayload(input.payload);
+      const specs = treasuryDisbursementAssociationSpecs(payload);
+      assertAssociations(
+        input.associationSourceIds,
+        [...new Set(specs.map((spec) => spec.sourceAssociationId))],
+      );
+      assertSingleMigrationEvidence(input, payload);
+      await Promise.all(uniqueAssociationTargets(specs).map(async (spec) =>
         this.requireMapping(run, spec.entityType, spec.sourceAssociationId)));
       return;
     } else if (input.entityType === 'recruitment.interview') {
@@ -1385,6 +1402,46 @@ export class DataMigrationService {
       };
       return target(await this.treasuryAccounts.importFromMigration(key, command));
     }
+    if (input.entityType === 'treasury.disbursement_batch') {
+      const payload = treasuryDisbursementPayload(input.payload);
+      if (this.treasuryDisbursements === undefined) {
+        throw new Error('迁移代发批次适配器未装配');
+      }
+      const cache = new Map<string, Promise<string>>();
+      const mapped = (entityType: AssociationTargetType, sourceId: string) =>
+        cachedTargetId(cache, entityType, sourceId, async () =>
+          (await this.requireMapping(run, entityType, sourceId)).targetId);
+      const [periodId, payrollRunId, debtorBankAccountId, preparedByEmployeeId,
+        exportApprovedByEmployeeId, approvalHistoryId, lines] = await Promise.all([
+        mapped('payroll.period', payload.payrollPeriodSourceId),
+        mapped('payroll.calculation_run', payload.payrollRunSourceId),
+        mapped('treasury.bank_account', payload.debtorBankAccountSourceId),
+        mapped('org.employee', payload.preparedByEmployeeSourceId),
+        mapped('org.employee', payload.exportApprovedByEmployeeSourceId),
+        mapped('approval.history', payload.approvalHistorySourceId),
+        Promise.all(payload.lines.map(async (line) => ({
+          employeeId: await mapped('org.employee', line.employeeSourceId),
+          bankAccountId: await mapped('treasury.bank_account', line.bankAccountSourceId),
+          expectedNetPayMinor: line.expectedNetPayMinor,
+        }))),
+      ]);
+      const command: ImportTreasuryDisbursementFromMigrationInput = {
+        targetId: mapping?.targetId ?? null, payrollPeriodId: periodId,
+        payrollRunId, expectedPayrollVersion: payload.expectedPayrollVersion,
+        debtorBankAccountId, preparedByEmployeeId, exportApprovedByEmployeeId,
+        approvalHistoryId, approvalEvidenceChecksum: payload.approvalEvidenceChecksum,
+        requestedExecutionDate: payload.requestedExecutionDate, lines,
+        expectedLineCount: payload.expectedLineCount,
+        expectedTotalMinor: payload.expectedTotalMinor,
+        bankSubmissionId: payload.bankSubmissionId,
+        bankSubmissionEvidenceId: payload.bankSubmissionEvidenceId,
+        preparedAt: payload.preparedAt, submittedAt: payload.submittedAt,
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${run.id}/attachments/${payload.sourceEvidenceSourceAttachmentId}`,
+        evidenceChecksum: payload.sourceEvidenceChecksum,
+      };
+      return target(await this.treasuryDisbursements.importSubmittedFromMigration(key, command));
+    }
     const payload = approvalTemplatePayload(input.payload);
     if (this.approvals === undefined) throw new Error('迁移审批适配器未装配');
     const employeeId = async (sourceId: string): Promise<string> =>
@@ -1909,7 +1966,8 @@ type AssociationTargetType =
   | 'payroll.compensation_profile'
   | 'payroll.period'
   | 'payroll.period_approval'
-  | 'payroll.calculation_run';
+  | 'payroll.calculation_run'
+  | 'treasury.bank_account';
 interface AssociationEvidence {
   readonly relationship: AssociationRelationship;
   readonly sourceAssociationId: string;
@@ -3920,6 +3978,124 @@ function treasuryBankAccountAssociationSpecs(
   ];
 }
 
+interface TreasuryDisbursementMigrationPayload extends MigrationEvidencePayload {
+  readonly payrollPeriodSourceId: string;
+  readonly payrollRunSourceId: string;
+  readonly expectedPayrollVersion: number;
+  readonly debtorBankAccountSourceId: string;
+  readonly preparedByEmployeeSourceId: string;
+  readonly exportApprovedByEmployeeSourceId: string;
+  readonly approvalHistorySourceId: string;
+  readonly approvalEvidenceChecksum: string;
+  readonly requestedExecutionDate: string;
+  readonly lines: readonly {
+    readonly employeeSourceId: string;
+    readonly bankAccountSourceId: string;
+    readonly expectedNetPayMinor: number;
+  }[];
+  readonly expectedLineCount: number;
+  readonly expectedTotalMinor: number;
+  readonly bankSubmissionId: string;
+  readonly bankSubmissionEvidenceId: string;
+  readonly preparedAt: string;
+  readonly submittedAt: string;
+}
+
+function treasuryDisbursementPayload(
+  value: Readonly<Record<string, unknown>>,
+): TreasuryDisbursementMigrationPayload {
+  exactKeys(value, [
+    'approvalEvidenceChecksum', 'approvalHistorySourceId', 'bankSubmissionEvidenceId',
+    'bankSubmissionId', 'debtorBankAccountSourceId', 'expectedLineCount',
+    'expectedPayrollVersion', 'expectedTotalMinor', 'exportApprovedByEmployeeSourceId',
+    'lines', 'payrollPeriodSourceId', 'payrollRunSourceId', 'preparedAt',
+    'preparedByEmployeeSourceId', 'requestedExecutionDate',
+    'sourceEvidenceChecksum', 'sourceEvidenceSourceAttachmentId', 'submittedAt',
+  ]);
+  if (!Array.isArray(value.lines) || value.lines.length < 1 || value.lines.length > 5_000) {
+    throw invalidPayload();
+  }
+  const lines = value.lines.map((entry) => {
+    if (!isPlainMigrationObject(entry)) throw invalidPayload();
+    exactKeys(entry, ['bankAccountSourceId', 'employeeSourceId', 'expectedNetPayMinor']);
+    if (typeof entry.employeeSourceId !== 'string' ||
+      !SOURCE_ID_PATTERN.test(entry.employeeSourceId) ||
+      typeof entry.bankAccountSourceId !== 'string' ||
+      !SOURCE_ID_PATTERN.test(entry.bankAccountSourceId) ||
+      !Number.isSafeInteger(entry.expectedNetPayMinor) ||
+      Number(entry.expectedNetPayMinor) < 1) throw invalidPayload();
+    return {
+      employeeSourceId: entry.employeeSourceId,
+      bankAccountSourceId: entry.bankAccountSourceId,
+      expectedNetPayMinor: Number(entry.expectedNetPayMinor),
+    };
+  });
+  const sourceIds = [
+    'payrollPeriodSourceId', 'payrollRunSourceId', 'debtorBankAccountSourceId',
+    'preparedByEmployeeSourceId', 'exportApprovedByEmployeeSourceId',
+    'approvalHistorySourceId',
+  ] as const;
+  if (sourceIds.some((key) => typeof value[key] !== 'string' ||
+      !SOURCE_ID_PATTERN.test(String(value[key]))) ||
+    typeof value.approvalEvidenceChecksum !== 'string' ||
+    !HASH_PATTERN.test(value.approvalEvidenceChecksum) ||
+    !migrationVersion(value.expectedPayrollVersion) || Number(value.expectedPayrollVersion) < 6 ||
+    !Number.isSafeInteger(value.expectedLineCount) ||
+    Number(value.expectedLineCount) !== lines.length ||
+    !Number.isSafeInteger(value.expectedTotalMinor) || Number(value.expectedTotalMinor) < 1 ||
+    typeof value.requestedExecutionDate !== 'string' ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(value.requestedExecutionDate) ||
+    typeof value.bankSubmissionId !== 'string' || !SOURCE_ID_PATTERN.test(value.bankSubmissionId) ||
+    typeof value.bankSubmissionEvidenceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.bankSubmissionEvidenceId) ||
+    !isStrictUtcIso(value.preparedAt) || !isStrictUtcIso(value.submittedAt) ||
+    !migrationEvidence(value)) throw invalidPayload();
+  return {
+    payrollPeriodSourceId: value.payrollPeriodSourceId as string,
+    payrollRunSourceId: value.payrollRunSourceId as string,
+    expectedPayrollVersion: Number(value.expectedPayrollVersion),
+    debtorBankAccountSourceId: value.debtorBankAccountSourceId as string,
+    preparedByEmployeeSourceId: value.preparedByEmployeeSourceId as string,
+    exportApprovedByEmployeeSourceId: value.exportApprovedByEmployeeSourceId as string,
+    approvalHistorySourceId: value.approvalHistorySourceId as string,
+    approvalEvidenceChecksum: value.approvalEvidenceChecksum,
+    requestedExecutionDate: value.requestedExecutionDate,
+    lines, expectedLineCount: Number(value.expectedLineCount),
+    expectedTotalMinor: Number(value.expectedTotalMinor),
+    bankSubmissionId: value.bankSubmissionId,
+    bankSubmissionEvidenceId: value.bankSubmissionEvidenceId,
+    preparedAt: value.preparedAt, submittedAt: value.submittedAt,
+    sourceEvidenceSourceAttachmentId: value.sourceEvidenceSourceAttachmentId,
+    sourceEvidenceChecksum: value.sourceEvidenceChecksum,
+  };
+}
+
+function treasuryDisbursementAssociationSpecs(
+  payload: TreasuryDisbursementMigrationPayload,
+): readonly (AssociationEvidence & { readonly entityType: AssociationTargetType })[] {
+  return [
+    { relationship: 'payroll_period', sourceAssociationId: payload.payrollPeriodSourceId,
+      entityType: 'payroll.period' },
+    { relationship: 'payroll_run', sourceAssociationId: payload.payrollRunSourceId,
+      entityType: 'payroll.calculation_run' },
+    { relationship: 'debtor_account', sourceAssociationId: payload.debtorBankAccountSourceId,
+      entityType: 'treasury.bank_account' },
+    { relationship: 'prepared_by', sourceAssociationId: payload.preparedByEmployeeSourceId,
+      entityType: 'org.employee' },
+    { relationship: 'approved_by', sourceAssociationId: payload.exportApprovedByEmployeeSourceId,
+      entityType: 'org.employee' },
+    { relationship: 'approval_history', sourceAssociationId: payload.approvalHistorySourceId,
+      entityType: 'approval.history' },
+    ...payload.lines.flatMap((line) => [
+      { relationship: 'employee' as const, sourceAssociationId: line.employeeSourceId,
+        entityType: 'org.employee' as const },
+      { relationship: 'recipient_account' as const,
+        sourceAssociationId: line.bankAccountSourceId,
+        entityType: 'treasury.bank_account' as const },
+    ]),
+  ];
+}
+
 function migrationEvidence(value: Readonly<Record<string, unknown>>): value is
 Readonly<Record<string, unknown>> & MigrationEvidencePayload {
   return typeof value.sourceEvidenceSourceAttachmentId === 'string' &&
@@ -4301,6 +4477,10 @@ function associationEvidence(input: ApplyDataMigrationRecordDto): readonly Assoc
       derived = payrollTaxFilingAssociationSpecs(payrollTaxFilingPayload(input.payload));
     } else if (input.entityType === 'treasury.bank_account') {
       derived = treasuryBankAccountAssociationSpecs(treasuryBankAccountPayload(input.payload));
+    } else if (input.entityType === 'treasury.disbursement_batch') {
+      derived = treasuryDisbursementAssociationSpecs(
+        treasuryDisbursementPayload(input.payload),
+      );
     } else if (input.entityType === 'attendance.monthly_snapshot') {
       const payload = attendanceMonthPayload(input.payload);
       derived = [
@@ -4437,7 +4617,7 @@ const ASSOCIATION_RELATIONSHIPS = [
   'added_approver', 'expected_pending_approver',
   'requisition', 'approval_instance', 'approval_history',
   'candidate', 'application', 'interviewer', 'interview',
-  'account_owner',
+  'account_owner', 'debtor_account', 'recipient_account',
   'source_fact',
   'previous_snapshot',
   'prepared_by', 'payroll_period', 'payroll_run', 'rule_pack',

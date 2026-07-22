@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -16,6 +17,8 @@ import { z } from 'zod';
 import { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
 import type { AppEnvironment } from '../../../config/environment.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
+import { ApprovalApplicationService } from '../../approval/application/approval-application.service.js';
+import { AccessProfileRepository } from '../../identity/access-profile.repository.js';
 import type { VerifiedAccessToken } from '../../identity/auth.types.js';
 import { WebAuthnService } from '../../identity/strong-auth/webauthn.service.js';
 import {
@@ -52,12 +55,15 @@ import type {
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const HASH_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const MIGRATION_EVIDENCE_REF_PATTERN =
+  /^erp:\/\/data-migrations\/runs\/[0-7][0-9A-HJKMNP-TV-Z]{25}\/attachments\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const bankAccountDataSchema = z.object({
   accountName: z.string().min(1).max(140),
   account: z.string().regex(/^[0-9]{8,32}$/),
   clearingCode: z.string().regex(/^[0-9A-Z]{8,12}$/),
   currency: z.literal('CNY'),
 }).strict();
+type BankAccountData = z.infer<typeof bankAccountDataSchema>;
 const batchSnapshotSchema = z.object({
   messageId: z.string().regex(ID_PATTERN),
   paymentInformationId: z.string().regex(ID_PATTERN),
@@ -97,6 +103,34 @@ export interface TreasuryDisbursementSummary extends Record<string, unknown> {
   readonly bankSubmissionEvidenceId: string | null;
 }
 
+export interface ImportTreasuryDisbursementLineFromMigration {
+  readonly employeeId: string;
+  readonly bankAccountId: string;
+  readonly expectedNetPayMinor: number;
+}
+
+export interface ImportTreasuryDisbursementFromMigrationInput {
+  readonly targetId: string | null;
+  readonly payrollPeriodId: string;
+  readonly payrollRunId: string;
+  readonly expectedPayrollVersion: number;
+  readonly debtorBankAccountId: string;
+  readonly preparedByEmployeeId: string;
+  readonly exportApprovedByEmployeeId: string;
+  readonly approvalHistoryId: string;
+  readonly approvalEvidenceChecksum: string;
+  readonly requestedExecutionDate: string;
+  readonly lines: readonly ImportTreasuryDisbursementLineFromMigration[];
+  readonly expectedLineCount: number;
+  readonly expectedTotalMinor: number;
+  readonly bankSubmissionId: string;
+  readonly bankSubmissionEvidenceId: string;
+  readonly preparedAt: string;
+  readonly submittedAt: string;
+  readonly migrationEvidenceRef: string;
+  readonly evidenceChecksum: string;
+}
+
 /** 锁定工资到受控代发文件的两阶段编排；不返回文件、账号或员工级金额。 */
 @Injectable()
 export class TreasuryDisbursementService {
@@ -116,7 +150,158 @@ export class TreasuryDisbursementService {
     private readonly instructions: Model<TreasuryPaymentInstructionDocument>,
     @InjectModel(TreasuryDisbursementBatchRecord.name)
     private readonly batches: Model<TreasuryDisbursementBatchDocument>,
+    @Inject(AccessProfileRepository)
+    private readonly profiles?: AccessProfileRepository,
+    @Inject(ApprovalApplicationService)
+    private readonly approvals?: ApprovalApplicationService,
   ) {}
+
+  /** 迁移专用：重建确定性代发文件并恢复银行提交回执，不调用 WORM 或银行网关。 */
+  async importSubmittedFromMigration(
+    key: string,
+    input: ImportTreasuryDisbursementFromMigrationInput,
+  ): Promise<TreasuryDisbursementSummary> {
+    this.assertMigrationWriter();
+    assertDisbursementMigrationInput(input);
+    const profiles = this.profiles;
+    const approvals = this.approvals;
+    if (profiles === undefined || approvals === undefined) {
+      throw new Error('代发迁移身份或审批依赖未装配');
+    }
+    const source = await this.payroll.getLockedDisbursementSourceForMigration(
+      input.payrollPeriodId, input.expectedPayrollVersion,
+    );
+    return this.run(() => this.idempotency.execute(
+      'treasury.disbursement.import_from_migration', key, input, async (session) => {
+        const [preparedBy, exportApprovedBy, approval, debtor, creditorRecords] =
+          await Promise.all([
+            profiles.findActorIdByEmployee(
+              this.tenantId(), input.preparedByEmployeeId, session,
+            ),
+            profiles.findActorIdByEmployee(
+              this.tenantId(), input.exportApprovedByEmployeeId, session,
+            ),
+            approvals.verifyTreasuryMigrationReference(
+              input.approvalHistoryId, 'treasury_disbursement_export_approval', session,
+            ),
+            this.accounts.findOne({
+              tenantId: this.tenantId(), id: input.debtorBankAccountId,
+              ownerType: 'organization', ownerId: this.tenantId(),
+            }).session(session).lean().exec(),
+            this.accounts.find({
+              tenantId: this.tenantId(), id: { $in: input.lines.map((line) => line.bankAccountId) },
+              ownerType: 'employee',
+            }).session(session).lean().exec(),
+          ]);
+        if (preparedBy === null || exportApprovedBy === null || debtor === null) {
+          throw new NotFoundException({
+            code: 'TREASURY_DISBURSEMENT_MIGRATION_REFERENCE_NOT_FOUND',
+            message: '代发迁移制备人、批准人或付款账户不存在',
+          });
+        }
+        const preparedAt = strictMigrationInstant(input.preparedAt);
+        const submittedAt = strictMigrationInstant(input.submittedAt);
+        const approvedAt = strictMigrationInstant(approval.completedAt);
+        if (approval.evidenceChecksum !== input.approvalEvidenceChecksum ||
+          source.payrollRunId !== input.payrollRunId ||
+          preparedBy === source.payrollLockedBy || exportApprovedBy === preparedBy ||
+          exportApprovedBy === source.payrollLockedBy ||
+          preparedAt.getTime() < Date.parse(source.lockedAt) ||
+          approvedAt.getTime() < preparedAt.getTime() ||
+          submittedAt.getTime() < approvedAt.getTime()) {
+          throw new ConflictException({
+            code: 'TREASURY_DISBURSEMENT_MIGRATION_CONTROL_INVALID',
+            message: '代发迁移工资绑定、审批证据、职责分离或时间线非法',
+          });
+        }
+        const creditors = this.migrationCreditorAccounts(
+          input, creditorRecords, preparedAt,
+        );
+        this.assertMigrationAccountAvailable(debtor, preparedAt);
+        const controls = migrationPayableControls(source, input, creditors);
+        if (input.targetId !== null) return this.verifyMigrationReplay(
+          input, source, controls, debtor, creditors, preparedBy,
+          exportApprovedBy, preparedAt, submittedAt, session,
+        );
+        const batchId = createEventId(preparedAt);
+        const header = migrationBatchHeader(batchId, input, source, debtor, this.accountData(debtor));
+        const protectedBatch = this.crypto.protect({
+          tenantId: this.tenantId(), resourceType: 'batch_snapshot',
+          resourceId: batchId, version: 1,
+        }, header);
+        const instructionRecords = controls.lines.map((line) => {
+          const account = creditors.get(line.employeeId);
+          if (account === undefined) throw new Error('TREASURY_MIGRATION_ACCOUNT_MISSING');
+          const id = createEventId(preparedAt);
+          const data = migrationInstructionData(id, line, account.record.id, account.data);
+          return {
+            record: {
+              id, tenantId: this.tenantId(), batchId,
+              payrollCalculationLineId: line.calculationLineId,
+              employeeId: line.employeeId, bankAccountId: account.record.id,
+              status: 'submitted' as const, bankLineReference: null,
+              ...protectedRecord(this.crypto.protect({
+                tenantId: this.tenantId(), resourceType: 'payment_instruction',
+                resourceId: id, version: 1,
+              }, data)),
+              createdAt: preparedAt, updatedAt: submittedAt,
+            },
+            fileLine: {
+              instructionId: id, creditorName: data.creditorName,
+              creditorAccount: data.creditorAccount,
+              creditorAgentClearingCode: data.creditorAgentClearingCode,
+              amountMinor: data.amountMinor, purposeCode: data.purposeCode,
+            },
+          };
+        });
+        const document = generatePain001({
+          messageId: header.messageId, paymentInformationId: header.paymentInformationId,
+          creationDateTime: header.creationDateTime,
+          requestedExecutionDate: header.requestedExecutionDate,
+          debtorName: header.debtorName, debtorAccount: header.debtorAccount,
+          debtorAgentClearingCode: header.debtorAgentClearingCode,
+          currency: 'CNY', lines: instructionRecords.map((item) => item.fileLine),
+        });
+        if (document.lineCount !== controls.lineCount ||
+          document.controlSumMinor !== controls.totalMinor) {
+          throw new ConflictException({
+            code: 'TREASURY_DISBURSEMENT_MIGRATION_FILE_CONTROL_MISMATCH',
+            message: '目标重建代发文件控制量不一致',
+          });
+        }
+        const evidenceId = migrationEvidenceId('batch', input.migrationEvidenceRef);
+        const batch = {
+          id: batchId, tenantId: this.tenantId(), payrollPeriodId: source.periodId,
+          payrollRunId: source.payrollRunId, payrollResultHash: source.resultHash,
+          payableResultHash: controls.payableResultHash, batchSequence: 1,
+          parentBatchId: null, recoverySourceBatchId: null, purpose: 'regular' as const,
+          format: 'ISO20022_PAIN_001_001_03' as const, fileHash: document.contentHash,
+          lineCount: controls.lineCount, totalMinor: controls.totalMinor,
+          preparedBy, payrollLockedBy: source.payrollLockedBy, exportApprovedBy,
+          strongAuthEvidenceId: approval.id,
+          strongAuthReferenceType: 'migration_export_approval_evidence' as const,
+          recoveryApprovedBy: null, recoveryStrongAuthEvidenceId: null, recoveryReturnId: null,
+          objectEvidenceId: evidenceId, objectRef: input.migrationEvidenceRef,
+          bankSubmissionId: input.bankSubmissionId,
+          bankSubmissionEvidenceId: input.bankSubmissionEvidenceId,
+          returnHash: null, successfulCount: null, failedCount: null,
+          successfulMinor: null, failedMinor: null, freezeReason: null,
+          status: 'submitted' as const, version: 4,
+          migrationEvidenceRef: input.migrationEvidenceRef,
+          migrationEvidenceChecksum: input.evidenceChecksum,
+          ...protectedRecord(protectedBatch), createdAt: preparedAt, updatedAt: submittedAt,
+        };
+        await this.batches.create([batch], { session });
+        await this.instructions.create(instructionRecords.map((item) => item.record), { session });
+        await this.outbox.append({
+          type: 'treasury.disbursement.migrated', tenantId: this.tenantId(),
+          aggregateId: batchId, version: 4, occurredAt: input.submittedAt,
+          data: migrationBatchEventData(batch),
+        }, session);
+        return summaryFromRecord(batch, 'submitted');
+      },
+    ));
+  }
 
   async submit(
     key: string,
@@ -285,6 +470,7 @@ export class TreasuryDisbursementService {
           status: next.status, version: next.version,
           exportApprovedBy: next.exportApprovedBy,
           strongAuthEvidenceId: next.strongAuthEvidenceId,
+          strongAuthReferenceType: 'webauthn_evidence',
         } }, { session, runValidators: true });
         if (updated.modifiedCount !== 1) throw new ConflictException({
           code: 'TREASURY_EXPORT_APPROVAL_WRITE_CONFLICT', message: '代发导出批准发生并发冲突',
@@ -393,10 +579,12 @@ export class TreasuryDisbursementService {
       purpose: 'regular', format: 'ISO20022_PAIN_001_001_03', fileHash: null,
       lineCount: payable.length, totalMinor: Number(total), preparedBy,
       payrollLockedBy: source.payrollLockedBy, exportApprovedBy: null,
-      strongAuthEvidenceId: null, objectEvidenceId: null, objectRef: null,
+      strongAuthEvidenceId: null, strongAuthReferenceType: null,
+      objectEvidenceId: null, objectRef: null,
       bankSubmissionId: null, bankSubmissionEvidenceId: null, returnHash: null,
       successfulCount: null, failedCount: null, successfulMinor: null, failedMinor: null,
       freezeReason: null, status: 'materializing', version: 1,
+      migrationEvidenceRef: null, migrationEvidenceChecksum: null,
       ...protectedRecord(protectedSnapshot),
     }], { session });
     const records = payable.map((line) => {
@@ -578,6 +766,142 @@ export class TreasuryDisbursementService {
     }, protectedValue(record)));
   }
 
+  private migrationCreditorAccounts(
+    input: ImportTreasuryDisbursementFromMigrationInput,
+    records: readonly TreasuryBankAccountRecord[],
+    preparedAt: Date,
+  ): ReadonlyMap<string, { readonly record: TreasuryBankAccountRecord;
+    readonly data: BankAccountData }> {
+    if (records.length !== input.lines.length ||
+      new Set(records.map((record) => record.id)).size !== input.lines.length) {
+      throw new ConflictException({
+        code: 'TREASURY_DISBURSEMENT_MIGRATION_ACCOUNT_INCOMPLETE',
+        message: '代发迁移员工账户映射不完整',
+      });
+    }
+    const byId = new Map(records.map((record) => [record.id, record]));
+    const result = new Map<string, {
+      readonly record: TreasuryBankAccountRecord; readonly data: BankAccountData;
+    }>();
+    for (const line of input.lines) {
+      const record = byId.get(line.bankAccountId);
+      if (record === undefined || record.ownerId !== line.employeeId) {
+        throw new ConflictException({
+          code: 'TREASURY_DISBURSEMENT_MIGRATION_ACCOUNT_BINDING_INVALID',
+          message: '代发迁移员工与银行账户绑定不一致',
+        });
+      }
+      this.assertMigrationAccountAvailable(record, preparedAt);
+      result.set(line.employeeId, { record, data: this.accountData(record) });
+    }
+    return result;
+  }
+
+  private assertMigrationAccountAvailable(
+    record: TreasuryBankAccountRecord,
+    preparedAt: Date,
+  ): void {
+    if (record.createdAt.getTime() > preparedAt.getTime() ||
+      (record.revokedAt !== null && record.revokedAt.getTime() <= preparedAt.getTime())) {
+      throw new ConflictException({
+        code: 'TREASURY_DISBURSEMENT_MIGRATION_ACCOUNT_TIME_INVALID',
+        message: '代发制备时银行账户尚未生效或已经撤销',
+      });
+    }
+  }
+
+  private async verifyMigrationReplay(
+    input: ImportTreasuryDisbursementFromMigrationInput,
+    source: LockedPayrollDisbursementSource,
+    controls: MigrationPayableControls,
+    debtor: TreasuryBankAccountRecord,
+    creditors: ReadonlyMap<string, { readonly record: TreasuryBankAccountRecord;
+      readonly data: BankAccountData }>,
+    preparedBy: string,
+    exportApprovedBy: string,
+    preparedAt: Date,
+    submittedAt: Date,
+    session: ClientSession,
+  ): Promise<TreasuryDisbursementSummary> {
+    const batch = await this.batches.findOne({
+      tenantId: this.tenantId(), id: input.targetId,
+    }).session(session).lean().exec();
+    if (batch === null) throw disbursementMigrationImmutable();
+    const header = batchSnapshotSchema.parse(this.crypto.unprotect({
+      tenantId: this.tenantId(), resourceType: 'batch_snapshot',
+      resourceId: batch.id, version: 1,
+    }, protectedValue(batch)));
+    const expectedHeader = migrationBatchHeader(
+      batch.id, input, source, debtor, this.accountData(debtor),
+    );
+    const records = await this.instructions.find({
+      tenantId: this.tenantId(), batchId: batch.id,
+    }).sort({ id: 1 }).session(session).lean().exec();
+    if (records.length !== controls.lineCount) throw disbursementMigrationImmutable();
+    const controlByEmployee = new Map(
+      controls.lines.map((line) => [line.employeeId, line]),
+    );
+    const fileLines = records.map((record) => {
+      const control = controlByEmployee.get(record.employeeId);
+      const account = creditors.get(record.employeeId);
+      const data = instructionDataSchema.parse(this.crypto.unprotect({
+        tenantId: this.tenantId(), resourceType: 'payment_instruction',
+        resourceId: record.id, version: 1,
+      }, protectedValue(record)));
+      if (control === undefined || account === undefined) {
+        throw disbursementMigrationImmutable();
+      }
+      const expected = migrationInstructionData(
+        record.id, control, account.record.id, account.data,
+      );
+      if (JSON.stringify(data) !== JSON.stringify(expected) ||
+        record.payrollCalculationLineId !== control.calculationLineId ||
+        record.bankAccountId !== account.record.id || record.status !== 'submitted' ||
+        record.bankLineReference !== null || record.createdAt.toISOString() !== input.preparedAt ||
+        record.updatedAt.toISOString() !== input.submittedAt) {
+        throw disbursementMigrationImmutable();
+      }
+      return {
+        instructionId: record.id, creditorName: data.creditorName,
+        creditorAccount: data.creditorAccount,
+        creditorAgentClearingCode: data.creditorAgentClearingCode,
+        amountMinor: data.amountMinor, purposeCode: data.purposeCode,
+      };
+    });
+    const document = generatePain001({
+      messageId: header.messageId, paymentInformationId: header.paymentInformationId,
+      creationDateTime: header.creationDateTime,
+      requestedExecutionDate: header.requestedExecutionDate,
+      debtorName: header.debtorName, debtorAccount: header.debtorAccount,
+      debtorAgentClearingCode: header.debtorAgentClearingCode,
+      currency: 'CNY', lines: fileLines,
+    });
+    if (JSON.stringify(header) !== JSON.stringify(expectedHeader) ||
+      batch.payrollPeriodId !== source.periodId || batch.payrollRunId !== source.payrollRunId ||
+      batch.payrollResultHash !== source.resultHash ||
+      batch.payableResultHash !== controls.payableResultHash || batch.batchSequence !== 1 ||
+      batch.parentBatchId !== null || batch.recoverySourceBatchId !== null ||
+      batch.purpose !== 'regular' || batch.format !== 'ISO20022_PAIN_001_001_03' ||
+      batch.fileHash !== document.contentHash || batch.lineCount !== controls.lineCount ||
+      batch.totalMinor !== controls.totalMinor || batch.preparedBy !== preparedBy ||
+      batch.payrollLockedBy !== source.payrollLockedBy ||
+      batch.exportApprovedBy !== exportApprovedBy ||
+      batch.strongAuthEvidenceId !== input.approvalHistoryId ||
+      batch.strongAuthReferenceType !== 'migration_export_approval_evidence' ||
+      batch.objectEvidenceId !== migrationEvidenceId('batch', input.migrationEvidenceRef) ||
+      batch.objectRef !== input.migrationEvidenceRef ||
+      batch.bankSubmissionId !== input.bankSubmissionId ||
+      batch.bankSubmissionEvidenceId !== input.bankSubmissionEvidenceId ||
+      batch.returnHash !== null || batch.status !== 'submitted' || batch.version !== 4 ||
+      batch.migrationEvidenceRef !== input.migrationEvidenceRef ||
+      batch.migrationEvidenceChecksum !== input.evidenceChecksum ||
+      batch.createdAt.toISOString() !== preparedAt.toISOString() ||
+      batch.updatedAt.toISOString() !== submittedAt.toISOString()) {
+      throw disbursementMigrationImmutable();
+    }
+    return summaryFromRecord(batch, 'submitted');
+  }
+
   private async requireBatch(
     id: string,
     session?: ClientSession,
@@ -599,6 +923,18 @@ export class TreasuryDisbursementService {
     if (actor.actorType !== 'user') throw new ForbiddenException({
       code: 'TREASURY_PREPARER_HUMAN_REQUIRED', message: '代发制备只能由已验证人员执行',
     });
+  }
+
+  private assertMigrationWriter(): void {
+    const actor = this.context.getActorRequired();
+    if (!['service', 'system_job'].includes(actor.actorType) ||
+      !actor.scopes.includes('erp:migration:execute') ||
+      !actor.scopes.includes('erp:treasury:migration:write')) {
+      throw new ForbiddenException({
+        code: 'TREASURY_DISBURSEMENT_MIGRATION_WRITER_DENIED',
+        message: '代发迁移必须由受信任服务身份执行',
+      });
+    }
   }
 
   private async run<T>(operation: () => Promise<T>): Promise<T> {
@@ -627,11 +963,174 @@ export class TreasuryDisbursementService {
 
 function protectedRecord(value: {
   readonly keyId: string; readonly iv: string; readonly ciphertext: string; readonly authTag: string;
-}): Record<string, string> {
+}) {
   return {
     dataKeyId: value.keyId, dataIv: value.iv,
     dataCiphertext: value.ciphertext, dataAuthTag: value.authTag,
   };
+}
+
+interface MigrationPayableControls {
+  readonly lines: readonly {
+    readonly calculationLineId: string;
+    readonly employeeId: string;
+    readonly netPayMinor: number;
+    readonly resultHash: string;
+  }[];
+  readonly lineCount: number;
+  readonly totalMinor: number;
+  readonly payableResultHash: string;
+}
+
+function assertDisbursementMigrationInput(
+  input: ImportTreasuryDisbursementFromMigrationInput,
+): void {
+  if (Object.keys(input).sort().join(',') !==
+      'approvalEvidenceChecksum,approvalHistoryId,bankSubmissionEvidenceId,bankSubmissionId,debtorBankAccountId,evidenceChecksum,expectedLineCount,expectedPayrollVersion,expectedTotalMinor,exportApprovedByEmployeeId,lines,migrationEvidenceRef,payrollPeriodId,payrollRunId,preparedAt,preparedByEmployeeId,requestedExecutionDate,submittedAt,targetId' ||
+    (input.targetId !== null && !ID_PATTERN.test(input.targetId)) ||
+    !ID_PATTERN.test(input.payrollPeriodId) || !ID_PATTERN.test(input.payrollRunId) ||
+    !ID_PATTERN.test(input.debtorBankAccountId) ||
+    !ID_PATTERN.test(input.preparedByEmployeeId) ||
+    !ID_PATTERN.test(input.exportApprovedByEmployeeId) ||
+    !ID_PATTERN.test(input.approvalHistoryId) ||
+    !HASH_PATTERN.test(input.approvalEvidenceChecksum) ||
+    !ID_PATTERN.test(input.bankSubmissionId) ||
+    !ID_PATTERN.test(input.bankSubmissionEvidenceId) ||
+    !MIGRATION_EVIDENCE_REF_PATTERN.test(input.migrationEvidenceRef) ||
+    !HASH_PATTERN.test(input.evidenceChecksum) ||
+    !Number.isSafeInteger(input.expectedPayrollVersion) || input.expectedPayrollVersion < 6 ||
+    !Number.isSafeInteger(input.expectedLineCount) || input.expectedLineCount < 1 ||
+    input.expectedLineCount > 5_000 || !Number.isSafeInteger(input.expectedTotalMinor) ||
+    input.expectedTotalMinor < 1 || input.lines.length !== input.expectedLineCount ||
+    !isCalendarDate(input.requestedExecutionDate)) throw disbursementMigrationInputInvalid();
+  const preparedAt = strictMigrationInstant(input.preparedAt);
+  const submittedAt = strictMigrationInstant(input.submittedAt);
+  if (submittedAt.getTime() < preparedAt.getTime() ||
+    !isExecutionWindow(input.requestedExecutionDate, preparedAt)) {
+    throw disbursementMigrationInputInvalid();
+  }
+  for (const line of input.lines) {
+    if (Object.keys(line).sort().join(',') !==
+        'bankAccountId,employeeId,expectedNetPayMinor' ||
+      !ID_PATTERN.test(line.employeeId) || !ID_PATTERN.test(line.bankAccountId) ||
+      !Number.isSafeInteger(line.expectedNetPayMinor) || line.expectedNetPayMinor < 1) {
+      throw disbursementMigrationInputInvalid();
+    }
+  }
+  if (new Set(input.lines.map((line) => line.employeeId)).size !== input.lines.length ||
+    new Set(input.lines.map((line) => line.bankAccountId)).size !== input.lines.length) {
+    throw disbursementMigrationInputInvalid();
+  }
+}
+
+function migrationPayableControls(
+  source: LockedPayrollDisbursementSource,
+  input: ImportTreasuryDisbursementFromMigrationInput,
+  creditors: ReadonlyMap<string, unknown>,
+): MigrationPayableControls {
+  const lines = source.lines.filter((line) => line.netPayMinor > 0);
+  const declared = new Map(input.lines.map((line) => [line.employeeId, line]));
+  for (const line of lines) {
+    const expected = declared.get(line.employeeId);
+    if (expected === undefined || expected.expectedNetPayMinor !== line.netPayMinor ||
+      !creditors.has(line.employeeId)) {
+      throw new ConflictException({
+        code: 'TREASURY_DISBURSEMENT_MIGRATION_LINE_MISMATCH',
+        message: '代发迁移员工、账户或实发金额与锁定工资不一致',
+      });
+    }
+  }
+  const total = lines.reduce((sum, line) => sum + BigInt(line.netPayMinor), 0n);
+  if (lines.length !== input.expectedLineCount || lines.length !== declared.size ||
+    total !== BigInt(input.expectedTotalMinor) || total !== BigInt(source.totalNetMinor) ||
+    total > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new ConflictException({
+      code: 'TREASURY_DISBURSEMENT_MIGRATION_TOTAL_MISMATCH',
+      message: '代发迁移行数或总额与锁定工资不一致',
+    });
+  }
+  return Object.freeze({
+    lines: Object.freeze(lines), lineCount: lines.length, totalMinor: Number(total),
+    payableResultHash: payrollDigest(lines.map((line) => ({
+      employeeId: line.employeeId, resultHash: line.resultHash,
+    })).sort((left, right) => left.employeeId.localeCompare(right.employeeId))),
+  });
+}
+
+function migrationBatchHeader(
+  batchId: string,
+  input: ImportTreasuryDisbursementFromMigrationInput,
+  source: LockedPayrollDisbursementSource,
+  debtor: TreasuryBankAccountRecord,
+  debtorData: BankAccountData,
+) {
+  return Object.freeze({
+    messageId: batchId, paymentInformationId: batchId,
+    creationDateTime: input.preparedAt,
+    requestedExecutionDate: input.requestedExecutionDate,
+    debtorBankAccountId: debtor.id, debtorName: debtorData.accountName,
+    debtorAccount: debtorData.account,
+    debtorAgentClearingCode: debtorData.clearingCode,
+    payrollResultHash: source.resultHash,
+    payableResultHash: payrollDigest(source.lines.filter((line) => line.netPayMinor > 0)
+      .map((line) => ({ employeeId: line.employeeId, resultHash: line.resultHash }))
+      .sort((left, right) => left.employeeId.localeCompare(right.employeeId))),
+  });
+}
+
+function migrationInstructionData(
+  instructionId: string,
+  line: MigrationPayableControls['lines'][number],
+  bankAccountId: string,
+  account: BankAccountData,
+) {
+  return Object.freeze({
+    instructionId, employeeId: line.employeeId, bankAccountId,
+    payrollCalculationLineId: line.calculationLineId,
+    payrollResultHash: line.resultHash, creditorName: account.accountName,
+    creditorAccount: account.account,
+    creditorAgentClearingCode: account.clearingCode,
+    amountMinor: line.netPayMinor, purposeCode: 'PAYROLL' as const,
+  });
+}
+
+function migrationBatchEventData(batch: {
+  readonly payrollPeriodId: string;
+  readonly payrollRunId: string;
+  readonly lineCount: number;
+  readonly totalMinor: number;
+  readonly fileHash: string;
+}) {
+  return {
+    payrollPeriodId: batch.payrollPeriodId, payrollRunId: batch.payrollRunId,
+    lineCount: batch.lineCount, totalMinor: batch.totalMinor,
+    fileHash: batch.fileHash, status: 'submitted',
+  } as const;
+}
+
+function strictMigrationInstant(value: string): Date {
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString() !== value ||
+    parsed.getTime() > Date.now() + 5 * 60_000) throw disbursementMigrationInputInvalid();
+  return parsed;
+}
+
+function migrationEvidenceId(kind: string, reference: string): string {
+  return `migration-${kind}:${createHash('sha256').update(reference, 'utf8').digest('base64url')}`;
+}
+
+function disbursementMigrationInputInvalid(): BadRequestException {
+  return new BadRequestException({
+    code: 'TREASURY_DISBURSEMENT_MIGRATION_INPUT_INVALID',
+    message: '代发迁移控制信息非法',
+  });
+}
+
+function disbursementMigrationImmutable(): ConflictException {
+  return new ConflictException({
+    code: 'TREASURY_DISBURSEMENT_MIGRATION_IMMUTABLE',
+    message: '既有代发批次、支付指令或迁移证据不一致，禁止覆盖',
+  });
 }
 
 function protectedValue(value: {

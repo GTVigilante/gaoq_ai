@@ -134,6 +134,27 @@ describe('TreasuryOutboxWriter', () => {
     }, session))).rejects.toThrow('TREASURY_OUTBOX_DATA_INVALID');
   });
 
+  it('代发迁移事件仅公开重建文件控制量，不泄露源提交回执', async () => {
+    const context = new TenantContextService();
+    const create = vi.fn().mockResolvedValue([]);
+    const writer = new TreasuryOutboxWriter(context, { create } as never);
+    const migrated: TreasuryEvent = {
+      type: 'treasury.disbursement.migrated', tenantId: 'tenant-001',
+      aggregateId: 'batch-001', version: 4, occurredAt: '2026-07-22T11:00:00.000Z',
+      data: {
+        payrollPeriodId: 'period-001', payrollRunId: 'run-001', lineCount: 2,
+        totalMinor: 1_839_600, fileHash: 'a'.repeat(43), status: 'submitted',
+      },
+    };
+    await context.run({ tenant, actor }, () => writer.append(migrated, session));
+    const calls = JSON.stringify(create.mock.calls);
+    expect(calls).toContain('treasury.disbursement.migrated.v1');
+    expect(calls).not.toMatch(/bankSubmission|objectRef|migrationEvidence|employee|account/u);
+    await expect(context.run({ tenant, actor }, () => writer.append({
+      ...migrated, data: { ...migrated.data, bankSubmissionId: 'legacy-secret' },
+    }, session))).rejects.toThrow('TREASURY_OUTBOX_DATA_INVALID');
+  });
+
   it('银行回盘事件只公开证据引用与批次汇总', async () => {
     const context = new TenantContextService();
     const create = vi.fn().mockResolvedValue([]);

@@ -167,6 +167,12 @@ export class TreasuryDisbursementBatchRecord extends ProtectedTreasuryRecord {
   exportApprovedBy!: string | null;
   @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
   strongAuthEvidenceId!: string | null;
+  @Prop({
+    type: String, default: null,
+    enum: ['webauthn_evidence', 'migration_export_approval_evidence'],
+  })
+  strongAuthReferenceType!:
+    'webauthn_evidence' | 'migration_export_approval_evidence' | null;
   @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
   recoveryApprovedBy!: string | null;
   @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
@@ -197,6 +203,13 @@ export class TreasuryDisbursementBatchRecord extends ProtectedTreasuryRecord {
   freezeReason!: string | null;
   @Prop({ type: String, required: true, enum: BATCH_STATUSES }) status!: TreasuryBatchPersistenceStatus;
   @Prop({ type: Number, required: true, min: 1 }) version!: number;
+  @Prop({
+    type: String, default: null, immutable: true, maxlength: 256,
+    match: MIGRATION_EVIDENCE_REF_PATTERN,
+  })
+  migrationEvidenceRef!: string | null;
+  @Prop({ type: String, default: null, immutable: true, match: HASH_PATTERN })
+  migrationEvidenceChecksum!: string | null;
   createdAt!: Date;
   updatedAt!: Date;
 }
@@ -205,6 +218,24 @@ export type TreasuryDisbursementBatchDocument =
 export const TreasuryDisbursementBatchRecordSchema = SchemaFactory.createForClass(
   TreasuryDisbursementBatchRecord,
 );
+TreasuryDisbursementBatchRecordSchema.pre('validate', function () {
+  const record = this as TreasuryDisbursementBatchRecord;
+  if (record.strongAuthReferenceType === null && record.strongAuthEvidenceId !== null) {
+    record.strongAuthReferenceType = 'webauthn_evidence';
+  }
+  if ((record.strongAuthReferenceType === null) !==
+    (record.strongAuthEvidenceId === null)) {
+    throw new Error('代发批准证据类型与标识必须成对出现');
+  }
+  if ((record.migrationEvidenceRef === null) !==
+    (record.migrationEvidenceChecksum === null)) {
+    throw new Error('代发迁移证据引用与校验和必须成对出现');
+  }
+  if (record.strongAuthReferenceType === 'migration_export_approval_evidence' &&
+    record.migrationEvidenceRef === null) {
+    throw new Error('历史导出审批批次必须绑定迁移证据');
+  }
+});
 TreasuryDisbursementBatchRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 TreasuryDisbursementBatchRecordSchema.index(
   { tenantId: 1, payrollRunId: 1, batchSequence: 1 }, { unique: true },
@@ -217,6 +248,10 @@ TreasuryDisbursementBatchRecordSchema.index(
 TreasuryDisbursementBatchRecordSchema.index(
   { tenantId: 1, recoverySourceBatchId: 1 },
   { unique: true, partialFilterExpression: { recoverySourceBatchId: { $type: 'string' } } },
+);
+TreasuryDisbursementBatchRecordSchema.index(
+  { tenantId: 1, migrationEvidenceRef: 1 },
+  { unique: true, partialFilterExpression: { migrationEvidenceRef: { $type: 'string' } } },
 );
 
 /** 银行回盘只保存受控对象、证据、汇总和规范化行密文；原始正文不得进入 Mongo。 */

@@ -41,11 +41,14 @@ function sortedQuery<T>(value: T) {
 
 function assemble(aggregateHash = runHash) {
   const context = new TenantContextService();
-  const periods = { findOne: vi.fn().mockReturnValue(terminalQuery({
+  const period = {
     id: 'period-001', tenantId: 'tenant-001', period: '2026-07', version: 6,
     status: 'locked', activeRunId: 'run-001', lockedBy: 'payroll-locker',
+    strongAuthReferenceType: 'migration_lock_evidence',
     resultHash: aggregateHash, employeeCount: 1, totalNetMinor: 839_500,
-  })) };
+    updatedAt: new Date('2026-07-22T08:00:00.000Z'),
+  };
+  const periods = { findOne: vi.fn().mockReturnValue(terminalQuery(period)) };
   const calculationLines = { find: vi.fn().mockReturnValue(sortedQuery([{
     id: 'line-001', employeeId: 'employee-001', resultHash: result.resultHash,
     dataKeyId: 'key', dataIv: 'iv', dataCiphertext: 'cipher', dataAuthTag: 'tag',
@@ -56,7 +59,7 @@ function assemble(aggregateHash = runHash) {
     {} as never, {} as never, {} as never, {} as never, {} as never,
     calculationLines as never,
   );
-  return { context, periods, calculationLines, crypto, service };
+  return { context, period, periods, calculationLines, crypto, service };
 }
 
 describe('Payroll 锁定代发源端口', () => {
@@ -66,7 +69,8 @@ describe('Payroll 锁定代发源端口', () => {
       store.service.getLockedDisbursementSource('period-001', 6));
     expect(source).toEqual({
       periodId: 'period-001', period: '2026-07', payrollRunId: 'run-001',
-      payrollLockedBy: 'payroll-locker', payrollVersion: 6,
+      payrollLockedBy: 'payroll-locker', lockedAt: '2026-07-22T08:00:00.000Z',
+      payrollVersion: 6,
       resultHash: runHash, totalNetMinor: 839_500,
       lines: [{
         calculationLineId: 'line-001', employeeId: 'employee-001',
@@ -76,6 +80,29 @@ describe('Payroll 锁定代发源端口', () => {
     expect(store.crypto.unprotect).toHaveBeenCalledWith(expect.objectContaining({
       tenantId: 'tenant-001', resourceType: 'calculation_line', resourceId: 'line-001',
     }), expect.any(Object));
+  });
+
+  it('迁移读取只接受可信服务与迁移锁定证据', async () => {
+    const store = assemble();
+    const migrationReader: ActorContext = {
+      actorType: 'service', actorId: 'migration-worker', tenantId: tenant.tenantId,
+      roleCodes: [], scopes: ['erp:migration:execute', 'erp:treasury:migration:write'],
+      departmentIds: [], traceId: 'trace-migration-001',
+    };
+    await expect(store.context.run({ tenant, actor: migrationReader }, () =>
+      store.service.getLockedDisbursementSourceForMigration('period-001', 6)))
+      .resolves.toMatchObject({ lockedAt: '2026-07-22T08:00:00.000Z' });
+
+    store.periods.findOne.mockReturnValue(terminalQuery({
+      ...store.period, strongAuthReferenceType: 'webauthn_evidence',
+    }));
+    await expect(store.context.run({ tenant, actor: migrationReader }, () =>
+      store.service.getLockedDisbursementSourceForMigration('period-001', 6)))
+      .rejects.toMatchObject({ response: { code: 'PAYROLL_DISBURSEMENT_SOURCE_NOT_LOCKED' } });
+
+    await expect(store.context.run({ tenant, actor }, () =>
+      store.service.getLockedDisbursementSourceForMigration('period-001', 6)))
+      .rejects.toMatchObject({ response: { code: 'PAYROLL_DISBURSEMENT_MIGRATION_READER_DENIED' } });
   });
 
   it('聚合摘要错位时拒绝向资金模块提供员工实发数据', async () => {

@@ -7,11 +7,17 @@ import {
   TreasuryDisbursementBatchRecordSchema,
   TreasuryPaymentInstructionRecordSchema,
 } from './treasury.schemas.js';
-import type { TreasuryBankAccountRecord } from './treasury.schemas.js';
+import type {
+  TreasuryBankAccountRecord,
+  TreasuryDisbursementBatchRecord,
+} from './treasury.schemas.js';
 
 const mongoose = new Mongoose();
 const AccountModel = mongoose.model<TreasuryBankAccountRecord>(
   'SpecTreasuryBankAccount', TreasuryBankAccountRecordSchema,
+);
+const BatchModel = mongoose.model<TreasuryDisbursementBatchRecord>(
+  'SpecTreasuryDisbursementBatch', TreasuryDisbursementBatchRecordSchema,
 );
 
 describe('Treasury 持久化契约', () => {
@@ -60,6 +66,43 @@ describe('Treasury 持久化契约', () => {
     expect(TreasuryDisbursementBatchRecordSchema.indexes()).toContainEqual([
       { tenantId: 1, recoverySourceBatchId: 1 }, expect.objectContaining({ unique: true }),
     ]);
+    expect(TreasuryDisbursementBatchRecordSchema.indexes()).toContainEqual([
+      { tenantId: 1, migrationEvidenceRef: 1 }, expect.objectContaining({
+        unique: true, partialFilterExpression: { migrationEvidenceRef: { $type: 'string' } },
+      }),
+    ]);
+  });
+
+  it('迁移代发批次必须成对绑定审批判别与迁移 WORM 证据', async () => {
+    const base = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4B1', tenantId: 'tenant-001',
+      payrollPeriodId: '01J8ZQK7V0A2M4N6P8R0T2W4P1',
+      payrollRunId: '01J8ZQK7V0A2M4N6P8R0T2W4R1',
+      payrollResultHash: 'p'.repeat(43), payableResultHash: 'q'.repeat(43),
+      batchSequence: 1, parentBatchId: null, recoverySourceBatchId: null,
+      purpose: 'regular', format: 'ISO20022_PAIN_001_001_03', fileHash: 'f'.repeat(43),
+      lineCount: 1, totalMinor: 839_500, preparedBy: 'maker',
+      payrollLockedBy: 'locker', exportApprovedBy: 'checker',
+      strongAuthEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4H1',
+      strongAuthReferenceType: 'migration_export_approval_evidence',
+      objectEvidenceId: 'migration-object',
+      objectRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/batch-001',
+      bankSubmissionId: 'bank-submission', bankSubmissionEvidenceId: 'bank-evidence',
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/batch-001',
+      migrationEvidenceChecksum: 'm'.repeat(43),
+      status: 'submitted', version: 4,
+      dataKeyId: 'treasury-key-001', dataIv: 'c'.repeat(16),
+      dataCiphertext: 'd'.repeat(64), dataAuthTag: 'e'.repeat(22),
+    };
+    await expect(new BatchModel(base).validate()).resolves.toBeUndefined();
+    await expect(new BatchModel({
+      ...base, migrationEvidenceChecksum: null,
+    }).validate()).rejects.toThrow('代发迁移证据引用与校验和必须成对出现');
+    await expect(new BatchModel({
+      ...base, strongAuthEvidenceId: null,
+    }).validate()).rejects.toThrow('代发批准证据类型与标识必须成对出现');
   });
 
   it('历史审批账户必须成对绑定迁移 WORM 引用和摘要', async () => {

@@ -282,12 +282,15 @@ export class TreasuryRecoveryService {
       purpose: 'recovery', format: parent.format, fileHash: null,
       lineCount: failed.length, totalMinor: failedMinor, preparedBy: approvedBy,
       payrollLockedBy: parent.payrollLockedBy, exportApprovedBy: null,
-      strongAuthEvidenceId: null, recoveryApprovedBy: approvedBy,
+      strongAuthEvidenceId: null, strongAuthReferenceType: null,
+      recoveryApprovedBy: approvedBy,
       recoveryStrongAuthEvidenceId: evidenceId, recoveryReturnId: returned.id,
       objectEvidenceId: null, objectRef: null, bankSubmissionId: null,
       bankSubmissionEvidenceId: null, returnHash: null, successfulCount: null,
       failedCount: null, successfulMinor: null, failedMinor: null, freezeReason: null,
-      status: 'materializing', version: 1, ...protectedRecord(protectedBatch),
+      status: 'materializing', version: 1,
+      migrationEvidenceRef: null, migrationEvidenceChecksum: null,
+      ...protectedRecord(protectedBatch),
     }], { session });
     const childInstructions = failed.map((source) => {
       const account = accounts.get(source.employeeId);

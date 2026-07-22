@@ -175,6 +175,7 @@ export interface LockedPayrollDisbursementSource {
   readonly period: string;
   readonly payrollRunId: string;
   readonly payrollLockedBy: string;
+  readonly lockedAt: string;
   readonly payrollVersion: number;
   readonly resultHash: string;
   readonly totalNetMinor: number;
@@ -558,6 +559,31 @@ export class PayrollRunService {
     expectedVersion: number,
   ): Promise<LockedPayrollDisbursementSource> {
     this.assertScope('erp:treasury:disbursement:prepare');
+    return this.loadLockedDisbursementSource(periodId, expectedVersion, false);
+  }
+
+  /** Treasury 迁移内部只读端口：额外要求历史锁定证据判别与迁移双 Scope。 */
+  async getLockedDisbursementSourceForMigration(
+    periodId: string,
+    expectedVersion: number,
+  ): Promise<LockedPayrollDisbursementSource> {
+    const actor = this.context.getActorRequired();
+    if (!['service', 'system_job'].includes(actor.actorType) ||
+      !actor.scopes.includes('erp:migration:execute') ||
+      !actor.scopes.includes('erp:treasury:migration:write')) {
+      throw new ForbiddenException({
+        code: 'PAYROLL_DISBURSEMENT_MIGRATION_READER_DENIED',
+        message: '迁移工资支付来源只允许受信任服务身份读取',
+      });
+    }
+    return this.loadLockedDisbursementSource(periodId, expectedVersion, true);
+  }
+
+  private async loadLockedDisbursementSource(
+    periodId: string,
+    expectedVersion: number,
+    migrationOnly: boolean,
+  ): Promise<LockedPayrollDisbursementSource> {
     if (!ID_PATTERN.test(periodId) || !Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
       throw new BadRequestException({
         code: 'PAYROLL_DISBURSEMENT_SOURCE_REFERENCE_INVALID', message: '代发工资来源引用非法',
@@ -569,7 +595,8 @@ export class PayrollRunService {
     if (
       period === null || period.version !== expectedVersion || period.status !== 'locked' ||
       period.activeRunId === null || period.lockedBy === null || period.resultHash === null ||
-      period.employeeCount === null || period.totalNetMinor === null
+      period.employeeCount === null || period.totalNetMinor === null ||
+      (migrationOnly && period.strongAuthReferenceType !== 'migration_lock_evidence')
     ) throw new ConflictException({
       code: 'PAYROLL_DISBURSEMENT_SOURCE_NOT_LOCKED', message: '工资周期未锁定或版本已变化',
     });
@@ -614,7 +641,8 @@ export class PayrollRunService {
     });
     return Object.freeze({
       periodId: period.id, period: period.period, payrollRunId: period.activeRunId,
-      payrollLockedBy: period.lockedBy, payrollVersion: period.version,
+      payrollLockedBy: period.lockedBy, lockedAt: period.updatedAt.toISOString(),
+      payrollVersion: period.version,
       resultHash: period.resultHash, totalNetMinor: Number(total),
       lines: Object.freeze(lines),
     });

@@ -14,6 +14,7 @@ import type { PayrollApprovalService } from '../../payroll/application/payroll-a
 import type { PayrollRunService } from '../../payroll/application/payroll-run.service.js';
 import type { PayrollTaxFilingService } from '../../payroll/application/payroll-tax-filing.service.js';
 import type { TreasuryBankAccountService } from '../../treasury/application/treasury-bank-account.service.js';
+import type { TreasuryDisbursementService } from '../../treasury/application/treasury-disbursement.service.js';
 import type {
   DataMigrationAssociationDocument,
   DataMigrationAttachmentDocument,
@@ -157,6 +158,10 @@ function payrollTaxFilingsRun() {
 
 function treasuryBankAccountsRun() {
   return { ...run(), scope: 'treasury_bank_accounts' as const };
+}
+
+function treasuryDisbursementBatchesRun() {
+  return { ...run(), scope: 'treasury_disbursement_batches' as const };
 }
 
 function query<T>(value: T) { return { lean: () => ({ exec: () => Promise.resolve(value) }) }; }
@@ -2187,6 +2192,108 @@ describe('DataMigrationService', () => {
       }),
     );
     expect(JSON.stringify(items.create.mock.calls)).not.toMatch(/6222000000000001|张三|CNAPS001/u);
+  });
+
+  it('已提交代发批次迁移解析工资、账户、人员和审批映射且账本不保存金额', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      payrollPeriodSourceId: 'legacy-period-001',
+      payrollRunSourceId: 'legacy-payroll-run-001', expectedPayrollVersion: 6,
+      debtorBankAccountSourceId: 'legacy-debtor-account-001',
+      preparedByEmployeeSourceId: 'legacy-maker-001',
+      exportApprovedByEmployeeSourceId: 'legacy-checker-001',
+      approvalHistorySourceId: 'legacy-export-approval-001',
+      approvalEvidenceChecksum: 'a'.repeat(43), requestedExecutionDate: '2026-07-23',
+      lines: [{
+        employeeSourceId: 'legacy-employee-001',
+        bankAccountSourceId: 'legacy-creditor-account-001',
+        expectedNetPayMinor: 839_500,
+      }],
+      expectedLineCount: 1, expectedTotalMinor: 839_500,
+      bankSubmissionId: 'legacy-bank-submission-001',
+      bankSubmissionEvidenceId: 'legacy-bank-evidence-001',
+      preparedAt: '2026-07-22T09:00:00.000Z',
+      submittedAt: '2026-07-22T11:00:00.000Z',
+      sourceEvidenceSourceAttachmentId: 'treasury-batch-001',
+      sourceEvidenceChecksum: 'e'.repeat(43),
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(treasuryDisbursementBatchesRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const targets: Readonly<Record<string, string>> = {
+      'payroll.period:legacy-period-001': '01J8ZQK7V0A2M4N6P8R0T2W4P1',
+      'payroll.calculation_run:legacy-payroll-run-001': '01J8ZQK7V0A2M4N6P8R0T2W4R1',
+      'treasury.bank_account:legacy-debtor-account-001': '01J8ZQK7V0A2M4N6P8R0T2W4D1',
+      'treasury.bank_account:legacy-creditor-account-001': '01J8ZQK7V0A2M4N6P8R0T2W4C1',
+      'org.employee:legacy-maker-001': 'employee-maker-001',
+      'org.employee:legacy-checker-001': 'employee-checker-001',
+      'org.employee:legacy-employee-001': 'employee-001',
+      'approval.history:legacy-export-approval-001': '01J8ZQK7V0A2M4N6P8R0T2W4H1',
+    };
+    const mappings = {
+      findOne: vi.fn((filter: { entityType: string; sourceRecordId: string }) => query(
+        filter.entityType === 'treasury.disbursement_batch' ? null : {
+          targetId: targets[`${filter.entityType}:${filter.sourceRecordId}`], targetVersion: 1,
+        },
+      )),
+      findOneAndUpdate: vi.fn().mockReturnValue(query({ targetId: 'batch-001' })),
+    };
+    const associations = {
+      findOneAndUpdate: vi.fn().mockReturnValue(query({})),
+      bulkWrite: vi.fn().mockResolvedValue({}),
+    };
+    const attachments = {
+      findOne: vi.fn().mockReturnValue(query(null)),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const treasuryDisbursements = { importSubmittedFromMigration: vi.fn().mockResolvedValue({
+      id: 'batch-001', payrollPeriodId: targets['payroll.period:legacy-period-001'],
+      payrollRunId: targets['payroll.calculation_run:legacy-payroll-run-001'],
+      status: 'submitted', version: 4, lineCount: 1, totalMinor: 839_500,
+      fileHash: 'f'.repeat(43), objectEvidenceId: 'migration-object',
+      bankSubmissionId: 'legacy-bank-submission-001',
+      bankSubmissionEvidenceId: 'legacy-bank-evidence-001',
+    }) };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      mappings as unknown as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+      undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, undefined,
+      undefined, treasuryDisbursements as unknown as TreasuryDisbursementService,
+    );
+    const result = await trusted(context, () => service.apply(RUN_ID, {
+      sequence: 1, sourceRecordId: 'legacy-batch-001', sourceVersion: '1',
+      entityType: 'treasury.disbursement_batch', payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: [
+        'legacy-period-001', 'legacy-payroll-run-001', 'legacy-debtor-account-001',
+        'legacy-maker-001', 'legacy-checker-001', 'legacy-export-approval-001',
+        'legacy-employee-001', 'legacy-creditor-account-001',
+      ],
+      attachments: [{ sourceAttachmentId: 'treasury-batch-001', checksum: 'e'.repeat(43) }],
+    }));
+    expect(result).toMatchObject({ status: 'applied', targetId: 'batch-001' });
+    expect(treasuryDisbursements.importSubmittedFromMigration).toHaveBeenCalledWith(
+      expect.stringMatching(/^migration:/u),
+      expect.objectContaining({
+        payrollPeriodId: targets['payroll.period:legacy-period-001'],
+        debtorBankAccountId: targets['treasury.bank_account:legacy-debtor-account-001'],
+        preparedByEmployeeId: 'employee-maker-001',
+        exportApprovedByEmployeeId: 'employee-checker-001',
+        lines: [{
+          employeeId: 'employee-001',
+          bankAccountId: targets['treasury.bank_account:legacy-creditor-account-001'],
+          expectedNetPayMinor: 839_500,
+        }],
+      }),
+    );
+    expect(JSON.stringify(items.create.mock.calls)).not.toMatch(/839500|bank-submission|bank-evidence/u);
   });
 
   it('未解析关联和未决附件进入 Phase 6 硬门禁', async () => {

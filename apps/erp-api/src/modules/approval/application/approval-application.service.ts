@@ -274,7 +274,9 @@ export interface ApprovalPayrollMigrationReference {
 
 export interface ApprovalTreasuryMigrationReference {
   readonly id: string;
-  readonly templateCode: 'treasury_bank_account_attestation';
+  readonly templateCode:
+    | 'treasury_bank_account_attestation'
+    | 'treasury_disbursement_export_approval';
   readonly completedAt: string;
   readonly evidenceChecksum: string;
 }
@@ -549,7 +551,7 @@ export class ApprovalApplicationService {
     });
   }
 
-  /** 资金迁移只读校验：只接受已通过的账户鉴证专用终结历史。 */
+  /** 资金迁移只读校验：只接受已通过的指定资金治理终结历史。 */
   async verifyTreasuryMigrationReference(
     id: string,
     templateCode: ApprovalTreasuryMigrationReference['templateCode'],

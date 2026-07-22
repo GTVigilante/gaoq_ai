@@ -16,6 +16,7 @@ export interface TreasuryEvent {
     | 'treasury.disbursement.export_approved'
     | 'treasury.disbursement.submission_requested'
     | 'treasury.disbursement.submitted'
+    | 'treasury.disbursement.migrated'
     | 'treasury.disbursement.recovery_requested'
     | 'treasury.bank_return.applied'
     | 'treasury.reconciliation.completed';
@@ -148,6 +149,14 @@ export class TreasuryOutboxWriter {
           'bankSubmissionEvidenceId,bankSubmissionId,fileHash,lineCount,payrollPeriodId,payrollRunId,status,totalMinor' ||
         !baseValid || data['status'] !== 'submitted' ||
         !safeId(data['bankSubmissionId']) || !safeId(data['bankSubmissionEvidenceId']) ||
+        typeof data['fileHash'] !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(data['fileHash'])
+      ) throw new Error('TREASURY_OUTBOX_DATA_INVALID');
+      return;
+    }
+    if (event.type === 'treasury.disbursement.migrated') {
+      if (
+        keys !== 'fileHash,lineCount,payrollPeriodId,payrollRunId,status,totalMinor' ||
+        !baseValid || data['status'] !== 'submitted' ||
         typeof data['fileHash'] !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(data['fileHash'])
       ) throw new Error('TREASURY_OUTBOX_DATA_INVALID');
       return;
