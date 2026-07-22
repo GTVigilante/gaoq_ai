@@ -1,7 +1,7 @@
 # Phase 5 生产加固与 Go/No-Go 证据
 
 - 文档编号：phase-5/13
-- 状态：供应链与生产镜像门禁已实现；DAST、容量和容灾实测仍待完成
+- 状态：供应链、生产镜像、容量及 DAST/ASVS 工具门禁已实现；真实容量、DAST/ASVS 和容灾实测仍待完成
 
 ## 安全与供应链门禁
 
@@ -18,6 +18,8 @@ Dependabot 每周分别检查 pnpm/npm 依赖与 GitHub Actions。许可证门�
 API、Worker、Web 已有固定摘要、distroless、nonroot 的生产镜像目标；每个 PR 分别构建最终镜像、生成 SPDX JSON SBOM 并以 Trivy 阻断 High/Critical 漏洞。构建和验证细则见[生产镜像构建与验证运行手册](./14-production-images-runbook.md)。正式仓库推送、镜像签名、SLSA provenance 与准入策略仍待 CD 平台接入。
 
 1000 并发只读 API、1000 人工资计算和三次可比证据的脚本与校验契约见[性能容量三次实测门禁](./15-performance-capacity-gate.md)。工具交付不代替生产等价环境的三次真实执行。
+
+ZAP 主动扫描、OWASP ASVS 5.0.0 L2/L3 证据与四方签署契约见[DAST 与 ASVS 5.0.0 证据门禁](./16-dast-asvs-gate.md)。工作流只能由受保护的 `phase-5-dast` GitHub Environment 在隔离测试租户执行，不允许扫描生产流量。
 
 以下项目尚未完成，因此本文件不构成生产放行：
 

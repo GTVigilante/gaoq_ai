@@ -196,6 +196,35 @@ jobs:
             scripts/load/phase-5-api-capacity.js
           node scripts/performance/validate-phase-5-capacity.mjs --self-test
 
+  dast-asvs-contract:
+    name: DAST 与 ASVS 契约
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - name: 校验 OWASP ASVS 5.0.0 官方目录
+        shell: bash
+        run: |
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$RUNNER_TEMP/asvs-5.0.0.csv" \
+            https://github.com/OWASP/ASVS/releases/download/v5.0.0_release/OWASP_Application_Security_Verification_Standard_5.0.0_en.csv
+          echo "6124dba176dc563f66363a11ae0c47f9b86b8a4a84c66a793670bd196ed86cd5  $RUNNER_TEMP/asvs-5.0.0.csv" \
+            | sha256sum --check --strict
+
+      - name: 检查 DAST 安全边界与证据契约
+        run: |
+          node scripts/security/run-phase-5-dast.mjs --self-test
+          node scripts/security/validate-phase-5-dast-evidence.mjs --self-test
+
   container-images:
     name: 生产镜像（${{ matrix.image }}）
     runs-on: ubuntu-latest

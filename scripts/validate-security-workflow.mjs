@@ -32,6 +32,11 @@ for (const marker of [
   '--ignore-file bearer.ignore',
   'severity: HIGH,CRITICAL',
   'format: spdx-json',
+  'dast-asvs-contract:',
+  'OWASP/ASVS/releases/download/v5.0.0_release/OWASP_Application_Security_Verification_Standard_5.0.0_en.csv',
+  '6124dba176dc563f66363a11ae0c47f9b86b8a4a84c66a793670bd196ed86cd5',
+  'node scripts/security/run-phase-5-dast.mjs --self-test',
+  'node scripts/security/validate-phase-5-dast-evidence.mjs --self-test',
 ]) {
   if (!workflow.includes(marker)) throw new Error('PHASE5_SECURITY_GATE_INCOMPLETE');
 }

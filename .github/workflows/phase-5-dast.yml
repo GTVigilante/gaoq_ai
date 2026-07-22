@@ -1,0 +1,53 @@
+name: Phase 5 DAST 主动扫描
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-5-dast
+  cancel-in-progress: false
+
+jobs:
+  active-scan:
+    name: 生产等价隔离环境 DAST
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    environment: phase-5-dast
+    env:
+      DAST_BASE_URL: ${{ secrets.DAST_BASE_URL }}
+      DAST_AUTH_TOKEN: ${{ secrets.DAST_AUTH_TOKEN }}
+      DAST_ENVIRONMENT_NAME: ${{ vars.DAST_ENVIRONMENT_NAME }}
+      DAST_ALLOWED_HOST_SUFFIX: ${{ vars.DAST_ALLOWED_HOST_SUFFIX }}
+      DAST_PRODUCTION_EQUIVALENT: ${{ vars.DAST_PRODUCTION_EQUIVALENT }}
+      DAST_PRODUCTION_TRAFFIC: ${{ vars.DAST_PRODUCTION_TRAFFIC }}
+      DAST_ACTIVE_SCAN_APPROVED: ${{ vars.DAST_ACTIVE_SCAN_APPROVED }}
+      DAST_REPORT_DIR: ${{ runner.temp }}/phase-5-dast
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 验证目标、密钥边界与工作流
+        run: node scripts/security/run-phase-5-dast.mjs --self-test
+
+      - name: 拉取固定摘要的 ZAP 2.17.0
+        run: >-
+          docker pull
+          zaproxy/zap-stable@sha256:c558ee87358911ab17278c70991e856f57793e115d9cd0f88ca475cf82907a1a
+
+      - name: 执行未认证与低权限主动扫描
+        id: dast
+        run: node scripts/security/run-phase-5-dast.mjs --run
+
+      - name: 保存受控 DAST 原始报告
+        if: always() && steps.dast.outputs.reports_safe == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: phase-5-dast-${{ github.sha }}
+          path: ${{ runner.temp }}/phase-5-dast
+          if-no-files-found: error
+          retention-days: 14
