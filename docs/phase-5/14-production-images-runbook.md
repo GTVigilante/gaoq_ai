@@ -5,7 +5,7 @@
 
 ## 镜像边界
 
-根目录 `Dockerfile` 只允许输出 `erp-api`、`erp-worker`、`erp-web` 三个生产目标。构建阶段使用固定版本和 OCI 摘要的 Node.js 22 builder；最终运行阶段统一使用固定 OCI 摘要的 distroless Node.js 22 nonroot 镜像，不携带 shell、包管理器、应用源码、应用测试或构建工具。API 与 Worker 共享同一份经过 `pnpm deploy --prod` 裁剪的生产依赖，但拥有独立入口与健康检查。Docker 生态的 Dependabot 每周检查 builder 与 runtime 基础镜像更新，更新 PR 必须重新通过全部镜像门禁。
+根目录 `Dockerfile` 只允许输出 `erp-api`、`erp-worker`、`erp-web` 三个生产目标。构建阶段使用固定版本和 OCI 摘要的 Node.js 22 builder；最终运行阶段统一使用固定 OCI 摘要的 distroless Debian 13 Node.js 22 nonroot 镜像，不携带 shell、包管理器、应用源码、应用测试或构建工具。Debian 12 runtime 曾在首次 CI 被 Trivy 阻断 1 个 Critical 和 5 个 High 的 OpenSSL 漏洞，因此不得回退。API 与 Worker 共享同一份经过 `pnpm deploy --prod` 裁剪的生产依赖，但拥有独立入口与健康检查。Docker 生态的 Dependabot 每周检查 builder 与 runtime 基础镜像更新，更新 PR 必须重新通过全部镜像门禁。
 
 所有运行目标显式使用 UID/GID `65532:65532`，应用日志只写 stdout/stderr，业务证据只写 MongoDB、Redis、WORM 或受控网关。部署平台必须设置只读根文件系统、禁止提权、删除全部 Linux capabilities，并至少提供只读 Secret 挂载；不得把密钥写入镜像、Docker build arg、环境样例或镜像标签。
 
