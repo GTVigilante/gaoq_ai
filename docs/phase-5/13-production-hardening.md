@@ -23,6 +23,8 @@ ZAP 主动扫描、OWASP ASVS 5.0.0 L2/L3 证据与四方签署契约见[DAST �
 
 MongoDB 时间点恢复、Redis/BullMQ 重建、对象/WORM 与 KMS 验证、旧系统回滚及八类外部连接两小时断连追赶契约见[容灾恢复与外部系统断连追赶门禁](./17-resilience-rehearsal-gate.md)。现场证据只能由受保护的 `phase-5-resilience` Environment 和隔离单次 Runner 验收。
 
+全部上线证据的新鲜度、版本绑定、十一类门禁、十方签署和周末八小时切换窗口由[跨职能 Go/No-Go 证据门禁](./18-go-no-go-evidence-gate.md)统一验收。工作流只生成不可部署的 verdict，不替代人工生产审批。
+
 以下项目尚未完成，因此本文件不构成生产放行：
 
 - 在 CD 平台执行生产镜像签名、SLSA provenance、只读文件系统冒烟、准入与回滚验证；

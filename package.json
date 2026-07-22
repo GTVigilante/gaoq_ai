@@ -26,7 +26,9 @@
     "performance:self-test": "node scripts/performance/validate-phase-5-capacity.mjs --self-test",
     "resilience:validate-evidence": "node scripts/resilience/validate-phase-5-resilience-evidence.mjs",
     "resilience:self-test": "node scripts/resilience/validate-phase-5-resilience-evidence.mjs --self-test",
-    "check": "pnpm lint && pnpm typecheck && pnpm test && node scripts/validate-docs.mjs && pnpm security:validate && pnpm security:containers && pnpm security:dast:self-test && pnpm performance:self-test && pnpm resilience:self-test"
+    "release:go-no-go:validate-evidence": "node scripts/release/validate-phase-5-go-no-go-evidence.mjs",
+    "release:go-no-go:self-test": "node scripts/release/validate-phase-5-go-no-go-evidence.mjs --self-test",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && node scripts/validate-docs.mjs && pnpm security:validate && pnpm security:containers && pnpm security:dast:self-test && pnpm performance:self-test && pnpm resilience:self-test && pnpm release:go-no-go:self-test"
   },
   "pnpm": {
     "overrides": {

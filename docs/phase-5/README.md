@@ -22,6 +22,7 @@ Phase 5 在已验收的组织、审批、招聘入职、考勤薪酬底座之上
    - [性能容量三次实测门禁](./15-performance-capacity-gate.md)
    - [DAST 与 ASVS 5.0.0 证据门禁](./16-dast-asvs-gate.md)
    - [容灾恢复与外部系统断连追赶门禁](./17-resilience-rehearsal-gate.md)
+   - [跨职能 Go/No-Go 证据门禁](./18-go-no-go-evidence-gate.md)
 
 后续切片各自拥有独立契约文档；禁止借任何已立项切片隐式扩张范围。
 
