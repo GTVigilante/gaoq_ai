@@ -20,7 +20,8 @@ export interface TreasuryEvent {
     | 'treasury.disbursement.recovery_requested'
     | 'treasury.bank_return.applied'
     | 'treasury.bank_return.migrated'
-    | 'treasury.reconciliation.completed';
+    | 'treasury.reconciliation.completed'
+    | 'treasury.reconciliation.migrated';
   readonly tenantId: string;
   readonly aggregateId: string;
   readonly version: number;
@@ -68,7 +69,8 @@ export class TreasuryOutboxWriter {
   private assertSafeEvent(event: TreasuryEvent): void {
     const data = event.data;
     const keys = Object.keys(data).sort().join(',');
-    if (event.type === 'treasury.reconciliation.completed') {
+    if (event.type === 'treasury.reconciliation.completed' ||
+      event.type === 'treasury.reconciliation.migrated') {
       if (
         keys !==
           'differenceCount,evidenceHash,payrollPeriodId,payrollRunId,reconciliationId,status' ||

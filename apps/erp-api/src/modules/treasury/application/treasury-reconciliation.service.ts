@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -14,8 +15,10 @@ import { IdempotencyService } from '../../../core/idempotency/idempotency.servic
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import {
   PayrollReconciliationService,
+  type PayrollReconciliationMigrationControl,
   type PayrollReconciliationSummary,
 } from '../../payroll/application/payroll-reconciliation.service.js';
+import { AccessProfileRepository } from '../../identity/access-profile.repository.js';
 import { TreasuryOutboxWriter } from '../persistence/treasury-outbox.writer.js';
 import {
   TreasuryBankReturnRecord,
@@ -25,6 +28,19 @@ import {
 } from '../persistence/treasury.schemas.js';
 
 const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
+
+export interface ImportFourWayReconciliationFromMigrationInput {
+  readonly targetId: string | null;
+  readonly batchId: string;
+  readonly bankReturnId: string;
+  readonly taxFilingId: string;
+  readonly reconciledByEmployeeId: string;
+  readonly expectedBatchVersion: number;
+  readonly expectedPeriodVersion: number;
+  readonly reconciledAt: string;
+  readonly migrationEvidenceRef: string;
+  readonly evidenceChecksum: string;
+}
 
 @Injectable()
 export class TreasuryReconciliationService {
@@ -37,7 +53,116 @@ export class TreasuryReconciliationService {
     private readonly batches: Model<TreasuryDisbursementBatchDocument>,
     @InjectModel(TreasuryBankReturnRecord.name)
     private readonly returns: Model<TreasuryBankReturnDocument>,
+    @Inject(AccessProfileRepository)
+    private readonly profiles?: AccessProfileRepository,
   ) {}
+
+  async importBalancedFromMigration(
+    key: string,
+    input: ImportFourWayReconciliationFromMigrationInput,
+  ): Promise<PayrollReconciliationSummary> {
+    this.assertMigrationWriter();
+    assertReconciliationMigrationInput(input);
+    return this.idempotency.execute(
+      'treasury.reconciliation.import_from_migration', key, input, async (session) => {
+        const profiles = this.profiles;
+        if (profiles === undefined) throw new Error('四方对账迁移身份依赖未装配');
+        const [batch, bankReturn, reconciledBy] = await Promise.all([
+          this.requireBatch(input.batchId, session),
+          this.returns.findOne({
+            tenantId: this.tenantId(), id: input.bankReturnId, batchId: input.batchId,
+          }).session(session).lean().exec(),
+          profiles.findActorIdByEmployee(
+            this.tenantId(), input.reconciledByEmployeeId, session,
+          ),
+        ]);
+        const replay = input.targetId !== null;
+        if (bankReturn === null || reconciledBy === null ||
+          batch.migrationEvidenceRef === null || bankReturn.migrationEvidenceRef === null ||
+          batch.purpose !== 'regular' || batch.batchSequence !== 1 ||
+          batch.parentBatchId !== null || batch.recoverySourceBatchId !== null ||
+          bankReturn.outcome !== 'accepted' || !bankReturn.signatureVerified ||
+          !bankReturn.malwareClean || bankReturn.failedCount !== 0 ||
+          bankReturn.unknownCount !== 0 || bankReturn.duplicateCount !== 0 ||
+          bankReturn.lineAmountMismatchCount !== 0 ||
+          bankReturn.evidenceReferenceType !== 'migration_return_evidence' ||
+          reconciledBy === batch.preparedBy || reconciledBy === batch.payrollLockedBy ||
+          reconciledBy === batch.exportApprovedBy ||
+          (replay
+            ? batch.status !== 'reconciled' || batch.version !== input.expectedBatchVersion + 1
+            : batch.status !== 'reconciling' || batch.version !== input.expectedBatchVersion)) {
+          throw new ConflictException({
+            code: 'PAYROLL_RECONCILIATION_MIGRATION_REFERENCE_INVALID',
+            message: '四方对账迁移批次、回盘、身份或职责分离控制非法',
+          });
+        }
+        const reconciledAt = strictMigrationInstant(input.reconciledAt);
+        if (bankReturn.receivedAt.getTime() > reconciledAt.getTime()) {
+          throw new ConflictException({
+            code: 'PAYROLL_RECONCILIATION_MIGRATION_TIME_INVALID',
+            message: '四方对账完成时间早于银行回盘',
+          });
+        }
+        const settlement = await this.settlementEvidence(batch, bankReturn, session);
+        const migration: PayrollReconciliationMigrationControl = {
+          targetId: input.targetId, expectedPeriodVersion: input.expectedPeriodVersion,
+          expectedTaxFilingId: input.taxFilingId, reconciledAt: input.reconciledAt,
+          migrationEvidenceRef: input.migrationEvidenceRef,
+          evidenceChecksum: input.evidenceChecksum,
+        };
+        const reconciled = await this.payroll.reconcile({
+          batchId: batch.id, payrollPeriodId: batch.payrollPeriodId,
+          payrollRunId: batch.payrollRunId, payrollResultHash: batch.payrollResultHash,
+          status: 'reconciling', version: input.expectedBatchVersion,
+          lineCount: batch.lineCount, totalMinor: batch.totalMinor,
+          settledLineCount: settlement.lineCount, settledMinor: settlement.totalMinor,
+          settlementChainHash: settlement.chainHash, preparedBy: batch.preparedBy,
+          exportEvidenceId: required(batch.objectEvidenceId),
+          objectEvidenceId: required(batch.objectEvidenceId),
+          bankSubmissionId: required(batch.bankSubmissionId),
+          bankSubmissionEvidenceId: required(batch.bankSubmissionEvidenceId),
+        }, {
+          returnId: bankReturn.id, batchId: bankReturn.batchId,
+          returnHash: bankReturn.returnHash, outcome: 'accepted',
+          successfulCount: bankReturn.successfulCount,
+          successfulMinor: bankReturn.successfulMinor,
+          failedCount: bankReturn.failedCount, failedMinor: bankReturn.failedMinor,
+          objectEvidenceId: bankReturn.objectEvidenceId,
+          signatureEvidenceId: bankReturn.signatureEvidenceId,
+          malwareScanEvidenceId: bankReturn.malwareScanEvidenceId,
+        }, reconciledBy, session, migration);
+        if (!reconciled.result.balanced || reconciled.summary.status !== 'balanced') {
+          throw new ConflictException({
+            code: 'PAYROLL_RECONCILIATION_MIGRATION_NOT_BALANCED',
+            message: '历史四方对账重算不守恒',
+          });
+        }
+        if (replay) return reconciled.summary;
+        const updated = await this.batches.updateOne({
+          tenantId: this.tenantId(), id: batch.id,
+          status: 'reconciling', version: input.expectedBatchVersion,
+        }, { $set: {
+          status: 'reconciled', version: input.expectedBatchVersion + 1,
+          freezeReason: null, updatedAt: reconciledAt,
+        } }, { session, runValidators: true, timestamps: false });
+        if (updated.modifiedCount !== 1) throw new ConflictException({
+          code: 'PAYROLL_RECONCILIATION_MIGRATION_BATCH_CONFLICT',
+          message: '四方对账迁移批次发生并发冲突',
+        });
+        await this.outbox.append({
+          type: 'treasury.reconciliation.migrated', tenantId: this.tenantId(),
+          aggregateId: batch.id, version: input.expectedBatchVersion + 1,
+          occurredAt: input.reconciledAt, data: {
+            payrollPeriodId: batch.payrollPeriodId, payrollRunId: batch.payrollRunId,
+            reconciliationId: reconciled.summary.id,
+            evidenceHash: reconciled.summary.evidenceHash, differenceCount: 0,
+            status: 'reconciled',
+          },
+        }, session);
+        return reconciled.summary;
+      },
+    );
+  }
 
   async reconcile(
     key: string,
@@ -237,6 +362,19 @@ export class TreasuryReconciliationService {
     return batch;
   }
 
+  private assertMigrationWriter(): void {
+    const actor = this.context.getActorRequired();
+    if (!['service', 'system_job'].includes(actor.actorType) ||
+      !actor.scopes.includes('erp:migration:execute') ||
+      !actor.scopes.includes('erp:payroll:migration:write') ||
+      !actor.scopes.includes('erp:treasury:migration:write')) {
+      throw new ForbiddenException({
+        code: 'PAYROLL_RECONCILIATION_MIGRATION_WRITER_DENIED',
+        message: '四方对账迁移必须由受信任服务身份执行',
+      });
+    }
+  }
+
   private tenantId(): string { return this.context.getTenantRequired().tenantId; }
 }
 
@@ -264,4 +402,47 @@ function returnControlsMatch(
   if (controls.some((value) => !Number.isSafeInteger(value) || value < 0)) return false;
   return bankReturn.successfulCount + bankReturn.failedCount === batch.lineCount &&
     BigInt(bankReturn.successfulMinor) + BigInt(bankReturn.failedMinor) === BigInt(batch.totalMinor);
+}
+
+const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const HASH = /^[A-Za-z0-9_-]{43}$/;
+const MIGRATION_EVIDENCE_REF =
+  /^erp:\/\/data-migrations\/runs\/[0-7][0-9A-HJKMNP-TV-Z]{25}\/attachments\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+function assertReconciliationMigrationInput(
+  input: ImportFourWayReconciliationFromMigrationInput,
+): void {
+  if (Object.keys(input).sort().join(',') !==
+      'bankReturnId,batchId,evidenceChecksum,expectedBatchVersion,expectedPeriodVersion,migrationEvidenceRef,reconciledAt,reconciledByEmployeeId,targetId,taxFilingId' ||
+    (input.targetId !== null && !ULID.test(input.targetId)) || !ULID.test(input.batchId) ||
+    !ULID.test(input.bankReturnId) || !ULID.test(input.taxFilingId) ||
+    !ID.test(input.reconciledByEmployeeId) || input.expectedBatchVersion !== 5 ||
+    input.expectedPeriodVersion !== 6 || !MIGRATION_EVIDENCE_REF.test(input.migrationEvidenceRef) ||
+    !HASH.test(input.evidenceChecksum)) {
+    throw new BadRequestException({
+      code: 'PAYROLL_RECONCILIATION_MIGRATION_INPUT_INVALID',
+      message: '四方对账迁移控制信息非法',
+    });
+  }
+  strictMigrationInstant(input.reconciledAt);
+}
+
+function strictMigrationInstant(value: string): Date {
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString() !== value ||
+    parsed.getTime() > Date.now() + 5 * 60_000) {
+    throw new BadRequestException({
+      code: 'PAYROLL_RECONCILIATION_MIGRATION_INPUT_INVALID',
+      message: '四方对账迁移时间非法',
+    });
+  }
+  return parsed;
+}
+
+function required<T>(value: T | null): T {
+  if (value === null) throw new ConflictException({
+    code: 'PAYROLL_RECONCILIATION_MIGRATION_EVIDENCE_MISSING',
+    message: '四方对账迁移所需资金证据缺失',
+  });
+  return value;
 }

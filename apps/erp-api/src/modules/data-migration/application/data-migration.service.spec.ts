@@ -1,3 +1,4 @@
+import type { ActorContext } from '@gaoq/shared-types';
 import type { Model } from 'mongoose';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -16,6 +17,7 @@ import type { PayrollTaxFilingService } from '../../payroll/application/payroll-
 import type { TreasuryBankAccountService } from '../../treasury/application/treasury-bank-account.service.js';
 import type { TreasuryDisbursementService } from '../../treasury/application/treasury-disbursement.service.js';
 import type { TreasuryBankReturnService } from '../../treasury/application/treasury-bank-return.service.js';
+import type { TreasuryReconciliationService } from '../../treasury/application/treasury-reconciliation.service.js';
 import type {
   DataMigrationAssociationDocument,
   DataMigrationAttachmentDocument,
@@ -169,6 +171,10 @@ function treasuryBankReturnsRun() {
   return { ...run(), scope: 'treasury_bank_returns' as const };
 }
 
+function payrollReconciliationsRun() {
+  return { ...run(), scope: 'payroll_reconciliations' as const };
+}
+
 function query<T>(value: T) { return { lean: () => ({ exec: () => Promise.resolve(value) }) }; }
 function listQuery<T>(value: readonly T[]) {
   return {
@@ -179,6 +185,31 @@ function listQuery<T>(value: readonly T[]) {
 }
 
 describe('DataMigrationService', () => {
+  it('四方对账控制面必须同时具备 Payroll 与 Treasury 迁移权限', async () => {
+    const context = new TenantContextService();
+    const payload = {};
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      { findOne: vi.fn().mockReturnValue(query(payrollReconciliationsRun())) } as unknown as
+        Model<DataMigrationRunDocument>,
+      {} as Model<DataMigrationItemDocument>, {} as Model<DataMigrationMappingDocument>,
+      {} as Model<DataMigrationAssociationDocument>, {} as Model<DataMigrationAttachmentDocument>,
+    );
+    const payrollOnly: ActorContext = {
+      actorType: 'service', actorId: 'migration-payroll-only', tenantId: 'tenant-001',
+      roleCodes: [], scopes: ['erp:migration:execute', 'erp:payroll:migration:write'],
+      departmentIds: [], traceId: 'trace-migration-payroll-only',
+    };
+    await expect(context.run({
+      tenant: { tenantId: 'tenant-001', source: 'service_identity' }, actor: payrollOnly,
+    }, () => service.apply(RUN_ID, {
+      sequence: 1, sourceRecordId: 'legacy-reconciliation-001', sourceVersion: '1',
+      entityType: 'payroll.reconciliation', payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: [], attachments: [],
+    }))).rejects.toThrow('当前身份无权执行数据迁移');
+  });
+
   it('目标写入复用组织应用服务且账本不持久化来源正文', async () => {
     const context = new TenantContextService();
     const payload = { code: 'POS-001', name: '产品经理', status: 'active' };
@@ -2377,6 +2408,81 @@ describe('DataMigrationService', () => {
       }),
     );
     expect(JSON.stringify(items.create.mock.calls)).not.toMatch(/839500|legacy-bank-line/u);
+  });
+
+  it('四方对账迁移解析四个可信引用并只向领域服务传递目标标识', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      batchSourceId: 'legacy-batch-001', bankReturnSourceId: 'legacy-return-001',
+      taxFilingSourceId: 'legacy-tax-001',
+      reconciledByEmployeeSourceId: 'legacy-reconciler-001',
+      expectedBatchVersion: 5, expectedPeriodVersion: 6,
+      reconciledAt: '2026-07-22T12:00:00.000Z',
+      sourceEvidenceSourceAttachmentId: 'reconciliation-001',
+      sourceEvidenceChecksum: 'e'.repeat(43),
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(payrollReconciliationsRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const targets: Readonly<Record<string, string>> = {
+      'treasury.disbursement_batch': '01J8ZQK7V0A2M4N6P8R0T2W4B1',
+      'treasury.bank_return': '01J8ZQK7V0A2M4N6P8R0T2W4N1',
+      'payroll.tax_filing': '01J8ZQK7V0A2M4N6P8R0T2W4F1',
+      'org.employee': 'employee-reconciler',
+    };
+    const mappings = {
+      findOne: vi.fn((filter: { entityType: string }) => query(
+        filter.entityType === 'payroll.reconciliation' ? null : {
+          targetId: targets[filter.entityType], targetVersion: 1,
+        },
+      )),
+      findOneAndUpdate: vi.fn().mockReturnValue(query({ targetId: 'reconciliation-target' })),
+    };
+    const associations = {
+      findOneAndUpdate: vi.fn().mockReturnValue(query({})),
+      bulkWrite: vi.fn().mockResolvedValue({}),
+    };
+    const attachments = {
+      findOne: vi.fn().mockReturnValue(query(null)),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const treasuryReconciliations = { importBalancedFromMigration: vi.fn().mockResolvedValue({
+      id: 'reconciliation-target', version: 1, status: 'balanced',
+      differences: [], evidenceHash: 'h'.repeat(43),
+    }) };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      mappings as unknown as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+      undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined,
+      treasuryReconciliations as unknown as TreasuryReconciliationService,
+    );
+    const result = await trusted(context, () => service.apply(RUN_ID, {
+      sequence: 1, sourceRecordId: 'legacy-reconciliation-001', sourceVersion: '1',
+      entityType: 'payroll.reconciliation', payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: [
+        'legacy-batch-001', 'legacy-return-001', 'legacy-tax-001',
+        'legacy-reconciler-001',
+      ],
+      attachments: [{ sourceAttachmentId: 'reconciliation-001', checksum: 'e'.repeat(43) }],
+    }));
+    expect(result).toMatchObject({ status: 'applied', targetId: 'reconciliation-target' });
+    expect(treasuryReconciliations.importBalancedFromMigration).toHaveBeenCalledWith(
+      expect.stringMatching(/^migration:/u), expect.objectContaining({
+        batchId: targets['treasury.disbursement_batch'],
+        bankReturnId: targets['treasury.bank_return'],
+        taxFilingId: targets['payroll.tax_filing'],
+        reconciledByEmployeeId: 'employee-reconciler',
+      }),
+    );
   });
 
   it('未解析关联和未决附件进入 Phase 6 硬门禁', async () => {

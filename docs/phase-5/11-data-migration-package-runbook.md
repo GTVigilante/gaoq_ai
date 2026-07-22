@@ -20,6 +20,8 @@
 
 当前 Scope 的执行顺序固定为 `org_reference` → `org_workforce` → 身份开户核对 → `org_employment` → 三个审批 Scope → 五个招聘 Scope → `attendance_source_facts` → `attendance_corrections` → `attendance_monthly_snapshots` → `payroll_rule_packs` → `payroll_compensation_profiles` → `payroll_periods` → `payroll_calculation_runs` → `payroll_period_approvals` → `payroll_period_locks` → `payroll_tax_filings` → `treasury_bank_accounts` → `treasury_disbursement_batches` → `treasury_bank_returns`。每个 Scope 使用独立来源包、`sourceRunId`、控制总数和签署证据。薪资规则、薪酬档案、资金账户和代发导出必须引用各自专用的 approved 审批历史；薪酬档案按法域/员工及版本排序，资金账户按主体及版本排序。审批实例及各业务实体必须为每条记录提供一份 checksum 精确一致的 WORM 证据附件。禁止把多个 Scope 混入同一包。
 
+`payroll_reconciliations` 必须紧接 `treasury_bank_returns` 执行，是当前顺序的最后一个 Scope。它使用独立来源包、`sourceRunId` 和签署证据，禁止与银行回盘或其他 Scope 合包。
+
 `recruitment_candidates` 包含 L3 直接身份，必须在受控迁移工作区静态加密，读权限只授予迁移服务与双人复核角色，apply 完成后按批准保留期销毁。CLI、服务日志和证据导出不得输出 payload；候选人明文不得进入命令行参数、Git、工单、聊天或 MCP 上下文。
 
 `recruitment_interviews` 包含 L3 面试地点、会议链接和评价原文，执行与销毁要求等同候选人包。每条记录必须预检申请/员工引用、唯一面试官与唯一评价人、严格时间顺序、`version = 1 + 评价数 + 终态动作数`、完成态评价齐备，以及唯一 WORM 附件；日志、迁移报告、审计、工单和 MCP 不得输出 L3 payload。
@@ -46,6 +48,8 @@
 
 `treasury_bank_returns` 为 L4，只接收前述常规批次的首份全量成功回盘。每条记录提交批次来源引用、批次 v4、银行提交回执引用、逐员工期望金额与唯一银行行引用、行数/总额、严格 UTC 接收时间和唯一 WORM。目标按员工映射定位密文指令，重建加密回盘清单和目标摘要，并将批次恢复为 reconciling v5；不调用 Inbox。失败行、未知/重复/金额错位、签名/扫描失败、冻结、部分成功、补发或恢复链禁止进入本 Scope。
 
+`payroll_reconciliations` 为 L4，只接收前述锁定工资、已提交个税、常规代发批次和全量成功回盘形成的已平衡四方对账。每条记录仅提交四个来源引用、周期 v6/批次 v5、严格 UTC 对账时间与唯一 WORM；目标重算人数、工资/个税/代发/回盘金额、引用和摘要。对账员工须映射到有效 ERP 身份，与锁定/制备/导出批准三岗分离。任一差异、非常规首批、非迁移链路、时间倒置或证据不一致均失败关闭；不调用银行、税局、WORM 或 MCP 写工具。
+
 ## 离线预检
 
 ```bash
@@ -66,6 +70,8 @@ unset ERP_MIGRATION_TOKEN
 
 令牌必须绑定可信租户、`service|system_job` 身份以及 `erp:migration:execute`、当前目标域写权限（组织沿用 `erp:org:master:write`；审批、招聘、考勤、薪资和资金使用各自 `*:migration:write` Scope）、`erp:migration:attachment:execute` Scope。工具不接受命令行 Token，避免进入 shell history；除 `localhost`/`127.0.0.1` 外只允许 HTTPS。每次 apply 都先完整预检，然后幂等创建来源运行；服务端返回的 checkpoint 决定续传起点，已确认序号不会再次发送。全部记录处理后请求附件搬运并轮询聚合报告，未决附件归零后才调用 complete；默认等待 1800 秒，可通过 `ERP_MIGRATION_ATTACHMENT_WAIT_SECONDS` 设置 10–86400 秒。
 
+`payroll_reconciliations` 令牌必须同时授予 `erp:payroll:migration:write` 和 `erp:treasury:migration:write`；只具备其中一项时，创建运行和 apply 都必须拒绝。
+
 ## 操作门禁
 
 - 生产 apply 前必须完成来源包双人校验、恶意文件扫描、备份、变更单和演练编号登记。
@@ -74,7 +80,7 @@ unset ERP_MIGRATION_TOKEN
 - 网络超时或进程中断后使用同一来源包重跑 apply；禁止修改原包后复用 `sourceRunId`。
 - 当前实现会在预检期间维护来源记录 ID 集合；超大数据包必须按已批准 Scope 和容量演练结果拆分，不得绕过服务端总控制量。
 
-附件网关通过 `DATA_MIGRATION_ATTACHMENT_GATEWAY_ENDPOINT` 与 `DATA_MIGRATION_ATTACHMENT_GATEWAY_BEARER_TOKEN` 成套配置，必须位于 ERP 授权域之外的标准 HTTPS 权限域。网关负责来源凭据、正文拉取、扫描与 WORM 归档；ERP 只发送来源标识、预期 checksum、由服务端 Scope 固定映射的 `L3|L4` 分级和不少于 2555 天的保留期。`recruitment_offers`、三个考勤 Scope、`payroll_compensation_profiles`、`payroll_calculation_runs`、`payroll_period_approvals`、`payroll_period_locks`、`payroll_tax_filings`、三个 Treasury Scope 强制为 L4；`payroll_rule_packs` 与 `payroll_periods` 为 L3。来源包和客户端不能提交或降低分级，网关回执必须原样确认。
+附件网关通过 `DATA_MIGRATION_ATTACHMENT_GATEWAY_ENDPOINT` 与 `DATA_MIGRATION_ATTACHMENT_GATEWAY_BEARER_TOKEN` 成套配置，必须位于 ERP 授权域之外的标准 HTTPS 权限域。网关负责来源凭据、正文拉取、扫描与 WORM 归档；ERP 只发送来源标识、预期 checksum、由服务端 Scope 固定映射的 `L3|L4` 分级和不少于 2555 天的保留期。`recruitment_offers`、三个考勤 Scope、`payroll_compensation_profiles`、`payroll_calculation_runs`、`payroll_period_approvals`、`payroll_period_locks`、`payroll_tax_filings`、`payroll_reconciliations`、三个 Treasury Scope 强制为 L4；`payroll_rule_packs` 与 `payroll_periods` 为 L3。来源包和客户端不能提交或降低分级，网关回执必须原样确认。
 
 ## 完整差异证据导出
 

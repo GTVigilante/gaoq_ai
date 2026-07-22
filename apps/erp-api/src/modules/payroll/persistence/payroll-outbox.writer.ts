@@ -26,6 +26,7 @@ export interface PayrollEvent {
     | 'payroll.disbursement.started'
     | 'payroll.reconciliation.started'
     | 'payroll.reconciliation.completed'
+    | 'payroll.reconciliation.migrated'
     | 'payroll.tax_filing.prepared'
     | 'payroll.tax_filing.approved'
     | 'payroll.tax_filing.submitted'
@@ -113,7 +114,8 @@ export class PayrollOutboxWriter {
     if (
       event.type !== 'payroll.disbursement.started' &&
       event.type !== 'payroll.reconciliation.started' &&
-      event.type !== 'payroll.reconciliation.completed'
+      event.type !== 'payroll.reconciliation.completed' &&
+      event.type !== 'payroll.reconciliation.migrated'
     ) return;
     const data = event.data;
     const keys = Object.keys(data).sort().join(',');

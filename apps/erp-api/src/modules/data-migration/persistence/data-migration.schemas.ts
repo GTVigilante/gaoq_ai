@@ -122,7 +122,7 @@ export class DataMigrationAssociationRecord {
       'previous_snapshot',
       'prepared_by', 'payroll_period', 'payroll_run', 'rule_pack',
       'compensation_profile', 'attendance_snapshot',
-      'approval_control', 'locked_by',
+      'approval_control', 'locked_by', 'bank_return', 'tax_filing', 'reconciled_by',
       'declared_reference',
     ],
   })
@@ -171,6 +171,9 @@ export class DataMigrationAssociationRecord {
     | 'attendance_snapshot'
     | 'approval_control'
     | 'locked_by'
+    | 'bank_return'
+    | 'tax_filing'
+    | 'reconciled_by'
     | 'declared_reference';
   @Prop({ type: String, required: true, immutable: true, match: SOURCE_ID })
   sourceAssociationId!: string;

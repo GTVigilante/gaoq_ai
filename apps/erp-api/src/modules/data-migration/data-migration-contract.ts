@@ -31,6 +31,7 @@ export const DATA_MIGRATION_SCOPE_ENTITIES = Object.freeze({
   treasury_bank_accounts: Object.freeze(['treasury.bank_account']),
   treasury_disbursement_batches: Object.freeze(['treasury.disbursement_batch']),
   treasury_bank_returns: Object.freeze(['treasury.bank_return']),
+  payroll_reconciliations: Object.freeze(['payroll.reconciliation']),
 } as const);
 
 export type DataMigrationScope = keyof typeof DATA_MIGRATION_SCOPE_ENTITIES;
@@ -73,6 +74,7 @@ export const DATA_MIGRATION_SCOPE_WRITE_SCOPE: Readonly<Record<DataMigrationScop
     treasury_bank_accounts: 'erp:treasury:migration:write',
     treasury_disbursement_batches: 'erp:treasury:migration:write',
     treasury_bank_returns: 'erp:treasury:migration:write',
+    payroll_reconciliations: 'erp:payroll:migration:write',
   });
 
 /** 附件分级只由服务端 Scope 决定，禁止来源包或客户端降级。 */
@@ -102,6 +104,7 @@ Readonly<Record<DataMigrationScope, DataMigrationDataClassification>> = Object.f
   treasury_bank_accounts: 'L4',
   treasury_disbursement_batches: 'L4',
   treasury_bank_returns: 'L4',
+  payroll_reconciliations: 'L4',
 });
 
 /** 失败关闭地校验实体是否属于本批次范围。 */

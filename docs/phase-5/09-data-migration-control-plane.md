@@ -2,7 +2,7 @@
 
 ## 范围与当前能力
 
-本切片建立可重复、可恢复、可审计的迁移控制面。当前白名单覆盖组织、审批、招聘、考勤、Payroll 完整历史链路，并覆盖资金账户、已提交常规代发批次与全量成功银行回盘，共二十四个独立 Scope；四方对账与业务附件仍需按域追加，完成前 Issue #34 与 Phase 5 迁移门禁保持未完成。
+本切片建立可重复、可恢复、可审计的迁移控制面。当前白名单覆盖组织、审批、招聘、考勤、Payroll 完整历史链路，并覆盖资金账户、已提交常规代发批次、全量成功银行回盘与已平衡四方对账，共二十五个独立 Scope；业务附件仍需按域追加，完成前 Issue #34 与 Phase 5 迁移门禁保持未完成。
 
 目标业务数据禁止由迁移模块直接写集合。组织与劳动关系实体调用 `OrgApplicationService`，审批模板、已终结审批历史与活动审批调用 `ApprovalApplicationService`，HC 与职位调用 `RecruitmentManagementService`，候选人与申请调用 `RecruitmentApplicationService`，面试与评价调用 `RecruitmentInterviewService`，Offer 与后续申请阶段调用 `RecruitmentOfferService`，资金账户与代发批次分别调用 `TreasuryBankAccountService`、`TreasuryDisbursementService`，继续执行领域校验、引用校验、加密、盲索引、幂等、Outbox 和版本并发控制。员工更新、状态变更与开放劳动关系在一个事务内同步；既有员工离职仍必须进入 Care，迁移不得绕过清算、身份吊销与生效日控制。历史劳动关系使用独立恢复入口，不触发正常入职、离职或身份副作用，也不生成新员工。审批迁移分别只发布 `approval_template.migrated`、`approval_history.migrated` 与 `approval_instance.migrated`；招聘迁移只发布各聚合的 `.migrated` 专用事件，包括申请、面试和 Offer。所有迁移事件均不得伪装成正常创建、排期、评价、提交、决策、发送、签署、发布或退役动作，也不创建通知、外部日历、eSign、WORM 归档或银行提交任务。迁移模块只直写自己拥有的运行、条目、来源映射与证据账本。
 
@@ -68,12 +68,15 @@
 - 目标从可信映射与密文账户重新生成支付指令和 ISO 20022 pain.001，文件 hash 是目标重建文件摘要，不宣称等于来源银行文件摘要；来源原文件和回执仅由迁移 WORM 保真。目标恢复 submitted v4 与回执引用，只发布不含回执、账号或员工明细的 `treasury.disbursement.migrated`，不调用 WORM 或银行网关，不注册 MCP 写 Tool。
 - `treasury_bank_returns` 必须在对应常规批次后执行，且当前只接收首份、全量成功、签名与恶意文件检查均已通过、无未知/重复/金额错位行的终结回盘。来源按员工声明期望金额与银行行引用，目标用员工映射定位迁移批次中的密文指令并逐行复核；任一失败行、部分成功、冻结或恢复子链均失败关闭，必须在切换前闭环或经批准归档。
 - 目标以目标指令 ID 重建规范回盘清单并加密，目标 `returnHash` 只代表重建清单；来源回盘文件、签名和扫描证明由唯一 L4 WORM 保真，并通过 `migration_return_evidence` 判别，禁止伪装为在线 Inbox 回执。目标把批次从 submitted v4 恢复为 reconciling v5、支付行恢复为 succeeded，只发布不含证据定位符、银行行引用或员工明细的 `treasury.bank_return.migrated`，不调用 Inbox，不开放 MCP 写能力。
+- `payroll_reconciliations` 只接收上述链路中已平衡的常规首批四方对账。来源只提交批次、银行回盘、已提交个税清单和对账员工来源引用，固定期望 v6、批次 v5、历史对账时间与唯一 L4 WORM；不接受来源差异、目标摘要、actorId、金额明细或账号。对账员工必须通过 ERP 身份映射，且不得与工资锁定人、代发制备人或导出批准人重合。
+- 目标重新读取 Payroll 运行、个税清单、Treasury 指令与银行回盘，复用确定性四方对账内核；仅零差异才把周期从 locked v6 历史恢复为 reconciled v9、批次从 reconciling v5 恢复为 reconciled v6。目标 `evidenceHash` 只代表重算事实，来源对账材料由 `migration_reconciliation_evidence` WORM 独立保真。全事务只发布 `payroll.reconciliation.migrated` 与 `treasury.reconciliation.migrated`，不发布普通中间状态、不调用外部系统，不开放 MCP 迁移写工具。
 
 `sourceFactHash` 的规范对象固定为 `sourceRecordId`、`sourceVersion`、`entityType`、`payloadHash`、按字典序排列的 `associationSourceIds`，以及按 `sourceAttachmentId` 排列且仅含 ID 与 checksum 的附件数组。滚动来源校验和初值为 `base64url(SHA-256(""))`，第 N 条为 `base64url(SHA-256(previous + "\\n" + sequence + ":" + sourceFactHash))`。来源导出程序必须使用相同算法，并固定 UTF-8、对象键字典序与数组规则。
 
 ## 权限、安全与数据质量
 
 - 写接口只允许具有 `erp:migration:execute` 与目标域写 Scope 的 `service`/`system_job`；普通用户和 MCP 永久不能开始、推进或完成迁移。
+- `payroll_reconciliations` 同时变更 Payroll 周期和 Treasury 批次，控制面开始、应用与重放均必须同时具备 `erp:payroll:migration:write` 与 `erp:treasury:migration:write`；缺少任一 Scope 即失败关闭。
 - 租户只来自已验证服务身份；payload 不允许 tenantId，实体类型、字段和关联均走固定白名单。
 - 账本不保存来源 payload、姓名、附件内容或 Token，只保存摘要、来源/目标引用、版本、状态和标准拒绝码。
 - `data_migration_associations` 逐项保存关系类型、来源关联 ID、解析后的目标 ID 与 `resolved|missing` 状态；`data_migration_attachments` 逐项保存来源附件 ID、checksum、搬运状态和目标证据引用，严禁保存附件正文。

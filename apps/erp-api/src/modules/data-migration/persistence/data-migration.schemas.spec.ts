@@ -79,6 +79,7 @@ describe('数据迁移账本 Schema', () => {
         'compensation_profile', 'attendance_snapshot',
         'debtor_account', 'recipient_account',
         'disbursement_batch',
+        'bank_return', 'tax_filing', 'reconciled_by',
       ]));
   });
 

@@ -82,6 +82,10 @@ import {
   TreasuryBankReturnService,
   type ImportTreasuryBankReturnFromMigrationInput,
 } from '../../treasury/application/treasury-bank-return.service.js';
+import {
+  TreasuryReconciliationService,
+  type ImportFourWayReconciliationFromMigrationInput,
+} from '../../treasury/application/treasury-reconciliation.service.js';
 import type {
   CreateDepartmentDto,
   CreateEmployeeDto,
@@ -203,6 +207,8 @@ export class DataMigrationService {
     private readonly treasuryDisbursements?: TreasuryDisbursementService,
     @Inject(TreasuryBankReturnService)
     private readonly treasuryBankReturns?: TreasuryBankReturnService,
+    @Inject(TreasuryReconciliationService)
+    private readonly treasuryReconciliations?: TreasuryReconciliationService,
   ) {}
 
   async start(input: CreateDataMigrationRunDto) {
@@ -616,6 +622,15 @@ export class DataMigrationService {
       );
       assertSingleMigrationEvidence(input, payload);
       await Promise.all(uniqueAssociationTargets(specs).map(async (spec) =>
+        this.requireMapping(run, spec.entityType, spec.sourceAssociationId)));
+      return;
+    } else if (input.entityType === 'payroll.reconciliation') {
+      const payload = payrollReconciliationPayload(input.payload);
+      const specs = payrollReconciliationAssociationSpecs(payload);
+      assertAssociations(input.associationSourceIds,
+        specs.map((spec) => spec.sourceAssociationId));
+      assertSingleMigrationEvidence(input, payload);
+      await Promise.all(specs.map(async (spec) =>
         this.requireMapping(run, spec.entityType, spec.sourceAssociationId)));
       return;
     } else if (input.entityType === 'recruitment.interview') {
@@ -1490,6 +1505,30 @@ export class DataMigrationService {
       };
       return target(await this.treasuryBankReturns.importCleanFromMigration(key, command));
     }
+    if (input.entityType === 'payroll.reconciliation') {
+      const payload = payrollReconciliationPayload(input.payload);
+      if (this.treasuryReconciliations === undefined) {
+        throw new Error('迁移四方对账适配器未装配');
+      }
+      const [batch, bankReturn, taxFiling, reconciledBy] = await Promise.all([
+        this.requireMapping(run, 'treasury.disbursement_batch', payload.batchSourceId),
+        this.requireMapping(run, 'treasury.bank_return', payload.bankReturnSourceId),
+        this.requireMapping(run, 'payroll.tax_filing', payload.taxFilingSourceId),
+        this.requireMapping(run, 'org.employee', payload.reconciledByEmployeeSourceId),
+      ]);
+      const command: ImportFourWayReconciliationFromMigrationInput = {
+        targetId: mapping?.targetId ?? null, batchId: batch.targetId,
+        bankReturnId: bankReturn.targetId, taxFilingId: taxFiling.targetId,
+        reconciledByEmployeeId: reconciledBy.targetId,
+        expectedBatchVersion: payload.expectedBatchVersion,
+        expectedPeriodVersion: payload.expectedPeriodVersion,
+        reconciledAt: payload.reconciledAt,
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${run.id}/attachments/${payload.sourceEvidenceSourceAttachmentId}`,
+        evidenceChecksum: payload.sourceEvidenceChecksum,
+      };
+      return target(await this.treasuryReconciliations.importBalancedFromMigration(key, command));
+    }
     const payload = approvalTemplatePayload(input.payload);
     if (this.approvals === undefined) throw new Error('迁移审批适配器未装配');
     const employeeId = async (sourceId: string): Promise<string> =>
@@ -1796,10 +1835,12 @@ export class DataMigrationService {
 
   private assertExecutor(scope?: DataMigrationScope): void {
     const actor = this.context.getActorRequired();
+    const requiredScopes = scope === undefined ? [] : scope === 'payroll_reconciliations'
+      ? ['erp:payroll:migration:write', 'erp:treasury:migration:write']
+      : [DATA_MIGRATION_SCOPE_WRITE_SCOPE[scope]];
     if (!['service', 'system_job'].includes(actor.actorType) ||
       !actor.scopes.includes('erp:migration:execute') ||
-      (scope !== undefined &&
-        !actor.scopes.includes(DATA_MIGRATION_SCOPE_WRITE_SCOPE[scope]))) {
+      requiredScopes.some((requiredScope) => !actor.scopes.includes(requiredScope))) {
       throw new ForbiddenException({
       code: 'DATA_MIGRATION_EXECUTOR_FORBIDDEN', message: '当前身份无权执行数据迁移',
       });
@@ -2015,8 +2056,10 @@ type AssociationTargetType =
   | 'payroll.period'
   | 'payroll.period_approval'
   | 'payroll.calculation_run'
+  | 'payroll.tax_filing'
   | 'treasury.bank_account'
-  | 'treasury.disbursement_batch';
+  | 'treasury.disbursement_batch'
+  | 'treasury.bank_return';
 interface AssociationEvidence {
   readonly relationship: AssociationRelationship;
   readonly sourceAssociationId: string;
@@ -4221,6 +4264,59 @@ function treasuryBankReturnAssociationSpecs(
   ];
 }
 
+interface PayrollReconciliationMigrationPayload extends MigrationEvidencePayload {
+  readonly batchSourceId: string;
+  readonly bankReturnSourceId: string;
+  readonly taxFilingSourceId: string;
+  readonly reconciledByEmployeeSourceId: string;
+  readonly expectedBatchVersion: number;
+  readonly expectedPeriodVersion: number;
+  readonly reconciledAt: string;
+}
+
+function payrollReconciliationPayload(
+  value: Readonly<Record<string, unknown>>,
+): PayrollReconciliationMigrationPayload {
+  exactKeys(value, [
+    'bankReturnSourceId', 'batchSourceId', 'expectedBatchVersion',
+    'expectedPeriodVersion', 'reconciledAt', 'reconciledByEmployeeSourceId',
+    'sourceEvidenceChecksum', 'sourceEvidenceSourceAttachmentId', 'taxFilingSourceId',
+  ]);
+  const sourceIds = [
+    'batchSourceId', 'bankReturnSourceId', 'taxFilingSourceId',
+    'reconciledByEmployeeSourceId',
+  ] as const;
+  if (sourceIds.some((key) => typeof value[key] !== 'string' ||
+      !SOURCE_ID_PATTERN.test(String(value[key]))) ||
+    value.expectedBatchVersion !== 5 || value.expectedPeriodVersion !== 6 ||
+    !isStrictUtcIso(value.reconciledAt) || !migrationEvidence(value)) throw invalidPayload();
+  return {
+    batchSourceId: value.batchSourceId as string,
+    bankReturnSourceId: value.bankReturnSourceId as string,
+    taxFilingSourceId: value.taxFilingSourceId as string,
+    reconciledByEmployeeSourceId: value.reconciledByEmployeeSourceId as string,
+    expectedBatchVersion: 5, expectedPeriodVersion: 6,
+    reconciledAt: value.reconciledAt,
+    sourceEvidenceSourceAttachmentId: value.sourceEvidenceSourceAttachmentId,
+    sourceEvidenceChecksum: value.sourceEvidenceChecksum,
+  };
+}
+
+function payrollReconciliationAssociationSpecs(
+  payload: PayrollReconciliationMigrationPayload,
+): readonly (AssociationEvidence & { readonly entityType: AssociationTargetType })[] {
+  return [
+    { relationship: 'disbursement_batch', sourceAssociationId: payload.batchSourceId,
+      entityType: 'treasury.disbursement_batch' },
+    { relationship: 'bank_return', sourceAssociationId: payload.bankReturnSourceId,
+      entityType: 'treasury.bank_return' },
+    { relationship: 'tax_filing', sourceAssociationId: payload.taxFilingSourceId,
+      entityType: 'payroll.tax_filing' },
+    { relationship: 'reconciled_by', sourceAssociationId: payload.reconciledByEmployeeSourceId,
+      entityType: 'org.employee' },
+  ];
+}
+
 function migrationEvidence(value: Readonly<Record<string, unknown>>): value is
 Readonly<Record<string, unknown>> & MigrationEvidencePayload {
   return typeof value.sourceEvidenceSourceAttachmentId === 'string' &&
@@ -4608,6 +4704,10 @@ function associationEvidence(input: ApplyDataMigrationRecordDto): readonly Assoc
       );
     } else if (input.entityType === 'treasury.bank_return') {
       derived = treasuryBankReturnAssociationSpecs(treasuryBankReturnPayload(input.payload));
+    } else if (input.entityType === 'payroll.reconciliation') {
+      derived = payrollReconciliationAssociationSpecs(
+        payrollReconciliationPayload(input.payload),
+      );
     } else if (input.entityType === 'attendance.monthly_snapshot') {
       const payload = attendanceMonthPayload(input.payload);
       derived = [
@@ -4749,7 +4849,7 @@ const ASSOCIATION_RELATIONSHIPS = [
   'previous_snapshot',
   'prepared_by', 'payroll_period', 'payroll_run', 'rule_pack',
   'compensation_profile', 'attendance_snapshot',
-  'approval_control', 'locked_by',
+  'approval_control', 'locked_by', 'bank_return', 'tax_filing', 'reconciled_by',
   'declared_reference',
 ] as const;
 const ASSOCIATION_RELATIONSHIP_SET: ReadonlySet<string> = new Set(ASSOCIATION_RELATIONSHIPS);

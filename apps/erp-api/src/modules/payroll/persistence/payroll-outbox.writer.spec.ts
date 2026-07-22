@@ -80,7 +80,7 @@ describe('Payroll Tax Outbox 白名单', () => {
     expect(store.records.create).not.toHaveBeenCalled();
   });
 
-  it('四方对账事件只发布状态、标准差异数量和摘要', async () => {
+  it('在线与迁移四方对账事件只发布状态、标准差异数量和摘要', async () => {
     const store = setup();
     const completed: PayrollEvent = {
       ...base, type: 'payroll.reconciliation.completed', version: 9, data: {
@@ -89,10 +89,21 @@ describe('Payroll Tax Outbox 白名单', () => {
         evidenceHash: 'e'.repeat(43), differenceCount: 1, status: 'frozen',
       },
     };
-    await store.context.run({ tenant, actor }, () => store.writer.append(completed, session));
+    const migrated: PayrollEvent = {
+      ...completed, type: 'payroll.reconciliation.migrated', data: {
+        ...completed.data, differenceCount: 0, status: 'reconciled',
+      },
+    };
+    await store.context.run({ tenant, actor }, async () => {
+      await store.writer.append(completed, session);
+      await store.writer.append(migrated, session);
+    });
     const persisted = JSON.stringify(store.records.create.mock.calls);
     expect(persisted).toContain('"differenceCount":1');
-    expect(persisted).not.toMatch(/employee|account|taxSubmission|bankSubmission/u);
+    expect(persisted).toContain('payroll.reconciliation.migrated.v1');
+    expect(persisted).not.toMatch(
+      /employee|account|taxSubmission|bankSubmission|migrationEvidence|reconciledBy/u,
+    );
     await expect(store.context.run({ tenant, actor }, () => store.writer.append({
       ...completed, data: { ...completed.data, employeeId: 'employee-001' },
     }, session))).rejects.toThrow('PAYROLL_RECONCILIATION_OUTBOX_DATA_INVALID');

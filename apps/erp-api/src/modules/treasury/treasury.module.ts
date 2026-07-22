@@ -69,6 +69,7 @@ import { TreasuryController } from './treasury.controller.js';
     TreasuryBankAccountService,
     TreasuryBankReturnService,
     TreasuryDisbursementService,
+    TreasuryReconciliationService,
     TreasuryDataCryptoService,
   ],
 })

@@ -37,14 +37,19 @@ function setup(taxMinor = 21_000) {
     disbursementPreparedBy: null, disbursementExportEvidenceId: null,
     reconciliationEvidenceId: null, reconciledBy: null, version: 6,
     createdAt: new Date('2026-07-01T00:00:00.000Z'),
-    updatedAt: new Date('2026-07-31T00:00:00.000Z'),
+    updatedAt: new Date('2026-07-22T08:00:00.000Z'),
   };
   const tax = {
     id: '01J8ZQK7V0A2M4N6P8R0T2W4F1', tenantId: tenant.tenantId,
     periodId: PERIOD_ID, payrollRunId: RUN_ID, payrollResultHash: 'a'.repeat(43),
     status: 'submitted', employeeCount: 2, totalTaxableEarningsMinor: 2_000_000,
     totalWithholdingTaxMinor: taxMinor, contentHash: 'c'.repeat(43),
+    preparedBy: 'tax-maker', approvedBy: 'tax-approver',
+    strongAuthReferenceType: 'migration_tax_approval_evidence',
     taxSubmissionId: 'tax-submission-001', taxSubmissionEvidenceId: 'tax-evidence-001',
+    migrationEvidenceRef:
+      'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/tax-001',
+    updatedAt: new Date('2026-07-22T10:00:00.000Z'),
   };
   const periods = {
     findOne: vi.fn().mockReturnValue(query(() => period)),
@@ -76,10 +81,66 @@ function setup(taxMinor = 21_000) {
     objectEvidenceId: 'return-worm-001', signatureEvidenceId: 'return-signature-001',
     malwareScanEvidenceId: 'return-malware-001',
   };
-  return { context, service, periods, reconciliations, outbox, treasury, bankReturn };
+  return { context, service, periods, reconciliations, outbox, treasury, bankReturn, tax };
 }
 
 describe('PayrollReconciliationService', () => {
+  it('迁移四方重算守恒时冻结历史时间且只发布迁移事件', async () => {
+    const store = setup();
+    const migrationActor: ActorContext = {
+      actorType: 'service', actorId: 'migration-worker', tenantId: tenant.tenantId,
+      roleCodes: [], scopes: [
+        'erp:migration:execute', 'erp:payroll:migration:write',
+        'erp:treasury:migration:write',
+      ], departmentIds: [], traceId: 'trace-reconciliation-migration',
+    };
+    const result = await store.context.run({ tenant, actor: migrationActor }, () =>
+      store.service.reconcile(
+        store.treasury, store.bankReturn, 'historical-reconciler', session, {
+          targetId: null, expectedPeriodVersion: 6,
+          expectedTaxFilingId: '01J8ZQK7V0A2M4N6P8R0T2W4F1',
+          reconciledAt: '2026-07-22T12:00:00.000Z',
+          migrationEvidenceRef:
+            'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F2/attachments/recon-001',
+          evidenceChecksum: 'm'.repeat(43),
+        },
+      ));
+    expect(result.summary).toMatchObject({ status: 'balanced', differences: [] });
+    expect(store.periods.updateOne.mock.calls[0]?.[2]).toEqual({
+      session, runValidators: true, timestamps: false,
+    });
+    const events = JSON.stringify(store.outbox.append.mock.calls);
+    expect(events).toContain('payroll.reconciliation.migrated');
+    expect(events).not.toMatch(/payroll\.disbursement\.started|payroll\.reconciliation\.started/u);
+    expect(store.reconciliations.create).toHaveBeenCalledWith([
+      expect.objectContaining({
+        reconciledBy: 'historical-reconciler',
+        evidenceReferenceType: 'migration_reconciliation_evidence',
+        createdAt: new Date('2026-07-22T12:00:00.000Z'),
+      }),
+    ], { session });
+  });
+
+  it('迁移对账员不得兼任个税制备或批准人', async () => {
+    const store = setup();
+    const migrationActor: ActorContext = {
+      actorType: 'service', actorId: 'migration-worker', tenantId: tenant.tenantId,
+      roleCodes: [], scopes: [
+        'erp:migration:execute', 'erp:payroll:migration:write',
+        'erp:treasury:migration:write',
+      ], departmentIds: [], traceId: 'trace-reconciliation-role-conflict',
+    };
+    await expect(store.context.run({ tenant, actor: migrationActor }, () =>
+      store.service.reconcile(store.treasury, store.bankReturn, store.tax.preparedBy, session, {
+        targetId: null, expectedPeriodVersion: 6,
+        expectedTaxFilingId: store.tax.id, reconciledAt: '2026-07-22T12:00:00.000Z',
+        migrationEvidenceRef:
+          'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F2/attachments/recon-001',
+        evidenceChecksum: 'm'.repeat(43),
+      }))).rejects.toThrow('历史个税链路、时间或职责分离控制非法');
+    expect(store.periods.updateOne).not.toHaveBeenCalled();
+  });
+
   it('四方守恒时连续补齐状态事件并原子完成工资周期', async () => {
     const store = setup();
     const result = await store.context.run({ tenant, actor }, () => store.service.reconcile(

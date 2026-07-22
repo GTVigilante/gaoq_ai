@@ -27,12 +27,15 @@ function setup(balanced = true) {
     id: BATCH_ID, tenantId: tenant.tenantId,
     payrollPeriodId: '01J8ZQK7V0A2M4N6P8R0T2W4P1',
     payrollRunId: '01J8ZQK7V0A2M4N6P8R0T2W4R1', payrollResultHash: 'a'.repeat(43),
-    purpose: 'regular', recoverySourceBatchId: null,
+    purpose: 'regular', batchSequence: 1, parentBatchId: null, recoverySourceBatchId: null,
     status: 'reconciling', version: 5, lineCount: 2, totalMinor: 1_679_000,
     preparedBy: 'treasury-maker', objectEvidenceId: 'treasury-worm-001',
     bankSubmissionId: 'bank-submission-001', bankSubmissionEvidenceId: 'bank-evidence-001',
     returnHash: 'b'.repeat(43), successfulCount: 2, successfulMinor: 1_679_000,
     failedCount: 0, failedMinor: 0,
+    migrationEvidenceRef:
+      'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/batch-001',
+    payrollLockedBy: 'payroll-locker', exportApprovedBy: 'treasury-checker',
   };
   const bankReturn = {
     id: '01J8ZQK7V0A2M4N6P8R0T2W4N1', tenantId: tenant.tenantId, batchId: BATCH_ID,
@@ -42,6 +45,10 @@ function setup(balanced = true) {
     failedCount: 0, failedMinor: 0, unknownCount: 0, duplicateCount: 0,
     lineAmountMismatchCount: 0, objectEvidenceId: 'return-worm-001',
     signatureEvidenceId: 'return-signature-001', malwareScanEvidenceId: 'return-malware-001',
+    evidenceReferenceType: 'migration_return_evidence',
+    migrationEvidenceRef:
+      'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/return-001',
+    receivedAt: new Date('2026-07-22T11:00:00.000Z'),
   };
   const summary = {
     id: '01J8ZQK7V0A2M4N6P8R0T2W4C1', periodId: batch.payrollPeriodId,
@@ -67,18 +74,86 @@ function setup(balanced = true) {
   };
   const returns = { findOne: vi.fn().mockReturnValue(query(() => bankReturn)) };
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
+  const profiles = { findActorIdByEmployee: vi.fn().mockResolvedValue('historical-reconciler') };
   const idempotency = { execute: vi.fn(async (
     _operation: string, _key: string, _request: unknown,
     handler: (value: ClientSession) => Promise<unknown>,
   ) => handler(session)) };
   const service = new TreasuryReconciliationService(
     idempotency as never, context, payroll as never, outbox as never,
-    batches as never, returns as never,
+    batches as never, returns as never, profiles as never,
   );
-  return { context, service, payroll, batches, returns, outbox, summary, batch, bankReturn };
+  return {
+    context, service, payroll, batches, returns, outbox, profiles, summary, batch, bankReturn,
+  };
 }
 
 describe('TreasuryReconciliationService', () => {
+  it('迁移服务重算四方守恒后恢复批次且不发布普通完成事件', async () => {
+    const store = setup();
+    const migrationActor: ActorContext = {
+      actorType: 'service', actorId: 'migration-worker', tenantId: tenant.tenantId,
+      roleCodes: [], scopes: [
+        'erp:migration:execute', 'erp:payroll:migration:write',
+        'erp:treasury:migration:write',
+      ], departmentIds: [], traceId: 'trace-four-way-migration',
+    };
+    const result = await store.context.run({ tenant, actor: migrationActor }, () =>
+      store.service.importBalancedFromMigration('four-way-migration', {
+        targetId: null, batchId: BATCH_ID,
+        bankReturnId: store.bankReturn.id,
+        taxFilingId: '01J8ZQK7V0A2M4N6P8R0T2W4F1',
+        reconciledByEmployeeId: 'employee-reconciler',
+        expectedBatchVersion: 5, expectedPeriodVersion: 6,
+        reconciledAt: '2026-07-22T12:00:00.000Z',
+        migrationEvidenceRef:
+          'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F2/attachments/recon-001',
+        evidenceChecksum: 'm'.repeat(43),
+      }));
+    expect(result).toEqual(store.summary);
+    expect(store.payroll.reconcile).toHaveBeenCalledWith(
+      expect.objectContaining({ batchId: BATCH_ID, settledMinor: 1_679_000 }),
+      expect.objectContaining({ returnId: store.bankReturn.id }),
+      'historical-reconciler', session,
+      expect.objectContaining({ expectedPeriodVersion: 6 }),
+    );
+    expect(store.batches.updateOne).toHaveBeenCalledWith(expect.anything(), { $set: {
+      status: 'reconciled', version: 6, freezeReason: null,
+      updatedAt: new Date('2026-07-22T12:00:00.000Z'),
+    } }, { session, runValidators: true, timestamps: false });
+    expect(store.outbox.append).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'treasury.reconciliation.migrated', version: 6,
+    }), session);
+  });
+
+  it('相同四方对账迁移重放只复核事实且不重复更新批次', async () => {
+    const store = setup();
+    store.batch.status = 'reconciled';
+    store.batch.version = 6;
+    const migrationActor: ActorContext = {
+      actorType: 'system_job', actorId: 'migration-replay', tenantId: tenant.tenantId,
+      roleCodes: [], scopes: [
+        'erp:migration:execute', 'erp:payroll:migration:write',
+        'erp:treasury:migration:write',
+      ], departmentIds: [], traceId: 'trace-four-way-replay',
+    };
+    const result = await store.context.run({ tenant, actor: migrationActor }, () =>
+      store.service.importBalancedFromMigration('four-way-replay', {
+        targetId: store.summary.id, batchId: BATCH_ID,
+        bankReturnId: store.bankReturn.id, taxFilingId: store.summary.taxFilingId,
+        reconciledByEmployeeId: 'employee-reconciler',
+        expectedBatchVersion: 5, expectedPeriodVersion: 6,
+        reconciledAt: '2026-07-22T12:00:00.000Z',
+        migrationEvidenceRef:
+          'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F2/attachments/recon-001',
+        evidenceChecksum: 'm'.repeat(43),
+      }));
+    expect(result).toEqual(store.summary);
+    expect(store.payroll.reconcile).toHaveBeenCalledOnce();
+    expect(store.batches.updateOne).not.toHaveBeenCalled();
+    expect(store.outbox.append).not.toHaveBeenCalled();
+  });
+
   it('可信服务对账守恒时同步完成代发批次', async () => {
     const store = setup();
     const result = await store.context.run({ tenant, actor }, () =>

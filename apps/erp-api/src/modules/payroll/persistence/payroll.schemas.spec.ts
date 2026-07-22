@@ -186,6 +186,9 @@ describe('Payroll 持久化契约', () => {
         { tenantId: 1, [field]: 1 }, expect.objectContaining({ unique: true }),
       ]);
     }
+    expect(PayrollReconciliationRecordSchema.indexes()).toContainEqual([
+      { tenantId: 1, migrationEvidenceRef: 1 }, expect.objectContaining({ unique: true }),
+    ]);
   });
 
   it('个税清单只保存密文和控制摘要且限制安全整数', async () => {
@@ -247,6 +250,15 @@ describe('Payroll 持久化契约', () => {
       status: 'balanced', version: 1,
     };
     await expect(new ReconciliationModel(base).validate()).resolves.toBeUndefined();
+    await expect(new ReconciliationModel({
+      ...base, evidenceReferenceType: 'migration_reconciliation_evidence',
+    }).validate()).rejects.toThrow('历史四方对账必须绑定迁移证据');
+    await expect(new ReconciliationModel({
+      ...base, evidenceReferenceType: 'migration_reconciliation_evidence',
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/recon-001',
+      migrationEvidenceChecksum: 'm'.repeat(43),
+    }).validate()).resolves.toBeUndefined();
     await expect(new ReconciliationModel({
       ...base, status: 'frozen', differences: ['UNCONTROLLED_DIFFERENCE'],
     }).validate()).rejects.toThrow(/differences/);

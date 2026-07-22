@@ -13,7 +13,7 @@ Phase 5 在已验收的组织、审批、招聘入职、考勤薪酬底座之上
 5. [移动工作台契约](./06-mobile-workbench-contract.md)（H5 首页、审批待办/详情/时间线、R1 决策/转交/加签、限期委托、模板驱动发起、本人培训任务与容器安全策略已交付；真实内容/评分服务、平台容器及实体 UAT 待续）
 6. [管理驾驶舱与受控分析导出契约](./07-management-dashboard-contract.md)（Web、REST、MCP 与 R2 异步导出代码已交付，生产数据与管理层 UAT 待验收）
    - [管理分析索引迁移运行手册](./08-analytics-index-migration-runbook.md)
-7. [全量/增量迁移控制面契约](./09-data-migration-control-plane.md)（组织、审批、招聘、考勤、薪资、资金账户、已提交常规代发批次及全量成功银行回盘历史适配器已交付；四方对账、业务附件与三次演练待续）
+7. [全量/增量迁移控制面契约](./09-data-migration-control-plane.md)（组织、审批、招聘、考勤、薪资、资金账户、常规代发、全量成功银行回盘及已平衡四方对账历史适配器已交付；业务附件与三次演练待续）
    - [数据迁移控制面索引运行手册](./10-data-migration-index-runbook.md)
    - [旧审批历史索引运行手册](./10a-approval-history-index-runbook.md)
    - [Payroll 迁移证据索引运行手册](./10b-payroll-migration-index-runbook.md)

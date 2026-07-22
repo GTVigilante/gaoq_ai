@@ -550,9 +550,22 @@ export class PayrollReconciliationRecord {
   @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN }) evidenceHash!: string;
   @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
   reconciledBy!: string;
+  @Prop({
+    type: String, required: true, immutable: true,
+    enum: ['online_reconciliation', 'migration_reconciliation_evidence'],
+    default: 'online_reconciliation',
+  })
+  evidenceReferenceType!: 'online_reconciliation' | 'migration_reconciliation_evidence';
   @Prop({ type: String, required: true, immutable: true, enum: ['balanced', 'frozen'] })
   status!: 'balanced' | 'frozen';
   @Prop({ type: Number, required: true, immutable: true, min: 1 }) version!: number;
+  @Prop({
+    type: String, default: null, immutable: true, maxlength: 256,
+    match: MIGRATION_EVIDENCE_REF_PATTERN,
+  })
+  migrationEvidenceRef!: string | null;
+  @Prop({ type: String, default: null, immutable: true, match: HASH_PATTERN })
+  migrationEvidenceChecksum!: string | null;
   createdAt!: Date;
   updatedAt!: Date;
 }
@@ -560,11 +573,26 @@ export type PayrollReconciliationDocument = HydratedDocument<PayrollReconciliati
 export const PayrollReconciliationRecordSchema = SchemaFactory.createForClass(
   PayrollReconciliationRecord,
 );
+PayrollReconciliationRecordSchema.pre('validate', function () {
+  const record = this as PayrollReconciliationRecord;
+  if ((record.migrationEvidenceRef === null) !==
+    (record.migrationEvidenceChecksum === null)) {
+    throw new Error('四方对账迁移证据引用与校验和必须成对出现');
+  }
+  if (record.evidenceReferenceType === 'migration_reconciliation_evidence' &&
+    record.migrationEvidenceRef === null) {
+    throw new Error('历史四方对账必须绑定迁移证据');
+  }
+});
 PayrollReconciliationRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 PayrollReconciliationRecordSchema.index({ tenantId: 1, periodId: 1 }, { unique: true });
 PayrollReconciliationRecordSchema.index({ tenantId: 1, payrollRunId: 1 }, { unique: true });
 PayrollReconciliationRecordSchema.index({ tenantId: 1, batchId: 1 }, { unique: true });
 PayrollReconciliationRecordSchema.index({ tenantId: 1, status: 1, createdAt: 1 });
+PayrollReconciliationRecordSchema.index(
+  { tenantId: 1, migrationEvidenceRef: 1 },
+  { unique: true, partialFilterExpression: { migrationEvidenceRef: { $type: 'string' } } },
+);
 
 const SHADOW_DIFFERENCE_CODES = [
   'LEGACY_EMPLOYEE_MISSING',

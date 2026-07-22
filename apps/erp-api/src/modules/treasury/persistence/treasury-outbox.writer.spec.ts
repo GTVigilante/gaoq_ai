@@ -220,7 +220,7 @@ describe('TreasuryOutboxWriter', () => {
     expect(calls).not.toMatch(/employee|instruction|account|approvedBy|evidence/u);
   });
 
-  it('四方对账事件只公开证据摘要和差异数量', async () => {
+  it('在线与迁移四方对账事件只公开证据摘要和差异数量', async () => {
     const context = new TenantContextService();
     const create = vi.fn().mockResolvedValue([]);
     const writer = new TreasuryOutboxWriter(context, { create } as never);
@@ -233,10 +233,19 @@ describe('TreasuryOutboxWriter', () => {
         differenceCount: 0, status: 'reconciled',
       },
     };
-    await context.run({ tenant, actor }, () => writer.append(reconciled, session));
+    const migrated: TreasuryEvent = {
+      ...reconciled, type: 'treasury.reconciliation.migrated',
+    };
+    await context.run({ tenant, actor }, async () => {
+      await writer.append(reconciled, session);
+      await writer.append(migrated, session);
+    });
     const calls = JSON.stringify(create.mock.calls);
     expect(calls).toContain('"status":"reconciled"');
-    expect(calls).not.toMatch(/employee|account|taxSubmission|bankSubmission/u);
+    expect(calls).toContain('treasury.reconciliation.migrated.v1');
+    expect(calls).not.toMatch(
+      /employee|account|taxSubmission|bankSubmission|migrationEvidence|reconciledBy/u,
+    );
     await expect(context.run({ tenant, actor }, () => writer.append({
       ...reconciled, data: { ...reconciled.data, employeeId: 'employee-001' },
     }, session))).rejects.toThrow('TREASURY_OUTBOX_DATA_INVALID');
