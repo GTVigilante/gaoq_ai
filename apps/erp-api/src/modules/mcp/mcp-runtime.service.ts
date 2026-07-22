@@ -80,6 +80,27 @@ const approvalInstanceOutputSchema = z.object({
     completedAt: z.string().nullable(),
   }),
 });
+const approvalTimelineOutputSchema = z.object({
+  timeline: z.array(z.object({
+    actionId: z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/),
+    aggregateVersion: z.number().int().positive(),
+    actionType: z.enum([
+      'instance.submitted', 'instance.decided', 'instance.approver_transferred',
+      'instance.approver_added', 'instance.withdrawn', 'instance.archived',
+    ]),
+    actorId: z.string(),
+    principalApproverId: z.string().nullable(),
+    nodeId: z.string().nullable(),
+    outcome: z.enum(['approved', 'rejected']).nullable(),
+    resultingStatus: z.enum(['draft', 'running', 'approved', 'rejected', 'withdrawn', 'archived']).nullable(),
+    delegated: z.boolean(),
+    fromApproverId: z.string().nullable(),
+    toApproverId: z.string().nullable(),
+    addedApproverId: z.string().nullable(),
+    canceledApproverIds: z.array(z.string()),
+    occurredAt: z.string(),
+  })),
+});
 const preparedOperationOutputSchema = z.object({
   operationId: z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/),
   digest: z.string().length(43),
@@ -1167,6 +1188,18 @@ export class McpRuntimeService {
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
       },
       async ({ instanceId }, extra) => this.tools.getApprovalInstance(instanceId, extra),
+    );
+
+    server.registerTool(
+      'approval_timeline_get',
+      {
+        title: '查询审批时间线',
+        description: '返回当前主体有权读取的追加式审批动作，不包含租户字段或表单正文。风险等级 R0。',
+        inputSchema: { instanceId: z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/) },
+        outputSchema: approvalTimelineOutputSchema,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      },
+      async ({ instanceId }, extra) => this.tools.getApprovalTimeline(instanceId, extra),
     );
 
     server.registerTool(

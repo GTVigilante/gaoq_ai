@@ -726,6 +726,23 @@ export class McpToolService {
     });
   }
 
+  async getApprovalTimeline(instanceId: string, extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:approval:instance:read')) {
+        await this.auditTool(identity, 'approval_timeline_get', 'R0', 'denied');
+        return scopeError('erp:approval:instance:read');
+      }
+      const timeline = await this.approvals.getTimeline(instanceId);
+      const data: Record<string, unknown> = { timeline };
+      await this.auditTool(identity, 'approval_timeline_get', 'R0', 'success', { count: timeline.length });
+      return {
+        content: [{ type: 'text', text: JSON.stringify(data) }],
+        structuredContent: data,
+      };
+    });
+  }
+
   async prepareApprovalSubmit(
     instanceId: string,
     expectedVersion: number,

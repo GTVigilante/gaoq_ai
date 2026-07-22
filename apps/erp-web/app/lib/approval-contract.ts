@@ -18,6 +18,23 @@ export interface ApprovalView extends ApprovalSummary {
   readonly currentNodeIndex: number | null;
 }
 
+export interface ApprovalTimelineEntry {
+  readonly actionId: string;
+  readonly aggregateVersion: number;
+  readonly actionType: 'instance.submitted' | 'instance.decided' | 'instance.approver_transferred' | 'instance.approver_added' | 'instance.withdrawn' | 'instance.archived';
+  readonly actorId: string;
+  readonly principalApproverId: string | null;
+  readonly nodeId: string | null;
+  readonly outcome: 'approved' | 'rejected' | null;
+  readonly resultingStatus: ApprovalStatus | null;
+  readonly delegated: boolean;
+  readonly fromApproverId: string | null;
+  readonly toApproverId: string | null;
+  readonly addedApproverId: string | null;
+  readonly canceledApproverIds: readonly string[];
+  readonly occurredAt: string;
+}
+
 const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/u;
 const CODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -46,6 +63,48 @@ export function parseApprovalView(value: unknown): ApprovalView {
     formData: Object.freeze({ ...record.formData }),
     currentNodeIndex: record.currentNodeIndex as number | null,
   });
+}
+
+/** 校验服务端追加式审批时间线；时间线不允许携带表单或租户字段。 */
+export function parseApprovalTimeline(value: unknown): readonly ApprovalTimelineEntry[] {
+  if (!Array.isArray(value) || value.length > 500) throw new Error('APPROVAL_TIMELINE_INVALID');
+  return Object.freeze(value.map((item) => {
+    const record = objectRecord(item, 'APPROVAL_TIMELINE_INVALID');
+    const actionTypes: readonly ApprovalTimelineEntry['actionType'][] = [
+      'instance.submitted', 'instance.decided', 'instance.approver_transferred',
+      'instance.approver_added', 'instance.withdrawn', 'instance.archived',
+    ];
+    if (
+      typeof record.actionId !== 'string' || !ULID_PATTERN.test(record.actionId) ||
+      !positiveInteger(record.aggregateVersion) ||
+      typeof record.actionType !== 'string' || !actionTypes.includes(record.actionType as ApprovalTimelineEntry['actionType']) ||
+      typeof record.actorId !== 'string' || !ID_PATTERN.test(record.actorId) ||
+      !nullableId(record.principalApproverId) || !nullableId(record.nodeId) ||
+      !(record.outcome === null || record.outcome === 'approved' || record.outcome === 'rejected') ||
+      !(record.resultingStatus === null || (typeof record.resultingStatus === 'string' && STATUSES.has(record.resultingStatus as ApprovalStatus))) ||
+      typeof record.delegated !== 'boolean' ||
+      !nullableId(record.fromApproverId) || !nullableId(record.toApproverId) || !nullableId(record.addedApproverId) ||
+      !Array.isArray(record.canceledApproverIds) || record.canceledApproverIds.some((id) => typeof id !== 'string' || !ID_PATTERN.test(id)) ||
+      typeof record.occurredAt !== 'string' || Number.isNaN(Date.parse(record.occurredAt)) ||
+      Object.hasOwn(record, 'tenantId') || Object.hasOwn(record, 'formData')
+    ) throw new Error('APPROVAL_TIMELINE_INVALID');
+    return Object.freeze({
+      actionId: record.actionId,
+      aggregateVersion: record.aggregateVersion as number,
+      actionType: record.actionType as ApprovalTimelineEntry['actionType'],
+      actorId: record.actorId,
+      principalApproverId: record.principalApproverId as string | null,
+      nodeId: record.nodeId as string | null,
+      outcome: record.outcome,
+      resultingStatus: record.resultingStatus as ApprovalStatus | null,
+      delegated: record.delegated,
+      fromApproverId: record.fromApproverId as string | null,
+      toApproverId: record.toApproverId as string | null,
+      addedApproverId: record.addedApproverId as string | null,
+      canceledApproverIds: Object.freeze([...(record.canceledApproverIds as string[])]),
+      occurredAt: record.occurredAt,
+    });
+  }));
 }
 
 function parseApprovalSummary(value: unknown): ApprovalSummary {
@@ -86,4 +145,8 @@ function positiveInteger(value: unknown): boolean {
 
 function nullableIso(value: unknown): boolean {
   return value === null || (typeof value === 'string' && !Number.isNaN(Date.parse(value)));
+}
+
+function nullableId(value: unknown): boolean {
+  return value === null || (typeof value === 'string' && ID_PATTERN.test(value));
 }

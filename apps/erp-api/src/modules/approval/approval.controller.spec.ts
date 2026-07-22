@@ -23,6 +23,25 @@ function summary() {
 }
 
 describe('ApprovalController', () => {
+  it('读取时间线使用严格 ULID、细粒度 Scope 和最小审计', async () => {
+    const timeline = [{ actionId: INSTANCE_ID, actionType: 'instance.submitted' }];
+    const getTimeline = vi.fn().mockResolvedValue(timeline);
+    const record = vi.fn().mockResolvedValue(undefined);
+    const controller = new ApprovalController(
+      { getTimeline } as unknown as ApprovalApplicationService,
+      { record } as unknown as AuditService,
+    );
+    await expect(controller.getTimeline(INSTANCE_ID)).resolves.toEqual(timeline);
+    expect(getTimeline).toHaveBeenCalledWith(INSTANCE_ID);
+    expect(record).toHaveBeenCalledWith({
+      action: 'approval.instance.timeline.read', resourceType: 'approval_instance',
+      resourceId: INSTANCE_ID, riskLevel: 'R0', outcome: 'success', metadata: { count: 1 },
+    });
+    await expect(controller.getTimeline('invalid')).rejects.toBeInstanceOf(BadRequestException);
+    const method = Object.getOwnPropertyDescriptor(ApprovalController.prototype, 'getTimeline')?.value as object;
+    expect(Reflect.getMetadata(REQUIRED_SCOPES_KEY, method)).toEqual(['erp:approval:instance:read']);
+  });
+
   it('提交强制 If-Match/幂等键，响应 ETag 并写最小审计', async () => {
     const submitInstance = vi.fn().mockResolvedValue({ instance: summary() });
     const record = vi.fn().mockResolvedValue(undefined);

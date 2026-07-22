@@ -366,6 +366,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       'get_my_permissions',
       'approval_get_inbox',
       'approval_get',
+      'approval_timeline_get',
       'approval_submit_prepare',
       'approval_submit_execute',
       'approval_withdraw_prepare',

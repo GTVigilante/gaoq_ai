@@ -115,7 +115,7 @@ function dependencies(overrides: Record<string, unknown> = {}) {
       replace: vi.fn(),
     },
     instances: { findById: vi.fn(), insert: vi.fn(), replace: vi.fn(), findInbox: vi.fn() },
-    actions: { append: vi.fn() },
+    actions: { append: vi.fn(), findTimeline: vi.fn().mockResolvedValue([]) },
     delegations: { isActive: vi.fn().mockResolvedValue(false) },
     resolvers: {
       resolve: vi.fn().mockResolvedValue([{ nodeId: 'manager', actorIds: ['manager-001'] }]),
@@ -145,6 +145,25 @@ function service(
 }
 
 describe('ApprovalApplicationService', () => {
+  it('时间线先复用实例读取授权，再返回不含表单正文的动作投影', async () => {
+    const timeline = [{
+      actionId: '01K00000000000000000000000', aggregateVersion: 1,
+      actionType: 'instance.submitted', actorId: 'actor-001', principalApproverId: null,
+      nodeId: null, outcome: null, resultingStatus: null, delegated: false,
+      fromApproverId: null, toApproverId: null, addedApproverId: null,
+      canceledApproverIds: [], occurredAt: NOW.toISOString(),
+    }] as const;
+    const deps = dependencies({
+      instances: { findById: vi.fn().mockResolvedValue(draftInstance()) },
+      actions: { append: vi.fn(), findTimeline: vi.fn().mockResolvedValue(timeline) },
+    });
+    await expect(service(deps).getTimeline('instance-001')).resolves.toEqual(timeline);
+    expect(deps.actions.findTimeline).toHaveBeenCalledWith('instance-001');
+
+    const denied = service(deps, trustedContext([], 'unrelated-actor'));
+    await expect(denied.getTimeline('instance-001')).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
   it('OP Worker 只能以 ERP 员工主体和 ERP 路由模板原子创建并提交审批', async () => {
     const deps = dependencies({
       profiles: {

@@ -35,6 +35,7 @@ import {
 } from '../domain/index.js';
 import {
   ApprovalActionRepository,
+  type ApprovalActionProjection,
   ApprovalDelegationRepository,
   ApprovalInstanceRepository,
   ApprovalTemplateRepository,
@@ -84,6 +85,8 @@ export interface ApprovalInstanceView {
   readonly submittedAt: string | null;
   readonly completedAt: string | null;
 }
+
+export type ApprovalTimelineEntry = ApprovalActionProjection;
 
 export interface AttendanceCorrectionDecision {
   readonly id: string;
@@ -442,13 +445,8 @@ export class ApprovalApplicationService {
   }
 
   async getInstance(id: string): Promise<ApprovalInstanceView> {
-    const instance = await this.requireInstance(id);
+    const instance = await this.requireReadableInstance(id);
     const actor = this.context.getActorRequired();
-    if (
-      actor.actorId !== instance.initiatorId &&
-      !instance.resolvedNodes.some((node) => node.actorIds.includes(actor.actorId)) &&
-      !actor.scopes.includes('erp:approval:instance:read_all')
-    ) throw new ForbiddenException({ code: 'APPROVAL_READ_DENIED', message: '无权读取该审批' });
     const canReadSensitive = actor.actorId === instance.initiatorId ||
       actor.scopes.includes('erp:approval:instance:read_sensitive');
     const fields = new Map(instance.templateSnapshot.definition.fields.map((field) => [field.key, field]));
@@ -477,9 +475,26 @@ export class ApprovalApplicationService {
     });
   }
 
+  /** 返回已授权实例的追加式动作时间线；投影不含表单正文和租户字段。 */
+  async getTimeline(id: string): Promise<readonly ApprovalTimelineEntry[]> {
+    await this.requireReadableInstance(id);
+    return this.actions.findTimeline(id);
+  }
+
   async getInbox(): Promise<readonly ApprovalInstanceSummary[]> {
     const instances = await this.instances.findInbox(this.context.getActorRequired().actorId);
     return Object.freeze(instances.map((instance) => instanceSummary(instance)));
+  }
+
+  private async requireReadableInstance(id: string): Promise<ApprovalInstance> {
+    const instance = await this.requireInstance(id);
+    const actor = this.context.getActorRequired();
+    if (
+      actor.actorId !== instance.initiatorId &&
+      !instance.resolvedNodes.some((node) => node.actorIds.includes(actor.actorId)) &&
+      !actor.scopes.includes('erp:approval:instance:read_all')
+    ) throw new ForbiddenException({ code: 'APPROVAL_READ_DENIED', message: '无权读取该审批' });
+    return instance;
   }
 
   /** Recruitment 只读取审批终态；必须使用专用 Scope，禁止读取表单正文。 */

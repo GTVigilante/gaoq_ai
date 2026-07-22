@@ -14,6 +14,7 @@ import {
   Space,
   Table,
   Tag,
+  Timeline,
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -25,7 +26,15 @@ import {
   erpFetch,
   strongEtag,
 } from '../../lib/api-client';
-import { parseApprovalSummaries, parseApprovalView, type ApprovalStatus, type ApprovalSummary, type ApprovalView } from './approval-contract';
+import {
+  parseApprovalSummaries,
+  parseApprovalTimeline,
+  parseApprovalView,
+  type ApprovalStatus,
+  type ApprovalSummary,
+  type ApprovalTimelineEntry,
+  type ApprovalView,
+} from '../../lib/approval-contract';
 
 interface IdentityProfile {
   readonly actorId: string;
@@ -48,6 +57,7 @@ export function ApprovalWorkbench() {
   const [items, setItems] = useState<readonly ApprovalSummary[]>([]);
   const [profile, setProfile] = useState<IdentityProfile | null>(null);
   const [selected, setSelected] = useState<ApprovalView | null>(null);
+  const [timeline, setTimeline] = useState<readonly ApprovalTimelineEntry[]>([]);
   const [status, setStatus] = useState<'all' | ApprovalStatus>('all');
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -77,8 +87,12 @@ export function ApprovalWorkbench() {
   const open = useCallback(async (id: string) => {
     setDetailLoading(true);
     try {
-      const result = await erpFetch<unknown>(`/api/approvals/instances/${encodeURIComponent(id)}`);
-      setSelected(parseApprovalView(result.data));
+      const [instance, actions] = await Promise.all([
+        erpFetch<unknown>(`/api/approvals/instances/${encodeURIComponent(id)}`),
+        erpFetch<unknown>(`/api/approvals/instances/${encodeURIComponent(id)}/timeline`),
+      ]);
+      setSelected(parseApprovalView(instance.data));
+      setTimeline(parseApprovalTimeline(actions.data));
     } catch (value) {
       const apiError = value instanceof ErpApiError ? value : null;
       void message.error(apiError?.message ?? '审批详情加载失败');
@@ -160,7 +174,7 @@ export function ApprovalWorkbench() {
         </Flex>
         <Table rowKey="id" columns={columns} dataSource={[...filtered]} loading={loading} pagination={{ pageSize: 10 }} locale={{ emptyText: <Empty description="当前范围内没有审批任务" /> }} scroll={{ x: 820 }} />
       </Card>
-      <Drawer title="审批详情" width={620} open={selected !== null} loading={detailLoading} onClose={() => setSelected(null)} extra={selected === null ? null : <Tag color={selected.riskLevel === 'R2' ? 'red' : 'gold'}>{selected.riskLevel}</Tag>}>
+      <Drawer title="审批详情" width={620} open={selected !== null} loading={detailLoading} onClose={() => { setSelected(null); setTimeline([]); }} extra={selected === null ? null : <Tag color={selected.riskLevel === 'R2' ? 'red' : 'gold'}>{selected.riskLevel}</Tag>}>
         {selected === null ? null : <Space direction="vertical" size="large" className="console-full-width">
           {selected.riskLevel === 'R2' ? <Alert type="warning" showIcon icon={<SafetyCertificateOutlined />} message="R2 强认证边界" description="本工作台仅查看 R2 数据；决策必须进入 WebAuthn 受控确认流程。" /> : null}
           <Descriptions column={1} bordered size="small" items={[
@@ -174,6 +188,15 @@ export function ApprovalWorkbench() {
           <Card size="small" title="表单数据（已按敏感级别脱敏）">
             {Object.keys(selected.formData).length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无字段" /> : <Descriptions column={1} size="small" items={Object.entries(selected.formData).map(([key, value]) => ({ key, label: key, children: formatValue(value) }))} />}
           </Card>
+          <Card size="small" title="动作时间线">
+            {timeline.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚无动作记录" /> : <Timeline items={timeline.map((entry) => ({
+              color: entry.outcome === 'rejected' ? 'red' : entry.outcome === 'approved' ? 'green' : 'blue',
+              children: <Space direction="vertical" size={0}>
+                <Typography.Text strong>{timelineText(entry)}</Typography.Text>
+                <Typography.Text type="secondary">{entry.actorId} · {new Date(entry.occurredAt).toLocaleString('zh-CN')} · v{entry.aggregateVersion}</Typography.Text>
+              </Space>,
+            }))} />}
+          </Card>
           {selected.status === 'running' ? <Flex justify="flex-end" gap={12}>
             <Button danger loading={writing} disabled={selected.riskLevel === 'R2'} onClick={() => {
               modal.confirm({ title: '确认拒绝此审批？', okText: '拒绝', okButtonProps: { danger: true }, onOk: async () => decide('rejected') });
@@ -186,6 +209,18 @@ export function ApprovalWorkbench() {
       </Drawer>
     </main>
   );
+}
+
+function timelineText(entry: ApprovalTimelineEntry): string {
+  const labels: Readonly<Record<ApprovalTimelineEntry['actionType'], string>> = {
+    'instance.submitted': '提交审批',
+    'instance.decided': entry.outcome === 'approved' ? '审批通过' : '审批拒绝',
+    'instance.approver_transferred': '转交审批人',
+    'instance.approver_added': '新增审批人',
+    'instance.withdrawn': '撤回审批',
+    'instance.archived': '归档审批',
+  };
+  return `${labels[entry.actionType]}${entry.delegated ? '（委托）' : ''}`;
 }
 
 function formatValue(value: unknown): React.ReactNode {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseApprovalSummaries, parseApprovalView } from './approval-contract.js';
+import { parseApprovalSummaries, parseApprovalTimeline, parseApprovalView } from '../../lib/approval-contract.js';
 
 const SUMMARY = {
   id: '01K00000000000000000000000', status: 'running', templateCode: 'expense_claim',
@@ -23,5 +23,20 @@ describe('审批工作台响应契约', () => {
       .toMatchObject({ title: '费用报销', currentNodeIndex: 0 });
     expect(() => parseApprovalView({ ...SUMMARY, title: '费用报销', initiatorId: 'employee-001', formData: [], currentNodeIndex: 0 }))
       .toThrowError('APPROVAL_DETAIL_INVALID');
+  });
+
+  it('时间线拒绝租户字段、表单正文和未知动作', () => {
+    const action = {
+      actionId: '01K00000000000000000000001', aggregateVersion: 2,
+      actionType: 'instance.decided', actorId: 'manager-001', principalApproverId: 'manager-001',
+      nodeId: 'manager_review', outcome: 'approved', resultingStatus: 'approved', delegated: false,
+      fromApproverId: null, toApproverId: null, addedApproverId: null, canceledApproverIds: [],
+      occurredAt: '2026-07-22T01:00:00.000Z',
+    } as const;
+    expect(parseApprovalTimeline([action])).toEqual([action]);
+    expect(() => parseApprovalTimeline([{ ...action, tenantId: 'tenant-001' }]))
+      .toThrowError('APPROVAL_TIMELINE_INVALID');
+    expect(() => parseApprovalTimeline([{ ...action, actionType: 'instance.deleted' }]))
+      .toThrowError('APPROVAL_TIMELINE_INVALID');
   });
 });

@@ -2,9 +2,9 @@
 
 ## 交付范围
 
-本工作台提供企业 SSO 入口、审批待办与详情、R1 审批决策、版本化表单设计、独立发布复核、组织主数据浏览与创建、身份授权快照、Passkey 入口和当前会话吊销。
+本工作台提供企业 SSO 入口、审批待办、详情与追加式动作时间线、R1 审批决策、版本化表单设计、独立发布复核、组织主数据浏览与创建、身份授权快照、Passkey 入口和当前会话吊销。PC 与 H5 均从待办卡片进入详情并在第三步前完成 R1 决策。
 
-移动审批发起、审批时间线、转交、加签、委托与完整 H5 三步操作仍属于后续验收范围，不因本页面交付而视为完成。
+移动审批发起、转交、加签、委托与真实设备无障碍 UAT 仍属于后续验收范围，不因本页面交付而视为完成。
 
 ## 浏览器会话
 
@@ -26,13 +26,15 @@
 
 | 页面能力 | REST 应用服务 | 事件/集成 | MCP | 审计 |
 | --- | --- | --- | --- | --- |
-| 审批待办与详情 | `ApprovalApplicationService` | 无副作用 | 复用审批 R0 工具 | 读取遵循现有审计策略 |
+| 审批待办、详情与时间线 | `ApprovalApplicationService` | 无副作用；时间线读取追加日志投影 | `approval_get_inbox`、`approval_get`、`approval_timeline_get` | REST 时间线和 MCP Tool 分别记录 R0 读取审计 |
 | R1 审批决策 | `ApprovalApplicationService` | 动作、Outbox、通知意图同事务 | 复用审批 R1 prepare/execute | `approval.instance.decide` |
 | 模板草稿与发布 | `ApprovalApplicationService` | 发布事件进入 Outbox | 业务能力不由前端旁路 | `approval.template.create/publish` |
 | 组织浏览与创建 | `OrgApplicationService` | 组织版本事件进入 Outbox，下发钉钉/飞书/OP | 复用组织 R0/R1 工具 | `org.department.create`、`org.employee.create` |
 | 身份摘要与会话吊销 | 可信身份上下文与 `TokenGrantService` | 吊销不依赖外部平台成功 | OAuth/MCP 继续使用同一 Scope 模型 | `identity.profile.read`、`identity.session.revoke` |
 
 MCP 不得调用页面、读取浏览器令牌或直接访问数据库。页面新增呈现能力不得改变 MCP 风险分级，R3 始终不注册工具。
+
+审批时间线以 `aggregateVersion` 升序读取，最多返回 500 条动作。仓储查询强制可信租户和实例标识；应用服务先执行与详情相同的实例读取授权。REST 与 MCP 仅返回动作标识、版本、类型、参与主体标识、结果和时间，不返回 `tenantId`、表单正文、Mongo 内部标识或平台凭据。
 
 ## 验证与生产门禁
 

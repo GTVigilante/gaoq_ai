@@ -390,6 +390,49 @@ export class ApprovalActionRepository extends TenantBoundApprovalRepository {
     const details = actionRecordDetails(action);
     await this.records.create([{ ...base, ...details }], { session });
   }
+
+  /** 返回单实例的追加式动作投影；不返回租户字段、表单正文或内部 Mongo 标识。 */
+  async findTimeline(instanceId: string): Promise<readonly ApprovalActionProjection[]> {
+    const records = await this.records.find({ tenantId: this.tenantId(), instanceId })
+      .sort({ aggregateVersion: 1 })
+      .limit(501)
+      .lean()
+      .exec();
+    if (records.length > 500) throw integrityError();
+    return Object.freeze(records.map((record) => Object.freeze({
+      actionId: record.actionId,
+      aggregateVersion: record.aggregateVersion,
+      actionType: record.actionType,
+      actorId: record.actorId,
+      principalApproverId: record.principalApproverId,
+      nodeId: record.nodeId,
+      outcome: record.outcome,
+      resultingStatus: record.resultingStatus,
+      delegated: record.delegated,
+      fromApproverId: record.fromApproverId,
+      toApproverId: record.toApproverId,
+      addedApproverId: record.addedApproverId,
+      canceledApproverIds: Object.freeze([...record.canceledApproverIds]),
+      occurredAt: record.occurredAt.toISOString(),
+    })));
+  }
+}
+
+export interface ApprovalActionProjection {
+  readonly actionId: string;
+  readonly aggregateVersion: number;
+  readonly actionType: ApprovalActionRecord['actionType'];
+  readonly actorId: string;
+  readonly principalApproverId: string | null;
+  readonly nodeId: string | null;
+  readonly outcome: 'approved' | 'rejected' | null;
+  readonly resultingStatus: ApprovalActionRecord['resultingStatus'];
+  readonly delegated: boolean;
+  readonly fromApproverId: string | null;
+  readonly toApproverId: string | null;
+  readonly addedApproverId: string | null;
+  readonly canceledApproverIds: readonly string[];
+  readonly occurredAt: string;
 }
 
 @Injectable()

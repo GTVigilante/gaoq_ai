@@ -1,24 +1,20 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
-import { erpFetch } from '../lib/api-client';
+import {
+  parseApprovalSummaries,
+  parseApprovalTimeline,
+  parseApprovalView,
+  type ApprovalStatus,
+  type ApprovalSummary,
+  type ApprovalTimelineEntry,
+  type ApprovalView,
+} from '../lib/approval-contract';
+import { createIdempotencyKey, ErpApiError, erpFetch, strongEtag } from '../lib/api-client';
 
 type MobileTab = 'home' | 'approvals' | 'knowledge' | 'profile';
-type ApprovalStatus = 'draft' | 'running' | 'approved' | 'rejected' | 'withdrawn' | 'archived';
-
-interface ApprovalSummary {
-  readonly id: string;
-  readonly status: ApprovalStatus;
-  readonly templateCode: string;
-  readonly templateRevision: number;
-  readonly riskLevel: 'R1' | 'R2';
-  readonly version: number;
-  readonly submittedAt: string | null;
-  readonly completedAt: string | null;
-}
-
-const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 const STATUS_LABEL: Readonly<Record<ApprovalStatus, string>> = {
   draft: '草稿', running: '审批中', approved: '已通过', rejected: '已驳回',
   withdrawn: '已撤回', archived: '已归档',
@@ -29,6 +25,12 @@ export function MobileWorkbench() {
   const [tab, setTab] = useState<MobileTab>('home');
   const [approvals, setApprovals] = useState<readonly ApprovalSummary[]>([]);
   const [state, setState] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
+  const [detail, setDetail] = useState<ApprovalView | null>(null);
+  const [timeline, setTimeline] = useState<readonly ApprovalTimelineEntry[]>([]);
+  const [actorId, setActorId] = useState<string | null>(null);
+  const [detailState, setDetailState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [writing, setWriting] = useState(false);
 
   const loadApprovals = useCallback(async (signal?: AbortSignal): Promise<void> => {
     setState('loading');
@@ -52,6 +54,53 @@ export function MobileWorkbench() {
     return () => controller.abort();
   }, [loadApprovals]);
 
+  const openApproval = useCallback(async (id: string) => {
+    setDetailState('loading');
+    setDetailError(null);
+    try {
+      const [instance, actions, profile] = await Promise.all([
+        erpFetch<unknown>(`/api/approvals/instances/${encodeURIComponent(id)}`),
+        erpFetch<unknown>(`/api/approvals/instances/${encodeURIComponent(id)}/timeline`),
+        erpFetch<unknown>('/api/auth/profile'),
+      ]);
+      setDetail(parseApprovalView(instance.data));
+      setTimeline(parseApprovalTimeline(actions.data));
+      setActorId(parseActorId(profile.data));
+      setDetailState('ready');
+    } catch (value) {
+      const error = value instanceof ErpApiError ? value : null;
+      setDetailError(error?.traceId === null || error === null ? (error?.message ?? '审批详情加载失败') : `${error.message} · ${error.traceId}`);
+      setDetailState('error');
+    }
+  }, []);
+
+  const decide = useCallback(async (outcome: 'approved' | 'rejected') => {
+    if (detail === null || actorId === null || writing || detail.riskLevel === 'R2') return;
+    const confirmed = window.confirm(outcome === 'approved' ? '确认通过此审批？' : '确认拒绝此审批？');
+    if (!confirmed) return;
+    setWriting(true);
+    setDetailError(null);
+    try {
+      await erpFetch(`/api/approvals/instances/${encodeURIComponent(detail.id)}/decisions`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'if-match': strongEtag(detail.version),
+          'idempotency-key': createIdempotencyKey('mobile-approval-decision'),
+        },
+        body: JSON.stringify({ principalApproverId: actorId, outcome }),
+      });
+      setDetail(null);
+      setDetailState('idle');
+      await loadApprovals();
+    } catch (value) {
+      const error = value instanceof ErpApiError ? value : null;
+      setDetailError(error?.traceId === null || error === null ? (error?.message ?? '审批提交失败') : `${error.message} · ${error.traceId}`);
+    } finally {
+      setWriting(false);
+    }
+  }, [actorId, detail, loadApprovals, writing]);
+
   return (
     <main className="mobile-shell">
       <header className="mobile-header">
@@ -65,7 +114,7 @@ export function MobileWorkbench() {
       <div className="mobile-content">
         {tab === 'home' ? <HomePanel approvals={approvals} state={state} onOpen={() => setTab('approvals')} /> : null}
         {tab === 'approvals' ? (
-          <ApprovalPanel approvals={approvals} state={state} onRetry={() => { void loadApprovals(); }} />
+          <ApprovalPanel approvals={approvals} state={state} onRetry={() => { void loadApprovals(); }} onOpen={(id) => { void openApproval(id); }} />
         ) : null}
         {tab === 'knowledge' ? <ComingSoon title="知识中心" text="培训任务将复用 ERP 知识应用服务与现有权限投影。" /> : null}
         {tab === 'profile' ? <ComingSoon title="我的" text="账号、安全设置和 Passkey 管理将保持服务端可信身份边界。" /> : null}
@@ -87,6 +136,17 @@ export function MobileWorkbench() {
           </button>
         ))}
       </nav>
+      {detailState === 'idle' ? null : (
+        <ApprovalDetailSheet
+          detail={detail}
+          timeline={timeline}
+          state={detailState}
+          error={detailError}
+          writing={writing}
+          onClose={() => { setDetail(null); setDetailState('idle'); setDetailError(null); }}
+          onDecide={(outcome) => { void decide(outcome); }}
+        />
+      )}
     </main>
   );
 }
@@ -120,6 +180,7 @@ function ApprovalPanel(props: {
   readonly approvals: readonly ApprovalSummary[];
   readonly state: 'loading' | 'ready' | 'empty' | 'error';
   readonly onRetry: () => void;
+  readonly onOpen: (id: string) => void;
 }) {
   if (props.state === 'loading') return <PanelState title="正在读取审批待办" detail="数据仅保留在当前页面。" />;
   if (props.state === 'error') return (
@@ -144,11 +205,42 @@ function ApprovalPanel(props: {
             <div><dt>版本</dt><dd>v{approval.version}</dd></div>
             <div><dt>提交</dt><dd>{formatTime(approval.submittedAt)}</dd></div>
           </dl>
-          <p>审批决策必须进入详情页并使用服务端版本、权限与强认证约束。</p>
+          <button type="button" className="mobile-card-action" onClick={() => props.onOpen(approval.id)}>查看详情与时间线</button>
         </article>
       ))}
     </section>
   );
+}
+
+function ApprovalDetailSheet(props: {
+  readonly detail: ApprovalView | null;
+  readonly timeline: readonly ApprovalTimelineEntry[];
+  readonly state: 'loading' | 'ready' | 'error';
+  readonly error: string | null;
+  readonly writing: boolean;
+  readonly onClose: () => void;
+  readonly onDecide: (outcome: 'approved' | 'rejected') => void;
+}) {
+  return <div className="mobile-sheet-backdrop" role="presentation" onClick={props.onClose}>
+    <section className="mobile-detail-sheet" role="dialog" aria-modal="true" aria-labelledby="mobile-detail-title" onClick={(event) => event.stopPropagation()}>
+      <header><div><p>审批详情</p><h2 id="mobile-detail-title">{props.detail?.title ?? '读取中'}</h2></div><button type="button" aria-label="关闭审批详情" onClick={props.onClose}>关闭</button></header>
+      {props.state === 'loading' ? <PanelState title="正在读取详情" detail="同时校验权限和动作时间线。" /> : null}
+      {props.error === null ? null : <p className="mobile-detail-error" role="alert">{props.error}</p>}
+      {props.state === 'error' ? <PanelState title="无法读取审批详情" detail="关闭后可刷新待办重试。" /> : null}
+      {props.state === 'ready' && props.detail !== null ? <div className="mobile-detail-body">
+        {props.detail.riskLevel === 'R2' ? <div className="mobile-r2-notice"><strong>R2 强认证操作</strong><p>移动工作台仅查看。请使用绑定操作摘要与会话的 WebAuthn 受控确认流程。</p><Link href="/security/passkeys">管理 Passkey</Link></div> : null}
+        <dl className="mobile-detail-meta">
+          <div><dt>状态</dt><dd>{STATUS_LABEL[props.detail.status]}</dd></div>
+          <div><dt>流程</dt><dd>{props.detail.templateCode} · r{props.detail.templateRevision}</dd></div>
+          <div><dt>版本</dt><dd>v{props.detail.version}</dd></div>
+          <div><dt>发起人</dt><dd>{props.detail.initiatorId}</dd></div>
+        </dl>
+        <section><h3>表单数据</h3><dl className="mobile-detail-fields">{Object.entries(props.detail.formData).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{formatFormValue(value)}</dd></div>)}</dl></section>
+        <section><h3>动作时间线</h3>{props.timeline.length === 0 ? <p className="mobile-detail-muted">尚无动作记录</p> : <ol className="mobile-timeline">{props.timeline.map((entry) => <li key={entry.actionId}><span>{timelineLabel(entry)}</span><strong>{entry.actorId}</strong><time>{formatTime(entry.occurredAt)} · v{entry.aggregateVersion}</time></li>)}</ol>}</section>
+        {props.detail.status === 'running' && props.detail.riskLevel === 'R1' ? <div className="mobile-decision-actions"><button type="button" className="reject" disabled={props.writing} onClick={() => props.onDecide('rejected')}>拒绝</button><button type="button" className="approve" disabled={props.writing} onClick={() => props.onDecide('approved')}>{props.writing ? '提交中…' : '通过'}</button></div> : null}
+      </div> : null}
+    </section>
+  </div>;
 }
 
 function PanelState(props: {
@@ -163,33 +255,6 @@ function ComingSoon({ title, text }: { readonly title: string; readonly text: st
   return <section className="mobile-panel-state"><span>规划中</span><h2>{title}</h2><p>{text}</p></section>;
 }
 
-function parseApprovalSummaries(value: unknown): readonly ApprovalSummary[] {
-  if (!Array.isArray(value) || value.length > 200) throw new Error('APPROVAL_RESPONSE_INVALID');
-  return Object.freeze(value.map((item): ApprovalSummary => {
-    if (typeof item !== 'object' || item === null) throw new Error('APPROVAL_RESPONSE_INVALID');
-    const record = item as Readonly<Record<string, unknown>>;
-    const status = record.status;
-    if (
-      typeof record.id !== 'string' || !ULID_PATTERN.test(record.id) ||
-      typeof record.templateCode !== 'string' || record.templateCode.length < 1 ||
-      record.templateCode.length > 64 ||
-      !['draft', 'running', 'approved', 'rejected', 'withdrawn', 'archived'].includes(String(status)) ||
-      (record.riskLevel !== 'R1' && record.riskLevel !== 'R2') ||
-      typeof record.templateRevision !== 'number' || !Number.isInteger(record.templateRevision) ||
-      record.templateRevision < 1 ||
-      typeof record.version !== 'number' || !Number.isInteger(record.version) || record.version < 1 ||
-      (record.submittedAt !== null && typeof record.submittedAt !== 'string') ||
-      (record.completedAt !== null && typeof record.completedAt !== 'string')
-    ) throw new Error('APPROVAL_RESPONSE_INVALID');
-    return Object.freeze({
-      id: record.id, status: status as ApprovalStatus, templateCode: record.templateCode,
-      templateRevision: record.templateRevision, riskLevel: record.riskLevel,
-      version: record.version, submittedAt: record.submittedAt,
-      completedAt: record.completedAt,
-    });
-  }));
-}
-
 function formatTime(value: string | null): string {
   if (value === null) return '尚未提交';
   const date = new Date(value);
@@ -197,6 +262,33 @@ function formatTime(value: string | null): string {
   return new Intl.DateTimeFormat('zh-CN', {
     month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
   }).format(date);
+}
+
+function parseActorId(value: unknown): string {
+  if (typeof value !== 'object' || value === null) throw new Error('IDENTITY_PROFILE_INVALID');
+  const actorId = (value as Readonly<Record<string, unknown>>).actorId;
+  if (typeof actorId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(actorId)) throw new Error('IDENTITY_PROFILE_INVALID');
+  return actorId;
+}
+
+function formatFormValue(value: unknown): string {
+  if (typeof value === 'object' && value !== null && !Array.isArray(value) && (value as Record<string, unknown>).redacted === true) return '已脱敏';
+  if (value === null) return '—';
+  if (typeof value === 'boolean') return value ? '是' : '否';
+  if (typeof value === 'string' || typeof value === 'number') return String(value);
+  return JSON.stringify(value);
+}
+
+function timelineLabel(entry: ApprovalTimelineEntry): string {
+  const labels: Readonly<Record<ApprovalTimelineEntry['actionType'], string>> = {
+    'instance.submitted': '提交审批',
+    'instance.decided': entry.outcome === 'approved' ? '审批通过' : '审批拒绝',
+    'instance.approver_transferred': '转交审批人',
+    'instance.approver_added': '新增审批人',
+    'instance.withdrawn': '撤回审批',
+    'instance.archived': '归档审批',
+  };
+  return `${labels[entry.actionType]}${entry.delegated ? '（委托）' : ''}`;
 }
 
 function tabTitle(tab: MobileTab): string {

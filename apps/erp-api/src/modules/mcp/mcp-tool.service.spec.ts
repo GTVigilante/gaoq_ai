@@ -57,6 +57,7 @@ function assemble() {
   const approvals = {
     getInbox: vi.fn().mockResolvedValue([]),
     getInstance: vi.fn().mockResolvedValue({ id: 'instance-001', formData: { remark: { redacted: true } } }),
+    getTimeline: vi.fn().mockResolvedValue([{ actionId: '01K00000000000000000000000', actionType: 'instance.submitted' }]),
     submitInstance: vi.fn(),
     withdrawInstance: vi.fn(),
     decideInstance: vi.fn(),
@@ -160,6 +161,19 @@ describe('McpToolService', () => {
     expect(result.structuredContent).toEqual({
       instance: { id: 'instance-001', formData: { remark: { redacted: true } } },
     });
+  });
+
+  it('审批时间线复用应用服务且不返回租户或表单正文', async () => {
+    const store = assemble();
+    const result = await store.service.getApprovalTimeline('01K00000000000000000000000', extra([
+      'erp:mcp:server:connect', 'erp:approval:instance:read',
+    ]));
+    expect(result.structuredContent).toEqual({
+      timeline: [{ actionId: '01K00000000000000000000000', actionType: 'instance.submitted' }],
+    });
+    expect(JSON.stringify(result)).not.toContain('tenant-001');
+    expect(JSON.stringify(result)).not.toContain('formData');
+    expect(store.approvals.getTimeline).toHaveBeenCalledWith('01K00000000000000000000000');
   });
 
   it('权限查询只返回服务端身份快照，不返回租户参数或访问令牌', async () => {

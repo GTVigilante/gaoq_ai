@@ -15,10 +15,12 @@ import {
 } from '../domain/template.js';
 import { ApprovalDataCryptoService } from './approval-data-crypto.service.js';
 import {
+  ApprovalActionRepository,
   ApprovalInstanceRepository,
   ApprovalTemplateRepository,
 } from './approval.repositories.js';
 import type {
+  ApprovalActionDocument,
   ApprovalInstanceDocument,
   ApprovalTemplateDocument,
 } from './approval.schemas.js';
@@ -79,6 +81,31 @@ function runningInstance() {
 }
 
 describe('审批租户仓储', () => {
+  it('时间线查询固定可信租户、聚合版本顺序与最大记录数', async () => {
+    const exec = vi.fn().mockResolvedValue([{
+      actionId: '01K00000000000000000000000', tenantId: 'tenant-001', instanceId: 'instance-001',
+      aggregateVersion: 1, actionType: 'instance.submitted', actorId: 'actor-001',
+      principalApproverId: null, nodeId: null, outcome: null, resultingStatus: null,
+      delegated: false, fromApproverId: null, toApproverId: null, addedApproverId: null,
+      canceledApproverIds: [], occurredAt: NOW,
+    }]);
+    const lean = vi.fn().mockReturnValue({ exec });
+    const limit = vi.fn().mockReturnValue({ lean });
+    const sort = vi.fn().mockReturnValue({ limit });
+    const find = vi.fn().mockReturnValue({ sort });
+    const repository = new ApprovalActionRepository(
+      context(), { find } as unknown as Model<ApprovalActionDocument>,
+    );
+    const timeline = await repository.findTimeline('instance-001');
+    expect(find).toHaveBeenCalledWith({ tenantId: 'tenant-001', instanceId: 'instance-001' });
+    expect(sort).toHaveBeenCalledWith({ aggregateVersion: 1 });
+    expect(limit).toHaveBeenCalledWith(501);
+    expect(timeline).toEqual([expect.objectContaining({
+      actionId: '01K00000000000000000000000', occurredAt: NOW.toISOString(),
+    })]);
+    expect(JSON.stringify(timeline)).not.toContain('tenant-001');
+  });
+
   it('模板落库使用定义 JSON 且拒绝跨租户实体', async () => {
     const create = vi.fn().mockResolvedValue([]);
     const records = { create } as unknown as Model<ApprovalTemplateDocument>;

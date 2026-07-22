@@ -128,7 +128,7 @@ function validateClients(clients) {
     equal(client.initialized, true, 'PHASE5_MCP_INTEGRATION_INITIALIZE_FAILED');
     equal(client.protocolVersion, '2025-11-25', 'PHASE5_MCP_INTEGRATION_PROTOCOL_INVALID');
     equal(client.catalogHash, catalog.catalogHash, 'PHASE5_MCP_INTEGRATION_CATALOG_MISMATCH');
-    equal(client.toolCount, 40, 'PHASE5_MCP_INTEGRATION_CATALOG_MISMATCH');
+    equal(client.toolCount, 41, 'PHASE5_MCP_INTEGRATION_CATALOG_MISMATCH');
     integer(client.resourceCount, 2, 10_000, 'PHASE5_MCP_INTEGRATION_COVERAGE');
     integer(client.resourceTemplateCount, 18, 10_000, 'PHASE5_MCP_INTEGRATION_COVERAGE');
     integer(client.promptCount, 16, 10_000, 'PHASE5_MCP_INTEGRATION_COVERAGE');
@@ -210,7 +210,7 @@ function fixture() {
       endedAt: '2026-07-22T01:00:00.000Z' },
     clients: Object.entries(CLIENTS).map(([profile, authFlow], index) => ({ profile, authFlow,
       initialized: true, protocolVersion: '2025-11-25', catalogHash: catalog.catalogHash,
-      toolCount: 40, resourceCount: 2, resourceTemplateCount: 18, promptCount: 16,
+      toolCount: 41, resourceCount: 2, resourceTemplateCount: 18, promptCount: 16,
       toolCalls: 20, structuredOutputFailures: 0, schemaFailures: 0,
       errorContractFailures: 0, timeoutCancellationFailures: 0, idempotencyFailures: 0,
       auditEvents: 20, evidenceHash: hash(`client-${index}`) })),

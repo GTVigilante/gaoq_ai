@@ -17,6 +17,7 @@ import {
   ApprovalApplicationService,
   type ApprovalInstanceSummary,
   type ApprovalInstanceView,
+  type ApprovalTimelineEntry,
   type ApprovalTemplateSummary,
 } from './application/approval-application.service.js';
 import {
@@ -94,6 +95,22 @@ export class ApprovalController {
     const result = await this.approvals.getInstance(this.requireUlid(id));
     this.setVersion(response, result.version);
     return result;
+  }
+
+  @Get('instances/:id/timeline')
+  @RequiredScopes('erp:approval:instance:read')
+  async getTimeline(@Param('id') id: string): Promise<readonly ApprovalTimelineEntry[]> {
+    const instanceId = this.requireUlid(id);
+    const timeline = await this.approvals.getTimeline(instanceId);
+    await this.audit.record({
+      action: 'approval.instance.timeline.read',
+      resourceType: 'approval_instance',
+      resourceId: instanceId,
+      riskLevel: 'R0',
+      outcome: 'success',
+      metadata: { count: timeline.length },
+    });
+    return timeline;
   }
 
   @Post('instances/:id/submit')
