@@ -275,6 +275,11 @@ export class TreasuryBankReturnRecord extends ProtectedTreasuryRecord {
   @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
   malwareScanEvidenceId!: string;
   @Prop({ type: Boolean, required: true, immutable: true }) malwareClean!: boolean;
+  @Prop({
+    type: String, required: true, immutable: true,
+    enum: ['online_inbox', 'migration_return_evidence'], default: 'online_inbox',
+  })
+  evidenceReferenceType!: 'online_inbox' | 'migration_return_evidence';
   @Prop({ type: Number, required: true, immutable: true, min: 0 }) successfulCount!: number;
   @Prop({ type: Number, required: true, immutable: true, min: 0 }) failedCount!: number;
   @Prop({ type: Number, required: true, immutable: true, min: 0 }) unknownCount!: number;
@@ -286,6 +291,13 @@ export class TreasuryBankReturnRecord extends ProtectedTreasuryRecord {
   @Prop({ type: String, required: true, immutable: true, enum: ['accepted', 'frozen'] })
   outcome!: 'accepted' | 'frozen';
   @Prop({ type: Date, required: true, immutable: true }) receivedAt!: Date;
+  @Prop({
+    type: String, default: null, immutable: true, maxlength: 256,
+    match: MIGRATION_EVIDENCE_REF_PATTERN,
+  })
+  migrationEvidenceRef!: string | null;
+  @Prop({ type: String, default: null, immutable: true, match: HASH_PATTERN })
+  migrationEvidenceChecksum!: string | null;
   createdAt!: Date;
   updatedAt!: Date;
 }
@@ -293,8 +305,23 @@ export type TreasuryBankReturnDocument = HydratedDocument<TreasuryBankReturnReco
 export const TreasuryBankReturnRecordSchema = SchemaFactory.createForClass(
   TreasuryBankReturnRecord,
 );
+TreasuryBankReturnRecordSchema.pre('validate', function () {
+  const record = this as TreasuryBankReturnRecord;
+  if ((record.migrationEvidenceRef === null) !==
+    (record.migrationEvidenceChecksum === null)) {
+    throw new Error('银行回盘迁移证据引用与校验和必须成对出现');
+  }
+  if (record.evidenceReferenceType === 'migration_return_evidence' &&
+    record.migrationEvidenceRef === null) {
+    throw new Error('历史银行回盘必须绑定迁移证据');
+  }
+});
 TreasuryBankReturnRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 TreasuryBankReturnRecordSchema.index({ tenantId: 1, returnHash: 1 }, { unique: true });
 TreasuryBankReturnRecordSchema.index(
   { tenantId: 1, batchId: 1, sequence: 1 }, { unique: true },
+);
+TreasuryBankReturnRecordSchema.index(
+  { tenantId: 1, migrationEvidenceRef: 1 },
+  { unique: true, partialFilterExpression: { migrationEvidenceRef: { $type: 'string' } } },
 );

@@ -19,6 +19,7 @@ export interface TreasuryEvent {
     | 'treasury.disbursement.migrated'
     | 'treasury.disbursement.recovery_requested'
     | 'treasury.bank_return.applied'
+    | 'treasury.bank_return.migrated'
     | 'treasury.reconciliation.completed';
   readonly tenantId: string;
   readonly aggregateId: string;
@@ -92,6 +93,16 @@ export class TreasuryOutboxWriter {
         !nonnegativeInteger(data['lineAmountMismatchCount']) ||
         !nonnegativeInteger(data['successfulMinor']) || !nonnegativeInteger(data['failedMinor']) ||
         typeof data['freezeReason'] !== 'string'
+      ) throw new Error('TREASURY_OUTBOX_DATA_INVALID');
+      return;
+    }
+    if (event.type === 'treasury.bank_return.migrated') {
+      if (
+        keys !== 'outcome,returnHash,successfulCount,successfulMinor' ||
+        data['outcome'] !== 'reconciling' || typeof data['returnHash'] !== 'string' ||
+        !/^[A-Za-z0-9_-]{43}$/.test(data['returnHash']) ||
+        !nonnegativeInteger(data['successfulCount']) ||
+        !nonnegativeInteger(data['successfulMinor'])
       ) throw new Error('TREASURY_OUTBOX_DATA_INVALID');
       return;
     }

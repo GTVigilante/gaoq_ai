@@ -2,7 +2,7 @@
 
 ## 范围与当前能力
 
-本切片建立可重复、可恢复、可审计的迁移控制面。当前白名单覆盖组织、审批、招聘、考勤、Payroll 完整历史链路，并覆盖 `treasury_bank_accounts`（资金账户历史版本）与 `treasury_disbursement_batches`（已提交常规代发批次），共二十三个独立 Scope；银行回盘、四方对账与业务附件仍需按域追加，完成前 Issue #34 与 Phase 5 迁移门禁保持未完成。
+本切片建立可重复、可恢复、可审计的迁移控制面。当前白名单覆盖组织、审批、招聘、考勤、Payroll 完整历史链路，并覆盖资金账户、已提交常规代发批次与全量成功银行回盘，共二十四个独立 Scope；四方对账与业务附件仍需按域追加，完成前 Issue #34 与 Phase 5 迁移门禁保持未完成。
 
 目标业务数据禁止由迁移模块直接写集合。组织与劳动关系实体调用 `OrgApplicationService`，审批模板、已终结审批历史与活动审批调用 `ApprovalApplicationService`，HC 与职位调用 `RecruitmentManagementService`，候选人与申请调用 `RecruitmentApplicationService`，面试与评价调用 `RecruitmentInterviewService`，Offer 与后续申请阶段调用 `RecruitmentOfferService`，资金账户与代发批次分别调用 `TreasuryBankAccountService`、`TreasuryDisbursementService`，继续执行领域校验、引用校验、加密、盲索引、幂等、Outbox 和版本并发控制。员工更新、状态变更与开放劳动关系在一个事务内同步；既有员工离职仍必须进入 Care，迁移不得绕过清算、身份吊销与生效日控制。历史劳动关系使用独立恢复入口，不触发正常入职、离职或身份副作用，也不生成新员工。审批迁移分别只发布 `approval_template.migrated`、`approval_history.migrated` 与 `approval_instance.migrated`；招聘迁移只发布各聚合的 `.migrated` 专用事件，包括申请、面试和 Offer。所有迁移事件均不得伪装成正常创建、排期、评价、提交、决策、发送、签署、发布或退役动作，也不创建通知、外部日历、eSign、WORM 归档或银行提交任务。迁移模块只直写自己拥有的运行、条目、来源映射与证据账本。
 
@@ -65,7 +65,9 @@
 - `treasury_bank_accounts` 必须在员工和专用 `treasury_bank_account_attestation` approved 历史之后，按主体和版本升序执行。组织账户主体由可信租户派生，员工账户只接受已迁移员工映射；来源不得提交 tenantId 或目标 ownerId。每个版本核验审批 checksum 与时间线，账号明文仅在隔离请求内存中短暂存在，目标使用 Treasury AES-256-GCM 与可轮换 HMAC 盲索引保存。版本必须连续，活动账户不得绑定离职员工或与任何活动账号重复；历史撤销时间、前后版本链接和独立 L4 WORM 均冻结。只发布不含 ownerId/账号的 `treasury.bank_account.migrated`，不伪造在线 attest，不开放 MCP 写能力。
 - `treasury_disbursement_batches` 必须在工资锁定、组织/员工账户和专用 `treasury_disbursement_export_approval` approved 历史之后执行。当前只接收已经提交、尚未回盘、`regular` 且批次序号为 1 的完整批次；来源存在部分成功、冻结、补发、恢复子批次或回盘链时，必须在切换前闭环或进入经批准的历史归档，禁止截断或伪造为常规已提交状态。
 - 来源声明工资周期/运行、付款与员工收款账户、制备/批准员工、审批 checksum、期望工资版本、逐员工实发控制量、银行提交回执引用、制备/提交时间和唯一 L4 WORM。目标重新读取迁移锁定工资密文、核验三岗分离与 `锁定 ≤ 制备 ≤ 批准 ≤ 提交`，并验证账户在制备时点有效；来源不得提交 tenantId、actorId、支付指令 ID、目标文件 hash、账号快照或文件正文。
-- 目标从可信映射与密文账户重新生成支付指令和 ISO 20022 pain.001，文件 hash 是目标重建文件摘要，不宣称等于来源银行文件摘要；来源原文件和回执仅由迁移 WORM 保真。目标恢复 submitted v4 与回执引用，只发布不含回执、账号或员工明细的 `treasury.disbursement.migrated`，不调用 WORM 或银行网关，不注册 MCP 写 Tool。银行回盘必须由后续独立 Scope 追加。
+- 目标从可信映射与密文账户重新生成支付指令和 ISO 20022 pain.001，文件 hash 是目标重建文件摘要，不宣称等于来源银行文件摘要；来源原文件和回执仅由迁移 WORM 保真。目标恢复 submitted v4 与回执引用，只发布不含回执、账号或员工明细的 `treasury.disbursement.migrated`，不调用 WORM 或银行网关，不注册 MCP 写 Tool。
+- `treasury_bank_returns` 必须在对应常规批次后执行，且当前只接收首份、全量成功、签名与恶意文件检查均已通过、无未知/重复/金额错位行的终结回盘。来源按员工声明期望金额与银行行引用，目标用员工映射定位迁移批次中的密文指令并逐行复核；任一失败行、部分成功、冻结或恢复子链均失败关闭，必须在切换前闭环或经批准归档。
+- 目标以目标指令 ID 重建规范回盘清单并加密，目标 `returnHash` 只代表重建清单；来源回盘文件、签名和扫描证明由唯一 L4 WORM 保真，并通过 `migration_return_evidence` 判别，禁止伪装为在线 Inbox 回执。目标把批次从 submitted v4 恢复为 reconciling v5、支付行恢复为 succeeded，只发布不含证据定位符、银行行引用或员工明细的 `treasury.bank_return.migrated`，不调用 Inbox，不开放 MCP 写能力。
 
 `sourceFactHash` 的规范对象固定为 `sourceRecordId`、`sourceVersion`、`entityType`、`payloadHash`、按字典序排列的 `associationSourceIds`，以及按 `sourceAttachmentId` 排列且仅含 ID 与 checksum 的附件数组。滚动来源校验和初值为 `base64url(SHA-256(""))`，第 N 条为 `base64url(SHA-256(previous + "\\n" + sequence + ":" + sourceFactHash))`。来源导出程序必须使用相同算法，并固定 UTF-8、对象键字典序与数组规则。
 

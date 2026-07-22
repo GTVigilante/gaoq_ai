@@ -78,6 +78,10 @@ import {
   TreasuryDisbursementService,
   type ImportTreasuryDisbursementFromMigrationInput,
 } from '../../treasury/application/treasury-disbursement.service.js';
+import {
+  TreasuryBankReturnService,
+  type ImportTreasuryBankReturnFromMigrationInput,
+} from '../../treasury/application/treasury-bank-return.service.js';
 import type {
   CreateDepartmentDto,
   CreateEmployeeDto,
@@ -197,6 +201,8 @@ export class DataMigrationService {
     private readonly treasuryAccounts?: TreasuryBankAccountService,
     @Inject(TreasuryDisbursementService)
     private readonly treasuryDisbursements?: TreasuryDisbursementService,
+    @Inject(TreasuryBankReturnService)
+    private readonly treasuryBankReturns?: TreasuryBankReturnService,
   ) {}
 
   async start(input: CreateDataMigrationRunDto) {
@@ -593,6 +599,17 @@ export class DataMigrationService {
     } else if (input.entityType === 'treasury.disbursement_batch') {
       const payload = treasuryDisbursementPayload(input.payload);
       const specs = treasuryDisbursementAssociationSpecs(payload);
+      assertAssociations(
+        input.associationSourceIds,
+        [...new Set(specs.map((spec) => spec.sourceAssociationId))],
+      );
+      assertSingleMigrationEvidence(input, payload);
+      await Promise.all(uniqueAssociationTargets(specs).map(async (spec) =>
+        this.requireMapping(run, spec.entityType, spec.sourceAssociationId)));
+      return;
+    } else if (input.entityType === 'treasury.bank_return') {
+      const payload = treasuryBankReturnPayload(input.payload);
+      const specs = treasuryBankReturnAssociationSpecs(payload);
       assertAssociations(
         input.associationSourceIds,
         [...new Set(specs.map((spec) => spec.sourceAssociationId))],
@@ -1442,6 +1459,37 @@ export class DataMigrationService {
       };
       return target(await this.treasuryDisbursements.importSubmittedFromMigration(key, command));
     }
+    if (input.entityType === 'treasury.bank_return') {
+      const payload = treasuryBankReturnPayload(input.payload);
+      if (this.treasuryBankReturns === undefined) {
+        throw new Error('迁移银行回盘适配器未装配');
+      }
+      const cache = new Map<string, Promise<string>>();
+      const mapped = (entityType: AssociationTargetType, sourceId: string) =>
+        cachedTargetId(cache, entityType, sourceId, async () =>
+          (await this.requireMapping(run, entityType, sourceId)).targetId);
+      const [batchId, lines] = await Promise.all([
+        mapped('treasury.disbursement_batch', payload.batchSourceId),
+        Promise.all(payload.lines.map(async (line) => ({
+          employeeId: await mapped('org.employee', line.employeeSourceId),
+          expectedAmountMinor: line.expectedAmountMinor,
+          bankLineReference: line.bankLineReference,
+        }))),
+      ]);
+      const command: ImportTreasuryBankReturnFromMigrationInput = {
+        targetId: mapping?.targetId ?? null, batchId,
+        expectedBatchVersion: payload.expectedBatchVersion,
+        expectedBankSubmissionId: payload.expectedBankSubmissionId,
+        lines, expectedLineCount: payload.expectedLineCount,
+        expectedTotalMinor: payload.expectedTotalMinor,
+        signatureVerified: payload.signatureVerified, malwareClean: payload.malwareClean,
+        receivedAt: payload.receivedAt,
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${run.id}/attachments/${payload.sourceEvidenceSourceAttachmentId}`,
+        evidenceChecksum: payload.sourceEvidenceChecksum,
+      };
+      return target(await this.treasuryBankReturns.importCleanFromMigration(key, command));
+    }
     const payload = approvalTemplatePayload(input.payload);
     if (this.approvals === undefined) throw new Error('迁移审批适配器未装配');
     const employeeId = async (sourceId: string): Promise<string> =>
@@ -1967,7 +2015,8 @@ type AssociationTargetType =
   | 'payroll.period'
   | 'payroll.period_approval'
   | 'payroll.calculation_run'
-  | 'treasury.bank_account';
+  | 'treasury.bank_account'
+  | 'treasury.disbursement_batch';
 interface AssociationEvidence {
   readonly relationship: AssociationRelationship;
   readonly sourceAssociationId: string;
@@ -4096,6 +4145,82 @@ function treasuryDisbursementAssociationSpecs(
   ];
 }
 
+interface TreasuryBankReturnMigrationPayload extends MigrationEvidencePayload {
+  readonly batchSourceId: string;
+  readonly expectedBatchVersion: number;
+  readonly expectedBankSubmissionId: string;
+  readonly lines: readonly {
+    readonly employeeSourceId: string;
+    readonly expectedAmountMinor: number;
+    readonly bankLineReference: string;
+  }[];
+  readonly expectedLineCount: number;
+  readonly expectedTotalMinor: number;
+  readonly signatureVerified: true;
+  readonly malwareClean: true;
+  readonly receivedAt: string;
+}
+
+function treasuryBankReturnPayload(
+  value: Readonly<Record<string, unknown>>,
+): TreasuryBankReturnMigrationPayload {
+  exactKeys(value, [
+    'batchSourceId', 'expectedBankSubmissionId', 'expectedBatchVersion',
+    'expectedLineCount', 'expectedTotalMinor', 'lines', 'malwareClean', 'receivedAt',
+    'signatureVerified',
+    'sourceEvidenceChecksum', 'sourceEvidenceSourceAttachmentId',
+  ]);
+  if (!Array.isArray(value.lines) || value.lines.length < 1 || value.lines.length > 5_000) {
+    throw invalidPayload();
+  }
+  const lines = value.lines.map((entry) => {
+    if (!isPlainMigrationObject(entry)) throw invalidPayload();
+    exactKeys(entry, ['bankLineReference', 'employeeSourceId', 'expectedAmountMinor']);
+    if (typeof entry.employeeSourceId !== 'string' ||
+      !SOURCE_ID_PATTERN.test(entry.employeeSourceId) ||
+      typeof entry.bankLineReference !== 'string' ||
+      !SOURCE_ID_PATTERN.test(entry.bankLineReference) ||
+      !Number.isSafeInteger(entry.expectedAmountMinor) ||
+      Number(entry.expectedAmountMinor) < 1) throw invalidPayload();
+    return {
+      employeeSourceId: entry.employeeSourceId,
+      expectedAmountMinor: Number(entry.expectedAmountMinor),
+      bankLineReference: entry.bankLineReference,
+    };
+  });
+  if (typeof value.batchSourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.batchSourceId) || value.expectedBatchVersion !== 4 ||
+    typeof value.expectedBankSubmissionId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.expectedBankSubmissionId) ||
+    !Number.isSafeInteger(value.expectedLineCount) ||
+    Number(value.expectedLineCount) !== lines.length ||
+    !Number.isSafeInteger(value.expectedTotalMinor) || Number(value.expectedTotalMinor) < 1 ||
+    value.signatureVerified !== true || value.malwareClean !== true ||
+    !isStrictUtcIso(value.receivedAt) || !migrationEvidence(value)) throw invalidPayload();
+  return {
+    batchSourceId: value.batchSourceId, expectedBatchVersion: 4,
+    expectedBankSubmissionId: value.expectedBankSubmissionId,
+    lines, expectedLineCount: Number(value.expectedLineCount),
+    expectedTotalMinor: Number(value.expectedTotalMinor),
+    signatureVerified: true, malwareClean: true, receivedAt: value.receivedAt,
+    sourceEvidenceSourceAttachmentId: value.sourceEvidenceSourceAttachmentId,
+    sourceEvidenceChecksum: value.sourceEvidenceChecksum,
+  };
+}
+
+function treasuryBankReturnAssociationSpecs(
+  payload: TreasuryBankReturnMigrationPayload,
+): readonly (AssociationEvidence & { readonly entityType: AssociationTargetType })[] {
+  return [
+    { relationship: 'disbursement_batch', sourceAssociationId: payload.batchSourceId,
+      entityType: 'treasury.disbursement_batch' },
+    ...payload.lines.map((line) => ({
+      relationship: 'employee' as const, sourceAssociationId: line.employeeSourceId,
+      entityType: 'org.employee' as const,
+    })),
+  ];
+}
+
 function migrationEvidence(value: Readonly<Record<string, unknown>>): value is
 Readonly<Record<string, unknown>> & MigrationEvidencePayload {
   return typeof value.sourceEvidenceSourceAttachmentId === 'string' &&
@@ -4481,6 +4606,8 @@ function associationEvidence(input: ApplyDataMigrationRecordDto): readonly Assoc
       derived = treasuryDisbursementAssociationSpecs(
         treasuryDisbursementPayload(input.payload),
       );
+    } else if (input.entityType === 'treasury.bank_return') {
+      derived = treasuryBankReturnAssociationSpecs(treasuryBankReturnPayload(input.payload));
     } else if (input.entityType === 'attendance.monthly_snapshot') {
       const payload = attendanceMonthPayload(input.payload);
       derived = [
@@ -4617,7 +4744,7 @@ const ASSOCIATION_RELATIONSHIPS = [
   'added_approver', 'expected_pending_approver',
   'requisition', 'approval_instance', 'approval_history',
   'candidate', 'application', 'interviewer', 'interview',
-  'account_owner', 'debtor_account', 'recipient_account',
+  'account_owner', 'debtor_account', 'recipient_account', 'disbursement_batch',
   'source_fact',
   'previous_snapshot',
   'prepared_by', 'payroll_period', 'payroll_run', 'rule_pack',

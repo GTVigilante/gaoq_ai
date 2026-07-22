@@ -14,6 +14,9 @@ const actor: ActorContext = {
 const session = {} as ClientSession;
 const BATCH_ID = '01J8ZQK7V0A2M4N6P8R0T2W4F1';
 const RETURN_ID = '01J8ZQK7V0A2M4N6P8R0T2W4R2';
+const MIGRATION_RUN_ID = '01J8ZQK7V0A2M4N6P8R0T2W4F2';
+const MIGRATION_EVIDENCE_REF =
+  `erp://data-migrations/runs/${MIGRATION_RUN_ID}/attachments/return-001`;
 
 function query<T>(resolve: () => T | Promise<T>) {
   const value = {
@@ -34,45 +37,68 @@ receivedAt = new Date().toISOString(), sequence = 1) {
   let batch: Record<string, unknown> = {
     id: BATCH_ID, tenantId: tenant.tenantId, payrollPeriodId: 'period-001',
     payrollRunId: 'run-001', format: 'ISO20022_PAIN_001_001_03', fileHash: 'f'.repeat(43),
+    purpose: 'regular', batchSequence: 1, parentBatchId: null, recoverySourceBatchId: null,
     lineCount: 1, totalMinor: 839_500, preparedBy: 'maker', payrollLockedBy: 'locker',
     exportApprovedBy: 'checker', strongAuthEvidenceId: 'strong-auth-001',
     objectEvidenceId: 'file-evidence-001', bankSubmissionId: 'bank-submission-001',
     bankSubmissionEvidenceId: 'submission-evidence-001', returnHash: null,
     successfulCount: null, failedCount: null, successfulMinor: null, failedMinor: null,
     freezeReason: null, status: 'submitted', version: 4,
-    createdAt: new Date(), updatedAt: new Date(),
+    migrationEvidenceRef: 'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/batch-001',
+    strongAuthReferenceType: 'migration_export_approval_evidence',
+    createdAt: new Date('2026-07-22T09:00:00.000Z'),
+    updatedAt: new Date('2026-07-22T11:00:00.000Z'),
   };
   const batches = {
     findOne: vi.fn().mockImplementation(() => query(() => batch)),
     updateOne: vi.fn().mockImplementation((
       _filter: unknown, update: { readonly $set: Readonly<Record<string, unknown>> },
     ) => {
-      batch = { ...batch, ...update.$set, updatedAt: new Date() };
+      batch = { ...batch, ...update.$set, updatedAt: update.$set.updatedAt ?? new Date() };
       return Promise.resolve({ modifiedCount: 1 });
     }),
   };
-  const instruction = {
+  let instruction: Record<string, unknown> = {
     id: 'instruction-001', tenantId: tenant.tenantId, batchId: BATCH_ID,
     payrollCalculationLineId: 'payroll-line-001', employeeId: 'employee-001',
     bankAccountId: '01J8ZQK7V0A2M4N6P8R0T2W4A1', status: 'submitted',
     dataKeyId: 'key', dataIv: 'iv', dataCiphertext: 'cipher', dataAuthTag: 'tag',
+    createdAt: new Date('2026-07-22T09:00:00.000Z'),
+    updatedAt: new Date('2026-07-22T11:00:00.000Z'),
   };
   const instructions = {
     find: vi.fn().mockReturnValue(query(() => [instruction])),
-    updateOne: vi.fn().mockResolvedValue({ modifiedCount: 1 }),
+    updateOne: vi.fn().mockImplementation((
+      _filter: unknown, update: { readonly $set: Readonly<Record<string, unknown>> },
+    ) => {
+      instruction = { ...instruction, ...update.$set,
+        updatedAt: update.$set.updatedAt ?? new Date() };
+      return Promise.resolve({ modifiedCount: 1 });
+    }),
     updateMany: vi.fn().mockResolvedValue({ modifiedCount: 1 }),
   };
-  const crypto = { protect: vi.fn().mockReturnValue({
-    keyId: 'return-key', iv: 'return-iv', ciphertext: 'return-ciphertext',
-    authTag: 'return-auth-tag',
-  }), unprotect: vi.fn().mockReturnValue({
+  const instructionData = {
     instructionId: instruction.id, employeeId: instruction.employeeId,
     bankAccountId: instruction.bankAccountId,
     payrollCalculationLineId: instruction.payrollCalculationLineId,
     payrollResultHash: 'p'.repeat(43), creditorName: '密文内姓名',
     creditorAccount: '6222000000000001', creditorAgentClearingCode: 'CNAPS001',
     amountMinor: 839_500, purposeCode: 'PAYROLL',
-  }) };
+  };
+  const protectedValues = new Map<string, unknown>();
+  const crypto = {
+    protect: vi.fn((_context: unknown, value: unknown) => {
+      protectedValues.set('return-ciphertext', value);
+      return {
+        keyId: 'return-key', iv: 'return-iv', ciphertext: 'return-ciphertext',
+        authTag: 'return-auth-tag',
+      };
+    }),
+    unprotect: vi.fn((cryptoContext: { resourceType: string }, value: { ciphertext: string }) =>
+      cryptoContext.resourceType === 'bank_return'
+        ? protectedValues.get(value.ciphertext)
+        : instructionData),
+  };
   const manifest = {
     returnId: RETURN_ID, tenantId: tenant.tenantId, batchId: BATCH_ID,
     bankSubmissionId: 'bank-submission-001', sequence, returnHash: 'r'.repeat(43),
@@ -81,9 +107,15 @@ receivedAt = new Date().toISOString(), sequence = 1) {
     malwareScanEvidenceId: 'scan-001', receivedAt, lines,
   };
   const inbox = { claim: vi.fn().mockResolvedValue(manifest) };
+  let returnRecord: Record<string, unknown> | null = null;
   const returns = {
-    findOne: vi.fn().mockReturnValue(query(() => null)),
-    create: vi.fn().mockResolvedValue([]),
+    findOne: vi.fn().mockImplementation(() => query(() => returnRecord)),
+    create: vi.fn().mockImplementation((documents: readonly Record<string, unknown>[]) => {
+      const document = documents[0] ?? {};
+      returnRecord = { ...document, createdAt: document.createdAt ?? new Date(),
+        updatedAt: document.updatedAt ?? new Date() };
+      return Promise.resolve([]);
+    }),
   };
   const idempotency = { execute: vi.fn(async (
     _operation: string, _key: string, _request: unknown,
@@ -97,7 +129,65 @@ receivedAt = new Date().toISOString(), sequence = 1) {
   return { context, batches, instructions, inbox, returns, outbox, service };
 }
 
+function migrationActor(actorType: 'service' | 'user' = 'service'): ActorContext {
+  return {
+    actorType, actorId: 'migration-worker', tenantId: tenant.tenantId,
+    roleCodes: [], scopes: ['erp:migration:execute', 'erp:treasury:migration:write'],
+    departmentIds: [], traceId: 'trace-return-migration',
+  };
+}
+
+function migrationInput(targetId: string | null = null) {
+  return {
+    targetId, batchId: BATCH_ID, expectedBatchVersion: 4,
+    expectedBankSubmissionId: 'bank-submission-001',
+    lines: [{
+      employeeId: 'employee-001', expectedAmountMinor: 839_500,
+      bankLineReference: 'legacy-bank-line-001',
+    }],
+    expectedLineCount: 1, expectedTotalMinor: 839_500,
+    signatureVerified: true as const, malwareClean: true as const,
+    receivedAt: '2026-07-22T12:00:00.000Z',
+    migrationEvidenceRef: MIGRATION_EVIDENCE_REF, evidenceChecksum: 'e'.repeat(43),
+  };
+}
+
 describe('TreasuryBankReturnService', () => {
+  it('迁移全量成功回盘时重建密文清单且不调用外部 Inbox', async () => {
+    const store = assemble();
+    const result = await store.context.run({ tenant, actor: migrationActor() }, () =>
+      store.service.importCleanFromMigration('return-migration', migrationInput()));
+    expect(result).toMatchObject({
+      version: 1, status: 'reconciling', batchVersion: 5,
+      successfulCount: 1, failedCount: 0, successfulMinor: 839_500,
+    });
+    expect(store.inbox.claim).not.toHaveBeenCalled();
+    expect(store.outbox.append).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'treasury.bank_return.migrated', version: 5,
+    }), session);
+    const persisted = JSON.stringify([
+      store.returns.create.mock.calls, store.outbox.append.mock.calls,
+    ]);
+    expect(persisted).not.toMatch(/6222000000000001|密文内姓名|employee-001/u);
+
+    await expect(store.context.run({ tenant, actor: migrationActor() }, () =>
+      store.service.importCleanFromMigration(
+        'return-migration-replay', migrationInput(result.id),
+      ))).resolves.toEqual(result);
+    expect(store.returns.create).toHaveBeenCalledOnce();
+    expect(store.outbox.append).toHaveBeenCalledOnce();
+  });
+
+  it('拒绝用户身份执行回盘迁移', async () => {
+    const store = assemble();
+    await expect(store.context.run({ tenant, actor: migrationActor('user') }, () =>
+      store.service.importCleanFromMigration('return-migration-denied', migrationInput())))
+      .rejects.toMatchObject({
+        response: { code: 'TREASURY_BANK_RETURN_MIGRATION_WRITER_DENIED' },
+      });
+    expect(store.returns.create).not.toHaveBeenCalled();
+  });
+
   it('逐行复核密文金额，完整成功只进入 reconciling', async () => {
     const store = assemble();
     const result = await store.context.run({ tenant, actor }, () =>

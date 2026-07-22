@@ -180,6 +180,27 @@ describe('TreasuryOutboxWriter', () => {
     }, session))).rejects.toThrow('TREASURY_OUTBOX_DATA_INVALID');
   });
 
+  it('银行回盘迁移事件不公开来源证据和银行行引用', async () => {
+    const context = new TenantContextService();
+    const create = vi.fn().mockResolvedValue([]);
+    const writer = new TreasuryOutboxWriter(context, { create } as never);
+    const migrated: TreasuryEvent = {
+      type: 'treasury.bank_return.migrated', tenantId: 'tenant-001',
+      aggregateId: 'batch-001', version: 5, occurredAt: '2026-07-22T12:00:00.000Z',
+      data: {
+        returnHash: 'r'.repeat(43), outcome: 'reconciling',
+        successfulCount: 1, successfulMinor: 839_500,
+      },
+    };
+    await context.run({ tenant, actor }, () => writer.append(migrated, session));
+    const calls = JSON.stringify(create.mock.calls);
+    expect(calls).toContain('treasury.bank_return.migrated.v1');
+    expect(calls).not.toMatch(/objectEvidence|signatureEvidence|scan|bankLine|employee/u);
+    await expect(context.run({ tenant, actor }, () => writer.append({
+      ...migrated, data: { ...migrated.data, bankLineReference: 'secret' },
+    }, session))).rejects.toThrow('TREASURY_OUTBOX_DATA_INVALID');
+  });
+
   it('失败子批次事件只公开父批次、回盘摘要和失败汇总', async () => {
     const context = new TenantContextService();
     const create = vi.fn().mockResolvedValue([]);

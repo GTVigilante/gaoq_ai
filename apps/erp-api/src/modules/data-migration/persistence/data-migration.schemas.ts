@@ -117,7 +117,7 @@ export class DataMigrationAssociationRecord {
       'requisition', 'approval_instance', 'approval_history',
       'candidate',
       'application', 'interviewer', 'interview',
-      'account_owner', 'debtor_account', 'recipient_account',
+      'account_owner', 'debtor_account', 'recipient_account', 'disbursement_batch',
       'source_fact',
       'previous_snapshot',
       'prepared_by', 'payroll_period', 'payroll_run', 'rule_pack',
@@ -160,6 +160,7 @@ export class DataMigrationAssociationRecord {
     | 'account_owner'
     | 'debtor_account'
     | 'recipient_account'
+    | 'disbursement_batch'
     | 'source_fact'
     | 'previous_snapshot'
     | 'prepared_by'

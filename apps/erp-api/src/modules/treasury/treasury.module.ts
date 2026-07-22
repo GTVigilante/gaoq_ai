@@ -65,6 +65,11 @@ import { TreasuryController } from './treasury.controller.js';
     { provide: TreasuryBankReturnInbox, useExisting: HttpTreasuryBankReturnInbox },
     { provide: TreasuryImmutableArchive, useExisting: HttpTreasuryImmutableArchive },
   ],
-  exports: [TreasuryBankAccountService, TreasuryDisbursementService, TreasuryDataCryptoService],
+  exports: [
+    TreasuryBankAccountService,
+    TreasuryBankReturnService,
+    TreasuryDisbursementService,
+    TreasuryDataCryptoService,
+  ],
 })
 export class TreasuryModule {}

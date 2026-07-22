@@ -15,6 +15,7 @@ import type { PayrollRunService } from '../../payroll/application/payroll-run.se
 import type { PayrollTaxFilingService } from '../../payroll/application/payroll-tax-filing.service.js';
 import type { TreasuryBankAccountService } from '../../treasury/application/treasury-bank-account.service.js';
 import type { TreasuryDisbursementService } from '../../treasury/application/treasury-disbursement.service.js';
+import type { TreasuryBankReturnService } from '../../treasury/application/treasury-bank-return.service.js';
 import type {
   DataMigrationAssociationDocument,
   DataMigrationAttachmentDocument,
@@ -162,6 +163,10 @@ function treasuryBankAccountsRun() {
 
 function treasuryDisbursementBatchesRun() {
   return { ...run(), scope: 'treasury_disbursement_batches' as const };
+}
+
+function treasuryBankReturnsRun() {
+  return { ...run(), scope: 'treasury_bank_returns' as const };
 }
 
 function query<T>(value: T) { return { lean: () => ({ exec: () => Promise.resolve(value) }) }; }
@@ -2294,6 +2299,84 @@ describe('DataMigrationService', () => {
       }),
     );
     expect(JSON.stringify(items.create.mock.calls)).not.toMatch(/839500|bank-submission|bank-evidence/u);
+  });
+
+  it('全量成功银行回盘迁移解析批次与员工映射且账本不保存银行行引用', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      batchSourceId: 'legacy-batch-001', expectedBatchVersion: 4,
+      expectedBankSubmissionId: 'legacy-bank-submission-001',
+      lines: [{
+        employeeSourceId: 'legacy-employee-001', expectedAmountMinor: 839_500,
+        bankLineReference: 'legacy-bank-line-001',
+      }],
+      expectedLineCount: 1, expectedTotalMinor: 839_500,
+      signatureVerified: true, malwareClean: true,
+      receivedAt: '2026-07-22T12:00:00.000Z',
+      sourceEvidenceSourceAttachmentId: 'treasury-return-001',
+      sourceEvidenceChecksum: 'e'.repeat(43),
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(treasuryBankReturnsRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const mappings = {
+      findOne: vi.fn((filter: { entityType: string; sourceRecordId: string }) => query(
+        filter.entityType === 'treasury.bank_return' ? null : {
+          targetId: filter.entityType === 'treasury.disbursement_batch'
+            ? '01J8ZQK7V0A2M4N6P8R0T2W4B1' : 'employee-001',
+          targetVersion: 1,
+        },
+      )),
+      findOneAndUpdate: vi.fn().mockReturnValue(query({ targetId: 'return-001' })),
+    };
+    const associations = {
+      findOneAndUpdate: vi.fn().mockReturnValue(query({})),
+      bulkWrite: vi.fn().mockResolvedValue({}),
+    };
+    const attachments = {
+      findOne: vi.fn().mockReturnValue(query(null)),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const treasuryBankReturns = { importCleanFromMigration: vi.fn().mockResolvedValue({
+      id: 'return-001', version: 1, batchId: '01J8ZQK7V0A2M4N6P8R0T2W4B1',
+      status: 'reconciling', batchVersion: 5, returnHash: 'r'.repeat(43),
+      successfulCount: 1, failedCount: 0, unknownCount: 0, duplicateCount: 0,
+      lineAmountMismatchCount: 0, successfulMinor: 839_500, failedMinor: 0,
+      freezeReason: null,
+    }) };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      mappings as unknown as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+      undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined,
+      treasuryBankReturns as unknown as TreasuryBankReturnService,
+    );
+    const result = await trusted(context, () => service.apply(RUN_ID, {
+      sequence: 1, sourceRecordId: 'legacy-return-001', sourceVersion: '1',
+      entityType: 'treasury.bank_return', payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: ['legacy-batch-001', 'legacy-employee-001'],
+      attachments: [{ sourceAttachmentId: 'treasury-return-001', checksum: 'e'.repeat(43) }],
+    }));
+    expect(result).toMatchObject({ status: 'applied', targetId: 'return-001' });
+    expect(treasuryBankReturns.importCleanFromMigration).toHaveBeenCalledWith(
+      expect.stringMatching(/^migration:/u),
+      expect.objectContaining({
+        batchId: '01J8ZQK7V0A2M4N6P8R0T2W4B1',
+        lines: [{
+          employeeId: 'employee-001', expectedAmountMinor: 839_500,
+          bankLineReference: 'legacy-bank-line-001',
+        }],
+      }),
+    );
+    expect(JSON.stringify(items.create.mock.calls)).not.toMatch(/839500|legacy-bank-line/u);
   });
 
   it('未解析关联和未决附件进入 Phase 6 硬门禁', async () => {

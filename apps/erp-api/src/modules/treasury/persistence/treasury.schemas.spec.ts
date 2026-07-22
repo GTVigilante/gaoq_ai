@@ -9,6 +9,7 @@ import {
 } from './treasury.schemas.js';
 import type {
   TreasuryBankAccountRecord,
+  TreasuryBankReturnRecord,
   TreasuryDisbursementBatchRecord,
 } from './treasury.schemas.js';
 
@@ -18,6 +19,9 @@ const AccountModel = mongoose.model<TreasuryBankAccountRecord>(
 );
 const BatchModel = mongoose.model<TreasuryDisbursementBatchRecord>(
   'SpecTreasuryDisbursementBatch', TreasuryDisbursementBatchRecordSchema,
+);
+const ReturnModel = mongoose.model<TreasuryBankReturnRecord>(
+  'SpecTreasuryBankReturn', TreasuryBankReturnRecordSchema,
 );
 
 describe('Treasury 持久化契约', () => {
@@ -62,6 +66,11 @@ describe('Treasury 持久化契约', () => {
     ]);
     expect(TreasuryBankReturnRecordSchema.indexes()).toContainEqual([
       { tenantId: 1, returnHash: 1 }, expect.objectContaining({ unique: true }),
+    ]);
+    expect(TreasuryBankReturnRecordSchema.indexes()).toContainEqual([
+      { tenantId: 1, migrationEvidenceRef: 1 }, expect.objectContaining({
+        unique: true, partialFilterExpression: { migrationEvidenceRef: { $type: 'string' } },
+      }),
     ]);
     expect(TreasuryDisbursementBatchRecordSchema.indexes()).toContainEqual([
       { tenantId: 1, recoverySourceBatchId: 1 }, expect.objectContaining({ unique: true }),
@@ -134,5 +143,30 @@ describe('Treasury 持久化契约', () => {
     expect(TreasuryDisbursementBatchRecordSchema.path('dataCiphertext')).toBeDefined();
     expect(TreasuryBankReturnRecordSchema.path('lines')).toBeUndefined();
     expect(TreasuryBankReturnRecordSchema.path('dataCiphertext')).toBeDefined();
+  });
+
+  it('历史银行回盘必须绑定带判别的迁移证据', async () => {
+    const base = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4R9', tenantId: 'tenant-001',
+      batchId: '01J8ZQK7V0A2M4N6P8R0T2W4B9', bankSubmissionId: 'bank-submission',
+      sequence: 1, returnHash: 'r'.repeat(43), objectEvidenceId: 'object-evidence',
+      objectRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/return-001',
+      signatureEvidenceId: 'signature-evidence', signatureVerified: true,
+      malwareScanEvidenceId: 'scan-evidence', malwareClean: true,
+      evidenceReferenceType: 'migration_return_evidence',
+      successfulCount: 1, failedCount: 0, unknownCount: 0, duplicateCount: 0,
+      lineAmountMismatchCount: 0, successfulMinor: 839_500, failedMinor: 0,
+      outcome: 'accepted', receivedAt: new Date('2026-07-22T12:00:00.000Z'),
+      dataKeyId: 'treasury-key-001', dataIv: 'c'.repeat(16),
+      dataCiphertext: 'd'.repeat(64), dataAuthTag: 'e'.repeat(22),
+    };
+    await expect(new ReturnModel(base).validate()).rejects.toThrow(
+      '历史银行回盘必须绑定迁移证据',
+    );
+    await expect(new ReturnModel({
+      ...base, migrationEvidenceRef: base.objectRef,
+      migrationEvidenceChecksum: 'm'.repeat(43),
+    }).validate()).resolves.toBeUndefined();
   });
 });

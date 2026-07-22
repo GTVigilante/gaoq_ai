@@ -78,6 +78,7 @@ describe('数据迁移账本 Schema', () => {
         'prepared_by', 'payroll_period', 'rule_pack',
         'compensation_profile', 'attendance_snapshot',
         'debtor_account', 'recipient_account',
+        'disbursement_batch',
       ]));
   });
 
