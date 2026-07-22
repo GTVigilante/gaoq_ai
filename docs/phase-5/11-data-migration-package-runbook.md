@@ -57,6 +57,8 @@ pnpm --filter @gaoq/erp-api migration:package -- evidence 01J8ZQK7V0A2M4N6P8R0T2
 unset ERP_MIGRATION_TOKEN
 ```
 
-证据令牌必须额外具备 `erp:migration:evidence:export`，且运行必须已经 `completed|failed` 冻结。工具先写入聚合 report，再依次分页写入 items、associations、attachments，逐页验证服务端 `pageChecksum`；三类明细总数必须与 report 控制量完全一致，最后一行 seal 才保存三类记录数、总记录数和整份内容的滚动 `artifactChecksum`。证据不含 payload、姓名、附件正文、tenantId、Token 或时间戳，但来源与目标标识仍按 L2 处理，产物必须加密保存、限制访问并登记销毁时间。
+证据令牌必须额外具备 `erp:migration:evidence:export`，且运行必须已经 `completed|failed` 冻结。证据 NDJSON 每行固定携带 `formatVersion: 1`；工具先写入聚合 report，再依次分页写入 items、associations、attachments，逐页验证服务端 `pageChecksum`；三类明细总数必须与 report 控制量完全一致，最后一行 seal 才保存三类记录数、总记录数和整份内容的滚动 `artifactChecksum`。证据不含 payload、姓名、附件正文、tenantId、Token 或时间戳，但来源与目标标识仍按 L2 处理，产物必须加密保存、限制访问并登记销毁时间。
 
 任何页面 checksum 错误、游标异常、网络失败或非 JSON 响应都会终止导出且不生成可信完成结论。只有存在 seal 且重新计算结果一致的文件才能进入迁移签署材料；MCP 不提供此详细导出能力。
+
+三次全量演练完成后，必须按[数据迁移三次演练证据门禁](./12-data-migration-rehearsal-gate.md)比较三份独立证据。比较命令只接受恰好三个文件，并强制逐份验封、零差异和目标事实一致；它不代替真实环境演练及四方签署。

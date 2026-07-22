@@ -13,6 +13,7 @@ import {
   migrationSourceFactHash,
   roll,
 } from '../modules/data-migration/data-migration-checksum.js';
+import { compareMigrationRehearsals } from './data-migration-rehearsal.js';
 
 const HASH = /^[A-Za-z0-9_-]{43}$/;
 const SOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -180,7 +181,7 @@ export async function exportMigrationEvidence(
     `${endpoint}/data-migrations/runs/${encodeURIComponent(runId)}/report`,
     { method: 'GET', headers },
   );
-  append(Object.freeze({ recordType: 'report', data: report }));
+  append(Object.freeze({ formatVersion: 1, recordType: 'report', data: report }));
 
   for (const kind of ['items', 'associations', 'attachments'] as const) {
     let cursor: string | null = null;
@@ -208,7 +209,7 @@ export async function exportMigrationEvidence(
           throw packageError('EVIDENCE_PAGE_INVALID');
         }
         counts[kind] += 1;
-        append(Object.freeze({ recordType: kind, data: record }));
+        append(Object.freeze({ formatVersion: 1, recordType: kind, data: record }));
       }
       cursor = nextCursor;
     } while (cursor !== null);
@@ -223,7 +224,7 @@ export async function exportMigrationEvidence(
     throw packageError('EVIDENCE_CONTROL_TOTAL_MISMATCH');
   }
   const seal = Object.freeze({
-    recordType: 'seal', runId, recordCount: artifactSequence,
+    formatVersion: 1, recordType: 'seal', runId, recordCount: artifactSequence,
     counts: Object.freeze({ ...counts }), artifactChecksum,
   });
   emit(seal);
@@ -334,6 +335,12 @@ function packageError(code: string): Error {
 
 async function main(): Promise<void> {
   const [command, target, ...rest] = process.argv.slice(2);
+  if (command === 'compare') {
+    if (target === undefined || rest.length !== 2) throw packageError('ARGUMENT_INVALID');
+    const result = await compareMigrationRehearsals([target, rest[0] ?? '', rest[1] ?? '']);
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
   if (!['validate', 'apply', 'evidence'].includes(command ?? '') || target === undefined ||
     rest.length !== 0) throw packageError('ARGUMENT_INVALID');
   if (command === 'validate') {
