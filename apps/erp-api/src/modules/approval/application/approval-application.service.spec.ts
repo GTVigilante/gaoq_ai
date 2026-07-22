@@ -241,6 +241,31 @@ describe('ApprovalApplicationService', () => {
     expect(JSON.stringify(result)).not.toContain('不得输出');
   });
 
+  it('资金迁移只读取已通过账户鉴证历史的安全投影', async () => {
+    const deps = dependencies({
+      legacyHistories: {
+        ...dependencies().legacyHistories,
+        findById: vi.fn().mockResolvedValue({
+          id: 'history-treasury-001', templateCode: 'treasury_bank_account_attestation',
+          outcome: 'approved', completedAt: '2026-01-02T00:00:00.000Z',
+          evidenceChecksum: 't'.repeat(43), migrationEvidenceRef: '不得输出',
+        }),
+      },
+    });
+    const application = service(
+      deps,
+      opWorkerContext(['erp:migration:execute', 'erp:treasury:migration:write']),
+    );
+    const result = await application.verifyTreasuryMigrationReference(
+      'history-treasury-001', 'treasury_bank_account_attestation', SESSION,
+    );
+    expect(result).toEqual({
+      id: 'history-treasury-001', templateCode: 'treasury_bank_account_attestation',
+      completedAt: '2026-01-02T00:00:00.000Z', evidenceChecksum: 't'.repeat(43),
+    });
+    expect(JSON.stringify(result)).not.toContain('不得输出');
+  });
+
   it('招聘迁移只能读取活动审批或终结历史的最小引用投影', async () => {
     const running = submitApprovalInstance(draftInstance('recruitment_hc'), {
       tenantId: 'tenant-001', expectedVersion: 1, actorId: 'actor-001',

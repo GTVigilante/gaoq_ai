@@ -8,6 +8,8 @@ const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const HASH_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const BLIND_INDEX_PATTERN = /^[A-Za-z0-9._-]{1,64}\.[A-Za-z0-9_-]{43}$/;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
+const MIGRATION_EVIDENCE_REF_PATTERN =
+  /^erp:\/\/data-migrations\/runs\/[0-7][0-9A-HJKMNP-TV-Z]{25}\/attachments\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const MAX_CIPHERTEXT_LENGTH = 11_184_811;
 
 abstract class ProtectedTreasuryRecord {
@@ -34,10 +36,22 @@ export class TreasuryBankAccountRecord extends ProtectedTreasuryRecord {
   accountBlindIndexes!: string[];
   @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
   approvalEvidenceId!: string;
+  @Prop({
+    type: String, required: true, immutable: true,
+    enum: ['approval_instance', 'legacy_history'],
+  })
+  approvalReferenceType!: 'approval_instance' | 'legacy_history';
   @Prop({ type: String, required: true, enum: ['active', 'revoked'] })
   status!: 'active' | 'revoked';
   @Prop({ type: String, default: null, match: ULID_PATTERN }) supersededById!: string | null;
   @Prop({ type: Date, default: null }) revokedAt!: Date | null;
+  @Prop({
+    type: String, default: null, immutable: true, maxlength: 256,
+    match: MIGRATION_EVIDENCE_REF_PATTERN,
+  })
+  migrationEvidenceRef!: string | null;
+  @Prop({ type: String, default: null, immutable: true, match: HASH_PATTERN })
+  migrationEvidenceChecksum!: string | null;
   createdAt!: Date;
   updatedAt!: Date;
 }
@@ -45,6 +59,20 @@ export type TreasuryBankAccountDocument = HydratedDocument<TreasuryBankAccountRe
 export const TreasuryBankAccountRecordSchema = SchemaFactory.createForClass(
   TreasuryBankAccountRecord,
 );
+TreasuryBankAccountRecordSchema.pre('validate', function () {
+  const record = this as TreasuryBankAccountRecord;
+  if (record.approvalReferenceType === undefined || record.approvalReferenceType === null) {
+    record.approvalReferenceType = 'approval_instance';
+  }
+  if ((record.migrationEvidenceRef === null) !==
+    (record.migrationEvidenceChecksum === null)) {
+    throw new Error('资金账户迁移证据引用与校验和必须成对出现');
+  }
+  if (record.approvalReferenceType === 'legacy_history' &&
+    record.migrationEvidenceRef === null) {
+    throw new Error('历史审批账户必须绑定迁移证据');
+  }
+});
 TreasuryBankAccountRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 TreasuryBankAccountRecordSchema.index(
   { tenantId: 1, ownerType: 1, ownerId: 1, version: 1 }, { unique: true },
@@ -56,6 +84,10 @@ TreasuryBankAccountRecordSchema.index(
 TreasuryBankAccountRecordSchema.index(
   { tenantId: 1, accountBlindIndexes: 1 },
   { unique: true, partialFilterExpression: { status: 'active' } },
+);
+TreasuryBankAccountRecordSchema.index(
+  { tenantId: 1, migrationEvidenceRef: 1 },
+  { unique: true, partialFilterExpression: { migrationEvidenceRef: { $type: 'string' } } },
 );
 
 /** 员工级支付指令；账号快照、户名、清算行号和实发金额整体密文保存。 */

@@ -26,6 +26,7 @@ describe('Treasury 持久化契约', () => {
     });
     await expect(document.validate()).resolves.toBeUndefined();
     const stored = document.toObject();
+    expect(stored.approvalReferenceType).toBe('approval_instance');
     expect(stored).not.toHaveProperty('account');
     expect(stored).not.toHaveProperty('accountName');
     expect(stored).not.toHaveProperty('clearingCode');
@@ -48,12 +49,36 @@ describe('Treasury 持久化契约', () => {
     expect(TreasuryBankAccountRecordSchema.indexes()).toContainEqual([
       { tenantId: 1, accountBlindIndexes: 1 }, expect.objectContaining({ unique: true }),
     ]);
+    expect(TreasuryBankAccountRecordSchema.indexes()).toContainEqual([
+      { tenantId: 1, migrationEvidenceRef: 1 }, expect.objectContaining({
+        unique: true, partialFilterExpression: { migrationEvidenceRef: { $type: 'string' } },
+      }),
+    ]);
     expect(TreasuryBankReturnRecordSchema.indexes()).toContainEqual([
       { tenantId: 1, returnHash: 1 }, expect.objectContaining({ unique: true }),
     ]);
     expect(TreasuryDisbursementBatchRecordSchema.indexes()).toContainEqual([
       { tenantId: 1, recoverySourceBatchId: 1 }, expect.objectContaining({ unique: true }),
     ]);
+  });
+
+  it('历史审批账户必须成对绑定迁移 WORM 引用和摘要', async () => {
+    const base = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4Z8', tenantId: 'tenant-001',
+      ownerType: 'employee', ownerId: 'employee-001', version: 1,
+      accountBlindIndexes: [`blind-key-001.${'a'.repeat(43)}`],
+      approvalEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4H1',
+      approvalReferenceType: 'legacy_history', status: 'active',
+      dataKeyId: 'treasury-key-001', dataIv: 'c'.repeat(16),
+      dataCiphertext: 'd'.repeat(64), dataAuthTag: 'e'.repeat(22),
+    };
+    await expect(new AccountModel(base).validate()).rejects.toThrow('必须绑定迁移证据');
+    await expect(new AccountModel({
+      ...base,
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/account-001',
+      migrationEvidenceChecksum: 'm'.repeat(43),
+    }).validate()).resolves.toBeUndefined();
   });
 
   it('员工级支付指令金额没有明文字段，批次仅保留控制总额', () => {

@@ -272,6 +272,13 @@ export interface ApprovalPayrollMigrationReference {
   readonly evidenceChecksum: string;
 }
 
+export interface ApprovalTreasuryMigrationReference {
+  readonly id: string;
+  readonly templateCode: 'treasury_bank_account_attestation';
+  readonly completedAt: string;
+  readonly evidenceChecksum: string;
+}
+
 /** 审批应用服务：唯一事务编排入口，REST、Worker 与 MCP 必须复用本服务。 */
 @Injectable()
 export class ApprovalApplicationService {
@@ -534,6 +541,27 @@ export class ApprovalApplicationService {
       throw new BadRequestException({
         code: 'APPROVAL_MIGRATION_PAYROLL_REFERENCE_INVALID',
         message: '薪资迁移必须引用已迁移且已通过的专用审批历史',
+      });
+    }
+    return Object.freeze({
+      id: history.id, templateCode, completedAt: history.completedAt,
+      evidenceChecksum: history.evidenceChecksum,
+    });
+  }
+
+  /** 资金迁移只读校验：只接受已通过的账户鉴证专用终结历史。 */
+  async verifyTreasuryMigrationReference(
+    id: string,
+    templateCode: ApprovalTreasuryMigrationReference['templateCode'],
+    session: ClientSession,
+  ): Promise<ApprovalTreasuryMigrationReference> {
+    this.assertTreasuryMigrationVerifier();
+    const history = await this.legacyHistories.findById(id, session);
+    if (history === null || history.templateCode !== templateCode ||
+      history.outcome !== 'approved') {
+      throw new BadRequestException({
+        code: 'APPROVAL_MIGRATION_TREASURY_REFERENCE_INVALID',
+        message: '资金迁移必须引用已迁移且已通过的专用审批历史',
       });
     }
     return Object.freeze({
@@ -1296,6 +1324,18 @@ export class ApprovalApplicationService {
       throw new ForbiddenException({
         code: 'APPROVAL_MIGRATION_PAYROLL_VERIFIER_DENIED',
         message: '薪资迁移审批引用校验只允许受信任服务身份',
+      });
+    }
+  }
+
+  private assertTreasuryMigrationVerifier(): void {
+    const actor = this.context.getActorRequired();
+    if (!['service', 'system_job'].includes(actor.actorType) ||
+      !actor.scopes.includes('erp:migration:execute') ||
+      !actor.scopes.includes('erp:treasury:migration:write')) {
+      throw new ForbiddenException({
+        code: 'APPROVAL_MIGRATION_TREASURY_VERIFIER_DENIED',
+        message: '资金迁移审批引用校验只允许受信任服务身份',
       });
     }
   }

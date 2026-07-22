@@ -45,6 +45,24 @@ describe('TreasuryOutboxWriter', () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  it('账户迁移事件只公开主体类型、版本和状态', async () => {
+    const context = new TenantContextService();
+    const create = vi.fn().mockResolvedValue([]);
+    const writer = new TreasuryOutboxWriter(context, { create } as never);
+    const migrated: TreasuryEvent = {
+      type: 'treasury.bank_account.migrated', tenantId: tenant.tenantId,
+      aggregateId: 'account-002', version: 2, occurredAt: '2026-07-22T10:00:00.000Z',
+      data: { ownerType: 'employee', version: 2, status: 'revoked' },
+    };
+    await context.run({ tenant, actor }, () => writer.append(migrated, session));
+    const calls = JSON.stringify(create.mock.calls);
+    expect(calls).toContain('treasury.bank_account.migrated.v1');
+    expect(calls).not.toMatch(/ownerId|accountBlind|6222|cipher|migrationEvidence/u);
+    await expect(context.run({ tenant, actor }, () => writer.append({
+      ...migrated, data: { ...migrated.data, ownerId: 'employee-001' },
+    }, session))).rejects.toThrow('TREASURY_OUTBOX_DATA_INVALID');
+  });
+
   it('代发事件只允许批次汇总与 WORM 证据，不允许员工级字段', async () => {
     const context = new TenantContextService();
     const create = vi.fn().mockResolvedValue([]);

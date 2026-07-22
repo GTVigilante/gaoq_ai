@@ -10,6 +10,7 @@ import { OutboxRecord, type OutboxDocument } from '../../org/persistence/outbox.
 export interface TreasuryEvent {
   readonly type:
     | 'treasury.bank_account.attested'
+    | 'treasury.bank_account.migrated'
     | 'treasury.disbursement.materialization_requested'
     | 'treasury.disbursement.prepared'
     | 'treasury.disbursement.export_approved'
@@ -40,7 +41,9 @@ export class TreasuryOutboxWriter {
     this.assertSafeEvent(event);
     const eventId = createEventId(new Date(event.occurredAt));
     const eventType = `cn.gaoq.erp.${event.type}.v1`;
-    const resourceType = event.type === 'treasury.bank_account.attested'
+    const bankAccountEvent = event.type === 'treasury.bank_account.attested' ||
+      event.type === 'treasury.bank_account.migrated';
+    const resourceType = bankAccountEvent
       ? 'bank-account' : 'disbursement-batch';
     const envelope: CloudEvent<Record<string, unknown>> & { readonly schemaVersion: '1' } = {
       specversion: '1.0', id: eventId, source: '//gaoq-erp/treasury-module', type: eventType,
@@ -52,7 +55,7 @@ export class TreasuryOutboxWriter {
     };
     await this.records.create([{
       eventId, tenantId: event.tenantId,
-      aggregateType: event.type === 'treasury.bank_account.attested'
+      aggregateType: bankAccountEvent
         ? 'treasury_bank_account' : 'treasury_disbursement_batch',
       aggregateId: event.aggregateId, aggregateVersion: event.version,
       eventType, envelope: { ...envelope }, status: 'pending', attempts: 0,
@@ -108,6 +111,15 @@ export class TreasuryOutboxWriter {
         keys !== 'ownerId,ownerType,status,version' ||
         !['organization', 'employee'].includes(String(data['ownerType'])) ||
         !safeId(data['ownerId']) || data['status'] !== 'active' || !positiveInteger(data['version'])
+      ) throw new Error('TREASURY_OUTBOX_DATA_INVALID');
+      return;
+    }
+    if (event.type === 'treasury.bank_account.migrated') {
+      if (
+        keys !== 'ownerType,status,version' ||
+        !['organization', 'employee'].includes(String(data['ownerType'])) ||
+        !['active', 'revoked'].includes(String(data['status'])) ||
+        !positiveInteger(data['version'])
       ) throw new Error('TREASURY_OUTBOX_DATA_INVALID');
       return;
     }

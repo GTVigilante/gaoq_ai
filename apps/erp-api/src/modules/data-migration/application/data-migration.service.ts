@@ -70,6 +70,10 @@ import {
   PayrollTaxFilingService,
   type ImportPayrollTaxFilingFromMigrationInput,
 } from '../../payroll/application/payroll-tax-filing.service.js';
+import {
+  TreasuryBankAccountService,
+  type ImportTreasuryBankAccountFromMigrationInput,
+} from '../../treasury/application/treasury-bank-account.service.js';
 import type {
   CreateDepartmentDto,
   CreateEmployeeDto,
@@ -185,6 +189,8 @@ export class DataMigrationService {
     private readonly payrollControls?: PayrollApprovalService,
     @Inject(PayrollTaxFilingService)
     private readonly payrollTax?: PayrollTaxFilingService,
+    @Inject(TreasuryBankAccountService)
+    private readonly treasuryAccounts?: TreasuryBankAccountService,
   ) {}
 
   async start(input: CreateDataMigrationRunDto) {
@@ -559,6 +565,17 @@ export class DataMigrationService {
     } else if (input.entityType === 'payroll.tax_filing') {
       const payload = payrollTaxFilingPayload(input.payload);
       const specs = payrollTaxFilingAssociationSpecs(payload);
+      assertAssociations(
+        input.associationSourceIds,
+        specs.map((spec) => spec.sourceAssociationId),
+      );
+      assertSingleMigrationEvidence(input, payload);
+      await Promise.all(specs.map(async (spec) =>
+        this.requireMapping(run, spec.entityType, spec.sourceAssociationId)));
+      return;
+    } else if (input.entityType === 'treasury.bank_account') {
+      const payload = treasuryBankAccountPayload(input.payload);
+      const specs = treasuryBankAccountAssociationSpecs(payload);
       assertAssociations(
         input.associationSourceIds,
         specs.map((spec) => spec.sourceAssociationId),
@@ -1342,6 +1359,31 @@ export class DataMigrationService {
         evidenceChecksum: payload.sourceEvidenceChecksum,
       };
       return target(await this.payrollTax.importSubmittedFromMigration(key, command));
+    }
+    if (input.entityType === 'treasury.bank_account') {
+      const payload = treasuryBankAccountPayload(input.payload);
+      if (this.treasuryAccounts === undefined) {
+        throw new Error('迁移资金账户适配器未装配');
+      }
+      const [approval, owner] = await Promise.all([
+        this.requireMapping(run, 'approval.history', payload.approvalHistorySourceId),
+        payload.ownerEmployeeSourceId === null ? Promise.resolve(null) :
+          this.requireMapping(run, 'org.employee', payload.ownerEmployeeSourceId),
+      ]);
+      const command: ImportTreasuryBankAccountFromMigrationInput = {
+        targetId: mapping?.targetId ?? null, ownerType: payload.ownerType,
+        ownerId: owner?.targetId ?? this.context.getTenantRequired().tenantId,
+        accountName: payload.accountName, account: payload.account,
+        clearingCode: payload.clearingCode, currency: payload.currency,
+        version: payload.version, status: payload.status,
+        approvalHistoryId: approval.targetId,
+        approvalEvidenceChecksum: payload.approvalEvidenceChecksum,
+        createdAt: payload.createdAt, revokedAt: payload.revokedAt,
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${run.id}/attachments/${payload.sourceEvidenceSourceAttachmentId}`,
+        evidenceChecksum: payload.sourceEvidenceChecksum,
+      };
+      return target(await this.treasuryAccounts.importFromMigration(key, command));
     }
     const payload = approvalTemplatePayload(input.payload);
     if (this.approvals === undefined) throw new Error('迁移审批适配器未装配');
@@ -3799,6 +3841,85 @@ function payrollTaxFilingAssociationSpecs(
   ];
 }
 
+interface TreasuryBankAccountMigrationPayload extends MigrationEvidencePayload {
+  readonly ownerType: 'organization' | 'employee';
+  readonly ownerEmployeeSourceId: string | null;
+  readonly accountName: string;
+  readonly account: string;
+  readonly clearingCode: string;
+  readonly currency: 'CNY';
+  readonly version: number;
+  readonly status: 'active' | 'revoked';
+  readonly approvalHistorySourceId: string;
+  readonly approvalEvidenceChecksum: string;
+  readonly createdAt: string;
+  readonly revokedAt: string | null;
+}
+
+function treasuryBankAccountPayload(
+  value: Readonly<Record<string, unknown>>,
+): TreasuryBankAccountMigrationPayload {
+  exactKeys(value, [
+    'account', 'accountName', 'approvalEvidenceChecksum', 'approvalHistorySourceId',
+    'clearingCode', 'createdAt', 'currency', 'ownerEmployeeSourceId', 'ownerType',
+    'revokedAt', 'sourceEvidenceChecksum', 'sourceEvidenceSourceAttachmentId',
+    'status', 'version',
+  ]);
+  const ownerType = value.ownerType;
+  const status = value.status;
+  if (!['organization', 'employee'].includes(String(ownerType)) ||
+    (ownerType === 'organization' && value.ownerEmployeeSourceId !== null) ||
+    (ownerType === 'employee' &&
+      (typeof value.ownerEmployeeSourceId !== 'string' ||
+        !SOURCE_ID_PATTERN.test(value.ownerEmployeeSourceId))) ||
+    typeof value.accountName !== 'string' || value.accountName.trim().length < 1 ||
+    value.accountName.length > 140 || /[\p{Cc}\p{Cf}]/u.test(value.accountName) ||
+    typeof value.account !== 'string' || !/^[0-9]{8,32}$/.test(value.account) ||
+    typeof value.clearingCode !== 'string' || !/^[0-9A-Z]{8,12}$/.test(value.clearingCode) ||
+    value.currency !== 'CNY' || !migrationVersion(value.version) || Number(value.version) > 1_000 ||
+    !['active', 'revoked'].includes(String(status)) ||
+    typeof value.approvalHistorySourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.approvalHistorySourceId) ||
+    typeof value.approvalEvidenceChecksum !== 'string' ||
+    !HASH_PATTERN.test(value.approvalEvidenceChecksum) ||
+    !isStrictUtcIso(value.createdAt) ||
+    (value.revokedAt !== null && !isStrictUtcIso(value.revokedAt)) ||
+    (status === 'active' && value.revokedAt !== null) ||
+    (status === 'revoked' && value.revokedAt === null) ||
+    !migrationEvidence(value)) throw invalidPayload();
+  return {
+    ownerType: ownerType as 'organization' | 'employee',
+    ownerEmployeeSourceId: value.ownerEmployeeSourceId as string | null,
+    accountName: value.accountName, account: value.account,
+    clearingCode: value.clearingCode, currency: 'CNY',
+    version: Number(value.version), status: status as 'active' | 'revoked',
+    approvalHistorySourceId: value.approvalHistorySourceId,
+    approvalEvidenceChecksum: value.approvalEvidenceChecksum,
+    createdAt: value.createdAt,
+    revokedAt: value.revokedAt,
+    sourceEvidenceSourceAttachmentId: value.sourceEvidenceSourceAttachmentId,
+    sourceEvidenceChecksum: value.sourceEvidenceChecksum,
+  };
+}
+
+function treasuryBankAccountAssociationSpecs(
+  payload: TreasuryBankAccountMigrationPayload,
+): readonly (AssociationEvidence & { readonly entityType: AssociationTargetType })[] {
+  const owner = payload.ownerEmployeeSourceId === null ? [] : [{
+    relationship: 'account_owner' as const,
+    sourceAssociationId: payload.ownerEmployeeSourceId,
+    entityType: 'org.employee' as const,
+  }];
+  return [
+    ...owner,
+    {
+      relationship: 'approval_history',
+      sourceAssociationId: payload.approvalHistorySourceId,
+      entityType: 'approval.history',
+    },
+  ];
+}
+
 function migrationEvidence(value: Readonly<Record<string, unknown>>): value is
 Readonly<Record<string, unknown>> & MigrationEvidencePayload {
   return typeof value.sourceEvidenceSourceAttachmentId === 'string' &&
@@ -4178,6 +4299,8 @@ function associationEvidence(input: ApplyDataMigrationRecordDto): readonly Assoc
       derived = payrollPeriodLockAssociationSpecs(payrollPeriodLockPayload(input.payload));
     } else if (input.entityType === 'payroll.tax_filing') {
       derived = payrollTaxFilingAssociationSpecs(payrollTaxFilingPayload(input.payload));
+    } else if (input.entityType === 'treasury.bank_account') {
+      derived = treasuryBankAccountAssociationSpecs(treasuryBankAccountPayload(input.payload));
     } else if (input.entityType === 'attendance.monthly_snapshot') {
       const payload = attendanceMonthPayload(input.payload);
       derived = [
@@ -4257,11 +4380,11 @@ function rejectionCode(error: unknown): string | null {
     if (typeof response === 'object' && response !== null) {
       const code = (response as { code?: unknown }).code;
       if (typeof code === 'string' &&
-        /^(ORG|APPROVAL|RECRUITMENT|ATTENDANCE|PAYROLL|DATA_MIGRATION)_[A-Z0-9_]{2,80}$/.test(code)) return code;
+        /^(ORG|APPROVAL|RECRUITMENT|ATTENDANCE|PAYROLL|TREASURY|DATA_MIGRATION)_[A-Z0-9_]{2,80}$/.test(code)) return code;
     }
   }
   return error instanceof Error &&
-    /^(ORG|APPROVAL|RECRUITMENT|ATTENDANCE|PAYROLL|DATA_MIGRATION)_[A-Z0-9_]{2,80}$/.test(error.message)
+    /^(ORG|APPROVAL|RECRUITMENT|ATTENDANCE|PAYROLL|TREASURY|DATA_MIGRATION)_[A-Z0-9_]{2,80}$/.test(error.message)
     ? error.message : null;
 }
 
@@ -4314,6 +4437,7 @@ const ASSOCIATION_RELATIONSHIPS = [
   'added_approver', 'expected_pending_approver',
   'requisition', 'approval_instance', 'approval_history',
   'candidate', 'application', 'interviewer', 'interview',
+  'account_owner',
   'source_fact',
   'previous_snapshot',
   'prepared_by', 'payroll_period', 'payroll_run', 'rule_pack',

@@ -13,6 +13,7 @@ import type { PayrollMasterDataService } from '../../payroll/application/payroll
 import type { PayrollApprovalService } from '../../payroll/application/payroll-approval.service.js';
 import type { PayrollRunService } from '../../payroll/application/payroll-run.service.js';
 import type { PayrollTaxFilingService } from '../../payroll/application/payroll-tax-filing.service.js';
+import type { TreasuryBankAccountService } from '../../treasury/application/treasury-bank-account.service.js';
 import type {
   DataMigrationAssociationDocument,
   DataMigrationAttachmentDocument,
@@ -34,6 +35,7 @@ function trusted<T>(context: TenantContextService, action: () => T): T {
         'erp:recruitment:migration:write',
         'erp:attendance:migration:write',
         'erp:payroll:migration:write',
+        'erp:treasury:migration:write',
       ],
       departmentIds: [], traceId: 'trace-migration-001',
     },
@@ -151,6 +153,10 @@ function payrollPeriodLocksRun() {
 
 function payrollTaxFilingsRun() {
   return { ...run(), scope: 'payroll_tax_filings' as const };
+}
+
+function treasuryBankAccountsRun() {
+  return { ...run(), scope: 'treasury_bank_accounts' as const };
 }
 
 function query<T>(value: T) { return { lean: () => ({ exec: () => Promise.resolve(value) }) }; }
@@ -2110,6 +2116,77 @@ describe('DataMigrationService', () => {
       }),
     );
     expect(JSON.stringify(items.create.mock.calls)).not.toMatch(/1000000|10500|taxable/u);
+  });
+
+  it('资金账户迁移解析员工和审批历史且账本不保存账号明文', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      ownerType: 'employee', ownerEmployeeSourceId: 'legacy-employee-001',
+      accountName: '张三', account: '6222000000000001', clearingCode: 'CNAPS001',
+      currency: 'CNY', version: 1, status: 'active',
+      approvalHistorySourceId: 'legacy-account-approval-001',
+      approvalEvidenceChecksum: 'a'.repeat(43),
+      createdAt: '2026-07-01T00:00:00.000Z', revokedAt: null,
+      sourceEvidenceSourceAttachmentId: 'treasury-account-001',
+      sourceEvidenceChecksum: 'e'.repeat(43),
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(treasuryBankAccountsRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const targetIds: Readonly<Record<string, string>> = {
+      'org.employee': 'employee-001',
+      'approval.history': '01J8ZQK7V0A2M4N6P8R0T2W4H1',
+    };
+    const mappings = {
+      findOne: vi.fn((filter: { entityType: string }) => query(
+        filter.entityType === 'treasury.bank_account' ? null : {
+          targetId: targetIds[filter.entityType], targetVersion: 1,
+        },
+      )),
+      findOneAndUpdate: vi.fn().mockReturnValue(query({ targetId: 'account-001' })),
+    };
+    const associations = {
+      findOneAndUpdate: vi.fn().mockReturnValue(query({})),
+      bulkWrite: vi.fn().mockResolvedValue({}),
+    };
+    const attachments = {
+      findOne: vi.fn().mockReturnValue(query(null)),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const treasuryAccounts = { importFromMigration: vi.fn().mockResolvedValue({
+      id: 'account-001', ownerType: 'employee', ownerId: 'employee-001',
+      version: 1, status: 'active',
+    }) };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      mappings as unknown as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+      undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, undefined,
+      treasuryAccounts as unknown as TreasuryBankAccountService,
+    );
+    const result = await trusted(context, () => service.apply(RUN_ID, {
+      sequence: 1, sourceRecordId: 'legacy-account-001', sourceVersion: '1',
+      entityType: 'treasury.bank_account', payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: ['legacy-employee-001', 'legacy-account-approval-001'],
+      attachments: [{ sourceAttachmentId: 'treasury-account-001', checksum: 'e'.repeat(43) }],
+    }));
+    expect(result).toMatchObject({ status: 'applied', targetId: 'account-001' });
+    expect(treasuryAccounts.importFromMigration).toHaveBeenCalledWith(
+      expect.stringMatching(/^migration:/u),
+      expect.objectContaining({
+        ownerId: 'employee-001',
+        approvalHistoryId: targetIds['approval.history'],
+        account: '6222000000000001',
+      }),
+    );
+    expect(JSON.stringify(items.create.mock.calls)).not.toMatch(/6222000000000001|张三|CNAPS001/u);
   });
 
   it('未解析关联和未决附件进入 Phase 6 硬门禁', async () => {
