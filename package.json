@@ -24,6 +24,9 @@
     "security:dast:validate-evidence": "node scripts/security/validate-phase-5-dast-evidence.mjs",
     "performance:validate": "node scripts/performance/validate-phase-5-capacity.mjs",
     "performance:self-test": "node scripts/performance/validate-phase-5-capacity.mjs --self-test",
+    "migration:rehearsal:validate-evidence": "node scripts/migration/validate-phase-5-migration-rehearsal-evidence.mjs",
+    "migration:rehearsal:self-test": "node scripts/migration/validate-phase-5-migration-rehearsal-evidence.mjs --self-test",
+    "migration:rehearsal:print-contract": "node scripts/migration/validate-phase-5-migration-rehearsal-evidence.mjs --print-contract",
     "resilience:validate-evidence": "node scripts/resilience/validate-phase-5-resilience-evidence.mjs",
     "resilience:self-test": "node scripts/resilience/validate-phase-5-resilience-evidence.mjs --self-test",
     "release:go-no-go:validate-evidence": "node scripts/release/validate-phase-5-go-no-go-evidence.mjs",
@@ -37,7 +40,7 @@
     "release:phase6:hypercare:validate-evidence": "node scripts/release/validate-phase-6-hypercare-evidence.mjs",
     "release:phase6:hypercare:self-test": "node scripts/release/validate-phase-6-hypercare-evidence.mjs --self-test",
     "release:phase6:workflows:validate": "node scripts/validate-phase-6-workflows.mjs",
-    "check": "pnpm lint && pnpm typecheck && pnpm test && node scripts/validate-docs.mjs && pnpm security:validate && pnpm security:containers && pnpm security:dast:self-test && pnpm performance:self-test && pnpm resilience:self-test && pnpm release:go-no-go:self-test && pnpm mcp:catalog:self-test && pnpm mcp:integration:self-test && pnpm release:phase6:cutover:self-test && pnpm release:phase6:hypercare:self-test && pnpm release:phase6:workflows:validate"
+    "check": "pnpm lint && pnpm typecheck && pnpm test && node scripts/validate-docs.mjs && pnpm security:validate && pnpm security:containers && pnpm security:dast:self-test && pnpm performance:self-test && pnpm migration:rehearsal:self-test && pnpm resilience:self-test && pnpm release:go-no-go:self-test && pnpm mcp:catalog:self-test && pnpm mcp:integration:self-test && pnpm release:phase6:cutover:self-test && pnpm release:phase6:hypercare:self-test && pnpm release:phase6:workflows:validate"
   },
   "pnpm": {
     "overrides": {

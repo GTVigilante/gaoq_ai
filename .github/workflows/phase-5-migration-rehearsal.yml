@@ -1,0 +1,82 @@
+name: Phase 5 全量迁移三次演练证据验收
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-5-migration-rehearsal
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    name: 校验受信任分支与迁移演练证据契约
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 只允许默认分支执行现场验收
+        shell: bash
+        run: test "$GITHUB_REF" = 'refs/heads/main'
+
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - name: 校验全部 Scope 聚合证据的失败关闭边界
+        run: node scripts/migration/validate-phase-5-migration-rehearsal-evidence.mjs --self-test
+
+  evidence:
+    name: 验收三轮全量迁移与故障演练聚合证据
+    needs: contract
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - phase-5-migration-rehearsal
+    timeout-minutes: 30
+    environment: phase-5-migration-rehearsal
+    env:
+      MIGRATION_REHEARSAL_EVIDENCE_PATH: /var/lib/gaoq/migration/phase-5-rehearsal.json
+      MIGRATION_REHEARSAL_EXPECTED_ENVIRONMENT: ${{ vars.MIGRATION_REHEARSAL_ENVIRONMENT_NAME }}
+      MIGRATION_REHEARSAL_EXPECTED_REGION: ${{ vars.MIGRATION_REHEARSAL_REGION }}
+      MIGRATION_REHEARSAL_EXPECTED_COMMIT: ${{ github.sha }}
+      MIGRATION_REHEARSAL_EXPECTED_API_IMAGE: ${{ vars.MIGRATION_REHEARSAL_API_IMAGE_DIGEST }}
+      MIGRATION_REHEARSAL_EXPECTED_WORKER_IMAGE: ${{ vars.MIGRATION_REHEARSAL_WORKER_IMAGE_DIGEST }}
+      MIGRATION_REHEARSAL_EXPECTED_WEB_IMAGE: ${{ vars.MIGRATION_REHEARSAL_WEB_IMAGE_DIGEST }}
+      MIGRATION_REHEARSAL_EXPECTED_DEPLOYMENT_MANIFEST: ${{ vars.MIGRATION_REHEARSAL_DEPLOYMENT_MANIFEST_SHA256 }}
+      MIGRATION_REHEARSAL_EXPECTED_SOURCE_SNAPSHOT: ${{ vars.MIGRATION_REHEARSAL_SOURCE_SNAPSHOT_SHA256 }}
+      MIGRATION_REHEARSAL_EXPECTED_PACKAGE_MANIFEST: ${{ vars.MIGRATION_REHEARSAL_PACKAGE_MANIFEST_SHA256 }}
+      MIGRATION_REHEARSAL_VERDICT_PATH: ${{ runner.temp }}/phase-5-migration-rehearsal-verdict.json
+    steps:
+      - name: 检出受信任代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - name: 验证版本绑定与三轮全量迁移聚合证据
+        run: >-
+          node scripts/migration/validate-phase-5-migration-rehearsal-evidence.mjs
+          --enforce-environment
+          "$MIGRATION_REHEARSAL_EVIDENCE_PATH"
+          > "$MIGRATION_REHEARSAL_VERDICT_PATH"
+
+      - name: 保存不含业务数据的验收结论
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: phase-5-migration-rehearsal-verdict-${{ github.sha }}
+          path: ${{ runner.temp }}/phase-5-migration-rehearsal-verdict.json
+          if-no-files-found: error
+          retention-days: 30

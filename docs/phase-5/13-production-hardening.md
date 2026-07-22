@@ -19,6 +19,8 @@ API、Worker、Web 已有固定摘要、distroless、nonroot 的生产镜像目�
 
 1000 并发只读 API、1000 人工资计算和三次可比证据的脚本与校验契约见[性能容量三次实测门禁](./15-performance-capacity-gate.md)。现场证据只能由受保护的 `phase-5-performance` Environment 和隔离单次 Runner 验收；工具交付不代替生产等价环境的三次真实执行。
 
+二十六个迁移 Scope、三轮七十八个运行与三类故障演练的聚合证据由[数据迁移三次演练证据门禁](./12-data-migration-rehearsal-gate.md)验收。只有受保护的 `phase-5-migration-rehearsal` Environment 可以生成供 Go/No-Go 消费的 migration verdict；单 Scope 比较通过不能替代全链路验收。
+
 ZAP 主动扫描、OWASP ASVS 5.0.0 L2/L3 证据与四方签署契约见[DAST 与 ASVS 5.0.0 证据门禁](./16-dast-asvs-gate.md)。工作流只能由受保护的 `phase-5-dast` GitHub Environment 在隔离测试租户执行，不允许扫描生产流量。
 
 MongoDB 时间点恢复、Redis/BullMQ 重建、对象/WORM 与 KMS 验证、旧系统回滚及八类外部连接两小时断连追赶契约见[容灾恢复与外部系统断连追赶门禁](./17-resilience-rehearsal-gate.md)。现场证据只能由受保护的 `phase-5-resilience` Environment 和隔离单次 Runner 验收。

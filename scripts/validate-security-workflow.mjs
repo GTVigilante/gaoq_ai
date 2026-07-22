@@ -2,6 +2,10 @@ import { readFile } from 'node:fs/promises';
 
 const workflowPath = new URL('../.github/workflows/phase-5-security.yml', import.meta.url);
 const performanceWorkflowPath = new URL('../.github/workflows/phase-5-performance.yml', import.meta.url);
+const migrationRehearsalWorkflowPath = new URL(
+  '../.github/workflows/phase-5-migration-rehearsal.yml',
+  import.meta.url,
+);
 const resilienceWorkflowPath = new URL('../.github/workflows/phase-5-resilience.yml', import.meta.url);
 const goNoGoWorkflowPath = new URL('../.github/workflows/phase-5-go-no-go.yml', import.meta.url);
 const mcpIntegrationWorkflowPath = new URL('../.github/workflows/phase-5-mcp-integration.yml', import.meta.url);
@@ -10,6 +14,7 @@ const bearerIgnorePath = new URL('../bearer.ignore', import.meta.url);
 const gitleaksConfigPath = new URL('../.gitleaks.toml', import.meta.url);
 const workflow = await readFile(workflowPath, 'utf8');
 const performanceWorkflow = await readFile(performanceWorkflowPath, 'utf8');
+const migrationRehearsalWorkflow = await readFile(migrationRehearsalWorkflowPath, 'utf8');
 const resilienceWorkflow = await readFile(resilienceWorkflowPath, 'utf8');
 const goNoGoWorkflow = await readFile(goNoGoWorkflowPath, 'utf8');
 const mcpIntegrationWorkflow = await readFile(mcpIntegrationWorkflowPath, 'utf8');
@@ -45,6 +50,8 @@ for (const marker of [
   '6124dba176dc563f66363a11ae0c47f9b86b8a4a84c66a793670bd196ed86cd5',
   'node scripts/security/run-phase-5-dast.mjs --self-test',
   'node scripts/security/validate-phase-5-dast-evidence.mjs --self-test',
+  'migration-rehearsal-contract:',
+  'node scripts/migration/validate-phase-5-migration-rehearsal-evidence.mjs --self-test',
   'resilience-contract:',
   'node scripts/resilience/validate-phase-5-resilience-evidence.mjs --self-test',
   'go-no-go-contract:',
@@ -87,6 +94,41 @@ for (const forbidden of [
 ]) {
   if (performanceWorkflow.includes(forbidden)) {
     throw new Error('PHASE5_PERFORMANCE_WORKFLOW_UNSAFE');
+  }
+}
+
+const migrationRehearsalActionReferences = [
+  ...migrationRehearsalWorkflow.matchAll(/^\s*uses:\s*([^\s#]+)(?:\s*#.*)?$/gmu),
+].map((match) => match[1]);
+if (migrationRehearsalActionReferences.length !== 5 ||
+  migrationRehearsalActionReferences.some(
+    (reference) => reference === undefined || !/@[a-f0-9]{40}$/u.test(reference),
+  )) throw new Error('PHASE5_MIGRATION_REHEARSAL_ACTION_NOT_PINNED');
+for (const marker of [
+  'workflow_dispatch:', "test \"$GITHUB_REF\" = 'refs/heads/main'",
+  'environment: phase-5-migration-rehearsal', '- phase-5-migration-rehearsal',
+  'MIGRATION_REHEARSAL_EVIDENCE_PATH: /var/lib/gaoq/migration/phase-5-rehearsal.json',
+  'MIGRATION_REHEARSAL_EXPECTED_ENVIRONMENT: ${{ vars.MIGRATION_REHEARSAL_ENVIRONMENT_NAME }}',
+  'MIGRATION_REHEARSAL_EXPECTED_REGION: ${{ vars.MIGRATION_REHEARSAL_REGION }}',
+  'MIGRATION_REHEARSAL_EXPECTED_COMMIT: ${{ github.sha }}',
+  'MIGRATION_REHEARSAL_EXPECTED_API_IMAGE: ${{ vars.MIGRATION_REHEARSAL_API_IMAGE_DIGEST }}',
+  'MIGRATION_REHEARSAL_EXPECTED_WORKER_IMAGE: ${{ vars.MIGRATION_REHEARSAL_WORKER_IMAGE_DIGEST }}',
+  'MIGRATION_REHEARSAL_EXPECTED_WEB_IMAGE: ${{ vars.MIGRATION_REHEARSAL_WEB_IMAGE_DIGEST }}',
+  'MIGRATION_REHEARSAL_EXPECTED_DEPLOYMENT_MANIFEST: ${{ vars.MIGRATION_REHEARSAL_DEPLOYMENT_MANIFEST_SHA256 }}',
+  'MIGRATION_REHEARSAL_EXPECTED_SOURCE_SNAPSHOT: ${{ vars.MIGRATION_REHEARSAL_SOURCE_SNAPSHOT_SHA256 }}',
+  'MIGRATION_REHEARSAL_EXPECTED_PACKAGE_MANIFEST: ${{ vars.MIGRATION_REHEARSAL_PACKAGE_MANIFEST_SHA256 }}',
+  '--enforce-environment', 'phase-5-migration-rehearsal-verdict-${{ github.sha }}',
+  'retention-days: 30',
+]) {
+  if (!migrationRehearsalWorkflow.includes(marker)) {
+    throw new Error('PHASE5_MIGRATION_REHEARSAL_WORKFLOW_INCOMPLETE');
+  }
+}
+for (const forbidden of [
+  'pull_request:', 'push:', 'workflow_call:', '${{ inputs.', '${{ secrets.',
+]) {
+  if (migrationRehearsalWorkflow.includes(forbidden)) {
+    throw new Error('PHASE5_MIGRATION_REHEARSAL_WORKFLOW_UNSAFE');
   }
 }
 
