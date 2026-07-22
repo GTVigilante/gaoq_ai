@@ -3,12 +3,14 @@ import { readFile } from 'node:fs/promises';
 const workflowPath = new URL('../.github/workflows/phase-5-security.yml', import.meta.url);
 const resilienceWorkflowPath = new URL('../.github/workflows/phase-5-resilience.yml', import.meta.url);
 const goNoGoWorkflowPath = new URL('../.github/workflows/phase-5-go-no-go.yml', import.meta.url);
+const mcpIntegrationWorkflowPath = new URL('../.github/workflows/phase-5-mcp-integration.yml', import.meta.url);
 const packagePath = new URL('../package.json', import.meta.url);
 const bearerIgnorePath = new URL('../bearer.ignore', import.meta.url);
 const gitleaksConfigPath = new URL('../.gitleaks.toml', import.meta.url);
 const workflow = await readFile(workflowPath, 'utf8');
 const resilienceWorkflow = await readFile(resilienceWorkflowPath, 'utf8');
 const goNoGoWorkflow = await readFile(goNoGoWorkflowPath, 'utf8');
+const mcpIntegrationWorkflow = await readFile(mcpIntegrationWorkflowPath, 'utf8');
 const packageDocument = JSON.parse(await readFile(packagePath, 'utf8'));
 const bearerIgnore = JSON.parse(await readFile(bearerIgnorePath, 'utf8'));
 const gitleaksConfig = await readFile(gitleaksConfigPath, 'utf8');
@@ -45,6 +47,8 @@ for (const marker of [
   'node scripts/resilience/validate-phase-5-resilience-evidence.mjs --self-test',
   'go-no-go-contract:',
   'node scripts/release/validate-phase-5-go-no-go-evidence.mjs --self-test',
+  'mcp-catalog-contract:',
+  'pnpm mcp:catalog:self-test',
 ]) {
   if (!workflow.includes(marker)) throw new Error('PHASE5_SECURITY_GATE_INCOMPLETE');
 }
@@ -113,6 +117,31 @@ for (const forbidden of [
   'pull_request:', 'push:', 'workflow_call:', '${{ inputs.', '${{ secrets.',
 ]) {
   if (goNoGoWorkflow.includes(forbidden)) throw new Error('PHASE5_GO_NO_GO_WORKFLOW_UNSAFE');
+}
+
+const mcpIntegrationActions = [
+  ...mcpIntegrationWorkflow.matchAll(/^\s*uses:\s*([^\s#]+)(?:\s*#.*)?$/gmu),
+].map((match) => match[1]);
+if (mcpIntegrationActions.length !== 7 || mcpIntegrationActions.some(
+  (reference) => reference === undefined || !/@[a-f0-9]{40}$/u.test(reference),
+)) throw new Error('PHASE5_MCP_INTEGRATION_ACTION_NOT_PINNED');
+for (const marker of [
+  'workflow_dispatch:', "test \"$GITHUB_REF\" = 'refs/heads/main'",
+  'environment: phase-5-mcp-integration', 'phase-5-mcp-integration]',
+  'MCP_INTEGRATION_EVIDENCE_PATH: /var/lib/gaoq/mcp/phase-5-mcp-integration.json',
+  'MCP_INTEGRATION_EXPECTED_COMMIT: ${{ github.sha }}',
+  'MCP_INTEGRATION_EXPECTED_API_IMAGE: ${{ vars.MCP_INTEGRATION_API_IMAGE_DIGEST }}',
+  '--enforce-environment "$MCP_INTEGRATION_EVIDENCE_PATH"',
+  'phase-5-mcp-integration-verdict-${{ github.sha }}', 'retention-days: 30',
+]) {
+  if (!mcpIntegrationWorkflow.includes(marker)) {
+    throw new Error('PHASE5_MCP_INTEGRATION_WORKFLOW_INCOMPLETE');
+  }
+}
+for (const forbidden of ['pull_request:', 'push:', 'workflow_call:', '${{ inputs.', '${{ secrets.']) {
+  if (mcpIntegrationWorkflow.includes(forbidden)) {
+    throw new Error('PHASE5_MCP_INTEGRATION_WORKFLOW_UNSAFE');
+  }
 }
 
 if (workflow.includes('actions/dependency-review-action@')) {

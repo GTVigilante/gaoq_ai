@@ -265,6 +265,32 @@ jobs:
           node scripts/release/validate-phase-5-go-no-go-evidence.mjs --self-test
           node scripts/validate-security-workflow.mjs
 
+  mcp-catalog-contract:
+    name: MCP 完整能力目录契约
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 10.29.2
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装冻结依赖并验证真实运行时目录
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm mcp:catalog:self-test
+
   container-images:
     name: 生产镜像（${{ matrix.image }}）
     runs-on: ubuntu-latest

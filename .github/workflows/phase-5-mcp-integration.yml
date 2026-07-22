@@ -1,0 +1,80 @@
+name: Phase 5 MCP 跨系统联调证据验收
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-5-mcp-integration
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    name: 校验 MCP 目录与联调契约
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 只允许默认分支执行现场验收
+        run: test "$GITHUB_REF" = 'refs/heads/main'
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 10.29.2
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: 校验运行时目录与证据契约
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm mcp:catalog:self-test
+          pnpm mcp:integration:self-test
+
+  evidence:
+    name: 验收三类客户端与八类外部沙箱证据
+    needs: contract
+    runs-on: [self-hosted, linux, x64, phase-5-mcp-integration]
+    timeout-minutes: 30
+    environment: phase-5-mcp-integration
+    env:
+      MCP_INTEGRATION_EVIDENCE_PATH: /var/lib/gaoq/mcp/phase-5-mcp-integration.json
+      MCP_INTEGRATION_EXPECTED_ENVIRONMENT: ${{ vars.MCP_INTEGRATION_ENVIRONMENT_NAME }}
+      MCP_INTEGRATION_EXPECTED_COMMIT: ${{ github.sha }}
+      MCP_INTEGRATION_EXPECTED_API_IMAGE: ${{ vars.MCP_INTEGRATION_API_IMAGE_DIGEST }}
+      MCP_INTEGRATION_EXPECTED_WORKER_IMAGE: ${{ vars.MCP_INTEGRATION_WORKER_IMAGE_DIGEST }}
+      MCP_INTEGRATION_EXPECTED_WEB_IMAGE: ${{ vars.MCP_INTEGRATION_WEB_IMAGE_DIGEST }}
+      MCP_INTEGRATION_VERDICT_PATH: ${{ runner.temp }}/phase-5-mcp-integration-verdict.json
+    steps:
+      - name: 检出受信任代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 10.29.2
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: 安装冻结依赖并验证现场证据
+        run: |
+          pnpm install --frozen-lockfile
+          node scripts/mcp/validate-phase-5-mcp-integration-evidence.mjs \
+            --enforce-environment "$MCP_INTEGRATION_EVIDENCE_PATH" \
+            > "$MCP_INTEGRATION_VERDICT_PATH"
+      - name: 保存脱敏联调结论
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: phase-5-mcp-integration-verdict-${{ github.sha }}
+          path: ${{ runner.temp }}/phase-5-mcp-integration-verdict.json
+          if-no-files-found: error
+          retention-days: 30

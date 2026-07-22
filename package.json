@@ -28,7 +28,11 @@
     "resilience:self-test": "node scripts/resilience/validate-phase-5-resilience-evidence.mjs --self-test",
     "release:go-no-go:validate-evidence": "node scripts/release/validate-phase-5-go-no-go-evidence.mjs",
     "release:go-no-go:self-test": "node scripts/release/validate-phase-5-go-no-go-evidence.mjs --self-test",
-    "check": "pnpm lint && pnpm typecheck && pnpm test && node scripts/validate-docs.mjs && pnpm security:validate && pnpm security:containers && pnpm security:dast:self-test && pnpm performance:self-test && pnpm resilience:self-test && pnpm release:go-no-go:self-test"
+    "mcp:catalog:print": "node scripts/mcp/validate-phase-5-mcp-catalog.mjs --print",
+    "mcp:catalog:self-test": "node scripts/mcp/validate-phase-5-mcp-catalog.mjs --self-test",
+    "mcp:integration:validate-evidence": "node scripts/mcp/validate-phase-5-mcp-integration-evidence.mjs",
+    "mcp:integration:self-test": "node scripts/mcp/validate-phase-5-mcp-integration-evidence.mjs --self-test",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && node scripts/validate-docs.mjs && pnpm security:validate && pnpm security:containers && pnpm security:dast:self-test && pnpm performance:self-test && pnpm resilience:self-test && pnpm release:go-no-go:self-test && pnpm mcp:catalog:self-test && pnpm mcp:integration:self-test"
   },
   "pnpm": {
     "overrides": {
