@@ -1,7 +1,7 @@
 # Phase 5 生产加固与 Go/No-Go 证据
 
 - 文档编号：phase-5/13
-- 状态：供应链首批门禁已交付；生产镜像、DAST、容量和容灾实测仍待完成
+- 状态：供应链与生产镜像门禁已实现；DAST、容量和容灾实测仍待完成
 
 ## 安全与供应链门禁
 
@@ -15,9 +15,11 @@ Dependabot 每周分别检查 pnpm/npm 依赖与 GitHub Actions。许可证门�
 
 ## 后续生产门禁
 
+API、Worker、Web 已有固定摘要、distroless、nonroot 的生产镜像目标；每个 PR 分别构建最终镜像、生成 SPDX JSON SBOM 并以 Trivy 阻断 High/Critical 漏洞。构建和验证细则见[生产镜像构建与验证运行手册](./14-production-images-runbook.md)。正式仓库推送、镜像签名、SLSA provenance 与准入策略仍待 CD 平台接入。
+
 以下项目尚未完成，因此本文件不构成生产放行：
 
-- 生成最小权限、非 root、只读文件系统兼容的 API/Web/Worker 生产镜像，并对最终镜像生成 SBOM 与 High/Critical 零漏洞报告；
+- 在 CD 平台执行生产镜像签名、SLSA provenance、只读文件系统冒烟、准入与回滚验证；
 - 在生产等价环境执行 SAST 之外的 DAST、ASVS L2 与高风险 L3 验证，安全负责人签署；
 - 验证 API P95 小于 500ms、1000 并发和 1000 人薪资 5 分钟内完成，保存原始负载结果；
 - 完成 MongoDB、Redis、对象证据、队列和密钥依赖的 RPO 不超过 15 分钟、RTO 不超过 4 小时恢复演练；

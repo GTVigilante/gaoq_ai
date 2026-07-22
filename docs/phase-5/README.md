@@ -17,7 +17,8 @@ Phase 5 在已验收的组织、审批、招聘入职、考勤薪酬底座之上
    - [数据迁移控制面索引运行手册](./10-data-migration-index-runbook.md)
    - [数据迁移来源包运行手册](./11-data-migration-package-runbook.md)
    - [数据迁移三次演练证据门禁](./12-data-migration-rehearsal-gate.md)（工具已交付，三次真实演练待执行）
-8. [生产加固与 Go/No-Go 证据](./13-production-hardening.md)（供应链首批门禁已交付，生产镜像、DAST、容量和容灾实测待续）
+8. [生产加固与 Go/No-Go 证据](./13-production-hardening.md)（供应链与生产镜像门禁已实现，DAST、容量和容灾实测待续）
+   - [生产镜像构建与验证运行手册](./14-production-images-runbook.md)
 
 后续切片各自拥有独立契约文档；禁止借任何已立项切片隐式扩张范围。
 

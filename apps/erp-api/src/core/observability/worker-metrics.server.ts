@@ -49,6 +49,10 @@ export class WorkerMetricsServer implements OnApplicationBootstrap, OnApplicatio
   }
 
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    if (request.method === 'GET' && request.url === '/health/live') {
+      respond(response, 200, 'OK');
+      return;
+    }
     if (request.method !== 'GET' || request.url !== '/metrics') {
       respond(response, 404, 'Not Found');
       return;

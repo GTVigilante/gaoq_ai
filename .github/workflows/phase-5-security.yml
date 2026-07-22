@@ -152,9 +152,68 @@ jobs:
         with:
           scan-type: fs
           scan-ref: .
-          scanners: vuln,secret,misconfig
+          scanners: vuln,secret
           severity: HIGH,CRITICAL
           exit-code: '1'
           ignore-unfixed: false
           skip-dirs: node_modules,.next,dist,coverage
+          timeout: 10m
+
+  container-images:
+    name: 生产镜像（${{ matrix.image }}）
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: api
+            target: erp-api
+          - image: worker
+            target: erp-worker
+          - image: web
+            target: erp-web
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 构建不可变生产镜像
+        shell: bash
+        run: |
+          docker build \
+            --target "${{ matrix.target }}" \
+            --build-arg IMAGE_REVISION="$GITHUB_SHA" \
+            --build-arg NEXT_PUBLIC_ERP_API_ORIGIN=https://erp.example.invalid \
+            --tag "gaoq-os/${{ matrix.image }}:$GITHUB_SHA" \
+            .
+
+      - name: 验证非 root 用户与健康检查
+        shell: bash
+        run: |
+          image="gaoq-os/${{ matrix.image }}:$GITHUB_SHA"
+          configured_user="$(docker image inspect "$image" --format '{{.Config.User}}')"
+          healthcheck="$(docker image inspect "$image" --format '{{json .Config.Healthcheck.Test}}')"
+          test "$configured_user" = '65532:65532'
+          test "$healthcheck" != 'null'
+
+      - name: 生成生产镜像 SPDX JSON SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: gaoq-os/${{ matrix.image }}:${{ github.sha }}
+          format: spdx-json
+          output-file: gaoq-os-${{ matrix.image }}.spdx.json
+          artifact-name: gaoq-os-${{ matrix.image }}-sbom
+          upload-artifact: true
+          upload-artifact-retention: 30
+
+      - name: 阻断生产镜像 High 与 Critical 漏洞
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: gaoq-os/${{ matrix.image }}:${{ github.sha }}
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: false
           timeout: 10m

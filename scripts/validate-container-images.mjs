@@ -1,0 +1,50 @@
+import { readFile } from 'node:fs/promises';
+
+const dockerfile = await readFile(new URL('../Dockerfile', import.meta.url), 'utf8');
+const dockerignore = await readFile(new URL('../.dockerignore', import.meta.url), 'utf8');
+const workflow = await readFile(
+  new URL('../.github/workflows/phase-5-security.yml', import.meta.url), 'utf8',
+);
+const dependabot = await readFile(new URL('../.github/dependabot.yml', import.meta.url), 'utf8');
+
+for (const marker of [
+  'node:22.23.1-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3',
+  'gcr.io/distroless/nodejs22-debian12:nonroot@sha256:13593b7570658e8477de39e2f4a1dd25db2f836d68a0ba771251572d23bb4f8e',
+  'FROM runtime-base AS erp-api',
+  'FROM runtime-base AS erp-worker',
+  'FROM runtime-base AS erp-web',
+  'USER 65532:65532',
+  'org.opencontainers.image.revision',
+  'NEXT_PUBLIC_ERP_API_ORIGIN',
+]) {
+  if (!dockerfile.includes(marker)) throw new Error('PHASE5_CONTAINER_BASELINE_INCOMPLETE');
+}
+
+if ((dockerfile.match(/^HEALTHCHECK /gmu) ?? []).length !== 3 ||
+  /^USER\s+(?:0|root)(?::|\s|$)/mu.test(dockerfile)) {
+  throw new Error('PHASE5_CONTAINER_RUNTIME_POLICY_INVALID');
+}
+
+for (const marker of [
+  '.git', '.env.*', '**/.next', '**/dist', '**/node_modules', 'wordpress backup',
+]) {
+  if (!dockerignore.split('\n').includes(marker)) throw new Error('PHASE5_CONTAINER_CONTEXT_EXPOSED');
+}
+
+for (const marker of [
+  'container-images:',
+  'target: erp-api',
+  'target: erp-worker',
+  'target: erp-web',
+  "test \"$configured_user\" = '65532:65532'",
+  'artifact-name: gaoq-os-${{ matrix.image }}-sbom',
+  'image-ref: gaoq-os/${{ matrix.image }}:${{ github.sha }}',
+]) {
+  if (!workflow.includes(marker)) throw new Error('PHASE5_CONTAINER_CI_GATE_INCOMPLETE');
+}
+
+if (!/- package-ecosystem: docker\n\s+directory: \/$/mu.test(dependabot)) {
+  throw new Error('PHASE5_CONTAINER_UPDATE_POLICY_MISSING');
+}
+
+process.stdout.write('Phase 5 生产镜像与镜像安全门禁校验通过。\n');
