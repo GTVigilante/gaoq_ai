@@ -1,8 +1,28 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
-  "required": ["release", "images", "runtime", "replicas", "networkPolicy"],
+  "required": [
+    "nameOverride",
+    "fullnameOverride",
+    "targetNamespace",
+    "release",
+    "images",
+    "runtime",
+    "serviceAccount",
+    "replicas",
+    "resources",
+    "autoscaling",
+    "podDisruptionBudget",
+    "ingress",
+    "networkPolicy",
+    "nodeSelector",
+    "tolerations",
+    "topologySpreadKey"
+  ],
   "properties": {
+    "nameOverride": { "$ref": "#/definitions/optionalDnsLabel" },
+    "fullnameOverride": { "$ref": "#/definitions/optionalDnsLabel" },
+    "targetNamespace": { "$ref": "#/definitions/dnsLabel" },
     "release": {
       "type": "object",
       "required": ["commitSha", "deploymentManifestHash", "rolloutId"],
@@ -41,6 +61,14 @@
       },
       "additionalProperties": false
     },
+    "serviceAccount": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "$ref": "#/definitions/dnsLabel" }
+      },
+      "additionalProperties": false
+    },
     "replicas": {
       "type": "object",
       "required": ["api", "worker", "web"],
@@ -48,6 +76,50 @@
         "api": { "type": "integer", "minimum": 3, "maximum": 50 },
         "worker": { "type": "integer", "minimum": 2, "maximum": 50 },
         "web": { "type": "integer", "minimum": 3, "maximum": 50 }
+      },
+      "additionalProperties": false
+    },
+    "resources": {
+      "type": "object",
+      "required": ["api", "worker", "web"],
+      "properties": {
+        "api": { "$ref": "#/definitions/componentResources" },
+        "worker": { "$ref": "#/definitions/componentResources" },
+        "web": { "$ref": "#/definitions/componentResources" }
+      },
+      "additionalProperties": false
+    },
+    "autoscaling": {
+      "type": "object",
+      "required": ["api", "web"],
+      "properties": {
+        "api": { "$ref": "#/definitions/autoscaling" },
+        "web": { "$ref": "#/definitions/autoscaling" }
+      },
+      "additionalProperties": false
+    },
+    "podDisruptionBudget": {
+      "type": "object",
+      "required": ["apiMinAvailable", "workerMinAvailable", "webMinAvailable"],
+      "properties": {
+        "apiMinAvailable": { "type": "integer", "minimum": 2, "maximum": 49 },
+        "workerMinAvailable": { "type": "integer", "minimum": 1, "maximum": 49 },
+        "webMinAvailable": { "type": "integer", "minimum": 2, "maximum": 49 }
+      },
+      "additionalProperties": false
+    },
+    "ingress": {
+      "type": "object",
+      "required": ["enabled", "className", "annotations", "apiHost", "webHost", "tlsSecretName", "apiPath", "webPath"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "className": { "$ref": "#/definitions/optionalDnsLabel" },
+        "annotations": { "$ref": "#/definitions/annotations" },
+        "apiHost": { "$ref": "#/definitions/optionalHostname" },
+        "webHost": { "$ref": "#/definitions/optionalHostname" },
+        "tlsSecretName": { "$ref": "#/definitions/optionalDnsLabel" },
+        "apiPath": { "$ref": "#/definitions/httpPath" },
+        "webPath": { "$ref": "#/definitions/httpPath" }
       },
       "additionalProperties": false
     },
@@ -76,8 +148,21 @@
         "redisCidrs": { "$ref": "#/definitions/privateCidrs" }
       },
       "additionalProperties": false
+    },
+    "nodeSelector": { "$ref": "#/definitions/labels" },
+    "tolerations": {
+      "type": "array",
+      "maxItems": 16,
+      "items": { "$ref": "#/definitions/toleration" }
+    },
+    "topologySpreadKey": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 253,
+      "pattern": "^[A-Za-z0-9./_-]+$"
     }
   },
+  "additionalProperties": false,
   "definitions": {
     "image": {
       "type": "object",
@@ -93,6 +178,100 @@
       "minLength": 1,
       "maxLength": 63,
       "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+    },
+    "optionalDnsLabel": {
+      "type": "string",
+      "maxLength": 63,
+      "pattern": "^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+    },
+    "optionalHostname": {
+      "type": "string",
+      "maxLength": 253,
+      "pattern": "^$|^(?:[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?\\.)+[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$"
+    },
+    "httpPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^/[A-Za-z0-9/_-]*$"
+    },
+    "annotations": {
+      "type": "object",
+      "maxProperties": 32,
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 253,
+        "pattern": "^[A-Za-z0-9./_-]+$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 1024,
+        "pattern": "^[^\\r\\n]*$"
+      }
+    },
+    "labels": {
+      "type": "object",
+      "maxProperties": 32,
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 253,
+        "pattern": "^[A-Za-z0-9./_-]+$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 63,
+        "pattern": "^[A-Za-z0-9._-]+$"
+      }
+    },
+    "resourceList": {
+      "type": "object",
+      "required": ["cpu", "memory", "ephemeral-storage"],
+      "properties": {
+        "cpu": { "$ref": "#/definitions/resourceQuantity" },
+        "memory": { "$ref": "#/definitions/resourceQuantity" },
+        "ephemeral-storage": { "$ref": "#/definitions/resourceQuantity" }
+      },
+      "additionalProperties": false
+    },
+    "resourceQuantity": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*(?:m|Ki|Mi|Gi|Ti|Pi|Ei)?$"
+    },
+    "componentResources": {
+      "type": "object",
+      "required": ["requests", "limits"],
+      "properties": {
+        "requests": { "$ref": "#/definitions/resourceList" },
+        "limits": { "$ref": "#/definitions/resourceList" }
+      },
+      "additionalProperties": false
+    },
+    "autoscaling": {
+      "type": "object",
+      "required": ["enabled", "minReplicas", "maxReplicas", "cpuUtilization", "memoryUtilization"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "minReplicas": { "type": "integer", "minimum": 3, "maximum": 50 },
+        "maxReplicas": { "type": "integer", "minimum": 3, "maximum": 100 },
+        "cpuUtilization": { "type": "integer", "minimum": 20, "maximum": 90 },
+        "memoryUtilization": { "type": "integer", "minimum": 20, "maximum": 90 }
+      },
+      "additionalProperties": false
+    },
+    "toleration": {
+      "type": "object",
+      "required": ["operator"],
+      "properties": {
+        "key": { "type": "string", "maxLength": 253, "pattern": "^[A-Za-z0-9./_-]*$" },
+        "operator": { "enum": ["Exists", "Equal"] },
+        "value": { "type": "string", "maxLength": 63, "pattern": "^[A-Za-z0-9._-]*$" },
+        "effect": { "enum": ["NoSchedule", "PreferNoSchedule", "NoExecute"] },
+        "tolerationSeconds": { "type": "integer", "minimum": 0, "maximum": 86400 }
+      },
+      "additionalProperties": false
     },
     "nonEmptyLabels": {
       "type": "object",

@@ -2,6 +2,7 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: {{ include "gaoq-erp.fullname" . }}-api
+  namespace: {{ include "gaoq-erp.targetNamespace" . }}
   labels:
     {{- include "gaoq-erp.labels" . | nindent 4 }}
     app.kubernetes.io/component: api
@@ -17,6 +18,7 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: {{ include "gaoq-erp.fullname" . }}-worker
+  namespace: {{ include "gaoq-erp.targetNamespace" . }}
   labels:
     {{- include "gaoq-erp.labels" . | nindent 4 }}
     app.kubernetes.io/component: worker
@@ -32,6 +34,7 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: {{ include "gaoq-erp.fullname" . }}-web
+  namespace: {{ include "gaoq-erp.targetNamespace" . }}
   labels:
     {{- include "gaoq-erp.labels" . | nindent 4 }}
     app.kubernetes.io/component: web

@@ -5,6 +5,7 @@
 ## 必填输入
 
 - `images.*.repository` 与 `images.*.digest`：三个经过供应链门禁的独立镜像仓库和 `sha256` 摘要，禁止 tag 部署。
+- `targetNamespace`：ERP 工作负载的独立业务命名空间；它与保存 Helm release ConfigMap 的控制命名空间分离。
 - `release.commitSha`：与发布证据一致的 40 位 Git commit。
 - `release.deploymentManifestHash`：发布系统生成的不可变部署包清单摘要，不对包含本字段的渲染 YAML 做自引用哈希。
 - `release.rolloutId`：本次发布窗口的唯一标识。
@@ -26,4 +27,4 @@ CI 还使用固定版本、固定摘要的 Kubeconform 和固定 commit 的 Kube
 
 ## 发布边界
 
-Chart 不包含自动安装步骤。生产 `helm upgrade`、回滚、Secret 创建、网络放行和数据库操作均为 R3 人工治理动作，不能由 MCP Tool 或 AI 自主执行。
+Chart 不包含自动安装步骤。受保护工作流使用 `HELM_DRIVER=configmap` 把不含敏感值的 release 元数据保存到独立控制命名空间，所有 Chart 资源显式写入 `targetNamespace`；生产发布、回滚、Secret 创建、网络放行和数据库操作均为 R3 人工治理动作，不能由 MCP Tool 或 AI 自主执行。

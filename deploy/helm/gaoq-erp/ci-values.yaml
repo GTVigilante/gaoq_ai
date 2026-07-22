@@ -2,6 +2,7 @@ release:
   commitSha: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   deploymentManifestHash: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
   rolloutId: ci-render-001
+targetNamespace: erp-prod
 images:
   api:
     repository: registry.example.invalid/gaoq/erp-api

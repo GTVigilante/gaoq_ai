@@ -10,7 +10,7 @@
 
 生产平台至少满足以下条件：
 
-1. Kubernetes 1.30 或更高的受支持版本，三个可用区，节点和控制面监控已接入值班体系；命名空间强制 Pod Security `restricted`，准入策略拒绝特权、host namespace、hostPath、非摘要镜像和未授权仓库。
+1. Kubernetes 1.30 或更高的受支持版本，三个可用区，节点和控制面监控已接入值班体系；ERP 业务命名空间强制 Pod Security `restricted`，准入策略拒绝特权、host namespace、hostPath、非摘要镜像和未授权仓库；另设仅保存非敏感 Helm release ConfigMap 的控制命名空间。
 2. 托管 MongoDB Replica Set 跨可用区部署，启用静态/传输加密、PITR、备份恢复演练和连接数告警；托管 Redis 启用认证、TLS、持久化和故障转移。
 3. 独立 Secret Manager/KMS 负责凭据生成、版本、轮换、紧急吊销和访问审计；不得把明文 Secret 写入 values、Git、CI 日志或 ConfigMap。
 4. 合规 WORM/对象存储位于独立权限域，审计锚点、发布证据、迁移证据和资金授权证据按保留期不可变保存。

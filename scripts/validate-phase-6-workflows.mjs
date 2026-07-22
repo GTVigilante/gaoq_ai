@@ -132,6 +132,9 @@ function validateDeploymentWorkflow(workflow) {
     'environment: phase-6-production-deployment',
     'PHASE6_DEPLOYMENT_VALUES_PATH: /var/lib/gaoq/deployment/production-values.yaml',
     'PHASE6_DEPLOYMENT_GO_NO_GO_PATH: /var/lib/gaoq/go-no-go/phase-5-go-no-go.json',
+    'PHASE6_DEPLOYMENT_CONTROL_NAMESPACE: ${{ vars.PHASE6_DEPLOYMENT_CONTROL_NAMESPACE }}',
+    'PHASE6_DEPLOYMENT_TARGET_NAMESPACE: ${{ vars.PHASE6_DEPLOYMENT_TARGET_NAMESPACE }}',
+    'HELM_DRIVER: configmap',
     "test \"$(node --version)\" = 'v22.23.1'",
     'validate-phase-5-go-no-go-evidence.mjs',
     'validate-phase-6-deployment-plan.mjs',
@@ -141,7 +144,11 @@ function validateDeploymentWorkflow(workflow) {
     "test \"$(kubeconform -v)\" = 'v0.7.0'",
     'v1.30.0-standalone-strict/{{.ResourceKind}}.json',
     'kubectl apply --server-side --dry-run=server',
-    'kubectl diff --server-side',
+    'diff --unified',
+    'kubectl auth can-i get secrets',
+    'kubectl auth can-i create deployments',
+    'kubectl auth can-i patch deployments',
+    'kubectl auth can-i delete deployments',
     'rendered_sha256: ${{ steps.plan_hash.outputs.rendered_sha256 }}',
     "test \"sha256:$rendered_hash\" = '${{ needs.plan.outputs.rendered_sha256 }}'",
     'helm upgrade --install',
@@ -160,6 +167,7 @@ function validateDeploymentWorkflow(workflow) {
     '--force', '--create-namespace', '--set ', '--set-string ', '--reuse-values',
     'curl ', 'wget ', 'ssh ', 'terraform ', 'tofu ', 'aws ', 'aliyun ', 'gcloud ', 'az ',
     'kubectl delete', 'helm uninstall', 'helm rollback',
+    'HELM_DRIVER: secret', 'PHASE6_DEPLOYMENT_NAMESPACE:',
   ]) {
     if (workflow.includes(forbidden)) throw new Error('PHASE6_DEPLOYMENT_WORKFLOW_UNSAFE');
   }

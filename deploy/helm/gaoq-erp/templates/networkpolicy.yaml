@@ -2,6 +2,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: {{ include "gaoq-erp.fullname" . }}-default-deny
+  namespace: {{ include "gaoq-erp.targetNamespace" . }}
   labels:
     {{- include "gaoq-erp.labels" . | nindent 4 }}
 spec:
@@ -15,6 +16,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: {{ include "gaoq-erp.fullname" . }}-dns-egress
+  namespace: {{ include "gaoq-erp.targetNamespace" . }}
   labels:
     {{- include "gaoq-erp.labels" . | nindent 4 }}
 spec:
@@ -40,6 +42,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: {{ include "gaoq-erp.fullname" $ }}-gateway-to-{{ $component }}
+  namespace: {{ include "gaoq-erp.targetNamespace" $ }}
   labels:
     {{- include "gaoq-erp.labels" $ | nindent 4 }}
 spec:
@@ -66,6 +69,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: {{ include "gaoq-erp.fullname" $ }}-monitoring-to-{{ $component }}
+  namespace: {{ include "gaoq-erp.targetNamespace" $ }}
   labels:
     {{- include "gaoq-erp.labels" $ | nindent 4 }}
 spec:
@@ -91,6 +95,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: {{ include "gaoq-erp.fullname" . }}-backend-private-egress
+  namespace: {{ include "gaoq-erp.targetNamespace" . }}
   labels:
     {{- include "gaoq-erp.labels" . | nindent 4 }}
 spec:
@@ -127,6 +132,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: {{ include "gaoq-erp.fullname" . }}-web-to-api
+  namespace: {{ include "gaoq-erp.targetNamespace" . }}
   labels:
     {{- include "gaoq-erp.labels" . | nindent 4 }}
 spec:

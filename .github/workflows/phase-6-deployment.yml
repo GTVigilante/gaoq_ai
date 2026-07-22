@@ -51,8 +51,10 @@ jobs:
       PHASE6_DEPLOYMENT_VALUES_PATH: /var/lib/gaoq/deployment/production-values.yaml
       PHASE6_DEPLOYMENT_GO_NO_GO_PATH: /var/lib/gaoq/go-no-go/phase-5-go-no-go.json
       PHASE6_DEPLOYMENT_RELEASE_NAME: ${{ vars.PHASE6_DEPLOYMENT_RELEASE_NAME }}
-      PHASE6_DEPLOYMENT_NAMESPACE: ${{ vars.PHASE6_DEPLOYMENT_NAMESPACE }}
+      PHASE6_DEPLOYMENT_CONTROL_NAMESPACE: ${{ vars.PHASE6_DEPLOYMENT_CONTROL_NAMESPACE }}
+      PHASE6_DEPLOYMENT_TARGET_NAMESPACE: ${{ vars.PHASE6_DEPLOYMENT_TARGET_NAMESPACE }}
       PHASE6_DEPLOYMENT_KUBECTL_VERSION: ${{ vars.PHASE6_DEPLOYMENT_KUBECTL_VERSION }}
+      HELM_DRIVER: configmap
       PHASE6_DEPLOYMENT_EXPECTED_COMMIT: ${{ github.sha }}
       PHASE6_DEPLOYMENT_EXPECTED_API_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_API_IMAGE_DIGEST }}
       PHASE6_DEPLOYMENT_EXPECTED_WORKER_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_WORKER_IMAGE_DIGEST }}
@@ -98,13 +100,13 @@ jobs:
           "$PHASE6_DEPLOYMENT_GO_NO_GO_PATH"
           > "$RUNNER_TEMP/go-no-go-verdict.json"
 
-      - name: 渲染、校验并执行服务端只读计划
+      - name: 渲染、校验并生成只读计划
         shell: bash
         run: |
           helm lint deploy/helm/gaoq-erp --strict \
             --values "$PHASE6_DEPLOYMENT_VALUES_PATH"
           helm template "$PHASE6_DEPLOYMENT_RELEASE_NAME" deploy/helm/gaoq-erp \
-            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" \
+            --namespace "$PHASE6_DEPLOYMENT_CONTROL_NAMESPACE" \
             --values "$PHASE6_DEPLOYMENT_VALUES_PATH" \
             > "$RUNNER_TEMP/production-rendered.yaml"
           node scripts/validate-kubernetes-deployment.mjs \
@@ -115,19 +117,28 @@ jobs:
           kubeconform -strict -summary -kubernetes-version 1.30.0 \
             -schema-location 'file:///var/lib/gaoq/kubernetes-schema/v1.30.0-standalone-strict/{{.ResourceKind}}.json' \
             "$RUNNER_TEMP/production-rendered.yaml"
-          kubectl get namespace "$PHASE6_DEPLOYMENT_NAMESPACE" > /dev/null
+          kubectl get namespace "$PHASE6_DEPLOYMENT_CONTROL_NAMESPACE" > /dev/null
+          kubectl get namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE" > /dev/null
           kubectl get configmap "$PHASE6_DEPLOYMENT_API_CONFIG_MAP" \
-            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" > /dev/null
+            --namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE" > /dev/null
           kubectl get configmap "$PHASE6_DEPLOYMENT_WORKER_CONFIG_MAP" \
-            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" > /dev/null
-          kubectl apply --server-side --dry-run=server \
-            --field-manager=gaoq-phase6-plan \
-            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" \
-            --filename "$RUNNER_TEMP/production-rendered.yaml" > /dev/null
+            --namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE" > /dev/null
+          if kubectl auth can-i get secrets --namespace "$PHASE6_DEPLOYMENT_CONTROL_NAMESPACE"; then exit 1; fi
+          if kubectl auth can-i get secrets --namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE"; then exit 1; fi
+          if kubectl auth can-i create deployments --namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE"; then exit 1; fi
+          if kubectl auth can-i patch deployments --namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE"; then exit 1; fi
+          if kubectl auth can-i delete deployments --namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE"; then exit 1; fi
+          if helm status "$PHASE6_DEPLOYMENT_RELEASE_NAME" \
+            --namespace "$PHASE6_DEPLOYMENT_CONTROL_NAMESPACE" > /dev/null 2>&1; then
+            helm get manifest "$PHASE6_DEPLOYMENT_RELEASE_NAME" \
+              --namespace "$PHASE6_DEPLOYMENT_CONTROL_NAMESPACE" \
+              > "$RUNNER_TEMP/current-manifest.yaml"
+          else
+            : > "$RUNNER_TEMP/current-manifest.yaml"
+          fi
           set +e
-          kubectl diff --server-side --field-manager=gaoq-phase6-plan \
-            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" \
-            --filename "$RUNNER_TEMP/production-rendered.yaml" \
+          diff --unified "$RUNNER_TEMP/current-manifest.yaml" \
+            "$RUNNER_TEMP/production-rendered.yaml" \
             > "$RUNNER_TEMP/deployment.diff"
           diff_status=$?
           set -e
@@ -166,8 +177,10 @@ jobs:
       PHASE6_DEPLOYMENT_VALUES_PATH: /var/lib/gaoq/deployment/production-values.yaml
       PHASE6_DEPLOYMENT_GO_NO_GO_PATH: /var/lib/gaoq/go-no-go/phase-5-go-no-go.json
       PHASE6_DEPLOYMENT_RELEASE_NAME: ${{ vars.PHASE6_DEPLOYMENT_RELEASE_NAME }}
-      PHASE6_DEPLOYMENT_NAMESPACE: ${{ vars.PHASE6_DEPLOYMENT_NAMESPACE }}
+      PHASE6_DEPLOYMENT_CONTROL_NAMESPACE: ${{ vars.PHASE6_DEPLOYMENT_CONTROL_NAMESPACE }}
+      PHASE6_DEPLOYMENT_TARGET_NAMESPACE: ${{ vars.PHASE6_DEPLOYMENT_TARGET_NAMESPACE }}
       PHASE6_DEPLOYMENT_KUBECTL_VERSION: ${{ vars.PHASE6_DEPLOYMENT_KUBECTL_VERSION }}
+      HELM_DRIVER: configmap
       PHASE6_DEPLOYMENT_EXPECTED_COMMIT: ${{ github.sha }}
       PHASE6_DEPLOYMENT_EXPECTED_API_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_API_IMAGE_DIGEST }}
       PHASE6_DEPLOYMENT_EXPECTED_WORKER_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_WORKER_IMAGE_DIGEST }}
@@ -210,7 +223,7 @@ jobs:
             --enforce-environment "$PHASE6_DEPLOYMENT_GO_NO_GO_PATH" \
             > "$RUNNER_TEMP/go-no-go-verdict.json"
           helm template "$PHASE6_DEPLOYMENT_RELEASE_NAME" deploy/helm/gaoq-erp \
-            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" \
+            --namespace "$PHASE6_DEPLOYMENT_CONTROL_NAMESPACE" \
             --values "$PHASE6_DEPLOYMENT_VALUES_PATH" \
             > "$RUNNER_TEMP/production-rendered.yaml"
           node scripts/validate-kubernetes-deployment.mjs \
@@ -220,20 +233,24 @@ jobs:
             > "$RUNNER_TEMP/deployment-plan-verdict.json"
           rendered_hash=$(sha256sum "$RUNNER_TEMP/production-rendered.yaml" | cut --delimiter=' ' --fields=1)
           test "sha256:$rendered_hash" = '${{ needs.plan.outputs.rendered_sha256 }}'
+          kubectl get namespace "$PHASE6_DEPLOYMENT_CONTROL_NAMESPACE" > /dev/null
+          kubectl get namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE" > /dev/null
           kubectl get configmap "$PHASE6_DEPLOYMENT_API_CONFIG_MAP" \
-            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" > /dev/null
+            --namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE" > /dev/null
           kubectl get configmap "$PHASE6_DEPLOYMENT_WORKER_CONFIG_MAP" \
-            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" > /dev/null
+            --namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE" > /dev/null
+          if kubectl auth can-i get secrets --namespace "$PHASE6_DEPLOYMENT_CONTROL_NAMESPACE"; then exit 1; fi
+          if kubectl auth can-i get secrets --namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE"; then exit 1; fi
           kubectl apply --server-side --dry-run=server \
             --field-manager=gaoq-phase6-deploy \
-            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" \
+            --namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE" \
             --filename "$RUNNER_TEMP/production-rendered.yaml" > /dev/null
 
       - name: 执行原子部署
         shell: bash
         run: |
           helm upgrade --install "$PHASE6_DEPLOYMENT_RELEASE_NAME" deploy/helm/gaoq-erp \
-            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" \
+            --namespace "$PHASE6_DEPLOYMENT_CONTROL_NAMESPACE" \
             --values "$PHASE6_DEPLOYMENT_VALUES_PATH" \
             --atomic --wait --timeout 15m --history-max 10
 
@@ -242,9 +259,9 @@ jobs:
         run: |
           kubectl rollout status deployment \
             --selector="app.kubernetes.io/instance=$PHASE6_DEPLOYMENT_RELEASE_NAME,app.kubernetes.io/part-of=gaoq-os" \
-            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" --timeout=10m
+            --namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE" --timeout=10m
           helm get manifest "$PHASE6_DEPLOYMENT_RELEASE_NAME" \
-            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" \
+            --namespace "$PHASE6_DEPLOYMENT_CONTROL_NAMESPACE" \
             > "$RUNNER_TEMP/applied-manifest.yaml"
           node scripts/validate-kubernetes-deployment.mjs \
             "$RUNNER_TEMP/applied-manifest.yaml"
@@ -252,7 +269,7 @@ jobs:
             --enforce-environment "$RUNNER_TEMP/applied-manifest.yaml" \
             > "$RUNNER_TEMP/deployment-evidence.json"
           helm status "$PHASE6_DEPLOYMENT_RELEASE_NAME" \
-            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" --output json \
+            --namespace "$PHASE6_DEPLOYMENT_CONTROL_NAMESPACE" --output json \
             > "$RUNNER_TEMP/helm-status.json"
 
       - name: 保存生产部署证据

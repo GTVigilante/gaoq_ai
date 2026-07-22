@@ -35,7 +35,8 @@ if (argumentsList.length === 1 && argumentsList[0] === '--validate-environment')
     suite: 'gaoq.phase6.production-deployment-plan.verdict',
     outcome: 'VALID',
     releaseName: summary.releaseName,
-    namespace: summary.namespace,
+    controlNamespace: summary.controlNamespace,
+    targetNamespace: summary.targetNamespace,
     commitSha: summary.commitSha,
     images: summary.images,
     deploymentManifestHash: summary.deploymentManifestHash,
@@ -48,7 +49,8 @@ if (argumentsList.length === 1 && argumentsList[0] === '--validate-environment')
 function expectedFromEnvironment() {
   const expected = Object.freeze({
     releaseName: process.env.PHASE6_DEPLOYMENT_RELEASE_NAME,
-    namespace: process.env.PHASE6_DEPLOYMENT_NAMESPACE,
+    controlNamespace: process.env.PHASE6_DEPLOYMENT_CONTROL_NAMESPACE,
+    targetNamespace: process.env.PHASE6_DEPLOYMENT_TARGET_NAMESPACE,
     commitSha: process.env.PHASE6_DEPLOYMENT_EXPECTED_COMMIT,
     apiImageDigest: process.env.PHASE6_DEPLOYMENT_EXPECTED_API_IMAGE,
     workerImageDigest: process.env.PHASE6_DEPLOYMENT_EXPECTED_WORKER_IMAGE,
@@ -61,8 +63,11 @@ function expectedFromEnvironment() {
     workerSecret: process.env.PHASE6_DEPLOYMENT_WORKER_SECRET,
   });
   name(expected.releaseName, 53);
-  for (const field of ['namespace', 'apiConfigMap', 'apiSecret', 'workerConfigMap', 'workerSecret']) {
+  for (const field of ['controlNamespace', 'targetNamespace', 'apiConfigMap', 'apiSecret', 'workerConfigMap', 'workerSecret']) {
     name(expected[field], 63);
+  }
+  if (expected.controlNamespace === expected.targetNamespace) {
+    fail('PHASE6_DEPLOYMENT_NAMESPACES_NOT_SEPARATED');
   }
   pattern(expected.commitSha, COMMIT, 'PHASE6_DEPLOYMENT_EXPECTED_COMMIT_INVALID');
   for (const field of ['apiImageDigest', 'workerImageDigest', 'webImageDigest', 'deploymentManifestHash']) {
@@ -91,6 +96,11 @@ function validateManifest(manifest, expected) {
   const deployments = manifest.split(/^---\s*$/gmu).filter((document) =>
     /^kind:\s*Deployment$/mu.test(document));
   if (deployments.length !== COMPONENTS.length) fail('PHASE6_DEPLOYMENT_COMPONENTS_INCOMPLETE');
+  const targetNamespaces = [...manifest.matchAll(/^\s{2}namespace:\s*([^\s]+)\s*$/gmu)]
+    .map((match) => match[1]);
+  if (targetNamespaces.length !== 21 || new Set(targetNamespaces).size !== 1) {
+    fail('PHASE6_DEPLOYMENT_TARGET_NAMESPACE_INVALID');
+  }
 
   const summaries = {};
   for (const component of COMPONENTS) {
@@ -162,7 +172,8 @@ function validateManifest(manifest, expected) {
 
   const summary = Object.freeze({
     releaseName: summaries.api.releaseName,
-    namespace: expected?.namespace ?? 'unbound',
+    controlNamespace: expected?.controlNamespace ?? 'unbound',
+    targetNamespace: targetNamespaces[0],
     commitSha: summaries.api.commitSha,
     images: Object.freeze(Object.fromEntries(COMPONENTS.map((component) => [
       component,
@@ -178,6 +189,8 @@ function validateManifest(manifest, expected) {
 
 function validateExpected(summary, summaries, expected) {
   equal(summary.releaseName, expected.releaseName, 'PHASE6_DEPLOYMENT_RELEASE_MISMATCH');
+  equal(summary.targetNamespace, expected.targetNamespace,
+    'PHASE6_DEPLOYMENT_TARGET_NAMESPACE_MISMATCH');
   equal(summary.commitSha, expected.commitSha, 'PHASE6_DEPLOYMENT_COMMIT_MISMATCH');
   equal(summary.deploymentManifestHash, expected.deploymentManifestHash,
     'PHASE6_DEPLOYMENT_MANIFEST_MISMATCH');
@@ -211,7 +224,7 @@ function runSelfTest() {
   const sha = (character) => `sha256:${character.repeat(64)}`;
   const commitSha = 'a'.repeat(40);
   const manifestHash = sha('b');
-  const documents = COMPONENTS.map((component, index) => {
+  const deploymentDocuments = COMPONENTS.map((component, index) => {
     const runtime = component === 'api'
       ? '          envFrom:\n            - configMapRef: { name: api-config }\n            - secretRef: { name: api-secret }\n'
       : component === 'worker'
@@ -220,6 +233,7 @@ function runSelfTest() {
     return `apiVersion: apps/v1
 kind: Deployment
 metadata:
+  namespace: erp-prod
   labels:
     app.kubernetes.io/instance: release-a
     app.kubernetes.io/component: ${component}
@@ -241,9 +255,16 @@ spec:
         - name: ${component}
           image: "registry.example.invalid/gaoq/${component}@${sha(String(index + 1))}"
 ${runtime}`;
-  }).join('\n---\n');
+  });
+  const supportDocuments = Array.from({ length: 18 }, (_, index) => `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: support-${index}
+  namespace: erp-prod
+`);
+  const documents = [...deploymentDocuments, ...supportDocuments].join('\n---\n');
   const expected = Object.freeze({
-    releaseName: 'release-a', namespace: 'erp-prod', commitSha,
+    releaseName: 'release-a', controlNamespace: 'erp-control', targetNamespace: 'erp-prod', commitSha,
     apiImageDigest: sha('1'), workerImageDigest: sha('2'), webImageDigest: sha('3'),
     deploymentManifestHash: manifestHash, rolloutId: 'rollout-001',
     apiConfigMap: 'api-config', apiSecret: 'api-secret',

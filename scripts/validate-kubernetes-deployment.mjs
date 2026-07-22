@@ -45,8 +45,12 @@ const assertIncludes = (content, markers, code) => {
 if (schema.$schema !== 'http://json-schema.org/draft-07/schema#') {
   throw new Error('KUBERNETES_VALUES_SCHEMA_DRAFT_INVALID');
 }
+if (schema.additionalProperties !== false) {
+  throw new Error('KUBERNETES_VALUES_SCHEMA_UNKNOWN_FIELDS_ALLOWED');
+}
 
 assertIncludes(JSON.stringify(schema), [
+  'targetNamespace',
   '^[a-f0-9]{40}$',
   '^sha256:[a-f0-9]{64}$',
   '"minimum":3',
@@ -80,6 +84,7 @@ for (const [component, markers] of Object.entries({
     'topologySpreadConstraints:',
     'gaoq.io/release-commit:',
     'gaoq.io/deployment-manifest:',
+    'gaoq-erp.targetNamespace',
     ...markers,
   ], `KUBERNETES_${component.toUpperCase()}_DEPLOYMENT_INCOMPLETE`);
 }
@@ -187,6 +192,12 @@ if (renderedPath !== undefined) {
     NetworkPolicy: 8,
   })) {
     if (count(kind) !== expected) throw new Error(`KUBERNETES_RENDERED_${kind.toUpperCase()}_COUNT_INVALID`);
+  }
+
+  const namespaces = [...rendered.matchAll(/^\s{2}namespace:\s*([^\s]+)\s*$/gmu)]
+    .map((match) => match[1]);
+  if (namespaces.length !== 21 || new Set(namespaces).size !== 1) {
+    throw new Error('KUBERNETES_RENDERED_TARGET_NAMESPACE_INVALID');
   }
 
   if ([...rendered.matchAll(/^\s*image:\s*"?([^"\s]+)"?$/gmu)].some(

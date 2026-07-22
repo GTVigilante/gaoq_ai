@@ -22,6 +22,10 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- required "serviceAccount.name 必填" .Values.serviceAccount.name -}}
 {{- end -}}
 
+{{- define "gaoq-erp.targetNamespace" -}}
+{{- required "targetNamespace 必填" .Values.targetNamespace -}}
+{{- end -}}
+
 {{- define "gaoq-erp.image" -}}
 {{- printf "%s@%s" (required "镜像仓库必填" .repository) (required "镜像摘要必填" .digest) -}}
 {{- end -}}
