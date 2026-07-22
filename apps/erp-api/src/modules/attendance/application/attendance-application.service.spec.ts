@@ -4,7 +4,10 @@ import type { ClientSession } from 'mongoose';
 import { describe, expect, it, vi } from 'vitest';
 
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
-import type { AttendanceSourceFact } from '../domain/index.js';
+import {
+  restoreAttendanceMonthFromMigration,
+  type AttendanceSourceFact,
+} from '../domain/index.js';
 import { AttendanceApplicationService } from './attendance-application.service.js';
 
 const tenant = { tenantId: 'tenant-001', source: 'access_token' as const };
@@ -46,6 +49,7 @@ function assemble() {
   const approvals = {
     getAttendanceCorrectionDecision: vi.fn(), getAttendanceMonthReopenDecision: vi.fn(),
     verifyAttendanceCorrectionMigrationReference: vi.fn(),
+    verifyAttendanceMonthReopenMigrationReference: vi.fn(),
     createInstance: vi.fn(), submitInstance: vi.fn(),
   };
   const crypto = { sourceEventFingerprints: vi.fn().mockReturnValue(['key.digest']) };
@@ -64,7 +68,9 @@ function assemble() {
     insert: vi.fn().mockResolvedValue(undefined), insertMigrated: vi.fn().mockResolvedValue(undefined),
   };
   const snapshots = {
-    findActive: vi.fn(), activate: vi.fn().mockResolvedValue(undefined),
+    findActive: vi.fn().mockResolvedValue(null), findById: vi.fn().mockResolvedValue(null),
+    findMigrationEvidenceById: vi.fn().mockResolvedValue(null),
+    activate: vi.fn().mockResolvedValue(undefined), activateMigrated: vi.fn().mockResolvedValue(undefined),
   };
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
   const service = new AttendanceApplicationService(
@@ -78,6 +84,80 @@ function assemble() {
 }
 
 describe('AttendanceApplicationService', () => {
+  it('迁移月结从事实与修订重算并只发布专用安全事件', async () => {
+    const store = assemble();
+    store.corrections.findForMonth.mockResolvedValue([]);
+    const result = await store.context.run({
+      tenant,
+      actor: actor(
+        ['erp:migration:execute', 'erp:attendance:migration:write'], 'service',
+      ),
+    }, () => store.service.importMonthFromMigration('attendance-month-migration-001', {
+      targetId: null, employeeId: 'employee-001', month: '2026-04', snapshotVersion: 1,
+      rulesetVersion: 'legacy-cn-v1', sourceCutoffAt: '2026-04-02T00:00:00.000Z',
+      closedAt: '2026-04-02T00:01:00.000Z', previousSnapshotId: null,
+      supersessionApprovalHistoryId: null, supersessionApprovalEvidenceChecksum: null,
+      expectedImpact: {
+        workedMinutes: 480, leaveMinutes: 0, overtimeMinutes: 0, absentMinutes: 0,
+      },
+      expectedSourceFactCount: 1, expectedCorrectionCount: 0,
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/month-001',
+      evidenceChecksum: 'm'.repeat(43),
+    }));
+    expect(store.snapshots.activateMigrated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        snapshotVersion: 1, workedMinutes: 480,
+        closedAt: '2026-04-02T00:01:00.000Z',
+      }), null, expect.stringContaining('/attachments/month-001'), 'm'.repeat(43), session,
+    );
+    const event = store.outbox.append.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
+    expect(event).toMatchObject({ type: 'attendance.month.migrated' });
+    expect(JSON.stringify(event)).not.toMatch(/dailySummaries|workedMinutes|480/u);
+    expect(result.month).toMatchObject({ version: 1, workedMinutes: 480 });
+  });
+
+  it('迁移月结 v2 精确校验直接前序与重开审批历史', async () => {
+    const store = assemble();
+    const previous = restoreAttendanceMonthFromMigration({
+      id: 'snapshot-v1', tenantId: tenant.tenantId, employeeId: 'employee-001',
+      month: '2026-04', snapshotVersion: 1, rulesetVersion: 'legacy-cn-v1',
+      sourceCutoffAt: '2026-04-02T00:00:00.000Z', facts: [sourceFact()], corrections: [],
+      previousSnapshotId: null, supersessionEvidenceId: null,
+      closedAt: '2026-04-02T00:01:00.000Z',
+    }, new Date('2026-04-03T00:00:00.000Z'));
+    store.snapshots.findById.mockResolvedValue(previous);
+    store.snapshots.findActive.mockResolvedValue(previous);
+    store.approvals.verifyAttendanceMonthReopenMigrationReference.mockResolvedValue({
+      id: 'approval-reopen-001', completedAt: '2026-04-02T01:00:00.000Z',
+      evidenceChecksum: 'r'.repeat(43),
+    });
+    await store.context.run({
+      tenant,
+      actor: actor(
+        ['erp:migration:execute', 'erp:attendance:migration:write'], 'service',
+      ),
+    }, () => store.service.importMonthFromMigration('attendance-month-migration-v2', {
+      targetId: null, employeeId: 'employee-001', month: '2026-04', snapshotVersion: 2,
+      rulesetVersion: 'legacy-cn-v2', sourceCutoffAt: '2026-04-03T00:00:00.000Z',
+      closedAt: '2026-04-03T00:01:00.000Z', previousSnapshotId: previous.id,
+      supersessionApprovalHistoryId: 'approval-reopen-001',
+      supersessionApprovalEvidenceChecksum: 'r'.repeat(43),
+      expectedImpact: {
+        workedMinutes: 480, leaveMinutes: 0, overtimeMinutes: 0, absentMinutes: 0,
+      }, expectedSourceFactCount: 1, expectedCorrectionCount: 0,
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/month-v2',
+      evidenceChecksum: 'v'.repeat(43),
+    }));
+    expect(store.snapshots.activateMigrated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        snapshotVersion: 2, previousSnapshotId: previous.id,
+        supersessionEvidenceId: 'approval-reopen-001',
+      }), previous, expect.any(String), 'v'.repeat(43), session,
+    );
+  });
+
   it('迁移修订从源事实和已批准历史派生绑定且不泄露 L4 替换影响', async () => {
     const store = assemble();
     store.approvals.verifyAttendanceCorrectionMigrationReference.mockResolvedValue({

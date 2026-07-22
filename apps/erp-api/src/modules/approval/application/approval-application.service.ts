@@ -257,6 +257,12 @@ export interface ApprovalAttendanceCorrectionMigrationReference {
   readonly evidenceChecksum: string;
 }
 
+export interface ApprovalAttendanceMonthReopenMigrationReference {
+  readonly id: string;
+  readonly completedAt: string;
+  readonly evidenceChecksum: string;
+}
+
 /** 审批应用服务：唯一事务编排入口，REST、Worker 与 MCP 必须复用本服务。 */
 @Injectable()
 export class ApprovalApplicationService {
@@ -476,6 +482,27 @@ export class ApprovalApplicationService {
       throw new BadRequestException({
         code: 'APPROVAL_MIGRATION_ATTENDANCE_CORRECTION_REFERENCE_INVALID',
         message: '考勤修订必须引用已迁移且已通过的专用审批历史',
+      });
+    }
+    return Object.freeze({
+      id: history.id,
+      completedAt: history.completedAt,
+      evidenceChecksum: history.evidenceChecksum,
+    });
+  }
+
+  /** 月结迁移只读校验：只接受已通过的重开审批历史。 */
+  async verifyAttendanceMonthReopenMigrationReference(
+    id: string,
+    session: ClientSession,
+  ): Promise<ApprovalAttendanceMonthReopenMigrationReference> {
+    this.assertAttendanceMigrationVerifier();
+    const history = await this.legacyHistories.findById(id, session);
+    if (history === null || history.templateCode !== 'attendance_month_reopen' ||
+      history.outcome !== 'approved') {
+      throw new BadRequestException({
+        code: 'APPROVAL_MIGRATION_ATTENDANCE_REOPEN_REFERENCE_INVALID',
+        message: '考勤月结重开必须引用已迁移且已通过的专用审批历史',
       });
     }
     return Object.freeze({

@@ -159,12 +159,26 @@ export class AttendanceMonthlySnapshotRecord extends ProtectedRecord {
   @Prop({ type: String, default: null, immutable: true, maxlength: 128, match: ID_PATTERN })
   supersessionEvidenceId!: string | null;
   @Prop({ type: Date, required: true, immutable: true }) closedAt!: Date;
+  @Prop({
+    type: String, default: null, immutable: true, maxlength: 256,
+    match: MIGRATION_EVIDENCE_REF_PATTERN,
+  })
+  migrationEvidenceRef!: string | null;
+  @Prop({ type: String, default: null, immutable: true, match: HASH_PATTERN })
+  migrationEvidenceChecksum!: string | null;
   createdAt!: Date;
   updatedAt!: Date;
 }
 export type AttendanceMonthlySnapshotDocument = HydratedDocument<AttendanceMonthlySnapshotRecord>;
 export const AttendanceMonthlySnapshotRecordSchema =
   SchemaFactory.createForClass(AttendanceMonthlySnapshotRecord);
+AttendanceMonthlySnapshotRecordSchema.pre('validate', function () {
+  const record = this as AttendanceMonthlySnapshotRecord;
+  if ((record.migrationEvidenceRef === null) !==
+    (record.migrationEvidenceChecksum === null)) {
+    throw new Error('考勤月结迁移证据引用与校验和必须成对出现');
+  }
+});
 AttendanceMonthlySnapshotRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 AttendanceMonthlySnapshotRecordSchema.index(
   { tenantId: 1, employeeId: 1, month: 1, snapshotVersion: 1 }, { unique: true },
@@ -176,4 +190,8 @@ AttendanceMonthlySnapshotRecordSchema.index(
 AttendanceMonthlySnapshotRecordSchema.index(
   { tenantId: 1, previousSnapshotId: 1 },
   { unique: true, partialFilterExpression: { previousSnapshotId: { $type: 'string' } } },
+);
+AttendanceMonthlySnapshotRecordSchema.index(
+  { tenantId: 1, migrationEvidenceRef: 1 },
+  { unique: true, partialFilterExpression: { migrationEvidenceRef: { $type: 'string' } } },
 );

@@ -48,6 +48,7 @@ import {
 import {
   AttendanceApplicationService,
   type ImportAttendanceCorrectionFromMigrationInput,
+  type ImportAttendanceMonthFromMigrationInput,
   type ImportAttendanceSourceFactFromMigrationInput,
 } from '../../attendance/application/attendance-application.service.js';
 import type {
@@ -590,6 +591,35 @@ export class DataMigrationService {
         this.requireMapping(run, 'approval.history', payload.approvalHistorySourceId),
       ]);
       return;
+    } else if (input.entityType === 'attendance.monthly_snapshot') {
+      const payload = attendanceMonthPayload(input.payload);
+      const expectedAssociations = [
+        payload.employeeSourceId,
+        ...(payload.previousSnapshotSourceId === null ? [] : [payload.previousSnapshotSourceId]),
+        ...(payload.supersessionApprovalHistorySourceId === null
+          ? [] : [payload.supersessionApprovalHistorySourceId]),
+      ];
+      assertAssociations(input.associationSourceIds, expectedAssociations);
+      const evidence = input.attachments.find((attachment) =>
+        attachment.sourceAttachmentId === payload.sourceEvidenceSourceAttachmentId);
+      if (input.attachments.length !== 1 ||
+        evidence?.checksum !== payload.sourceEvidenceChecksum) {
+        throw new Error('DATA_MIGRATION_ATTENDANCE_MONTH_EVIDENCE_REQUIRED');
+      }
+      await Promise.all([
+        this.requireMapping(run, 'org.employee', payload.employeeSourceId),
+        ...(payload.previousSnapshotSourceId === null ? [] : [
+          this.requireMapping(
+            run, 'attendance.monthly_snapshot', payload.previousSnapshotSourceId,
+          ),
+        ]),
+        ...(payload.supersessionApprovalHistorySourceId === null ? [] : [
+          this.requireMapping(
+            run, 'approval.history', payload.supersessionApprovalHistorySourceId,
+          ),
+        ]),
+      ]);
+      return;
     } else {
       const payload = approvalTemplatePayload(input.payload);
       const specs = approvalTemplateAssociationSpecs(payload);
@@ -1010,6 +1040,42 @@ export class DataMigrationService {
         evidenceChecksum: payload.sourceEvidenceChecksum,
       });
       return target(result.correction);
+    }
+    if (input.entityType === 'attendance.monthly_snapshot') {
+      const payload = attendanceMonthPayload(input.payload);
+      if (this.attendance === undefined) throw new Error('迁移考勤月结适配器未装配');
+      const [employee, previous, approval] = await Promise.all([
+        this.requireMapping(run, 'org.employee', payload.employeeSourceId),
+        payload.previousSnapshotSourceId === null
+          ? Promise.resolve(null)
+          : this.requireMapping(
+              run, 'attendance.monthly_snapshot', payload.previousSnapshotSourceId,
+            ),
+        payload.supersessionApprovalHistorySourceId === null
+          ? Promise.resolve(null)
+          : this.requireMapping(
+              run, 'approval.history', payload.supersessionApprovalHistorySourceId,
+            ),
+      ]);
+      const result = await this.attendance.importMonthFromMigration(key, {
+        targetId: mapping?.targetId ?? null,
+        employeeId: employee.targetId,
+        month: payload.month,
+        snapshotVersion: payload.snapshotVersion,
+        rulesetVersion: payload.rulesetVersion,
+        sourceCutoffAt: payload.sourceCutoffAt,
+        closedAt: payload.closedAt,
+        previousSnapshotId: previous?.targetId ?? null,
+        supersessionApprovalHistoryId: approval?.targetId ?? null,
+        supersessionApprovalEvidenceChecksum: payload.supersessionApprovalEvidenceChecksum,
+        expectedImpact: payload.expectedImpact,
+        expectedSourceFactCount: payload.expectedSourceFactCount,
+        expectedCorrectionCount: payload.expectedCorrectionCount,
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${run.id}/attachments/${payload.sourceEvidenceSourceAttachmentId}`,
+        evidenceChecksum: payload.sourceEvidenceChecksum,
+      });
+      return target(result.month);
     }
     const payload = approvalTemplatePayload(input.payload);
     if (this.approvals === undefined) throw new Error('迁移审批适配器未装配');
@@ -1459,7 +1525,8 @@ type AssociationTargetType =
   | 'recruitment.candidate'
   | 'recruitment.application'
   | 'recruitment.interview'
-  | 'attendance.source_fact';
+  | 'attendance.source_fact'
+  | 'attendance.monthly_snapshot';
 interface AssociationEvidence {
   readonly relationship: AssociationRelationship;
   readonly sourceAssociationId: string;
@@ -2781,6 +2848,98 @@ function attendanceCorrectionPayload(
   };
 }
 
+type AttendanceMonthMigrationPayload = Omit<
+  ImportAttendanceMonthFromMigrationInput,
+  'targetId' | 'employeeId' | 'previousSnapshotId' |
+  'supersessionApprovalHistoryId' | 'migrationEvidenceRef' | 'evidenceChecksum'
+> & {
+  readonly employeeSourceId: string;
+  readonly previousSnapshotSourceId: string | null;
+  readonly supersessionApprovalHistorySourceId: string | null;
+  readonly sourceEvidenceSourceAttachmentId: string;
+  readonly sourceEvidenceChecksum: string;
+};
+
+function attendanceMonthPayload(
+  value: Readonly<Record<string, unknown>>,
+): AttendanceMonthMigrationPayload {
+  exactKeys(value, [
+    'closedAt', 'employeeSourceId', 'expectedCorrectionCount', 'expectedImpact',
+    'expectedSourceFactCount', 'month', 'previousSnapshotSourceId', 'rulesetVersion',
+    'snapshotVersion', 'sourceCutoffAt', 'sourceEvidenceChecksum',
+    'sourceEvidenceSourceAttachmentId', 'supersessionApprovalEvidenceChecksum',
+    'supersessionApprovalHistorySourceId',
+  ]);
+  if (typeof value.employeeSourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.employeeSourceId) ||
+    typeof value.month !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(value.month) ||
+    !Number.isSafeInteger(value.snapshotVersion) || Number(value.snapshotVersion) < 1 ||
+    Number(value.snapshotVersion) > 10_000 ||
+    typeof value.rulesetVersion !== 'string' ||
+    !/^[A-Za-z0-9._:-]{1,64}$/.test(value.rulesetVersion) ||
+    !isStrictUtcIso(value.sourceCutoffAt) || !isStrictUtcIso(value.closedAt) ||
+    !nullableSourceId(value.previousSnapshotSourceId) ||
+    !nullableSourceId(value.supersessionApprovalHistorySourceId) ||
+    !nullableHash(value.supersessionApprovalEvidenceChecksum) ||
+    typeof value.sourceEvidenceSourceAttachmentId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.sourceEvidenceSourceAttachmentId) ||
+    typeof value.sourceEvidenceChecksum !== 'string' ||
+    !HASH_PATTERN.test(value.sourceEvidenceChecksum) ||
+    !isPlainMigrationObject(value.expectedImpact) ||
+    !Number.isSafeInteger(value.expectedSourceFactCount) ||
+    Number(value.expectedSourceFactCount) < 0 || Number(value.expectedSourceFactCount) > 10_000_000 ||
+    !Number.isSafeInteger(value.expectedCorrectionCount) ||
+    Number(value.expectedCorrectionCount) < 0 || Number(value.expectedCorrectionCount) > 10_000_000) {
+    throw invalidPayload();
+  }
+  exactKeys(value.expectedImpact, [
+    'absentMinutes', 'leaveMinutes', 'overtimeMinutes', 'workedMinutes',
+  ]);
+  const minutes = [
+    value.expectedImpact.workedMinutes, value.expectedImpact.leaveMinutes,
+    value.expectedImpact.overtimeMinutes, value.expectedImpact.absentMinutes,
+  ];
+  const version = Number(value.snapshotVersion);
+  const initial = version === 1;
+  if (minutes.some((minute) => !Number.isSafeInteger(minute) || Number(minute) < 0 ||
+    Number(minute) > 44_640) ||
+    (initial && (value.previousSnapshotSourceId !== null ||
+      value.supersessionApprovalHistorySourceId !== null ||
+      value.supersessionApprovalEvidenceChecksum !== null)) ||
+    (!initial && (value.previousSnapshotSourceId === null ||
+      value.supersessionApprovalHistorySourceId === null ||
+      value.supersessionApprovalEvidenceChecksum === null))) throw invalidPayload();
+  return {
+    employeeSourceId: value.employeeSourceId,
+    month: value.month,
+    snapshotVersion: version,
+    rulesetVersion: value.rulesetVersion,
+    sourceCutoffAt: value.sourceCutoffAt,
+    closedAt: value.closedAt,
+    previousSnapshotSourceId: value.previousSnapshotSourceId,
+    supersessionApprovalHistorySourceId: value.supersessionApprovalHistorySourceId,
+    supersessionApprovalEvidenceChecksum: value.supersessionApprovalEvidenceChecksum,
+    expectedImpact: {
+      workedMinutes: Number(value.expectedImpact.workedMinutes),
+      leaveMinutes: Number(value.expectedImpact.leaveMinutes),
+      overtimeMinutes: Number(value.expectedImpact.overtimeMinutes),
+      absentMinutes: Number(value.expectedImpact.absentMinutes),
+    },
+    expectedSourceFactCount: Number(value.expectedSourceFactCount),
+    expectedCorrectionCount: Number(value.expectedCorrectionCount),
+    sourceEvidenceSourceAttachmentId: value.sourceEvidenceSourceAttachmentId,
+    sourceEvidenceChecksum: value.sourceEvidenceChecksum,
+  };
+}
+
+function nullableSourceId(value: unknown): value is string | null {
+  return value === null || (typeof value === 'string' && SOURCE_ID_PATTERN.test(value));
+}
+
+function nullableHash(value: unknown): value is string | null {
+  return value === null || (typeof value === 'string' && HASH_PATTERN.test(value));
+}
+
 function assertGovernanceEvidence(
   input: ApplyDataMigrationRecordDto,
   payload: {
@@ -3072,6 +3231,24 @@ function associationEvidence(input: ApplyDataMigrationRecordDto): readonly Assoc
           entityType: 'approval.history',
         },
       ];
+    } else if (input.entityType === 'attendance.monthly_snapshot') {
+      const payload = attendanceMonthPayload(input.payload);
+      derived = [
+        {
+          relationship: 'employee', sourceAssociationId: payload.employeeSourceId,
+          entityType: 'org.employee',
+        },
+        ...(payload.previousSnapshotSourceId === null ? [] : [{
+          relationship: 'previous_snapshot' as const,
+          sourceAssociationId: payload.previousSnapshotSourceId,
+          entityType: 'attendance.monthly_snapshot' as const,
+        }]),
+        ...(payload.supersessionApprovalHistorySourceId === null ? [] : [{
+          relationship: 'approval_history' as const,
+          sourceAssociationId: payload.supersessionApprovalHistorySourceId,
+          entityType: 'approval.history' as const,
+        }]),
+      ];
     } else derived = [];
   } catch {
     derived = [];
@@ -3191,6 +3368,7 @@ const ASSOCIATION_RELATIONSHIPS = [
   'requisition', 'approval_instance', 'approval_history',
   'candidate', 'application', 'interviewer', 'interview',
   'source_fact',
+  'previous_snapshot',
   'declared_reference',
 ] as const;
 const ASSOCIATION_RELATIONSHIP_SET: ReadonlySet<string> = new Set(ASSOCIATION_RELATIONSHIPS);

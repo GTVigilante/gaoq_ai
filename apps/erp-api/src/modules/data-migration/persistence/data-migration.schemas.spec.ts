@@ -71,6 +71,8 @@ describe('数据迁移账本 Schema', () => {
       .toContain('interview');
     expect(DataMigrationAssociationRecordSchema.path('relationship').options.enum)
       .toContain('source_fact');
+    expect(DataMigrationAssociationRecordSchema.path('relationship').options.enum)
+      .toContain('previous_snapshot');
   });
 
   it('附件 processing、verified、rejected 状态必须分别绑定租约或证据', async () => {

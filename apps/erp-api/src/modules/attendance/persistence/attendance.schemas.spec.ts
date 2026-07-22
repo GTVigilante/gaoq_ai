@@ -68,6 +68,29 @@ describe('Attendance 持久化契约', () => {
     }).validate()).rejects.toThrow('必须成对出现');
   });
 
+  it('迁移月结 WORM 引用与校验和必须成对出现', async () => {
+    const SnapshotModel = mongoose.model(
+      'AttendanceMonthMigrationContract', AttendanceMonthlySnapshotRecordSchema,
+    );
+    const valid = {
+      id: 'snapshot-001', tenantId: 'tenant-001', employeeId: 'employee-001',
+      month: '2026-04', snapshotVersion: 1, rulesetVersion: 'legacy-cn-v1',
+      sourceCutoffAt: new Date(), workedMinutes: 480, leaveMinutes: 0,
+      overtimeMinutes: 0, absentMinutes: 0, sourceFactCount: 1, correctionCount: 0,
+      snapshotHash: 's'.repeat(43), status: 'active', previousSnapshotId: null,
+      supersessionEvidenceId: null, closedAt: new Date(),
+      dataKeyId: 'key-001', dataIv: 'a'.repeat(16),
+      dataCiphertext: 'b'.repeat(32), dataAuthTag: 'c'.repeat(22),
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/month-001',
+      migrationEvidenceChecksum: 'm'.repeat(43),
+    };
+    await expect(new SnapshotModel(valid).validate()).resolves.toBeUndefined();
+    await expect(new SnapshotModel({
+      ...valid, migrationEvidenceChecksum: null,
+    }).validate()).rejects.toThrow('必须成对出现');
+  });
+
   it('外部事件、单事实修订、审批实例、活动快照和版本链均有唯一约束', () => {
     expect(AttendanceSourceFactRecordSchema.indexes()).toContainEqual([
       { tenantId: 1, sourceEventBlindIndexes: 1 }, expect.objectContaining({ unique: true }),
@@ -93,6 +116,10 @@ describe('Attendance 持久化契约', () => {
       ],
       [
         { tenantId: 1, previousSnapshotId: 1 },
+        expect.objectContaining({ unique: true }),
+      ],
+      [
+        { tenantId: 1, migrationEvidenceRef: 1 },
         expect.objectContaining({ unique: true }),
       ],
     ]));

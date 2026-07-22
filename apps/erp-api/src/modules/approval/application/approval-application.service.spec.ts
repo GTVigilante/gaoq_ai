@@ -193,6 +193,29 @@ describe('ApprovalApplicationService', () => {
     expect(JSON.stringify(result)).not.toContain('不得输出');
   });
 
+  it('考勤月结迁移只读取已通过重开历史的时间与证据摘要', async () => {
+    const deps = dependencies({
+      legacyHistories: {
+        ...dependencies().legacyHistories,
+        findById: vi.fn().mockResolvedValue({
+          id: 'history-reopen-001', templateCode: 'attendance_month_reopen',
+          outcome: 'approved', completedAt: '2026-04-03T00:00:00.000Z',
+          evidenceChecksum: 'r'.repeat(43),
+        }),
+      },
+    });
+    const application = service(
+      deps,
+      opWorkerContext(['erp:migration:execute', 'erp:attendance:migration:write']),
+    );
+    await expect(application.verifyAttendanceMonthReopenMigrationReference(
+      'history-reopen-001', SESSION,
+    )).resolves.toEqual({
+      id: 'history-reopen-001', completedAt: '2026-04-03T00:00:00.000Z',
+      evidenceChecksum: 'r'.repeat(43),
+    });
+  });
+
   it('招聘迁移只能读取活动审批或终结历史的最小引用投影', async () => {
     const running = submitApprovalInstance(draftInstance('recruitment_hc'), {
       tenantId: 'tenant-001', expectedVersion: 1, actorId: 'actor-001',

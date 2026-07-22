@@ -20,6 +20,7 @@ import {
   createAttendanceCorrection,
   createAttendanceSourceFact,
   restoreAttendanceCorrectionFromMigration,
+  restoreAttendanceMonthFromMigration,
   restoreAttendanceSourceFactFromMigration,
   type AttendanceCorrection,
   type AttendanceFactType,
@@ -107,6 +108,24 @@ export interface ImportAttendanceCorrectionFromMigrationInput {
   readonly replacementImpact: AttendanceImpact;
   readonly reasonCode: string;
   readonly createdAt: string;
+  readonly migrationEvidenceRef: string;
+  readonly evidenceChecksum: string;
+}
+
+export interface ImportAttendanceMonthFromMigrationInput {
+  readonly targetId: string | null;
+  readonly employeeId: string;
+  readonly month: string;
+  readonly snapshotVersion: number;
+  readonly rulesetVersion: string;
+  readonly sourceCutoffAt: string;
+  readonly closedAt: string;
+  readonly previousSnapshotId: string | null;
+  readonly supersessionApprovalHistoryId: string | null;
+  readonly supersessionApprovalEvidenceChecksum: string | null;
+  readonly expectedImpact: AttendanceImpact;
+  readonly expectedSourceFactCount: number;
+  readonly expectedCorrectionCount: number;
   readonly migrationEvidenceRef: string;
   readonly evidenceChecksum: string;
 }
@@ -284,6 +303,111 @@ export class AttendanceApplicationService {
           },
         }, session);
         return { correction: migratedCorrectionSummary(correction) };
+      },
+    ));
+  }
+
+  /** 数据迁移专用：从已恢复事实与修订重算月结，来源汇总只作为控制总量。 */
+  async importMonthFromMigration(
+    key: string,
+    input: ImportAttendanceMonthFromMigrationInput,
+  ): Promise<{ readonly month: AttendanceMonthSummary & { readonly version: number } }> {
+    this.assertMigrationWriter();
+    assertMigrationEvidence(input.migrationEvidenceRef, input.evidenceChecksum);
+    const sourceCutoffAt = strictMigrationInputInstant(input.sourceCutoffAt);
+    const closedAt = strictMigrationInputInstant(input.closedAt);
+    return this.run(async () => this.idempotency.execute(
+      'attendance.month.import_from_migration', key, input, async (session) => {
+        const tenantId = this.context.getTenantRequired().tenantId;
+        const employee = await this.employees.findById(input.employeeId, session);
+        if (employee === null) throw new NotFoundException({
+          code: 'ATTENDANCE_MIGRATION_EMPLOYEE_NOT_FOUND', message: '考勤月结员工主数据不存在',
+        });
+        let previous: AttendanceMonthlySnapshot | null = null;
+        let supersessionEvidenceId: string | null = null;
+        if (input.snapshotVersion === 1) {
+          if (input.previousSnapshotId !== null ||
+            input.supersessionApprovalHistoryId !== null ||
+            input.supersessionApprovalEvidenceChecksum !== null) {
+            throw invalidMigratedMonthChain();
+          }
+        } else {
+          if (input.previousSnapshotId === null ||
+            input.supersessionApprovalHistoryId === null ||
+            input.supersessionApprovalEvidenceChecksum === null ||
+            !HASH_PATTERN.test(input.supersessionApprovalEvidenceChecksum)) {
+            throw invalidMigratedMonthChain();
+          }
+          const [resolvedPrevious, approval] = await Promise.all([
+            this.snapshots.findById(input.previousSnapshotId, session),
+            this.approvals.verifyAttendanceMonthReopenMigrationReference(
+              input.supersessionApprovalHistoryId, session,
+            ),
+          ]);
+          if (resolvedPrevious === null || resolvedPrevious.employeeId !== input.employeeId ||
+            resolvedPrevious.month !== input.month ||
+            resolvedPrevious.snapshotVersion !== input.snapshotVersion - 1 ||
+            approval.id !== input.supersessionApprovalHistoryId ||
+            approval.evidenceChecksum !== input.supersessionApprovalEvidenceChecksum ||
+            Date.parse(approval.completedAt) < Date.parse(resolvedPrevious.closedAt) ||
+            Date.parse(approval.completedAt) > closedAt.getTime() ||
+            Date.parse(input.sourceCutoffAt) < Date.parse(resolvedPrevious.sourceCutoffAt) ||
+            closedAt.getTime() < Date.parse(resolvedPrevious.closedAt)) {
+            throw invalidMigratedMonthChain();
+          }
+          previous = resolvedPrevious;
+          supersessionEvidenceId = approval.id;
+        }
+        const cutoffAt = sourceCutoffAt;
+        const [facts, corrections, active] = await Promise.all([
+          this.facts.findForMonth(input.employeeId, input.month, cutoffAt, session),
+          this.corrections.findForMonth(input.employeeId, input.month, cutoffAt, session),
+          this.snapshots.findActive(input.employeeId, input.month, session),
+        ]);
+        const id = input.targetId ?? createEventId(closedAt);
+        const snapshot = restoreAttendanceMonthFromMigration({
+          id, tenantId, employeeId: input.employeeId, month: input.month,
+          snapshotVersion: input.snapshotVersion, rulesetVersion: input.rulesetVersion,
+          sourceCutoffAt: input.sourceCutoffAt, facts, corrections,
+          previousSnapshotId: previous?.id ?? null, supersessionEvidenceId,
+          closedAt: input.closedAt,
+        }, new Date());
+        assertMigratedMonthControls(snapshot, input);
+        if (input.targetId !== null) {
+          const [existing, evidence] = await Promise.all([
+            this.snapshots.findById(input.targetId, session),
+            this.snapshots.findMigrationEvidenceById(input.targetId, session),
+          ]);
+          if (existing === null || evidence === null ||
+            !sameMigratedMonth(existing, snapshot) ||
+            evidence.migrationEvidenceRef !== input.migrationEvidenceRef ||
+            evidence.migrationEvidenceChecksum !== input.evidenceChecksum) {
+            throw new ConflictException({
+              code: 'ATTENDANCE_MIGRATION_MONTH_IMMUTABLE',
+              message: '既有考勤月结、重开审批或 WORM 证据不一致，禁止覆盖',
+            });
+          }
+          return { month: migratedMonthSummary(existing) };
+        }
+        if ((previous === null && active !== null) ||
+          (previous !== null && active?.id !== previous.id)) {
+          throw new ConflictException({
+            code: 'ATTENDANCE_MIGRATION_MONTH_CHAIN_CONFLICT',
+            message: '考勤月结活动版本与迁移版本链不一致',
+          });
+        }
+        await this.snapshots.activateMigrated(
+          snapshot, previous, input.migrationEvidenceRef, input.evidenceChecksum, session,
+        );
+        await this.outbox.append({
+          type: 'attendance.month.migrated', tenantId, aggregateId: snapshot.id,
+          version: snapshot.snapshotVersion, occurredAt: snapshot.closedAt, data: {
+            employeeId: snapshot.employeeId, month: snapshot.month,
+            snapshotVersion: snapshot.snapshotVersion, snapshotHash: snapshot.snapshotHash,
+            rulesetVersion: snapshot.rulesetVersion,
+          },
+        }, session);
+        return { month: migratedMonthSummary(snapshot) };
       },
     ));
   }
@@ -677,6 +801,12 @@ function monthSummary(snapshot: AttendanceMonthlySnapshot): AttendanceMonthSumma
   });
 }
 
+function migratedMonthSummary(
+  snapshot: AttendanceMonthlySnapshot,
+): AttendanceMonthSummary & { readonly version: number } {
+  return Object.freeze({ ...monthSummary(snapshot), version: snapshot.snapshotVersion });
+}
+
 function normalizeInstant(value: string): string {
   const parsed = new Date(value);
   if (!Number.isFinite(parsed.getTime())) throw new BadRequestException({
@@ -720,6 +850,61 @@ function sameMigratedCorrection(
     left.approvalHistoryId === right.approvalHistoryId &&
     left.approvalEvidenceId === right.approvalEvidenceId &&
     left.approvedAt === right.approvedAt && left.createdAt === right.createdAt;
+}
+
+function sameMigratedMonth(
+  left: AttendanceMonthlySnapshot,
+  right: AttendanceMonthlySnapshot,
+): boolean {
+  return left.id === right.id && left.tenantId === right.tenantId &&
+    left.employeeId === right.employeeId && left.month === right.month &&
+    left.snapshotVersion === right.snapshotVersion &&
+    left.rulesetVersion === right.rulesetVersion &&
+    left.sourceCutoffAt === right.sourceCutoffAt &&
+    left.workedMinutes === right.workedMinutes && left.leaveMinutes === right.leaveMinutes &&
+    left.overtimeMinutes === right.overtimeMinutes && left.absentMinutes === right.absentMinutes &&
+    left.sourceFactCount === right.sourceFactCount &&
+    left.correctionCount === right.correctionCount &&
+    JSON.stringify(left.dailySummaries) === JSON.stringify(right.dailySummaries) &&
+    left.snapshotHash === right.snapshotHash &&
+    left.previousSnapshotId === right.previousSnapshotId &&
+    left.supersessionEvidenceId === right.supersessionEvidenceId &&
+    left.closedAt === right.closedAt;
+}
+
+function assertMigratedMonthControls(
+  snapshot: AttendanceMonthlySnapshot,
+  input: ImportAttendanceMonthFromMigrationInput,
+): void {
+  const impactMatches = snapshot.workedMinutes === input.expectedImpact.workedMinutes &&
+    snapshot.leaveMinutes === input.expectedImpact.leaveMinutes &&
+    snapshot.overtimeMinutes === input.expectedImpact.overtimeMinutes &&
+    snapshot.absentMinutes === input.expectedImpact.absentMinutes;
+  if (!impactMatches || snapshot.sourceFactCount !== input.expectedSourceFactCount ||
+    snapshot.correctionCount !== input.expectedCorrectionCount) {
+    throw new ConflictException({
+      code: 'ATTENDANCE_MIGRATION_MONTH_CONTROL_MISMATCH',
+      message: '考勤月结重算结果与来源控制总量不一致',
+    });
+  }
+}
+
+function invalidMigratedMonthChain(): BadRequestException {
+  return new BadRequestException({
+    code: 'ATTENDANCE_MIGRATION_MONTH_CHAIN_INVALID',
+    message: '考勤月结前序版本或重开审批链无效',
+  });
+}
+
+function strictMigrationInputInstant(value: string): Date {
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString() !== value) {
+    throw new BadRequestException({
+      code: 'ATTENDANCE_MIGRATION_TIME_INVALID',
+      message: '考勤迁移时间必须为毫秒精度 UTC ISO instant',
+    });
+  }
+  return parsed;
 }
 
 function assertMigrationEvidence(reference: string, checksum: string): void {

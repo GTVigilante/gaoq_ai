@@ -308,9 +308,59 @@ export class AttendanceMonthlySnapshotRepository extends TenantRepository {
     return record === null ? null : this.toDomain(record);
   }
 
+  async findById(id: string, session?: ClientSession): Promise<AttendanceMonthlySnapshot | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), id });
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record === null ? null : this.toDomain(record);
+  }
+
+  async findMigrationEvidenceById(
+    id: string,
+    session?: ClientSession,
+  ): Promise<{
+    readonly migrationEvidenceRef: string;
+    readonly migrationEvidenceChecksum: string;
+  } | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), id })
+      .select('migrationEvidenceRef migrationEvidenceChecksum -_id');
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record?.migrationEvidenceRef === null || record?.migrationEvidenceRef === undefined ||
+      record.migrationEvidenceChecksum === null ||
+      record.migrationEvidenceChecksum === undefined
+      ? null
+      : Object.freeze({
+          migrationEvidenceRef: record.migrationEvidenceRef,
+          migrationEvidenceChecksum: record.migrationEvidenceChecksum,
+        });
+  }
+
   async activate(
     snapshot: AttendanceMonthlySnapshot,
     previous: AttendanceMonthlySnapshot | null,
+    session: ClientSession,
+  ): Promise<void> {
+    await this.activateWithMigrationEvidence(snapshot, previous, null, null, session);
+  }
+
+  async activateMigrated(
+    snapshot: AttendanceMonthlySnapshot,
+    previous: AttendanceMonthlySnapshot | null,
+    migrationEvidenceRef: string,
+    migrationEvidenceChecksum: string,
+    session: ClientSession,
+  ): Promise<void> {
+    await this.activateWithMigrationEvidence(
+      snapshot, previous, migrationEvidenceRef, migrationEvidenceChecksum, session,
+    );
+  }
+
+  private async activateWithMigrationEvidence(
+    snapshot: AttendanceMonthlySnapshot,
+    previous: AttendanceMonthlySnapshot | null,
+    migrationEvidenceRef: string | null,
+    migrationEvidenceChecksum: string | null,
     session: ClientSession,
   ): Promise<void> {
     this.assertTenant(snapshot.tenantId);
@@ -338,6 +388,7 @@ export class AttendanceMonthlySnapshotRepository extends TenantRepository {
       snapshotHash: snapshot.snapshotHash, status: snapshot.status,
       previousSnapshotId: snapshot.previousSnapshotId,
       supersessionEvidenceId: snapshot.supersessionEvidenceId,
+      migrationEvidenceRef, migrationEvidenceChecksum,
       ...toProtectedRecord(protectedData),
     }], { session });
   }

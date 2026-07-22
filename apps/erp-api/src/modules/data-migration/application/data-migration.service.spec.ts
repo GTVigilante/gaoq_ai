@@ -116,6 +116,10 @@ function attendanceCorrectionsRun() {
   return { ...run(), scope: 'attendance_corrections' as const };
 }
 
+function attendanceMonthlySnapshotsRun() {
+  return { ...run(), scope: 'attendance_monthly_snapshots' as const };
+}
+
 function query<T>(value: T) { return { lean: () => ({ exec: () => Promise.resolve(value) }) }; }
 function listQuery<T>(value: readonly T[]) {
   return {
@@ -1482,6 +1486,68 @@ describe('DataMigrationService', () => {
     );
     const item = items.create.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
     expect(JSON.stringify(item)).not.toMatch(/workedMinutes|420|LEGACY_APPROVED/u);
+  });
+
+  it('考勤月结迁移解析员工并且账本不保存来源汇总', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      employeeSourceId: 'legacy-employee-001', month: '2026-04', snapshotVersion: 1,
+      rulesetVersion: 'legacy-cn-v1', sourceCutoffAt: '2026-04-02T00:00:00.000Z',
+      closedAt: '2026-04-02T00:01:00.000Z', previousSnapshotSourceId: null,
+      supersessionApprovalHistorySourceId: null,
+      supersessionApprovalEvidenceChecksum: null,
+      expectedImpact: {
+        workedMinutes: 480, leaveMinutes: 0, overtimeMinutes: 0, absentMinutes: 0,
+      },
+      expectedSourceFactCount: 1, expectedCorrectionCount: 0,
+      sourceEvidenceSourceAttachmentId: 'attendance-month-001',
+      sourceEvidenceChecksum: 'm'.repeat(43),
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(attendanceMonthlySnapshotsRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const mappings = {
+      findOne: vi.fn((filter: { entityType: string }) => query(
+        filter.entityType === 'attendance.monthly_snapshot'
+          ? null : { targetId: 'employee-001', targetVersion: 1 },
+      )),
+      findOneAndUpdate: vi.fn().mockReturnValue(query({ targetId: 'snapshot-001' })),
+    };
+    const associations = { findOneAndUpdate: vi.fn().mockReturnValue(query({})) };
+    const attachments = {
+      findOne: vi.fn().mockReturnValue(query(null)),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const attendance = { importMonthFromMigration: vi.fn().mockResolvedValue({ month: {
+      id: 'snapshot-001', employeeId: 'employee-001', month: '2026-04',
+      snapshotVersion: 1, snapshotHash: 's'.repeat(43), version: 1,
+    } }) };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      mappings as unknown as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+      undefined, undefined, undefined, undefined, undefined,
+      attendance as unknown as AttendanceApplicationService,
+    );
+    const result = await trusted(context, () => service.apply(RUN_ID, {
+      sequence: 1, sourceRecordId: 'legacy-month-001', sourceVersion: '1',
+      entityType: 'attendance.monthly_snapshot', payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: ['legacy-employee-001'],
+      attachments: [{ sourceAttachmentId: 'attendance-month-001', checksum: 'm'.repeat(43) }],
+    }));
+    expect(result).toMatchObject({ status: 'applied', targetId: 'snapshot-001' });
+    expect(attendance.importMonthFromMigration).toHaveBeenCalledWith(
+      expect.stringMatching(/^migration:/u),
+      expect.objectContaining({ employeeId: 'employee-001', snapshotVersion: 1 }),
+    );
+    const item = items.create.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
+    expect(JSON.stringify(item)).not.toMatch(/workedMinutes|480|legacy-cn-v1/u);
   });
 
   it('未解析关联和未决附件进入 Phase 6 硬门禁', async () => {

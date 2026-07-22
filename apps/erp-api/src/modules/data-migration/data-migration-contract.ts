@@ -20,6 +20,7 @@ export const DATA_MIGRATION_SCOPE_ENTITIES = Object.freeze({
   recruitment_offers: Object.freeze(['recruitment.offer']),
   attendance_source_facts: Object.freeze(['attendance.source_fact']),
   attendance_corrections: Object.freeze(['attendance.correction']),
+  attendance_monthly_snapshots: Object.freeze(['attendance.monthly_snapshot']),
 } as const);
 
 export type DataMigrationScope = keyof typeof DATA_MIGRATION_SCOPE_ENTITIES;
@@ -51,6 +52,7 @@ export const DATA_MIGRATION_SCOPE_WRITE_SCOPE: Readonly<Record<DataMigrationScop
     recruitment_offers: 'erp:recruitment:migration:write',
     attendance_source_facts: 'erp:attendance:migration:write',
     attendance_corrections: 'erp:attendance:migration:write',
+    attendance_monthly_snapshots: 'erp:attendance:migration:write',
   });
 
 /** 附件分级只由服务端 Scope 决定，禁止来源包或客户端降级。 */
@@ -69,6 +71,7 @@ Readonly<Record<DataMigrationScope, DataMigrationDataClassification>> = Object.f
   recruitment_offers: 'L4',
   attendance_source_facts: 'L4',
   attendance_corrections: 'L4',
+  attendance_monthly_snapshots: 'L4',
 });
 
 /** 失败关闭地校验实体是否属于本批次范围。 */

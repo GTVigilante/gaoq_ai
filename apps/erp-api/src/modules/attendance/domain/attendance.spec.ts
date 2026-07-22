@@ -8,6 +8,7 @@ import {
   createAttendanceSourceFact,
   restoreAttendanceSourceFactFromMigration,
   restoreAttendanceCorrectionFromMigration,
+  restoreAttendanceMonthFromMigration,
 } from './attendance.js';
 
 const now = new Date('2026-04-02T00:00:00.000Z');
@@ -122,5 +123,19 @@ describe('Attendance 领域', () => {
     expect(() => restoreAttendanceCorrectionFromMigration({
       ...restored, approvedAt: '2026-04-01T02:02:00.000Z',
     }, now)).toThrow('时间线');
+  });
+
+  it('迁移月结复用领域重算并保留历史关账时间', () => {
+    const restored = restoreAttendanceMonthFromMigration({
+      id: 'snapshot-legacy-001', tenantId: 'tenant-001', employeeId: 'employee-001',
+      month: '2026-04', snapshotVersion: 1, rulesetVersion: 'legacy-cn-v1',
+      sourceCutoffAt: '2026-04-02T00:00:00.000Z', facts: [fact()], corrections: [],
+      previousSnapshotId: null, supersessionEvidenceId: null,
+      closedAt: '2026-04-02T00:01:00.000Z',
+    }, new Date('2026-04-03T00:00:00.000Z'));
+    expect(restored).toMatchObject({
+      workedMinutes: 480, sourceFactCount: 1, snapshotVersion: 1,
+      closedAt: '2026-04-02T00:01:00.000Z',
+    });
   });
 });

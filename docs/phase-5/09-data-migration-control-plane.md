@@ -2,7 +2,7 @@
 
 ## 范围与当前能力
 
-本切片建立可重复、可恢复、可审计的迁移控制面。当前白名单包含 `org_reference`（部门、岗位、职级）、`org_workforce`（员工）、`org_employment`（劳动关系）、`approval_templates`（审批模板版本）、`approval_history`（已终结审批历史）、`approval_active_instances`（无文件草稿/运行中实例）、`recruitment_reference`（HC 与职位）、`recruitment_candidates`（候选人隐私主档）、`recruitment_applications`（面试前申请基线）、`recruitment_interviews`（面试及评价）、`recruitment_offers`（Offer 及申请后续阶段）、`attendance_source_facts`（考勤原始事实）与 `attendance_corrections`（已批准考勤修订）十三个独立 Scope；考勤月结、薪资与业务附件实体仍需在同一账本协议上按域追加，完成前 Issue #34 与 Phase 5 迁移门禁保持未完成。
+本切片建立可重复、可恢复、可审计的迁移控制面。当前白名单包含 `org_reference`（部门、岗位、职级）、`org_workforce`（员工）、`org_employment`（劳动关系）、`approval_templates`（审批模板版本）、`approval_history`（已终结审批历史）、`approval_active_instances`（无文件草稿/运行中实例）、`recruitment_reference`（HC 与职位）、`recruitment_candidates`（候选人隐私主档）、`recruitment_applications`（面试前申请基线）、`recruitment_interviews`（面试及评价）、`recruitment_offers`（Offer 及申请后续阶段）、`attendance_source_facts`（考勤原始事实）、`attendance_corrections`（已批准考勤修订）与 `attendance_monthly_snapshots`（月结版本链）十四个独立 Scope；薪资与业务附件实体仍需在同一账本协议上按域追加，完成前 Issue #34 与 Phase 5 迁移门禁保持未完成。
 
 目标业务数据禁止由迁移模块直接写集合。组织与劳动关系实体调用 `OrgApplicationService`，审批模板、已终结审批历史与活动审批调用 `ApprovalApplicationService`，HC 与职位调用 `RecruitmentManagementService`，候选人与申请调用 `RecruitmentApplicationService`，面试与评价调用 `RecruitmentInterviewService`，Offer 与后续申请阶段调用 `RecruitmentOfferService`，继续执行领域校验、引用校验、加密、盲索引、幂等、Outbox 和版本并发控制。员工更新、状态变更与开放劳动关系在一个事务内同步；既有员工离职仍必须进入 Care，迁移不得绕过清算、身份吊销与生效日控制。历史劳动关系使用独立恢复入口，不触发正常入职、离职或身份副作用，也不生成新员工。审批迁移分别只发布 `approval_template.migrated`、`approval_history.migrated` 与 `approval_instance.migrated`；招聘迁移只发布各聚合的 `.migrated` 专用事件，包括申请、面试和 Offer。所有迁移事件均不得伪装成正常创建、排期、评价、提交、决策、发送、签署、发布或退役动作，也不创建通知、外部日历或 eSign 任务。迁移模块只直写自己拥有的运行、条目、来源映射与证据账本。
 
@@ -50,6 +50,9 @@
 - `attendance_corrections` 必须在源事实和已终结审批历史之后执行。每条记录同时引用已迁移员工、源事实和 `attendance_correction` 专用审批历史；审批必须为 approved，批准时间与审批 WORM checksum 从不可变历史核验，员工与业务日期从源事实派生，payload 不接受自报目标 ID、批准时间或业务日期。目标模型使用 `approval_instance|legacy_history` 判别引用并分别唯一约束，禁止把历史 ID 伪装成在线审批实例 ID。
 - 替换分钟与原因码继续进入既有 L4 AES-256-GCM 修订仓储；修订另绑定唯一 WORM 档案。批准时间 ≤ 历史落库时间 ≤ 当前时间，同一源事实只允许一个修订，相同来源可严格重放，修订、审批摘要或 WORM 任一差异均禁止覆盖。
 - 只发布 `attendance.correction.migrated`，不创建审批、待办、通知，不改写源事实，也不触发月结重开。事件、迁移账本、报告和 MCP 不输出替换分钟、原因码或审批 WORM 定位符。
+- `attendance_monthly_snapshots` 必须在源事实与修订之后按员工、月份、版本升序执行。来源只声明规则版本、截止/关账时间、控制总量和版本链引用；目标服务按截止时间重新读取已迁移事实与修订并复用正式关账算法重算逐日明细、总计与 `snapshotHash`，禁止直接采信或写入来源快照正文。
+- v1 不得包含前序或重开证据；v2+ 必须引用同员工同月份的 v(n-1) 目标映射、已通过 `attendance_month_reopen` 历史及其 WORM checksum，并满足重开审批完成 ≤ 关账时间。每一版另绑定唯一 WORM，激活新版本时只把直接前序标记为 superseded。
+- 只发布 `attendance.month.migrated`，不伪造普通关账/重开事件。逐日明细继续使用 AES-256-GCM；迁移账本、报告、事件与 MCP 不输出逐日明细或来源控制 payload。
 
 `sourceFactHash` 的规范对象固定为 `sourceRecordId`、`sourceVersion`、`entityType`、`payloadHash`、按字典序排列的 `associationSourceIds`，以及按 `sourceAttachmentId` 排列且仅含 ID 与 checksum 的附件数组。滚动来源校验和初值为 `base64url(SHA-256(""))`，第 N 条为 `base64url(SHA-256(previous + "\\n" + sequence + ":" + sourceFactHash))`。来源导出程序必须使用相同算法，并固定 UTF-8、对象键字典序与数组规则。
 

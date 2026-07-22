@@ -331,6 +331,22 @@ export function closeAttendanceMonth(input: {
   });
 }
 
+/** 数据迁移专用：使用现有算法重算快照，并保留严格历史关账时间。 */
+export function restoreAttendanceMonthFromMigration(
+  input: Parameters<typeof closeAttendanceMonth>[0] & { readonly closedAt: string },
+  now: Date,
+): AttendanceMonthlySnapshot {
+  const closedAt = strictMigrationInstant(input.closedAt);
+  if (Date.parse(closedAt) > now.getTime() + 5 * 60 * 1_000) {
+    fail('ATTENDANCE_MIGRATION_MONTH_TIMELINE_INVALID', '考勤月结迁移关账时间无效');
+  }
+  const restored = closeAttendanceMonth(input, new Date(closedAt));
+  if (restored.closedAt !== closedAt) {
+    fail('ATTENDANCE_MIGRATION_MONTH_TIMELINE_INVALID', '考勤月结迁移时间未被完整保留');
+  }
+  return restored;
+}
+
 function assertSnapshotFact(
   snapshot: { readonly tenantId: string; readonly employeeId: string; readonly month: string },
   fact: AttendanceSourceFact,
