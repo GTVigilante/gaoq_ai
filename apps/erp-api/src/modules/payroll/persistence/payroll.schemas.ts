@@ -160,6 +160,8 @@ export class PayrollPeriodRecord {
   @Prop({ type: Number, default: null, min: 0 }) totalGrossMinor!: number | null;
   @Prop({ type: Number, default: null }) totalTaxMinor!: number | null;
   @Prop({ type: Number, default: null, min: 0 }) totalNetMinor!: number | null;
+  @Prop({ type: String, default: null, enum: ['approval_instance', 'legacy_history'] })
+  approvalReferenceType!: 'approval_instance' | 'legacy_history' | null;
   @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
   approvalInstanceId!: string | null;
   @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN }) approvedBy!: string | null;
@@ -168,6 +170,8 @@ export class PayrollPeriodRecord {
   @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN }) lockedBy!: string | null;
   @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
   strongAuthEvidenceId!: string | null;
+  @Prop({ type: String, default: null, enum: ['webauthn_evidence', 'migration_lock_evidence'] })
+  strongAuthReferenceType!: 'webauthn_evidence' | 'migration_lock_evidence' | null;
   @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
   disbursementBatchId!: string | null;
   @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
@@ -192,9 +196,21 @@ export type PayrollPeriodDocument = HydratedDocument<PayrollPeriodRecord>;
 export const PayrollPeriodRecordSchema = SchemaFactory.createForClass(PayrollPeriodRecord);
 PayrollPeriodRecordSchema.pre('validate', function () {
   const record = this as PayrollPeriodRecord;
+  if (record.approvalReferenceType === null && record.approvalInstanceId !== null) {
+    record.approvalReferenceType = 'approval_instance';
+  }
+  if (record.strongAuthReferenceType === null && record.strongAuthEvidenceId !== null) {
+    record.strongAuthReferenceType = 'webauthn_evidence';
+  }
   if ((record.migrationEvidenceRef === null) !==
     (record.migrationEvidenceChecksum === null)) {
     throw new Error('工资周期迁移证据引用与校验和必须成对出现');
+  }
+  if ((record.approvalReferenceType === null) !== (record.approvalInstanceId === null)) {
+    throw new Error('工资周期审批引用类型与标识必须成对出现');
+  }
+  if ((record.strongAuthReferenceType === null) !== (record.strongAuthEvidenceId === null)) {
+    throw new Error('工资周期强认证引用类型与标识必须成对出现');
   }
 });
 PayrollPeriodRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
@@ -253,6 +269,84 @@ PayrollCalculationRunRecordSchema.index({ tenantId: 1, periodId: 1, runNumber: 1
 PayrollCalculationRunRecordSchema.index(
   { tenantId: 1, migrationEvidenceRef: 1 },
   { unique: true, partialFilterExpression: { migrationEvidenceRef: { $type: 'string' } } },
+);
+
+/** 历史工资审批控制证据；不把旧审批历史伪装成在线审批实例。 */
+@Schema({ collection: 'payroll_period_approval_evidence', timestamps: true, versionKey: false, id: false })
+export class PayrollPeriodApprovalEvidenceRecord {
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) id!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  tenantId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) periodId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
+  approvalHistoryId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  approvalEvidenceChecksum!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  approvedBy!: string;
+  @Prop({ type: Date, required: true, immutable: true }) approvedAt!: Date;
+  @Prop({ type: Number, required: true, immutable: true, min: 1 }) periodVersion!: number;
+  @Prop({
+    type: String, required: true, immutable: true, maxlength: 256,
+    match: MIGRATION_EVIDENCE_REF_PATTERN,
+  })
+  migrationEvidenceRef!: string;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  migrationEvidenceChecksum!: string;
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+export type PayrollPeriodApprovalEvidenceDocument =
+  HydratedDocument<PayrollPeriodApprovalEvidenceRecord>;
+export const PayrollPeriodApprovalEvidenceRecordSchema = SchemaFactory.createForClass(
+  PayrollPeriodApprovalEvidenceRecord,
+);
+PayrollPeriodApprovalEvidenceRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
+PayrollPeriodApprovalEvidenceRecordSchema.index({ tenantId: 1, periodId: 1 }, { unique: true });
+PayrollPeriodApprovalEvidenceRecordSchema.index(
+  { tenantId: 1, approvalHistoryId: 1 }, { unique: true },
+);
+PayrollPeriodApprovalEvidenceRecordSchema.index(
+  { tenantId: 1, migrationEvidenceRef: 1 }, { unique: true },
+);
+
+/** 历史工资锁定证据；强认证正文只在 WORM，在线仅保存不可变控制字段。 */
+@Schema({ collection: 'payroll_period_lock_evidence', timestamps: true, versionKey: false, id: false })
+export class PayrollPeriodLockEvidenceRecord {
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) id!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  tenantId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) periodId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
+  approvalControlEvidenceId!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  lockedBy!: string;
+  @Prop({ type: Date, required: true, immutable: true }) lockedAt!: Date;
+  @Prop({ type: Number, required: true, immutable: true, min: 1 }) periodVersion!: number;
+  @Prop({ type: String, required: true, immutable: true, enum: ['webauthn_uv'] })
+  strongAuthMethod!: 'webauthn_uv';
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) operationId!: string;
+  @Prop({
+    type: String, required: true, immutable: true, maxlength: 256,
+    match: MIGRATION_EVIDENCE_REF_PATTERN,
+  })
+  migrationEvidenceRef!: string;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  migrationEvidenceChecksum!: string;
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+export type PayrollPeriodLockEvidenceDocument = HydratedDocument<PayrollPeriodLockEvidenceRecord>;
+export const PayrollPeriodLockEvidenceRecordSchema = SchemaFactory.createForClass(
+  PayrollPeriodLockEvidenceRecord,
+);
+PayrollPeriodLockEvidenceRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
+PayrollPeriodLockEvidenceRecordSchema.index({ tenantId: 1, periodId: 1 }, { unique: true });
+PayrollPeriodLockEvidenceRecordSchema.index(
+  { tenantId: 1, approvalControlEvidenceId: 1 }, { unique: true },
+);
+PayrollPeriodLockEvidenceRecordSchema.index(
+  { tenantId: 1, migrationEvidenceRef: 1 }, { unique: true },
 );
 
 @Schema({ collection: 'payroll_input_snapshots', timestamps: true, versionKey: false, id: false })

@@ -34,10 +34,12 @@ function approvedPeriod(): PayrollPeriod {
     },
   }, NOW);
   period = submitPayrollApproval(period, {
-    tenantId: 'tenant-001', expectedVersion: 3, approvalInstanceId: 'approval-001',
+    tenantId: 'tenant-001', expectedVersion: 3,
+    approvalReferenceType: 'approval_instance', approvalInstanceId: 'approval-001',
   }, NOW);
   return applyPayrollApproval(period, {
     tenantId: 'tenant-001', expectedVersion: 4, approvalInstanceId: 'approval-001',
+    approvalReferenceType: 'approval_instance',
     outcome: 'approved', decidedBy: 'employee-finance-approver',
     approvalEvidenceId: 'approval-evidence-001', trustedApproval: true,
   }, NOW);
@@ -49,6 +51,7 @@ describe('PayrollPeriod 职责分离状态机', () => {
     period = lockPayrollPeriod(period, {
       tenantId: 'tenant-001', expectedVersion: 5,
       lockedBy: 'employee-finance-locker', strongAuthEvidenceId: 'mfa-evidence-001',
+      strongAuthReferenceType: 'webauthn_evidence',
     }, NOW);
     period = startPayrollDisbursement(period, {
       tenantId: 'tenant-001', expectedVersion: 6,
@@ -85,26 +88,31 @@ describe('PayrollPeriod 职责分离状态机', () => {
       },
     }, NOW);
     period = submitPayrollApproval(period, {
-      tenantId: 'tenant-001', expectedVersion: 3, approvalInstanceId: 'approval-001',
+      tenantId: 'tenant-001', expectedVersion: 3,
+      approvalReferenceType: 'approval_instance', approvalInstanceId: 'approval-001',
     }, NOW);
     expect(() => applyPayrollApproval(period, {
       tenantId: 'tenant-001', expectedVersion: 4, approvalInstanceId: 'approval-001',
+      approvalReferenceType: 'approval_instance',
       outcome: 'approved', decidedBy: 'employee-approver',
       approvalEvidenceId: 'evidence-001', trustedApproval: false,
     }, NOW)).toThrow(/不可信/u);
     expect(() => applyPayrollApproval(period, {
       tenantId: 'tenant-001', expectedVersion: 4, approvalInstanceId: 'approval-001',
+      approvalReferenceType: 'approval_instance',
       outcome: 'approved', decidedBy: 'employee-maker',
       approvalEvidenceId: 'evidence-001', trustedApproval: true,
     }, NOW)).toThrow(/必须分离/u);
     const approved = applyPayrollApproval(period, {
       tenantId: 'tenant-001', expectedVersion: 4, approvalInstanceId: 'approval-001',
+      approvalReferenceType: 'approval_instance',
       outcome: 'approved', decidedBy: 'employee-approver',
       approvalEvidenceId: 'evidence-001', trustedApproval: true,
     }, NOW);
     expect(() => lockPayrollPeriod(approved, {
       tenantId: 'tenant-001', expectedVersion: 5,
       lockedBy: 'employee-approver', strongAuthEvidenceId: 'mfa-001',
+      strongAuthReferenceType: 'webauthn_evidence',
     }, NOW)).toThrow(/独立/u);
   });
 
@@ -115,6 +123,7 @@ describe('PayrollPeriod 职责分离状态机', () => {
     let period = lockPayrollPeriod(approved, {
       tenantId: 'tenant-001', expectedVersion: 5,
       lockedBy: 'employee-locker', strongAuthEvidenceId: 'mfa-001',
+      strongAuthReferenceType: 'webauthn_evidence',
     }, NOW);
     expect(() => recordPayrollCalculation(period, {
       tenantId: 'tenant-001', expectedVersion: 6,

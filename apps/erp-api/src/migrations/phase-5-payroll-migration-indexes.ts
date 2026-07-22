@@ -6,6 +6,8 @@ import {
   PayrollCalculationRunRecordSchema,
   PayrollCompensationProfileRecordSchema,
   PayrollPeriodRecordSchema,
+  PayrollPeriodApprovalEvidenceRecordSchema,
+  PayrollPeriodLockEvidenceRecordSchema,
   PayrollRulePackRecordSchema,
 } from '../modules/payroll/persistence/payroll.schemas.js';
 import { buildIndexManifestFromSchemas, runAdditiveIndexMigration } from './phase-3-indexes.js';
@@ -18,6 +20,8 @@ export function buildPhaseFivePayrollMigrationIndexManifest() {
     PayrollCompensationProfileRecordSchema,
     PayrollPeriodRecordSchema,
     PayrollCalculationRunRecordSchema,
+    PayrollPeriodApprovalEvidenceRecordSchema,
+    PayrollPeriodLockEvidenceRecordSchema,
   ]);
 }
 

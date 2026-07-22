@@ -10,6 +10,7 @@ import type { RecruitmentInterviewService } from '../../recruitment/application/
 import type { RecruitmentOfferService } from '../../recruitment/application/recruitment-offer.service.js';
 import type { AttendanceApplicationService } from '../../attendance/application/attendance-application.service.js';
 import type { PayrollMasterDataService } from '../../payroll/application/payroll-master-data.service.js';
+import type { PayrollApprovalService } from '../../payroll/application/payroll-approval.service.js';
 import type { PayrollRunService } from '../../payroll/application/payroll-run.service.js';
 import type {
   DataMigrationAssociationDocument,
@@ -137,6 +138,14 @@ function payrollPeriodsRun() {
 
 function payrollCalculationRunsRun() {
   return { ...run(), scope: 'payroll_calculation_runs' as const };
+}
+
+function payrollPeriodApprovalsRun() {
+  return { ...run(), scope: 'payroll_period_approvals' as const };
+}
+
+function payrollPeriodLocksRun() {
+  return { ...run(), scope: 'payroll_period_locks' as const };
 }
 
 function query<T>(value: T) { return { lean: () => ({ exec: () => Promise.resolve(value) }) }; }
@@ -1861,6 +1870,150 @@ describe('DataMigrationService', () => {
     expect(associations.bulkWrite.mock.calls[0]?.[1]).toEqual({ ordered: true });
     const item = items.create.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
     expect(JSON.stringify(item)).not.toMatch(/1000000|980000|20000/u);
+  });
+
+  it('工资批准迁移解析周期、批准历史和审批人三类可信映射', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      periodSourceId: 'legacy-period-001', expectedPeriodVersion: 3,
+      approvalHistorySourceId: 'legacy-approval-001',
+      approvalEvidenceChecksum: 'a'.repeat(43),
+      approvedByEmployeeSourceId: 'legacy-employee-approver-001',
+      sourceEvidenceSourceAttachmentId: 'payroll-approval-001',
+      sourceEvidenceChecksum: 'e'.repeat(43),
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(payrollPeriodApprovalsRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const targetIds: Readonly<Record<string, string>> = {
+      'payroll.period': '01J8ZQK7V0A2M4N6P8R0T2W4P1',
+      'approval.history': '01J8ZQK7V0A2M4N6P8R0T2W4H1',
+      'org.employee': 'employee-approver-001',
+    };
+    const mappings = {
+      findOne: vi.fn((filter: { entityType: string }) => query(
+        filter.entityType === 'payroll.period_approval' ? null : {
+          targetId: targetIds[filter.entityType], targetVersion: 1,
+        },
+      )),
+      findOneAndUpdate: vi.fn().mockReturnValue(query({ targetId: 'approval-control-001' })),
+    };
+    const associations = {
+      findOneAndUpdate: vi.fn().mockReturnValue(query({})),
+      bulkWrite: vi.fn().mockResolvedValue({}),
+    };
+    const attachments = {
+      findOne: vi.fn().mockReturnValue(query(null)),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const payrollControls = { importApprovalFromMigration: vi.fn().mockResolvedValue({
+      id: 'approval-control-001', version: 1, periodId: targetIds['payroll.period'],
+      periodVersion: 5, status: 'approved',
+    }) };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      mappings as unknown as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      payrollControls as unknown as PayrollApprovalService,
+    );
+
+    const result = await trusted(context, () => service.apply(RUN_ID, {
+      sequence: 1, sourceRecordId: 'legacy-payroll-approval-001', sourceVersion: '1',
+      entityType: 'payroll.period_approval', payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: [
+        'legacy-period-001', 'legacy-approval-001', 'legacy-employee-approver-001',
+      ],
+      attachments: [{ sourceAttachmentId: 'payroll-approval-001', checksum: 'e'.repeat(43) }],
+    }));
+
+    expect(result).toMatchObject({ status: 'applied', targetId: 'approval-control-001' });
+    expect(payrollControls.importApprovalFromMigration).toHaveBeenCalledWith(
+      expect.stringMatching(/^migration:/u),
+      expect.objectContaining({
+        periodId: targetIds['payroll.period'],
+        approvalHistoryId: targetIds['approval.history'],
+        approvedByEmployeeId: targetIds['org.employee'],
+      }),
+    );
+  });
+
+  it('工资锁定迁移依赖批准控制映射且不把历史证明伪装成在线认证标识', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      periodSourceId: 'legacy-period-001', expectedPeriodVersion: 5,
+      approvalControlSourceId: 'legacy-approval-control-001',
+      lockedByEmployeeSourceId: 'legacy-employee-locker-001',
+      lockedAt: '2026-06-04T00:00:00.000Z', strongAuthMethod: 'webauthn_uv',
+      sourceEvidenceSourceAttachmentId: 'payroll-lock-001',
+      sourceEvidenceChecksum: 'l'.repeat(43),
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(payrollPeriodLocksRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const targetIds: Readonly<Record<string, string>> = {
+      'payroll.period': '01J8ZQK7V0A2M4N6P8R0T2W4P1',
+      'payroll.period_approval': '01J8ZQK7V0A2M4N6P8R0T2W4A1',
+      'org.employee': 'employee-locker-001',
+    };
+    const mappings = {
+      findOne: vi.fn((filter: { entityType: string }) => query(
+        filter.entityType === 'payroll.period_lock' ? null : {
+          targetId: targetIds[filter.entityType], targetVersion: 1,
+        },
+      )),
+      findOneAndUpdate: vi.fn().mockReturnValue(query({ targetId: 'lock-control-001' })),
+    };
+    const associations = {
+      findOneAndUpdate: vi.fn().mockReturnValue(query({})),
+      bulkWrite: vi.fn().mockResolvedValue({}),
+    };
+    const attachments = {
+      findOne: vi.fn().mockReturnValue(query(null)),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const payrollControls = { importLockFromMigration: vi.fn().mockResolvedValue({
+      id: 'lock-control-001', version: 1, periodId: targetIds['payroll.period'],
+      periodVersion: 6, status: 'locked',
+    }) };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      mappings as unknown as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      payrollControls as unknown as PayrollApprovalService,
+    );
+
+    const result = await trusted(context, () => service.apply(RUN_ID, {
+      sequence: 1, sourceRecordId: 'legacy-payroll-lock-001', sourceVersion: '1',
+      entityType: 'payroll.period_lock', payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: [
+        'legacy-period-001', 'legacy-approval-control-001', 'legacy-employee-locker-001',
+      ],
+      attachments: [{ sourceAttachmentId: 'payroll-lock-001', checksum: 'l'.repeat(43) }],
+    }));
+
+    expect(result).toMatchObject({ status: 'applied', targetId: 'lock-control-001' });
+    expect(payrollControls.importLockFromMigration).toHaveBeenCalledWith(
+      expect.stringMatching(/^migration:/u),
+      expect.objectContaining({
+        periodId: targetIds['payroll.period'],
+        approvalControlEvidenceId: targetIds['payroll.period_approval'],
+        lockedByEmployeeId: targetIds['org.employee'], strongAuthMethod: 'webauthn_uv',
+      }),
+    );
   });
 
   it('未解析关联和未决附件进入 Phase 6 硬门禁', async () => {

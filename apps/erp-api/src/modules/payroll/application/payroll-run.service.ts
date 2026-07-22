@@ -1025,9 +1025,11 @@ export function toMutablePayrollPeriodRecord(period: PayrollPeriod): Record<stri
     totalGrossMinor: period.activeRun?.totalGrossMinor ?? null,
     totalTaxMinor: period.activeRun?.totalTaxMinor ?? null,
     totalNetMinor: period.activeRun?.totalNetMinor ?? null,
+    approvalReferenceType: period.approvalReferenceType,
     approvalInstanceId: period.approvalInstanceId, approvedBy: period.approvedBy,
     approvalEvidenceId: period.approvalEvidenceId, lockedBy: period.lockedBy,
     strongAuthEvidenceId: period.strongAuthEvidenceId,
+    strongAuthReferenceType: period.strongAuthReferenceType,
     disbursementBatchId: period.disbursementBatchId,
     disbursementPreparedBy: period.disbursementPreparedBy,
     disbursementExportEvidenceId: period.disbursementExportEvidenceId,
@@ -1046,9 +1048,13 @@ export function payrollPeriodFromRecord(record: PayrollPeriodRecord): PayrollPer
   return Object.freeze({
     id: record.id, tenantId: record.tenantId, period: record.period, currency: record.currency,
     status: record.status, preparedBy: record.preparedBy, activeRun,
+    approvalReferenceType: record.approvalReferenceType ??
+      (record.approvalInstanceId === null ? null : 'approval_instance'),
     approvalInstanceId: record.approvalInstanceId, approvedBy: record.approvedBy,
     approvalEvidenceId: record.approvalEvidenceId, lockedBy: record.lockedBy,
     strongAuthEvidenceId: record.strongAuthEvidenceId,
+    strongAuthReferenceType: record.strongAuthReferenceType ??
+      (record.strongAuthEvidenceId === null ? null : 'webauthn_evidence'),
     disbursementBatchId: record.disbursementBatchId,
     disbursementPreparedBy: record.disbursementPreparedBy,
     disbursementExportEvidenceId: record.disbursementExportEvidenceId,

@@ -61,6 +61,11 @@ import {
   type ImportPayrollCalculationRunFromMigrationInput,
   type ImportPayrollPeriodFromMigrationInput,
 } from '../../payroll/application/payroll-run.service.js';
+import {
+  PayrollApprovalService,
+  type ImportPayrollPeriodApprovalFromMigrationInput,
+  type ImportPayrollPeriodLockFromMigrationInput,
+} from '../../payroll/application/payroll-approval.service.js';
 import type {
   CreateDepartmentDto,
   CreateEmployeeDto,
@@ -172,6 +177,8 @@ export class DataMigrationService {
     private readonly payrollMasterData?: PayrollMasterDataService,
     @Inject(PayrollRunService)
     private readonly payrollRuns?: PayrollRunService,
+    @Inject(PayrollApprovalService)
+    private readonly payrollControls?: PayrollApprovalService,
   ) {}
 
   async start(input: CreateDataMigrationRunDto) {
@@ -666,6 +673,28 @@ export class DataMigrationService {
       );
       assertSingleMigrationEvidence(input, payload);
       await this.requireMappings(run, specs);
+      return;
+    } else if (input.entityType === 'payroll.period_approval') {
+      const payload = payrollPeriodApprovalPayload(input.payload);
+      const specs = payrollPeriodApprovalAssociationSpecs(payload);
+      assertAssociations(
+        input.associationSourceIds,
+        specs.map((spec) => spec.sourceAssociationId),
+      );
+      assertSingleMigrationEvidence(input, payload);
+      await Promise.all(specs.map(async (spec) =>
+        this.requireMapping(run, spec.entityType, spec.sourceAssociationId)));
+      return;
+    } else if (input.entityType === 'payroll.period_lock') {
+      const payload = payrollPeriodLockPayload(input.payload);
+      const specs = payrollPeriodLockAssociationSpecs(payload);
+      assertAssociations(
+        input.associationSourceIds,
+        specs.map((spec) => spec.sourceAssociationId),
+      );
+      assertSingleMigrationEvidence(input, payload);
+      await Promise.all(specs.map(async (spec) =>
+        this.requireMapping(run, spec.entityType, spec.sourceAssociationId)));
       return;
     } else {
       const payload = approvalTemplatePayload(input.payload);
@@ -1223,6 +1252,50 @@ export class DataMigrationService {
       const result = await this.payrollRuns.importCalculationRunFromMigration(key, command);
       return target(result);
     }
+    if (input.entityType === 'payroll.period_approval') {
+      const payload = payrollPeriodApprovalPayload(input.payload);
+      if (this.payrollControls === undefined) throw new Error('迁移工资控制适配器未装配');
+      const [period, approval, approvedBy] = await Promise.all([
+        this.requireMapping(run, 'payroll.period', payload.periodSourceId),
+        this.requireMapping(run, 'approval.history', payload.approvalHistorySourceId),
+        this.requireMapping(run, 'org.employee', payload.approvedByEmployeeSourceId),
+      ]);
+      const command: ImportPayrollPeriodApprovalFromMigrationInput = {
+        targetId: mapping?.targetId ?? null, periodId: period.targetId,
+        expectedPeriodVersion: payload.expectedPeriodVersion,
+        approvalHistoryId: approval.targetId,
+        approvalEvidenceChecksum: payload.approvalEvidenceChecksum,
+        approvedByEmployeeId: approvedBy.targetId,
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${run.id}/attachments/${payload.sourceEvidenceSourceAttachmentId}`,
+        evidenceChecksum: payload.sourceEvidenceChecksum,
+      };
+      const result = await this.payrollControls.importApprovalFromMigration(key, command);
+      return target(result);
+    }
+    if (input.entityType === 'payroll.period_lock') {
+      const payload = payrollPeriodLockPayload(input.payload);
+      if (this.payrollControls === undefined) throw new Error('迁移工资控制适配器未装配');
+      const [period, approvalControl, lockedBy] = await Promise.all([
+        this.requireMapping(run, 'payroll.period', payload.periodSourceId),
+        this.requireMapping(
+          run, 'payroll.period_approval', payload.approvalControlSourceId,
+        ),
+        this.requireMapping(run, 'org.employee', payload.lockedByEmployeeSourceId),
+      ]);
+      const command: ImportPayrollPeriodLockFromMigrationInput = {
+        targetId: mapping?.targetId ?? null, periodId: period.targetId,
+        expectedPeriodVersion: payload.expectedPeriodVersion,
+        approvalControlEvidenceId: approvalControl.targetId,
+        lockedByEmployeeId: lockedBy.targetId,
+        lockedAt: payload.lockedAt, strongAuthMethod: payload.strongAuthMethod,
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${run.id}/attachments/${payload.sourceEvidenceSourceAttachmentId}`,
+        evidenceChecksum: payload.sourceEvidenceChecksum,
+      };
+      const result = await this.payrollControls.importLockFromMigration(key, command);
+      return target(result);
+    }
     const payload = approvalTemplatePayload(input.payload);
     if (this.approvals === undefined) throw new Error('迁移审批适配器未装配');
     const employeeId = async (sourceId: string): Promise<string> =>
@@ -1745,7 +1818,8 @@ type AssociationTargetType =
   | 'attendance.monthly_snapshot'
   | 'payroll.rule_pack'
   | 'payroll.compensation_profile'
-  | 'payroll.period';
+  | 'payroll.period'
+  | 'payroll.period_approval';
 interface AssociationEvidence {
   readonly relationship: AssociationRelationship;
   readonly sourceAssociationId: string;
@@ -3458,6 +3532,125 @@ function payrollCalculationRunAssociationSpecs(
   ];
 }
 
+interface PayrollPeriodApprovalMigrationPayload extends MigrationEvidencePayload {
+  readonly periodSourceId: string;
+  readonly expectedPeriodVersion: number;
+  readonly approvalHistorySourceId: string;
+  readonly approvalEvidenceChecksum: string;
+  readonly approvedByEmployeeSourceId: string;
+}
+
+function payrollPeriodApprovalPayload(
+  value: Readonly<Record<string, unknown>>,
+): PayrollPeriodApprovalMigrationPayload {
+  exactKeys(value, [
+    'approvalEvidenceChecksum', 'approvalHistorySourceId', 'approvedByEmployeeSourceId',
+    'expectedPeriodVersion', 'periodSourceId', 'sourceEvidenceChecksum',
+    'sourceEvidenceSourceAttachmentId',
+  ]);
+  if (typeof value.periodSourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.periodSourceId) ||
+    typeof value.approvalHistorySourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.approvalHistorySourceId) ||
+    typeof value.approvedByEmployeeSourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.approvedByEmployeeSourceId) ||
+    !migrationVersion(value.expectedPeriodVersion) ||
+    Number(value.expectedPeriodVersion) < 3 ||
+    typeof value.approvalEvidenceChecksum !== 'string' ||
+    !HASH_PATTERN.test(value.approvalEvidenceChecksum) ||
+    !migrationEvidence(value)) throw invalidPayload();
+  return {
+    periodSourceId: value.periodSourceId,
+    expectedPeriodVersion: Number(value.expectedPeriodVersion),
+    approvalHistorySourceId: value.approvalHistorySourceId,
+    approvalEvidenceChecksum: value.approvalEvidenceChecksum,
+    approvedByEmployeeSourceId: value.approvedByEmployeeSourceId,
+    sourceEvidenceSourceAttachmentId: value.sourceEvidenceSourceAttachmentId,
+    sourceEvidenceChecksum: value.sourceEvidenceChecksum,
+  };
+}
+
+function payrollPeriodApprovalAssociationSpecs(
+  payload: PayrollPeriodApprovalMigrationPayload,
+): readonly (AssociationEvidence & { readonly entityType: AssociationTargetType })[] {
+  return [
+    {
+      relationship: 'payroll_period', sourceAssociationId: payload.periodSourceId,
+      entityType: 'payroll.period',
+    },
+    {
+      relationship: 'approval_history',
+      sourceAssociationId: payload.approvalHistorySourceId,
+      entityType: 'approval.history',
+    },
+    {
+      relationship: 'approved_by',
+      sourceAssociationId: payload.approvedByEmployeeSourceId,
+      entityType: 'org.employee',
+    },
+  ];
+}
+
+interface PayrollPeriodLockMigrationPayload extends MigrationEvidencePayload {
+  readonly periodSourceId: string;
+  readonly expectedPeriodVersion: number;
+  readonly approvalControlSourceId: string;
+  readonly lockedByEmployeeSourceId: string;
+  readonly lockedAt: string;
+  readonly strongAuthMethod: 'webauthn_uv';
+}
+
+function payrollPeriodLockPayload(
+  value: Readonly<Record<string, unknown>>,
+): PayrollPeriodLockMigrationPayload {
+  exactKeys(value, [
+    'approvalControlSourceId', 'expectedPeriodVersion', 'lockedAt',
+    'lockedByEmployeeSourceId', 'periodSourceId', 'sourceEvidenceChecksum',
+    'sourceEvidenceSourceAttachmentId', 'strongAuthMethod',
+  ]);
+  if (typeof value.periodSourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.periodSourceId) ||
+    typeof value.approvalControlSourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.approvalControlSourceId) ||
+    typeof value.lockedByEmployeeSourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.lockedByEmployeeSourceId) ||
+    !migrationVersion(value.expectedPeriodVersion) ||
+    Number(value.expectedPeriodVersion) < 5 || !isStrictUtcIso(value.lockedAt) ||
+    value.strongAuthMethod !== 'webauthn_uv' || !migrationEvidence(value)) {
+    throw invalidPayload();
+  }
+  return {
+    periodSourceId: value.periodSourceId,
+    expectedPeriodVersion: Number(value.expectedPeriodVersion),
+    approvalControlSourceId: value.approvalControlSourceId,
+    lockedByEmployeeSourceId: value.lockedByEmployeeSourceId,
+    lockedAt: value.lockedAt, strongAuthMethod: 'webauthn_uv',
+    sourceEvidenceSourceAttachmentId: value.sourceEvidenceSourceAttachmentId,
+    sourceEvidenceChecksum: value.sourceEvidenceChecksum,
+  };
+}
+
+function payrollPeriodLockAssociationSpecs(
+  payload: PayrollPeriodLockMigrationPayload,
+): readonly (AssociationEvidence & { readonly entityType: AssociationTargetType })[] {
+  return [
+    {
+      relationship: 'payroll_period', sourceAssociationId: payload.periodSourceId,
+      entityType: 'payroll.period',
+    },
+    {
+      relationship: 'approval_control',
+      sourceAssociationId: payload.approvalControlSourceId,
+      entityType: 'payroll.period_approval',
+    },
+    {
+      relationship: 'locked_by',
+      sourceAssociationId: payload.lockedByEmployeeSourceId,
+      entityType: 'org.employee',
+    },
+  ];
+}
+
 function migrationEvidence(value: Readonly<Record<string, unknown>>): value is
 Readonly<Record<string, unknown>> & MigrationEvidencePayload {
   return typeof value.sourceEvidenceSourceAttachmentId === 'string' &&
@@ -3829,6 +4022,12 @@ function associationEvidence(input: ApplyDataMigrationRecordDto): readonly Assoc
       derived = payrollCalculationRunAssociationSpecs(
         payrollCalculationRunPayload(input.payload),
       );
+    } else if (input.entityType === 'payroll.period_approval') {
+      derived = payrollPeriodApprovalAssociationSpecs(
+        payrollPeriodApprovalPayload(input.payload),
+      );
+    } else if (input.entityType === 'payroll.period_lock') {
+      derived = payrollPeriodLockAssociationSpecs(payrollPeriodLockPayload(input.payload));
     } else if (input.entityType === 'attendance.monthly_snapshot') {
       const payload = attendanceMonthPayload(input.payload);
       derived = [
@@ -3969,6 +4168,7 @@ const ASSOCIATION_RELATIONSHIPS = [
   'previous_snapshot',
   'prepared_by', 'payroll_period', 'rule_pack',
   'compensation_profile', 'attendance_snapshot',
+  'approval_control', 'locked_by',
   'declared_reference',
 ] as const;
 const ASSOCIATION_RELATIONSHIP_SET: ReadonlySet<string> = new Set(ASSOCIATION_RELATIONSHIPS);

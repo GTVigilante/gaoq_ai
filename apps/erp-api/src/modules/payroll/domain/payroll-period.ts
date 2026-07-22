@@ -20,11 +20,14 @@ export interface PayrollPeriod {
   readonly status: PayrollPeriodStatus;
   readonly preparedBy: string;
   readonly activeRun: PayrollRunReference | null;
+  readonly approvalReferenceType: 'approval_instance' | 'legacy_history' | null;
   readonly approvalInstanceId: string | null;
   readonly approvedBy: string | null;
   readonly approvalEvidenceId: string | null;
   readonly lockedBy: string | null;
   readonly strongAuthEvidenceId: string | null;
+  readonly strongAuthReferenceType:
+    | 'webauthn_evidence' | 'migration_lock_evidence' | null;
   readonly disbursementBatchId: string | null;
   readonly disbursementPreparedBy: string | null;
   readonly disbursementExportEvidenceId: string | null;
@@ -55,8 +58,9 @@ export function createPayrollPeriod(input: {
   const occurredAt = iso(now);
   return Object.freeze({
     ...input, currency: 'CNY', status: 'draft', activeRun: null,
-    approvalInstanceId: null, approvedBy: null, approvalEvidenceId: null,
-    lockedBy: null, strongAuthEvidenceId: null,
+    approvalReferenceType: null, approvalInstanceId: null,
+    approvedBy: null, approvalEvidenceId: null,
+    lockedBy: null, strongAuthEvidenceId: null, strongAuthReferenceType: null,
     disbursementBatchId: null, disbursementPreparedBy: null,
     disbursementExportEvidenceId: null,
     reconciliationEvidenceId: null, reconciledBy: null,
@@ -85,13 +89,17 @@ export function recordPayrollCalculation(
   validateRun(command.run);
   return next(period, {
     status: 'review', activeRun: frozenRun(command.run),
-    approvalInstanceId: null, approvedBy: null, approvalEvidenceId: null,
+    approvalReferenceType: null, approvalInstanceId: null,
+    approvedBy: null, approvalEvidenceId: null,
   }, now);
 }
 
 export function submitPayrollApproval(
   period: PayrollPeriod,
-  command: BaseCommand & { readonly approvalInstanceId: string },
+  command: BaseCommand & {
+    readonly approvalReferenceType: 'approval_instance' | 'legacy_history';
+    readonly approvalInstanceId: string;
+  },
   now: Date,
 ): PayrollPeriod {
   assertCommand(period, command);
@@ -99,7 +107,8 @@ export function submitPayrollApproval(
   if (period.activeRun === null) invalid('PAYROLL_RUN_REQUIRED', '提交审批前必须完成计算');
   assertId(command.approvalInstanceId, 'approvalInstanceId');
   return next(period, {
-    status: 'pending_approval', approvalInstanceId: command.approvalInstanceId,
+    status: 'pending_approval', approvalReferenceType: command.approvalReferenceType,
+    approvalInstanceId: command.approvalInstanceId,
   }, now);
 }
 
@@ -108,6 +117,7 @@ export function applyPayrollApproval(
   period: PayrollPeriod,
   command: BaseCommand & {
     readonly approvalInstanceId: string;
+    readonly approvalReferenceType: 'approval_instance' | 'legacy_history';
     readonly outcome: 'approved' | 'rejected';
     readonly decidedBy: string;
     readonly approvalEvidenceId: string;
@@ -122,11 +132,13 @@ export function applyPayrollApproval(
     decidedBy: command.decidedBy,
     approvalEvidenceId: command.approvalEvidenceId,
   })) assertId(value, field);
-  if (!command.trustedApproval || command.approvalInstanceId !== period.approvalInstanceId) {
+  if (!command.trustedApproval || command.approvalInstanceId !== period.approvalInstanceId ||
+    command.approvalReferenceType !== period.approvalReferenceType) {
     invalid('PAYROLL_APPROVAL_UNTRUSTED', '工资审批事实不可信或引用不匹配');
   }
   if (command.outcome === 'rejected') return next(period, {
-    status: 'review', approvalInstanceId: null, approvedBy: null, approvalEvidenceId: null,
+    status: 'review', approvalReferenceType: null, approvalInstanceId: null,
+    approvedBy: null, approvalEvidenceId: null,
   }, now);
   if (command.decidedBy === period.preparedBy) {
     invalid('PAYROLL_DUAL_CONTROL_REQUIRED', '制单人与审批人必须分离');
@@ -140,7 +152,11 @@ export function applyPayrollApproval(
 /** 锁定属于 R3；锁定人不得是制单人或审批人，并必须引用近期强认证。 */
 export function lockPayrollPeriod(
   period: PayrollPeriod,
-  command: BaseCommand & { readonly lockedBy: string; readonly strongAuthEvidenceId: string },
+  command: BaseCommand & {
+    readonly lockedBy: string;
+    readonly strongAuthEvidenceId: string;
+    readonly strongAuthReferenceType: 'webauthn_evidence' | 'migration_lock_evidence';
+  },
   now: Date,
 ): PayrollPeriod {
   assertCommand(period, command);
@@ -153,6 +169,7 @@ export function lockPayrollPeriod(
   return next(period, {
     status: 'locked', lockedBy: command.lockedBy,
     strongAuthEvidenceId: command.strongAuthEvidenceId,
+    strongAuthReferenceType: command.strongAuthReferenceType,
   }, now);
 }
 

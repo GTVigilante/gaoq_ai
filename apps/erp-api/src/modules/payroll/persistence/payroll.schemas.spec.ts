@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest';
 import {
   PayrollCompensationProfileRecordSchema,
   PayrollCalculationRunRecordSchema,
+  PayrollPeriodApprovalEvidenceRecordSchema,
+  PayrollPeriodLockEvidenceRecordSchema,
   PayrollPeriodRecordSchema,
   PayrollReconciliationRecordSchema,
   PayrollRulePackRecordSchema,
@@ -97,6 +99,61 @@ describe('Payroll 持久化契约', () => {
       expect(schema.indexes()).toContainEqual([
         { tenantId: 1, migrationEvidenceRef: 1 }, expect.objectContaining({ unique: true }),
       ]);
+    }
+  });
+
+  it('旧在线周期引用可安全补齐类型且拒绝半对引用', async () => {
+    const PeriodModel = mongoose.model('SpecPayrollPeriodReferences', PayrollPeriodRecordSchema);
+    const base = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4P2', tenantId: 'tenant-001', period: '2026-07',
+      currency: 'CNY', status: 'approved', preparedBy: 'actor-preparer-001', version: 5,
+      approvalInstanceId: 'approval-instance-001', approvedBy: 'actor-approver-001',
+      approvalEvidenceId: 'approval-instance-001',
+    };
+    const compatible = new PeriodModel(base);
+    await expect(compatible.validate()).resolves.toBeUndefined();
+    expect(compatible.approvalReferenceType).toBe('approval_instance');
+    await expect(new PeriodModel({
+      ...base, approvalInstanceId: null, approvalReferenceType: 'legacy_history',
+    }).validate()).rejects.toThrow('必须成对出现');
+  });
+
+  it('工资批准与锁定迁移证据为租户唯一 WORM 控制记录', async () => {
+    const ApprovalModel = mongoose.model(
+      'SpecPayrollPeriodApprovalEvidence', PayrollPeriodApprovalEvidenceRecordSchema,
+    );
+    const LockModel = mongoose.model(
+      'SpecPayrollPeriodLockEvidence', PayrollPeriodLockEvidenceRecordSchema,
+    );
+    const approvedAt = new Date('2026-06-03T00:00:00.000Z');
+    const evidenceRef =
+      'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/control-001';
+    await expect(new ApprovalModel({
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4A1', tenantId: 'tenant-001',
+      periodId: '01J8ZQK7V0A2M4N6P8R0T2W4P1',
+      approvalHistoryId: '01J8ZQK7V0A2M4N6P8R0T2W4H1',
+      approvalEvidenceChecksum: 'a'.repeat(43), approvedBy: 'actor-approver-001',
+      approvedAt, periodVersion: 5, migrationEvidenceRef: evidenceRef,
+      migrationEvidenceChecksum: 'e'.repeat(43),
+    }).validate()).resolves.toBeUndefined();
+    await expect(new LockModel({
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4N1', tenantId: 'tenant-001',
+      periodId: '01J8ZQK7V0A2M4N6P8R0T2W4P1',
+      approvalControlEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4A1',
+      lockedBy: 'actor-locker-001', lockedAt: new Date('2026-06-04T00:00:00.000Z'),
+      periodVersion: 6, strongAuthMethod: 'webauthn_uv',
+      operationId: '01J8ZQK7V0A2M4N6P8R0T2W4P1', migrationEvidenceRef: evidenceRef,
+      migrationEvidenceChecksum: 'l'.repeat(43),
+    }).validate()).resolves.toBeUndefined();
+    for (const schema of [
+      PayrollPeriodApprovalEvidenceRecordSchema, PayrollPeriodLockEvidenceRecordSchema,
+    ]) {
+      expect(schema.indexes()).toContainEqual([
+        { tenantId: 1, migrationEvidenceRef: 1 }, expect.objectContaining({ unique: true }),
+      ]);
+      for (const [key, options] of schema.indexes()) {
+        if (options.unique === true) expect(Object.keys(key)[0]).toBe('tenantId');
+      }
     }
   });
 
