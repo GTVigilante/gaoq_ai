@@ -14,6 +14,9 @@ import { RECRUITMENT_CODE_PATTERN, RECRUITMENT_ID_PATTERN } from '../domain/inde
 
 const BLIND_INDEX_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\.[A-Za-z0-9_-]{43}$/;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
+const HASH_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const MIGRATION_EVIDENCE_REF_PATTERN =
+  /^erp:\/\/data-migrations\/runs\/[0-7][0-9A-HJKMNP-TV-Z]{25}\/attachments\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const STRING_ID = { type: String, required: true, maxlength: 128, match: RECRUITMENT_ID_PATTERN } as const;
 const TERMINAL_APPLICATION_STAGES: readonly CandidateApplicationStage[] = [
   'hired', 'rejected', 'withdrawn',
@@ -172,6 +175,15 @@ export class CandidateConsentEvidenceRecord {
   @Prop({ type: Date, required: true, immutable: true })
   expiresAt!: Date;
 
+  @Prop({
+    type: String, default: null, immutable: true, maxlength: 256,
+    match: MIGRATION_EVIDENCE_REF_PATTERN,
+  })
+  migrationEvidenceRef!: string | null;
+
+  @Prop({ type: String, default: null, immutable: true, match: HASH_PATTERN })
+  evidenceChecksum!: string | null;
+
   createdAt!: Date;
   updatedAt!: Date;
 }
@@ -180,6 +192,16 @@ export type CandidateConsentEvidenceDocument = HydratedDocument<CandidateConsent
 export const CandidateConsentEvidenceRecordSchema = SchemaFactory.createForClass(
   CandidateConsentEvidenceRecord,
 );
+
+CandidateConsentEvidenceRecordSchema.pre('validate', function () {
+  const record = this as CandidateConsentEvidenceRecord;
+  const hasMigrationEvidence = record.migrationEvidenceRef !== null &&
+    record.evidenceChecksum !== null;
+  if ((record.migrationEvidenceRef === null) !== (record.evidenceChecksum === null) ||
+    (record.source === 'manual_import') !== hasMigrationEvidence) {
+    throw new Error('人工迁移授权必须精确绑定 WORM 迁移证据');
+  }
+});
 
 CandidateConsentEvidenceRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 CandidateConsentEvidenceRecordSchema.index({ tenantId: 1, candidateId: 1, occurredAt: 1, id: 1 });

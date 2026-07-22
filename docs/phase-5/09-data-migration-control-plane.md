@@ -2,9 +2,9 @@
 
 ## 范围与当前能力
 
-本切片建立可重复、可恢复、可审计的迁移控制面。当前白名单包含 `org_reference`（部门、岗位、职级）、`org_workforce`（员工）、`org_employment`（劳动关系）、`approval_templates`（审批模板版本）、`approval_history`（已终结审批历史）、`approval_active_instances`（无文件草稿/运行中实例）与 `recruitment_reference`（HC 与职位）七个独立 Scope；候选人/申请/面试/Offer、考勤、薪资与业务附件实体仍需在同一账本协议上按域追加，完成前 Issue #34 与 Phase 5 迁移门禁保持未完成。
+本切片建立可重复、可恢复、可审计的迁移控制面。当前白名单包含 `org_reference`（部门、岗位、职级）、`org_workforce`（员工）、`org_employment`（劳动关系）、`approval_templates`（审批模板版本）、`approval_history`（已终结审批历史）、`approval_active_instances`（无文件草稿/运行中实例）、`recruitment_reference`（HC 与职位）与 `recruitment_candidates`（候选人隐私主档）八个独立 Scope；申请/面试/Offer、考勤、薪资与业务附件实体仍需在同一账本协议上按域追加，完成前 Issue #34 与 Phase 5 迁移门禁保持未完成。
 
-目标业务数据禁止由迁移模块直接写集合。组织与劳动关系实体调用 `OrgApplicationService`，审批模板、已终结审批历史与活动审批调用 `ApprovalApplicationService`，HC 与职位调用 `RecruitmentManagementService`，继续执行领域校验、引用校验、幂等、Outbox 和版本并发控制。员工更新、状态变更与开放劳动关系在一个事务内同步；既有员工离职仍必须进入 Care，迁移不得绕过清算、身份吊销与生效日控制。历史劳动关系使用独立恢复入口，不触发正常入职、离职或身份副作用，也不生成新员工。审批迁移分别只发布 `approval_template.migrated`、`approval_history.migrated` 与 `approval_instance.migrated`；招聘参考数据只发布 `recruitment.requisition.migrated` 与 `recruitment.position.migrated`。所有迁移事件均不得伪装成正常创建、提交、决策、发布或退役动作，也不创建通知。迁移模块只直写自己拥有的运行、条目、来源映射与证据账本。
+目标业务数据禁止由迁移模块直接写集合。组织与劳动关系实体调用 `OrgApplicationService`，审批模板、已终结审批历史与活动审批调用 `ApprovalApplicationService`，HC 与职位调用 `RecruitmentManagementService`，候选人调用 `RecruitmentApplicationService`，继续执行领域校验、引用校验、加密、盲索引、幂等、Outbox 和版本并发控制。员工更新、状态变更与开放劳动关系在一个事务内同步；既有员工离职仍必须进入 Care，迁移不得绕过清算、身份吊销与生效日控制。历史劳动关系使用独立恢复入口，不触发正常入职、离职或身份副作用，也不生成新员工。审批迁移分别只发布 `approval_template.migrated`、`approval_history.migrated` 与 `approval_instance.migrated`；招聘迁移只发布 `recruitment.requisition.migrated`、`recruitment.position.migrated` 与 `recruitment.candidate.migrated`。所有迁移事件均不得伪装成正常创建、提交、决策、发布或退役动作，也不创建通知。迁移模块只直写自己拥有的运行、条目、来源映射与证据账本。
 
 ## 来源包与确定性
 
@@ -28,6 +28,10 @@
 - HC 创建员工来源引用先解析为 ERP employeeId，再由身份仓储解析为 actorId；草稿和待审批 HC 的创建员工身份还必须 active。非终结 HC 的部门必须 active；状态、审批引用和固定领域版本（草稿 1、待审批 2、批准/拒绝 3、关闭 4）必须一致。既有映射只允许完全相同快照重放，任何变化禁止覆盖。
 - 职位 payload 只接收已迁移 HC、部门和职级来源引用、标题、地点、人数、状态、版本及生命周期时间。标题、部门与人数必须和 HC 完全一致；活动职位要求 active 部门及已批准 HC，关闭职位只允许引用已批准或已关闭 HC。领域恢复入口验证首次发布、关闭和更新时间顺序，不重放正常发布/暂停/关闭事件。
 - 每条 HC 与职位必须各自唯一绑定一份治理 WORM 证据附件；payload 中附件来源 ID 和 checksum 必须与附件清单精确一致。在线招聘集合不保存附件正文或来源附件 ID，完整来源请求、审批和职位治理材料只由迁移账本及 WORM 管理。
+- `recruitment_candidates` 使用独立来源包。payload 只接受当前隐私状态、姓名、E.164 手机、规范邮箱、当前授权版本/目的/时间、保留期、领域版本及一份候选人治理证据摘要；不接受简历正文、证件号码、银行卡、附件字节、tenantId、密钥或来源系统访问凭据。匿名候选人的姓名、手机和邮箱必须全部为 `null`；非匿名候选人必须有合法姓名和至少一种联系方式。
+- 候选人姓名、手机和邮箱只在受控请求内存与招聘应用服务中短暂存在，随后由既有 `RecruitmentCandidateRepository` 使用 AES-256-GCM 写入身份密文，并用独立可轮换 HMAC 密钥生成电话/邮箱盲索引。迁移账本只保存 payload hash，目标 hash 只基于无 PII 摘要；Outbox、审计、幂等响应、REST 报告与 MCP 均不得包含直接身份、授权目的或保留期。
+- 活动授权必须尚未到期，所有非匿名主档必须仍在保留期；已撤回授权必须具有与当前更新时间一致的撤回时间，过期但未匿名化的来源记录失败关闭。迁移来源固定登记为 `manual_import`，每条主档唯一绑定一份 checksum 精确匹配的授权/来源 WORM 证据；在线授权证据集合只保存迁移账本定位符和 checksum，不保存证明正文。
+- 候选人主档为隐私快照，不接受迁移增量覆盖。相同 payload 由迁移账本识别为 duplicate；任何身份、授权、版本、时间或 WORM 证据变化必须进入人工隐私仲裁及正常领域流程。后续申请 Scope 只能引用本 Scope 已冻结的目标候选人映射。
 
 `sourceFactHash` 的规范对象固定为 `sourceRecordId`、`sourceVersion`、`entityType`、`payloadHash`、按字典序排列的 `associationSourceIds`，以及按 `sourceAttachmentId` 排列且仅含 ID 与 checksum 的附件数组。滚动来源校验和初值为 `base64url(SHA-256(""))`，第 N 条为 `base64url(SHA-256(previous + "\\n" + sequence + ":" + sourceFactHash))`。来源导出程序必须使用相同算法，并固定 UTF-8、对象键字典序与数组规则。
 

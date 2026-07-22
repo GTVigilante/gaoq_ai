@@ -32,6 +32,10 @@ import {
   type ImportRecruitmentPositionFromMigrationInput,
   type ImportRecruitmentRequisitionFromMigrationInput,
 } from '../../recruitment/application/recruitment-management.service.js';
+import {
+  RecruitmentApplicationService,
+  type ImportRecruitmentCandidateFromMigrationInput,
+} from '../../recruitment/application/recruitment-application.service.js';
 import type {
   CreateDepartmentDto,
   CreateEmployeeDto,
@@ -131,6 +135,8 @@ export class DataMigrationService {
     private readonly approvals?: ApprovalApplicationService,
     @Inject(RecruitmentManagementService)
     private readonly recruitment?: RecruitmentManagementService,
+    @Inject(RecruitmentApplicationService)
+    private readonly recruitmentCandidates?: RecruitmentApplicationService,
   ) {}
 
   async start(input: CreateDataMigrationRunDto) {
@@ -476,6 +482,16 @@ export class DataMigrationService {
       await Promise.all(uniqueAssociationTargets(specs).map(async (spec) =>
         this.requireMapping(run, spec.entityType, spec.sourceAssociationId)));
       return;
+    } else if (input.entityType === 'recruitment.candidate') {
+      const payload = recruitmentCandidatePayload(input.payload);
+      assertAssociations(input.associationSourceIds, []);
+      const evidence = input.attachments.find((attachment) =>
+        attachment.sourceAttachmentId === payload.candidateEvidenceSourceAttachmentId);
+      if (input.attachments.length !== 1 ||
+        evidence?.checksum !== payload.candidateEvidenceChecksum) {
+        throw new Error('DATA_MIGRATION_CANDIDATE_EVIDENCE_REQUIRED');
+      }
+      return;
     } else {
       const payload = approvalTemplatePayload(input.payload);
       const specs = approvalTemplateAssociationSpecs(payload);
@@ -707,6 +723,30 @@ export class DataMigrationService {
         updatedAt: payload.updatedAt,
       });
       return target(result.position);
+    }
+    if (input.entityType === 'recruitment.candidate') {
+      const payload = recruitmentCandidatePayload(input.payload);
+      if (this.recruitmentCandidates === undefined) throw new Error('迁移候选人适配器未装配');
+      const result = await this.recruitmentCandidates.importCandidateFromMigration(key, {
+        targetId: mapping?.targetId ?? null,
+        status: payload.status,
+        name: payload.name,
+        phone: payload.phone,
+        email: payload.email,
+        consentVersion: payload.consentVersion,
+        consentPurpose: payload.consentPurpose,
+        consentCapturedAt: payload.consentCapturedAt,
+        consentExpiresAt: payload.consentExpiresAt,
+        consentWithdrawnAt: payload.consentWithdrawnAt,
+        retentionExpiresAt: payload.retentionExpiresAt,
+        version: payload.version,
+        createdAt: payload.createdAt,
+        updatedAt: payload.updatedAt,
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${run.id}/attachments/${payload.candidateEvidenceSourceAttachmentId}`,
+        evidenceChecksum: payload.candidateEvidenceChecksum,
+      });
+      return target(result.candidate);
     }
     const payload = approvalTemplatePayload(input.payload);
     if (this.approvals === undefined) throw new Error('迁移审批适配器未装配');
@@ -1873,6 +1913,55 @@ function recruitmentPositionAssociationSpecs(
       entityType: 'org.job_level',
     },
   ]);
+}
+
+type RecruitmentCandidateMigrationPayload = Omit<
+  ImportRecruitmentCandidateFromMigrationInput,
+  'targetId' | 'migrationEvidenceRef' | 'evidenceChecksum'
+> & {
+  readonly candidateEvidenceSourceAttachmentId: string;
+  readonly candidateEvidenceChecksum: string;
+};
+
+function recruitmentCandidatePayload(
+  value: Readonly<Record<string, unknown>>,
+): RecruitmentCandidateMigrationPayload {
+  exactKeys(value, [
+    'candidateEvidenceChecksum', 'candidateEvidenceSourceAttachmentId', 'consentCapturedAt',
+    'consentExpiresAt', 'consentPurpose', 'consentVersion', 'consentWithdrawnAt',
+    'createdAt', 'email', 'name', 'phone', 'retentionExpiresAt', 'status', 'updatedAt', 'version',
+  ]);
+  const nullableIdentity = [value.name, value.phone, value.email];
+  if (typeof value.candidateEvidenceSourceAttachmentId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.candidateEvidenceSourceAttachmentId) ||
+    typeof value.candidateEvidenceChecksum !== 'string' ||
+    !HASH_PATTERN.test(value.candidateEvidenceChecksum) ||
+    !['active', 'consent_withdrawn', 'anonymized'].includes(String(value.status)) ||
+    nullableIdentity.some((item) => item !== null && typeof item !== 'string') ||
+    typeof value.consentVersion !== 'string' || typeof value.consentPurpose !== 'string' ||
+    !isStrictUtcIso(value.consentCapturedAt) || !isStrictUtcIso(value.consentExpiresAt) ||
+    (value.consentWithdrawnAt !== null && !isStrictUtcIso(value.consentWithdrawnAt)) ||
+    !isStrictUtcIso(value.retentionExpiresAt) || !isStrictUtcIso(value.createdAt) ||
+    !isStrictUtcIso(value.updatedAt) || !Number.isSafeInteger(value.version) ||
+    Number(value.version) < 1) throw invalidPayload();
+  return {
+    status: value.status as RecruitmentCandidateMigrationPayload['status'],
+    name: value.name as string | null,
+    phone: value.phone as string | null,
+    email: value.email as string | null,
+    consentVersion: value.consentVersion,
+    consentPurpose: value.consentPurpose,
+    consentCapturedAt: value.consentCapturedAt,
+    consentExpiresAt: value.consentExpiresAt,
+    consentWithdrawnAt: value.consentWithdrawnAt,
+    retentionExpiresAt: value.retentionExpiresAt,
+    version: Number(value.version),
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    candidateEvidenceSourceAttachmentId:
+      value.candidateEvidenceSourceAttachmentId,
+    candidateEvidenceChecksum: value.candidateEvidenceChecksum,
+  };
 }
 
 function assertGovernanceEvidence(

@@ -35,6 +35,25 @@ export interface Candidate {
   readonly updatedAt: string;
 }
 
+export interface RestoreCandidateFromMigrationInput {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly status: Candidate['status'];
+  readonly name: string | null;
+  readonly phone: string | null;
+  readonly email: string | null;
+  readonly consentEvidenceId: string;
+  readonly consentVersion: string;
+  readonly consentPurpose: string;
+  readonly consentCapturedAt: string;
+  readonly consentExpiresAt: string;
+  readonly consentWithdrawnAt: string | null;
+  readonly retentionExpiresAt: string;
+  readonly version: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 /** 创建与职位无关的候选人主档；精确字段在进入仓储前必须加密和生成盲索引。 */
 export function createCandidate(
   input: {
@@ -95,6 +114,90 @@ export function createCandidate(
     version: 1,
     createdAt: occurredAt,
     updatedAt: occurredAt,
+  });
+}
+
+/** 数据迁移专用：恢复候选人当前隐私状态；历史授权正文只进入 WORM。 */
+export function restoreCandidateFromMigration(
+  input: RestoreCandidateFromMigrationInput,
+  now: Date,
+): Candidate {
+  assertRecruitmentId(input.id, 'id');
+  assertRecruitmentId(input.tenantId, 'tenantId');
+  assertRecruitmentId(input.consentEvidenceId, 'consentEvidenceId');
+  assertRecruitmentCode(input.consentVersion, 'consentVersion');
+  assertRecruitmentVersion(input.version);
+  if (!['active', 'consent_withdrawn', 'anonymized'].includes(input.status)) {
+    throw new RecruitmentDomainError('CANDIDATE_MIGRATION_STATUS_INVALID', '候选人迁移状态无效');
+  }
+  const anonymized = input.status === 'anonymized';
+  if (anonymized !== (input.name === null && input.phone === null && input.email === null)) {
+    throw new RecruitmentDomainError(
+      'CANDIDATE_MIGRATION_IDENTITY_STATE_INVALID',
+      '匿名状态与候选人直接身份字段不一致',
+    );
+  }
+  const name = input.name === null ? null : input.name.normalize('NFKC').trim();
+  const phone = input.phone === null ? null : normalizeCandidatePhone(input.phone);
+  const email = input.email === null ? null : normalizeCandidateEmail(input.email);
+  if (!anonymized && (name === null || name.length < 1 || name.length > 128 ||
+    (phone === null && email === null))) {
+    throw new RecruitmentDomainError(
+      'CANDIDATE_MIGRATION_IDENTITY_STATE_INVALID',
+      '非匿名候选人必须具备合法姓名和至少一种联系方式',
+    );
+  }
+  const purpose = input.consentPurpose.normalize('NFKC').trim();
+  if (purpose.length < 3 || purpose.length > 256) throw new RecruitmentDomainError(
+    'CANDIDATE_CONSENT_PURPOSE_INVALID', '授权目的长度必须为 3..256',
+  );
+  const createdAt = strictCandidateMigrationIso(input.createdAt);
+  const updatedAt = strictCandidateMigrationIso(input.updatedAt);
+  const capturedAt = strictCandidateMigrationIso(input.consentCapturedAt);
+  const expiresAt = strictCandidateMigrationIso(input.consentExpiresAt);
+  const withdrawnAt = input.consentWithdrawnAt === null
+    ? null
+    : strictCandidateMigrationIso(input.consentWithdrawnAt);
+  const retentionExpiresAt = strictCandidateMigrationIso(input.retentionExpiresAt);
+  const futureLimit = now.getTime() + 5 * 60 * 1_000;
+  const withdrawnStateValid = input.status === 'consent_withdrawn'
+    ? withdrawnAt !== null && withdrawnAt === updatedAt
+    : input.status === 'active'
+      ? withdrawnAt === null
+      : withdrawnAt === null || withdrawnAt <= updatedAt;
+  if (!withdrawnStateValid || createdAt > capturedAt || capturedAt > updatedAt ||
+    Date.parse(updatedAt) > futureLimit || expiresAt <= capturedAt ||
+    retentionExpiresAt <= createdAt ||
+    (withdrawnAt !== null && (withdrawnAt < capturedAt || withdrawnAt > updatedAt)) ||
+    (input.status === 'active' && Date.parse(expiresAt) <= now.getTime()) ||
+    (!anonymized && Date.parse(retentionExpiresAt) <= now.getTime()) ||
+    (input.status === 'active' && input.version < 1) ||
+    (input.status !== 'active' && input.version < 2)) {
+    throw new RecruitmentDomainError(
+      'CANDIDATE_MIGRATION_LIFECYCLE_INVALID',
+      '候选人迁移版本、授权状态或隐私生命周期时间不一致',
+    );
+  }
+  return deepFreezeRecruitment({
+    id: input.id,
+    tenantId: input.tenantId,
+    status: input.status,
+    name,
+    phone,
+    email,
+    consent: {
+      evidenceId: input.consentEvidenceId,
+      version: input.consentVersion,
+      purpose,
+      source: 'manual_import' as const,
+      capturedAt,
+      expiresAt,
+      withdrawnAt,
+    },
+    retentionExpiresAt,
+    version: input.version,
+    createdAt,
+    updatedAt,
   });
 }
 
@@ -217,4 +320,15 @@ function assertCandidateCommand(
   if (candidate.version !== expectedVersion) {
     throw new RecruitmentDomainError('RECRUITMENT_VERSION_CONFLICT', '候选人版本冲突');
   }
+}
+
+function strictCandidateMigrationIso(value: string): string {
+  const parsed = new Date(value);
+  if (typeof value !== 'string' || Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value) {
+    throw new RecruitmentDomainError(
+      'CANDIDATE_MIGRATION_TIME_INVALID',
+      '候选人迁移时间必须为规范 UTC ISO 时间',
+    );
+  }
+  return value;
 }

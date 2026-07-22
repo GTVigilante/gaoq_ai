@@ -5,6 +5,7 @@ import { TenantContextService } from '../../../core/tenant/tenant-context.servic
 import type { ApprovalApplicationService } from '../../approval/application/approval-application.service.js';
 import type { OrgApplicationService } from '../../org/application/org-application.service.js';
 import type { RecruitmentManagementService } from '../../recruitment/application/recruitment-management.service.js';
+import type { RecruitmentApplicationService } from '../../recruitment/application/recruitment-application.service.js';
 import type {
   DataMigrationAssociationDocument,
   DataMigrationAttachmentDocument,
@@ -85,6 +86,10 @@ function approvalActiveRun() {
 
 function recruitmentReferenceRun() {
   return { ...run(), scope: 'recruitment_reference' as const };
+}
+
+function recruitmentCandidatesRun() {
+  return { ...run(), scope: 'recruitment_candidates' as const };
 }
 
 function query<T>(value: T) { return { lean: () => ({ exec: () => Promise.resolve(value) }) }; }
@@ -968,6 +973,71 @@ describe('DataMigrationService', () => {
       rejectionCode: 'DATA_MIGRATION_RECRUITMENT_GOVERNANCE_EVIDENCE_REQUIRED',
     });
     expect(recruitment.importPositionFromMigration).not.toHaveBeenCalled();
+  });
+
+  it('候选人明文只传给加密领域入口，账本仅保存摘要和无 PII 目标投影', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      status: 'active', name: '张三', phone: '+8613800138000', email: 'candidate@example.com',
+      consentVersion: 'privacy-v1', consentPurpose: '招聘评估与候选人联络',
+      consentCapturedAt: '2026-07-20T00:00:00.000Z',
+      consentExpiresAt: '2027-07-20T00:00:00.000Z', consentWithdrawnAt: null,
+      retentionExpiresAt: '2028-07-20T00:00:00.000Z', version: 1,
+      createdAt: '2026-07-20T00:00:00.000Z', updatedAt: '2026-07-20T00:00:00.000Z',
+      candidateEvidenceSourceAttachmentId: 'candidate-evidence-001',
+      candidateEvidenceChecksum: 'c'.repeat(43),
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(recruitmentCandidatesRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const mappings = {
+      findOne: vi.fn().mockReturnValue(query(null)),
+      findOneAndUpdate: vi.fn().mockReturnValue(query({ targetId: 'candidate-001' })),
+    };
+    const attachments = {
+      findOne: vi.fn().mockReturnValue(query(null)),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const recruitmentCandidates = {
+      importCandidateFromMigration: vi.fn().mockResolvedValue({ candidate: {
+        id: 'candidate-001', status: 'active', consentEvidenceId: 'consent-001',
+        consentVersion: 'privacy-v1', version: 1,
+      } }),
+    };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      mappings as unknown as Model<DataMigrationMappingDocument>,
+      { findOneAndUpdate: vi.fn().mockReturnValue(query({})) } as unknown as
+        Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+      undefined,
+      undefined,
+      recruitmentCandidates as unknown as RecruitmentApplicationService,
+    );
+
+    const result = await trusted(context, () => service.apply(RUN_ID, {
+      sequence: 1, sourceRecordId: 'legacy-candidate-001', sourceVersion: '1',
+      entityType: 'recruitment.candidate', payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: [],
+      attachments: [{ sourceAttachmentId: 'candidate-evidence-001', checksum: 'c'.repeat(43) }],
+    }));
+
+    expect(result).toMatchObject({ status: 'applied', targetId: 'candidate-001' });
+    expect(recruitmentCandidates.importCandidateFromMigration).toHaveBeenCalledWith(
+      expect.stringMatching(/^migration:/u),
+      expect.objectContaining({
+        name: '张三', phone: '+8613800138000', email: 'candidate@example.com',
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${RUN_ID}/attachments/candidate-evidence-001`,
+      }),
+    );
+    const item = items.create.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
+    expect(JSON.stringify(item)).not.toMatch(/张三|13800138000|candidate@example/iu);
   });
 
   it('未解析关联和未决附件进入 Phase 6 硬门禁', async () => {

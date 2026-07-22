@@ -13,11 +13,14 @@ import { TenantContextService } from '../../../core/tenant/tenant-context.servic
 import {
   buildCandidateApplicationCreatedEvent,
   buildCandidateApplicationStageEvent,
+  buildCandidateMigratedEvent,
   createCandidate,
   createCandidateApplication,
   grantCandidateConsent,
   RecruitmentDomainError,
+  restoreCandidateFromMigration,
   transitionCandidateApplication,
+  type Candidate,
   type CandidateApplication,
   type CandidateApplicationStage,
 } from '../domain/index.js';
@@ -60,6 +63,33 @@ export interface CreateCandidateApplicationInput {
   };
 }
 
+export interface ImportRecruitmentCandidateFromMigrationInput {
+  readonly targetId: string | null;
+  readonly status: Candidate['status'];
+  readonly name: string | null;
+  readonly phone: string | null;
+  readonly email: string | null;
+  readonly consentVersion: string;
+  readonly consentPurpose: string;
+  readonly consentCapturedAt: string;
+  readonly consentExpiresAt: string;
+  readonly consentWithdrawnAt: string | null;
+  readonly retentionExpiresAt: string;
+  readonly version: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly migrationEvidenceRef: string;
+  readonly evidenceChecksum: string;
+}
+
+export interface RecruitmentCandidateMigrationSummary extends Record<string, unknown> {
+  readonly id: string;
+  readonly status: Candidate['status'];
+  readonly consentEvidenceId: string;
+  readonly consentVersion: string;
+  readonly version: number;
+}
+
 /** 招聘应用服务；REST、MCP、Worker 只可通过本层操作候选人和职位申请。 */
 @Injectable()
 export class RecruitmentApplicationService {
@@ -73,6 +103,53 @@ export class RecruitmentApplicationService {
     private readonly stages: CandidateApplicationStageRepository,
     private readonly outbox: RecruitmentOutboxWriter,
   ) {}
+
+  /** 数据迁移专用：明文只进入现有加密仓储，响应、事件和幂等快照均不含直接身份。 */
+  async importCandidateFromMigration(
+    key: string,
+    input: ImportRecruitmentCandidateFromMigrationInput,
+  ): Promise<{ readonly candidate: RecruitmentCandidateMigrationSummary }> {
+    this.assertMigrationWriter();
+    assertCandidateMigrationEvidence(input.migrationEvidenceRef, input.evidenceChecksum);
+    return this.run(async () => this.idempotency.execute(
+      'recruitment.candidate.import_from_migration', key, input, async (session) => {
+        const tenantId = this.context.getTenantRequired().tenantId;
+        const existing = input.targetId === null
+          ? null
+          : await this.candidates.findById(input.targetId, session);
+        const candidate = restoreCandidateFromMigration({
+          ...input,
+          id: input.targetId ?? createEventId(),
+          tenantId,
+          consentEvidenceId: existing?.consent.evidenceId ??
+            createEventId(),
+        }, new Date());
+        if (input.targetId !== null) {
+          const evidence = existing === null
+            ? null
+            : await this.consents.findMigrationEvidenceById(existing.consent.evidenceId, session);
+          if (existing === null || evidence === null ||
+            !sameMigratedCandidate(existing, candidate) ||
+            evidence.migrationEvidenceRef !== input.migrationEvidenceRef ||
+            evidence.evidenceChecksum !== input.evidenceChecksum) throw new ConflictException({
+            code: 'RECRUITMENT_MIGRATION_CANDIDATE_IMMUTABLE',
+            message: '既有候选人与迁移隐私快照或 WORM 证据不一致，禁止覆盖',
+          });
+          return { candidate: migrationCandidateSummary(existing) };
+        }
+        await this.candidates.insert(candidate, session);
+        await this.consents.appendMigrated(
+          candidate,
+          this.context.getActorRequired().actorId,
+          input.migrationEvidenceRef,
+          input.evidenceChecksum,
+          session,
+        );
+        await this.outbox.append(buildCandidateMigratedEvent(candidate), session);
+        return { candidate: migrationCandidateSummary(candidate) };
+      },
+    ));
+  }
 
   async createApplication(
     key: string,
@@ -267,6 +344,18 @@ export class RecruitmentApplicationService {
     return application;
   }
 
+  private assertMigrationWriter(): void {
+    const actor = this.context.getActorRequired();
+    if (!['service', 'system_job'].includes(actor.actorType) ||
+      !actor.scopes.includes('erp:migration:execute') ||
+      !actor.scopes.includes('erp:recruitment:migration:write')) {
+      throw new ForbiddenException({
+        code: 'RECRUITMENT_MIGRATION_WRITER_DENIED',
+        message: '候选人迁移必须由受信任服务身份执行',
+      });
+    }
+  }
+
   private async run<T>(operation: () => Promise<T>): Promise<T> {
     try {
       return await operation();
@@ -299,6 +388,39 @@ function summary(application: CandidateApplication): CandidateApplicationSummary
   });
 }
 
+function migrationCandidateSummary(candidate: Candidate): RecruitmentCandidateMigrationSummary {
+  return Object.freeze({
+    id: candidate.id,
+    status: candidate.status,
+    consentEvidenceId: candidate.consent.evidenceId,
+    consentVersion: candidate.consent.version,
+    version: candidate.version,
+  });
+}
+
+function sameMigratedCandidate(left: Candidate, right: Candidate): boolean {
+  return left.id === right.id && left.tenantId === right.tenantId &&
+    left.status === right.status && left.name === right.name && left.phone === right.phone &&
+    left.email === right.email && left.consent.evidenceId === right.consent.evidenceId &&
+    left.consent.version === right.consent.version &&
+    left.consent.purpose === right.consent.purpose &&
+    left.consent.source === right.consent.source &&
+    left.consent.capturedAt === right.consent.capturedAt &&
+    left.consent.expiresAt === right.consent.expiresAt &&
+    left.consent.withdrawnAt === right.consent.withdrawnAt &&
+    left.retentionExpiresAt === right.retentionExpiresAt && left.version === right.version &&
+    left.createdAt === right.createdAt && left.updatedAt === right.updatedAt;
+}
+
+function assertCandidateMigrationEvidence(reference: string, checksum: string): void {
+  if (!MIGRATION_EVIDENCE_REF_PATTERN.test(reference) || !HASH_PATTERN.test(checksum)) {
+    throw new BadRequestException({
+      code: 'RECRUITMENT_MIGRATION_CANDIDATE_EVIDENCE_INVALID',
+      message: '候选人迁移必须精确引用迁移账本 WORM 证据与校验和',
+    });
+  }
+}
+
 function requiredDate(value: string): Date {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) throw new RecruitmentDomainError(
@@ -318,3 +440,7 @@ function contactsCompatible(
   return (incoming.phone === null || incoming.phone === existing.phone) &&
     (incoming.email === null || incoming.email === existing.email);
 }
+
+const HASH_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const MIGRATION_EVIDENCE_REF_PATTERN =
+  /^erp:\/\/data-migrations\/runs\/[0-7][0-9A-HJKMNP-TV-Z]{25}\/attachments\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;

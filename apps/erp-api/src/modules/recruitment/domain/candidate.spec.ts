@@ -6,6 +6,7 @@ import {
   grantCandidateConsent,
   normalizeCandidateEmail,
   normalizeCandidatePhone,
+  restoreCandidateFromMigration,
   withdrawCandidateConsent,
 } from './candidate.js';
 
@@ -86,5 +87,35 @@ describe('Candidate', () => {
       consent: { evidenceId: 'consent-evidence-002', version: 'privacy-v2' },
       retentionExpiresAt: '2029-01-01T00:00:00.000Z',
     });
+  });
+
+  it('迁移恢复隐私生命周期并拒绝到期未匿名化身份', () => {
+    const restored = restoreCandidateFromMigration({
+      id: 'candidate-001', tenantId: 'tenant-001', status: 'consent_withdrawn',
+      name: ' 张 三 ', phone: '+86 138-0013-8000', email: 'Candidate@Example.COM',
+      consentEvidenceId: 'consent-evidence-001', consentVersion: 'privacy-v1',
+      consentPurpose: '招聘评估与候选人联络',
+      consentCapturedAt: '2026-06-01T00:00:00.000Z',
+      consentExpiresAt: '2027-06-01T00:00:00.000Z',
+      consentWithdrawnAt: '2026-07-01T00:00:00.000Z',
+      retentionExpiresAt: '2028-06-01T00:00:00.000Z', version: 2,
+      createdAt: '2026-06-01T00:00:00.000Z', updatedAt: '2026-07-01T00:00:00.000Z',
+    }, new Date('2026-07-22T00:00:00.000Z'));
+    expect(restored).toMatchObject({
+      status: 'consent_withdrawn', name: '张 三', phone: '+8613800138000',
+      email: 'candidate@example.com', version: 2,
+      consent: { source: 'manual_import' },
+    });
+    expect(() => restoreCandidateFromMigration({
+      ...restored,
+      status: 'active',
+      consentEvidenceId: restored.consent.evidenceId,
+      consentVersion: restored.consent.version,
+      consentPurpose: restored.consent.purpose,
+      consentCapturedAt: restored.consent.capturedAt,
+      consentExpiresAt: '2026-07-21T00:00:00.000Z',
+      consentWithdrawnAt: null,
+      version: 1,
+    }, new Date('2026-07-22T00:00:00.000Z'))).toThrow('隐私生命周期时间不一致');
   });
 });

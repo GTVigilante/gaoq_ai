@@ -39,7 +39,7 @@ function fixture(options?: {
   readonly matches?: readonly Record<string, unknown>[];
   readonly actorDepartments?: readonly string[];
   readonly actorScopes?: readonly string[];
-  readonly actorType?: 'user' | 'system_job';
+  readonly actorType?: 'user' | 'service' | 'system_job';
 }) {
   const execute = vi.fn().mockImplementation(
     async (_operation: string, _key: string, _request: unknown, handler: (value: ClientSession) => Promise<unknown>) =>
@@ -60,10 +60,15 @@ function fixture(options?: {
   };
   const candidates = {
     findByContacts: vi.fn().mockResolvedValue(options?.matches ?? []),
+    findById: vi.fn().mockResolvedValue(null),
     insert: vi.fn().mockResolvedValue(undefined),
     replace: vi.fn().mockResolvedValue(undefined),
   };
-  const consents = { appendGranted: vi.fn().mockResolvedValue(undefined) };
+  const consents = {
+    appendGranted: vi.fn().mockResolvedValue(undefined),
+    appendMigrated: vi.fn().mockResolvedValue(undefined),
+    findMigrationEvidenceById: vi.fn().mockResolvedValue(null),
+  };
   const positions = { findById: vi.fn().mockResolvedValue(position) };
   const applications = {
     insert: vi.fn().mockResolvedValue(undefined),
@@ -97,6 +102,55 @@ const createInput = {
 };
 
 describe('RecruitmentApplicationService', () => {
+  it('候选人迁移只允许服务身份，写入加密仓储边界且响应和事件不含 PII', async () => {
+    const input = {
+      targetId: null,
+      status: 'active' as const,
+      name: '张三', phone: '+8613800138000', email: 'candidate@example.com',
+      consentVersion: 'privacy-v1', consentPurpose: '招聘评估与候选人联络',
+      consentCapturedAt: '2026-07-20T00:00:00.000Z',
+      consentExpiresAt: '2027-07-20T00:00:00.000Z', consentWithdrawnAt: null,
+      retentionExpiresAt: '2028-07-20T00:00:00.000Z', version: 1,
+      createdAt: '2026-07-20T00:00:00.000Z', updatedAt: '2026-07-20T00:00:00.000Z',
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/candidate-evidence-001',
+      evidenceChecksum: 'a'.repeat(43),
+    };
+    const denied = fixture({
+      actorScopes: ['erp:migration:execute', 'erp:recruitment:migration:write'],
+    });
+    await expect(denied.service.importCandidateFromMigration('candidate-migration-denied', input))
+      .rejects.toMatchObject({ response: { code: 'RECRUITMENT_MIGRATION_WRITER_DENIED' } });
+
+    const store = fixture({
+      actorType: 'service',
+      actorScopes: ['erp:migration:execute', 'erp:recruitment:migration:write'],
+    });
+    const result = await store.service.importCandidateFromMigration(
+      'candidate-migration-001', input,
+    );
+    const inserted = store.candidates.insert.mock.calls[0]?.[0] as unknown as {
+      readonly tenantId: string; readonly status: string; readonly name: string;
+      readonly phone: string; readonly email: string;
+      readonly consent: { readonly source: string };
+    };
+    expect(inserted).toMatchObject({
+      tenantId: 'tenant-001', status: 'active', name: '张三',
+      phone: '+8613800138000', email: 'candidate@example.com',
+      consent: { source: 'manual_import' },
+    });
+    expect(store.consents.appendMigrated).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: 'tenant-001' }),
+      'actor-001', input.migrationEvidenceRef, input.evidenceChecksum, session,
+    );
+    const event = store.outbox.append.mock.calls[0]?.[0] as unknown as {
+      readonly type: string; readonly payload: Readonly<Record<string, unknown>>;
+    };
+    expect(event.type).toBe('recruitment.candidate.migrated');
+    expect(event.payload).not.toHaveProperty('name');
+    expect(JSON.stringify(result)).not.toMatch(/张三|13800138000|candidate@example/iu);
+  });
+
   it('新候选人、授权证据、申请和 Outbox 在同一幂等事务中写入', async () => {
     const store = fixture();
     const result = await store.service.createApplication('create-key-001', createInput);

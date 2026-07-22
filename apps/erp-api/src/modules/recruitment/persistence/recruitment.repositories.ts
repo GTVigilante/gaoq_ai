@@ -212,7 +212,61 @@ export class CandidateConsentEvidenceRepository extends TenantBoundRecruitmentRe
       action: 'granted', consentVersion: candidate.consent.version,
       purpose: candidate.consent.purpose, source: candidate.consent.source, actorId,
       occurredAt: new Date(candidate.consent.capturedAt), expiresAt: new Date(candidate.consent.expiresAt),
+      migrationEvidenceRef: null, evidenceChecksum: null,
     }], { session });
+  }
+
+  async findMigrationEvidenceById(
+    id: string,
+    session?: ClientSession,
+  ): Promise<{ readonly migrationEvidenceRef: string; readonly evidenceChecksum: string } | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), id })
+      .select('migrationEvidenceRef evidenceChecksum -_id');
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record?.migrationEvidenceRef === null || record?.migrationEvidenceRef === undefined ||
+      record.evidenceChecksum === null || record.evidenceChecksum === undefined
+      ? null
+      : Object.freeze({
+          migrationEvidenceRef: record.migrationEvidenceRef,
+          evidenceChecksum: record.evidenceChecksum,
+        });
+  }
+
+  /** 迁移候选人授权只追加最小证明索引；授权与撤回正文均留在同一 WORM 证据。 */
+  async appendMigrated(
+    candidate: Candidate,
+    actorId: string,
+    migrationEvidenceRef: string,
+    evidenceChecksum: string,
+    session: ClientSession,
+  ): Promise<void> {
+    this.assertTenant(candidate.tenantId);
+    if (candidate.consent.source !== 'manual_import') throw new Error('候选人迁移授权来源无效');
+    const common = {
+      tenantId: candidate.tenantId,
+      candidateId: candidate.id,
+      consentVersion: candidate.consent.version,
+      purpose: candidate.consent.purpose,
+      source: candidate.consent.source,
+      actorId,
+      expiresAt: new Date(candidate.consent.expiresAt),
+      migrationEvidenceRef,
+      evidenceChecksum,
+    };
+    const records: Record<string, unknown>[] = [{
+      ...common,
+      id: candidate.consent.evidenceId,
+      action: 'granted' as const,
+      occurredAt: new Date(candidate.consent.capturedAt),
+    }];
+    if (candidate.consent.withdrawnAt !== null) records.push({
+      ...common,
+      id: createEventId(new Date(candidate.consent.withdrawnAt)),
+      action: 'withdrawn' as const,
+      occurredAt: new Date(candidate.consent.withdrawnAt),
+    });
+    await this.records.create(records, { session });
   }
 }
 

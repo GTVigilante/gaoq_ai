@@ -26,6 +26,9 @@ const mongoose = new Mongoose();
 const CandidateModel = mongoose.model<RecruitmentCandidateRecord>(
   'SpecRecruitmentCandidate', RecruitmentCandidateRecordSchema,
 );
+const ConsentEvidenceModel = mongoose.model(
+  'SpecCandidateConsentEvidence', CandidateConsentEvidenceRecordSchema,
+);
 const ApplicationModel = mongoose.model<CandidateApplicationRecord>(
   'SpecCandidateApplication', CandidateApplicationRecordSchema,
 );
@@ -135,6 +138,23 @@ describe('RecruitmentSchemas', () => {
     await expect(new CandidateModel({
       ...candidate(), status: 'consent_withdrawn',
     }).validate()).rejects.toThrow('必须记录撤回时间');
+  });
+
+  it('人工迁移授权证据必须同时绑定迁移账本定位符与 checksum', async () => {
+    const evidence = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4Z1', tenantId: 'tenant-001',
+      candidateId: CANDIDATE_ID, action: 'granted', consentVersion: 'privacy-v1',
+      purpose: '招聘评估与候选人联络', source: 'manual_import', actorId: 'migration-agent-001',
+      occurredAt: new Date('2026-07-20T00:00:00.000Z'),
+      expiresAt: new Date('2027-07-20T00:00:00.000Z'),
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/candidate-evidence-001',
+      evidenceChecksum: 'a'.repeat(43),
+    };
+    await new ConsentEvidenceModel(evidence).validate();
+    await expect(new ConsentEvidenceModel({
+      ...evidence, evidenceChecksum: null,
+    }).validate()).rejects.toThrow('必须精确绑定 WORM');
   });
 
   it('申请阶段证据和终态时间在持久层再次失败关闭', async () => {

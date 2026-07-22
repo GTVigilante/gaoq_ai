@@ -1,4 +1,5 @@
 import type { CandidateApplication, CandidateApplicationStageEvent } from './application.js';
+import type { Candidate } from './candidate.js';
 import type { RecruitmentInterview, RecruitmentInterviewFeedback } from './interview.js';
 import type { RecruitmentOffer } from './offer.js';
 import type { RecruitmentPosition } from './position.js';
@@ -7,6 +8,7 @@ import type { RecruitmentRequisition } from './requisition.js';
 export type RecruitmentEventType =
   | 'recruitment.application.created'
   | 'recruitment.application.stage_changed'
+  | 'recruitment.candidate.migrated'
   | 'recruitment.requisition.created'
   | 'recruitment.requisition.submitted'
   | 'recruitment.requisition.approved'
@@ -35,6 +37,7 @@ export interface RecruitmentDomainEvent {
   readonly type: RecruitmentEventType;
   readonly aggregateType:
     | 'recruitment.application'
+    | 'recruitment.candidate'
     | 'recruitment.requisition'
     | 'recruitment.position'
     | 'recruitment.interview'
@@ -64,6 +67,23 @@ export function buildCandidateApplicationCreatedEvent(
       consentEvidenceId: application.consentEvidenceId,
       sourceChannel: application.sourceChannel,
       stage: application.stage,
+    }),
+  });
+}
+
+/** 候选人迁移事件不包含姓名、联系方式、授权目的或保留期。 */
+export function buildCandidateMigratedEvent(candidate: Candidate): RecruitmentDomainEvent {
+  return Object.freeze({
+    type: 'recruitment.candidate.migrated',
+    aggregateType: 'recruitment.candidate',
+    tenantId: candidate.tenantId,
+    aggregateId: candidate.id,
+    version: candidate.version,
+    occurredAt: candidate.updatedAt,
+    payload: Object.freeze({
+      status: candidate.status,
+      consentEvidenceId: candidate.consent.evidenceId,
+      consentVersion: candidate.consent.version,
     }),
   });
 }
