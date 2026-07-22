@@ -9,6 +9,7 @@ import type { Model } from 'mongoose';
 import type { AppEnvironment } from '../../../config/environment.js';
 import { AuditService } from '../../../core/audit/audit.service.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
+import { BusinessAttachmentService } from '../../document/application/business-attachment.service.js';
 import {
   DATA_MIGRATION_ATTACHMENT_QUEUE,
   DATA_MIGRATION_ATTACHMENT_TRANSFER_JOB,
@@ -40,6 +41,7 @@ export class DataMigrationAttachmentService {
     @InjectModel(DataMigrationRunRecord.name) private readonly runs: Model<DataMigrationRunDocument>,
     @InjectModel(DataMigrationAttachmentRecord.name)
     private readonly attachments: Model<DataMigrationAttachmentDocument>,
+    private readonly businessAttachments: BusinessAttachmentService,
   ) {}
 
   async request(runId: string) {
@@ -78,6 +80,13 @@ export class DataMigrationAttachmentService {
             'DATA_MIGRATION_ATTACHMENT_RETENTION_DAYS', { infer: true },
           ),
         });
+        if (attachment.usage === 'business_content') {
+          const finalized = await this.businessAttachments.finalizeMigration(
+            input.tenantId, input.runId, attachment.sourceAttachmentId,
+            receipt.checksum, receipt.targetEvidenceId,
+          );
+          if (!finalized) throw new Error('BUSINESS_ATTACHMENT_MIGRATION_TARGET_NOT_FOUND');
+        }
         await this.audit.recordSystem(input.tenantId, {
           action: 'data_migration.attachment.transfer', resourceType: 'data_migration_run',
           resourceId: input.runId, riskLevel: 'R2', outcome: 'success', traceId: input.runId,
@@ -188,11 +197,17 @@ function permanentFailure(error: unknown, attempts: number): boolean {
     'DATA_MIGRATION_ATTACHMENT_GATEWAY_HTTP_404',
     'DATA_MIGRATION_ATTACHMENT_GATEWAY_HTTP_409',
     'DATA_MIGRATION_ATTACHMENT_GATEWAY_HTTP_422',
+    'BUSINESS_ATTACHMENT_MIGRATION_RECEIPT_INVALID',
+    'BUSINESS_ATTACHMENT_MIGRATION_CHECKSUM_MISMATCH',
+    'BUSINESS_ATTACHMENT_MIGRATION_IMMUTABLE',
+    'BUSINESS_ATTACHMENT_MIGRATION_TARGET_NOT_FOUND',
   ].includes(code);
 }
 
 function safeFailureCode(error: unknown, attempts: number): string {
   if (attempts >= MAX_ATTEMPTS) return 'DATA_MIGRATION_ATTACHMENT_RETRY_EXHAUSTED';
-  return error instanceof Error && /^DATA_MIGRATION_ATTACHMENT_[A-Z0-9_]{2,80}$/u.test(error.message)
+  return error instanceof Error &&
+    /^(?:DATA_MIGRATION_ATTACHMENT|BUSINESS_ATTACHMENT_MIGRATION)_[A-Z0-9_]{2,80}$/u
+      .test(error.message)
     ? error.message : 'DATA_MIGRATION_ATTACHMENT_TRANSFER_REJECTED';
 }

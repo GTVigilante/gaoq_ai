@@ -86,6 +86,17 @@ import {
   TreasuryReconciliationService,
   type ImportFourWayReconciliationFromMigrationInput,
 } from '../../treasury/application/treasury-reconciliation.service.js';
+import {
+  BusinessAttachmentService,
+  type ImportBusinessAttachmentFromMigrationInput,
+} from '../../document/application/business-attachment.service.js';
+import {
+  BUSINESS_ATTACHMENT_OWNER_TYPES,
+  BUSINESS_ATTACHMENT_OWNER_BY_PURPOSE,
+  BUSINESS_ATTACHMENT_PURPOSES,
+  type BusinessAttachmentOwnerType,
+  type BusinessAttachmentPurpose,
+} from '../../document/persistence/business-attachment.schemas.js';
 import type {
   CreateDepartmentDto,
   CreateEmployeeDto,
@@ -209,6 +220,8 @@ export class DataMigrationService {
     private readonly treasuryBankReturns?: TreasuryBankReturnService,
     @Inject(TreasuryReconciliationService)
     private readonly treasuryReconciliations?: TreasuryReconciliationService,
+    @Inject(BusinessAttachmentService)
+    private readonly businessAttachments?: BusinessAttachmentService,
   ) {}
 
   async start(input: CreateDataMigrationRunDto) {
@@ -627,6 +640,15 @@ export class DataMigrationService {
     } else if (input.entityType === 'payroll.reconciliation') {
       const payload = payrollReconciliationPayload(input.payload);
       const specs = payrollReconciliationAssociationSpecs(payload);
+      assertAssociations(input.associationSourceIds,
+        specs.map((spec) => spec.sourceAssociationId));
+      assertSingleMigrationEvidence(input, payload);
+      await Promise.all(specs.map(async (spec) =>
+        this.requireMapping(run, spec.entityType, spec.sourceAssociationId)));
+      return;
+    } else if (input.entityType === 'business.attachment') {
+      const payload = businessAttachmentPayload(input.payload);
+      const specs = businessAttachmentAssociationSpecs(payload);
       assertAssociations(input.associationSourceIds,
         specs.map((spec) => spec.sourceAssociationId));
       assertSingleMigrationEvidence(input, payload);
@@ -1529,6 +1551,27 @@ export class DataMigrationService {
       };
       return target(await this.treasuryReconciliations.importBalancedFromMigration(key, command));
     }
+    if (input.entityType === 'business.attachment') {
+      const payload = businessAttachmentPayload(input.payload);
+      if (this.businessAttachments === undefined) {
+        throw new Error('迁移业务附件适配器未装配');
+      }
+      const [owner, uploadedBy] = await Promise.all([
+        this.requireMapping(run, payload.ownerEntityType, payload.ownerSourceId),
+        payload.uploadedByEmployeeSourceId === null ? Promise.resolve(null) :
+          this.requireMapping(run, 'org.employee', payload.uploadedByEmployeeSourceId),
+      ]);
+      const command: ImportBusinessAttachmentFromMigrationInput = {
+        targetId: mapping?.targetId ?? null, ownerType: payload.ownerEntityType,
+        ownerId: owner.targetId, purpose: payload.purpose,
+        uploadedByEmployeeId: uploadedBy?.targetId ?? null,
+        businessCreatedAt: payload.businessCreatedAt,
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${run.id}/attachments/${payload.sourceEvidenceSourceAttachmentId}`,
+        evidenceChecksum: payload.sourceEvidenceChecksum,
+      };
+      return target(await this.businessAttachments.importFromMigration(key, command));
+    }
     const payload = approvalTemplatePayload(input.payload);
     if (this.approvals === undefined) throw new Error('迁移审批适配器未装配');
     const employeeId = async (sourceId: string): Promise<string> =>
@@ -1722,7 +1765,10 @@ export class DataMigrationService {
           { $setOnInsert: {
             id: createEventId(), tenantId: run.tenantId, runId: run.id,
             sequence: input.sequence, sourceAttachmentId: attachment.sourceAttachmentId,
-            checksum: attachment.checksum, status: 'pending', attempts: 0,
+            checksum: attachment.checksum,
+            usage: input.entityType === 'business.attachment'
+              ? 'business_content' : 'migration_evidence',
+            status: 'pending', attempts: 0,
             processingStartedAt: null, targetEvidenceId: null, rejectionCode: null,
           } },
           { upsert: true, runValidators: true },
@@ -2041,6 +2087,7 @@ type AssociationTargetType =
   | 'org.position'
   | 'org.job_level'
   | 'org.employee'
+  | 'org.employment'
   | 'approval.template'
   | 'approval.instance'
   | 'approval.history'
@@ -2049,6 +2096,7 @@ type AssociationTargetType =
   | 'recruitment.candidate'
   | 'recruitment.application'
   | 'recruitment.interview'
+  | 'recruitment.offer'
   | 'attendance.source_fact'
   | 'attendance.monthly_snapshot'
   | 'payroll.rule_pack'
@@ -4317,6 +4365,62 @@ function payrollReconciliationAssociationSpecs(
   ];
 }
 
+interface BusinessAttachmentMigrationPayload extends MigrationEvidencePayload {
+  readonly ownerEntityType: BusinessAttachmentOwnerType;
+  readonly ownerSourceId: string;
+  readonly purpose: BusinessAttachmentPurpose;
+  readonly uploadedByEmployeeSourceId: string | null;
+  readonly businessCreatedAt: string;
+}
+
+function businessAttachmentPayload(
+  value: Readonly<Record<string, unknown>>,
+): BusinessAttachmentMigrationPayload {
+  exactKeys(value, [
+    'businessCreatedAt', 'ownerEntityType', 'ownerSourceId', 'purpose',
+    'sourceEvidenceChecksum', 'sourceEvidenceSourceAttachmentId',
+    'uploadedByEmployeeSourceId',
+  ]);
+  if (typeof value.ownerEntityType !== 'string' ||
+    !BUSINESS_ATTACHMENT_OWNER_TYPES.includes(value.ownerEntityType as BusinessAttachmentOwnerType) ||
+    typeof value.purpose !== 'string' ||
+    !BUSINESS_ATTACHMENT_PURPOSES.includes(value.purpose as BusinessAttachmentPurpose) ||
+    BUSINESS_ATTACHMENT_OWNER_BY_PURPOSE[value.purpose as BusinessAttachmentPurpose] !==
+      value.ownerEntityType ||
+    typeof value.ownerSourceId !== 'string' || !SOURCE_ID_PATTERN.test(value.ownerSourceId) ||
+    (value.uploadedByEmployeeSourceId !== null &&
+      (typeof value.uploadedByEmployeeSourceId !== 'string' ||
+        !SOURCE_ID_PATTERN.test(value.uploadedByEmployeeSourceId))) ||
+    !isStrictUtcIso(value.businessCreatedAt) || !migrationEvidence(value)) {
+    throw invalidPayload();
+  }
+  return {
+    ownerEntityType: value.ownerEntityType,
+    ownerSourceId: value.ownerSourceId,
+    purpose: value.purpose as BusinessAttachmentPurpose,
+    uploadedByEmployeeSourceId: value.uploadedByEmployeeSourceId,
+    businessCreatedAt: value.businessCreatedAt,
+    sourceEvidenceSourceAttachmentId: value.sourceEvidenceSourceAttachmentId,
+    sourceEvidenceChecksum: value.sourceEvidenceChecksum,
+  };
+}
+
+function businessAttachmentAssociationSpecs(
+  payload: BusinessAttachmentMigrationPayload,
+): readonly (AssociationEvidence & { readonly entityType: AssociationTargetType })[] {
+  return [
+    {
+      relationship: 'attachment_owner', sourceAssociationId: payload.ownerSourceId,
+      entityType: payload.ownerEntityType,
+    },
+    ...(payload.uploadedByEmployeeSourceId === null ? [] : [{
+      relationship: 'uploaded_by' as const,
+      sourceAssociationId: payload.uploadedByEmployeeSourceId,
+      entityType: 'org.employee' as const,
+    }]),
+  ];
+}
+
 function migrationEvidence(value: Readonly<Record<string, unknown>>): value is
 Readonly<Record<string, unknown>> & MigrationEvidencePayload {
   return typeof value.sourceEvidenceSourceAttachmentId === 'string' &&
@@ -4708,6 +4812,10 @@ function associationEvidence(input: ApplyDataMigrationRecordDto): readonly Assoc
       derived = payrollReconciliationAssociationSpecs(
         payrollReconciliationPayload(input.payload),
       );
+    } else if (input.entityType === 'business.attachment') {
+      derived = businessAttachmentAssociationSpecs(
+        businessAttachmentPayload(input.payload),
+      );
     } else if (input.entityType === 'attendance.monthly_snapshot') {
       const payload = attendanceMonthPayload(input.payload);
       derived = [
@@ -4850,6 +4958,7 @@ const ASSOCIATION_RELATIONSHIPS = [
   'prepared_by', 'payroll_period', 'payroll_run', 'rule_pack',
   'compensation_profile', 'attendance_snapshot',
   'approval_control', 'locked_by', 'bank_return', 'tax_filing', 'reconciled_by',
+  'attachment_owner', 'uploaded_by',
   'declared_reference',
 ] as const;
 const ASSOCIATION_RELATIONSHIP_SET: ReadonlySet<string> = new Set(ASSOCIATION_RELATIONSHIPS);

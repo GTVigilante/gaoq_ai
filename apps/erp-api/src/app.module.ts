@@ -33,6 +33,7 @@ import { TreasuryModule } from './modules/treasury/treasury.module.js';
 import { OpModule } from './modules/op/op.module.js';
 import { AnalyticsModule } from './modules/analytics/analytics.module.js';
 import { DataMigrationModule } from './modules/data-migration/data-migration.module.js';
+import { DocumentModule } from './modules/document/document.module.js';
 
 const mongoLogger = new Logger('MongoDB');
 
@@ -79,6 +80,7 @@ const mongoLogger = new Logger('MongoDB');
     TreasuryModule,
     OpModule,
     AnalyticsModule,
+    DocumentModule,
     DataMigrationModule,
     TraceMiddlewareModule,
     TenantContextModule,

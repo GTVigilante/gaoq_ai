@@ -36,6 +36,7 @@
     "migrate:phase5:payroll-control-indexes": "node dist/migrations/phase-5-payroll-control-indexes.js",
     "migrate:phase5:payroll-tax-migration-indexes": "node dist/migrations/phase-5-payroll-tax-migration-indexes.js",
     "migrate:phase5:payroll-reconciliation-migration-indexes": "node dist/migrations/phase-5-payroll-reconciliation-migration-indexes.js",
+    "migrate:phase5:business-attachment-migration-indexes": "node dist/migrations/phase-5-business-attachment-migration-indexes.js",
     "migrate:phase5:treasury-migration-indexes": "node dist/migrations/phase-5-treasury-migration-indexes.js",
     "migrate:phase5:treasury-batch-migration-indexes": "node dist/migrations/phase-5-treasury-batch-migration-indexes.js",
     "migrate:phase5:treasury-return-migration-indexes": "node dist/migrations/phase-5-treasury-return-migration-indexes.js",

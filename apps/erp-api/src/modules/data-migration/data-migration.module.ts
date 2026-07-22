@@ -10,6 +10,7 @@ import { AttendanceModule } from '../attendance/attendance.module.js';
 import { PayrollModule } from '../payroll/payroll.module.js';
 import { RecruitmentModule } from '../recruitment/recruitment.module.js';
 import { TreasuryModule } from '../treasury/treasury.module.js';
+import { DocumentModule } from '../document/document.module.js';
 import { DataMigrationAttachmentService } from './application/data-migration-attachment.service.js';
 import { DataMigrationService } from './application/data-migration.service.js';
 import { DATA_MIGRATION_ATTACHMENT_QUEUE } from './data-migration-attachment.queue.js';
@@ -35,6 +36,7 @@ import {
     AttendanceModule,
     PayrollModule,
     TreasuryModule,
+    DocumentModule,
     BullModule.registerQueue({ name: DATA_MIGRATION_ATTACHMENT_QUEUE }),
     MongooseModule.forFeature([
       { name: DataMigrationRunRecord.name, schema: DataMigrationRunRecordSchema },

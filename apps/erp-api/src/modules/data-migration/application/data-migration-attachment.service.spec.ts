@@ -98,6 +98,77 @@ describe('DataMigrationAttachmentService', () => {
     }));
   });
 
+  it('业务附件必须先由领域服务激活才确认账本回执', async () => {
+    const context = new TenantContextService();
+    const attachment = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4F2', tenantId: 'tenant-001', runId: RUN_ID,
+      sequence: 1, sourceAttachmentId: 'resume-001', checksum: 'r'.repeat(43),
+      usage: 'business_content', status: 'processing', attempts: 1,
+      processingStartedAt: new Date(), targetEvidenceId: null, rejectionCode: null,
+    };
+    const runs = { findOne: vi.fn().mockReturnValue(query({
+      id: RUN_ID, tenantId: 'tenant-001', sourceSystem: 'legacy-hr',
+      scope: 'business_attachments', status: 'running',
+    })) };
+    const attachments = {
+      findOneAndUpdate: vi.fn().mockReturnValueOnce(query(attachment)).mockReturnValueOnce(query(null)),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+      countDocuments: vi.fn().mockReturnValue({ exec: () => Promise.resolve(0) }),
+    };
+    const gateway = { transfer: vi.fn().mockResolvedValue({
+      targetEvidenceId: 'worm/migration/resume-001', malwareScanEvidenceId: 'scan-resume-001',
+      checksum: 'r'.repeat(43), immutable: true, malwareClean: true, retentionDays: 2_555,
+      classification: 'L4',
+    }) };
+    const finalizer = { finalizeMigration: vi.fn().mockResolvedValue(true) };
+    const service = assemble(
+      context, runs, attachments, {}, gateway, { recordSystem: vi.fn() }, finalizer,
+    );
+
+    await service.process({ tenantId: 'tenant-001', runId: RUN_ID });
+
+    expect(finalizer.finalizeMigration).toHaveBeenCalledWith(
+      'tenant-001', RUN_ID, 'resume-001', 'r'.repeat(43), 'worm/migration/resume-001',
+    );
+    expect(attachments.updateOne).toHaveBeenCalled();
+    expect(JSON.stringify(attachments.updateOne.mock.calls)).toContain('"status":"verified"');
+  });
+
+  it('业务附件目标元数据缺失时永久拒绝且不得把账本标为 verified', async () => {
+    const context = new TenantContextService();
+    const attachment = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4F2', tenantId: 'tenant-001', runId: RUN_ID,
+      sequence: 1, sourceAttachmentId: 'resume-missing', checksum: 'r'.repeat(43),
+      usage: 'business_content', status: 'processing', attempts: 1,
+      processingStartedAt: new Date(), targetEvidenceId: null, rejectionCode: null,
+    };
+    const runs = { findOne: vi.fn().mockReturnValue(query({
+      id: RUN_ID, tenantId: 'tenant-001', sourceSystem: 'legacy-hr',
+      scope: 'business_attachments', status: 'running',
+    })) };
+    const attachments = {
+      findOneAndUpdate: vi.fn().mockReturnValueOnce(query(attachment)).mockReturnValueOnce(query(null)),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+      countDocuments: vi.fn().mockReturnValue({ exec: () => Promise.resolve(0) }),
+    };
+    const gateway = { transfer: vi.fn().mockResolvedValue({
+      targetEvidenceId: 'worm/migration/resume-missing', malwareScanEvidenceId: 'scan-missing',
+      checksum: 'r'.repeat(43), immutable: true, malwareClean: true, retentionDays: 2_555,
+      classification: 'L4',
+    }) };
+    const finalizer = { finalizeMigration: vi.fn().mockResolvedValue(false) };
+    const service = assemble(
+      context, runs, attachments, {}, gateway, { recordSystem: vi.fn() }, finalizer,
+    );
+
+    await expect(service.process({ tenantId: 'tenant-001', runId: RUN_ID }))
+      .resolves.toBeUndefined();
+
+    const updates = JSON.stringify(attachments.updateOne.mock.calls);
+    expect(updates).toContain('BUSINESS_ATTACHMENT_MIGRATION_TARGET_NOT_FOUND');
+    expect(updates).not.toContain('"status":"verified"');
+  });
+
   it('网关返回永久失败时把附件标记为 rejected 且不继续重试', async () => {
     const context = new TenantContextService();
     const attachment = {
@@ -210,6 +281,7 @@ function assemble(
   queue: object,
   gateway: object,
   audit: object,
+  businessAttachments: object = { finalizeMigration: vi.fn() },
 ): DataMigrationAttachmentService {
   return new DataMigrationAttachmentService(
     context,
@@ -219,5 +291,6 @@ function assemble(
     queue as Queue<DataMigrationAttachmentJobData>,
     runs as Model<DataMigrationRunDocument>,
     attachments as Model<DataMigrationAttachmentDocument>,
+    businessAttachments as never,
   );
 }

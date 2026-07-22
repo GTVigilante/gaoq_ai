@@ -18,9 +18,9 @@
 
 `records.ndjson` 每行是一条完整 JSON 记录，字段与迁移记录 REST 契约一致。禁止空行、额外字段和超过 8 MiB 的单行；该上限与 API JSON 入口一致。序号必须从 1 连续递增。来源生成器必须先计算 payload 摘要，再按控制面契约计算 `sourceFactHash` 与滚动校验和。来源包不得纳入 Git，必须位于受控迁移工作区并执行保留期与销毁策略。
 
-当前 Scope 的执行顺序固定为 `org_reference` → `org_workforce` → 身份开户核对 → `org_employment` → 三个审批 Scope → 五个招聘 Scope → `attendance_source_facts` → `attendance_corrections` → `attendance_monthly_snapshots` → `payroll_rule_packs` → `payroll_compensation_profiles` → `payroll_periods` → `payroll_calculation_runs` → `payroll_period_approvals` → `payroll_period_locks` → `payroll_tax_filings` → `treasury_bank_accounts` → `treasury_disbursement_batches` → `treasury_bank_returns`。每个 Scope 使用独立来源包、`sourceRunId`、控制总数和签署证据。薪资规则、薪酬档案、资金账户和代发导出必须引用各自专用的 approved 审批历史；薪酬档案按法域/员工及版本排序，资金账户按主体及版本排序。审批实例及各业务实体必须为每条记录提供一份 checksum 精确一致的 WORM 证据附件。禁止把多个 Scope 混入同一包。
+当前 Scope 的执行顺序固定为 `org_reference` → `org_workforce` → 身份开户核对 → `org_employment` → 三个审批 Scope → 五个招聘 Scope → `attendance_source_facts` → `attendance_corrections` → `attendance_monthly_snapshots` → `payroll_rule_packs` → `payroll_compensation_profiles` → `payroll_periods` → `payroll_calculation_runs` → `payroll_period_approvals` → `payroll_period_locks` → `payroll_tax_filings` → `treasury_bank_accounts` → `treasury_disbursement_batches` → `treasury_bank_returns` → `payroll_reconciliations` → `business_attachments`。每个 Scope 使用独立来源包、`sourceRunId`、控制总数和签署证据。薪资规则、薪酬档案、资金账户和代发导出必须引用各自专用的 approved 审批历史；薪酬档案按法域/员工及版本排序，资金账户按主体及版本排序。审批实例及各业务实体必须为每条记录提供一份 checksum 精确一致的 WORM 证据附件。禁止把多个 Scope 混入同一包。
 
-`payroll_reconciliations` 必须紧接 `treasury_bank_returns` 执行，是当前顺序的最后一个 Scope。它使用独立来源包、`sourceRunId` 和签署证据，禁止与银行回盘或其他 Scope 合包。
+`payroll_reconciliations` 必须紧接 `treasury_bank_returns` 执行；`business_attachments` 在全部归属实体和员工映射完成后最后执行。两者都使用独立来源包、`sourceRunId` 和签署证据，禁止与其他 Scope 合包。
 
 `recruitment_candidates` 包含 L3 直接身份，必须在受控迁移工作区静态加密，读权限只授予迁移服务与双人复核角色，apply 完成后按批准保留期销毁。CLI、服务日志和证据导出不得输出 payload；候选人明文不得进入命令行参数、Git、工单、聊天或 MCP 上下文。
 
@@ -50,6 +50,8 @@
 
 `payroll_reconciliations` 为 L4，只接收前述锁定工资、已提交个税、常规代发批次和全量成功回盘形成的已平衡四方对账。每条记录仅提交四个来源引用、周期 v6/批次 v5、严格 UTC 对账时间与唯一 WORM；目标重算人数、工资/个税/代发/回盘金额、引用和摘要。对账员工须映射到有效 ERP 身份，与锁定/制备/导出批准三岗分离。任一差异、非常规首批、非迁移链路、时间倒置或证据不一致均失败关闭；不调用银行、税局、WORM 或 MCP 写工具。
 
+`business_attachments` 为 L4。归属/用途固定为审批实例/审批附件、审批历史/历史附件、候选人/简历、申请/申请附件、面试/面试附件、Offer/Offer 附件、劳动关系/劳动关系文件；每条记录只提交归属来源 ID、可选上传员工来源 ID、用途、严格 UTC 历史创建时间、checksum 与唯一附件。禁止提交附件正文、原文件名、MIME、来源路径、对象地址、tenantId、actorId 或来源凭据。目标先登记不可用元数据，隔离网关完成拉取、checksum、恶意文件扫描与 WORM 归档后，再由应用服务事务性激活并发布专用迁移事件；未解析归属/员工、回执缺失或校验不一致均阻断 Scope 完成。
+
 ## 离线预检
 
 ```bash
@@ -72,6 +74,8 @@ unset ERP_MIGRATION_TOKEN
 
 `payroll_reconciliations` 令牌必须同时授予 `erp:payroll:migration:write` 和 `erp:treasury:migration:write`；只具备其中一项时，创建运行和 apply 都必须拒绝。
 
+`business_attachments` 令牌必须额外授予 `erp:document:migration:write`；附件搬运仍单独校验 `erp:migration:attachment:execute`，禁止由普通用户或 MCP 代理代执行。
+
 ## 操作门禁
 
 - 生产 apply 前必须完成来源包双人校验、恶意文件扫描、备份、变更单和演练编号登记。
@@ -80,7 +84,7 @@ unset ERP_MIGRATION_TOKEN
 - 网络超时或进程中断后使用同一来源包重跑 apply；禁止修改原包后复用 `sourceRunId`。
 - 当前实现会在预检期间维护来源记录 ID 集合；超大数据包必须按已批准 Scope 和容量演练结果拆分，不得绕过服务端总控制量。
 
-附件网关通过 `DATA_MIGRATION_ATTACHMENT_GATEWAY_ENDPOINT` 与 `DATA_MIGRATION_ATTACHMENT_GATEWAY_BEARER_TOKEN` 成套配置，必须位于 ERP 授权域之外的标准 HTTPS 权限域。网关负责来源凭据、正文拉取、扫描与 WORM 归档；ERP 只发送来源标识、预期 checksum、由服务端 Scope 固定映射的 `L3|L4` 分级和不少于 2555 天的保留期。`recruitment_offers`、三个考勤 Scope、`payroll_compensation_profiles`、`payroll_calculation_runs`、`payroll_period_approvals`、`payroll_period_locks`、`payroll_tax_filings`、`payroll_reconciliations`、三个 Treasury Scope 强制为 L4；`payroll_rule_packs` 与 `payroll_periods` 为 L3。来源包和客户端不能提交或降低分级，网关回执必须原样确认。
+附件网关通过 `DATA_MIGRATION_ATTACHMENT_GATEWAY_ENDPOINT` 与 `DATA_MIGRATION_ATTACHMENT_GATEWAY_BEARER_TOKEN` 成套配置，必须位于 ERP 授权域之外的标准 HTTPS 权限域。网关负责来源凭据、正文拉取、扫描与 WORM 归档；ERP 只发送来源标识、预期 checksum、由服务端 Scope 固定映射的 `L3|L4` 分级和不少于 2555 天的保留期。`recruitment_offers`、三个考勤 Scope、`payroll_compensation_profiles`、`payroll_calculation_runs`、`payroll_period_approvals`、`payroll_period_locks`、`payroll_tax_filings`、`payroll_reconciliations`、`business_attachments`、三个 Treasury Scope 强制为 L4；`payroll_rule_packs` 与 `payroll_periods` 为 L3。来源包和客户端不能提交或降低分级，网关回执必须原样确认。
 
 ## 完整差异证据导出
 

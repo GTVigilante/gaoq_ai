@@ -123,6 +123,7 @@ export class DataMigrationAssociationRecord {
       'prepared_by', 'payroll_period', 'payroll_run', 'rule_pack',
       'compensation_profile', 'attendance_snapshot',
       'approval_control', 'locked_by', 'bank_return', 'tax_filing', 'reconciled_by',
+      'attachment_owner', 'uploaded_by',
       'declared_reference',
     ],
   })
@@ -174,6 +175,8 @@ export class DataMigrationAssociationRecord {
     | 'bank_return'
     | 'tax_filing'
     | 'reconciled_by'
+    | 'attachment_owner'
+    | 'uploaded_by'
     | 'declared_reference';
   @Prop({ type: String, required: true, immutable: true, match: SOURCE_ID })
   sourceAssociationId!: string;
@@ -202,6 +205,11 @@ export class DataMigrationAttachmentRecord {
   @Prop({ type: String, required: true, immutable: true, match: SOURCE_ID })
   sourceAttachmentId!: string;
   @Prop({ type: String, required: true, immutable: true, match: HASH }) checksum!: string;
+  @Prop({
+    type: String, required: true, immutable: true,
+    enum: ['migration_evidence', 'business_content'], default: 'migration_evidence',
+  })
+  usage!: 'migration_evidence' | 'business_content';
   @Prop({ type: String, required: true, enum: ['pending', 'processing', 'verified', 'rejected'] })
   status!: 'pending' | 'processing' | 'verified' | 'rejected';
   @Prop({ type: Number, required: true, min: 0, max: 20 }) attempts!: number;

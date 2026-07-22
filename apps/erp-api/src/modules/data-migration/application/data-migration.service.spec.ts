@@ -18,6 +18,7 @@ import type { TreasuryBankAccountService } from '../../treasury/application/trea
 import type { TreasuryDisbursementService } from '../../treasury/application/treasury-disbursement.service.js';
 import type { TreasuryBankReturnService } from '../../treasury/application/treasury-bank-return.service.js';
 import type { TreasuryReconciliationService } from '../../treasury/application/treasury-reconciliation.service.js';
+import type { BusinessAttachmentService } from '../../document/application/business-attachment.service.js';
 import type {
   DataMigrationAssociationDocument,
   DataMigrationAttachmentDocument,
@@ -40,6 +41,7 @@ function trusted<T>(context: TenantContextService, action: () => T): T {
         'erp:attendance:migration:write',
         'erp:payroll:migration:write',
         'erp:treasury:migration:write',
+        'erp:document:migration:write',
       ],
       departmentIds: [], traceId: 'trace-migration-001',
     },
@@ -173,6 +175,10 @@ function treasuryBankReturnsRun() {
 
 function payrollReconciliationsRun() {
   return { ...run(), scope: 'payroll_reconciliations' as const };
+}
+
+function businessAttachmentsRun() {
+  return { ...run(), scope: 'business_attachments' as const };
 }
 
 function query<T>(value: T) { return { lean: () => ({ exec: () => Promise.resolve(value) }) }; }
@@ -2482,6 +2488,76 @@ describe('DataMigrationService', () => {
         taxFilingId: targets['payroll.tax_filing'],
         reconciledByEmployeeId: 'employee-reconciler',
       }),
+    );
+  });
+
+  it('业务附件迁移只登记目标归属、员工映射与账本证据引用', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      ownerEntityType: 'recruitment.candidate', ownerSourceId: 'legacy-candidate-001',
+      purpose: 'candidate_resume', uploadedByEmployeeSourceId: 'legacy-recruiter-001',
+      businessCreatedAt: '2026-07-22T09:00:00.000Z',
+      sourceEvidenceSourceAttachmentId: 'resume-001',
+      sourceEvidenceChecksum: 'r'.repeat(43),
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(businessAttachmentsRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const mappings = {
+      findOne: vi.fn((filter: { entityType: string }) => query(
+        filter.entityType === 'business.attachment' ? null : {
+          targetId: filter.entityType === 'recruitment.candidate'
+            ? '01J8ZQK7V0A2M4N6P8R0T2W4C1' : 'employee-recruiter',
+          targetVersion: 1,
+        },
+      )),
+      findOneAndUpdate: vi.fn().mockReturnValue(query({ targetId: 'attachment-target' })),
+    };
+    const associations = {
+      findOneAndUpdate: vi.fn().mockReturnValue(query({})),
+      bulkWrite: vi.fn().mockResolvedValue({}),
+    };
+    const attachments = {
+      findOne: vi.fn().mockReturnValue(query(null)),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const businessAttachments = { importFromMigration: vi.fn().mockResolvedValue({
+      id: 'attachment-target', ownerType: 'recruitment.candidate',
+      ownerId: '01J8ZQK7V0A2M4N6P8R0T2W4C1', purpose: 'candidate_resume',
+      status: 'migration_pending', version: 1,
+    }) };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      mappings as unknown as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+      undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined,
+      businessAttachments as unknown as BusinessAttachmentService,
+    );
+    const result = await trusted(context, () => service.apply(RUN_ID, {
+      sequence: 1, sourceRecordId: 'legacy-resume-001', sourceVersion: '1',
+      entityType: 'business.attachment', payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: ['legacy-candidate-001', 'legacy-recruiter-001'],
+      attachments: [{ sourceAttachmentId: 'resume-001', checksum: 'r'.repeat(43) }],
+    }));
+    expect(result).toMatchObject({ status: 'applied', targetId: 'attachment-target' });
+    expect(businessAttachments.importFromMigration).toHaveBeenCalledWith(
+      expect.stringMatching(/^migration:/u), expect.objectContaining({
+        ownerType: 'recruitment.candidate', ownerId: '01J8ZQK7V0A2M4N6P8R0T2W4C1',
+        uploadedByEmployeeId: 'employee-recruiter', purpose: 'candidate_resume',
+      }),
+    );
+    expect(JSON.stringify(items.create.mock.calls)).not.toMatch(/candidate_resume|legacy-recruiter/u);
+    expect(attachments.updateOne).toHaveBeenCalled();
+    expect(JSON.stringify(attachments.updateOne.mock.calls)).toContain(
+      '"usage":"business_content"',
     );
   });
 

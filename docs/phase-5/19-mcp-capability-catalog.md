@@ -32,6 +32,8 @@ pnpm --silent mcp:catalog:print > /secure/mcp/gaoq-mcp-catalog.json
 
 OP、钉钉、飞书、e签宝、银行、税务、附件和 WORM 只通过应用服务与 Adapter 被 MCP 间接读取或发起受控意图。真实沙箱联调必须证明外部超时/重复/乱序不会绕过确认、租户、幂等、Outbox/Inbox、对账与审计；MCP 服务自身不得持有或返回供应商 Token。银行、税务、真实签署和资金动作只验证沙箱/受控替身，禁止生产副作用。
 
+业务附件迁移固定为 L4，不注册正文、对象定位符、checksum 的迁移 Tool 或 Resource。AI 只能读取聚合迁移报告；未来若增加领域附件状态能力，也必须复用应用服务并返回无正文、无对象地址、无上传人员标识的最小安全投影。
+
 工具自测和本目录不等于联调完成。最终 `integration-mcp` verdict 必须绑定 commit、三类镜像、`catalogHash`、三类客户端原始协议记录、八类外部沙箱证据、跨租户拒绝、审计和安全签署，随后才能进入[跨职能 Go/No-Go 门禁](./18-go-no-go-evidence-gate.md)。
 
 `.github/workflows/phase-5-mcp-integration.yml` 只允许 `main` 手工启动，绑定 Required Reviewers 保护的 `phase-5-mcp-integration` Environment 和同名隔离单次 Runner 标签。Environment 配置固定环境名及 API/Worker/Web 镜像 SHA-256；现场摘要文件固定为 `/var/lib/gaoq/mcp/phase-5-mcp-integration.json`。工作流把证据与当前 commit、镜像和实时解析的 `catalogHash` 精确绑定，只上传脱敏 verdict，不上传 OAuth Token、协议正文、业务数据或供应商凭据。

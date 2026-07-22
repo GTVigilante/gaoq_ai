@@ -47,6 +47,7 @@ describe('数据迁移账本 Schema', () => {
     expect(DataMigrationAttachmentRecordSchema.path('checksum')).toBeDefined();
     expect(DataMigrationAttachmentRecordSchema.path('attempts')).toBeDefined();
     expect(DataMigrationAttachmentRecordSchema.path('processingStartedAt')).toBeDefined();
+    expect(DataMigrationAttachmentRecordSchema.path('usage')).toBeDefined();
   });
 
   it('运行、条目与映射复用统一迁移白名单', () => {
@@ -80,6 +81,7 @@ describe('数据迁移账本 Schema', () => {
         'debtor_account', 'recipient_account',
         'disbursement_batch',
         'bank_return', 'tax_filing', 'reconciled_by',
+        'attachment_owner', 'uploaded_by',
       ]));
   });
 
