@@ -13,6 +13,7 @@ export interface AttendanceEvent {
     | 'attendance.source_fact.migrated'
     | 'attendance.correction.requested'
     | 'attendance.correction.approved'
+    | 'attendance.correction.migrated'
     | 'attendance.month.closed'
     | 'attendance.month.superseded';
   readonly tenantId: string;

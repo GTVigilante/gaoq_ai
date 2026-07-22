@@ -7,6 +7,7 @@ import {
   createAttendanceCorrection,
   createAttendanceSourceFact,
   restoreAttendanceSourceFactFromMigration,
+  restoreAttendanceCorrectionFromMigration,
 } from './attendance.js';
 
 const now = new Date('2026-04-02T00:00:00.000Z');
@@ -47,7 +48,8 @@ describe('Attendance 领域', () => {
       businessDate: source.businessDate,
       replacementImpact: { ...impact, workedMinutes: 420, overtimeMinutes: 0 },
       reasonCode: 'MISSED_BREAK',
-      approvalInstanceId: 'approval-001',
+      approvalReferenceType: 'approval_instance', approvalInstanceId: 'approval-001',
+      approvalHistoryId: null,
       approvalEvidenceId: 'evidence-001',
       approvedAt: '2026-04-01T12:00:00.000Z',
     }, now);
@@ -102,6 +104,23 @@ describe('Attendance 领域', () => {
     }, now)).toThrow('时间线');
     expect(() => restoreAttendanceSourceFactFromMigration({
       ...restored, createdAt: '2026-04-02T00:06:00.000Z',
+    }, now)).toThrow('时间线');
+  });
+
+  it('迁移修订保留审批与落库时间并拒绝先落库后批准', () => {
+    const restored = restoreAttendanceCorrectionFromMigration({
+      id: 'correction-legacy-001', tenantId: 'tenant-001', employeeId: 'employee-001',
+      sourceFactId: 'fact-legacy-001', businessDate: '2026-04-01',
+      replacementImpact: impact, reasonCode: 'LEGACY_APPROVED',
+      approvalReferenceType: 'legacy_history', approvalInstanceId: null,
+      approvalHistoryId: 'approval-history-001',
+      approvalEvidenceId: 'approval-history-001',
+      approvedAt: '2026-04-01T02:00:00.000Z',
+      createdAt: '2026-04-01T02:01:00.000Z',
+    }, now);
+    expect(restored.createdAt).toBe('2026-04-01T02:01:00.000Z');
+    expect(() => restoreAttendanceCorrectionFromMigration({
+      ...restored, approvedAt: '2026-04-01T02:02:00.000Z',
     }, now)).toThrow('时间线');
   });
 });

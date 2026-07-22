@@ -45,6 +45,7 @@ function assemble() {
   const employees = { findById: vi.fn().mockResolvedValue({ id: 'employee-001' }) };
   const approvals = {
     getAttendanceCorrectionDecision: vi.fn(), getAttendanceMonthReopenDecision: vi.fn(),
+    verifyAttendanceCorrectionMigrationReference: vi.fn(),
     createInstance: vi.fn(), submitInstance: vi.fn(),
   };
   const crypto = { sourceEventFingerprints: vi.fn().mockReturnValue(['key.digest']) };
@@ -58,7 +59,9 @@ function assemble() {
   };
   const corrections = {
     findForMonth: vi.fn().mockResolvedValue([]), findBySourceFactId: vi.fn().mockResolvedValue(null),
-    insert: vi.fn().mockResolvedValue(undefined),
+    findById: vi.fn().mockResolvedValue(null),
+    findMigrationEvidenceById: vi.fn().mockResolvedValue(null),
+    insert: vi.fn().mockResolvedValue(undefined), insertMigrated: vi.fn().mockResolvedValue(undefined),
   };
   const snapshots = {
     findActive: vi.fn(), activate: vi.fn().mockResolvedValue(undefined),
@@ -75,6 +78,64 @@ function assemble() {
 }
 
 describe('AttendanceApplicationService', () => {
+  it('迁移修订从源事实和已批准历史派生绑定且不泄露 L4 替换影响', async () => {
+    const store = assemble();
+    store.approvals.verifyAttendanceCorrectionMigrationReference.mockResolvedValue({
+      id: 'approval-history-001', completedAt: '2026-04-01T02:00:00.000Z',
+      evidenceChecksum: 'a'.repeat(43),
+    });
+    const result = await store.context.run({
+      tenant,
+      actor: actor(
+        ['erp:migration:execute', 'erp:attendance:migration:write'], 'service',
+      ),
+    }, () => store.service.importCorrectionFromMigration('attendance-correction-migration-001', {
+      targetId: null, employeeId: 'employee-001', sourceFactId: sourceFact().id,
+      approvalHistoryId: 'approval-history-001', approvalEvidenceChecksum: 'a'.repeat(43),
+      replacementImpact: {
+        workedMinutes: 420, leaveMinutes: 60, overtimeMinutes: 0, absentMinutes: 0,
+      },
+      reasonCode: 'LEGACY_APPROVED', createdAt: '2026-04-01T02:01:00.000Z',
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/correction-001',
+      evidenceChecksum: 'c'.repeat(43),
+    }));
+    expect(store.corrections.insertMigrated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        employeeId: 'employee-001', businessDate: '2026-04-01',
+        approvalReferenceType: 'legacy_history', approvalInstanceId: null,
+        approvalHistoryId: 'approval-history-001',
+        approvedAt: '2026-04-01T02:00:00.000Z',
+      }),
+      expect.stringContaining('/attachments/correction-001'), 'c'.repeat(43), session,
+    );
+    const event = store.outbox.append.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
+    expect(event).toMatchObject({ type: 'attendance.correction.migrated' });
+    expect(JSON.stringify(event)).not.toMatch(/workedMinutes|420|LEGACY_APPROVED/u);
+    expect(result.correction).toMatchObject({ version: 1, businessDate: '2026-04-01' });
+    store.approvals.verifyAttendanceCorrectionMigrationReference.mockResolvedValue({
+      id: 'approval-history-001', completedAt: '2026-04-01T01:01:00.000Z',
+      evidenceChecksum: 'a'.repeat(43),
+    });
+    await expect(store.context.run({
+      tenant,
+      actor: actor(
+        ['erp:migration:execute', 'erp:attendance:migration:write'], 'service',
+      ),
+    }, () => store.service.importCorrectionFromMigration('attendance-correction-migration-002', {
+      targetId: null, employeeId: 'employee-001', sourceFactId: sourceFact().id,
+      approvalHistoryId: 'approval-history-001', approvalEvidenceChecksum: 'a'.repeat(43),
+      replacementImpact: {
+        workedMinutes: 420, leaveMinutes: 60, overtimeMinutes: 0, absentMinutes: 0,
+      },
+      reasonCode: 'LEGACY_APPROVED', createdAt: '2026-04-01T02:01:00.000Z',
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/correction-002',
+      evidenceChecksum: 'd'.repeat(43),
+    }))).rejects.toThrow('批准时间不得早于源事实落库时间');
+    expect(store.corrections.insertMigrated).toHaveBeenCalledTimes(1);
+  });
+
   it('迁移源事实只写 L4 密文入口、盲索引、WORM 与专用事件', async () => {
     const store = assemble();
     store.crypto.sourceEventFingerprints.mockReturnValue(['blind-key.digest']);

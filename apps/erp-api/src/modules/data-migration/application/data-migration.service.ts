@@ -47,6 +47,7 @@ import {
 } from '../../recruitment/application/recruitment-offer.service.js';
 import {
   AttendanceApplicationService,
+  type ImportAttendanceCorrectionFromMigrationInput,
   type ImportAttendanceSourceFactFromMigrationInput,
 } from '../../attendance/application/attendance-application.service.js';
 import type {
@@ -570,6 +571,25 @@ export class DataMigrationService {
       }
       await this.requireMapping(run, 'org.employee', payload.employeeSourceId);
       return;
+    } else if (input.entityType === 'attendance.correction') {
+      const payload = attendanceCorrectionPayload(input.payload);
+      assertAssociations(input.associationSourceIds, [
+        payload.approvalHistorySourceId,
+        payload.employeeSourceId,
+        payload.sourceFactSourceId,
+      ]);
+      const evidence = input.attachments.find((attachment) =>
+        attachment.sourceAttachmentId === payload.sourceEvidenceSourceAttachmentId);
+      if (input.attachments.length !== 1 ||
+        evidence?.checksum !== payload.sourceEvidenceChecksum) {
+        throw new Error('DATA_MIGRATION_ATTENDANCE_CORRECTION_EVIDENCE_REQUIRED');
+      }
+      await Promise.all([
+        this.requireMapping(run, 'org.employee', payload.employeeSourceId),
+        this.requireMapping(run, 'attendance.source_fact', payload.sourceFactSourceId),
+        this.requireMapping(run, 'approval.history', payload.approvalHistorySourceId),
+      ]);
+      return;
     } else {
       const payload = approvalTemplatePayload(input.payload);
       const specs = approvalTemplateAssociationSpecs(payload);
@@ -967,6 +987,29 @@ export class DataMigrationService {
         evidenceChecksum: payload.sourceEvidenceChecksum,
       });
       return target(result.fact);
+    }
+    if (input.entityType === 'attendance.correction') {
+      const payload = attendanceCorrectionPayload(input.payload);
+      if (this.attendance === undefined) throw new Error('迁移考勤修订适配器未装配');
+      const [employee, sourceFact, approvalHistory] = await Promise.all([
+        this.requireMapping(run, 'org.employee', payload.employeeSourceId),
+        this.requireMapping(run, 'attendance.source_fact', payload.sourceFactSourceId),
+        this.requireMapping(run, 'approval.history', payload.approvalHistorySourceId),
+      ]);
+      const result = await this.attendance.importCorrectionFromMigration(key, {
+        targetId: mapping?.targetId ?? null,
+        employeeId: employee.targetId,
+        sourceFactId: sourceFact.targetId,
+        approvalHistoryId: approvalHistory.targetId,
+        approvalEvidenceChecksum: payload.approvalEvidenceChecksum,
+        replacementImpact: payload.replacementImpact,
+        reasonCode: payload.reasonCode,
+        createdAt: payload.createdAt,
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${run.id}/attachments/${payload.sourceEvidenceSourceAttachmentId}`,
+        evidenceChecksum: payload.sourceEvidenceChecksum,
+      });
+      return target(result.correction);
     }
     const payload = approvalTemplatePayload(input.payload);
     if (this.approvals === undefined) throw new Error('迁移审批适配器未装配');
@@ -1415,7 +1458,8 @@ type AssociationTargetType =
   | 'recruitment.position'
   | 'recruitment.candidate'
   | 'recruitment.application'
-  | 'recruitment.interview';
+  | 'recruitment.interview'
+  | 'attendance.source_fact';
 interface AssociationEvidence {
   readonly relationship: AssociationRelationship;
   readonly sourceAssociationId: string;
@@ -2673,6 +2717,70 @@ function attendanceSourceFactPayload(
   };
 }
 
+type AttendanceCorrectionMigrationPayload = Omit<
+  ImportAttendanceCorrectionFromMigrationInput,
+  'targetId' | 'employeeId' | 'sourceFactId' | 'approvalHistoryId' |
+  'migrationEvidenceRef' | 'evidenceChecksum'
+> & {
+  readonly employeeSourceId: string;
+  readonly sourceFactSourceId: string;
+  readonly approvalHistorySourceId: string;
+  readonly sourceEvidenceSourceAttachmentId: string;
+  readonly sourceEvidenceChecksum: string;
+};
+
+function attendanceCorrectionPayload(
+  value: Readonly<Record<string, unknown>>,
+): AttendanceCorrectionMigrationPayload {
+  exactKeys(value, [
+    'approvalEvidenceChecksum', 'approvalHistorySourceId', 'createdAt',
+    'employeeSourceId', 'reasonCode', 'replacementImpact',
+    'sourceEvidenceChecksum', 'sourceEvidenceSourceAttachmentId', 'sourceFactSourceId',
+  ]);
+  if (typeof value.employeeSourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.employeeSourceId) ||
+    typeof value.sourceFactSourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.sourceFactSourceId) ||
+    typeof value.approvalHistorySourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.approvalHistorySourceId) ||
+    typeof value.sourceEvidenceSourceAttachmentId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.sourceEvidenceSourceAttachmentId) ||
+    typeof value.approvalEvidenceChecksum !== 'string' ||
+    !HASH_PATTERN.test(value.approvalEvidenceChecksum) ||
+    typeof value.sourceEvidenceChecksum !== 'string' ||
+    !HASH_PATTERN.test(value.sourceEvidenceChecksum) ||
+    typeof value.reasonCode !== 'string' ||
+    !/^[A-Z][A-Z0-9_]{1,63}$/.test(value.reasonCode) ||
+    !isStrictUtcIso(value.createdAt) || !isPlainMigrationObject(value.replacementImpact)) {
+    throw invalidPayload();
+  }
+  exactKeys(value.replacementImpact, [
+    'absentMinutes', 'leaveMinutes', 'overtimeMinutes', 'workedMinutes',
+  ]);
+  const minutes = [
+    value.replacementImpact.workedMinutes, value.replacementImpact.leaveMinutes,
+    value.replacementImpact.overtimeMinutes, value.replacementImpact.absentMinutes,
+  ];
+  if (minutes.some((minute) => !Number.isSafeInteger(minute) || Number(minute) < 0 ||
+    Number(minute) > 44_640)) throw invalidPayload();
+  return {
+    employeeSourceId: value.employeeSourceId,
+    sourceFactSourceId: value.sourceFactSourceId,
+    approvalHistorySourceId: value.approvalHistorySourceId,
+    approvalEvidenceChecksum: value.approvalEvidenceChecksum,
+    replacementImpact: {
+      workedMinutes: Number(value.replacementImpact.workedMinutes),
+      leaveMinutes: Number(value.replacementImpact.leaveMinutes),
+      overtimeMinutes: Number(value.replacementImpact.overtimeMinutes),
+      absentMinutes: Number(value.replacementImpact.absentMinutes),
+    },
+    reasonCode: value.reasonCode,
+    createdAt: value.createdAt,
+    sourceEvidenceSourceAttachmentId: value.sourceEvidenceSourceAttachmentId,
+    sourceEvidenceChecksum: value.sourceEvidenceChecksum,
+  };
+}
+
 function assertGovernanceEvidence(
   input: ApplyDataMigrationRecordDto,
   payload: {
@@ -2947,6 +3055,23 @@ function associationEvidence(input: ApplyDataMigrationRecordDto): readonly Assoc
         relationship: 'employee', sourceAssociationId: employeeSourceId,
         entityType: 'org.employee',
       }];
+    } else if (input.entityType === 'attendance.correction') {
+      const payload = attendanceCorrectionPayload(input.payload);
+      derived = [
+        {
+          relationship: 'employee', sourceAssociationId: payload.employeeSourceId,
+          entityType: 'org.employee',
+        },
+        {
+          relationship: 'source_fact', sourceAssociationId: payload.sourceFactSourceId,
+          entityType: 'attendance.source_fact',
+        },
+        {
+          relationship: 'approval_history',
+          sourceAssociationId: payload.approvalHistorySourceId,
+          entityType: 'approval.history',
+        },
+      ];
     } else derived = [];
   } catch {
     derived = [];
@@ -3065,6 +3190,7 @@ const ASSOCIATION_RELATIONSHIPS = [
   'added_approver', 'expected_pending_approver',
   'requisition', 'approval_instance', 'approval_history',
   'candidate', 'application', 'interviewer', 'interview',
+  'source_fact',
   'declared_reference',
 ] as const;
 const ASSOCIATION_RELATIONSHIP_SET: ReadonlySet<string> = new Set(ASSOCIATION_RELATIONSHIPS);

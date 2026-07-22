@@ -77,20 +77,60 @@ export class AttendanceCorrectionRecord extends ProtectedRecord {
   @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
   sourceFactId!: string;
   @Prop({ type: String, required: true, immutable: true, match: DATE_PATTERN }) businessDate!: string;
-  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
-  approvalInstanceId!: string;
+  @Prop({
+    type: String, required: true, immutable: true,
+    enum: ['approval_instance', 'legacy_history'],
+  })
+  approvalReferenceType!: 'approval_instance' | 'legacy_history';
+  @Prop({ type: String, default: null, immutable: true, maxlength: 128, match: ID_PATTERN })
+  approvalInstanceId!: string | null;
+  @Prop({ type: String, default: null, immutable: true, maxlength: 128, match: ID_PATTERN })
+  approvalHistoryId!: string | null;
   @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
   approvalEvidenceId!: string;
   @Prop({ type: Date, required: true, immutable: true }) approvedAt!: Date;
+  @Prop({
+    type: String, default: null, immutable: true, maxlength: 256,
+    match: MIGRATION_EVIDENCE_REF_PATTERN,
+  })
+  migrationEvidenceRef!: string | null;
+  @Prop({ type: String, default: null, immutable: true, match: HASH_PATTERN })
+  migrationEvidenceChecksum!: string | null;
   createdAt!: Date;
   updatedAt!: Date;
 }
 export type AttendanceCorrectionDocument = HydratedDocument<AttendanceCorrectionRecord>;
 export const AttendanceCorrectionRecordSchema = SchemaFactory.createForClass(AttendanceCorrectionRecord);
+AttendanceCorrectionRecordSchema.pre('validate', function () {
+  const record = this as AttendanceCorrectionRecord;
+  if ((record.migrationEvidenceRef === null) !==
+    (record.migrationEvidenceChecksum === null)) {
+    throw new Error('考勤修订迁移证据引用与校验和必须成对出现');
+  }
+  const referenceId = record.approvalReferenceType === 'approval_instance'
+    ? record.approvalInstanceId
+    : record.approvalHistoryId;
+  if (referenceId === null ||
+    (record.approvalReferenceType === 'approval_instance' && record.approvalHistoryId !== null) ||
+    (record.approvalReferenceType === 'legacy_history' && record.approvalInstanceId !== null)) {
+    throw new Error('考勤修订审批引用类型与证据绑定必须一致');
+  }
+});
 AttendanceCorrectionRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 AttendanceCorrectionRecordSchema.index({ tenantId: 1, sourceFactId: 1 }, { unique: true });
-AttendanceCorrectionRecordSchema.index({ tenantId: 1, approvalInstanceId: 1 }, { unique: true });
+AttendanceCorrectionRecordSchema.index(
+  { tenantId: 1, approvalInstanceId: 1 },
+  { unique: true, partialFilterExpression: { approvalInstanceId: { $type: 'string' } } },
+);
+AttendanceCorrectionRecordSchema.index(
+  { tenantId: 1, approvalHistoryId: 1 },
+  { unique: true, partialFilterExpression: { approvalHistoryId: { $type: 'string' } } },
+);
 AttendanceCorrectionRecordSchema.index({ tenantId: 1, employeeId: 1, businessDate: 1 });
+AttendanceCorrectionRecordSchema.index(
+  { tenantId: 1, migrationEvidenceRef: 1 },
+  { unique: true, partialFilterExpression: { migrationEvidenceRef: { $type: 'string' } } },
+);
 
 /** 月结汇总可供授权主体读取；逐日明细仍保持 L4 密文。 */
 @Schema({ collection: 'attendance_monthly_snapshots', timestamps: true, versionKey: false, id: false })

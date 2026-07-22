@@ -251,6 +251,12 @@ export interface ApprovalRecruitmentMigrationReference {
   readonly outcome: 'running' | 'approved' | 'rejected' | 'withdrawn';
 }
 
+export interface ApprovalAttendanceCorrectionMigrationReference {
+  readonly id: string;
+  readonly completedAt: string;
+  readonly evidenceChecksum: string;
+}
+
 /** 审批应用服务：唯一事务编排入口，REST、Worker 与 MCP 必须复用本服务。 */
 @Injectable()
 export class ApprovalApplicationService {
@@ -455,6 +461,27 @@ export class ApprovalApplicationService {
       type,
       templateCode: history.templateCode,
       outcome: history.outcome,
+    });
+  }
+
+  /** 考勤迁移只读校验：只接受已通过的专用终结历史，不暴露审批正文或证据定位符。 */
+  async verifyAttendanceCorrectionMigrationReference(
+    id: string,
+    session: ClientSession,
+  ): Promise<ApprovalAttendanceCorrectionMigrationReference> {
+    this.assertAttendanceMigrationVerifier();
+    const history = await this.legacyHistories.findById(id, session);
+    if (history === null || history.templateCode !== 'attendance_correction' ||
+      history.outcome !== 'approved') {
+      throw new BadRequestException({
+        code: 'APPROVAL_MIGRATION_ATTENDANCE_CORRECTION_REFERENCE_INVALID',
+        message: '考勤修订必须引用已迁移且已通过的专用审批历史',
+      });
+    }
+    return Object.freeze({
+      id: history.id,
+      completedAt: history.completedAt,
+      evidenceChecksum: history.evidenceChecksum,
     });
   }
 
@@ -1188,6 +1215,18 @@ export class ApprovalApplicationService {
       throw new ForbiddenException({
         code: 'APPROVAL_MIGRATION_RECRUITMENT_VERIFIER_DENIED',
         message: '招聘迁移审批引用校验只允许受信任服务身份',
+      });
+    }
+  }
+
+  private assertAttendanceMigrationVerifier(): void {
+    const actor = this.context.getActorRequired();
+    if (!['service', 'system_job'].includes(actor.actorType) ||
+      !actor.scopes.includes('erp:migration:execute') ||
+      !actor.scopes.includes('erp:attendance:migration:write')) {
+      throw new ForbiddenException({
+        code: 'APPROVAL_MIGRATION_ATTENDANCE_VERIFIER_DENIED',
+        message: '考勤迁移审批引用校验只允许受信任服务身份',
       });
     }
   }

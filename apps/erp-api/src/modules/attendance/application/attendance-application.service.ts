@@ -19,7 +19,9 @@ import {
   closeAttendanceMonth,
   createAttendanceCorrection,
   createAttendanceSourceFact,
+  restoreAttendanceCorrectionFromMigration,
   restoreAttendanceSourceFactFromMigration,
+  type AttendanceCorrection,
   type AttendanceFactType,
   type AttendanceImpact,
   type AttendanceMonthlySnapshot,
@@ -96,6 +98,19 @@ export interface ImportAttendanceSourceFactFromMigrationInput {
   readonly evidenceChecksum: string;
 }
 
+export interface ImportAttendanceCorrectionFromMigrationInput {
+  readonly targetId: string | null;
+  readonly employeeId: string;
+  readonly sourceFactId: string;
+  readonly approvalHistoryId: string;
+  readonly approvalEvidenceChecksum: string;
+  readonly replacementImpact: AttendanceImpact;
+  readonly reasonCode: string;
+  readonly createdAt: string;
+  readonly migrationEvidenceRef: string;
+  readonly evidenceChecksum: string;
+}
+
 @Injectable()
 export class AttendanceApplicationService {
   constructor(
@@ -167,6 +182,108 @@ export class AttendanceApplicationService {
           },
         }, session);
         return { fact: migratedFactSummary(fact) };
+      },
+    ));
+  }
+
+  /** 数据迁移专用：只恢复已批准修订，不创建审批、不覆盖源事实。 */
+  async importCorrectionFromMigration(
+    key: string,
+    input: ImportAttendanceCorrectionFromMigrationInput,
+  ): Promise<{
+    readonly correction: Readonly<{
+      id: string;
+      employeeId: string;
+      sourceFactId: string;
+      businessDate: string;
+      approvalReferenceType: 'legacy_history';
+      approvalReferenceId: string;
+      version: 1;
+    }>;
+  }> {
+    this.assertMigrationWriter();
+    assertMigrationEvidence(input.migrationEvidenceRef, input.evidenceChecksum);
+    if (!HASH_PATTERN.test(input.approvalEvidenceChecksum)) {
+      throw new BadRequestException({
+        code: 'ATTENDANCE_MIGRATION_APPROVAL_EVIDENCE_INVALID',
+        message: '考勤修订审批证据校验和无效',
+      });
+    }
+    return this.run(async () => this.idempotency.execute(
+      'attendance.correction.import_from_migration', key, input, async (session) => {
+        const tenantId = this.context.getTenantRequired().tenantId;
+        const [source, employee, approval] = await Promise.all([
+          this.facts.findById(input.sourceFactId, session),
+          this.employees.findById(input.employeeId, session),
+          this.approvals.verifyAttendanceCorrectionMigrationReference(
+            input.approvalHistoryId, session,
+          ),
+        ]);
+        if (source === null) throw new NotFoundException({
+          code: 'ATTENDANCE_MIGRATION_SOURCE_FACT_NOT_FOUND',
+          message: '考勤修订引用的源事实不存在',
+        });
+        if (employee === null || employee.id !== source.employeeId) {
+          throw new ConflictException({
+            code: 'ATTENDANCE_MIGRATION_CORRECTION_EMPLOYEE_MISMATCH',
+            message: '考勤修订员工映射与源事实不一致',
+          });
+        }
+        if (approval.id !== input.approvalHistoryId ||
+          approval.evidenceChecksum !== input.approvalEvidenceChecksum) {
+          throw new ConflictException({
+            code: 'ATTENDANCE_MIGRATION_CORRECTION_APPROVAL_MISMATCH',
+            message: '考勤修订审批历史或证据摘要不一致',
+          });
+        }
+        const id = input.targetId ?? createEventId(new Date(input.createdAt));
+        const correction = restoreAttendanceCorrectionFromMigration({
+          id, tenantId, employeeId: source.employeeId, sourceFactId: source.id,
+          businessDate: source.businessDate, replacementImpact: input.replacementImpact,
+          reasonCode: input.reasonCode, approvalReferenceType: 'legacy_history',
+          approvalInstanceId: null, approvalHistoryId: approval.id,
+          approvalEvidenceId: approval.id, approvedAt: approval.completedAt,
+          createdAt: input.createdAt,
+        }, new Date());
+        if (Date.parse(source.createdAt) > Date.parse(correction.approvedAt)) {
+          throw new ConflictException({
+            code: 'ATTENDANCE_MIGRATION_CORRECTION_TIMELINE_INVALID',
+            message: '考勤修订批准时间不得早于源事实落库时间',
+          });
+        }
+        const collision = await this.corrections.findBySourceFactId(source.id, session);
+        if (input.targetId !== null) {
+          const [existing, evidence] = await Promise.all([
+            this.corrections.findById(input.targetId, session),
+            this.corrections.findMigrationEvidenceById(input.targetId, session),
+          ]);
+          if (existing === null || evidence === null || collision?.id !== input.targetId ||
+            !sameMigratedCorrection(existing, correction) ||
+            evidence.migrationEvidenceRef !== input.migrationEvidenceRef ||
+            evidence.migrationEvidenceChecksum !== input.evidenceChecksum) {
+            throw new ConflictException({
+              code: 'ATTENDANCE_MIGRATION_CORRECTION_IMMUTABLE',
+              message: '既有考勤修订、审批或 WORM 证据不一致，禁止覆盖',
+            });
+          }
+          return { correction: migratedCorrectionSummary(existing) };
+        }
+        if (collision !== null) throw new ConflictException({
+          code: 'ATTENDANCE_MIGRATION_CORRECTION_SOURCE_CONFLICT',
+          message: '考勤源事实已绑定既有修订',
+        });
+        await this.corrections.insertMigrated(
+          correction, input.migrationEvidenceRef, input.evidenceChecksum, session,
+        );
+        await this.outbox.append({
+          type: 'attendance.correction.migrated', tenantId,
+          aggregateId: correction.id, version: 1, occurredAt: correction.createdAt,
+          data: {
+            employeeId: correction.employeeId, sourceFactId: correction.sourceFactId,
+            businessDate: correction.businessDate, approvalHistoryId: correction.approvalHistoryId,
+          },
+        }, session);
+        return { correction: migratedCorrectionSummary(correction) };
       },
     ));
   }
@@ -327,7 +444,8 @@ export class AttendanceApplicationService {
           id: createEventId(now), tenantId: this.context.getTenantRequired().tenantId,
           employeeId: source.employeeId, sourceFactId: source.id,
           businessDate: source.businessDate, replacementImpact: approval.replacementImpact,
-          reasonCode: approval.reasonCode, approvalInstanceId: approval.id,
+          reasonCode: approval.reasonCode, approvalReferenceType: 'approval_instance',
+          approvalInstanceId: approval.id, approvalHistoryId: null,
           approvalEvidenceId: approval.id, approvedAt: approval.completedAt,
         }, now);
         await this.corrections.insert(correction, session);
@@ -335,13 +453,13 @@ export class AttendanceApplicationService {
           type: 'attendance.correction.approved', tenantId: correction.tenantId,
           aggregateId: correction.id, version: 1, occurredAt: now.toISOString(), data: {
             employeeId: correction.employeeId, sourceFactId: correction.sourceFactId,
-            businessDate: correction.businessDate, approvalInstanceId: correction.approvalInstanceId,
+            businessDate: correction.businessDate, approvalInstanceId: approval.id,
           },
         }, session);
         return { correction: Object.freeze({
           id: correction.id, employeeId: correction.employeeId,
           sourceFactId: correction.sourceFactId, businessDate: correction.businessDate,
-          approvalInstanceId: correction.approvalInstanceId,
+          approvalInstanceId: approval.id,
         }) };
       },
     ));
@@ -466,7 +584,8 @@ export class AttendanceApplicationService {
       id: 'validation-only', tenantId: source.tenantId, employeeId: source.employeeId,
       sourceFactId: source.id, businessDate: source.businessDate,
       replacementImpact: input.replacementImpact, reasonCode: input.reasonCode,
-      approvalInstanceId: 'validation-approval', approvalEvidenceId: 'validation-evidence',
+      approvalReferenceType: 'approval_instance', approvalInstanceId: 'validation-approval',
+      approvalHistoryId: null, approvalEvidenceId: 'validation-approval',
       approvedAt: now.toISOString(),
     }, now);
   }
@@ -525,6 +644,27 @@ function migratedFactSummary(
   return Object.freeze({ ...factSummary(fact), version: 1 as const });
 }
 
+function migratedCorrectionSummary(
+  correction: AttendanceCorrection,
+): Readonly<{
+  id: string;
+  employeeId: string;
+  sourceFactId: string;
+  businessDate: string;
+  approvalReferenceType: 'legacy_history';
+  approvalReferenceId: string;
+  version: 1;
+}> {
+  if (correction.approvalReferenceType !== 'legacy_history' ||
+    correction.approvalHistoryId === null) throw new Error('迁移考勤修订缺少历史审批引用');
+  return Object.freeze({
+    id: correction.id, employeeId: correction.employeeId,
+    sourceFactId: correction.sourceFactId, businessDate: correction.businessDate,
+    approvalReferenceType: 'legacy_history', approvalReferenceId: correction.approvalHistoryId,
+    version: 1 as const,
+  });
+}
+
 function monthSummary(snapshot: AttendanceMonthlySnapshot): AttendanceMonthSummary {
   return Object.freeze({
     id: snapshot.id, employeeId: snapshot.employeeId, month: snapshot.month,
@@ -564,6 +704,22 @@ function sameMigratedSourceFact(
     left.timeZone === right.timeZone && left.businessDate === right.businessDate &&
     JSON.stringify(left.impact) === JSON.stringify(right.impact) &&
     left.sourceObservedAt === right.sourceObservedAt && left.createdAt === right.createdAt;
+}
+
+function sameMigratedCorrection(
+  left: AttendanceCorrection,
+  right: AttendanceCorrection,
+): boolean {
+  return left.id === right.id && left.tenantId === right.tenantId &&
+    left.employeeId === right.employeeId && left.sourceFactId === right.sourceFactId &&
+    left.businessDate === right.businessDate &&
+    JSON.stringify(left.replacementImpact) === JSON.stringify(right.replacementImpact) &&
+    left.reasonCode === right.reasonCode &&
+    left.approvalReferenceType === right.approvalReferenceType &&
+    left.approvalInstanceId === right.approvalInstanceId &&
+    left.approvalHistoryId === right.approvalHistoryId &&
+    left.approvalEvidenceId === right.approvalEvidenceId &&
+    left.approvedAt === right.approvedAt && left.createdAt === right.createdAt;
 }
 
 function assertMigrationEvidence(reference: string, checksum: string): void {

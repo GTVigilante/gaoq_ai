@@ -112,6 +112,10 @@ function attendanceSourceFactsRun() {
   return { ...run(), scope: 'attendance_source_facts' as const };
 }
 
+function attendanceCorrectionsRun() {
+  return { ...run(), scope: 'attendance_corrections' as const };
+}
+
 function query<T>(value: T) { return { lean: () => ({ exec: () => Promise.resolve(value) }) }; }
 function listQuery<T>(value: readonly T[]) {
   return {
@@ -1402,6 +1406,82 @@ describe('DataMigrationService', () => {
     );
     const item = items.create.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
     expect(JSON.stringify(item)).not.toMatch(/workedMinutes|480|legacy-attendance-event-001/u);
+  });
+
+  it('考勤修订迁移解析员工、源事实与批准历史且账本不保存 L4 影响', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      employeeSourceId: 'legacy-employee-001',
+      sourceFactSourceId: 'legacy-attendance-001',
+      approvalHistorySourceId: 'legacy-approval-001',
+      approvalEvidenceChecksum: 'a'.repeat(43),
+      replacementImpact: {
+        workedMinutes: 420, leaveMinutes: 60, overtimeMinutes: 0, absentMinutes: 0,
+      },
+      reasonCode: 'LEGACY_APPROVED', createdAt: '2026-04-01T02:01:00.000Z',
+      sourceEvidenceSourceAttachmentId: 'attendance-correction-001',
+      sourceEvidenceChecksum: 'd'.repeat(43),
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(attendanceCorrectionsRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const targetByEntity: Readonly<Record<string, string>> = {
+      'org.employee': 'employee-001',
+      'attendance.source_fact': 'attendance-fact-001',
+      'approval.history': 'approval-history-001',
+    };
+    const mappings = {
+      findOne: vi.fn((filter: { entityType: string }) => query(
+        filter.entityType === 'attendance.correction'
+          ? null
+          : { targetId: targetByEntity[filter.entityType], targetVersion: 1 },
+      )),
+      findOneAndUpdate: vi.fn().mockReturnValue(query({ targetId: 'correction-001' })),
+    };
+    const associations = { findOneAndUpdate: vi.fn().mockReturnValue(query({})) };
+    const attachments = {
+      findOne: vi.fn().mockReturnValue(query(null)),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const attendance = { importCorrectionFromMigration: vi.fn().mockResolvedValue({ correction: {
+      id: 'correction-001', employeeId: 'employee-001',
+      sourceFactId: 'attendance-fact-001', businessDate: '2026-04-01',
+      approvalReferenceType: 'legacy_history', approvalReferenceId: 'approval-history-001',
+      version: 1,
+    } }) };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      mappings as unknown as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+      undefined, undefined, undefined, undefined, undefined,
+      attendance as unknown as AttendanceApplicationService,
+    );
+    const result = await trusted(context, () => service.apply(RUN_ID, {
+      sequence: 1, sourceRecordId: 'legacy-correction-001', sourceVersion: '1',
+      entityType: 'attendance.correction', payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: [
+        'legacy-approval-001', 'legacy-attendance-001', 'legacy-employee-001',
+      ],
+      attachments: [{
+        sourceAttachmentId: 'attendance-correction-001', checksum: 'd'.repeat(43),
+      }],
+    }));
+    expect(result).toMatchObject({ status: 'applied', targetId: 'correction-001' });
+    expect(attendance.importCorrectionFromMigration).toHaveBeenCalledWith(
+      expect.stringMatching(/^migration:/u),
+      expect.objectContaining({
+        employeeId: 'employee-001', sourceFactId: 'attendance-fact-001',
+        approvalHistoryId: 'approval-history-001',
+      }),
+    );
+    const item = items.create.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
+    expect(JSON.stringify(item)).not.toMatch(/workedMinutes|420|LEGACY_APPROVED/u);
   });
 
   it('未解析关联和未决附件进入 Phase 6 硬门禁', async () => {

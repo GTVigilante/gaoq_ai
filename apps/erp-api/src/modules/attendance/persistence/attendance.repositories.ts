@@ -175,11 +175,44 @@ export class AttendanceCorrectionRepository extends TenantRepository {
     private readonly crypto: AttendanceDataCryptoService,
   ) { super(context); }
 
-  async findBySourceFactId(sourceFactId: string): Promise<AttendanceCorrection | null> {
-    const record = await this.records.findOne({
+  async findBySourceFactId(
+    sourceFactId: string,
+    session?: ClientSession,
+  ): Promise<AttendanceCorrection | null> {
+    const query = this.records.findOne({
       tenantId: this.tenantId(), sourceFactId,
-    }).lean().exec();
+    });
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
     return record === null ? null : this.toDomain(record);
+  }
+
+  async findById(id: string, session?: ClientSession): Promise<AttendanceCorrection | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), id });
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record === null ? null : this.toDomain(record);
+  }
+
+  async findMigrationEvidenceById(
+    id: string,
+    session?: ClientSession,
+  ): Promise<{
+    readonly migrationEvidenceRef: string;
+    readonly migrationEvidenceChecksum: string;
+  } | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), id })
+      .select('migrationEvidenceRef migrationEvidenceChecksum -_id');
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record?.migrationEvidenceRef === null || record?.migrationEvidenceRef === undefined ||
+      record.migrationEvidenceChecksum === null ||
+      record.migrationEvidenceChecksum === undefined
+      ? null
+      : Object.freeze({
+          migrationEvidenceRef: record.migrationEvidenceRef,
+          migrationEvidenceChecksum: record.migrationEvidenceChecksum,
+        });
   }
 
   async findForMonth(
@@ -198,6 +231,26 @@ export class AttendanceCorrectionRepository extends TenantRepository {
   }
 
   async insert(correction: AttendanceCorrection, session: ClientSession): Promise<void> {
+    await this.insertWithMigrationEvidence(correction, null, null, session);
+  }
+
+  async insertMigrated(
+    correction: AttendanceCorrection,
+    migrationEvidenceRef: string,
+    migrationEvidenceChecksum: string,
+    session: ClientSession,
+  ): Promise<void> {
+    await this.insertWithMigrationEvidence(
+      correction, migrationEvidenceRef, migrationEvidenceChecksum, session,
+    );
+  }
+
+  private async insertWithMigrationEvidence(
+    correction: AttendanceCorrection,
+    migrationEvidenceRef: string | null,
+    migrationEvidenceChecksum: string | null,
+    session: ClientSession,
+  ): Promise<void> {
     this.assertTenant(correction.tenantId);
     const protectedData = this.crypto.protect(
       { tenantId: correction.tenantId, resourceType: 'correction', resourceId: correction.id },
@@ -206,9 +259,12 @@ export class AttendanceCorrectionRepository extends TenantRepository {
     await this.records.create([{
       id: correction.id, tenantId: correction.tenantId, employeeId: correction.employeeId,
       sourceFactId: correction.sourceFactId, businessDate: correction.businessDate,
+      approvalReferenceType: correction.approvalReferenceType,
       approvalInstanceId: correction.approvalInstanceId,
+      approvalHistoryId: correction.approvalHistoryId,
       approvalEvidenceId: correction.approvalEvidenceId,
       approvedAt: new Date(correction.approvedAt), ...toProtectedRecord(protectedData),
+      migrationEvidenceRef, migrationEvidenceChecksum,
       createdAt: new Date(correction.createdAt), updatedAt: new Date(correction.createdAt),
     }], { session });
   }
@@ -222,7 +278,9 @@ export class AttendanceCorrectionRepository extends TenantRepository {
       id: record.id, tenantId: record.tenantId, employeeId: record.employeeId,
       sourceFactId: record.sourceFactId, businessDate: record.businessDate,
       replacementImpact: Object.freeze(payload.replacementImpact), reasonCode: payload.reasonCode,
+      approvalReferenceType: record.approvalReferenceType,
       approvalInstanceId: record.approvalInstanceId, approvalEvidenceId: record.approvalEvidenceId,
+      approvalHistoryId: record.approvalHistoryId,
       approvedAt: record.approvedAt.toISOString(), createdAt: record.createdAt.toISOString(),
     });
   }

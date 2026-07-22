@@ -43,7 +43,9 @@ export interface AttendanceCorrection {
   readonly businessDate: string;
   readonly replacementImpact: AttendanceImpact;
   readonly reasonCode: string;
-  readonly approvalInstanceId: string;
+  readonly approvalReferenceType: 'approval_instance' | 'legacy_history';
+  readonly approvalInstanceId: string | null;
+  readonly approvalHistoryId: string | null;
   readonly approvalEvidenceId: string;
   readonly approvedAt: string;
   readonly createdAt: string;
@@ -149,9 +151,17 @@ export function createAttendanceCorrection(
     input.tenantId,
     input.employeeId,
     input.sourceFactId,
-    input.approvalInstanceId,
     input.approvalEvidenceId,
   ]) assertId(value, 'ATTENDANCE_CORRECTION_REFERENCE_INVALID');
+  const approvalReferenceId = input.approvalReferenceType === 'approval_instance'
+    ? input.approvalInstanceId
+    : input.approvalHistoryId;
+  if (approvalReferenceId === null ||
+    (input.approvalReferenceType === 'approval_instance' && input.approvalHistoryId !== null) ||
+    (input.approvalReferenceType === 'legacy_history' && input.approvalInstanceId !== null)) {
+    fail('ATTENDANCE_CORRECTION_APPROVAL_REFERENCE_INVALID', '考勤修订审批引用类型或证据绑定无效');
+  }
+  assertId(approvalReferenceId, 'ATTENDANCE_CORRECTION_REFERENCE_INVALID');
   if (!DATE_PATTERN.test(input.businessDate)) {
     fail('ATTENDANCE_BUSINESS_DATE_INVALID', '考勤业务日期非法');
   }
@@ -166,6 +176,28 @@ export function createAttendanceCorrection(
     replacementImpact: freezeImpact(input.replacementImpact),
     createdAt: now.toISOString(),
   });
+}
+
+/** 数据迁移专用：批准时间来自已迁移审批历史，并保留严格历史落库时间。 */
+export function restoreAttendanceCorrectionFromMigration(
+  input: AttendanceCorrection,
+  now: Date,
+): AttendanceCorrection {
+  const approvedAt = strictMigrationInstant(input.approvedAt);
+  const createdAt = strictMigrationInstant(input.createdAt);
+  if (Date.parse(approvedAt) > Date.parse(createdAt) ||
+    Date.parse(createdAt) > now.getTime() + 5 * 60 * 1_000) {
+    fail('ATTENDANCE_MIGRATION_CORRECTION_TIMELINE_INVALID', '考勤修订迁移时间线无效');
+  }
+  return createAttendanceCorrection({
+    id: input.id, tenantId: input.tenantId, employeeId: input.employeeId,
+    sourceFactId: input.sourceFactId, businessDate: input.businessDate,
+    replacementImpact: input.replacementImpact, reasonCode: input.reasonCode,
+    approvalReferenceType: input.approvalReferenceType,
+    approvalInstanceId: input.approvalInstanceId,
+    approvalHistoryId: input.approvalHistoryId,
+    approvalEvidenceId: input.approvalEvidenceId, approvedAt,
+  }, new Date(createdAt));
 }
 
 export function closeAttendanceMonth(input: {
@@ -245,7 +277,9 @@ export function closeAttendanceMonth(input: {
       correction === undefined ? null : [
         correction.id,
         correction.replacementImpact,
+        correction.approvalReferenceType,
         correction.approvalInstanceId,
+        correction.approvalHistoryId,
         correction.approvalEvidenceId,
       ],
     ]));
