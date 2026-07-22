@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
-import { readFile, stat } from 'node:fs/promises';
+import { lstat, readFile } from 'node:fs/promises';
 
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
 const COMMIT = /^[a-f0-9]{40}$/u;
 const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/u;
+const ENVIRONMENT_NAME = /^[a-z][a-z0-9-]{2,31}$/u;
+const REGION = /^[a-z0-9-]{2,32}$/u;
 const SIGNOFF_ROLES = ['performance_owner', 'platform_owner', 'security_owner'];
 const K6_BINARY_SHA256 =
   'sha256:2ae87d976f6cdba17185bdd980d8819a3a98e9092c6f0638cd58272ecefc8b90';
@@ -18,16 +20,19 @@ if (process.argv[2] === '--self-test') {
   runSelfTest();
   process.stdout.write('Phase 5 性能容量证据门禁自测通过。\n');
 } else {
-  const paths = process.argv.slice(2);
+  const argumentsList = process.argv.slice(2);
+  const enforceEnvironment = argumentsList[0] === '--enforce-environment';
+  const paths = argumentsList.slice(enforceEnvironment ? 1 : 0);
   if (paths.length !== 3) fail('PHASE5_PERFORMANCE_THREE_RUNS_REQUIRED');
   const documents = await Promise.all(paths.map(async (path) => {
-    const metadata = await stat(path);
-    if (!metadata.isFile() || metadata.size < 2 || metadata.size > 256 * 1_024) {
+    const metadata = await lstat(path);
+    if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size < 2 ||
+      metadata.size > 256 * 1_024 || (metadata.mode & 0o022) !== 0) {
       fail('PHASE5_PERFORMANCE_EVIDENCE_FILE_INVALID');
     }
     return JSON.parse(await readFile(path, 'utf8'));
   }));
-  const summaries = documents.map((document) => validateEvidence(document));
+  const summaries = documents.map((document) => validateEvidence(document, enforceEnvironment));
   validateComparable(summaries);
   process.stdout.write(`${JSON.stringify({
     formatVersion: 1,
@@ -77,7 +82,7 @@ async function validateHarnessSource() {
   }
 }
 
-function validateEvidence(document) {
+function validateEvidence(document, enforceEnvironment = false) {
   object(document, [
     'formatVersion', 'suite', 'runId', 'environment', 'source', 'images', 'dataset',
     'api', 'payroll', 'infrastructure', 'artifacts', 'signoffs',
@@ -89,25 +94,40 @@ function validateEvidence(document) {
   object(document.environment, [
     'name', 'region', 'productionEquivalent', 'productionTraffic', 'startedAt', 'endedAt',
   ]);
-  pattern(document.environment.name, /^[a-z][a-z0-9-]{2,31}$/u, 'PHASE5_PERFORMANCE_ENV_INVALID');
-  if (['prod', 'production'].includes(document.environment.name)) fail('PHASE5_PERFORMANCE_PROD_FORBIDDEN');
-  pattern(document.environment.region, /^[a-z0-9-]{2,32}$/u, 'PHASE5_PERFORMANCE_REGION_INVALID');
+  pattern(document.environment.name, ENVIRONMENT_NAME, 'PHASE5_PERFORMANCE_ENV_INVALID');
+  if (/(?:^|-)prod(?:-|$)|production/u.test(document.environment.name)) {
+    fail('PHASE5_PERFORMANCE_PROD_FORBIDDEN');
+  }
+  if (!/(?:^|-)(?:capacity|load|performance|stage|staging|preprod|uat)(?:-|$)/u
+    .test(document.environment.name)) fail('PHASE5_PERFORMANCE_ENV_INVALID');
+  pattern(document.environment.region, REGION, 'PHASE5_PERFORMANCE_REGION_INVALID');
   equal(document.environment.productionEquivalent, true, 'PHASE5_PERFORMANCE_ENV_NOT_EQUIVALENT');
   equal(document.environment.productionTraffic, false, 'PHASE5_PERFORMANCE_PROD_TRAFFIC_FORBIDDEN');
   const startedAt = timestamp(document.environment.startedAt);
   const endedAt = timestamp(document.environment.endedAt);
   if (endedAt <= startedAt) fail('PHASE5_PERFORMANCE_TIME_INVALID');
 
-  object(document.source, ['commitSha', 'k6Version', 'k6BinarySha256', 'harnessSha256']);
+  object(document.source, [
+    'commitSha', 'k6Version', 'k6BinarySha256', 'harnessSha256', 'deploymentManifestHash',
+  ]);
   pattern(document.source.commitSha, COMMIT, 'PHASE5_PERFORMANCE_COMMIT_INVALID');
   equal(document.source.k6Version, '2.0.0', 'PHASE5_PERFORMANCE_K6_VERSION_INVALID');
   equal(document.source.k6BinarySha256, K6_BINARY_SHA256, 'PHASE5_PERFORMANCE_K6_DIGEST_INVALID');
   equal(document.source.harnessSha256, HARNESS_SHA256, 'PHASE5_PERFORMANCE_HARNESS_DIGEST_INVALID');
+  pattern(
+    document.source.deploymentManifestHash,
+    SHA256,
+    'PHASE5_PERFORMANCE_DEPLOYMENT_MANIFEST_INVALID',
+  );
 
   object(document.images, ['api', 'worker', 'web']);
   for (const value of Object.values(document.images)) {
     pattern(value, SHA256, 'PHASE5_PERFORMANCE_IMAGE_DIGEST_INVALID');
   }
+  if (new Set(Object.values(document.images)).size !== 3) {
+    fail('PHASE5_PERFORMANCE_IMAGES_NOT_INDEPENDENT');
+  }
+  if (enforceEnvironment) validateExpectedEnvironment(document);
   object(document.dataset, ['fingerprint', 'employeeCount']);
   pattern(document.dataset.fingerprint, SHA256, 'PHASE5_PERFORMANCE_DATASET_INVALID');
   equal(document.dataset.employeeCount, 1_000, 'PHASE5_PERFORMANCE_DATASET_SIZE_INVALID');
@@ -176,6 +196,7 @@ function validateEvidence(document) {
     commitSha: document.source.commitSha,
     k6BinarySha256: document.source.k6BinarySha256,
     harnessSha256: document.source.harnessSha256,
+    deploymentManifestHash: document.source.deploymentManifestHash,
     images: document.images,
     dataset: document.dataset,
     environmentName: document.environment.name,
@@ -207,6 +228,7 @@ function validateComparable(summaries) {
     commitSha: summary.commitSha,
     k6BinarySha256: summary.k6BinarySha256,
     harnessSha256: summary.harnessSha256,
+    deploymentManifestHash: summary.deploymentManifestHash,
     images: summary.images,
     dataset: summary.dataset,
     environmentName: summary.environmentName,
@@ -239,6 +261,21 @@ function runSelfTest() {
     () => validateComparable(reusedMonitoring.map((run) => validateEvidence(run))),
     'PHASE5_PERFORMANCE_RUNS_NOT_INDEPENDENT',
   );
+  const productionNamed = fixture(1);
+  productionNamed.environment.name = 'prod-capacity';
+  expectFailure(
+    () => validateEvidence(productionNamed),
+    'PHASE5_PERFORMANCE_PROD_FORBIDDEN',
+  );
+  withExpectedEnvironment(fixture(1), () => {
+    validateEvidence(fixture(1), true);
+    const mismatched = fixture(1);
+    mismatched.source.commitSha = 'b'.repeat(40);
+    expectFailure(
+      () => validateEvidence(mismatched, true),
+      'PHASE5_PERFORMANCE_COMMIT_MISMATCH',
+    );
+  });
 }
 
 function fixture(sequence) {
@@ -254,7 +291,7 @@ function fixture(sequence) {
     },
     source: {
       commitSha: 'a'.repeat(40), k6Version: '2.0.0', k6BinarySha256: K6_BINARY_SHA256,
-      harnessSha256: HARNESS_SHA256,
+      harnessSha256: HARNESS_SHA256, deploymentManifestHash: digest('deployment-manifest'),
     },
     images: { api: digest('api'), worker: digest('worker'), web: digest('web') },
     dataset: { fingerprint: digest('dataset'), employeeCount: 1_000 },
@@ -280,6 +317,63 @@ function fixture(sequence) {
       signedAt: '2026-07-25T00:00:00.000Z',
     })),
   };
+}
+
+function validateExpectedEnvironment(document) {
+  const expected = {
+    environment: process.env.PERFORMANCE_EXPECTED_ENVIRONMENT,
+    region: process.env.PERFORMANCE_EXPECTED_REGION,
+    commitSha: process.env.PERFORMANCE_EXPECTED_COMMIT,
+    api: process.env.PERFORMANCE_EXPECTED_API_IMAGE,
+    worker: process.env.PERFORMANCE_EXPECTED_WORKER_IMAGE,
+    web: process.env.PERFORMANCE_EXPECTED_WEB_IMAGE,
+    deploymentManifestHash: process.env.PERFORMANCE_EXPECTED_DEPLOYMENT_MANIFEST,
+  };
+  pattern(expected.environment, ENVIRONMENT_NAME, 'PHASE5_PERFORMANCE_EXPECTED_ENV_REQUIRED');
+  pattern(expected.region, REGION, 'PHASE5_PERFORMANCE_EXPECTED_ENV_REQUIRED');
+  pattern(expected.commitSha, COMMIT, 'PHASE5_PERFORMANCE_EXPECTED_SOURCE_REQUIRED');
+  for (const field of ['api', 'worker', 'web', 'deploymentManifestHash']) {
+    pattern(expected[field], SHA256, 'PHASE5_PERFORMANCE_EXPECTED_SOURCE_REQUIRED');
+  }
+  equal(
+    document.environment.name,
+    expected.environment,
+    'PHASE5_PERFORMANCE_ENVIRONMENT_MISMATCH',
+  );
+  equal(document.environment.region, expected.region, 'PHASE5_PERFORMANCE_REGION_MISMATCH');
+  equal(document.source.commitSha, expected.commitSha, 'PHASE5_PERFORMANCE_COMMIT_MISMATCH');
+  equal(document.images.api, expected.api, 'PHASE5_PERFORMANCE_IMAGE_MISMATCH');
+  equal(document.images.worker, expected.worker, 'PHASE5_PERFORMANCE_IMAGE_MISMATCH');
+  equal(document.images.web, expected.web, 'PHASE5_PERFORMANCE_IMAGE_MISMATCH');
+  equal(
+    document.source.deploymentManifestHash,
+    expected.deploymentManifestHash,
+    'PHASE5_PERFORMANCE_DEPLOYMENT_MANIFEST_MISMATCH',
+  );
+}
+
+function withExpectedEnvironment(document, action) {
+  const values = {
+    PERFORMANCE_EXPECTED_ENVIRONMENT: document.environment.name,
+    PERFORMANCE_EXPECTED_REGION: document.environment.region,
+    PERFORMANCE_EXPECTED_COMMIT: document.source.commitSha,
+    PERFORMANCE_EXPECTED_API_IMAGE: document.images.api,
+    PERFORMANCE_EXPECTED_WORKER_IMAGE: document.images.worker,
+    PERFORMANCE_EXPECTED_WEB_IMAGE: document.images.web,
+    PERFORMANCE_EXPECTED_DEPLOYMENT_MANIFEST: document.source.deploymentManifestHash,
+  };
+  const previous = Object.fromEntries(
+    Object.keys(values).map((key) => [key, process.env[key]]),
+  );
+  Object.assign(process.env, values);
+  try {
+    action();
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 }
 
 function object(value, keys) {

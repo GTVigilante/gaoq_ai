@@ -1,0 +1,84 @@
+name: Phase 5 性能容量证据验收
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-5-performance
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    name: 校验受信任分支与性能证据契约
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 只允许默认分支执行现场验收
+        shell: bash
+        run: test "$GITHUB_REF" = 'refs/heads/main'
+
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - name: 校验三次容量证据的失败关闭边界
+        run: node scripts/performance/validate-phase-5-capacity.mjs --self-test
+
+  evidence:
+    name: 验收生产等价隔离环境的三次容量证据
+    needs: contract
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - phase-5-performance
+    timeout-minutes: 30
+    environment: phase-5-performance
+    env:
+      PERFORMANCE_EVIDENCE_RUN_1_PATH: /var/lib/gaoq/performance/run-1.json
+      PERFORMANCE_EVIDENCE_RUN_2_PATH: /var/lib/gaoq/performance/run-2.json
+      PERFORMANCE_EVIDENCE_RUN_3_PATH: /var/lib/gaoq/performance/run-3.json
+      PERFORMANCE_EXPECTED_ENVIRONMENT: ${{ vars.PERFORMANCE_ENVIRONMENT_NAME }}
+      PERFORMANCE_EXPECTED_REGION: ${{ vars.PERFORMANCE_REGION }}
+      PERFORMANCE_EXPECTED_COMMIT: ${{ github.sha }}
+      PERFORMANCE_EXPECTED_API_IMAGE: ${{ vars.PERFORMANCE_API_IMAGE_DIGEST }}
+      PERFORMANCE_EXPECTED_WORKER_IMAGE: ${{ vars.PERFORMANCE_WORKER_IMAGE_DIGEST }}
+      PERFORMANCE_EXPECTED_WEB_IMAGE: ${{ vars.PERFORMANCE_WEB_IMAGE_DIGEST }}
+      PERFORMANCE_EXPECTED_DEPLOYMENT_MANIFEST: ${{ vars.PERFORMANCE_DEPLOYMENT_MANIFEST_SHA256 }}
+      PERFORMANCE_VERDICT_PATH: ${{ runner.temp }}/phase-5-performance-verdict.json
+    steps:
+      - name: 检出受信任代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - name: 验证环境绑定与三次独立容量证据
+        run: >-
+          node scripts/performance/validate-phase-5-capacity.mjs
+          --enforce-environment
+          "$PERFORMANCE_EVIDENCE_RUN_1_PATH"
+          "$PERFORMANCE_EVIDENCE_RUN_2_PATH"
+          "$PERFORMANCE_EVIDENCE_RUN_3_PATH"
+          > "$PERFORMANCE_VERDICT_PATH"
+
+      - name: 保存不含业务数据的验收结论
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: phase-5-performance-verdict-${{ github.sha }}
+          path: ${{ runner.temp }}/phase-5-performance-verdict.json
+          if-no-files-found: error
+          retention-days: 30
