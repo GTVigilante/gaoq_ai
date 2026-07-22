@@ -36,6 +36,18 @@ function reader<T>(context: TenantContextService, action: () => T): T {
   }, action);
 }
 
+function evidenceReader<T>(context: TenantContextService, action: () => T): T {
+  return context.run({
+    tenant: { tenantId: 'tenant-001', source: 'access_token' },
+    actor: {
+      actorId: 'migration-auditor-001', actorType: 'user', tenantId: 'tenant-001',
+      roleCodes: ['migration_auditor'],
+      scopes: ['erp:migration:read', 'erp:migration:evidence:export'],
+      departmentIds: [], traceId: 'trace-migration-evidence-001',
+    },
+  }, action);
+}
+
 function run() {
   return {
     id: RUN_ID, tenantId: 'tenant-001', sourceSystem: 'legacy-hr', sourceRunId: 'full-001',
@@ -51,6 +63,13 @@ function workforceRun() {
 }
 
 function query<T>(value: T) { return { lean: () => ({ exec: () => Promise.resolve(value) }) }; }
+function listQuery<T>(value: readonly T[]) {
+  return {
+    sort: () => ({
+      limit: () => ({ lean: () => ({ exec: () => Promise.resolve(value) }) }),
+    }),
+  };
+}
 
 describe('DataMigrationService', () => {
   it('目标写入复用组织应用服务且账本不持久化来源正文', async () => {
@@ -360,5 +379,46 @@ describe('DataMigrationService', () => {
     expect(report.differences.map((item) => item.code)).toEqual([
       'ASSOCIATION_UNRESOLVED', 'ATTACHMENT_MIGRATION_NOT_CONFIGURED',
     ]);
+  });
+
+  it('证据分页只输出白名单字段并以页面校验和封装', async () => {
+    const context = new TenantContextService();
+    const frozenRun = { ...run(), status: 'completed' as const };
+    const runs = { findOne: vi.fn().mockReturnValue(query(frozenRun)) };
+    const ledger = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4F2', tenantId: 'tenant-001', runId: RUN_ID,
+      sequence: 1, sourceRecordId: 'legacy-position-001', sourceVersion: '1',
+      entityType: 'org.position', payloadHash: 'p'.repeat(43), sourceFactHash: 's'.repeat(43),
+      status: 'applied', targetId: 'position-001', targetVersion: 1,
+      targetHash: 't'.repeat(43), rejectionCode: null, associationCount: 0,
+      attachmentCount: 0, payload: { displayName: '禁止泄露' },
+    };
+    const items = { find: vi.fn().mockReturnValue(listQuery([ledger, { ...ledger, sequence: 2 }])) };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      {} as Model<DataMigrationMappingDocument>,
+      {} as Model<DataMigrationAssociationDocument>,
+      {} as Model<DataMigrationAttachmentDocument>,
+    );
+
+    const page = await evidenceReader(context, () => service.evidence(RUN_ID, {
+      kind: 'items', limit: 1,
+    }));
+
+    expect(page.records).toHaveLength(1);
+    expect(page.nextCursor).toMatch(/^[A-Za-z0-9_-]+$/u);
+    expect(page.pageChecksum).toBe(dataMigrationChecksum.digest(
+      dataMigrationChecksum.canonicalJson({
+        runId: RUN_ID, kind: 'items', records: page.records,
+        nextCursor: page.nextCursor,
+      }),
+    ));
+    const serialized = JSON.stringify(page);
+    for (const forbidden of [
+      '"tenantId":', '"payload":', '"displayName":', '"createdAt":', '"updatedAt":',
+    ]) expect(serialized).not.toContain(forbidden);
+    expect(items.find).toHaveBeenCalledWith({ tenantId: 'tenant-001', runId: RUN_ID });
   });
 });

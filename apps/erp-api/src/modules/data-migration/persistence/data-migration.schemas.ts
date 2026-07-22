@@ -150,4 +150,7 @@ export const DataMigrationAttachmentRecordSchema = SchemaFactory.createForClass(
 DataMigrationAttachmentRecordSchema.index(
   { tenantId: 1, runId: 1, sourceAttachmentId: 1 }, { unique: true },
 );
+DataMigrationAttachmentRecordSchema.index(
+  { tenantId: 1, runId: 1, sequence: 1, sourceAttachmentId: 1 },
+);
 DataMigrationAttachmentRecordSchema.index({ tenantId: 1, runId: 1, status: 1 });

@@ -26,6 +26,9 @@ describe('数据迁移账本 Schema', () => {
     expect(DataMigrationAttachmentRecordSchema.indexes()).toContainEqual([
       { tenantId: 1, runId: 1, sourceAttachmentId: 1 }, { unique: true },
     ]);
+    expect(DataMigrationAttachmentRecordSchema.indexes()).toContainEqual([
+      { tenantId: 1, runId: 1, sequence: 1, sourceAttachmentId: 1 }, {},
+    ]);
   });
 
   it('条目与映射只存校验和和目标引用，不落来源正文或附件内容', () => {

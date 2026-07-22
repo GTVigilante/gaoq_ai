@@ -32,7 +32,9 @@
 - `POST /api/data-migrations/runs/{id}/records`：严格按检查点应用一条记录。
 - `POST /api/data-migrations/runs/{id}/complete`：冻结运行并生成差异结论。
 - `GET /api/data-migrations/runs/{id}/report`：读取控制量报告，Scope `erp:migration:read`。
+- `GET /api/data-migrations/runs/{id}/evidence`：按 `items|associations|attachments` 固定顺序分页读取完整证据账本；要求 `erp:migration:read` 与 `erp:migration:evidence:export`，每页返回 SHA-256，按 R2 审计。
 - MCP Tool：`data_migration_report_get`；Resource：`erp://data-migrations/runs/{id}/report`；Prompt：`data_migration_report_review_guide`。全部只读且复用 `DataMigrationService.report`。
+- MCP 只提供聚合控制量，不注册详细证据导出 Tool 或 Resource。来源/目标标识、逐条拒绝和附件 checksum 只能由受控 REST/CLI 导出，禁止向通用 AI 上下文扩散。
 - R2 审计记录运行开始、每条应用/拒绝和完成；R1 审计记录报告读取。审计与 MCP 不包含来源正文。
 
 ## Phase 6 资格

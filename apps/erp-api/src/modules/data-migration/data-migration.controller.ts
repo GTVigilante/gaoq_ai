@@ -1,9 +1,13 @@
-import { BadRequestException, Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 
 import { AuditService } from '../../core/audit/audit.service.js';
 import { RequiredScopes } from '../identity/auth.decorators.js';
 import { DataMigrationService } from './application/data-migration.service.js';
-import { ApplyDataMigrationRecordDto, CreateDataMigrationRunDto } from './data-migration.dto.js';
+import {
+  ApplyDataMigrationRecordDto,
+  CreateDataMigrationRunDto,
+  DataMigrationEvidenceQueryDto,
+} from './data-migration.dto.js';
 
 const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 
@@ -64,6 +68,24 @@ export class DataMigrationController {
       metadata: { status: report.status, differenceCount: report.differences.length },
     });
     return report;
+  }
+
+  @Get('runs/:id/evidence')
+  @RequiredScopes('erp:migration:read', 'erp:migration:evidence:export')
+  async evidence(
+    @Param('id') id: string,
+    @Query() query: DataMigrationEvidenceQueryDto,
+  ) {
+    const page = await this.migrations.evidence(requireRunId(id), query);
+    await this.audit.record({
+      action: 'data_migration.evidence.export', resourceType: 'data_migration_run',
+      resourceId: id, riskLevel: 'R2', outcome: 'success',
+      metadata: {
+        kind: page.kind, recordCount: page.records.length,
+        hasNextPage: page.nextCursor !== null, pageChecksum: page.pageChecksum,
+      },
+    });
+    return page;
   }
 }
 

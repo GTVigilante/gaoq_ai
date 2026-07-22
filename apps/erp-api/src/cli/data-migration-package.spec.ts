@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   canonicalJson,
@@ -11,11 +11,15 @@ import {
   migrationSourceFactHash,
   roll,
 } from '../modules/data-migration/data-migration-checksum.js';
-import { validateMigrationPackage } from './data-migration-package.js';
+import {
+  exportMigrationEvidence,
+  validateMigrationPackage,
+} from './data-migration-package.js';
 
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await Promise.all(temporaryDirectories.splice(0).map(async (directory) =>
     rm(directory, { recursive: true, force: true })));
 });
@@ -74,4 +78,51 @@ describe('数据迁移来源包 CLI', () => {
     await expect(validateMigrationPackage(directory))
       .rejects.toThrow('DATA_MIGRATION_PACKAGE_SOURCE_CHECKSUM_MISMATCH');
   });
+
+  it('导出逐页验证页面校验和并生成全量证据封印', async () => {
+    const runId = '01J8ZQK7V0A2M4N6P8R0T2W4F1';
+    const report = {
+      runId, status: 'failed', phaseSixEligible: false,
+      counts: { applied: 0, duplicate: 0, rejected: 1 },
+      associationCount: 0, attachmentCount: 0,
+    };
+    const pages = [
+      evidencePage(runId, 'items', [{ sequence: 1, status: 'rejected' }]),
+      evidencePage(runId, 'associations', []),
+      evidencePage(runId, 'attachments', []),
+    ];
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(report));
+    for (const page of pages) fetchMock.mockResolvedValueOnce(jsonResponse(page));
+    vi.stubGlobal('fetch', fetchMock);
+    const lines: Readonly<Record<string, unknown>>[] = [];
+
+    const seal = await exportMigrationEvidence(runId, {
+      ERP_API_BASE_URL: 'https://erp.example.test/api',
+      ERP_MIGRATION_TOKEN: 'migration-token-at-least-twenty-characters',
+    }, (line) => lines.push(line));
+
+    expect(seal).toMatchObject({
+      recordType: 'seal', runId, recordCount: 2,
+      counts: { items: 1, associations: 0, attachments: 0 },
+    });
+    expect(lines).toHaveLength(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(JSON.stringify(lines)).not.toContain('migration-token-at-least-twenty-characters');
+  });
 });
+
+function evidencePage(
+  runId: string,
+  kind: 'items' | 'associations' | 'attachments',
+  records: readonly Readonly<Record<string, unknown>>[],
+) {
+  const body = { runId, kind, records, nextCursor: null };
+  return { ...body, pageChecksum: digest(canonicalJson(body)) };
+}
+
+function jsonResponse(value: unknown): Response {
+  return new Response(JSON.stringify(value), {
+    status: 200, headers: { 'content-type': 'application/json' },
+  });
+}

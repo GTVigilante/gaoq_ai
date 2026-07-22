@@ -124,6 +124,82 @@ export async function applyMigrationPackage(
   });
 }
 
+export async function exportMigrationEvidence(
+  runId: string,
+  environment: NodeJS.ProcessEnv = process.env,
+  emit: (line: Readonly<Record<string, unknown>>) => void = (line) => {
+    process.stdout.write(`${JSON.stringify(line)}\n`);
+  },
+): Promise<Readonly<Record<string, unknown>>> {
+  if (!/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/u.test(runId)) throw packageError('RUN_ID_INVALID');
+  const endpoint = requireEndpoint(environment.ERP_API_BASE_URL);
+  const token = environment.ERP_MIGRATION_TOKEN;
+  if (token === undefined || token.length < 20) throw packageError('TOKEN_REQUIRED');
+  const headers = Object.freeze({ authorization: `Bearer ${token}` });
+  let artifactChecksum = EMPTY_MIGRATION_CHECKSUM;
+  let artifactSequence = 0;
+  const counts: Record<'items' | 'associations' | 'attachments', number> = {
+    items: 0, associations: 0, attachments: 0,
+  };
+  const append = (line: Readonly<Record<string, unknown>>): void => {
+    artifactSequence += 1;
+    artifactChecksum = roll(artifactChecksum, artifactSequence, digest(canonicalJson(line)));
+    emit(line);
+  };
+  const report = await requestJson(
+    `${endpoint}/data-migrations/runs/${encodeURIComponent(runId)}/report`,
+    { method: 'GET', headers },
+  );
+  append(Object.freeze({ recordType: 'report', data: report }));
+
+  for (const kind of ['items', 'associations', 'attachments'] as const) {
+    let cursor: string | null = null;
+    do {
+      const parameters = new URLSearchParams({ kind, limit: '500' });
+      if (cursor !== null) parameters.set('cursor', cursor);
+      const page = await requestJson(
+        `${endpoint}/data-migrations/runs/${encodeURIComponent(runId)}/evidence?${parameters.toString()}`,
+        { method: 'GET', headers },
+      );
+      const records = page.records;
+      const nextCursor = page.nextCursor;
+      const pageChecksum = page.pageChecksum;
+      const checksumBody = {
+        runId: page.runId, kind: page.kind, records, nextCursor,
+      };
+      if (page.runId !== runId || page.kind !== kind || !Array.isArray(records) ||
+        (nextCursor !== null && typeof nextCursor !== 'string') ||
+        typeof pageChecksum !== 'string' || digest(canonicalJson(checksumBody)) !== pageChecksum) {
+        throw packageError('EVIDENCE_PAGE_INVALID');
+      }
+      const evidenceRecords = records as unknown[];
+      for (const record of evidenceRecords) {
+        if (typeof record !== 'object' || record === null || Array.isArray(record)) {
+          throw packageError('EVIDENCE_PAGE_INVALID');
+        }
+        counts[kind] += 1;
+        append(Object.freeze({ recordType: kind, data: record }));
+      }
+      cursor = nextCursor;
+    } while (cursor !== null);
+  }
+  const reportCounts = report.counts;
+  if (typeof reportCounts !== 'object' || reportCounts === null ||
+    Array.isArray(reportCounts) ||
+    counts.items !== controlTotal(reportCounts, 'applied') +
+      controlTotal(reportCounts, 'duplicate') + controlTotal(reportCounts, 'rejected') ||
+    counts.associations !== controlTotal(report, 'associationCount') ||
+    counts.attachments !== controlTotal(report, 'attachmentCount')) {
+    throw packageError('EVIDENCE_CONTROL_TOTAL_MISMATCH');
+  }
+  const seal = Object.freeze({
+    recordType: 'seal', runId, recordCount: artifactSequence,
+    counts: Object.freeze({ ...counts }), artifactChecksum,
+  });
+  emit(seal);
+  return seal;
+}
+
 export async function* readMigrationRecords(
   recordsPath: string,
 ): AsyncGenerator<MigrationPackageRecord> {
@@ -214,23 +290,35 @@ function requiredInteger(value: Record<string, unknown>, key: string): number {
   return Number(item);
 }
 
+function controlTotal(value: object, key: string): number {
+  const item = (value as Record<string, unknown>)[key];
+  if (!Number.isSafeInteger(item) || Number(item) < 0) {
+    throw packageError('EVIDENCE_CONTROL_TOTAL_INVALID');
+  }
+  return Number(item);
+}
+
 function packageError(code: string): Error {
   return new Error(`DATA_MIGRATION_PACKAGE_${code}`);
 }
 
 async function main(): Promise<void> {
-  const [command, packageDirectory, ...rest] = process.argv.slice(2);
-  if (!['validate', 'apply'].includes(command ?? '') || packageDirectory === undefined ||
+  const [command, target, ...rest] = process.argv.slice(2);
+  if (!['validate', 'apply', 'evidence'].includes(command ?? '') || target === undefined ||
     rest.length !== 0) throw packageError('ARGUMENT_INVALID');
   if (command === 'validate') {
-    const result = await validateMigrationPackage(packageDirectory);
+    const result = await validateMigrationPackage(target);
     process.stdout.write(`${JSON.stringify({
       valid: true, recordCount: result.recordCount, sourceChecksum: result.sourceChecksum,
       sourceRunId: result.manifest.sourceRunId, scope: result.manifest.scope,
     })}\n`);
     return;
   }
-  const report = await applyMigrationPackage(packageDirectory);
+  if (command === 'evidence') {
+    await exportMigrationEvidence(target);
+    return;
+  }
+  const report = await applyMigrationPackage(target);
   process.stdout.write(`${JSON.stringify(report)}\n`);
 }
 

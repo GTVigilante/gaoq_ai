@@ -17,7 +17,11 @@ import type {
   CreateJobLevelDto,
   CreatePositionDto,
 } from '../../org/application/org.dto.js';
-import type { ApplyDataMigrationRecordDto, CreateDataMigrationRunDto } from '../data-migration.dto.js';
+import type {
+  ApplyDataMigrationRecordDto,
+  CreateDataMigrationRunDto,
+  DataMigrationEvidenceQueryDto,
+} from '../data-migration.dto.js';
 import {
   canonicalJson,
   dataMigrationChecksum,
@@ -73,6 +77,14 @@ export interface DataMigrationReport {
     readonly code: string; readonly severity: 'critical' | 'high'; readonly count: number;
   }[];
   readonly phaseSixEligible: boolean;
+}
+
+export interface DataMigrationEvidencePage {
+  readonly runId: string;
+  readonly kind: DataMigrationEvidenceQueryDto['kind'];
+  readonly records: readonly Readonly<Record<string, unknown>>[];
+  readonly nextCursor: string | null;
+  readonly pageChecksum: string;
 }
 
 /** 可重放迁移控制面；迁移账本直写本模块集合，目标数据只经领域应用服务。 */
@@ -210,6 +222,112 @@ export class DataMigrationService {
       code: 'DATA_MIGRATION_RUN_NOT_FOUND', message: '迁移运行不存在',
     });
     return this.buildReport(run);
+  }
+
+  async evidence(
+    runId: string,
+    query: DataMigrationEvidenceQueryDto,
+  ): Promise<DataMigrationEvidencePage> {
+    this.assertEvidenceReader();
+    const tenantId = this.context.getTenantRequired().tenantId;
+    const run = await this.runs.findOne({ tenantId, id: runId }).lean().exec();
+    if (run === null) throw new NotFoundException({
+      code: 'DATA_MIGRATION_RUN_NOT_FOUND', message: '迁移运行不存在',
+    });
+    if (run.status === 'running') throw new ConflictException({
+      code: 'DATA_MIGRATION_EVIDENCE_RUN_NOT_FROZEN',
+      message: '迁移运行结束后才能导出完整证据',
+    });
+    const cursor = decodeEvidenceCursor(query.kind, query.cursor);
+    const page = query.kind === 'items'
+      ? await this.itemEvidencePage(tenantId, runId, query.limit, cursor)
+      : query.kind === 'associations'
+        ? await this.associationEvidencePage(tenantId, runId, query.limit, cursor)
+        : await this.attachmentEvidencePage(tenantId, runId, query.limit, cursor);
+    const body = {
+      runId, kind: query.kind, records: Object.freeze([...page.records]),
+      nextCursor: page.nextCursor,
+    };
+    return Object.freeze({ ...body, pageChecksum: digest(canonicalJson(body)) });
+  }
+
+  private async itemEvidencePage(
+    tenantId: string,
+    runId: string,
+    limit: number,
+    cursor: EvidenceCursor | null,
+  ): Promise<EvidencePageResult> {
+    const records = await this.items.find({
+      tenantId, runId,
+      ...(cursor === null ? {} : { sequence: { $gt: cursor.sequence } }),
+    }).sort({ sequence: 1 }).limit(limit + 1).lean().exec();
+    const page = records.slice(0, limit).map(itemEvidenceRecord);
+    const last = page.at(-1);
+    return {
+      records: page,
+      nextCursor: records.length <= limit || last === undefined
+        ? null : encodeEvidenceCursor({ kind: 'items', sequence: Number(last.sequence) }),
+    };
+  }
+
+  private async associationEvidencePage(
+    tenantId: string,
+    runId: string,
+    limit: number,
+    cursor: EvidenceCursor | null,
+  ): Promise<EvidencePageResult> {
+    const records = await this.associations.find({
+      tenantId, runId,
+      ...(cursor === null ? {} : { $or: [
+        { sequence: { $gt: cursor.sequence } },
+        {
+          sequence: cursor.sequence,
+          relationship: { $gt: cursor.tieOne as DataMigrationAssociationRecord['relationship'] },
+        },
+        {
+          sequence: cursor.sequence,
+          relationship: cursor.tieOne as DataMigrationAssociationRecord['relationship'],
+          sourceAssociationId: { $gt: cursor.tieTwo },
+        },
+      ] }),
+    }).sort({ sequence: 1, relationship: 1, sourceAssociationId: 1 })
+      .limit(limit + 1).lean().exec();
+    const page = records.slice(0, limit).map(associationEvidenceRecord);
+    const last = page.at(-1);
+    return {
+      records: page,
+      nextCursor: records.length <= limit || last === undefined ? null : encodeEvidenceCursor({
+        kind: 'associations', sequence: Number(last.sequence),
+        tieOne: String(last.relationship), tieTwo: String(last.sourceAssociationId),
+      }),
+    };
+  }
+
+  private async attachmentEvidencePage(
+    tenantId: string,
+    runId: string,
+    limit: number,
+    cursor: EvidenceCursor | null,
+  ): Promise<EvidencePageResult> {
+    const records = await this.attachments.find({
+      tenantId, runId,
+      ...(cursor === null ? {} : { $or: [
+        { sequence: { $gt: cursor.sequence } },
+        {
+          sequence: cursor.sequence,
+          sourceAttachmentId: { $gt: cursor.tieOne },
+        },
+      ] }),
+    }).sort({ sequence: 1, sourceAttachmentId: 1 }).limit(limit + 1).lean().exec();
+    const page = records.slice(0, limit).map(attachmentEvidenceRecord);
+    const last = page.at(-1);
+    return {
+      records: page,
+      nextCursor: records.length <= limit || last === undefined ? null : encodeEvidenceCursor({
+        kind: 'attachments', sequence: Number(last.sequence),
+        tieOne: String(last.sourceAttachmentId),
+      }),
+    };
   }
 
   private async applyOrReplay(
@@ -545,6 +663,120 @@ export class DataMigrationService {
       });
     }
   }
+
+  private assertEvidenceReader(): void {
+    const scopes = this.context.getActorRequired().scopes;
+    if (!scopes.includes('erp:migration:read') ||
+      !scopes.includes('erp:migration:evidence:export')) throw new ForbiddenException({
+      code: 'DATA_MIGRATION_EVIDENCE_FORBIDDEN', message: '当前身份无权导出迁移证据',
+    });
+  }
+}
+
+interface EvidenceCursor {
+  readonly kind: DataMigrationEvidenceQueryDto['kind'];
+  readonly sequence: number;
+  readonly tieOne: string;
+  readonly tieTwo: string;
+}
+
+interface EvidencePageResult {
+  readonly records: readonly Readonly<Record<string, unknown>>[];
+  readonly nextCursor: string | null;
+}
+
+function encodeEvidenceCursor(
+  input: Omit<EvidenceCursor, 'tieOne' | 'tieTwo'> &
+    Partial<Pick<EvidenceCursor, 'tieOne' | 'tieTwo'>>,
+): string {
+  return Buffer.from(canonicalJson({
+    kind: input.kind,
+    sequence: input.sequence,
+    tieOne: input.tieOne ?? '',
+    tieTwo: input.tieTwo ?? '',
+  }), 'utf8').toString('base64url');
+}
+
+function decodeEvidenceCursor(
+  kind: DataMigrationEvidenceQueryDto['kind'],
+  value: string | undefined,
+): EvidenceCursor | null {
+  if (value === undefined) return null;
+  try {
+    const decoded: unknown = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+    if (typeof decoded !== 'object' || decoded === null || Array.isArray(decoded)) {
+      throw new Error('shape');
+    }
+    const cursor = decoded as Record<string, unknown>;
+    if (Object.keys(cursor).sort().join('|') !== 'kind|sequence|tieOne|tieTwo' ||
+      cursor.kind !== kind || !Number.isSafeInteger(cursor.sequence) ||
+      Number(cursor.sequence) < 1 || typeof cursor.tieOne !== 'string' ||
+      typeof cursor.tieTwo !== 'string' ||
+      (kind === 'items' && (cursor.tieOne !== '' || cursor.tieTwo !== '')) ||
+      (kind === 'associations' &&
+        (!ASSOCIATION_RELATIONSHIP_SET.has(cursor.tieOne) ||
+          !SOURCE_ID_PATTERN.test(cursor.tieTwo))) ||
+      (kind === 'attachments' &&
+        (!SOURCE_ID_PATTERN.test(cursor.tieOne) || cursor.tieTwo !== ''))) {
+      throw new Error('value');
+    }
+    return {
+      kind,
+      sequence: Number(cursor.sequence),
+      tieOne: cursor.tieOne,
+      tieTwo: cursor.tieTwo,
+    };
+  } catch {
+    throw new BadRequestException({
+      code: 'DATA_MIGRATION_EVIDENCE_CURSOR_INVALID', message: '迁移证据游标非法',
+    });
+  }
+}
+
+function itemEvidenceRecord(item: DataMigrationItemRecord): Readonly<Record<string, unknown>> {
+  return Object.freeze({
+    id: item.id,
+    sequence: item.sequence,
+    sourceRecordId: item.sourceRecordId,
+    sourceVersion: item.sourceVersion,
+    entityType: item.entityType,
+    payloadHash: item.payloadHash,
+    sourceFactHash: item.sourceFactHash,
+    status: item.status,
+    targetId: item.targetId,
+    targetVersion: item.targetVersion,
+    targetHash: item.targetHash,
+    rejectionCode: item.rejectionCode,
+    associationCount: item.associationCount,
+    attachmentCount: item.attachmentCount,
+  });
+}
+
+function associationEvidenceRecord(
+  item: DataMigrationAssociationRecord,
+): Readonly<Record<string, unknown>> {
+  return Object.freeze({
+    id: item.id,
+    sequence: item.sequence,
+    relationship: item.relationship,
+    sourceAssociationId: item.sourceAssociationId,
+    targetId: item.targetId,
+    status: item.status,
+  });
+}
+
+function attachmentEvidenceRecord(
+  item: DataMigrationAttachmentRecord,
+): Readonly<Record<string, unknown>> {
+  return Object.freeze({
+    id: item.id,
+    sequence: item.sequence,
+    sourceAttachmentId: item.sourceAttachmentId,
+    checksum: item.checksum,
+    status: item.status,
+    targetEvidenceId: item.targetEvidenceId,
+    rejectionCode: item.rejectionCode,
+  });
 }
 
 function publicRun(run: Pick<DataMigrationRunRecord,
@@ -769,5 +1001,10 @@ function isDuplicateKeyError(error: unknown): boolean {
 }
 
 const SOURCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const ASSOCIATION_RELATIONSHIPS = [
+  'parent_department', 'department', 'primary_department', 'position', 'job_level',
+  'declared_reference',
+] as const;
+const ASSOCIATION_RELATIONSHIP_SET: ReadonlySet<string> = new Set(ASSOCIATION_RELATIONSHIPS);
 
 export { dataMigrationChecksum };

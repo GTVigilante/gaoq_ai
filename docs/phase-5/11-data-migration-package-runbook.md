@@ -45,3 +45,16 @@ unset ERP_MIGRATION_TOKEN
 - 工具不会替代领域校验，也不会直接连接 MongoDB；所有目标写入仍由 REST 进入应用服务。
 - 网络超时或进程中断后使用同一来源包重跑 apply；禁止修改原包后复用 `sourceRunId`。
 - 当前实现会在预检期间维护来源记录 ID 集合；超大数据包必须按已批准 Scope 和容量演练结果拆分，不得绕过服务端总控制量。
+
+## 完整差异证据导出
+
+```bash
+export ERP_API_BASE_URL=https://erp.example.com/api
+export ERP_MIGRATION_TOKEN=从受控密钥系统短期签发的证据导出令牌
+pnpm --filter @gaoq/erp-api migration:package -- evidence 01J8ZQK7V0A2M4N6P8R0T2W4F1 > migration-evidence.ndjson
+unset ERP_MIGRATION_TOKEN
+```
+
+证据令牌必须额外具备 `erp:migration:evidence:export`，且运行必须已经 `completed|failed` 冻结。工具先写入聚合 report，再依次分页写入 items、associations、attachments，逐页验证服务端 `pageChecksum`；三类明细总数必须与 report 控制量完全一致，最后一行 seal 才保存三类记录数、总记录数和整份内容的滚动 `artifactChecksum`。证据不含 payload、姓名、附件正文、tenantId、Token 或时间戳，但来源与目标标识仍按 L2 处理，产物必须加密保存、限制访问并登记销毁时间。
+
+任何页面 checksum 错误、游标异常、网络失败或非 JSON 响应都会终止导出且不生成可信完成结论。只有存在 seal 且重新计算结果一致的文件才能进入迁移签署材料；MCP 不提供此详细导出能力。

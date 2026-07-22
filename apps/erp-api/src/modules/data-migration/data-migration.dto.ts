@@ -5,6 +5,7 @@ import {
   IsEnum,
   IsInt,
   IsObject,
+  IsOptional,
   IsString,
   Length,
   Matches,
@@ -44,4 +45,15 @@ export class ApplyDataMigrationRecordDto {
   associationSourceIds!: string[];
   @IsArray() @ArrayMaxSize(20) @ValidateNested({ each: true }) @Type(() => MigrationAttachmentDto)
   attachments!: MigrationAttachmentDto[];
+}
+
+export class DataMigrationEvidenceQueryDto {
+  @IsEnum(['items', 'associations', 'attachments'])
+  kind!: 'items' | 'associations' | 'attachments';
+
+  @IsOptional() @IsString() @MaxLength(512) @Matches(/^[A-Za-z0-9_-]+$/)
+  cursor?: string;
+
+  @Type(() => Number) @IsInt() @Min(1) @Max(500)
+  limit = 200;
 }
