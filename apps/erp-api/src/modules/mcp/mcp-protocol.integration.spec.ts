@@ -259,6 +259,28 @@ describe('MCP Streamable HTTP 协议集成', () => {
       }),
       prepareManagementDashboardExport: vi.fn(),
       executeManagementDashboardExport: vi.fn(),
+      getDataMigrationReport: vi.fn().mockResolvedValue({
+        content: [{ type: 'text' as const, text: JSON.stringify({ report: {
+          runId: '01J8ZQK7V0A2M4N6P8R0T2W4F1', sourceSystem: 'legacy-hr', mode: 'full',
+          scope: 'org_reference', status: 'failed', expectedSourceCount: 100, checkpoint: 100,
+          counts: { applied: 98, duplicate: 1, rejected: 1 },
+          sourceChecksum: 's'.repeat(43), expectedSourceChecksum: 'e'.repeat(43),
+          targetChecksum: 't'.repeat(43), associationCount: 20,
+          unresolvedAssociationCount: 0, attachmentCount: 0, pendingAttachmentCount: 0,
+          differences: [{ code: 'REJECTED_RECORDS', severity: 'critical', count: 1 }],
+          phaseSixEligible: false,
+        } }) }],
+        structuredContent: { report: {
+          runId: '01J8ZQK7V0A2M4N6P8R0T2W4F1', sourceSystem: 'legacy-hr', mode: 'full',
+          scope: 'org_reference', status: 'failed', expectedSourceCount: 100, checkpoint: 100,
+          counts: { applied: 98, duplicate: 1, rejected: 1 },
+          sourceChecksum: 's'.repeat(43), expectedSourceChecksum: 'e'.repeat(43),
+          targetChecksum: 't'.repeat(43), associationCount: 20,
+          unresolvedAssociationCount: 0, attachmentCount: 0, pendingAttachmentCount: 0,
+          differences: [{ code: 'REJECTED_RECORDS', severity: 'critical', count: 1 }],
+          phaseSixEligible: false,
+        } },
+      }),
       prepareAttendanceCorrectionRequest: vi.fn(),
       executeAttendanceCorrectionRequest: vi.fn(),
       prepareRecruitmentRequisitionSubmit: vi.fn(),
@@ -301,6 +323,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
           'erp:op:operating_summary:read',
           'erp:analytics:management:read',
           'erp:analytics:management:export',
+          'erp:migration:read',
         ],
         departmentIds: ['department-001'],
         sessionId: 'session-001',
@@ -369,6 +392,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       'op_operating_summary_get',
       'op_approval_bridge_get',
       'management_dashboard_get',
+      'data_migration_report_get',
       'management_dashboard_export_prepare',
       'management_dashboard_export_execute',
       'attendance_correction_prepare',
@@ -404,6 +428,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ uriTemplate: 'erp://op/approval-bridges/{externalEventId}' }),
       expect.objectContaining({ uriTemplate: 'erp://analytics/management-dashboard/{asOf}' }),
       expect.objectContaining({ uriTemplate: 'erp://analytics/exports/{id}' }),
+      expect.objectContaining({ uriTemplate: 'erp://data-migrations/runs/{id}/report' }),
     ]));
     const prompts = await client.listPrompts();
     expect(prompts.prompts).toEqual(expect.arrayContaining([
@@ -422,6 +447,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ name: 'op_operating_summary_review_guide' }),
       expect.objectContaining({ name: 'op_approval_bridge_review_guide' }),
       expect.objectContaining({ name: 'management_dashboard_review_guide' }),
+      expect.objectContaining({ name: 'data_migration_report_review_guide' }),
     ]));
 
     const result = await client.callTool({ name: 'get_org_chart', arguments: {} });
@@ -544,5 +570,17 @@ describe('MCP Streamable HTTP 协议集成', () => {
     expect(JSON.parse(exportText)).toMatchObject({ export: { status: 'queued' } });
     expect(exportText).not.toMatch(/tenantId|requestedBy|failureCode/iu);
     expect(tools.getAnalyticsExport).toHaveBeenCalledOnce();
+
+    const migrationResource = await client.readResource({
+      uri: 'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/report',
+    });
+    const migrationContent = migrationResource.contents[0];
+    const migrationText = migrationContent !== undefined && 'text' in migrationContent
+      ? migrationContent.text : '{}';
+    expect(JSON.parse(migrationText)).toMatchObject({
+      report: { status: 'failed', phaseSixEligible: false },
+    });
+    expect(migrationText).not.toMatch(/payload|displayName|attachmentContent|tenantId/iu);
+    expect(tools.getDataMigrationReport).toHaveBeenCalledOnce();
   });
 });

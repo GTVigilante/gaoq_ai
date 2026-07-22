@@ -397,6 +397,26 @@ const analyticsExportSchema = z.object({
   artifact: z.record(z.string(), z.unknown()).nullable(),
   expiresAt: z.string().datetime(),
 });
+const dataMigrationReportSchema = z.object({
+  runId: recruitmentIdSchema, sourceSystem: z.string(),
+  mode: z.enum(['full', 'incremental']), scope: z.literal('org_reference'),
+  status: z.enum(['running', 'completed', 'failed']),
+  expectedSourceCount: z.number().int().positive(), checkpoint: z.number().int().nonnegative(),
+  counts: z.object({
+    applied: z.number().int().nonnegative(), duplicate: z.number().int().nonnegative(),
+    rejected: z.number().int().nonnegative(),
+  }),
+  sourceChecksum: z.string().length(43), expectedSourceChecksum: z.string().length(43),
+  targetChecksum: z.string().length(43), associationCount: z.number().int().nonnegative(),
+  unresolvedAssociationCount: z.number().int().nonnegative(),
+  attachmentCount: z.number().int().nonnegative(),
+  pendingAttachmentCount: z.number().int().nonnegative(),
+  differences: z.array(z.object({
+    code: z.string(), severity: z.enum(['critical', 'high']),
+    count: z.number().int().positive(),
+  })),
+  phaseSixEligible: z.boolean(),
+});
 
 @Injectable()
 export class McpRuntimeService {
@@ -852,6 +872,24 @@ export class McpRuntimeService {
       },
     );
 
+    server.registerResource(
+      'data-migration-report',
+      new ResourceTemplate('erp://data-migrations/runs/{id}/report', { list: undefined }),
+      {
+        title: '数据迁移差异报告',
+        description: '只读返回数量、校验和、拒绝、重复、关联与附件控制量，不返回来源正文。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getDataMigrationReport(requiredResourceId(id), extra);
+        if (result.isError === true) throw new Error('无权读取数据迁移报告');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
     server.registerPrompt(
       'approval_submission_guide',
       {
@@ -895,6 +933,19 @@ export class McpRuntimeService {
       ({ asOf }) => ({ messages: [{ role: 'user', content: {
         type: 'text',
         text: `请读取 ${asOf} 管理驾驶舱。先说明 30 日窗口、来源集合和空值，再概括在岗规模、审批积压、招聘供给、必修培训、薪资周期与 OP 经营摘要。不得推断个人绩效，不得把相关性表述为因果，也不得触发导出。`,
+      } }] }),
+    );
+
+    server.registerPrompt(
+      'data_migration_report_review_guide',
+      {
+        title: '数据迁移差异报告核对清单',
+        description: '指导 AI 解释数据质量门禁，不允许豁免差异或推进切换。',
+        argsSchema: { runId: recruitmentIdSchema },
+      },
+      ({ runId }) => ({ messages: [{ role: 'user', content: {
+        type: 'text',
+        text: `请读取迁移运行 ${runId} 的差异报告，逐项说明来源数量、检查点、重复、拒绝、关联、附件和校验和。不得展示来源正文，不得把 failed 解释为可上线，不得代替数据负责人豁免差异或触发迁移。`,
       } }] }),
     );
 
@@ -1455,6 +1506,20 @@ export class McpRuntimeService {
         },
       },
       async ({ asOf }, extra) => this.tools.getManagementDashboard(asOf, extra),
+    );
+
+    server.registerTool(
+      'data_migration_report_get',
+      {
+        title: '查询数据迁移差异报告',
+        description: '读取 Phase 6 预验收控制量和差异，不返回来源正文。风险等级 R1。',
+        inputSchema: { runId: recruitmentIdSchema },
+        outputSchema: z.object({ report: dataMigrationReportSchema }),
+        annotations: {
+          readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+        },
+      },
+      async ({ runId }, extra) => this.tools.getDataMigrationReport(runId, extra),
     );
 
     server.registerTool(

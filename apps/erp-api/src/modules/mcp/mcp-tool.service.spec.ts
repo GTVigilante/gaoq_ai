@@ -25,6 +25,7 @@ import type { OpOperatingSummaryService } from '../op/application/op-operating-s
 import type { OpApprovalBridgeService } from '../op/application/op-approval-bridge.service.js';
 import type { ManagementDashboardService } from '../analytics/application/management-dashboard.service.js';
 import type { AnalyticsExportService } from '../analytics/application/analytics-export.service.js';
+import type { DataMigrationService } from '../data-migration/application/data-migration.service.js';
 import { McpToolService } from './mcp-tool.service.js';
 import type { McpConfirmationService } from './mcp-confirmation.service.js';
 
@@ -94,6 +95,7 @@ function assemble() {
   const opApprovalBridges = { get: vi.fn() };
   const managementDashboard = { get: vi.fn() };
   const analyticsExports = { get: vi.fn(), request: vi.fn() };
+  const dataMigrations = { report: vi.fn() };
   const service = new McpToolService(
     context,
     audit as unknown as AuditService,
@@ -116,13 +118,14 @@ function assemble() {
     opApprovalBridges as unknown as OpApprovalBridgeService,
     managementDashboard as unknown as ManagementDashboardService,
     analyticsExports as unknown as AnalyticsExportService,
+    dataMigrations as unknown as DataMigrationService,
     confirmations as unknown as McpConfirmationService,
   );
   return {
     context, audit, organization, approvals, recruitmentApplications,
     recruitmentInterviews, recruitmentManagement, recruitmentOffers, confirmations, service,
     onboarding, knowledge, care, attendance, payroll, payslips, taxFilings, reconciliations, shadows,
-    opSummaries, opApprovalBridges, managementDashboard, analyticsExports,
+    opSummaries, opApprovalBridges, managementDashboard, analyticsExports, dataMigrations,
   };
 }
 
@@ -758,5 +761,26 @@ describe('McpToolService', () => {
       }),
     ]));
     expect(store.confirmations.complete).toHaveBeenCalledOnce();
+  });
+
+  it('迁移差异报告 Tool 只读复用控制面且不返回来源正文', async () => {
+    const store = assemble();
+    store.dataMigrations.report.mockResolvedValue({
+      runId: '01J8ZQK7V0A2M4N6P8R0T2W4F1', status: 'failed',
+      differences: [{ code: 'REJECTED_RECORDS', severity: 'critical', count: 1 }],
+      phaseSixEligible: false,
+    });
+    const denied = await store.service.getDataMigrationReport(
+      '01J8ZQK7V0A2M4N6P8R0T2W4F1', extra([]),
+    );
+    expect(denied.isError).toBe(true);
+    expect(store.dataMigrations.report).not.toHaveBeenCalled();
+    const result = await store.service.getDataMigrationReport(
+      '01J8ZQK7V0A2M4N6P8R0T2W4F1', extra(['erp:migration:read']),
+    );
+    expect(result.structuredContent).toMatchObject({
+      report: { status: 'failed', phaseSixEligible: false },
+    });
+    expect(JSON.stringify(result)).not.toMatch(/payload|attachmentContent|displayName/iu);
   });
 });

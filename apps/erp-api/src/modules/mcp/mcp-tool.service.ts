@@ -27,6 +27,7 @@ import { OpOperatingSummaryService } from '../op/application/op-operating-summar
 import { OpApprovalBridgeService } from '../op/application/op-approval-bridge.service.js';
 import { ManagementDashboardService } from '../analytics/application/management-dashboard.service.js';
 import { AnalyticsExportService } from '../analytics/application/analytics-export.service.js';
+import { DataMigrationService } from '../data-migration/application/data-migration.service.js';
 import { parseMcpIdentity, type McpIdentity } from './mcp-auth-context.js';
 import {
   McpConfirmationService,
@@ -79,6 +80,7 @@ export class McpToolService {
     private readonly opApprovalBridges: OpApprovalBridgeService,
     private readonly managementDashboard: ManagementDashboardService,
     private readonly analyticsExports: AnalyticsExportService,
+    private readonly dataMigrations: DataMigrationService,
     private readonly confirmations: McpConfirmationService,
   ) {}
 
@@ -320,6 +322,22 @@ export class McpToolService {
         exportId, status: result.status,
       });
       return structuredResult({ export: result });
+    });
+  }
+
+  async getDataMigrationReport(runId: string, extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:migration:read')) {
+        await this.auditTool(identity, 'data_migration_report_get', 'R1', 'denied');
+        return scopeError('erp:migration:read');
+      }
+      const report = await this.dataMigrations.report(runId);
+      await this.auditTool(identity, 'data_migration_report_get', 'R1', 'success', {
+        runId, status: report.status, differenceCount: report.differences.length,
+        phaseSixEligible: report.phaseSixEligible,
+      });
+      return structuredResult({ report });
     });
   }
 

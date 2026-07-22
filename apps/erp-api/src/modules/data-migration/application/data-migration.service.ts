@@ -1,0 +1,632 @@
+import { createHash } from 'node:crypto';
+
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { createEventId } from '@gaoq/shared-utils';
+import type { Model } from 'mongoose';
+
+import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
+import { OrgApplicationService } from '../../org/application/org-application.service.js';
+import type {
+  CreateDepartmentDto,
+  CreateJobLevelDto,
+  CreatePositionDto,
+} from '../../org/application/org.dto.js';
+import type { ApplyDataMigrationRecordDto, CreateDataMigrationRunDto } from '../data-migration.dto.js';
+import {
+  DataMigrationAssociationRecord,
+  type DataMigrationAssociationDocument,
+  DataMigrationAttachmentRecord,
+  type DataMigrationAttachmentDocument,
+  DataMigrationItemRecord,
+  type DataMigrationItemDocument,
+  DataMigrationMappingRecord,
+  type DataMigrationMappingDocument,
+  DataMigrationRunRecord,
+  type DataMigrationRunDocument,
+} from '../persistence/data-migration.schemas.js';
+
+const EMPTY_CHECKSUM = digest('');
+
+interface MappingView {
+  readonly tenantId: string;
+  readonly sourceSystem: string;
+  readonly entityType: ApplyDataMigrationRecordDto['entityType'];
+  readonly sourceRecordId: string;
+  readonly sourceVersion: string;
+  readonly payloadHash: string;
+  readonly targetId: string;
+  readonly targetVersion: number;
+  readonly targetHash: string;
+  readonly lastRunId: string;
+  readonly lastSequence: number;
+}
+
+export interface DataMigrationReport {
+  readonly runId: string;
+  readonly sourceSystem: string;
+  readonly mode: 'full' | 'incremental';
+  readonly scope: 'org_reference';
+  readonly status: 'running' | 'completed' | 'failed';
+  readonly expectedSourceCount: number;
+  readonly checkpoint: number;
+  readonly counts: { readonly applied: number; readonly duplicate: number; readonly rejected: number };
+  readonly sourceChecksum: string;
+  readonly expectedSourceChecksum: string;
+  readonly targetChecksum: string;
+  readonly associationCount: number;
+  readonly unresolvedAssociationCount: number;
+  readonly attachmentCount: number;
+  readonly pendingAttachmentCount: number;
+  readonly differences: readonly {
+    readonly code: string; readonly severity: 'critical' | 'high'; readonly count: number;
+  }[];
+  readonly phaseSixEligible: boolean;
+}
+
+/** 可重放迁移控制面；迁移账本直写本模块集合，目标数据只经领域应用服务。 */
+@Injectable()
+export class DataMigrationService {
+  constructor(
+    private readonly context: TenantContextService,
+    private readonly organization: OrgApplicationService,
+    @InjectModel(DataMigrationRunRecord.name) private readonly runs: Model<DataMigrationRunDocument>,
+    @InjectModel(DataMigrationItemRecord.name) private readonly items: Model<DataMigrationItemDocument>,
+    @InjectModel(DataMigrationMappingRecord.name)
+    private readonly mappings: Model<DataMigrationMappingDocument>,
+    @InjectModel(DataMigrationAssociationRecord.name)
+    private readonly associations: Model<DataMigrationAssociationDocument>,
+    @InjectModel(DataMigrationAttachmentRecord.name)
+    private readonly attachments: Model<DataMigrationAttachmentDocument>,
+  ) {}
+
+  async start(input: CreateDataMigrationRunDto) {
+    this.assertExecutor();
+    const tenantId = this.context.getTenantRequired().tenantId;
+    const run = Object.freeze({
+      id: createEventId(), tenantId, sourceSystem: input.sourceSystem, mode: input.mode,
+      sourceRunId: input.sourceRunId,
+      scope: input.scope, expectedSourceCount: input.expectedSourceCount,
+      expectedSourceChecksum: input.expectedSourceChecksum,
+      sourceChecksum: EMPTY_CHECKSUM, targetChecksum: EMPTY_CHECKSUM,
+      checkpoint: 0, status: 'running' as const, completedAt: null,
+    });
+    try {
+      await this.runs.create(run);
+      return publicRun(run);
+    } catch (error) {
+      if (!isDuplicateKeyError(error)) throw error;
+      const existing = await this.runs.findOne({
+        tenantId, sourceSystem: input.sourceSystem, sourceRunId: input.sourceRunId,
+      }).lean().exec();
+      if (existing === null || existing.expectedSourceChecksum !== input.expectedSourceChecksum ||
+        existing.expectedSourceCount !== input.expectedSourceCount || existing.mode !== input.mode ||
+        existing.scope !== input.scope) throw new ConflictException({
+        code: 'DATA_MIGRATION_SOURCE_RUN_REUSED', message: '来源运行标识已绑定不同快照',
+      });
+      return publicRun(existing);
+    }
+  }
+
+  async apply(runId: string, input: ApplyDataMigrationRecordDto) {
+    this.assertExecutor();
+    assertUniqueEvidence(input);
+    if (digest(canonicalJson(input.payload)) !== input.payloadHash) {
+      throw new BadRequestException({
+        code: 'DATA_MIGRATION_PAYLOAD_HASH_MISMATCH', message: '来源记录校验和不匹配',
+      });
+    }
+    const tenantId = this.context.getTenantRequired().tenantId;
+    const run = await this.requireRunningRun(tenantId, runId);
+    const sourceFactHash = migrationSourceFactHash(input);
+    if (input.sequence > run.expectedSourceCount) throw new BadRequestException({
+      code: 'DATA_MIGRATION_SEQUENCE_OUT_OF_RANGE', message: '来源序号超过声明记录数',
+    });
+    const existing = await this.items.findOne({ tenantId, runId, sequence: input.sequence }).lean().exec();
+    if (existing !== null) {
+      if (existing.sourceFactHash !== sourceFactHash) {
+        throw new ConflictException({
+          code: 'DATA_MIGRATION_SEQUENCE_REUSED', message: '同一序号已被不同来源记录占用',
+        });
+      }
+      await this.preflightEvidence(run, input);
+      await this.persistEvidence(run, input);
+      await this.advanceCheckpoint(run, existing);
+      return publicItem(existing);
+    }
+    if (input.sequence !== run.checkpoint + 1) throw new ConflictException({
+      code: 'DATA_MIGRATION_CHECKPOINT_GAP', message: '必须从当前检查点的下一条继续',
+    });
+    await this.preflightEvidence(run, input);
+
+    const mapping = await this.mappings.findOne({
+      tenantId, sourceSystem: run.sourceSystem,
+      entityType: input.entityType, sourceRecordId: input.sourceRecordId,
+    }).lean().exec() as MappingView | null;
+    let outcome: {
+      status: 'applied' | 'duplicate' | 'rejected'; targetId: string | null;
+      targetVersion: number | null; targetHash: string | null; rejectionCode: string | null;
+    };
+    try {
+      outcome = await this.applyOrReplay(run, input, mapping);
+    } catch (error) {
+      const code = rejectionCode(error);
+      if (code === null) throw error;
+      outcome = {
+        status: 'rejected', targetId: null, targetVersion: null, targetHash: null,
+        rejectionCode: code,
+      };
+    }
+    const item = {
+      id: createEventId(), tenantId, runId, sequence: input.sequence,
+      sourceRecordId: input.sourceRecordId, sourceVersion: input.sourceVersion,
+      entityType: input.entityType, payloadHash: input.payloadHash, sourceFactHash,
+      ...outcome, associationCount: input.associationSourceIds.length,
+      attachmentCount: input.attachments.length,
+    };
+    await this.persistEvidence(run, input);
+    await this.items.create(item);
+    await this.advanceCheckpoint(run, item);
+    return publicItem(item);
+  }
+
+  async complete(runId: string): Promise<DataMigrationReport> {
+    this.assertExecutor();
+    const tenantId = this.context.getTenantRequired().tenantId;
+    const run = await this.requireRunningRun(tenantId, runId);
+    if (run.checkpoint !== run.expectedSourceCount) throw new ConflictException({
+      code: 'DATA_MIGRATION_SOURCE_INCOMPLETE', message: '来源记录尚未全部处理',
+    });
+    const report = await this.buildReport(run);
+    const status = report.phaseSixEligible ? 'completed' : 'failed';
+    const updated = await this.runs.findOneAndUpdate(
+      { tenantId, id: runId, status: 'running', checkpoint: run.checkpoint },
+      { $set: { status, completedAt: new Date() } },
+      { returnDocument: 'after', runValidators: true },
+    ).lean().exec();
+    if (updated === null) throw new ConflictException({
+      code: 'DATA_MIGRATION_RUN_STATE_CHANGED', message: '迁移运行状态已变化',
+    });
+    return this.buildReport(updated);
+  }
+
+  async report(runId: string): Promise<DataMigrationReport> {
+    this.assertReader();
+    const tenantId = this.context.getTenantRequired().tenantId;
+    const run = await this.runs.findOne({ tenantId, id: runId }).lean().exec();
+    if (run === null) throw new NotFoundException({
+      code: 'DATA_MIGRATION_RUN_NOT_FOUND', message: '迁移运行不存在',
+    });
+    return this.buildReport(run);
+  }
+
+  private async applyOrReplay(
+    run: DataMigrationRunRecord,
+    input: ApplyDataMigrationRecordDto,
+    mapping: MappingView | null,
+  ) {
+    await this.validateInput(run, input);
+    if (mapping !== null && mapping.payloadHash === input.payloadHash) {
+      return {
+        status: mapping.lastRunId === run.id && mapping.lastSequence === input.sequence
+          ? 'applied' as const : 'duplicate' as const,
+        targetId: mapping.targetId, targetVersion: mapping.targetVersion,
+        targetHash: mapping.targetHash, rejectionCode: null,
+      };
+    }
+    const applied = await this.dispatch(run, input, mapping);
+    await this.mappings.findOneAndUpdate(
+      {
+        tenantId: run.tenantId, sourceSystem: run.sourceSystem,
+        entityType: input.entityType, sourceRecordId: input.sourceRecordId,
+      },
+      { $set: {
+        sourceVersion: input.sourceVersion, payloadHash: input.payloadHash,
+        targetId: applied.id, targetVersion: applied.version, targetHash: applied.hash,
+        lastRunId: run.id, lastSequence: input.sequence,
+      }, $setOnInsert: {
+        tenantId: run.tenantId, sourceSystem: run.sourceSystem,
+        entityType: input.entityType, sourceRecordId: input.sourceRecordId,
+      } },
+      { upsert: true, returnDocument: 'after', runValidators: true },
+    ).lean().exec();
+    return {
+      status: 'applied' as const, targetId: applied.id, targetVersion: applied.version,
+      targetHash: applied.hash, rejectionCode: null,
+    };
+  }
+
+  private async validateInput(
+    run: DataMigrationRunRecord,
+    input: ApplyDataMigrationRecordDto,
+  ): Promise<void> {
+    if (input.entityType === 'org.department') {
+      const payload = departmentPayload(input.payload);
+      const expected = payload.parentSourceId === null ? [] : [payload.parentSourceId];
+      assertAssociations(input.associationSourceIds, expected);
+      if (payload.parentSourceId !== null) {
+        await this.requireMapping(run, 'org.department', payload.parentSourceId);
+      }
+      return;
+    }
+    if (input.entityType === 'org.position') positionPayload(input.payload);
+    else jobLevelPayload(input.payload);
+    assertAssociations(input.associationSourceIds, []);
+  }
+
+  private async dispatch(
+    run: DataMigrationRunRecord,
+    input: ApplyDataMigrationRecordDto,
+    mapping: MappingView | null,
+  ): Promise<{ readonly id: string; readonly version: number; readonly hash: string }> {
+    const key = `migration:${run.id}:${input.sequence}:${input.payloadHash.slice(0, 16)}`;
+    if (input.entityType === 'org.department') {
+      const payload = departmentPayload(input.payload);
+      assertAssociations(
+        input.associationSourceIds,
+        payload.parentSourceId === null ? [] : [payload.parentSourceId],
+      );
+      const parentId = payload.parentSourceId === null
+        ? null : (await this.requireMapping(run, 'org.department', payload.parentSourceId)).targetId;
+      const command: CreateDepartmentDto = {
+        code: payload.code, name: payload.name, status: payload.status,
+        parentId, managerId: null, sortOrder: payload.sortOrder,
+      };
+      const result = mapping === null
+        ? await this.organization.createDepartment(key, command)
+        : await this.organization.updateDepartment(
+          mapping.targetId, mapping.targetVersion, key, command,
+        );
+      return target(result.department);
+    }
+    if (input.entityType === 'org.position') {
+      assertAssociations(input.associationSourceIds, []);
+      const command = positionPayload(input.payload);
+      const result = mapping === null
+        ? await this.organization.createPosition(key, command)
+        : await this.organization.updatePosition(mapping.targetId, mapping.targetVersion, key, command);
+      return target(result.position);
+    }
+    const command = jobLevelPayload(input.payload);
+    assertAssociations(input.associationSourceIds, []);
+    const result = mapping === null
+      ? await this.organization.createJobLevel(key, command)
+      : await this.organization.updateJobLevel(mapping.targetId, mapping.targetVersion, key, command);
+    return target(result.jobLevel);
+  }
+
+  private async requireMapping(
+    run: DataMigrationRunRecord,
+    entityType: ApplyDataMigrationRecordDto['entityType'],
+    sourceRecordId: string,
+  ): Promise<MappingView> {
+    const mapping = await this.mappings.findOne({
+      tenantId: run.tenantId, sourceSystem: run.sourceSystem, entityType, sourceRecordId,
+    }).lean().exec() as MappingView | null;
+    if (mapping === null) throw new Error('DATA_MIGRATION_ASSOCIATION_MISSING');
+    return mapping;
+  }
+
+  private async preflightEvidence(
+    run: DataMigrationRunRecord,
+    input: ApplyDataMigrationRecordDto,
+  ): Promise<void> {
+    for (const attachment of input.attachments) {
+      const existing = await this.attachments.findOne({
+        tenantId: run.tenantId, runId: run.id,
+        sourceAttachmentId: attachment.sourceAttachmentId,
+      }).lean().exec();
+      if (existing !== null &&
+        (existing.sequence !== input.sequence || existing.checksum !== attachment.checksum)) {
+        throw new ConflictException({
+          code: 'DATA_MIGRATION_ATTACHMENT_REUSED',
+          message: '同一来源附件标识已绑定不同记录或校验和',
+        });
+      }
+    }
+  }
+
+  private async persistEvidence(
+    run: DataMigrationRunRecord,
+    input: ApplyDataMigrationRecordDto,
+  ): Promise<void> {
+    const relationship = input.entityType === 'org.department'
+      ? 'parent_department' as const : 'declared_reference' as const;
+    for (const sourceAssociationId of input.associationSourceIds) {
+      const mapping = input.entityType === 'org.department'
+        ? await this.mappings.findOne({
+          tenantId: run.tenantId, sourceSystem: run.sourceSystem,
+          entityType: 'org.department', sourceRecordId: sourceAssociationId,
+        }).lean().exec() as MappingView | null
+        : null;
+      await this.associations.findOneAndUpdate(
+        {
+          tenantId: run.tenantId, runId: run.id, sequence: input.sequence,
+          relationship, sourceAssociationId,
+        },
+        {
+          $setOnInsert: {
+            id: createEventId(), tenantId: run.tenantId, runId: run.id,
+            sequence: input.sequence, relationship, sourceAssociationId,
+          },
+          $set: {
+            targetId: mapping?.targetId ?? null,
+            status: mapping === null ? 'missing' : 'resolved',
+          },
+        },
+        { upsert: true, returnDocument: 'after', runValidators: true },
+      ).lean().exec();
+    }
+    for (const attachment of input.attachments) {
+      try {
+        await this.attachments.updateOne(
+          {
+            tenantId: run.tenantId, runId: run.id, sequence: input.sequence,
+            sourceAttachmentId: attachment.sourceAttachmentId, checksum: attachment.checksum,
+          },
+          { $setOnInsert: {
+            id: createEventId(), tenantId: run.tenantId, runId: run.id,
+            sequence: input.sequence, sourceAttachmentId: attachment.sourceAttachmentId,
+            checksum: attachment.checksum, status: 'pending', targetEvidenceId: null,
+            rejectionCode: null,
+          } },
+          { upsert: true, runValidators: true },
+        ).exec();
+      } catch (error) {
+        if (!isDuplicateKeyError(error)) throw error;
+        throw new ConflictException({
+          code: 'DATA_MIGRATION_ATTACHMENT_REUSED',
+          message: '同一来源附件标识已绑定不同记录或校验和',
+        });
+      }
+    }
+  }
+
+  private async advanceCheckpoint(
+    run: DataMigrationRunRecord,
+    item: Pick<DataMigrationItemRecord,
+      'sequence' | 'sourceFactHash' | 'status' | 'targetHash' | 'rejectionCode'>,
+  ): Promise<void> {
+    if (item.sequence <= run.checkpoint) return;
+    const sourceChecksum = roll(run.sourceChecksum, item.sequence, item.sourceFactHash);
+    const targetFact = item.targetHash ?? digest(`rejected:${item.rejectionCode ?? 'UNKNOWN'}`);
+    const targetChecksum = roll(run.targetChecksum, item.sequence, targetFact);
+    const result = await this.runs.updateOne(
+      { tenantId: run.tenantId, id: run.id, status: 'running', checkpoint: item.sequence - 1 },
+      { $set: { checkpoint: item.sequence, sourceChecksum, targetChecksum } },
+      { runValidators: true },
+    ).exec();
+    if (result.modifiedCount !== 1) throw new ConflictException({
+      code: 'DATA_MIGRATION_CHECKPOINT_RACE', message: '迁移检查点已由其它执行者推进',
+    });
+  }
+
+  private async buildReport(run: DataMigrationRunRecord): Promise<DataMigrationReport> {
+    const [grouped, associationStatuses, attachmentStatuses] = await Promise.all([
+      this.items.aggregate<{
+        _id: DataMigrationItemRecord['status']; count: number;
+      }>([
+        { $match: { tenantId: run.tenantId, runId: run.id } },
+        { $group: { _id: '$status', count: { $sum: 1 } } },
+      ]).exec(),
+      this.associations.aggregate<{ _id: DataMigrationAssociationRecord['status']; count: number }>([
+        { $match: { tenantId: run.tenantId, runId: run.id } },
+        { $group: { _id: '$status', count: { $sum: 1 } } },
+      ]).exec(),
+      this.attachments.aggregate<{ _id: DataMigrationAttachmentRecord['status']; count: number }>([
+        { $match: { tenantId: run.tenantId, runId: run.id } },
+        { $group: { _id: '$status', count: { $sum: 1 } } },
+      ]).exec(),
+    ]);
+    const count = (status: DataMigrationItemRecord['status']) =>
+      grouped.find((entry) => entry._id === status)?.count ?? 0;
+    const associationCount = associationStatuses.reduce((sum, entry) => sum + entry.count, 0);
+    const unresolvedAssociationCount = associationStatuses
+      .find((entry) => entry._id === 'missing')?.count ?? 0;
+    const attachmentCount = attachmentStatuses.reduce((sum, entry) => sum + entry.count, 0);
+    const pendingAttachmentCount = attachmentStatuses
+      .find((entry) => entry._id === 'pending')?.count ?? 0;
+    const rejectedAttachmentCount = attachmentStatuses
+      .find((entry) => entry._id === 'rejected')?.count ?? 0;
+    const differences = [
+      ...(run.checkpoint === run.expectedSourceCount ? [] : [{
+        code: 'SOURCE_COUNT_MISMATCH', severity: 'critical' as const,
+        count: Math.abs(run.expectedSourceCount - run.checkpoint),
+      }]),
+      ...(run.sourceChecksum === run.expectedSourceChecksum ? [] : [{
+        code: 'SOURCE_CHECKSUM_MISMATCH', severity: 'critical' as const, count: 1,
+      }]),
+      ...(count('rejected') === 0 ? [] : [{
+        code: 'REJECTED_RECORDS', severity: 'critical' as const, count: count('rejected'),
+      }]),
+      ...(unresolvedAssociationCount === 0 ? [] : [{
+        code: 'ASSOCIATION_UNRESOLVED', severity: 'critical' as const,
+        count: unresolvedAssociationCount,
+      }]),
+      ...(pendingAttachmentCount === 0 ? [] : [{
+        code: 'ATTACHMENT_MIGRATION_NOT_CONFIGURED', severity: 'high' as const,
+        count: pendingAttachmentCount,
+      }]),
+      ...(rejectedAttachmentCount === 0 ? [] : [{
+        code: 'ATTACHMENT_MIGRATION_REJECTED', severity: 'critical' as const,
+        count: rejectedAttachmentCount,
+      }]),
+    ];
+    return Object.freeze({
+      runId: run.id, sourceSystem: run.sourceSystem, mode: run.mode, scope: run.scope,
+      status: run.status, expectedSourceCount: run.expectedSourceCount, checkpoint: run.checkpoint,
+      counts: Object.freeze({
+        applied: count('applied'), duplicate: count('duplicate'), rejected: count('rejected'),
+      }),
+      sourceChecksum: run.sourceChecksum, expectedSourceChecksum: run.expectedSourceChecksum,
+      targetChecksum: run.targetChecksum, associationCount, unresolvedAssociationCount,
+      attachmentCount, pendingAttachmentCount,
+      differences: Object.freeze(differences), phaseSixEligible: differences.length === 0,
+    });
+  }
+
+  private async requireRunningRun(tenantId: string, runId: string) {
+    const run = await this.runs.findOne({ tenantId, id: runId }).lean().exec();
+    if (run === null) throw new NotFoundException({
+      code: 'DATA_MIGRATION_RUN_NOT_FOUND', message: '迁移运行不存在',
+    });
+    if (run.status !== 'running') throw new ConflictException({
+      code: 'DATA_MIGRATION_RUN_NOT_RUNNING', message: '迁移运行已结束',
+    });
+    return run;
+  }
+
+  private assertExecutor(): void {
+    const actor = this.context.getActorRequired();
+    if (!['service', 'system_job'].includes(actor.actorType) ||
+      !actor.scopes.includes('erp:migration:execute') ||
+      !actor.scopes.includes('erp:org:master:write')) throw new ForbiddenException({
+      code: 'DATA_MIGRATION_EXECUTOR_FORBIDDEN', message: '当前身份无权执行数据迁移',
+    });
+  }
+
+  private assertReader(): void {
+    if (!this.context.getActorRequired().scopes.includes('erp:migration:read')) {
+      throw new ForbiddenException({
+        code: 'DATA_MIGRATION_READER_FORBIDDEN', message: '当前身份无权读取迁移报告',
+      });
+    }
+  }
+}
+
+function publicRun(run: Pick<DataMigrationRunRecord,
+  'id' | 'sourceSystem' | 'sourceRunId' | 'mode' | 'scope' | 'status' | 'checkpoint'
+>) {
+  return Object.freeze({
+    id: run.id, sourceSystem: run.sourceSystem, sourceRunId: run.sourceRunId, mode: run.mode,
+    scope: run.scope, status: run.status, checkpoint: run.checkpoint,
+  });
+}
+
+function publicItem(item: Pick<DataMigrationItemRecord,
+  'sequence' | 'sourceRecordId' | 'entityType' | 'status' | 'targetId' | 'targetVersion' | 'rejectionCode'
+>) {
+  return Object.freeze({
+    sequence: item.sequence, sourceRecordId: item.sourceRecordId, entityType: item.entityType,
+    status: item.status, targetId: item.targetId, targetVersion: item.targetVersion,
+    rejectionCode: item.rejectionCode,
+  });
+}
+
+function departmentPayload(value: Readonly<Record<string, unknown>>): {
+  code: string; name: string; status: 'active' | 'inactive'; parentSourceId: string | null; sortOrder: number;
+} {
+  exactKeys(value, ['code', 'name', 'parentSourceId', 'sortOrder', 'status']);
+  const status = value.status;
+  if (typeof value.code !== 'string' || typeof value.name !== 'string' ||
+    !['active', 'inactive'].includes(String(status)) ||
+    (value.parentSourceId !== null && typeof value.parentSourceId !== 'string') ||
+    !Number.isSafeInteger(value.sortOrder) || Number(value.sortOrder) < 0) throw invalidPayload();
+  return {
+    code: value.code, name: value.name, status: status as 'active' | 'inactive',
+    parentSourceId: value.parentSourceId, sortOrder: Number(value.sortOrder),
+  };
+}
+
+function positionPayload(value: Readonly<Record<string, unknown>>): CreatePositionDto {
+  exactKeys(value, ['code', 'name', 'status']);
+  if (typeof value.code !== 'string' || typeof value.name !== 'string' ||
+    !['active', 'inactive'].includes(String(value.status))) throw invalidPayload();
+  return { code: value.code, name: value.name, status: value.status as 'active' | 'inactive' };
+}
+
+function jobLevelPayload(value: Readonly<Record<string, unknown>>): CreateJobLevelDto {
+  exactKeys(value, ['code', 'name', 'rank', 'track']);
+  if (typeof value.code !== 'string' || typeof value.name !== 'string' ||
+    !['professional', 'management'].includes(String(value.track)) ||
+    !Number.isSafeInteger(value.rank) || Number(value.rank) < 1 || Number(value.rank) > 30) {
+    throw invalidPayload();
+  }
+  return {
+    code: value.code, name: value.name,
+    track: value.track as 'professional' | 'management', rank: Number(value.rank),
+  };
+}
+
+function exactKeys(value: Readonly<Record<string, unknown>>, expected: readonly string[]): void {
+  if (Object.keys(value).sort().join('|') !== [...expected].sort().join('|')) throw invalidPayload();
+}
+function invalidPayload(): Error { return new Error('DATA_MIGRATION_PAYLOAD_INVALID'); }
+function target<T extends object & { readonly id: string; readonly version: number }>(value: T) {
+  const projection = Object.fromEntries(Object.entries(value));
+  delete projection.tenantId;
+  delete projection.createdAt;
+  delete projection.updatedAt;
+  return { id: value.id, version: value.version, hash: digest(canonicalJson(projection)) };
+}
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (typeof value === 'object' && value !== null) return `{${Object.entries(value)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`).join(',')}}`;
+  return JSON.stringify(value);
+}
+function digest(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('base64url');
+}
+function roll(previous: string, sequence: number, factHash: string): string {
+  return digest(`${previous}\n${sequence}:${factHash}`);
+}
+function rejectionCode(error: unknown): string | null {
+  if (typeof error === 'object' && error !== null) {
+    const response = (error as { response?: unknown }).response;
+    if (typeof response === 'object' && response !== null) {
+      const code = (response as { code?: unknown }).code;
+      if (typeof code === 'string' && /^(ORG|DATA_MIGRATION)_[A-Z0-9_]{2,80}$/.test(code)) return code;
+    }
+  }
+  return error instanceof Error && /^(ORG|DATA_MIGRATION)_[A-Z0-9_]{2,80}$/.test(error.message)
+    ? error.message : null;
+}
+
+function assertAssociations(actual: readonly string[], expected: readonly string[]): void {
+  if ([...actual].sort().join('|') !== [...expected].sort().join('|')) {
+    throw new Error('DATA_MIGRATION_ASSOCIATION_DECLARATION_MISMATCH');
+  }
+}
+
+function assertUniqueEvidence(input: ApplyDataMigrationRecordDto): void {
+  if (new Set(input.associationSourceIds).size !== input.associationSourceIds.length) {
+    throw new BadRequestException({
+      code: 'DATA_MIGRATION_ASSOCIATION_DUPLICATE', message: '关联来源标识不得重复',
+    });
+  }
+  const attachmentIds = input.attachments.map((item) => item.sourceAttachmentId);
+  if (new Set(attachmentIds).size !== attachmentIds.length) {
+    throw new BadRequestException({
+      code: 'DATA_MIGRATION_ATTACHMENT_DUPLICATE', message: '附件来源标识不得重复',
+    });
+  }
+}
+
+function migrationSourceFactHash(input: ApplyDataMigrationRecordDto): string {
+  return digest(canonicalJson({
+    sourceRecordId: input.sourceRecordId,
+    sourceVersion: input.sourceVersion,
+    entityType: input.entityType,
+    payloadHash: input.payloadHash,
+    associationSourceIds: [...input.associationSourceIds].sort(),
+    attachments: [...input.attachments]
+      .map((item) => ({ sourceAttachmentId: item.sourceAttachmentId, checksum: item.checksum }))
+      .sort((left, right) => left.sourceAttachmentId.localeCompare(right.sourceAttachmentId)),
+  }));
+}
+
+function isDuplicateKeyError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 11000;
+}
+
+export const dataMigrationChecksum = Object.freeze({
+  canonicalJson, digest, roll, sourceFactHash: migrationSourceFactHash, empty: EMPTY_CHECKSUM,
+});

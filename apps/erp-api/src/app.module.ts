@@ -32,6 +32,7 @@ import { PayrollModule } from './modules/payroll/payroll.module.js';
 import { TreasuryModule } from './modules/treasury/treasury.module.js';
 import { OpModule } from './modules/op/op.module.js';
 import { AnalyticsModule } from './modules/analytics/analytics.module.js';
+import { DataMigrationModule } from './modules/data-migration/data-migration.module.js';
 
 const mongoLogger = new Logger('MongoDB');
 
@@ -78,6 +79,7 @@ const mongoLogger = new Logger('MongoDB');
     TreasuryModule,
     OpModule,
     AnalyticsModule,
+    DataMigrationModule,
     TraceMiddlewareModule,
     TenantContextModule,
     ObservabilityModule,
