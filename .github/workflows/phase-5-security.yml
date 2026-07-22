@@ -159,6 +159,43 @@ jobs:
           skip-dirs: node_modules,.next,dist,coverage
           timeout: 10m
 
+  performance-contract:
+    name: 性能容量契约
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - name: 安装校验过摘要的 k6 2.0.0
+        shell: bash
+        run: |
+          mkdir --parents "$RUNNER_TEMP/k6-bin"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$RUNNER_TEMP/k6.tar.gz" \
+            https://github.com/grafana/k6/releases/download/v2.0.0/k6-v2.0.0-linux-amd64.tar.gz
+          echo "2ae87d976f6cdba17185bdd980d8819a3a98e9092c6f0638cd58272ecefc8b90  $RUNNER_TEMP/k6.tar.gz" \
+            | sha256sum --check --strict
+          tar --extract --gzip --file "$RUNNER_TEMP/k6.tar.gz" \
+            --directory "$RUNNER_TEMP/k6-bin" --strip-components=1
+
+      - name: 检查只读容量脚本与证据契约
+        env:
+          PERFORMANCE_INSPECT_ONLY: 'true'
+          PERFORMANCE_BASE_URL: https://erp.example.invalid
+          PERFORMANCE_AS_OF: '2026-07-01'
+          PERFORMANCE_API_RESULT_PATH: /tmp/phase-5-k6-inspect.json
+        run: |
+          "$RUNNER_TEMP/k6-bin/k6" inspect scripts/load/phase-5-api-capacity.js
+          node scripts/performance/validate-phase-5-capacity.mjs --self-test
+
   container-images:
     name: 生产镜像（${{ matrix.image }}）
     runs-on: ubuntu-latest

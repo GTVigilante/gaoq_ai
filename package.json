@@ -19,7 +19,9 @@
     "security:licenses": "pnpm licenses list --prod --json | node scripts/validate-dependency-licenses.mjs",
     "security:containers": "node scripts/validate-container-images.mjs",
     "security:validate": "node scripts/validate-security-workflow.mjs",
-    "check": "pnpm lint && pnpm typecheck && pnpm test && node scripts/validate-docs.mjs && pnpm security:validate && pnpm security:containers"
+    "performance:validate": "node scripts/performance/validate-phase-5-capacity.mjs",
+    "performance:self-test": "node scripts/performance/validate-phase-5-capacity.mjs --self-test",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && node scripts/validate-docs.mjs && pnpm security:validate && pnpm security:containers && pnpm performance:self-test"
   },
   "pnpm": {
     "overrides": {
