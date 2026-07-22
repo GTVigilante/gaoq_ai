@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
 import type { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import type { ApprovalApplicationService } from '../../approval/application/approval-application.service.js';
+import type { AccessProfileRepository } from '../../identity/access-profile.repository.js';
 import {
   applyRecruitmentOfferApprovalOutcome,
   createRecruitmentOffer,
@@ -22,7 +23,10 @@ import type {
   RecruitmentOfferEvidenceRepository,
   RecruitmentPositionRepository,
 } from '../persistence/recruitment.repositories.js';
-import { RecruitmentOfferService } from './recruitment-offer.service.js';
+import {
+  RecruitmentOfferService,
+  type ImportRecruitmentOfferFromMigrationInput,
+} from './recruitment-offer.service.js';
 
 const APPLICATION_ID = '01J8ZQK7V0A2M4N6P8R0T2W4Y7';
 const CANDIDATE_ID = '01J8ZQK7V0A2M4N6P8R0T2W4Y6';
@@ -39,6 +43,36 @@ const terms = {
   proposedStartDate: '2026-08-15', probationMonths: 3,
   employmentType: 'full_time', workLocation: '上海', benefitsSummary: '标准福利计划',
 };
+
+function migrationInput(): ImportRecruitmentOfferFromMigrationInput {
+  return {
+    targetId: null, applicationId: APPLICATION_ID, completedInterviewId: INTERVIEW_ID,
+    createdByEmployeeId: 'employee-hr', terms,
+    expiresAt: '2027-08-01T00:00:00.000Z',
+    retentionExpiresAt: '2033-08-01T00:00:00.000Z', status: 'accepted',
+    approvalReferenceType: 'legacy_history', approvalReferenceId: APPROVAL_ID,
+    sendRequested: true,
+    sentProof: { proofHash: 'a'.repeat(43), occurredAt: '2026-07-21T03:00:00.000Z' },
+    decisionProof: {
+      decision: 'accepted', proofHash: 'b'.repeat(43),
+      occurredAt: '2026-07-21T04:00:00.000Z',
+    },
+    signedProof: null, version: 6,
+    createdAt: '2026-07-21T01:00:00.000Z', updatedAt: '2026-07-21T04:00:00.000Z',
+    applicationBaselineVersion: 3,
+    applicationBaselineUpdatedAt: '2026-07-21T00:00:00.000Z',
+    applicationActions: [
+      { targetStage: 'offer_approval', reasonCode: null, occurredAt: '2026-07-21T02:00:00.000Z' },
+      { targetStage: 'offer_sent', reasonCode: null, occurredAt: '2026-07-21T03:00:00.000Z' },
+      { targetStage: 'offer_accepted', reasonCode: null, occurredAt: '2026-07-21T04:00:00.000Z' },
+    ],
+    expectedApplicationStage: 'offer_accepted', expectedApplicationVersion: 6,
+    applicationEndedAt: null, applicationUpdatedAt: '2026-07-21T04:00:00.000Z',
+    migrationEvidenceRef:
+      'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/offer-001',
+    evidenceChecksum: 'c'.repeat(43),
+  };
+}
 
 function application(stage: CandidateApplicationStage = 'interview') {
   const version: Record<CandidateApplicationStage, number> = {
@@ -93,6 +127,7 @@ function offer(status: RecruitmentOfferStatus = 'draft') {
 }
 
 function fixture(options?: {
+  readonly actorType?: 'user' | 'service' | 'system_job';
   readonly offerStatus?:
     | 'draft'
     | 'pending_approval'
@@ -102,6 +137,8 @@ function fixture(options?: {
     | 'sent';
   readonly applicationStage?: CandidateApplicationStage;
   readonly approvalStatus?: 'running' | 'approved' | 'rejected';
+  readonly migrationApprovalOutcome?: 'running' | 'approved' | 'rejected';
+  readonly migrationApprovalType?: 'approval_instance' | 'legacy_history';
   readonly scopes?: readonly string[];
 }) {
   const execute = vi.fn().mockImplementation(
@@ -115,7 +152,8 @@ function fixture(options?: {
   const trusted = {
     tenant: { tenantId: 'tenant-001', source: 'access_token' as const },
     actor: {
-      actorId: 'actor-001', tenantId: 'tenant-001', actorType: 'user' as const,
+      actorId: 'actor-001', tenantId: 'tenant-001',
+      actorType: options?.actorType ?? 'user' as const,
       roleCodes: [], scopes: options?.scopes ?? ['erp:recruitment:offer:sync_approval'],
       departmentIds: ['department-001'], traceId: 'trace-001',
     },
@@ -137,11 +175,16 @@ function fixture(options?: {
       templateCode: 'recruitment_offer', templateRevision: 1, riskLevel: 'R2', version: 3,
       submittedAt: NOW.toISOString(), completedAt: NOW.toISOString(),
     }),
+    verifyRecruitmentMigrationReference: vi.fn().mockResolvedValue({
+      id: APPROVAL_ID, type: options?.migrationApprovalType ?? 'legacy_history',
+      templateCode: 'recruitment_offer', outcome: options?.migrationApprovalOutcome ?? 'approved',
+    }),
   };
   const applications = {
     findById: vi.fn().mockResolvedValue(application(options?.applicationStage)),
     replace: vi.fn().mockResolvedValue(undefined),
   };
+  const profiles = { findActorIdByEmployee: vi.fn().mockResolvedValue('creator-actor-001') };
   const stages = { append: vi.fn().mockResolvedValue(undefined) };
   const positions = { findById: vi.fn().mockResolvedValue({
     id: POSITION_ID, departmentId: 'department-001', status: 'open',
@@ -152,14 +195,20 @@ function fixture(options?: {
   const offers = {
     findById: vi.fn().mockResolvedValue(offer(options?.offerStatus)),
     insert: vi.fn().mockResolvedValue(undefined),
+    insertMigrated: vi.fn().mockResolvedValue(undefined),
+    findMigrationEvidenceById: vi.fn().mockResolvedValue(null),
     replace: vi.fn().mockResolvedValue(undefined),
   };
-  const evidence = { append: vi.fn().mockResolvedValue(undefined) };
+  const evidence = {
+    append: vi.fn().mockResolvedValue(undefined),
+    findByOffer: vi.fn().mockResolvedValue([]),
+  };
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
   const service = new RecruitmentOfferService(
     { execute } as unknown as IdempotencyService,
     context as unknown as TenantContextService,
     approvals as unknown as ApprovalApplicationService,
+    profiles as unknown as AccessProfileRepository,
     applications as unknown as CandidateApplicationRepository,
     stages as unknown as CandidateApplicationStageRepository,
     positions as unknown as RecruitmentPositionRepository,
@@ -168,10 +217,159 @@ function fixture(options?: {
     evidence as unknown as RecruitmentOfferEvidenceRepository,
     outbox as unknown as RecruitmentOutboxWriter,
   );
-  return { service, execute, approvals, applications, stages, offers, evidence, outbox };
+  return { service, execute, approvals, profiles, applications, stages, offers, evidence, outbox };
 }
 
 describe('RecruitmentOfferService', () => {
+  it('迁移 Offer 原子写入 L4 聚合、外部摘要和申请最终阶段', async () => {
+    const store = fixture({
+      actorType: 'service',
+      scopes: ['erp:migration:execute', 'erp:recruitment:migration:write'],
+    });
+    const result = await store.service.importOfferFromMigration(
+      'offer-migration-key-001', migrationInput(),
+    );
+    expect(store.approvals.verifyRecruitmentMigrationReference).toHaveBeenCalledWith(
+      'legacy_history', APPROVAL_ID, SESSION,
+    );
+    expect(store.offers.insertMigrated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'accepted', approvalHistoryId: APPROVAL_ID, version: 6,
+        createdBy: 'creator-actor-001',
+      }),
+      expect.stringContaining('/attachments/offer-001'), 'c'.repeat(43), SESSION,
+    );
+    expect(store.evidence.append).toHaveBeenCalledTimes(2);
+    expect(store.evidence.append).toHaveBeenCalledWith(
+      expect.objectContaining({ actorId: 'actor-001', source: 'migration_worm' }), SESSION,
+    );
+    expect(store.applications.replace).toHaveBeenCalledWith(expect.objectContaining({
+      stage: 'offer_accepted', completedInterviewId: INTERVIEW_ID,
+      version: 6,
+    }), 3, SESSION);
+    expect(store.stages.append).not.toHaveBeenCalled();
+    expect(store.outbox.append).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(store.outbox.append.mock.calls)).not.toContain('标准福利计划');
+    expect(result.offer).toMatchObject({ status: 'accepted', version: 6 });
+    expect(result.offer).not.toHaveProperty('terms');
+  });
+
+  it('迁移 Offer 拒绝跨聚合终态矛盾和被篡改的申请基线时间', async () => {
+    const mismatched = fixture({
+      actorType: 'service',
+      scopes: ['erp:migration:execute', 'erp:recruitment:migration:write'],
+    });
+    await expect(mismatched.service.importOfferFromMigration('offer-migration-key-002', {
+      ...migrationInput(), expectedApplicationStage: 'rejected',
+      applicationActions: [
+        ...migrationInput().applicationActions.slice(0, 1),
+        {
+          targetStage: 'rejected', reasonCode: 'offer_approval_rejected',
+          occurredAt: '2026-07-21T04:00:00.000Z',
+        },
+      ],
+      expectedApplicationVersion: 5,
+      applicationEndedAt: '2026-07-21T04:00:00.000Z',
+    })).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_MIGRATION_OFFER_APPLICATION_CONTROL_INVALID' },
+    });
+    expect(mismatched.offers.insertMigrated).not.toHaveBeenCalled();
+
+    const changedBaseline = fixture({
+      actorType: 'service',
+      scopes: ['erp:migration:execute', 'erp:recruitment:migration:write'],
+    });
+    await expect(changedBaseline.service.importOfferFromMigration('offer-migration-key-003', {
+      ...migrationInput(), applicationBaselineUpdatedAt: '2026-07-20T23:59:59.000Z',
+    })).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_MIGRATION_OFFER_APPLICATION_BASELINE_CONFLICT' },
+    });
+    expect(changedBaseline.offers.insertMigrated).not.toHaveBeenCalled();
+  });
+
+  it('迁移 Offer 拒绝语义相反的候选人决定和倒置证据时间线', async () => {
+    const store = fixture({
+      actorType: 'service',
+      scopes: ['erp:migration:execute', 'erp:recruitment:migration:write'],
+    });
+    await expect(store.service.importOfferFromMigration('offer-migration-key-004', {
+      ...migrationInput(),
+      decisionProof: {
+        decision: 'declined', proofHash: 'b'.repeat(43),
+        occurredAt: '2026-07-21T04:00:00.000Z',
+      },
+    })).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_MIGRATION_OFFER_APPLICATION_CONTROL_INVALID' },
+    });
+    await expect(store.service.importOfferFromMigration('offer-migration-key-005', {
+      ...migrationInput(),
+      sentProof: { proofHash: 'a'.repeat(43), occurredAt: '2026-07-21T03:30:00.000Z' },
+      decisionProof: {
+        decision: 'accepted', proofHash: 'b'.repeat(43),
+        occurredAt: '2026-07-21T03:00:00.000Z',
+      },
+    })).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_MIGRATION_OFFER_TIMELINE_CONTROL_INVALID' },
+    });
+    expect(store.offers.insertMigrated).not.toHaveBeenCalled();
+  });
+
+  it('迁移待审批与审批拒绝状态使用不同审批引用并精确回放申请', async () => {
+    const pending = fixture({
+      actorType: 'service', migrationApprovalType: 'approval_instance',
+      migrationApprovalOutcome: 'running',
+      scopes: ['erp:migration:execute', 'erp:recruitment:migration:write'],
+    });
+    await pending.service.importOfferFromMigration('offer-migration-key-006', {
+      ...migrationInput(), status: 'pending_approval',
+      approvalReferenceType: 'approval_instance', sendRequested: false,
+      sentProof: null, decisionProof: null, version: 2,
+      updatedAt: '2026-07-21T02:00:00.000Z',
+      applicationActions: [{
+        targetStage: 'offer_approval', reasonCode: null,
+        occurredAt: '2026-07-21T02:00:00.000Z',
+      }],
+      expectedApplicationStage: 'offer_approval', expectedApplicationVersion: 4,
+      applicationUpdatedAt: '2026-07-21T02:00:00.000Z',
+    });
+    expect(pending.approvals.verifyRecruitmentMigrationReference).toHaveBeenCalledWith(
+      'approval_instance', APPROVAL_ID, SESSION,
+    );
+    expect(pending.applications.replace).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: 'offer_approval', version: 4 }), 3, SESSION,
+    );
+
+    const rejected = fixture({
+      actorType: 'service', migrationApprovalOutcome: 'rejected',
+      scopes: ['erp:migration:execute', 'erp:recruitment:migration:write'],
+    });
+    await rejected.service.importOfferFromMigration('offer-migration-key-007', {
+      ...migrationInput(), status: 'rejected', sendRequested: false,
+      sentProof: null, decisionProof: null, version: 3,
+      updatedAt: '2026-07-21T02:30:00.000Z',
+      applicationActions: [
+        {
+          targetStage: 'offer_approval', reasonCode: null,
+          occurredAt: '2026-07-21T02:00:00.000Z',
+        },
+        {
+          targetStage: 'rejected', reasonCode: 'offer_approval_rejected',
+          occurredAt: '2026-07-21T02:30:00.000Z',
+        },
+      ],
+      expectedApplicationStage: 'rejected', expectedApplicationVersion: 5,
+      applicationEndedAt: '2026-07-21T02:30:00.000Z',
+      applicationUpdatedAt: '2026-07-21T02:30:00.000Z',
+    });
+    expect(rejected.offers.insertMigrated).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'rejected', approvalHistoryId: APPROVAL_ID, version: 3 }),
+      expect.any(String), 'c'.repeat(43), SESSION,
+    );
+    expect(rejected.applications.replace).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: 'rejected', version: 5 }), 3, SESSION,
+    );
+  });
+
   it('只有该申请已完成面试才能创建加密 Offer 聚合', async () => {
     const store = fixture();
     const result = await store.service.create(APPLICATION_ID, 3, 'offer-create-key-001', {

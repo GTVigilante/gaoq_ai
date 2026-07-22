@@ -17,6 +17,7 @@ import {
   RecruitmentCandidateRepository,
   RecruitmentInterviewFeedbackRepository,
   RecruitmentInterviewRepository,
+  RecruitmentOfferEvidenceRepository,
   RecruitmentOfferRepository,
 } from './recruitment.repositories.js';
 import type {
@@ -24,6 +25,7 @@ import type {
   RecruitmentInterviewDocument,
   RecruitmentInterviewFeedbackDocument,
   RecruitmentOfferDocument,
+  RecruitmentOfferEvidenceDocument,
 } from './recruitment.schemas.js';
 
 const candidate = createCandidate({
@@ -158,13 +160,59 @@ describe('RecruitmentOfferRepository', () => {
       expiresAt: new Date('2026-08-01T00:00:00.000Z'),
       retentionExpiresAt: new Date('2033-08-01T00:00:00.000Z'), actorId: 'actor-001',
     }, new Date('2026-07-21T00:00:00.000Z'));
-    await new RecruitmentOfferRepository(
+    const repository = new RecruitmentOfferRepository(
       context(), { create } as unknown as Model<RecruitmentOfferDocument>, crypto(),
-    ).insert(offer, { id: 'session' } as never);
+    );
+    await repository.insert(offer, { id: 'session' } as never);
     const stored = create.mock.calls[0]?.[0] as unknown;
     expect(JSON.stringify(stored)).not.toContain('标准福利计划');
     expect(JSON.stringify(stored)).not.toContain('monthlyBaseSalaryMinor');
     const records = stored as readonly [{ readonly termsCiphertext: unknown }];
     expect(typeof records[0].termsCiphertext).toBe('string');
+    await repository.insertMigrated(
+      offer,
+      'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/offer-001',
+      'a'.repeat(43),
+      { id: 'session' } as never,
+    );
+    const migrated = create.mock.calls[1]?.[0] as unknown as readonly Record<string, unknown>[];
+    expect(migrated[0]).toMatchObject({
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/offer-001',
+      migrationEvidenceChecksum: 'a'.repeat(43),
+    });
+    expect(JSON.stringify(migrated)).not.toContain('标准福利计划');
+  });
+});
+
+describe('RecruitmentOfferEvidenceRepository', () => {
+  it('按租户读取迁移摘要并恢复严格 ISO 时间，不返回 Mongo 内部字段', async () => {
+    const records = [{
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4X5', tenantId: 'tenant-001',
+      offerId: '01J8ZQK7V0A2M4N6P8R0T2W4X3', kind: 'signed', category: 'esign',
+      source: 'migration_worm', subjectCandidateId: null, sendRequestId: null,
+      authenticationEvidenceId: null, esignFlowId: 'esign-flow-001',
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/offer-001',
+      evidenceChecksum: 'a'.repeat(43), proofHash: 'b'.repeat(43),
+      occurredAt: new Date('2026-07-21T04:00:00.000Z'), actorId: 'actor-001',
+      recordedAt: new Date('2026-07-21T04:00:00.000Z'), _id: 'mongo-internal-id',
+    }];
+    const exec = vi.fn().mockResolvedValue(records);
+    const sort = vi.fn().mockReturnValue({ lean: () => ({ exec }) });
+    const find = vi.fn().mockReturnValue({ sort });
+    const repository = new RecruitmentOfferEvidenceRepository(
+      context(), { find } as unknown as Model<RecruitmentOfferEvidenceDocument>,
+    );
+    const result = await repository.findByOffer('01J8ZQK7V0A2M4N6P8R0T2W4X3');
+    expect(find).toHaveBeenCalledWith({
+      tenantId: 'tenant-001', offerId: '01J8ZQK7V0A2M4N6P8R0T2W4X3',
+    });
+    expect(sort).toHaveBeenCalledWith({ occurredAt: 1, id: 1 });
+    expect(result[0]).toMatchObject({
+      source: 'migration_worm', kind: 'signed',
+      occurredAt: '2026-07-21T04:00:00.000Z', recordedAt: '2026-07-21T04:00:00.000Z',
+    });
+    expect(result[0]).not.toHaveProperty('_id');
   });
 });

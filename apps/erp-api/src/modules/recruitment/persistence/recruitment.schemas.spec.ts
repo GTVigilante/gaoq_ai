@@ -305,6 +305,22 @@ describe('RecruitmentSchemas', () => {
     await expect(new OfferEvidenceModel({
       ...evidence, kind: 'accepted', category: 'candidate_decision', source: 'candidate_portal',
     }).validate()).rejects.toThrow('候选人决定证据字段不完整');
+    await new OfferEvidenceModel({
+      ...evidence,
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4X6', kind: 'signed', category: 'esign',
+      source: 'migration_worm', sendRequestId: null, esignFlowId: 'esign-flow-001',
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/offer-evidence-001',
+      evidenceChecksum: 'b'.repeat(43),
+    }).validate();
+    await expect(new OfferEvidenceModel({
+      ...evidence, source: 'migration_worm', migrationEvidenceRef: null,
+      evidenceChecksum: 'b'.repeat(43),
+    }).validate()).rejects.toThrow('迁移证据字段不完整');
+    await expect(new OfferEvidenceModel({
+      ...evidence, kind: 'signed', category: 'esign', source: 'integration_delivery',
+      sendRequestId: null, esignFlowId: 'esign-flow-001',
+    }).validate()).rejects.toThrow('不得伪装迁移证据');
     for (const field of ['payload', 'receipt', 'responseBody', 'candidateName']) {
       expect(RecruitmentOfferEvidenceRecordSchema.path(field)).toBeUndefined();
     }

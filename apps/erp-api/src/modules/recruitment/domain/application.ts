@@ -64,6 +64,13 @@ export interface CandidateApplicationBaselineAction {
   readonly occurredAt: string;
 }
 
+export interface CandidateApplicationOfferMigrationAction {
+  readonly targetStage: 'offer_approval' | 'offer_sent' | 'offer_accepted' | 'rejected' | 'withdrawn';
+  readonly evidenceId: string;
+  readonly reasonCode: string | null;
+  readonly occurredAt: string;
+}
+
 export function createCandidateApplication(
   input: {
     readonly id: string;
@@ -162,6 +169,57 @@ export function restoreCandidateApplicationBaselineFromMigration(
     throw new RecruitmentDomainError(
       'CANDIDATE_MIGRATION_APPLICATION_CONTROL_MISMATCH',
       '申请迁移最终阶段、版本或时间控制事实不一致',
+    );
+  }
+  return application;
+}
+
+/** Offer 迁移专用：从已冻结面试基线回放后续申请阶段，不写普通阶段日志。 */
+export function restoreCandidateApplicationOfferStagesFromMigration(
+  baseline: CandidateApplication,
+  input: {
+    readonly actorId: string;
+    readonly actions: readonly CandidateApplicationOfferMigrationAction[];
+    readonly expectedStage: CandidateApplicationStage;
+    readonly expectedVersion: number;
+    readonly endedAt: string | null;
+    readonly updatedAt: string;
+  },
+  now: Date,
+): CandidateApplication {
+  const baselineUpdatedAt = strictApplicationMigrationIso(baseline.updatedAt);
+  if (baseline.stage !== 'interview' || input.actions.length > 5 ||
+    input.expectedVersion !== baseline.version + input.actions.length) {
+    throw new RecruitmentDomainError(
+      'CANDIDATE_MIGRATION_OFFER_TIMELINE_INVALID', 'Offer 迁移申请基线或版本无效',
+    );
+  }
+  let application = baseline;
+  let previous = baselineUpdatedAt;
+  for (const action of input.actions) {
+    const occurredAt = strictApplicationMigrationIso(action.occurredAt);
+    if (occurredAt < previous || Date.parse(occurredAt) > now.getTime() + 5 * 60 * 1_000) {
+      throw new RecruitmentDomainError(
+        'CANDIDATE_MIGRATION_OFFER_TIMELINE_INVALID', 'Offer 申请动作必须按时间排序且不能位于未来',
+      );
+    }
+    application = transitionCandidateApplication(application, {
+      tenantId: baseline.tenantId,
+      expectedVersion: application.version,
+      actorId: input.actorId,
+      targetStage: action.targetStage,
+      evidenceId: action.evidenceId,
+      ...(action.reasonCode === null ? {} : { reasonCode: action.reasonCode }),
+    }, new Date(occurredAt)).application;
+    previous = occurredAt;
+  }
+  const endedAt = input.endedAt === null ? null : strictApplicationMigrationIso(input.endedAt);
+  const updatedAt = strictApplicationMigrationIso(input.updatedAt);
+  if (application.stage !== input.expectedStage || application.version !== input.expectedVersion ||
+    application.endedAt !== endedAt || application.updatedAt !== updatedAt) {
+    throw new RecruitmentDomainError(
+      'CANDIDATE_MIGRATION_OFFER_CONTROL_MISMATCH',
+      'Offer 迁移申请最终阶段、版本或时间控制事实不一致',
     );
   }
   return application;

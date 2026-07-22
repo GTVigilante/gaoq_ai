@@ -41,6 +41,10 @@ import {
   RecruitmentInterviewService,
   type ImportRecruitmentInterviewFromMigrationInput,
 } from '../../recruitment/application/recruitment-interview.service.js';
+import {
+  RecruitmentOfferService,
+  type ImportRecruitmentOfferFromMigrationInput,
+} from '../../recruitment/application/recruitment-offer.service.js';
 import type {
   CreateDepartmentDto,
   CreateEmployeeDto,
@@ -144,6 +148,8 @@ export class DataMigrationService {
     private readonly recruitmentCandidates?: RecruitmentApplicationService,
     @Inject(RecruitmentInterviewService)
     private readonly recruitmentInterviews?: RecruitmentInterviewService,
+    @Inject(RecruitmentOfferService)
+    private readonly recruitmentOffers?: RecruitmentOfferService,
   ) {}
 
   async start(input: CreateDataMigrationRunDto) {
@@ -531,6 +537,22 @@ export class DataMigrationService {
       await Promise.all(uniqueAssociationTargets(specs).map(async (spec) =>
         this.requireMapping(run, spec.entityType, spec.sourceAssociationId)));
       return;
+    } else if (input.entityType === 'recruitment.offer') {
+      const payload = recruitmentOfferPayload(input.payload);
+      const specs = recruitmentOfferAssociationSpecs(payload);
+      assertAssociations(
+        input.associationSourceIds,
+        [...new Set(specs.map((spec) => spec.sourceAssociationId))],
+      );
+      const evidence = input.attachments.find((attachment) =>
+        attachment.sourceAttachmentId === payload.offerEvidenceSourceAttachmentId);
+      if (input.attachments.length !== 1 ||
+        evidence?.checksum !== payload.offerEvidenceChecksum) {
+        throw new Error('DATA_MIGRATION_OFFER_EVIDENCE_REQUIRED');
+      }
+      await Promise.all(uniqueAssociationTargets(specs).map(async (spec) =>
+        this.requireMapping(run, spec.entityType, spec.sourceAssociationId)));
+      return;
     } else {
       const payload = approvalTemplatePayload(input.payload);
       const specs = approvalTemplateAssociationSpecs(payload);
@@ -859,6 +881,54 @@ export class DataMigrationService {
         evidenceChecksum: payload.interviewEvidenceChecksum,
       });
       return target(result.interview);
+    }
+    if (input.entityType === 'recruitment.offer') {
+      const payload = recruitmentOfferPayload(input.payload);
+      if (this.recruitmentOffers === undefined) throw new Error('迁移招聘 Offer 适配器未装配');
+      const [application, interview, createdBy, approval] = await Promise.all([
+        this.requireMapping(run, 'recruitment.application', payload.applicationSourceId),
+        this.requireMapping(run, 'recruitment.interview', payload.completedInterviewSourceId),
+        this.requireMapping(run, 'org.employee', payload.createdByEmployeeSourceId),
+        payload.approvalReferenceType === null || payload.approvalReferenceSourceId === null
+          ? Promise.resolve(null)
+          : this.requireMapping(
+              run, payload.approvalReferenceType, payload.approvalReferenceSourceId,
+            ),
+      ]);
+      const result = await this.recruitmentOffers.importOfferFromMigration(key, {
+        targetId: mapping?.targetId ?? null,
+        applicationId: application.targetId,
+        completedInterviewId: interview.targetId,
+        createdByEmployeeId: createdBy.targetId,
+        terms: payload.terms,
+        expiresAt: payload.expiresAt,
+        retentionExpiresAt: payload.retentionExpiresAt,
+        status: payload.status,
+        approvalReferenceType: payload.approvalReferenceType === 'approval.instance'
+          ? 'approval_instance'
+          : payload.approvalReferenceType === 'approval.history'
+            ? 'legacy_history'
+            : null,
+        approvalReferenceId: approval?.targetId ?? null,
+        sendRequested: payload.sendRequested,
+        sentProof: payload.sentProof,
+        decisionProof: payload.decisionProof,
+        signedProof: payload.signedProof,
+        version: payload.version,
+        createdAt: payload.createdAt,
+        updatedAt: payload.updatedAt,
+        applicationBaselineVersion: payload.applicationBaselineVersion,
+        applicationBaselineUpdatedAt: payload.applicationBaselineUpdatedAt,
+        applicationActions: payload.applicationActions,
+        expectedApplicationStage: payload.expectedApplicationStage,
+        expectedApplicationVersion: payload.expectedApplicationVersion,
+        applicationEndedAt: payload.applicationEndedAt,
+        applicationUpdatedAt: payload.applicationUpdatedAt,
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${run.id}/attachments/${payload.offerEvidenceSourceAttachmentId}`,
+        evidenceChecksum: payload.offerEvidenceChecksum,
+      });
+      return target(result.offer);
     }
     const payload = approvalTemplatePayload(input.payload);
     if (this.approvals === undefined) throw new Error('迁移审批适配器未装配');
@@ -1306,7 +1376,8 @@ type AssociationTargetType =
   | 'recruitment.requisition'
   | 'recruitment.position'
   | 'recruitment.candidate'
-  | 'recruitment.application';
+  | 'recruitment.application'
+  | 'recruitment.interview';
 interface AssociationEvidence {
   readonly relationship: AssociationRelationship;
   readonly sourceAssociationId: string;
@@ -2292,6 +2363,217 @@ function recruitmentInterviewAssociationSpecs(
   ]);
 }
 
+type RecruitmentOfferMigrationPayload = Omit<
+  ImportRecruitmentOfferFromMigrationInput,
+  | 'targetId'
+  | 'applicationId'
+  | 'completedInterviewId'
+  | 'createdByEmployeeId'
+  | 'approvalReferenceType'
+  | 'approvalReferenceId'
+  | 'migrationEvidenceRef'
+  | 'evidenceChecksum'
+> & {
+  readonly applicationSourceId: string;
+  readonly completedInterviewSourceId: string;
+  readonly createdByEmployeeSourceId: string;
+  readonly approvalReferenceType: 'approval.instance' | 'approval.history' | null;
+  readonly approvalReferenceSourceId: string | null;
+  readonly offerEvidenceSourceAttachmentId: string;
+  readonly offerEvidenceChecksum: string;
+};
+
+function recruitmentOfferPayload(
+  value: Readonly<Record<string, unknown>>,
+): RecruitmentOfferMigrationPayload {
+  exactKeys(value, [
+    'applicationActions', 'applicationBaselineUpdatedAt', 'applicationBaselineVersion',
+    'applicationEndedAt', 'applicationSourceId', 'applicationUpdatedAt',
+    'approvalReferenceSourceId', 'approvalReferenceType', 'completedInterviewSourceId',
+    'createdAt', 'createdByEmployeeSourceId', 'decisionProof', 'expectedApplicationStage',
+    'expectedApplicationVersion', 'expiresAt', 'offerEvidenceChecksum',
+    'offerEvidenceSourceAttachmentId', 'retentionExpiresAt', 'sendRequested', 'sentProof',
+    'signedProof', 'status', 'terms', 'updatedAt', 'version',
+  ]);
+  const sourceIds = [
+    value.applicationSourceId, value.completedInterviewSourceId,
+    value.createdByEmployeeSourceId, value.offerEvidenceSourceAttachmentId,
+  ];
+  if (sourceIds.some((item) => typeof item !== 'string' || !SOURCE_ID_PATTERN.test(item)) ||
+    (value.approvalReferenceSourceId !== null &&
+      (typeof value.approvalReferenceSourceId !== 'string' ||
+        !SOURCE_ID_PATTERN.test(value.approvalReferenceSourceId))) ||
+    !['draft', 'pending_approval', 'approved', 'rejected', 'sending', 'sent', 'accepted',
+      'declined', 'expired', 'cancelled', 'signed'].includes(String(value.status)) ||
+    typeof value.sendRequested !== 'boolean' ||
+    !Number.isSafeInteger(value.version) || Number(value.version) < 1 ||
+    !Number.isSafeInteger(value.applicationBaselineVersion) ||
+    Number(value.applicationBaselineVersion) < 1 ||
+    !Number.isSafeInteger(value.expectedApplicationVersion) ||
+    Number(value.expectedApplicationVersion) < 1 ||
+    !['interview', 'offer_approval', 'offer_sent', 'offer_accepted', 'rejected', 'withdrawn']
+      .includes(String(value.expectedApplicationStage)) ||
+    !isStrictUtcIso(value.expiresAt) || !isStrictUtcIso(value.retentionExpiresAt) ||
+    !isStrictUtcIso(value.createdAt) || !isStrictUtcIso(value.updatedAt) ||
+    !isStrictUtcIso(value.applicationBaselineUpdatedAt) ||
+    !isStrictUtcIso(value.applicationUpdatedAt) ||
+    (value.applicationEndedAt !== null && !isStrictUtcIso(value.applicationEndedAt)) ||
+    typeof value.offerEvidenceChecksum !== 'string' ||
+    !HASH_PATTERN.test(value.offerEvidenceChecksum) || !Array.isArray(value.applicationActions) ||
+    value.applicationActions.length > 5 || !isPlainMigrationObject(value.terms)) {
+    throw invalidPayload();
+  }
+  const expectedApprovalType = value.status === 'draft'
+    ? null
+    : value.status === 'pending_approval'
+      ? 'approval.instance'
+      : 'approval.history';
+  if (value.approvalReferenceType !== expectedApprovalType ||
+    (expectedApprovalType === null) !== (value.approvalReferenceSourceId === null)) {
+    throw invalidPayload();
+  }
+  return {
+    applicationSourceId: value.applicationSourceId as string,
+    completedInterviewSourceId: value.completedInterviewSourceId as string,
+    createdByEmployeeSourceId: value.createdByEmployeeSourceId as string,
+    terms: recruitmentOfferTermsPayload(value.terms),
+    expiresAt: value.expiresAt,
+    retentionExpiresAt: value.retentionExpiresAt,
+    status: value.status as RecruitmentOfferMigrationPayload['status'],
+    approvalReferenceType: expectedApprovalType,
+    approvalReferenceSourceId: value.approvalReferenceSourceId,
+    sendRequested: value.sendRequested,
+    sentProof: recruitmentOfferProofPayload(value.sentProof),
+    decisionProof: recruitmentOfferDecisionProofPayload(value.decisionProof),
+    signedProof: recruitmentOfferProofPayload(value.signedProof),
+    version: Number(value.version),
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    applicationBaselineVersion: Number(value.applicationBaselineVersion),
+    applicationBaselineUpdatedAt: value.applicationBaselineUpdatedAt,
+    applicationActions: value.applicationActions.map(recruitmentOfferApplicationAction),
+    expectedApplicationStage:
+      value.expectedApplicationStage as RecruitmentOfferMigrationPayload['expectedApplicationStage'],
+    expectedApplicationVersion: Number(value.expectedApplicationVersion),
+    applicationEndedAt: value.applicationEndedAt,
+    applicationUpdatedAt: value.applicationUpdatedAt,
+    offerEvidenceSourceAttachmentId: value.offerEvidenceSourceAttachmentId as string,
+    offerEvidenceChecksum: value.offerEvidenceChecksum,
+  };
+}
+
+function recruitmentOfferTermsPayload(
+  value: Readonly<Record<string, unknown>>,
+): ImportRecruitmentOfferFromMigrationInput['terms'] {
+  exactKeys(value, [
+    'annualVariableTargetMinor', 'benefitsSummary', 'currency', 'employmentType',
+    'monthlyBaseSalaryMinor', 'probationMonths', 'proposedStartDate', 'salaryMonths',
+    'signingBonusMinor', 'workLocation',
+  ]);
+  if (value.currency !== 'CNY' ||
+    !Number.isSafeInteger(value.monthlyBaseSalaryMinor) ||
+    Number(value.monthlyBaseSalaryMinor) < 1 ||
+    !Number.isSafeInteger(value.annualVariableTargetMinor) ||
+    Number(value.annualVariableTargetMinor) < 0 ||
+    !Number.isSafeInteger(value.signingBonusMinor) || Number(value.signingBonusMinor) < 0 ||
+    !Number.isSafeInteger(value.salaryMonths) || Number(value.salaryMonths) < 1 ||
+    Number(value.salaryMonths) > 24 || !Number.isSafeInteger(value.probationMonths) ||
+    Number(value.probationMonths) < 0 || Number(value.probationMonths) > 12 ||
+    typeof value.proposedStartDate !== 'string' ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(value.proposedStartDate) ||
+    typeof value.employmentType !== 'string' ||
+    !APPROVAL_CODE_PATTERN.test(value.employmentType) ||
+    typeof value.workLocation !== 'string' || value.workLocation.trim().length < 1 ||
+    value.workLocation.length > 256 || typeof value.benefitsSummary !== 'string' ||
+    value.benefitsSummary.trim().length < 1 || value.benefitsSummary.length > 4_096) {
+    throw invalidPayload();
+  }
+  return {
+    currency: 'CNY',
+    monthlyBaseSalaryMinor: Number(value.monthlyBaseSalaryMinor),
+    salaryMonths: Number(value.salaryMonths),
+    annualVariableTargetMinor: Number(value.annualVariableTargetMinor),
+    signingBonusMinor: Number(value.signingBonusMinor),
+    proposedStartDate: value.proposedStartDate,
+    probationMonths: Number(value.probationMonths),
+    employmentType: value.employmentType,
+    workLocation: value.workLocation,
+    benefitsSummary: value.benefitsSummary,
+  };
+}
+
+function recruitmentOfferProofPayload(
+  value: unknown,
+): { readonly proofHash: string; readonly occurredAt: string } | null {
+  if (value === null) return null;
+  if (!isPlainMigrationObject(value)) throw invalidPayload();
+  exactKeys(value, ['occurredAt', 'proofHash']);
+  if (typeof value.proofHash !== 'string' || !HASH_PATTERN.test(value.proofHash) ||
+    !isStrictUtcIso(value.occurredAt)) throw invalidPayload();
+  return { proofHash: value.proofHash, occurredAt: value.occurredAt };
+}
+
+function recruitmentOfferDecisionProofPayload(
+  value: unknown,
+): ImportRecruitmentOfferFromMigrationInput['decisionProof'] {
+  if (value === null) return null;
+  if (!isPlainMigrationObject(value)) throw invalidPayload();
+  exactKeys(value, ['decision', 'occurredAt', 'proofHash']);
+  if (!['accepted', 'declined'].includes(String(value.decision)) ||
+    typeof value.proofHash !== 'string' || !HASH_PATTERN.test(value.proofHash) ||
+    !isStrictUtcIso(value.occurredAt)) throw invalidPayload();
+  return {
+    decision: value.decision as 'accepted' | 'declined',
+    proofHash: value.proofHash,
+    occurredAt: value.occurredAt,
+  };
+}
+
+function recruitmentOfferApplicationAction(
+  value: unknown,
+): RecruitmentOfferMigrationPayload['applicationActions'][number] {
+  if (!isPlainMigrationObject(value)) throw invalidPayload();
+  exactKeys(value, ['occurredAt', 'reasonCode', 'targetStage']);
+  if (!['offer_approval', 'offer_sent', 'offer_accepted', 'rejected', 'withdrawn']
+    .includes(String(value.targetStage)) ||
+    (value.reasonCode !== null &&
+      (typeof value.reasonCode !== 'string' || !APPROVAL_CODE_PATTERN.test(value.reasonCode))) ||
+    !isStrictUtcIso(value.occurredAt)) throw invalidPayload();
+  return {
+    targetStage: value.targetStage as RecruitmentOfferMigrationPayload['applicationActions'][number]['targetStage'],
+    reasonCode: value.reasonCode,
+    occurredAt: value.occurredAt,
+  };
+}
+
+function recruitmentOfferAssociationSpecs(
+  payload: RecruitmentOfferMigrationPayload,
+): readonly (AssociationEvidence & { readonly entityType: AssociationTargetType })[] {
+  return Object.freeze([
+    {
+      relationship: 'application', sourceAssociationId: payload.applicationSourceId,
+      entityType: 'recruitment.application',
+    },
+    {
+      relationship: 'interview', sourceAssociationId: payload.completedInterviewSourceId,
+      entityType: 'recruitment.interview',
+    },
+    {
+      relationship: 'created_by', sourceAssociationId: payload.createdByEmployeeSourceId,
+      entityType: 'org.employee',
+    },
+    ...(payload.approvalReferenceType === null || payload.approvalReferenceSourceId === null
+      ? []
+      : [{
+          relationship: payload.approvalReferenceType === 'approval.instance'
+            ? 'approval_instance' as const
+            : 'approval_history' as const,
+          sourceAssociationId: payload.approvalReferenceSourceId,
+          entityType: payload.approvalReferenceType,
+        }]),
+  ]);
+}
+
 function assertGovernanceEvidence(
   input: ApplyDataMigrationRecordDto,
   payload: {
@@ -2558,6 +2840,8 @@ function associationEvidence(input: ApplyDataMigrationRecordDto): readonly Assoc
       derived = recruitmentInterviewAssociationSpecs(
         recruitmentInterviewPayload(input.payload),
       );
+    } else if (input.entityType === 'recruitment.offer') {
+      derived = recruitmentOfferAssociationSpecs(recruitmentOfferPayload(input.payload));
     } else derived = [];
   } catch {
     derived = [];
@@ -2675,7 +2959,7 @@ const ASSOCIATION_RELATIONSHIPS = [
   'action_actor', 'principal_approver', 'transfer_from', 'transfer_to',
   'added_approver', 'expected_pending_approver',
   'requisition', 'approval_instance', 'approval_history',
-  'candidate', 'application', 'interviewer',
+  'candidate', 'application', 'interviewer', 'interview',
   'declared_reference',
 ] as const;
 const ASSOCIATION_RELATIONSHIP_SET: ReadonlySet<string> = new Set(ASSOCIATION_RELATIONSHIPS);

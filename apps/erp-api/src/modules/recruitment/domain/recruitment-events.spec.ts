@@ -12,6 +12,7 @@ import {
   buildRecruitmentInterviewEvent,
   buildRecruitmentInterviewFeedbackEvent,
   buildRecruitmentOfferEvent,
+  buildRecruitmentOfferMigratedEvent,
 } from './recruitment-events.js';
 import { createRecruitmentRequisition } from './requisition.js';
 
@@ -110,11 +111,19 @@ describe('RecruitmentDomainEvents', () => {
       retentionExpiresAt: new Date('2033-08-01T00:00:00.000Z'), actorId: 'actor-001',
     }, new Date('2026-07-21T00:00:00.000Z'));
     const event = buildRecruitmentOfferEvent(offer, 'created');
+    const migratedEvent = buildRecruitmentOfferMigratedEvent(offer);
     expect(event).toMatchObject({
       type: 'recruitment.offer.created', aggregateType: 'recruitment.offer',
       payload: { applicationId: 'application-001', status: 'draft' },
     });
     expect(JSON.stringify(event)).not.toMatch(
+      /salary|currency|benefit|workLocation|标准福利计划|3000000|candidate-001/iu,
+    );
+    expect(migratedEvent).toMatchObject({
+      type: 'recruitment.offer.migrated', aggregateType: 'recruitment.offer',
+      payload: { applicationId: 'application-001', completedInterviewId: 'interview-001' },
+    });
+    expect(JSON.stringify(migratedEvent)).not.toMatch(
       /salary|currency|benefit|workLocation|标准福利计划|3000000|candidate-001/iu,
     );
   });

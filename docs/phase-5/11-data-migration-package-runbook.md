@@ -18,11 +18,13 @@
 
 `records.ndjson` 每行是一条完整 JSON 记录，字段与迁移记录 REST 契约一致。禁止空行、额外字段和超过 10 MiB 的单行；序号必须从 1 连续递增。来源生成器必须先计算 payload 摘要，再按控制面契约计算 `sourceFactHash` 与滚动校验和。来源包不得纳入 Git，必须位于受控迁移工作区并执行保留期与销毁策略。
 
-当前 Scope 的执行顺序固定为 `org_reference` → `org_workforce` → 身份开户核对 → `org_employment` → `approval_templates` → `approval_history` → `approval_active_instances` → `recruitment_reference` → `recruitment_candidates` → `recruitment_applications` → `recruitment_interviews`。每个 Scope 使用独立来源包、`sourceRunId`、控制总数和签署证据；劳动关系、审批模板、两类审批实例、招聘参考与面试包内的员工来源引用必须能在同一 `sourceSystem` 的员工映射中解析，审批责任员工、历史发起员工、HC 创建员工、草稿所有者和运行态当前待办人还必须已绑定 ERP 身份，后两者必须为 active。审批实例必须同时引用已经迁移的来源模板记录；HC 必须引用已迁移部门和与状态一致的活动审批/终结历史，职位必须引用包内更早导入的 HC、已迁移部门与职级；申请必须引用已迁移候选人和职位；面试必须引用已迁移申请、创建员工和全部面试官。审批实例、HC、职位、候选人、申请和面试必须为每条记录提供一份 checksum 精确一致的 WORM 证据附件。禁止把多个 Scope 混入同一包。
+当前 Scope 的执行顺序固定为 `org_reference` → `org_workforce` → 身份开户核对 → `org_employment` → `approval_templates` → `approval_history` → `approval_active_instances` → `recruitment_reference` → `recruitment_candidates` → `recruitment_applications` → `recruitment_interviews` → `recruitment_offers`。每个 Scope 使用独立来源包、`sourceRunId`、控制总数和签署证据；劳动关系、审批模板、两类审批实例、招聘参考、面试与 Offer 包内的员工来源引用必须能在同一 `sourceSystem` 的员工映射中解析，审批责任员工、历史发起员工、HC 创建员工、草稿所有者、运行态当前待办人与 Offer 创建员工还必须已绑定 ERP 身份，草稿所有者和运行态当前待办人必须为 active。审批实例必须同时引用已经迁移的来源模板记录；HC 必须引用已迁移部门和与状态一致的活动审批/终结历史，职位必须引用包内更早导入的 HC、已迁移部门与职级；申请必须引用已迁移候选人和职位；面试必须引用已迁移申请、创建员工和全部面试官；Offer 必须引用已迁移申请、该申请已完成面试、创建员工及与状态匹配的运行中审批或终结历史。审批实例、HC、职位、候选人、申请、面试和 Offer 必须为每条记录提供一份 checksum 精确一致的 WORM 证据附件。禁止把多个 Scope 混入同一包。
 
 `recruitment_candidates` 包含 L3 直接身份，必须在受控迁移工作区静态加密，读权限只授予迁移服务与双人复核角色，apply 完成后按批准保留期销毁。CLI、服务日志和证据导出不得输出 payload；候选人明文不得进入命令行参数、Git、工单、聊天或 MCP 上下文。
 
 `recruitment_interviews` 包含 L3 面试地点、会议链接和评价原文，执行与销毁要求等同候选人包。每条记录必须预检申请/员工引用、唯一面试官与唯一评价人、严格时间顺序、`version = 1 + 评价数 + 终态动作数`、完成态评价齐备，以及唯一 WORM 附件；日志、迁移报告、审计、工单和 MCP 不得输出 L3 payload。
+
+`recruitment_offers` 包含 L4 薪酬、福利和工作地点条款，来源包必须使用独立密钥静态加密，解密只发生在隔离迁移执行区；日志、错误、迁移账本、证据导出、工单和 MCP 均不得输出条款。每条记录必须预检申请/已完成面试/创建员工/审批引用、Offer 状态与版本、发送/决定/eSign 摘要链、申请后续阶段回放，以及唯一 WORM 附件。目标端只保存 AES-256-GCM 条款密文、不可变摘要和 WORM 引用，不生成普通审批、投递、候选人决定、签署或申请阶段副作用。
 
 ## 离线预检
 
@@ -42,7 +44,7 @@ pnpm --filter @gaoq/erp-api migration:package -- apply /secure/path/to/package
 unset ERP_MIGRATION_TOKEN
 ```
 
-令牌必须绑定可信租户、`service|system_job` 身份以及 `erp:migration:execute`、当前目标域写权限（组织三个 Scope 为 `erp:org:master:write`，审批模板及两类审批实例为 `erp:approval:migration:write`，招聘参考、候选人、申请与面试 Scope 为 `erp:recruitment:migration:write`）、`erp:migration:attachment:execute` Scope。工具不接受命令行 Token，避免进入 shell history；除 `localhost`/`127.0.0.1` 外只允许 HTTPS。每次 apply 都先完整预检，然后幂等创建来源运行；服务端返回的 checkpoint 决定续传起点，已确认序号不会再次发送。全部记录处理后请求附件搬运并轮询聚合报告，未决附件归零后才调用 complete；默认等待 1800 秒，可通过 `ERP_MIGRATION_ATTACHMENT_WAIT_SECONDS` 设置 10–86400 秒。
+令牌必须绑定可信租户、`service|system_job` 身份以及 `erp:migration:execute`、当前目标域写权限（组织三个 Scope 为 `erp:org:master:write`，审批模板及两类审批实例为 `erp:approval:migration:write`，招聘参考、候选人、申请、面试与 Offer Scope 为 `erp:recruitment:migration:write`）、`erp:migration:attachment:execute` Scope。工具不接受命令行 Token，避免进入 shell history；除 `localhost`/`127.0.0.1` 外只允许 HTTPS。每次 apply 都先完整预检，然后幂等创建来源运行；服务端返回的 checkpoint 决定续传起点，已确认序号不会再次发送。全部记录处理后请求附件搬运并轮询聚合报告，未决附件归零后才调用 complete；默认等待 1800 秒，可通过 `ERP_MIGRATION_ATTACHMENT_WAIT_SECONDS` 设置 10–86400 秒。
 
 ## 操作门禁
 

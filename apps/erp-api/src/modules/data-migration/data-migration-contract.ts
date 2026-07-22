@@ -17,6 +17,7 @@ export const DATA_MIGRATION_SCOPE_ENTITIES = Object.freeze({
   recruitment_candidates: Object.freeze(['recruitment.candidate']),
   recruitment_applications: Object.freeze(['recruitment.application']),
   recruitment_interviews: Object.freeze(['recruitment.interview']),
+  recruitment_offers: Object.freeze(['recruitment.offer']),
 } as const);
 
 export type DataMigrationScope = keyof typeof DATA_MIGRATION_SCOPE_ENTITIES;
@@ -44,6 +45,7 @@ export const DATA_MIGRATION_SCOPE_WRITE_SCOPE: Readonly<Record<DataMigrationScop
     recruitment_candidates: 'erp:recruitment:migration:write',
     recruitment_applications: 'erp:recruitment:migration:write',
     recruitment_interviews: 'erp:recruitment:migration:write',
+    recruitment_offers: 'erp:recruitment:migration:write',
   });
 
 /** 失败关闭地校验实体是否属于本批次范围。 */

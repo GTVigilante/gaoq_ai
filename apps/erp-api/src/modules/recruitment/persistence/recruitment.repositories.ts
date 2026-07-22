@@ -794,6 +794,34 @@ export class RecruitmentOfferEvidenceRepository extends TenantBoundRecruitmentRe
       recordedAt: new Date(evidence.recordedAt),
     }], { session });
   }
+
+  async findByOffer(
+    offerId: string,
+    session?: ClientSession,
+  ): Promise<readonly RecruitmentOfferEvidence[]> {
+    const query = this.records.find({ tenantId: this.tenantId(), offerId })
+      .sort({ occurredAt: 1, id: 1 });
+    if (session !== undefined) query.session(session);
+    const records = await query.lean().exec();
+    return Object.freeze(records.map((record) => deepFreezeRecruitment({
+      id: record.id,
+      tenantId: record.tenantId,
+      offerId: record.offerId,
+      kind: record.kind,
+      category: record.category,
+      source: record.source,
+      subjectCandidateId: record.subjectCandidateId,
+      sendRequestId: record.sendRequestId,
+      authenticationEvidenceId: record.authenticationEvidenceId,
+      esignFlowId: record.esignFlowId,
+      migrationEvidenceRef: record.migrationEvidenceRef,
+      evidenceChecksum: record.evidenceChecksum,
+      proofHash: record.proofHash,
+      occurredAt: record.occurredAt.toISOString(),
+      actorId: record.actorId,
+      recordedAt: record.recordedAt.toISOString(),
+    })));
+  }
 }
 
 function consentRecord(candidate: Candidate): Record<string, unknown> {

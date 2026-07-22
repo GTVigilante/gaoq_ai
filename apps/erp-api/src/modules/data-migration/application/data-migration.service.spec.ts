@@ -7,6 +7,7 @@ import type { OrgApplicationService } from '../../org/application/org-applicatio
 import type { RecruitmentManagementService } from '../../recruitment/application/recruitment-management.service.js';
 import type { RecruitmentApplicationService } from '../../recruitment/application/recruitment-application.service.js';
 import type { RecruitmentInterviewService } from '../../recruitment/application/recruitment-interview.service.js';
+import type { RecruitmentOfferService } from '../../recruitment/application/recruitment-offer.service.js';
 import type {
   DataMigrationAssociationDocument,
   DataMigrationAttachmentDocument,
@@ -99,6 +100,10 @@ function recruitmentApplicationsRun() {
 
 function recruitmentInterviewsRun() {
   return { ...run(), scope: 'recruitment_interviews' as const };
+}
+
+function recruitmentOffersRun() {
+  return { ...run(), scope: 'recruitment_offers' as const };
 }
 
 function query<T>(value: T) { return { lean: () => ({ exec: () => Promise.resolve(value) }) }; }
@@ -1224,6 +1229,109 @@ describe('DataMigrationService', () => {
       expect.objectContaining({ $set: { targetId: 'application-001', status: 'resolved' } }),
       expect.objectContaining({ upsert: true }),
     );
+  });
+
+  it('Offer 迁移解析申请、面试、员工和审批历史且账本不保存 L4 条款', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      applicationSourceId: 'legacy-application-001',
+      completedInterviewSourceId: 'legacy-interview-001',
+      createdByEmployeeSourceId: 'legacy-employee-hr',
+      terms: {
+        currency: 'CNY', monthlyBaseSalaryMinor: 3_000_000, salaryMonths: 13,
+        annualVariableTargetMinor: 6_000_000, signingBonusMinor: 1_000_000,
+        proposedStartDate: '2026-08-15', probationMonths: 3,
+        employmentType: 'full_time', workLocation: '上海', benefitsSummary: '标准福利计划',
+      },
+      expiresAt: '2027-08-01T00:00:00.000Z',
+      retentionExpiresAt: '2033-08-01T00:00:00.000Z', status: 'accepted',
+      approvalReferenceType: 'approval.history',
+      approvalReferenceSourceId: 'legacy-approval-history-001', sendRequested: true,
+      sentProof: { proofHash: 'a'.repeat(43), occurredAt: '2026-07-21T03:00:00.000Z' },
+      decisionProof: {
+        decision: 'accepted', proofHash: 'b'.repeat(43),
+        occurredAt: '2026-07-21T04:00:00.000Z',
+      },
+      signedProof: null, version: 6,
+      createdAt: '2026-07-21T01:00:00.000Z', updatedAt: '2026-07-21T04:00:00.000Z',
+      applicationBaselineVersion: 3,
+      applicationBaselineUpdatedAt: '2026-07-21T00:00:00.000Z',
+      applicationActions: [
+        { targetStage: 'offer_approval', reasonCode: null, occurredAt: '2026-07-21T02:00:00.000Z' },
+        { targetStage: 'offer_sent', reasonCode: null, occurredAt: '2026-07-21T03:00:00.000Z' },
+        { targetStage: 'offer_accepted', reasonCode: null, occurredAt: '2026-07-21T04:00:00.000Z' },
+      ],
+      expectedApplicationStage: 'offer_accepted', expectedApplicationVersion: 6,
+      applicationEndedAt: null, applicationUpdatedAt: '2026-07-21T04:00:00.000Z',
+      offerEvidenceSourceAttachmentId: 'offer-evidence-001',
+      offerEvidenceChecksum: 'c'.repeat(43),
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(recruitmentOffersRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const targets: Readonly<Record<string, string>> = {
+      'legacy-application-001': 'application-001',
+      'legacy-interview-001': 'interview-001',
+      'legacy-employee-hr': 'employee-hr',
+      'legacy-approval-history-001': 'approval-history-001',
+    };
+    const mappings = {
+      findOne: vi.fn((filter: { entityType: string; sourceRecordId: string }) => query(
+        filter.entityType === 'recruitment.offer'
+          ? null
+          : { targetId: targets[filter.sourceRecordId], targetVersion: 1 },
+      )),
+      findOneAndUpdate: vi.fn().mockReturnValue(query({ targetId: 'offer-001' })),
+    };
+    const associations = { findOneAndUpdate: vi.fn().mockReturnValue(query({})) };
+    const attachments = {
+      findOne: vi.fn().mockReturnValue(query(null)),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const recruitmentOffers = {
+      importOfferFromMigration: vi.fn().mockResolvedValue({ offer: {
+        id: 'offer-001', applicationId: 'application-001', positionId: 'position-001',
+        completedInterviewId: 'interview-001', status: 'accepted',
+        expiresAt: payload.expiresAt, approvalInstanceId: null,
+        approvalHistoryId: 'approval-history-001', sendRequestId: 'send-001',
+        sentEvidenceId: 'sent-001', acceptanceEvidenceId: 'decision-001',
+        esignFlowId: null, signedEvidenceId: null, version: 6,
+      } }),
+    };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      mappings as unknown as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+      undefined, undefined, undefined, undefined,
+      recruitmentOffers as unknown as RecruitmentOfferService,
+    );
+    const result = await trusted(context, () => service.apply(RUN_ID, {
+      sequence: 1, sourceRecordId: 'legacy-offer-001', sourceVersion: '1',
+      entityType: 'recruitment.offer', payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: [
+        'legacy-application-001', 'legacy-interview-001', 'legacy-employee-hr',
+        'legacy-approval-history-001',
+      ],
+      attachments: [{ sourceAttachmentId: 'offer-evidence-001', checksum: 'c'.repeat(43) }],
+    }));
+    expect(result).toMatchObject({ status: 'applied', targetId: 'offer-001' });
+    expect(recruitmentOffers.importOfferFromMigration).toHaveBeenCalledWith(
+      expect.stringMatching(/^migration:/u),
+      expect.objectContaining({
+        applicationId: 'application-001', completedInterviewId: 'interview-001',
+        createdByEmployeeId: 'employee-hr', approvalReferenceId: 'approval-history-001',
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${RUN_ID}/attachments/offer-evidence-001`,
+      }),
+    );
+    const item = items.create.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
+    expect(JSON.stringify(item)).not.toMatch(/标准福利计划|monthlyBaseSalaryMinor/u);
   });
 
   it('未解析关联和未决附件进入 Phase 6 硬门禁', async () => {

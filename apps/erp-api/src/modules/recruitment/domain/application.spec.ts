@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createCandidateApplication,
   restoreCandidateApplicationBaselineFromMigration,
+  restoreCandidateApplicationOfferStagesFromMigration,
   transitionCandidateApplication,
 } from './application.js';
 
@@ -122,5 +123,61 @@ describe('CandidateApplication', () => {
       appliedAt: '2026-07-20T00:00:00.000Z', endedAt: null,
       updatedAt: '2026-07-20T01:00:00.000Z',
     }, new Date('2026-07-22T00:00:00.000Z'))).toThrow('阶段迁移无效');
+  });
+
+  it('Offer 迁移从面试基线回放接受链并核对最终控制事实', () => {
+    const screening = advance(application(), 'screening');
+    const interview = advance(screening, 'interview');
+    const restored = restoreCandidateApplicationOfferStagesFromMigration(interview, {
+      actorId: 'migration-agent-001',
+      actions: [
+        {
+          targetStage: 'offer_approval', evidenceId: 'interview-001', reasonCode: null,
+          occurredAt: '2026-07-21T08:00:03.000Z',
+        },
+        {
+          targetStage: 'offer_sent', evidenceId: 'offer-001', reasonCode: null,
+          occurredAt: '2026-07-21T08:00:04.000Z',
+        },
+        {
+          targetStage: 'offer_accepted', evidenceId: 'acceptance-evidence-001', reasonCode: null,
+          occurredAt: '2026-07-21T08:00:05.000Z',
+        },
+      ],
+      expectedStage: 'offer_accepted', expectedVersion: 6, endedAt: null,
+      updatedAt: '2026-07-21T08:00:05.000Z',
+    }, new Date('2026-07-22T00:00:00.000Z'));
+    expect(restored).toMatchObject({
+      stage: 'offer_accepted', completedInterviewId: 'interview-001',
+      offerId: 'offer-001', acceptanceEvidenceId: 'acceptance-evidence-001', version: 6,
+    });
+  });
+
+  it('Offer 迁移拒绝伪造基线时间、乱序动作与不一致终态', () => {
+    const screening = advance(application(), 'screening');
+    const interview = advance(screening, 'interview');
+    const baseInput = {
+      actorId: 'migration-agent-001',
+      actions: [{
+        targetStage: 'offer_approval' as const, evidenceId: 'interview-001', reasonCode: null,
+        occurredAt: '2026-07-21T08:00:03.000Z',
+      }],
+      expectedStage: 'offer_approval' as const, expectedVersion: 4, endedAt: null,
+      updatedAt: '2026-07-21T08:00:03.000Z',
+    };
+    expect(() => restoreCandidateApplicationOfferStagesFromMigration({
+      ...interview, updatedAt: '2026-07-21 08:00:02',
+    }, baseInput, new Date('2026-07-22T00:00:00.000Z'))).toThrow('规范 UTC ISO');
+    expect(() => restoreCandidateApplicationOfferStagesFromMigration(interview, {
+      ...baseInput,
+      actions: [{
+        targetStage: 'offer_approval', evidenceId: 'interview-001', reasonCode: null,
+        occurredAt: '2026-07-21T08:00:01.000Z',
+      }],
+      updatedAt: '2026-07-21T08:00:01.000Z',
+    }, new Date('2026-07-22T00:00:00.000Z'))).toThrow('按时间排序');
+    expect(() => restoreCandidateApplicationOfferStagesFromMigration(interview, {
+      ...baseInput, expectedStage: 'rejected',
+    }, new Date('2026-07-22T00:00:00.000Z'))).toThrow('控制事实不一致');
   });
 });

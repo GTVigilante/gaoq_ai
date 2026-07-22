@@ -798,16 +798,17 @@ export class RecruitmentOfferEvidenceRecord {
   @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
   offerId!: string;
 
-  @Prop({ type: String, enum: ['sent', 'accepted', 'declined'], required: true, immutable: true })
+  @Prop({ type: String, enum: ['sent', 'accepted', 'declined', 'signed'], required: true, immutable: true })
   kind!: RecruitmentOfferEvidenceKind;
 
-  @Prop({ type: String, enum: ['delivery', 'candidate_decision'], required: true, immutable: true })
-  category!: 'delivery' | 'candidate_decision';
+  @Prop({ type: String, enum: ['delivery', 'candidate_decision', 'esign'], required: true, immutable: true })
+  category!: 'delivery' | 'candidate_decision' | 'esign';
 
   @Prop({
-    type: String, enum: ['integration_delivery', 'candidate_portal'], required: true, immutable: true,
+    type: String, enum: ['integration_delivery', 'candidate_portal', 'migration_worm'],
+    required: true, immutable: true,
   })
-  source!: 'integration_delivery' | 'candidate_portal';
+  source!: 'integration_delivery' | 'candidate_portal' | 'migration_worm';
 
   @Prop({ type: String, default: null, immutable: true, match: ULID_PATTERN })
   subjectCandidateId!: string | null;
@@ -817,6 +818,18 @@ export class RecruitmentOfferEvidenceRecord {
 
   @Prop({ type: String, default: null, immutable: true, maxlength: 128, match: RECRUITMENT_ID_PATTERN })
   authenticationEvidenceId!: string | null;
+
+  @Prop({ type: String, default: null, immutable: true, maxlength: 128, match: RECRUITMENT_ID_PATTERN })
+  esignFlowId!: string | null;
+
+  @Prop({
+    type: String, default: null, immutable: true, maxlength: 256,
+    match: MIGRATION_EVIDENCE_REF_PATTERN,
+  })
+  migrationEvidenceRef!: string | null;
+
+  @Prop({ type: String, default: null, immutable: true, match: HASH_PATTERN })
+  evidenceChecksum!: string | null;
 
   @Prop({ type: String, required: true, immutable: true, minlength: 43, maxlength: 43, match: BASE64URL_PATTERN })
   proofHash!: string;
@@ -841,6 +854,26 @@ export const RecruitmentOfferEvidenceRecordSchema = SchemaFactory.createForClass
 
 RecruitmentOfferEvidenceRecordSchema.pre('validate', function () {
   const record = this as RecruitmentOfferEvidenceRecord;
+  if (record.source === 'migration_worm') {
+    const expectedCategory = record.kind === 'sent'
+      ? 'delivery'
+      : record.kind === 'signed'
+        ? 'esign'
+        : 'candidate_decision';
+    if (record.category !== expectedCategory || record.authenticationEvidenceId !== null ||
+      (record.kind === 'sent') !== (record.sendRequestId !== null) ||
+      (['accepted', 'declined'].includes(record.kind)) !==
+        (record.subjectCandidateId !== null) ||
+      (record.kind === 'signed') !== (record.esignFlowId !== null) ||
+      record.migrationEvidenceRef === null || record.evidenceChecksum === null) {
+      throw new Error('Offer 迁移证据字段不完整');
+    }
+    return;
+  }
+  if (record.esignFlowId !== null || record.migrationEvidenceRef !== null ||
+    record.evidenceChecksum !== null || record.kind === 'signed') {
+    throw new Error('Offer 在线证据不得伪装迁移证据');
+  }
   const delivery = record.kind === 'sent';
   if (delivery !== (record.category === 'delivery') ||
     delivery !== (record.source === 'integration_delivery')) {
