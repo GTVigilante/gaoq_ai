@@ -12,7 +12,10 @@ import type { Model } from 'mongoose';
 
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import { ApprovalApplicationService } from '../../approval/application/approval-application.service.js';
-import type { ImportApprovalTemplateFromMigrationInput } from '../../approval/application/approval-application.service.js';
+import type {
+  ImportApprovalLegacyHistoryFromMigrationInput,
+  ImportApprovalTemplateFromMigrationInput,
+} from '../../approval/application/approval-application.service.js';
 import {
   validateAndFreezeApprovalTemplateDefinition,
   type ApprovalCondition,
@@ -411,6 +414,21 @@ export class DataMigrationService {
       assertAssociations(input.associationSourceIds, [payload.employeeSourceId]);
       await this.requireMapping(run, 'org.employee', payload.employeeSourceId);
       return;
+    } else if (input.entityType === 'approval.history') {
+      const payload = approvalLegacyHistoryPayload(input.payload);
+      const specs = approvalLegacyHistoryAssociationSpecs(payload);
+      assertAssociations(
+        input.associationSourceIds,
+        [...new Set(specs.map((spec) => spec.sourceAssociationId))],
+      );
+      const evidence = input.attachments.find((attachment) =>
+        attachment.sourceAttachmentId === payload.historyEvidenceSourceAttachmentId);
+      if (input.attachments.length !== 1 || evidence?.checksum !== payload.historyEvidenceChecksum) {
+        throw new Error('DATA_MIGRATION_HISTORY_EVIDENCE_REQUIRED');
+      }
+      await Promise.all(specs.map(async (spec) =>
+        this.requireMapping(run, spec.entityType, spec.sourceAssociationId)));
+      return;
     } else {
       const payload = approvalTemplatePayload(input.payload);
       const specs = approvalTemplateAssociationSpecs(payload);
@@ -495,6 +513,33 @@ export class DataMigrationService {
         employeeId,
       });
       return target(result.employment);
+    }
+    if (input.entityType === 'approval.history') {
+      const payload = approvalLegacyHistoryPayload(input.payload);
+      if (this.approvals === undefined) throw new Error('迁移审批适配器未装配');
+      const templateId = (await this.requireMapping(
+        run,
+        'approval.template',
+        payload.templateSourceId,
+      )).targetId;
+      const initiatorEmployeeId = (await this.requireMapping(
+        run,
+        'org.employee',
+        payload.initiatorEmployeeSourceId,
+      )).targetId;
+      const result = await this.approvals.importLegacyHistoryFromMigration(key, {
+        templateId,
+        templateCode: payload.templateCode,
+        templateRevision: payload.templateRevision,
+        initiatorEmployeeId,
+        outcome: payload.outcome,
+        completedAt: payload.completedAt,
+        archivedAt: payload.archivedAt,
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${run.id}/attachments/${payload.historyEvidenceSourceAttachmentId}`,
+        evidenceChecksum: payload.historyEvidenceChecksum,
+      });
+      return target(result.history);
     }
     const payload = approvalTemplatePayload(input.payload);
     if (this.approvals === undefined) throw new Error('迁移审批适配器未装配');
@@ -931,7 +976,12 @@ interface EmployeeMigrationPayload {
 }
 
 type AssociationRelationship = DataMigrationAssociationRecord['relationship'];
-type AssociationTargetType = 'org.department' | 'org.position' | 'org.job_level' | 'org.employee';
+type AssociationTargetType =
+  | 'org.department'
+  | 'org.position'
+  | 'org.job_level'
+  | 'org.employee'
+  | 'approval.template';
 interface AssociationEvidence {
   readonly relationship: AssociationRelationship;
   readonly sourceAssociationId: string;
@@ -1056,6 +1106,71 @@ type ApprovalTemplateMigrationPayload = Omit<
   readonly approvedByEmployeeSourceId: string | null;
   readonly governanceEvidenceSourceAttachmentId: string | null;
 };
+
+type ApprovalLegacyHistoryMigrationPayload = Omit<
+  ImportApprovalLegacyHistoryFromMigrationInput,
+  'templateId' | 'initiatorEmployeeId' | 'migrationEvidenceRef' | 'evidenceChecksum'
+> & {
+  readonly templateSourceId: string;
+  readonly initiatorEmployeeSourceId: string;
+  readonly historyEvidenceSourceAttachmentId: string;
+  readonly historyEvidenceChecksum: string;
+};
+
+function approvalLegacyHistoryPayload(
+  value: Readonly<Record<string, unknown>>,
+): ApprovalLegacyHistoryMigrationPayload {
+  exactKeys(value, [
+    'archivedAt', 'completedAt', 'historyEvidenceChecksum',
+    'historyEvidenceSourceAttachmentId', 'initiatorEmployeeSourceId', 'outcome',
+    'templateCode', 'templateRevision', 'templateSourceId',
+  ]);
+  const sourceIds = [
+    value.templateSourceId,
+    value.initiatorEmployeeSourceId,
+    value.historyEvidenceSourceAttachmentId,
+  ];
+  if (sourceIds.some((item) => typeof item !== 'string' || !SOURCE_ID_PATTERN.test(item)) ||
+    typeof value.templateCode !== 'string' ||
+    !Number.isSafeInteger(value.templateRevision) || Number(value.templateRevision) < 1 ||
+    !['approved', 'rejected', 'withdrawn'].includes(String(value.outcome)) ||
+    !isStrictUtcIso(value.completedAt) ||
+    (value.archivedAt !== null && !isStrictUtcIso(value.archivedAt)) ||
+    typeof value.historyEvidenceChecksum !== 'string' ||
+    !HASH_PATTERN.test(value.historyEvidenceChecksum)) throw invalidPayload();
+  if (value.archivedAt !== null &&
+    Date.parse(value.archivedAt) < Date.parse(value.completedAt)) {
+    throw invalidPayload();
+  }
+  return {
+    templateSourceId: value.templateSourceId as string,
+    templateCode: value.templateCode,
+    templateRevision: Number(value.templateRevision),
+    initiatorEmployeeSourceId: value.initiatorEmployeeSourceId as string,
+    outcome: value.outcome as ApprovalLegacyHistoryMigrationPayload['outcome'],
+    completedAt: value.completedAt,
+    archivedAt: value.archivedAt,
+    historyEvidenceSourceAttachmentId: value.historyEvidenceSourceAttachmentId as string,
+    historyEvidenceChecksum: value.historyEvidenceChecksum,
+  };
+}
+
+function approvalLegacyHistoryAssociationSpecs(
+  payload: ApprovalLegacyHistoryMigrationPayload,
+): readonly (AssociationEvidence & { readonly entityType: AssociationTargetType })[] {
+  return Object.freeze([
+    {
+      relationship: 'template',
+      sourceAssociationId: payload.templateSourceId,
+      entityType: 'approval.template',
+    },
+    {
+      relationship: 'initiator',
+      sourceAssociationId: payload.initiatorEmployeeSourceId,
+      entityType: 'org.employee',
+    },
+  ]);
+}
 
 function approvalTemplatePayload(
   value: Readonly<Record<string, unknown>>,
@@ -1284,6 +1399,10 @@ function associationEvidence(input: ApplyDataMigrationRecordDto): readonly Assoc
     } else if (input.entityType === 'approval.template') {
       const payload = approvalTemplatePayload(input.payload);
       derived = approvalTemplateAssociationSpecs(payload);
+    } else if (input.entityType === 'approval.history') {
+      derived = approvalLegacyHistoryAssociationSpecs(
+        approvalLegacyHistoryPayload(input.payload),
+      );
     } else derived = [];
   } catch {
     derived = [];
@@ -1303,6 +1422,11 @@ function exactKeys(value: Readonly<Record<string, unknown>>, expected: readonly 
   if (Object.keys(value).sort().join('|') !== [...expected].sort().join('|')) throw invalidPayload();
 }
 function invalidPayload(): Error { return new Error('DATA_MIGRATION_PAYLOAD_INVALID'); }
+function isStrictUtcIso(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const parsed = new Date(value);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
+}
 function target<T extends object & { readonly id: string; readonly version: number }>(value: T) {
   const projection = Object.fromEntries(Object.entries(value));
   delete projection.tenantId;
@@ -1357,11 +1481,13 @@ function isDuplicateKeyError(error: unknown): boolean {
 }
 
 const SOURCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const HASH_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const ASSOCIATION_RELATIONSHIPS = [
   'parent_department', 'department', 'primary_department', 'position', 'job_level',
   'employee',
   'created_by', 'updated_by', 'approved_by',
   'fixed_approver', 'condition_employee', 'condition_department',
+  'initiator', 'template',
   'declared_reference',
 ] as const;
 const ASSOCIATION_RELATIONSHIP_SET: ReadonlySet<string> = new Set(ASSOCIATION_RELATIONSHIPS);

@@ -5,16 +5,22 @@ import {
   ApprovalActionRecordSchema,
   ApprovalDelegationRecordSchema,
   ApprovalInstanceRecordSchema,
+  ApprovalLegacyHistoryRecordSchema,
   ApprovalTemplateRecordSchema,
   type ApprovalActionRecord,
   type ApprovalDelegationRecord,
   type ApprovalInstanceRecord,
+  type ApprovalLegacyHistoryRecord,
   type ApprovalTemplateRecord,
 } from './approval.schemas.js';
 
 const mongoose = new Mongoose();
 const TemplateModel = mongoose.model<ApprovalTemplateRecord>('SpecApprovalTemplate', ApprovalTemplateRecordSchema);
 const InstanceModel = mongoose.model<ApprovalInstanceRecord>('SpecApprovalInstance', ApprovalInstanceRecordSchema);
+const LegacyHistoryModel = mongoose.model<ApprovalLegacyHistoryRecord>(
+  'SpecApprovalLegacyHistory',
+  ApprovalLegacyHistoryRecordSchema,
+);
 const ActionModel = mongoose.model<ApprovalActionRecord>('SpecApprovalAction', ApprovalActionRecordSchema);
 const DelegationModel = mongoose.model<ApprovalDelegationRecord>('SpecApprovalDelegation', ApprovalDelegationRecordSchema);
 
@@ -86,6 +92,27 @@ describe('审批持久化 Schema', () => {
     }), '终态不能保留当前待办');
   });
 
+  it('旧审批历史只接受最小不可变字段与迁移账本证据引用', async () => {
+    const history = {
+      id: 'history-001', tenantId: 'tenant-001', templateId: 'template-001',
+      templateCode: 'EXPENSE', templateRevision: 1,
+      initiatorEmployeeId: 'employee-001', outcome: 'approved', completedAt: NOW,
+      archivedAt: null,
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/history-file-001',
+      evidenceChecksum: 'a'.repeat(43), version: 1,
+    };
+    await valid(new LegacyHistoryModel(history));
+    await invalid(new LegacyHistoryModel({
+      ...history, migrationEvidenceRef: 'worm://history-file-001',
+    }), 'migrationEvidenceRef');
+    await invalid(new LegacyHistoryModel({
+      ...history, archivedAt: new Date('2026-07-20T00:00:00.000Z'),
+    }), '归档时间不能早于完成时间');
+    expect(ApprovalLegacyHistoryRecordSchema.path('formData')).toBeUndefined();
+    expect(ApprovalLegacyHistoryRecordSchema.path('title')).toBeUndefined();
+  });
+
   it('动作日志拒绝不完整决策和非决策动作夹带决策字段', async () => {
     await valid(new ActionModel(action()));
     await invalid(new ActionModel({
@@ -120,6 +147,9 @@ describe('审批持久化 Schema', () => {
     const delegationIndexes = ApprovalDelegationRecordSchema.indexes() as Array<[
       Record<string, unknown>, Record<string, unknown>,
     ]>;
+    const legacyHistoryIndexes = ApprovalLegacyHistoryRecordSchema.indexes() as Array<[
+      Record<string, unknown>, Record<string, unknown>,
+    ]>;
     expect(templateIndexes.some(([keys, options]) =>
       keys.tenantId === 1 && keys.code === 1 && options.name === 'one_published_per_code')).toBe(true);
     expect(instanceIndexes.some(([keys]) =>
@@ -128,6 +158,9 @@ describe('审批持久化 Schema', () => {
       keys.tenantId === 1 && keys.principalApproverId === 1 && keys.coverageDays === 1 &&
       options.unique === true &&
       (options.partialFilterExpression as Record<string, unknown> | undefined)?.status === 'active'
+    )).toBe(true);
+    expect(legacyHistoryIndexes.some(([keys, options]) =>
+      keys.tenantId === 1 && keys.migrationEvidenceRef === 1 && options.unique === true
     )).toBe(true);
   });
 });

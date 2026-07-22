@@ -8,6 +8,7 @@ export const DATA_MIGRATION_SCOPE_ENTITIES = Object.freeze({
   org_workforce: Object.freeze(['org.employee']),
   org_employment: Object.freeze(['org.employment']),
   approval_templates: Object.freeze(['approval.template']),
+  approval_history: Object.freeze(['approval.history']),
 } as const);
 
 export type DataMigrationScope = keyof typeof DATA_MIGRATION_SCOPE_ENTITIES;
@@ -29,6 +30,7 @@ export const DATA_MIGRATION_SCOPE_WRITE_SCOPE: Readonly<Record<DataMigrationScop
     org_workforce: 'erp:org:master:write',
     org_employment: 'erp:org:master:write',
     approval_templates: 'erp:approval:migration:write',
+    approval_history: 'erp:approval:migration:write',
   });
 
 /** 失败关闭地校验实体是否属于本批次范围。 */

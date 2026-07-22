@@ -17,6 +17,7 @@ import type {
   ApprovalActionRepository,
   ApprovalDelegationRepository,
   ApprovalInstanceRepository,
+  ApprovalLegacyHistoryRepository,
   ApprovalTemplateRepository,
 } from '../persistence/approval.repositories.js';
 import type { ApprovalOutboxWriter } from '../persistence/approval-outbox.writer.js';
@@ -120,6 +121,7 @@ function dependencies(overrides: Record<string, unknown> = {}) {
       insert: vi.fn(),
       replace: vi.fn(),
     },
+    legacyHistories: { findByEvidenceRef: vi.fn().mockResolvedValue(null), insert: vi.fn() },
     instances: { findById: vi.fn(), insert: vi.fn(), replace: vi.fn(), findInbox: vi.fn() },
     actions: { append: vi.fn(), findTimeline: vi.fn().mockResolvedValue([]) },
     delegations: {
@@ -148,6 +150,7 @@ function service(
     context,
     deps.profiles as unknown as AccessProfileRepository,
     deps.templates as unknown as ApprovalTemplateRepository,
+    deps.legacyHistories as unknown as ApprovalLegacyHistoryRepository,
     deps.instances as unknown as ApprovalInstanceRepository,
     deps.actions as unknown as ApprovalActionRepository,
     deps.delegations as unknown as ApprovalDelegationRepository,
@@ -158,6 +161,62 @@ function service(
 }
 
 describe('ApprovalApplicationService', () => {
+  it('旧审批历史只写不可变索引和迁移事件，不重放通知', async () => {
+    const deps = dependencies({
+      templates: {
+        ...dependencies().templates,
+        findByCodeAndRevision: vi.fn().mockResolvedValue(template()),
+      },
+    });
+    const result = await service(
+      deps,
+      opWorkerContext(['erp:migration:execute', 'erp:approval:migration:write']),
+    ).importLegacyHistoryFromMigration('migration-history-key', {
+      templateId: 'template-001',
+      templateCode: 'EXPENSE',
+      templateRevision: 1,
+      initiatorEmployeeId: 'employee-initiator',
+      outcome: 'approved',
+      completedAt: '2020-01-02T00:00:00.000Z',
+      archivedAt: null,
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/legacy-history-001',
+      evidenceChecksum: 'a'.repeat(43),
+    });
+
+    expect(result.history).toMatchObject({
+      tenantId: 'tenant-001', initiatorEmployeeId: 'employee-initiator', version: 1,
+    });
+    expect(deps.legacyHistories.insert).toHaveBeenCalledOnce();
+    expect(deps.outbox.append).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'approval_history.migrated' }), SESSION,
+    );
+    expect(deps.notifications.append).not.toHaveBeenCalled();
+  });
+
+  it('旧审批历史拒绝来源映射模板与编码修订查询结果不一致', async () => {
+    const deps = dependencies({
+      templates: {
+        ...dependencies().templates,
+        findByCodeAndRevision: vi.fn().mockResolvedValue(template()),
+      },
+    });
+    await expect(service(
+      deps,
+      opWorkerContext(['erp:migration:execute', 'erp:approval:migration:write']),
+    ).importLegacyHistoryFromMigration('migration-history-mismatch-key', {
+      templateId: 'template-other', templateCode: 'EXPENSE', templateRevision: 1,
+      initiatorEmployeeId: 'employee-initiator', outcome: 'approved',
+      completedAt: '2020-01-02T00:00:00.000Z', archivedAt: null,
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/legacy-history-002',
+      evidenceChecksum: 'b'.repeat(43),
+    })).rejects.toMatchObject({
+      response: { code: 'APPROVAL_MIGRATION_HISTORY_TEMPLATE_MISSING' },
+    });
+    expect(deps.legacyHistories.insert).not.toHaveBeenCalled();
+  });
+
   it('迁移服务按员工身份映射连续恢复模板版本且不重放通知', async () => {
     const deps = dependencies();
     const result = await service(

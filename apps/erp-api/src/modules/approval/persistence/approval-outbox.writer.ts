@@ -27,6 +27,8 @@ export class ApprovalOutboxWriter {
     const eventType = `cn.gaoq.erp.${event.type}.v1`;
     const aggregateType = event.type.startsWith('approval_template.')
       ? 'approval.template'
+      : event.type.startsWith('approval_history.')
+        ? 'approval.history'
       : event.type.startsWith('approval_delegation.')
         ? 'approval.delegation'
         : 'approval.instance';

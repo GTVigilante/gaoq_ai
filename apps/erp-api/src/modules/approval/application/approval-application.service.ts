@@ -16,10 +16,12 @@ import {
   archiveApprovalInstance,
   buildApprovalActionEvent,
   buildApprovalDelegationEvent,
+  buildApprovalLegacyHistoryMigratedEvent,
   buildApprovalInstanceCreatedEvent,
   buildApprovalTemplateEvent,
   buildApprovalTemplateMigratedEvent,
   createApprovalInstanceDraft,
+  createApprovalLegacyHistory,
   createApprovalDelegation,
   createApprovalTemplateDraft,
   createNextApprovalTemplateRevision,
@@ -35,6 +37,7 @@ import {
   type ApprovalFormData,
   type ApprovalFormValue,
   type ApprovalInstance,
+  type ApprovalLegacyHistory,
   type ApprovalDelegation,
   type ApprovalTemplate,
   type ApprovalTemplateDefinition,
@@ -45,6 +48,7 @@ import {
   type ApprovalActionProjection,
   ApprovalDelegationRepository,
   ApprovalInstanceRepository,
+  ApprovalLegacyHistoryRepository,
   ApprovalTemplateRepository,
   ApprovalWriteConflictError,
 } from '../persistence/approval.repositories.js';
@@ -179,6 +183,18 @@ export interface ImportApprovalTemplateFromMigrationInput {
   readonly updatedAt: string;
 }
 
+export interface ImportApprovalLegacyHistoryFromMigrationInput {
+  readonly templateId: string;
+  readonly templateCode: string;
+  readonly templateRevision: number;
+  readonly initiatorEmployeeId: string;
+  readonly outcome: ApprovalLegacyHistory['outcome'];
+  readonly completedAt: string;
+  readonly archivedAt: string | null;
+  readonly migrationEvidenceRef: string;
+  readonly evidenceChecksum: string;
+}
+
 /** 审批应用服务：唯一事务编排入口，REST、Worker 与 MCP 必须复用本服务。 */
 @Injectable()
 export class ApprovalApplicationService {
@@ -187,6 +203,7 @@ export class ApprovalApplicationService {
     private readonly context: TenantContextService,
     private readonly profiles: AccessProfileRepository,
     private readonly templates: ApprovalTemplateRepository,
+    private readonly legacyHistories: ApprovalLegacyHistoryRepository,
     private readonly instances: ApprovalInstanceRepository,
     private readonly actions: ApprovalActionRepository,
     private readonly delegations: ApprovalDelegationRepository,
@@ -225,6 +242,48 @@ export class ApprovalApplicationService {
         await this.templates.insert(template, session);
         await this.outbox.append(buildApprovalTemplateEvent(template, 'draft_created'), session);
         return { template: templateSummary(template) };
+      },
+    ));
+  }
+
+  /** 数据迁移专用：登记已终结旧审批的最小索引，不恢复正文、不生成待办或通知。 */
+  async importLegacyHistoryFromMigration(
+    key: string,
+    input: ImportApprovalLegacyHistoryFromMigrationInput,
+  ): Promise<{ readonly history: ApprovalLegacyHistory }> {
+    this.assertMigrationWriter();
+    return this.run(async () => this.idempotency.execute(
+      'approval.history.import_from_migration', key, input, async (session) => {
+        const tenantId = this.context.getTenantRequired().tenantId;
+        const [template] = await Promise.all([
+          this.templates.findByCodeAndRevision(input.templateCode, input.templateRevision, session),
+          this.requireMigrationActor(input.initiatorEmployeeId, session),
+        ]);
+        if (template === null || template.id !== input.templateId || template.status === 'draft') {
+          throw new BadRequestException({
+          code: 'APPROVAL_MIGRATION_HISTORY_TEMPLATE_MISSING',
+          message: '旧审批历史必须精确引用已迁移的发布或退役模板版本',
+          });
+        }
+        const candidate = createApprovalLegacyHistory({
+          ...input,
+          id: createEventId(),
+          tenantId,
+        }, new Date());
+        const existing = await this.legacyHistories.findByEvidenceRef(
+          input.migrationEvidenceRef,
+          session,
+        );
+        if (existing !== null) {
+          if (!sameMigratedLegacyHistory(existing, candidate)) throw new ConflictException({
+            code: 'APPROVAL_MIGRATION_HISTORY_IMMUTABLE',
+            message: '既有旧审批历史与迁移证据不一致，禁止覆盖',
+          });
+          return { history: existing };
+        }
+        await this.legacyHistories.insert(candidate, session);
+        await this.outbox.append(buildApprovalLegacyHistoryMigratedEvent(candidate), session);
+        return { history: candidate };
       },
     ));
   }
@@ -1066,6 +1125,21 @@ function sameMigratedTemplate(left: ApprovalTemplate, right: ApprovalTemplate): 
     left.updatedBy === right.updatedBy &&
     left.createdAt === right.createdAt &&
     left.updatedAt === right.updatedAt;
+}
+
+function sameMigratedLegacyHistory(
+  left: ApprovalLegacyHistory,
+  right: ApprovalLegacyHistory,
+): boolean {
+  return left.templateCode === right.templateCode &&
+    left.templateId === right.templateId &&
+    left.templateRevision === right.templateRevision &&
+    left.initiatorEmployeeId === right.initiatorEmployeeId &&
+    left.outcome === right.outcome &&
+    left.completedAt === right.completedAt &&
+    left.archivedAt === right.archivedAt &&
+    left.migrationEvidenceRef === right.migrationEvidenceRef &&
+    left.evidenceChecksum === right.evidenceChecksum;
 }
 
 function cloneReadableValue(value: ApprovalFormValue): ApprovalFormValue {

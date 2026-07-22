@@ -109,6 +109,8 @@ export class DataMigrationAssociationRecord {
       'employee',
       'created_by', 'updated_by', 'approved_by',
       'fixed_approver', 'condition_employee', 'condition_department',
+      'initiator',
+      'template',
       'declared_reference',
     ],
   })
@@ -125,6 +127,8 @@ export class DataMigrationAssociationRecord {
     | 'fixed_approver'
     | 'condition_employee'
     | 'condition_department'
+    | 'initiator'
+    | 'template'
     | 'declared_reference';
   @Prop({ type: String, required: true, immutable: true, match: SOURCE_ID })
   sourceAssociationId!: string;

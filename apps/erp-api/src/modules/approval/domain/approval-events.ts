@@ -1,6 +1,7 @@
 import type { ApprovalAction, ApprovalInstance } from './instance.js';
 import type { ApprovalTemplate } from './template.js';
 import type { ApprovalDelegation } from './delegation.js';
+import type { ApprovalLegacyHistory } from './legacy-history.js';
 
 export interface ApprovalEvent<TType extends string, TPayload extends Record<string, unknown>> {
   readonly type: TType;
@@ -26,6 +27,10 @@ export type ApprovalDomainEvent =
   | ApprovalEvent<'approval_template.migrated', {
       readonly code: string; readonly revision: number; readonly status: ApprovalTemplate['status'];
       readonly riskLevel: 'R1' | 'R2'; readonly definitionHash: string;
+    }>
+  | ApprovalEvent<'approval_history.migrated', {
+      readonly templateCode: string; readonly templateRevision: number;
+      readonly outcome: ApprovalLegacyHistory['outcome']; readonly evidenceChecksum: string;
     }>
   | ApprovalEvent<'approval_instance.draft_created', {
       readonly initiatorId: string; readonly templateCode: string; readonly templateRevision: number;
@@ -146,6 +151,25 @@ export function buildApprovalTemplateMigratedEvent(
       status: template.status,
       riskLevel: template.riskLevel,
       definitionHash: template.definitionHash,
+    },
+  };
+}
+
+/** 旧审批历史迁移事件只披露检索元数据和证据摘要，不外发表单、意见或附件定位符。 */
+export function buildApprovalLegacyHistoryMigratedEvent(
+  history: ApprovalLegacyHistory,
+): ApprovalDomainEvent {
+  return {
+    type: 'approval_history.migrated',
+    tenantId: history.tenantId,
+    aggregateId: history.id,
+    version: history.version,
+    occurredAt: history.createdAt,
+    payload: {
+      templateCode: history.templateCode,
+      templateRevision: history.templateRevision,
+      outcome: history.outcome,
+      evidenceChecksum: history.evidenceChecksum,
     },
   };
 }

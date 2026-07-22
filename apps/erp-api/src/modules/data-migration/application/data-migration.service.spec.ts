@@ -73,6 +73,10 @@ function approvalTemplateRun() {
   return { ...run(), scope: 'approval_templates' as const };
 }
 
+function approvalHistoryRun() {
+  return { ...run(), scope: 'approval_history' as const };
+}
+
 function query<T>(value: T) { return { lean: () => ({ exec: () => Promise.resolve(value) }) }; }
 function listQuery<T>(value: readonly T[]) {
   return {
@@ -387,7 +391,8 @@ describe('DataMigrationService', () => {
       items as unknown as Model<DataMigrationItemDocument>,
       mappings as unknown as Model<DataMigrationMappingDocument>,
       associations as unknown as Model<DataMigrationAssociationDocument>,
-      {} as Model<DataMigrationAttachmentDocument>,
+      { findOne: vi.fn().mockReturnValue(query(null)) } as unknown as
+        Model<DataMigrationAttachmentDocument>,
     );
 
     const result = await trusted(context, () => service.apply(RUN_ID, input));
@@ -552,6 +557,141 @@ describe('DataMigrationService', () => {
       status: 'rejected', rejectionCode: 'DATA_MIGRATION_GOVERNANCE_EVIDENCE_REQUIRED',
     });
     expect(approvals.importTemplateFromMigration).not.toHaveBeenCalled();
+  });
+
+  it('已终结审批历史解析模板与员工并绑定唯一 WORM 迁移证据', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      templateSourceId: 'legacy-template-001',
+      templateCode: 'LEGACY_EXPENSE',
+      templateRevision: 1,
+      initiatorEmployeeSourceId: 'legacy-employee-001',
+      outcome: 'approved',
+      completedAt: '2020-01-02T00:00:00.000Z',
+      archivedAt: '2020-01-03T00:00:00.000Z',
+      historyEvidenceSourceAttachmentId: 'legacy-history-evidence-001',
+      historyEvidenceChecksum: 'a'.repeat(43),
+    };
+    const input = {
+      sequence: 1, sourceRecordId: 'legacy-history-001', sourceVersion: '1',
+      entityType: 'approval.history' as const, payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: ['legacy-template-001', 'legacy-employee-001'],
+      attachments: [{
+        sourceAttachmentId: 'legacy-history-evidence-001', checksum: 'a'.repeat(43),
+      }],
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(approvalHistoryRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const mappings = {
+      findOne: vi.fn((filter: { entityType: string }) => query(
+        filter.entityType === 'approval.history'
+          ? null
+          : filter.entityType === 'approval.template'
+            ? { targetId: 'template-001', targetVersion: 1 }
+            : { targetId: 'employee-001', targetVersion: 1 },
+      )),
+      findOneAndUpdate: vi.fn().mockReturnValue(query({ targetId: 'history-001' })),
+    };
+    const associations = { findOneAndUpdate: vi.fn().mockReturnValue(query({})) };
+    const attachments = {
+      findOne: vi.fn().mockReturnValue(query(null)),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 0 }) }),
+    };
+    const approvals = {
+      importLegacyHistoryFromMigration: vi.fn().mockResolvedValue({ history: {
+        id: 'history-001', tenantId: 'tenant-001', templateId: 'template-001',
+        templateCode: 'LEGACY_EXPENSE',
+        templateRevision: 1, initiatorEmployeeId: 'employee-001', outcome: 'approved',
+        completedAt: payload.completedAt, archivedAt: payload.archivedAt,
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${RUN_ID}/attachments/legacy-history-evidence-001`,
+        evidenceChecksum: 'a'.repeat(43), version: 1,
+        createdAt: '2026-07-22T00:00:00.000Z', updatedAt: '2026-07-22T00:00:00.000Z',
+      } }),
+    };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      mappings as unknown as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+      approvals as unknown as ApprovalApplicationService,
+    );
+
+    const result = await trusted(context, () => service.apply(RUN_ID, input));
+
+    expect(result).toMatchObject({ status: 'applied', targetId: 'history-001' });
+    expect(approvals.importLegacyHistoryFromMigration).toHaveBeenCalledWith(
+      expect.stringMatching(/^migration:/u),
+      expect.objectContaining({
+        templateId: 'template-001',
+        initiatorEmployeeId: 'employee-001',
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${RUN_ID}/attachments/legacy-history-evidence-001`,
+        evidenceChecksum: 'a'.repeat(43),
+      }),
+    );
+    expect(associations.findOneAndUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ relationship: 'template' }),
+      expect.objectContaining({ $set: { targetId: 'template-001', status: 'resolved' } }),
+      expect.objectContaining({ upsert: true }),
+    );
+    expect(associations.findOneAndUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ relationship: 'initiator' }),
+      expect.objectContaining({ $set: { targetId: 'employee-001', status: 'resolved' } }),
+      expect.objectContaining({ upsert: true }),
+    );
+  });
+
+  it('审批历史证据摘要与附件不一致时失败关闭', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      templateSourceId: 'legacy-template-001', templateCode: 'LEGACY_EXPENSE',
+      templateRevision: 1, initiatorEmployeeSourceId: 'legacy-employee-001',
+      outcome: 'approved', completedAt: '2020-01-02T00:00:00.000Z', archivedAt: null,
+      historyEvidenceSourceAttachmentId: 'legacy-history-evidence-001',
+      historyEvidenceChecksum: 'a'.repeat(43),
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(approvalHistoryRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const approvals = { importLegacyHistoryFromMigration: vi.fn() };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      { findOne: vi.fn().mockReturnValue(query(null)) } as unknown as
+        Model<DataMigrationMappingDocument>,
+      { findOneAndUpdate: vi.fn().mockReturnValue(query({})) } as unknown as
+        Model<DataMigrationAssociationDocument>,
+      {
+        findOne: vi.fn().mockReturnValue(query(null)),
+        updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 0 }) }),
+      } as unknown as
+        Model<DataMigrationAttachmentDocument>,
+      approvals as unknown as ApprovalApplicationService,
+    );
+
+    const result = await trusted(context, () => service.apply(RUN_ID, {
+      sequence: 1, sourceRecordId: 'legacy-history-001', sourceVersion: '1',
+      entityType: 'approval.history', payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: ['legacy-template-001', 'legacy-employee-001'],
+      attachments: [{
+        sourceAttachmentId: 'legacy-history-evidence-001', checksum: 'b'.repeat(43),
+      }],
+    }));
+    expect(result).toMatchObject({
+      status: 'rejected', rejectionCode: 'DATA_MIGRATION_HISTORY_EVIDENCE_REQUIRED',
+    });
+    expect(approvals.importLegacyHistoryFromMigration).not.toHaveBeenCalled();
   });
 
   it('规范 JSON 与滚动校验和不受对象字段顺序影响', () => {

@@ -20,6 +20,10 @@ import type {
 import {
   currentApprovalNode,
 } from '../domain/instance.js';
+import {
+  restoreApprovalLegacyHistory,
+  type ApprovalLegacyHistory,
+} from '../domain/legacy-history.js';
 import type {
   ApprovalTemplate,
   ApprovalTemplateDefinition,
@@ -41,6 +45,8 @@ import {
   type ApprovalDelegationDocument,
   ApprovalInstanceRecord,
   type ApprovalInstanceDocument,
+  ApprovalLegacyHistoryRecord,
+  type ApprovalLegacyHistoryDocument,
   ApprovalTemplateRecord,
   type ApprovalTemplateDocument,
 } from './approval.schemas.js';
@@ -224,6 +230,61 @@ export class ApprovalTemplateRepository extends TenantBoundApprovalRepository {
       version: record.version,
       createdBy: record.createdBy,
       updatedBy: record.updatedBy,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString(),
+    });
+  }
+}
+
+/** 旧审批历史仓储：仅允许按迁移证据幂等查找和首次写入，禁止更新接口。 */
+@Injectable()
+export class ApprovalLegacyHistoryRepository extends TenantBoundApprovalRepository {
+  constructor(
+    context: TenantContextService,
+    @InjectModel(ApprovalLegacyHistoryRecord.name)
+    private readonly records: Model<ApprovalLegacyHistoryDocument>,
+  ) {
+    super(context);
+  }
+
+  async findByEvidenceRef(
+    migrationEvidenceRef: string,
+    session?: ClientSession,
+  ): Promise<ApprovalLegacyHistory | null> {
+    const query = this.records.findOne({
+      tenantId: this.tenantId(),
+      migrationEvidenceRef,
+    });
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record === null ? null : this.toDomain(record);
+  }
+
+  async insert(history: ApprovalLegacyHistory, session: ClientSession): Promise<void> {
+    this.assertTenant(history.tenantId);
+    await this.records.create([{
+      ...history,
+      completedAt: new Date(history.completedAt),
+      archivedAt: toDate(history.archivedAt),
+      createdAt: new Date(history.createdAt),
+      updatedAt: new Date(history.updatedAt),
+    }], { session });
+  }
+
+  private toDomain(record: ApprovalLegacyHistoryRecord): ApprovalLegacyHistory {
+    return restoreApprovalLegacyHistory({
+      id: record.id,
+      tenantId: record.tenantId,
+      templateId: record.templateId,
+      templateCode: record.templateCode,
+      templateRevision: record.templateRevision,
+      initiatorEmployeeId: record.initiatorEmployeeId,
+      outcome: record.outcome,
+      completedAt: record.completedAt.toISOString(),
+      archivedAt: toIso(record.archivedAt),
+      migrationEvidenceRef: record.migrationEvidenceRef,
+      evidenceChecksum: record.evidenceChecksum,
+      version: record.version,
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
     });

@@ -4,6 +4,7 @@ import type { HydratedDocument } from 'mongoose';
 
 import { approvalDelegationCoverageDays } from '../domain/delegation.js';
 import type { ApprovalInstanceStatus } from '../domain/instance.js';
+import type { LegacyApprovalOutcome } from '../domain/legacy-history.js';
 import type { ApprovalTemplateStatus } from '../domain/template.js';
 
 const MAX_ID_LENGTH = 128;
@@ -15,6 +16,8 @@ const MAX_CIPHERTEXT_LENGTH = 8 * 1024 * 1024;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 const SHA256_BASE64URL_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const JSON_OBJECT_PATTERN = /^\s*\{/;
+const MIGRATION_EVIDENCE_REF_PATTERN =
+  /^erp:\/\/data-migrations\/runs\/[0-7][0-9A-HJKMNP-TV-Z]{25}\/attachments\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 const isPositiveSafeInteger = (value: number): boolean =>
   Number.isSafeInteger(value) && value >= 1;
@@ -107,6 +110,81 @@ ApprovalTemplateRecordSchema.index(
   { tenantId: 1, code: 1 },
   { unique: true, partialFilterExpression: { status: 'published' }, name: 'one_published_per_code' },
 );
+
+/** 已终结旧审批的最小不可变索引；正文与动作材料只存在于 WORM 迁移证据。 */
+@Schema({ collection: 'approval_legacy_histories', timestamps: true, versionKey: false, id: false })
+export class ApprovalLegacyHistoryRecord {
+  @Prop({ type: String, required: true, immutable: true, maxlength: MAX_ID_LENGTH })
+  id!: string;
+
+  @Prop({ type: String, required: true, immutable: true, maxlength: MAX_ID_LENGTH })
+  tenantId!: string;
+
+  @Prop({ type: String, required: true, immutable: true, maxlength: MAX_ID_LENGTH })
+  templateId!: string;
+
+  @Prop({ type: String, required: true, immutable: true, maxlength: 64 })
+  templateCode!: string;
+
+  @Prop({ type: Number, required: true, immutable: true, validate: isPositiveSafeInteger })
+  templateRevision!: number;
+
+  @Prop({ type: String, required: true, immutable: true, maxlength: MAX_ID_LENGTH })
+  initiatorEmployeeId!: string;
+
+  @Prop({
+    type: String,
+    enum: ['approved', 'rejected', 'withdrawn'],
+    required: true,
+    immutable: true,
+  })
+  outcome!: LegacyApprovalOutcome;
+
+  @Prop({ type: Date, required: true, immutable: true })
+  completedAt!: Date;
+
+  @Prop({ type: Date, default: null, immutable: true })
+  archivedAt!: Date | null;
+
+  @Prop({
+    type: String,
+    required: true,
+    immutable: true,
+    maxlength: 320,
+    match: MIGRATION_EVIDENCE_REF_PATTERN,
+  })
+  migrationEvidenceRef!: string;
+
+  @Prop({
+    type: String,
+    required: true,
+    immutable: true,
+    match: SHA256_BASE64URL_PATTERN,
+  })
+  evidenceChecksum!: string;
+
+  @Prop({ type: Number, required: true, immutable: true, enum: [1] })
+  version!: 1;
+
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+
+export type ApprovalLegacyHistoryDocument = HydratedDocument<ApprovalLegacyHistoryRecord>;
+export const ApprovalLegacyHistoryRecordSchema = SchemaFactory.createForClass(
+  ApprovalLegacyHistoryRecord,
+);
+ApprovalLegacyHistoryRecordSchema.pre('validate', function validateLegacyHistory() {
+  if (this.archivedAt !== null && this.archivedAt.getTime() < this.completedAt.getTime()) {
+    this.invalidate('archivedAt', '归档时间不能早于完成时间');
+  }
+});
+ApprovalLegacyHistoryRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
+ApprovalLegacyHistoryRecordSchema.index(
+  { tenantId: 1, migrationEvidenceRef: 1 },
+  { unique: true },
+);
+ApprovalLegacyHistoryRecordSchema.index({ tenantId: 1, templateCode: 1, completedAt: -1 });
 
 /** 审批实例记录；表单正文只允许加密字段，禁止明文 JSON 落库。 */
 @Schema({ collection: 'approval_instances', timestamps: true, versionKey: false, id: false })

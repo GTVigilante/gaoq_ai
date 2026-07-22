@@ -2,9 +2,9 @@
 
 ## 范围与当前能力
 
-本切片建立可重复、可恢复、可审计的迁移控制面。当前白名单包含 `org_reference`（部门、岗位、职级）、`org_workforce`（员工）、`org_employment`（劳动关系）与 `approval_templates`（审批模板版本）四个独立 Scope；审批实例/动作、招聘、考勤、薪资、附件实体仍需在同一账本协议上按域追加，完成前 Issue #34 与 Phase 5 迁移门禁保持未完成。
+本切片建立可重复、可恢复、可审计的迁移控制面。当前白名单包含 `org_reference`（部门、岗位、职级）、`org_workforce`（员工）、`org_employment`（劳动关系）、`approval_templates`（审批模板版本）与 `approval_history`（已终结审批历史）五个独立 Scope；可运行审批实例/动作、招聘、考勤、薪资与业务附件实体仍需在同一账本协议上按域追加，完成前 Issue #34 与 Phase 5 迁移门禁保持未完成。
 
-目标业务数据禁止由迁移模块直接写集合。组织与劳动关系实体调用 `OrgApplicationService`，审批模板调用 `ApprovalApplicationService`，继续执行领域校验、引用校验、幂等、Outbox 和版本并发控制。员工更新、状态变更与开放劳动关系在一个事务内同步；既有员工离职仍必须进入 Care，迁移不得绕过清算、身份吊销与生效日控制。历史劳动关系使用独立恢复入口，不触发正常入职、离职或身份副作用，也不生成新员工。审批模板迁移只发布明确的 `approval_template.migrated` 事件，不伪装成草稿创建、发布或退役，也不创建通知。迁移模块只直写自己拥有的运行、条目、来源映射与证据账本。
+目标业务数据禁止由迁移模块直接写集合。组织与劳动关系实体调用 `OrgApplicationService`，审批模板及已终结审批历史调用 `ApprovalApplicationService`，继续执行领域校验、引用校验、幂等、Outbox 和版本并发控制。员工更新、状态变更与开放劳动关系在一个事务内同步；既有员工离职仍必须进入 Care，迁移不得绕过清算、身份吊销与生效日控制。历史劳动关系使用独立恢复入口，不触发正常入职、离职或身份副作用，也不生成新员工。审批模板迁移只发布明确的 `approval_template.migrated` 事件；旧审批历史只发布 `approval_history.migrated`，二者都不伪装成正常业务动作，也不创建通知。迁移模块只直写自己拥有的运行、条目、来源映射与证据账本。
 
 ## 来源包与确定性
 
@@ -18,6 +18,9 @@
 - 劳动关系一经恢复即作为历史事实冻结；同一来源记录的相同摘要可安全重放，变更后的快照不得覆盖既有劳动关系，必须进入人工差异处置与经批准的领域修复流程。
 - `approval_templates` 必须在员工及其身份开户完成后执行，并按同一模板编码的修订号从 1 连续导入。payload 只接受模板编码/名称/风险等级/修订/状态、完整定义、责任员工来源引用与生命周期时间；应用服务先把责任员工映射解析为 ERP employeeId，再由身份仓储解析为 actorId，禁止来源系统直接注入 actorId。定义中的固定审批人，以及员工/部门字段条件中的来源引用，也必须逐项进入关联账本并转换成 ERP 主数据 ID。找不到身份、固定审批人或条件引用，修订断层、定义不合法或既有版本不同均失败关闭。
 - 已发布或退役模板必须声明 `governanceEvidenceSourceAttachmentId`，且该标识必须精确存在于本条附件清单；草稿必须为 `null`。治理证据由附件网关校验摘要、扫描并进入 WORM，用于补足历史编辑/独立审批/发布记录；模板集合不保存证明正文。模板版本恢复后不可由后续来源快照覆盖。
+- `approval_history` 只接收已通过、已拒绝或已撤回的终结事实；必须引用已迁移且非草稿的模板版本、已迁移员工及其 ERP 身份，并精确绑定一份历史证据附件。来源模板映射得到的目标模板 ID 必须与编码/修订查询结果一致。在线集合只保存目标模板 ID/编码/修订、发起员工、结果、完成/归档时间、迁移账本附件定位符与 checksum；标题、表单、意见、动作链和附件正文只进入 WORM。相同证据可幂等重放，任何字段变化均禁止覆盖。
+- 历史证据附件必须是本条唯一附件，payload 的 `historyEvidenceChecksum` 必须与附件清单 checksum 完全一致。目标定位符固定为 `erp://data-migrations/runs/{runId}/attachments/{sourceAttachmentId}`，它指向受控迁移账本而不是伪造目标文件 ID；只有附件 Worker 取得目标 WORM 回执且运行报告零未决时才能完成 Scope。
+- 草稿或运行中审批不属于 `approval_history`。带 `file_reference` 的活动审批必须在切换前排空或经批准重建；在附件 Worker 产生目标证据 ID 之前，禁止把来源附件 ID 写入在线表单。无文件活动审批的受控状态重放将由独立 Scope 交付。
 
 `sourceFactHash` 的规范对象固定为 `sourceRecordId`、`sourceVersion`、`entityType`、`payloadHash`、按字典序排列的 `associationSourceIds`，以及按 `sourceAttachmentId` 排列且仅含 ID 与 checksum 的附件数组。滚动来源校验和初值为 `base64url(SHA-256(""))`，第 N 条为 `base64url(SHA-256(previous + "\\n" + sequence + ":" + sourceFactHash))`。来源导出程序必须使用相同算法，并固定 UTF-8、对象键字典序与数组规则。
 

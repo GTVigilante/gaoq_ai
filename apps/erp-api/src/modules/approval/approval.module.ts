@@ -13,6 +13,7 @@ import {
   ApprovalActionRepository,
   ApprovalDelegationRepository,
   ApprovalInstanceRepository,
+  ApprovalLegacyHistoryRepository,
   ApprovalTemplateRepository,
 } from './persistence/approval.repositories.js';
 import {
@@ -22,6 +23,8 @@ import {
   ApprovalDelegationRecordSchema,
   ApprovalInstanceRecord,
   ApprovalInstanceRecordSchema,
+  ApprovalLegacyHistoryRecord,
+  ApprovalLegacyHistoryRecordSchema,
   ApprovalTemplateRecord,
   ApprovalTemplateRecordSchema,
 } from './persistence/approval.schemas.js';
@@ -44,6 +47,7 @@ import { ApprovalNotificationOperationsController } from './approval-notificatio
     OrgModule,
     MongooseModule.forFeature([
       { name: ApprovalTemplateRecord.name, schema: ApprovalTemplateRecordSchema },
+      { name: ApprovalLegacyHistoryRecord.name, schema: ApprovalLegacyHistoryRecordSchema },
       { name: ApprovalInstanceRecord.name, schema: ApprovalInstanceRecordSchema },
       { name: ApprovalActionRecord.name, schema: ApprovalActionRecordSchema },
       { name: ApprovalDelegationRecord.name, schema: ApprovalDelegationRecordSchema },
@@ -56,6 +60,7 @@ import { ApprovalNotificationOperationsController } from './approval-notificatio
     ApprovalActorResolverService,
     ApprovalApplicationService,
     ApprovalTemplateRepository,
+    ApprovalLegacyHistoryRepository,
     ApprovalInstanceRepository,
     ApprovalActionRepository,
     ApprovalDelegationRepository,
@@ -67,6 +72,7 @@ import { ApprovalNotificationOperationsController } from './approval-notificatio
   exports: [
     ApprovalApplicationService,
     ApprovalTemplateRepository,
+    ApprovalLegacyHistoryRepository,
     ApprovalInstanceRepository,
     ApprovalActionRepository,
     ApprovalDelegationRepository,
