@@ -15,6 +15,7 @@ Phase 5 在已验收的组织、审批、招聘入职、考勤薪酬底座之上
    - [管理分析索引迁移运行手册](./08-analytics-index-migration-runbook.md)
 7. [全量/增量迁移控制面契约](./09-data-migration-control-plane.md)（通用账本、组织参考数据与员工适配器已交付，其余领域与三次演练待续）
    - [数据迁移控制面索引运行手册](./10-data-migration-index-runbook.md)
+   - [数据迁移来源包运行手册](./11-data-migration-package-runbook.md)
 8. 生产加固（断连演练、性能、容灾、切换预验收，待立项契约文档）
 
 后续切片各自拥有独立契约文档；禁止借任何已立项切片隐式扩张范围。

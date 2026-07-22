@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto';
-
 import {
   BadRequestException,
   ConflictException,
@@ -21,6 +19,14 @@ import type {
 } from '../../org/application/org.dto.js';
 import type { ApplyDataMigrationRecordDto, CreateDataMigrationRunDto } from '../data-migration.dto.js';
 import {
+  canonicalJson,
+  dataMigrationChecksum,
+  digest,
+  EMPTY_MIGRATION_CHECKSUM,
+  migrationSourceFactHash,
+  roll,
+} from '../data-migration-checksum.js';
+import {
   DataMigrationAssociationRecord,
   type DataMigrationAssociationDocument,
   DataMigrationAttachmentRecord,
@@ -32,8 +38,6 @@ import {
   DataMigrationRunRecord,
   type DataMigrationRunDocument,
 } from '../persistence/data-migration.schemas.js';
-
-const EMPTY_CHECKSUM = digest('');
 
 interface MappingView {
   readonly tenantId: string;
@@ -95,7 +99,7 @@ export class DataMigrationService {
       sourceRunId: input.sourceRunId,
       scope: input.scope, expectedSourceCount: input.expectedSourceCount,
       expectedSourceChecksum: input.expectedSourceChecksum,
-      sourceChecksum: EMPTY_CHECKSUM, targetChecksum: EMPTY_CHECKSUM,
+      sourceChecksum: EMPTY_MIGRATION_CHECKSUM, targetChecksum: EMPTY_MIGRATION_CHECKSUM,
       checkpoint: 0, status: 'running' as const, completedAt: null,
     });
     try {
@@ -715,19 +719,6 @@ function target<T extends object & { readonly id: string; readonly version: numb
   delete projection.updatedAt;
   return { id: value.id, version: value.version, hash: digest(canonicalJson(projection)) };
 }
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  if (typeof value === 'object' && value !== null) return `{${Object.entries(value)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`).join(',')}}`;
-  return JSON.stringify(value);
-}
-function digest(value: string): string {
-  return createHash('sha256').update(value, 'utf8').digest('base64url');
-}
-function roll(previous: string, sequence: number, factHash: string): string {
-  return digest(`${previous}\n${sequence}:${factHash}`);
-}
 function rejectionCode(error: unknown): string | null {
   if (typeof error === 'object' && error !== null) {
     const response = (error as { response?: unknown }).response;
@@ -772,18 +763,6 @@ function assertUniqueEvidence(input: ApplyDataMigrationRecordDto): void {
   }
 }
 
-function migrationSourceFactHash(input: ApplyDataMigrationRecordDto): string {
-  return digest(canonicalJson({
-    sourceRecordId: input.sourceRecordId,
-    sourceVersion: input.sourceVersion,
-    entityType: input.entityType,
-    payloadHash: input.payloadHash,
-    associationSourceIds: [...input.associationSourceIds].sort(),
-    attachments: [...input.attachments]
-      .map((item) => ({ sourceAttachmentId: item.sourceAttachmentId, checksum: item.checksum }))
-      .sort((left, right) => left.sourceAttachmentId.localeCompare(right.sourceAttachmentId)),
-  }));
-}
 
 function isDuplicateKeyError(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 11000;
@@ -791,6 +770,4 @@ function isDuplicateKeyError(error: unknown): boolean {
 
 const SOURCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
-export const dataMigrationChecksum = Object.freeze({
-  canonicalJson, digest, roll, sourceFactHash: migrationSourceFactHash, empty: EMPTY_CHECKSUM,
-});
+export { dataMigrationChecksum };
