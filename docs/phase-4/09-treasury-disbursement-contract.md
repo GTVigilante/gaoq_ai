@@ -28,4 +28,4 @@ materializing → prepared → exported → submitting → submitted → reconci
 
 银行账号独立 AES-GCM/HMAC 盲索引、锁定工资到确定性文件、WORM、WebAuthn 三人分离批准、可信银行提交、隔离回盘 Inbox、恶意文件证据、ERP 逐行复核、乱序失败关闭、强认证失败行恢复子批次、税务申报和四方对账已经落地。冻结父批次永不原地解冻。生产连接前仍必须完成：银行/税务网关具体签名加密配置与联调，以及两个完整影子周期。MCP 只读取脱敏控制摘要，永不执行资金或税务动作。
 
-`TREASURY_BANK_SUBMISSION_MODE` 默认且在 Phase 4 必须保持 `sandbox`。应用服务和 HTTP Adapter 对 `production` 进行双重失败关闭；sandbox 请求与受理回执还必须双向绑定并回显 `submissionMode=sandbox`。外部银行网关必须使用银行沙箱租户与沙箱凭据，禁止把 sandbox 标记路由到真实清算通道。只有 Phase 6 总体 Go/No-Go、三次演练、回滚演练和统一切换授权记录全部落地后，才能以受审计变更替换该临时硬门禁。仅有两个工资影子周期 `eligible` 证据不足以打开真实银行提交。
+`TREASURY_BANK_SUBMISSION_MODE` 默认且在 Phase 4 必须保持 `sandbox`。sandbox 请求与受理回执必须双向绑定并回显 `submissionMode=sandbox`，外部银行网关必须使用银行沙箱租户与沙箱凭据。Phase 6 的 `production` 模式仍要求独立授权域逐批次绑定租户、摘要、版本、发布 commit 和部署清单，并由银行网关回显授权 WORM 证据；缺少任一项时应用服务与 HTTP Adapter 双重失败关闭。仅有两个工资影子周期 `eligible` 证据不足以打开真实银行提交。

@@ -1,6 +1,6 @@
 # 个税申报清单、独立审批与税务网关
 
-> Phase 4 安全门禁：`PAYROLL_TAX_GATEWAY_MODE` 默认并必须保持 `sandbox`。应用服务和 HTTP Adapter 对 `production` 双重失败关闭；沙箱请求与回执必须双向绑定 `submissionMode=sandbox`，外部网关必须使用税务沙箱租户与沙箱凭据。真实申报只能在 Phase 6 总体 Go/No-Go 和统一切换授权落地后开放，两个工资影子周期资格本身不足以授权真实申报。
+> Phase 4 安全门禁：`PAYROLL_TAX_GATEWAY_MODE` 默认并必须保持 `sandbox`。沙箱请求与回执必须双向绑定 `submissionMode=sandbox`，外部网关必须使用税务沙箱租户与沙箱凭据。Phase 6 的 `production` 模式仍要求独立授权域逐清单绑定租户、摘要、版本、发布 commit 和部署清单，并由税务网关回显授权 WORM 证据；缺少任一项时应用服务与 HTTP Adapter 双重失败关闭。两个工资影子周期资格本身不足以授权真实申报。
 
 ## 责任边界
 

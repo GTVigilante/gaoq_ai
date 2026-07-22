@@ -138,8 +138,14 @@ function assemble(options: {
     }
     return Promise.resolve({
       submissionId: 'tax-submission-001', evidenceId: 'tax-submission-evidence-001',
-      accepted: true,
+      accepted: true, productionAuthorizationEvidenceId: options.gatewayMode === 'production'
+        ? 'authorization-evidence-001' : null,
     });
+  }) };
+  const productionAuthorization = { authorize: vi.fn().mockResolvedValue({
+    authorizationId: 'authorization-001', evidenceId: 'authorization-evidence-001',
+    expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+    releaseCommitSha: 'c'.repeat(40), deploymentManifestHash: `sha256:${'d'.repeat(64)}`,
   }) };
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
   const profiles = { findActorIdByEmployee: vi.fn((
@@ -157,6 +163,7 @@ function assemble(options: {
     idempotency as never, context, employments as never, persons as never,
     strongAuth as never, crypto as never, archive, gateway,
     new ConfigService({ PAYROLL_TAX_GATEWAY_MODE: options.gatewayMode ?? 'sandbox' }) as never,
+    productionAuthorization as never,
     outbox as never,
     periods as never, lines as never, filings as never,
     profiles as never, approvals as never,
@@ -164,6 +171,7 @@ function assemble(options: {
   return {
     context, service, filings, archive, outbox, strongAuth, gateway,
     archived: () => archived, employments, persons, profiles, approvals, crypto,
+    productionAuthorization,
   };
 }
 
@@ -273,12 +281,39 @@ describe('PayrollTaxFilingService', () => {
     }), expect.any(Object));
   });
 
-  it('Phase 6 总体切换授权未实现前真实税务模式始终失败关闭', async () => {
+  it('真实税务模式缺少短时授权时失败关闭，有效授权才允许提交', async () => {
     const store = assemble({ gatewayMode: 'production' });
+    const prepared = await store.context.run({ tenant, actor }, () =>
+      store.service.prepare('payroll-tax-production-prepare', PERIOD_ID, 6));
+    await store.context.run({ tenant, actor: approver }, () => store.service.approve(
+      'payroll-tax-production-approve', prepared.id, 2,
+      '01J8ZQK7V0A2M4N6P8R0T2W4E1', approvalToken,
+    ));
+    store.productionAuthorization.authorize.mockRejectedValueOnce(
+      new Error('PHASE6_PRODUCTION_AUTHORIZATION_UNAVAILABLE'),
+    );
     await expect(store.context.run({ tenant, actor: connector }, () => store.service.submit(
-      'payroll-tax-production-submit', '01J8ZQK7V0A2M4N6P8R0T2W4F1', 3,
-    ))).rejects.toThrow('真实税务申报失败关闭');
+      'payroll-tax-production-submit-denied', prepared.id, 3,
+    ))).rejects.toThrow('PHASE6_PRODUCTION_AUTHORIZATION_UNAVAILABLE');
     expect(store.gateway.submit).not.toHaveBeenCalled();
+    await expect(store.context.run({ tenant, actor: connector }, () => store.service.submit(
+      'payroll-tax-production-submit-approved', prepared.id, 3,
+    ))).resolves.toMatchObject({ status: 'submitted', taxSubmissionId: 'tax-submission-001' });
+    const authorizationCall = store.productionAuthorization.authorize.mock.lastCall as
+      | [{ action: string; tenantId: string; resourceId: string; subjectHash: string;
+        expectedVersion: number }]
+      | undefined;
+    if (authorizationCall === undefined) throw new Error('测试缺少生产授权调用');
+    expect(authorizationCall[0]).toMatchObject({
+      action: 'payroll-tax-submission', tenantId: tenant.tenantId,
+      resourceId: prepared.id, expectedVersion: 3,
+    });
+    expect(authorizationCall[0].subjectHash).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    const gatewayCall = store.gateway.submit.mock.lastCall as
+      | [{ productionAuthorization: { authorizationId: string } | null }]
+      | undefined;
+    if (gatewayCall === undefined) throw new Error('测试缺少税务网关调用');
+    expect(gatewayCall[0].productionAuthorization?.authorizationId).toBe('authorization-001');
   });
 
   it('从锁定工资与组织身份凭证生成确定性清单并写入独立 WORM', async () => {

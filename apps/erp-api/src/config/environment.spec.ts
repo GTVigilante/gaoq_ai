@@ -40,6 +40,8 @@ describe('validateEnvironment', () => {
     expect(environment.PAYROLL_TAX_WORM_ARCHIVE_ENDPOINT).toBeUndefined();
     expect(environment.PAYROLL_TAX_GATEWAY_ENDPOINT).toBeUndefined();
     expect(environment.PAYROLL_TAX_GATEWAY_MODE).toBe('sandbox');
+    expect(environment.PHASE6_PRODUCTION_AUTHORIZATION_ENDPOINT).toBeUndefined();
+    expect(environment.PHASE6_RELEASE_COMMIT_SHA).toBeUndefined();
     expect(environment.PAYROLL_TAX_WORM_RETENTION_DAYS).toBe(3_650);
     expect(environment.METRICS_BEARER_TOKEN).toBeUndefined();
     expect(environment.DATA_MIGRATION_ATTACHMENT_GATEWAY_ENDPOINT).toBeUndefined();
@@ -453,6 +455,47 @@ describe('validateEnvironment', () => {
       ...configured,
       PAYROLL_TAX_WORM_ARCHIVE_BEARER_TOKEN: 'treasury-worm-token-at-least-32-characters',
     })).toThrow('不得复用');
+  });
+
+  it('生产资金通道必须完整绑定独立 Phase 6 授权域与发布物', () => {
+    const base = {
+      NODE_ENV: 'test', MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0', WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://erp.example.com', AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://erp.example.com/.well-known/jwks.json',
+      MCP_AUTHORIZATION_SERVER: 'https://erp.example.com',
+      MCP_ALLOWED_ORIGINS: 'https://erp.example.com',
+      TREASURY_BANK_SUBMISSION_ENDPOINT: 'https://bank.example.net/v1/submissions',
+      TREASURY_BANK_SUBMISSION_BEARER_TOKEN: 'bank-gateway-token-at-least-32-characters',
+      TREASURY_BANK_SUBMISSION_MODE: 'production',
+    };
+    expect(() => validateEnvironment(base)).toThrow('一次性授权域完整配置');
+    const authorization = {
+      PHASE6_PRODUCTION_AUTHORIZATION_ENDPOINT:
+        'https://release-authorization.example.net/v1/authorizations',
+      PHASE6_PRODUCTION_AUTHORIZATION_BEARER_TOKEN:
+        'phase6-authorization-token-at-least-32-characters',
+      PHASE6_RELEASE_COMMIT_SHA: 'a'.repeat(40),
+      PHASE6_DEPLOYMENT_MANIFEST_SHA256: `sha256:${'b'.repeat(64)}`,
+    };
+    expect(() => validateEnvironment({ ...base, ...authorization }))
+      .toThrow('只能在 NODE_ENV=production');
+    expect(validateEnvironment({
+      ...base, TREASURY_BANK_SUBMISSION_MODE: 'sandbox', ...authorization,
+    })).toMatchObject({
+      TREASURY_BANK_SUBMISSION_MODE: 'sandbox',
+      PHASE6_RELEASE_COMMIT_SHA: 'a'.repeat(40),
+    });
+    expect(() => validateEnvironment({
+      ...base, ...authorization,
+      PHASE6_PRODUCTION_AUTHORIZATION_ENDPOINT: 'https://bank.example.net/v1/authorizations',
+    })).toThrow('独立权限域标准 HTTPS');
+    expect(() => validateEnvironment({
+      ...base, ...authorization,
+      PHASE6_PRODUCTION_AUTHORIZATION_BEARER_TOKEN:
+        'bank-gateway-token-at-least-32-characters',
+    })).toThrow('不得复用资金、税务或 WORM 凭据');
   });
 
   it('生产环境具备指标凭据时仍拒绝缺失独立 WORM 配置', () => {

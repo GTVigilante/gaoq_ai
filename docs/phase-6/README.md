@@ -7,6 +7,7 @@ Phase 6 只接受真实生产证据，不把 CI 自测、模拟数据或 AI 结�
 - [统一切换控制契约](./00-unified-cutover-contract.md)
 - [四周 Hypercare 与旧系统归档契约](./01-hypercare-archive-contract.md)
 - [现场执行与证据运行手册](./02-production-execution-runbook.md)
+- [生产资金执行授权契约](./03-production-execution-authorization.md)
 
 ## 完成定义
 
@@ -14,7 +15,7 @@ Phase 6 只接受真实生产证据，不把 CI 自测、模拟数据或 AI 结�
 
 1. 三次生产等价全量演练均在 8 小时内完成，记录、权限、金额、附件和校验和未解释差异为零。
 2. 一次覆盖数据、身份、网关、外部集成、队列和 MCP 的生产级回滚演练在 4 小时内完成。
-3. 十方 Go/No-Go 仍在有效期内，发布 commit、镜像摘要和部署清单与现场一致。
+3. 十二类 Go/No-Go Gate 仍在有效期内，发布 commit、镜像摘要和部署清单与现场一致。
 4. 统一切换每一步均有不同操作人与复核人的证据，旧系统写入冻结后保持只读。
 5. 连续 28 个自然日完成核心 SLO、七域每日对账和事故审查，法务、财务、数据负责人批准归档。
 

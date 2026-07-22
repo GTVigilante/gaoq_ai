@@ -159,8 +159,16 @@ function assemble(
       objectRef: 'worm/treasury/object-001', receiptId: 'receipt-001', immutable: true as const,
     });
   }) };
-  const bankGateway = { submit: vi.fn().mockResolvedValue({
+  const bankGateway = { submit: vi.fn().mockImplementation((request: {
+    productionAuthorization: { evidenceId: string } | null;
+  }) => Promise.resolve({
     submissionId: 'bank-submission-001', evidenceId: 'bank-evidence-001', accepted: true,
+    productionAuthorizationEvidenceId: request.productionAuthorization?.evidenceId ?? null,
+  })) };
+  const productionAuthorization = { authorize: vi.fn().mockResolvedValue({
+    authorizationId: 'authorization-001', evidenceId: 'authorization-evidence-001',
+    expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+    releaseCommitSha: 'c'.repeat(40), deploymentManifestHash: `sha256:${'d'.repeat(64)}`,
   }) };
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
   const profiles = { findActorIdByEmployee: vi.fn().mockImplementation(
@@ -178,6 +186,7 @@ function assemble(
     idempotency as never, context, payroll as never, strongAuth as never, crypto as never,
     archive, bankGateway,
     new ConfigService({ TREASURY_BANK_SUBMISSION_MODE: submissionMode }) as never,
+    productionAuthorization as never,
     outbox as never, accounts as never,
     instructions as never, batches as never,
     profiles as never, approvals as never,
@@ -185,7 +194,7 @@ function assemble(
   return {
     context, crypto, payroll, strongAuth, accounts, batches, instructions,
     idempotency, archive, bankGateway, archivedBody: () => archivedBody, outbox,
-    profiles, approvals, service,
+    profiles, approvals, productionAuthorization, service,
   };
 }
 
@@ -266,17 +275,52 @@ describe('TreasuryDisbursementService', () => {
     expect(conflicted.batches.create).not.toHaveBeenCalled();
   });
 
-  it('Phase 6 总体切换授权未实现前真实银行模式始终失败关闭', async () => {
+  it('真实银行模式缺少短时授权时失败关闭，有效授权才允许提交', async () => {
     const store = assemble('payroll-locker', 'production');
+    const prepared = await store.context.run({ tenant, actor: actor() }, () =>
+      store.service.prepare('treasury-production-prepare', input));
+    const checker = actor('treasury-checker');
+    const token = {
+      issuer: 'https://erp.example.test', subject: checker.actorId,
+      audience: ['erp-api'], resource: ['erp-api'], tenantId: tenant.tenantId,
+      actorId: checker.actorId, actorType: 'user' as const, clientId: 'erp-web',
+      roleCodes: checker.roleCodes, scopes: checker.scopes,
+      departmentIds: [], sessionId: 'session-001', expiresAt: Date.now() + 60_000,
+    };
+    const exported = await store.context.run({ tenant, actor: checker }, () =>
+      store.service.approveExport('treasury-production-approval', prepared.id, {
+        expectedVersion: 2, strongAuthEvidenceId: EVIDENCE_ID,
+      }, token));
     const connector: ActorContext = {
       actorType: 'service', actorId: 'bank-connector', tenantId: tenant.tenantId,
       roleCodes: [], scopes: ['erp:treasury:disbursement:submit'],
       departmentIds: [], traceId: 'trace-bank-production-gate',
     };
+    store.productionAuthorization.authorize.mockRejectedValueOnce(
+      new Error('PHASE6_PRODUCTION_AUTHORIZATION_UNAVAILABLE'),
+    );
     await expect(store.context.run({ tenant, actor: connector }, () => store.service.submit(
-      'treasury-production-submit', '01J8ZQK7V0A2M4N6P8R0T2W4B1', { expectedVersion: 3 },
-    ))).rejects.toThrow('真实银行提交失败关闭');
+      'treasury-production-submit-denied', exported.id, { expectedVersion: 3 },
+    ))).rejects.toThrow('PHASE6_PRODUCTION_AUTHORIZATION_UNAVAILABLE');
     expect(store.bankGateway.submit).not.toHaveBeenCalled();
+    await expect(store.context.run({ tenant, actor: connector }, () => store.service.submit(
+      'treasury-production-submit-approved', exported.id, { expectedVersion: 3 },
+    ))).resolves.toMatchObject({ status: 'submitted', bankSubmissionId: 'bank-submission-001' });
+    const authorizationCall = store.productionAuthorization.authorize.mock.lastCall as
+      | [{ action: string; tenantId: string; resourceId: string; subjectHash: string;
+        expectedVersion: number }]
+      | undefined;
+    if (authorizationCall === undefined) throw new Error('测试缺少生产授权调用');
+    expect(authorizationCall[0]).toMatchObject({
+      action: 'treasury-bank-submission', tenantId: tenant.tenantId,
+      resourceId: exported.id, expectedVersion: 3,
+    });
+    expect(authorizationCall[0].subjectHash).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    const gatewayCall = store.bankGateway.submit.mock.lastCall as
+      | [{ productionAuthorization: { authorizationId: string } | null }]
+      | undefined;
+    if (gatewayCall === undefined) throw new Error('测试缺少银行网关调用');
+    expect(gatewayCall[0].productionAuthorization?.authorizationId).toBe('authorization-001');
   });
 
   it('从锁定工资形成密文指令，WORM 成功后才把批次转为 prepared', async () => {

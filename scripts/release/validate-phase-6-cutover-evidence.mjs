@@ -16,6 +16,9 @@ const ROLLBACK_COMPONENTS = [
 const CONNECTIONS = [
   'attachment', 'bank', 'dingtalk', 'esign', 'feishu', 'mcp', 'messaging', 'op', 'tax', 'worm',
 ];
+const PRODUCTION_EXECUTION_ACTIONS = [
+  'payroll-tax-submission', 'treasury-bank-submission',
+];
 const SIGNOFF_ROLES = [
   'business_owner', 'change_manager', 'data_owner', 'security_owner', 'sre_owner',
 ];
@@ -62,7 +65,7 @@ function validateEvidence(document, enforceEnvironment = false) {
   object(document, [
     'formatVersion', 'suite', 'releaseId', 'source', 'environment', 'phase5Decision',
     'rehearsals', 'rollbackRehearsal', 'window', 'steps', 'connections', 'acceptance',
-    'legacySystem', 'signoffs',
+    'productionExecution', 'legacySystem', 'signoffs',
   ], 'PHASE6_CUTOVER_DOCUMENT_INVALID');
   equal(document.formatVersion, 1, 'PHASE6_CUTOVER_FORMAT_INVALID');
   equal(document.suite, 'gaoq.phase6.cutover.v1', 'PHASE6_CUTOVER_SUITE_INVALID');
@@ -74,7 +77,10 @@ function validateEvidence(document, enforceEnvironment = false) {
   const rollback = validateRollback(document.rollbackRehearsal, source, environment.startedAt);
   validateWindow(document.window, environment);
   const steps = validateSteps(document.steps, environment);
-  validateConnections(document.connections);
+  const connectionEvidenceHashes = validateConnections(document.connections);
+  const productionExecutionEvidence = validateProductionExecution(
+    document.productionExecution, source, environment, steps, connectionEvidenceHashes,
+  );
   validateAcceptance(document.acceptance);
   validateLegacySystem(document.legacySystem, steps);
   const signoffEvidenceIds = validateSignoffs(document.signoffs, environment.endedAt);
@@ -87,6 +93,7 @@ function validateEvidence(document, enforceEnvironment = false) {
     rehearsalEvidenceIds: rehearsals,
     rollbackEvidenceId: rollback,
     stepEvidenceHashes: steps.map((step) => step.evidenceHash),
+    productionExecutionEvidence,
     signoffEvidenceIds,
   });
 }
@@ -294,6 +301,7 @@ function validateConnections(connections) {
     fail('PHASE6_CUTOVER_CONNECTIONS_INCOMPLETE');
   }
   const names = [];
+  const evidenceHashes = new Set();
   for (const connection of connections) {
     object(connection, [
       'name', 'smokeStatus', 'reconciliationDifferences', 'credentialExposed', 'evidenceHash',
@@ -303,8 +311,84 @@ function validateConnections(connections) {
     equal(connection.credentialExposed, false, 'PHASE6_CUTOVER_CREDENTIAL_EXPOSED');
     pattern(connection.evidenceHash, SHA256, 'PHASE6_CUTOVER_CONNECTION_INVALID');
     names.push(connection.name);
+    evidenceHashes.add(connection.evidenceHash);
   }
   exactStringSet(names, CONNECTIONS, 'PHASE6_CUTOVER_CONNECTIONS_INCOMPLETE');
+  if (evidenceHashes.size !== CONNECTIONS.length) {
+    fail('PHASE6_CUTOVER_CONNECTION_EVIDENCE_REUSED');
+  }
+  return evidenceHashes;
+}
+
+function validateProductionExecution(control, source, environment, steps, connectionHashes) {
+  object(control, [
+    'evidenceId', 'evidenceHash', 'changeEvidenceId', 'policyId', 'enabledAt',
+    'subjectCommitSha', 'deploymentManifestHash', 'maxAuthorizationTtlSeconds',
+    'singleUse', 'bindTenant', 'bindResource', 'bindSubjectHash', 'bindExpectedVersion',
+    'bindRelease', 'credentialReuseDetected', 'mcpR3ToolCount', 'actions',
+  ], 'PHASE6_PRODUCTION_EXECUTION_INVALID');
+  pattern(control.evidenceId, ULID, 'PHASE6_PRODUCTION_EXECUTION_INVALID');
+  pattern(control.changeEvidenceId, ULID, 'PHASE6_PRODUCTION_EXECUTION_INVALID');
+  if (control.evidenceId === control.changeEvidenceId) {
+    fail('PHASE6_PRODUCTION_EXECUTION_EVIDENCE_REUSED');
+  }
+  pattern(control.evidenceHash, SHA256, 'PHASE6_PRODUCTION_EXECUTION_INVALID');
+  pattern(control.policyId, /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/u,
+    'PHASE6_PRODUCTION_EXECUTION_INVALID');
+  equal(control.subjectCommitSha, source.commitSha,
+    'PHASE6_PRODUCTION_EXECUTION_SOURCE_MISMATCH');
+  equal(control.deploymentManifestHash, source.deploymentManifestHash,
+    'PHASE6_PRODUCTION_EXECUTION_SOURCE_MISMATCH');
+  equal(control.maxAuthorizationTtlSeconds, 900,
+    'PHASE6_PRODUCTION_EXECUTION_POLICY_INVALID');
+  for (const field of [
+    'singleUse', 'bindTenant', 'bindResource', 'bindSubjectHash', 'bindExpectedVersion',
+    'bindRelease',
+  ]) equal(control[field], true, 'PHASE6_PRODUCTION_EXECUTION_POLICY_INVALID');
+  equal(control.credentialReuseDetected, false, 'PHASE6_PRODUCTION_EXECUTION_CREDENTIAL_REUSE');
+  equal(control.mcpR3ToolCount, 0, 'PHASE6_PRODUCTION_EXECUTION_MCP_R3_FORBIDDEN');
+  const enabledAt = timestamp(control.enabledAt);
+  const gatewayStep = steps.find((step) => step.name === 'gateway-switch');
+  if (
+    gatewayStep === undefined || enabledAt < environment.startedAt ||
+    enabledAt > timestamp(gatewayStep.endedAt)
+  ) fail('PHASE6_PRODUCTION_EXECUTION_ENABLE_TIME_INVALID');
+  if (!Array.isArray(control.actions) ||
+    control.actions.length !== PRODUCTION_EXECUTION_ACTIONS.length) {
+    fail('PHASE6_PRODUCTION_EXECUTION_ACTIONS_INCOMPLETE');
+  }
+  const names = [];
+  const hashes = new Set([control.evidenceHash]);
+  for (const action of control.actions) {
+    object(action, [
+      'name', 'successfulAuthorizations', 'replayAttempts', 'replaysDenied',
+      'bindingMismatchAttempts', 'bindingMismatchesDenied', 'evidenceHash',
+    ], 'PHASE6_PRODUCTION_EXECUTION_ACTION_INVALID');
+    integer(action.successfulAuthorizations, 1, Number.MAX_SAFE_INTEGER,
+      'PHASE6_PRODUCTION_EXECUTION_ACTION_INVALID');
+    integer(action.replayAttempts, 1, Number.MAX_SAFE_INTEGER,
+      'PHASE6_PRODUCTION_EXECUTION_REPLAY_COVERAGE_INVALID');
+    equal(action.replaysDenied, action.replayAttempts,
+      'PHASE6_PRODUCTION_EXECUTION_REPLAY_ACCEPTED');
+    integer(action.bindingMismatchAttempts, 5, Number.MAX_SAFE_INTEGER,
+      'PHASE6_PRODUCTION_EXECUTION_BINDING_COVERAGE_INVALID');
+    equal(action.bindingMismatchesDenied, action.bindingMismatchAttempts,
+      'PHASE6_PRODUCTION_EXECUTION_BINDING_BYPASS');
+    pattern(action.evidenceHash, SHA256, 'PHASE6_PRODUCTION_EXECUTION_ACTION_INVALID');
+    names.push(action.name);
+    hashes.add(action.evidenceHash);
+  }
+  exactStringSet(names, PRODUCTION_EXECUTION_ACTIONS,
+    'PHASE6_PRODUCTION_EXECUTION_ACTIONS_INCOMPLETE');
+  if (
+    hashes.size !== PRODUCTION_EXECUTION_ACTIONS.length + 1 ||
+    [...hashes].some((hash) => connectionHashes.has(hash))
+  ) fail('PHASE6_PRODUCTION_EXECUTION_EVIDENCE_REUSED');
+  return Object.freeze({
+    evidenceId: control.evidenceId,
+    evidenceHash: control.evidenceHash,
+    actionEvidenceHashes: control.actions.map((action) => action.evidenceHash),
+  });
 }
 
 function validateAcceptance(acceptance) {
@@ -426,6 +510,20 @@ function fixture() {
       missingAttachments: 0, checksumMismatches: 0, crossTenantAttempts: 30,
       crossTenantDenied: 30, mcpR3ToolCount: 0,
     },
+    productionExecution: {
+      evidenceId: id(60), evidenceHash: hash('a'), changeEvidenceId: id(61),
+      policyId: 'phase6-production-execution-v1',
+      enabledAt: new Date(start + 2 * 60 * 60 * 1_000).toISOString(),
+      subjectCommitSha: commitSha, deploymentManifestHash: hash('d'),
+      maxAuthorizationTtlSeconds: 900, singleUse: true, bindTenant: true,
+      bindResource: true, bindSubjectHash: true, bindExpectedVersion: true,
+      bindRelease: true, credentialReuseDetected: false, mcpR3ToolCount: 0,
+      actions: PRODUCTION_EXECUTION_ACTIONS.map((name, index) => ({
+        name, successfulAuthorizations: 1, replayAttempts: 1, replaysDenied: 1,
+        bindingMismatchAttempts: 5, bindingMismatchesDenied: 5,
+        evidenceHash: hash(index === 0 ? 'b' : 'c'),
+      })),
+    },
     legacySystem: {
       writeFrozen: true, readOnly: true, dataPreserved: true, auditPreserved: true,
       writeProbeRejected: true, evidenceHash: hash('9'),
@@ -451,6 +549,14 @@ function runSelfTest() {
     [(value) => { value.legacySystem.readOnly = false; }, 'PHASE6_CUTOVER_LEGACY_INVALID'],
     [(value) => { value.connections[0].credentialExposed = true; },
       'PHASE6_CUTOVER_CREDENTIAL_EXPOSED'],
+    [(value) => { value.productionExecution.actions[0].replaysDenied = 0; },
+      'PHASE6_PRODUCTION_EXECUTION_REPLAY_ACCEPTED'],
+    [(value) => { value.productionExecution.bindRelease = false; },
+      'PHASE6_PRODUCTION_EXECUTION_POLICY_INVALID'],
+    [(value) => {
+      value.productionExecution.actions[1].evidenceHash =
+        value.productionExecution.actions[0].evidenceHash;
+    }, 'PHASE6_PRODUCTION_EXECUTION_EVIDENCE_REUSED'],
   ];
   for (const [mutate, code] of cases) {
     const value = structuredClone(fixture());

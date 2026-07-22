@@ -83,7 +83,7 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/).optional(),
   ),
-  /** Phase 6 总体 Go/No-Go 门禁落地前必须保持 sandbox；production 当前失败关闭。 */
+  /** production 仅在 Phase 6 独立授权域逐对象签发短时授权后可用。 */
   PAYROLL_TAX_GATEWAY_MODE: z.enum(['sandbox', 'production']).default('sandbox'),
   /** 资金账号、支付指令、银行文件与回盘正文专用密钥环；不得复用薪酬密钥。 */
   TREASURY_DATA_ENCRYPTION_KEYS: z.preprocess(
@@ -114,8 +114,25 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/).optional(),
   ),
-  /** Phase 6 总体 Go/No-Go 门禁落地前必须保持 sandbox；production 当前失败关闭。 */
+  /** production 仅在 Phase 6 独立授权域逐对象签发短时授权后可用。 */
   TREASURY_BANK_SUBMISSION_MODE: z.enum(['sandbox', 'production']).default('sandbox'),
+  /** Phase 6 独立授权域；只签发绑定发布物和业务对象的一次性短时生产执行授权。 */
+  PHASE6_PRODUCTION_AUTHORIZATION_ENDPOINT: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().url().optional(),
+  ),
+  PHASE6_PRODUCTION_AUTHORIZATION_BEARER_TOKEN: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/).optional(),
+  ),
+  PHASE6_RELEASE_COMMIT_SHA: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().regex(/^[a-f0-9]{40}$/).optional(),
+  ),
+  PHASE6_DEPLOYMENT_MANIFEST_SHA256: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
+  ),
   /** 银行回盘隔离 Inbox；在返回规范清单前完成验签、扫描与 WORM 留档。 */
   TREASURY_BANK_RETURN_INBOX_ENDPOINT: z.preprocess(
     (value) => value === '' ? undefined : value,
@@ -509,6 +526,65 @@ const environmentSchema = z.object({
   ) context.addIssue({
     code: 'custom', path: ['PAYROLL_TAX_GATEWAY_BEARER_TOKEN'],
     message: 'Payroll Tax 税务网关不得复用 Treasury 凭据',
+  });
+  const productionAuthorization = [
+    environment.PHASE6_PRODUCTION_AUTHORIZATION_ENDPOINT,
+    environment.PHASE6_PRODUCTION_AUTHORIZATION_BEARER_TOKEN,
+    environment.PHASE6_RELEASE_COMMIT_SHA,
+    environment.PHASE6_DEPLOYMENT_MANIFEST_SHA256,
+  ];
+  const productionExecutionEnabled =
+    environment.TREASURY_BANK_SUBMISSION_MODE === 'production' ||
+    environment.PAYROLL_TAX_GATEWAY_MODE === 'production';
+  if (productionExecutionEnabled && environment.NODE_ENV !== 'production') context.addIssue({
+    code: 'custom', path: ['TREASURY_BANK_SUBMISSION_MODE'],
+    message: '真实银行或税务通道只能在 NODE_ENV=production 的受控运行时启用',
+  });
+  if (
+    productionAuthorization.some((value) => value !== undefined) &&
+    productionAuthorization.some((value) => value === undefined)
+  ) context.addIssue({
+    code: 'custom', path: ['PHASE6_PRODUCTION_AUTHORIZATION_ENDPOINT'],
+    message: 'Phase 6 生产执行授权端点、凭据、发布 commit 与部署清单摘要必须成套配置',
+  });
+  if (productionExecutionEnabled && productionAuthorization.some((value) => value === undefined)) {
+    context.addIssue({
+      code: 'custom', path: ['PHASE6_PRODUCTION_AUTHORIZATION_ENDPOINT'],
+      message: '生产银行或税务通道只能在 Phase 6 一次性授权域完整配置后启用',
+    });
+  }
+  if (environment.PHASE6_PRODUCTION_AUTHORIZATION_ENDPOINT !== undefined) {
+    const endpoint = new URL(environment.PHASE6_PRODUCTION_AUTHORIZATION_ENDPOINT);
+    const forbiddenOrigins = new Set([
+      issuer.origin,
+      ...[
+        environment.TREASURY_WORM_ARCHIVE_ENDPOINT,
+        environment.TREASURY_BANK_SUBMISSION_ENDPOINT,
+        environment.TREASURY_BANK_RETURN_INBOX_ENDPOINT,
+        environment.PAYROLL_TAX_WORM_ARCHIVE_ENDPOINT,
+        environment.PAYROLL_TAX_GATEWAY_ENDPOINT,
+      ].filter((value): value is string => value !== undefined)
+        .map((value) => new URL(value).origin),
+    ]);
+    if (
+      endpoint.protocol !== 'https:' || endpoint.username !== '' || endpoint.password !== '' ||
+      endpoint.search !== '' || endpoint.hash !== '' ||
+      (endpoint.port !== '' && endpoint.port !== '443') || forbiddenOrigins.has(endpoint.origin)
+    ) context.addIssue({
+      code: 'custom', path: ['PHASE6_PRODUCTION_AUTHORIZATION_ENDPOINT'],
+      message: 'Phase 6 生产执行授权必须使用独立权限域标准 HTTPS',
+    });
+  }
+  if (
+    environment.PHASE6_PRODUCTION_AUTHORIZATION_BEARER_TOKEN !== undefined &&
+    [
+      ...treasuryTokens,
+      environment.PAYROLL_TAX_WORM_ARCHIVE_BEARER_TOKEN,
+      environment.PAYROLL_TAX_GATEWAY_BEARER_TOKEN,
+    ].includes(environment.PHASE6_PRODUCTION_AUTHORIZATION_BEARER_TOKEN)
+  ) context.addIssue({
+    code: 'custom', path: ['PHASE6_PRODUCTION_AUTHORIZATION_BEARER_TOKEN'],
+    message: 'Phase 6 生产执行授权不得复用资金、税务或 WORM 凭据',
   });
   if (environment.NODE_ENV === 'production' && environment.ESIGN_WEBHOOK_ENCRYPTION_KEYS === undefined) {
     context.addIssue({

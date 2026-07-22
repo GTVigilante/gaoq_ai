@@ -1,7 +1,10 @@
+import type { ProductionExecutionAuthorization } from '../../../core/production-execution/production-execution-authorization.service.js';
+
 export interface TreasuryBankSubmissionReceipt {
   readonly submissionId: string;
   readonly evidenceId: string;
   readonly accepted: true;
+  readonly productionAuthorizationEvidenceId: string | null;
 }
 
 export abstract class TreasuryBankSubmissionGateway {
@@ -13,5 +16,6 @@ export abstract class TreasuryBankSubmissionGateway {
     readonly fileHash: string;
     readonly lineCount: number;
     readonly totalMinor: number;
+    readonly productionAuthorization: ProductionExecutionAuthorization | null;
   }): Promise<TreasuryBankSubmissionReceipt>;
 }

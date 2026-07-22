@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 
 import { IdempotencyModule } from '../../core/idempotency/idempotency.module.js';
+import { ProductionExecutionModule } from '../../core/production-execution/production-execution.module.js';
 import { ApprovalModule } from '../approval/approval.module.js';
 import { StrongAuthModule } from '../identity/strong-auth/strong-auth.module.js';
 import { IdentityModule } from '../identity/identity.module.js';
@@ -57,6 +58,7 @@ import {
 @Module({
   imports: [
     IdempotencyModule,
+    ProductionExecutionModule,
     ApprovalModule,
     StrongAuthModule,
     IdentityModule,

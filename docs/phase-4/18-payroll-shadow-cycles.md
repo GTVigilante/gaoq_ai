@@ -71,7 +71,7 @@ ERP 再次按固定字段顺序计算来源清单 SHA-256，并对本地工资�
 
 该证据只满足 Phase 4 的工资影子门禁。Phase 6 仍必须验证三次全量演练、回滚、安全、权限、外部连接、备份恢复、监控和值班，并取得跨职能 Go/No-Go 签署。任何 AI、MCP 客户端或本服务都不能把 `eligible` 解释为自动上线授权。
 
-在 Phase 6 总体授权能力交付前，`TREASURY_BANK_SUBMISSION_MODE=production` 会由 Treasury 应用服务无条件失败关闭；影子联调只允许 `sandbox`。这避免把局部工资门禁误当成真实资金授权。
+影子联调只允许 `sandbox`。Phase 6 即使把 `TREASURY_BANK_SUBMISSION_MODE` 改为 `production`，也必须由独立授权域对租户、批次、摘要、版本和发布物签发一次性短时授权，并由银行网关回显 WORM 证据；仅有本阶段 `eligible` 仍会失败关闭。
 
 ## REST、事件、审计与 MCP
 

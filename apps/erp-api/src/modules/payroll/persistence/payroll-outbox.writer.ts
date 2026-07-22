@@ -102,11 +102,16 @@ export class PayrollOutboxWriter {
       ) throw new Error('PAYROLL_TAX_OUTBOX_DATA_INVALID');
       return;
     }
+    const validKeys = [
+      'contentHash,employeeCount,payrollRunId,period,status,taxSubmissionEvidenceId,taxSubmissionId,totalTaxableEarningsMinor,totalWithholdingTaxMinor',
+      'contentHash,employeeCount,payrollRunId,period,productionAuthorizationEvidenceId,status,taxSubmissionEvidenceId,taxSubmissionId,totalTaxableEarningsMinor,totalWithholdingTaxMinor',
+    ];
     if (
-      keys !==
-        'contentHash,employeeCount,payrollRunId,period,status,taxSubmissionEvidenceId,taxSubmissionId,totalTaxableEarningsMinor,totalWithholdingTaxMinor' ||
+      !validKeys.includes(keys) ||
       !base || data['status'] !== 'submitted' ||
-      !safeId(data['taxSubmissionId']) || !safeId(data['taxSubmissionEvidenceId'])
+      !safeId(data['taxSubmissionId']) || !safeId(data['taxSubmissionEvidenceId']) ||
+      (Object.hasOwn(data, 'productionAuthorizationEvidenceId') &&
+        !safeId(data['productionAuthorizationEvidenceId']))
     ) throw new Error('PAYROLL_TAX_OUTBOX_DATA_INVALID');
   }
 

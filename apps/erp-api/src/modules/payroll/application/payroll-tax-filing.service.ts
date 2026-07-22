@@ -15,6 +15,11 @@ import type { ClientSession, Model } from 'mongoose';
 import { z } from 'zod';
 
 import { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
+import {
+  ProductionExecutionAuthorizationService,
+  productionExecutionSubjectHash,
+  type ProductionExecutionAuthorization,
+} from '../../../core/production-execution/production-execution-authorization.service.js';
 import type { AppEnvironment } from '../../../config/environment.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import { ApprovalApplicationService } from '../../approval/application/approval-application.service.js';
@@ -117,6 +122,7 @@ export class PayrollTaxFilingService {
     private readonly archive: PayrollTaxImmutableArchive,
     private readonly gateway: PayrollTaxGateway,
     private readonly config: ConfigService<AppEnvironment, true>,
+    private readonly productionAuthorization: ProductionExecutionAuthorizationService,
     private readonly outbox: PayrollOutboxWriter,
     @InjectModel(PayrollPeriodRecord.name)
     private readonly periods: Model<PayrollPeriodDocument>,
@@ -325,17 +331,14 @@ export class PayrollTaxFilingService {
         message: '只允许受信任税务连接器执行个税申报提交',
       });
     }
-    if (this.config.get('PAYROLL_TAX_GATEWAY_MODE', { infer: true }) === 'production') {
-      throw new ConflictException({
-        code: 'PAYROLL_TAX_PRODUCTION_CUTOVER_NOT_AUTHORIZED',
-        message: 'Phase 6 总体 Go/No-Go 与生产切换授权尚未落地，真实税务申报失败关闭',
-      });
-    }
     if (!ULID.test(filingId) || !Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
       throw new BadRequestException({
         code: 'PAYROLL_TAX_SUBMISSION_INPUT_INVALID', message: '个税申报提交引用非法',
       });
     }
+    const productionAuthorization = await this.authorizeProductionSubmission(
+      filingId, expectedVersion,
+    );
     const staged = await this.run(() => this.idempotency.execute(
       'payroll.tax_filing.stage_submission', key, { filingId, expectedVersion },
       async (session) => {
@@ -384,6 +387,7 @@ export class PayrollTaxFilingService {
       employeeCount: filing.employeeCount,
       totalTaxableEarningsMinor: filing.totalTaxableEarningsMinor,
       totalWithholdingTaxMinor: filing.totalWithholdingTaxMinor,
+      productionAuthorization,
     });
     return this.run(() => this.idempotency.execute(
       'payroll.tax_filing.finalize_submission', deriveKey(key, 'finalize-submission'), {
@@ -421,8 +425,11 @@ export class PayrollTaxFilingService {
             contentHash: current.contentHash, employeeCount: current.employeeCount,
             totalTaxableEarningsMinor: current.totalTaxableEarningsMinor,
             totalWithholdingTaxMinor: current.totalWithholdingTaxMinor,
-            taxSubmissionId: receipt.submissionId,
-            taxSubmissionEvidenceId: receipt.evidenceId, status: 'submitted',
+            taxSubmissionId: receipt.submissionId, taxSubmissionEvidenceId: receipt.evidenceId,
+            ...(receipt.productionAuthorizationEvidenceId === null ? {} : {
+              productionAuthorizationEvidenceId: receipt.productionAuthorizationEvidenceId,
+            }),
+            status: 'submitted',
           },
         }, session);
         return summary({
@@ -720,6 +727,37 @@ export class PayrollTaxFilingService {
       code: 'PAYROLL_TAX_FILING_NOT_FOUND', message: '个税申报清单不存在',
     });
     return filing;
+  }
+
+  /** 生产模式要求独立授权域按租户、税务清单、摘要、版本和发布物签发短时授权。 */
+  private async authorizeProductionSubmission(
+    filingId: string,
+    expectedVersion: number,
+  ): Promise<ProductionExecutionAuthorization | null> {
+    if (this.config.get('PAYROLL_TAX_GATEWAY_MODE', { infer: true }) !== 'production') return null;
+    const filing = await this.requireFiling(filingId);
+    if (
+      filing.status === 'submitted' && filing.version === expectedVersion + 1 &&
+      filing.taxSubmissionId !== null && filing.taxSubmissionEvidenceId !== null
+    ) return null;
+    if (
+      !['approved', 'submitting'].includes(filing.status) || filing.version !== expectedVersion ||
+      filing.objectRef === null
+    ) throw new ConflictException({
+      code: 'PAYROLL_TAX_PRODUCTION_AUTHORIZATION_SUBJECT_INVALID',
+      message: '个税清单状态、版本或不可变对象不足以申请生产执行授权',
+    });
+    return this.productionAuthorization.authorize({
+      action: 'payroll-tax-submission',
+      tenantId: this.tenantId(),
+      resourceId: filing.id,
+      subjectHash: productionExecutionSubjectHash([
+        filing.periodId, filing.payrollRunId, filing.objectRef, filing.contentHash,
+        filing.employeeCount,
+        filing.totalTaxableEarningsMinor, filing.totalWithholdingTaxMinor,
+      ]),
+      expectedVersion,
+    });
   }
 
   private async requirePeriod(

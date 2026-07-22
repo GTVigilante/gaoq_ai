@@ -157,11 +157,16 @@ export class TreasuryOutboxWriter {
       return;
     }
     if (event.type === 'treasury.disbursement.submitted') {
+      const validKeys = [
+        'bankSubmissionEvidenceId,bankSubmissionId,fileHash,lineCount,payrollPeriodId,payrollRunId,status,totalMinor',
+        'bankSubmissionEvidenceId,bankSubmissionId,fileHash,lineCount,payrollPeriodId,payrollRunId,productionAuthorizationEvidenceId,status,totalMinor',
+      ];
       if (
-        keys !==
-          'bankSubmissionEvidenceId,bankSubmissionId,fileHash,lineCount,payrollPeriodId,payrollRunId,status,totalMinor' ||
+        !validKeys.includes(keys) ||
         !baseValid || data['status'] !== 'submitted' ||
         !safeId(data['bankSubmissionId']) || !safeId(data['bankSubmissionEvidenceId']) ||
+        (Object.hasOwn(data, 'productionAuthorizationEvidenceId') &&
+          !safeId(data['productionAuthorizationEvidenceId'])) ||
         typeof data['fileHash'] !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(data['fileHash'])
       ) throw new Error('TREASURY_OUTBOX_DATA_INVALID');
       return;

@@ -15,6 +15,11 @@ import type { ClientSession, Model } from 'mongoose';
 import { z } from 'zod';
 
 import { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
+import {
+  ProductionExecutionAuthorizationService,
+  productionExecutionSubjectHash,
+  type ProductionExecutionAuthorization,
+} from '../../../core/production-execution/production-execution-authorization.service.js';
 import type { AppEnvironment } from '../../../config/environment.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import { ApprovalApplicationService } from '../../approval/application/approval-application.service.js';
@@ -143,6 +148,7 @@ export class TreasuryDisbursementService {
     private readonly archive: TreasuryImmutableArchive,
     private readonly bankGateway: TreasuryBankSubmissionGateway,
     private readonly config: ConfigService<AppEnvironment, true>,
+    private readonly productionAuthorization: ProductionExecutionAuthorizationService,
     private readonly outbox: TreasuryOutboxWriter,
     @InjectModel(TreasuryBankAccountRecord.name)
     private readonly accounts: Model<TreasuryBankAccountDocument>,
@@ -320,12 +326,9 @@ export class TreasuryDisbursementService {
     if (!ID_PATTERN.test(batchId)) throw new BadRequestException({
       code: 'TREASURY_BATCH_ID_INVALID', message: '代发批次标识非法',
     });
-    if (this.config.get('TREASURY_BANK_SUBMISSION_MODE', { infer: true }) === 'production') {
-      throw new ConflictException({
-        code: 'TREASURY_PRODUCTION_CUTOVER_NOT_AUTHORIZED',
-        message: 'Phase 6 总体 Go/No-Go 与生产切换授权尚未落地，真实银行提交失败关闭',
-      });
-    }
+    const productionAuthorization = await this.authorizeProductionSubmission(
+      batchId, input.expectedVersion,
+    );
     const staged = await this.run(() => this.idempotency.execute(
       'treasury.disbursement.stage_submission', key,
       { batchId, expectedVersion: input.expectedVersion }, async (session) => {
@@ -380,6 +383,7 @@ export class TreasuryDisbursementService {
     const receipt = await this.bankGateway.submit({
       tenantId: this.tenantId(), batchId: exported.id, objectRef: exported.objectRef,
       fileHash: exported.fileHash, lineCount: exported.lineCount, totalMinor: exported.totalMinor,
+      productionAuthorization,
     });
     return this.run(() => this.idempotency.execute(
       'treasury.disbursement.finalize_submission', deriveKey(key, 'finalize-submission'), {
@@ -415,7 +419,11 @@ export class TreasuryDisbursementService {
             payrollPeriodId: next.payrollPeriodId, payrollRunId: next.payrollRunId,
             lineCount: next.lineCount, totalMinor: next.totalMinor, fileHash: next.fileHash,
             bankSubmissionId: receipt.submissionId,
-            bankSubmissionEvidenceId: receipt.evidenceId, status: 'submitted',
+            bankSubmissionEvidenceId: receipt.evidenceId,
+            ...(receipt.productionAuthorizationEvidenceId === null ? {} : {
+              productionAuthorizationEvidenceId: receipt.productionAuthorizationEvidenceId,
+            }),
+            status: 'submitted',
           },
         }, session);
         return summaryFromDomain(next);
@@ -913,6 +921,38 @@ export class TreasuryDisbursementService {
       code: 'TREASURY_BATCH_NOT_FOUND', message: '代发批次不存在',
     });
     return batch;
+  }
+
+  /** 生产模式要求独立授权域按租户、批次、摘要、版本和发布物签发短时一次性授权。 */
+  private async authorizeProductionSubmission(
+    batchId: string,
+    expectedVersion: number,
+  ): Promise<ProductionExecutionAuthorization | null> {
+    if (this.config.get('TREASURY_BANK_SUBMISSION_MODE', { infer: true }) !== 'production') {
+      return null;
+    }
+    const batch = await this.requireBatch(batchId);
+    if (
+      batch.status === 'submitted' && batch.version === expectedVersion + 1 &&
+      batch.bankSubmissionId !== null && batch.bankSubmissionEvidenceId !== null
+    ) return null;
+    if (
+      !['exported', 'submitting'].includes(batch.status) || batch.version !== expectedVersion ||
+      batch.fileHash === null || batch.objectRef === null
+    ) throw new ConflictException({
+      code: 'TREASURY_PRODUCTION_AUTHORIZATION_SUBJECT_INVALID',
+      message: '代发批次状态、版本或不可变文件不足以申请生产执行授权',
+    });
+    return this.productionAuthorization.authorize({
+      action: 'treasury-bank-submission',
+      tenantId: this.tenantId(),
+      resourceId: batch.id,
+      subjectHash: productionExecutionSubjectHash([
+        batch.payrollPeriodId, batch.payrollRunId, batch.objectRef, batch.fileHash,
+        batch.lineCount, batch.totalMinor,
+      ]),
+      expectedVersion,
+    });
   }
 
   private assertHumanPreparer(): void {

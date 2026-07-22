@@ -5,6 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { z } from 'zod';
 
 import type { AppEnvironment } from '../../../config/environment.js';
+import type { ProductionExecutionAuthorization } from '../../../core/production-execution/production-execution-authorization.service.js';
 import {
   TreasuryBankSubmissionGateway,
   type TreasuryBankSubmissionReceipt,
@@ -14,14 +15,24 @@ const RESPONSE_LIMIT_BYTES = 16 * 1024;
 const HASH_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const OBJECT_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9/._:-]{0,511}$/;
-const receiptSchema = z.object({
+const receiptBase = {
   submissionId: z.string().regex(ID_PATTERN), evidenceId: z.string().regex(ID_PATTERN),
   accepted: z.literal(true), batchId: z.string().regex(ID_PATTERN),
   objectRef: z.string().regex(OBJECT_REF_PATTERN), fileHash: z.string().regex(HASH_PATTERN),
   lineCount: z.number().int().min(1).max(5_000),
   totalMinor: z.number().int().safe().positive(),
-  submissionMode: z.literal('sandbox'),
-}).strict();
+};
+const receiptSchema = z.discriminatedUnion('submissionMode', [
+  z.object({ ...receiptBase, submissionMode: z.literal('sandbox') }).strict(),
+  z.object({
+    ...receiptBase,
+    submissionMode: z.literal('production'),
+    productionAuthorizationId: z.string().regex(ID_PATTERN),
+    productionAuthorizationEvidenceId: z.string().regex(ID_PATTERN),
+    releaseCommitSha: z.string().regex(/^[a-f0-9]{40}$/u),
+    deploymentManifestHash: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+  }).strict(),
+]);
 
 /** 独立银行提交 HTTPS Adapter；只传 WORM 引用和批次控制量，不处理账户或文件正文。 */
 @Injectable()
@@ -31,6 +42,7 @@ export class HttpTreasuryBankSubmissionGateway extends TreasuryBankSubmissionGat
   override async submit(input: {
     readonly tenantId: string; readonly batchId: string; readonly objectRef: string;
     readonly fileHash: string; readonly lineCount: number; readonly totalMinor: number;
+    readonly productionAuthorization: ProductionExecutionAuthorization | null;
   }): Promise<TreasuryBankSubmissionReceipt> {
     assertInput(input);
     const endpoint = this.config.get('TREASURY_BANK_SUBMISSION_ENDPOINT', { infer: true });
@@ -39,10 +51,14 @@ export class HttpTreasuryBankSubmissionGateway extends TreasuryBankSubmissionGat
     if (endpoint === undefined || token === undefined) {
       throw new Error('TREASURY_BANK_SUBMISSION_UNAVAILABLE');
     }
-    if (submissionMode !== 'sandbox') {
-      throw new Error('TREASURY_BANK_PRODUCTION_SUBMISSION_NOT_AUTHORIZED');
+    if (submissionMode !== 'sandbox' && submissionMode !== 'production') {
+      throw new Error('TREASURY_BANK_SUBMISSION_MODE_INVALID');
     }
-    const body = JSON.stringify({ ...input, submissionMode });
+    assertAuthorization(input.productionAuthorization, submissionMode);
+    const { productionAuthorization, ...submission } = input;
+    const body = JSON.stringify(submissionMode === 'sandbox'
+      ? { ...submission, submissionMode }
+      : { ...submission, submissionMode, productionAuthorization });
     const response = await safeFetch(safeEndpoint(endpoint), {
       method: 'POST', redirect: 'error', signal: AbortSignal.timeout(60_000),
       headers: {
@@ -61,14 +77,42 @@ export class HttpTreasuryBankSubmissionGateway extends TreasuryBankSubmissionGat
       !parsed.success || parsed.data.batchId !== input.batchId ||
       parsed.data.objectRef !== input.objectRef || parsed.data.fileHash !== input.fileHash ||
       parsed.data.lineCount !== input.lineCount || parsed.data.totalMinor !== input.totalMinor ||
-      parsed.data.submissionMode !== submissionMode
+      parsed.data.submissionMode !== submissionMode ||
+      (parsed.data.submissionMode === 'production' && (
+        input.productionAuthorization === null ||
+        parsed.data.productionAuthorizationId !== input.productionAuthorization.authorizationId ||
+        parsed.data.productionAuthorizationEvidenceId !== input.productionAuthorization.evidenceId ||
+        parsed.data.releaseCommitSha !== input.productionAuthorization.releaseCommitSha ||
+        parsed.data.deploymentManifestHash !==
+          input.productionAuthorization.deploymentManifestHash
+      ))
     ) throw new Error('TREASURY_BANK_SUBMISSION_RECEIPT_INVALID');
     return Object.freeze({
       submissionId: parsed.data.submissionId,
       evidenceId: parsed.data.evidenceId,
       accepted: true,
+      productionAuthorizationEvidenceId: parsed.data.submissionMode === 'production'
+        ? parsed.data.productionAuthorizationEvidenceId : null,
     });
   }
+}
+
+function assertAuthorization(
+  authorization: ProductionExecutionAuthorization | null,
+  mode: 'sandbox' | 'production',
+): void {
+  if (mode === 'sandbox') {
+    if (authorization !== null) throw new Error('TREASURY_BANK_SANDBOX_AUTHORIZATION_FORBIDDEN');
+    return;
+  }
+  const expiresAt = authorization === null ? Number.NaN : Date.parse(authorization.expiresAt);
+  if (
+    authorization === null || !ID_PATTERN.test(authorization.authorizationId) ||
+    !ID_PATTERN.test(authorization.evidenceId) ||
+    !/^[a-f0-9]{40}$/u.test(authorization.releaseCommitSha) ||
+    !/^sha256:[a-f0-9]{64}$/u.test(authorization.deploymentManifestHash) ||
+    !Number.isFinite(expiresAt) || expiresAt <= Date.now() + 10_000
+  ) throw new Error('TREASURY_BANK_PRODUCTION_AUTHORIZATION_INVALID');
 }
 
 function assertInput(input: {

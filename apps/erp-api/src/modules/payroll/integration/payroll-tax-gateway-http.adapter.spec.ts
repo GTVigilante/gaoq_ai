@@ -8,7 +8,12 @@ const input = Object.freeze({
   tenantId: 'tenant-001', filingId: '01J8ZQK7V0A2M4N6P8R0T2W4F1', period: '2026-07',
   objectRef: 'worm/payroll-tax/locked-object-001', contentHash: 'a'.repeat(43),
   employeeCount: 2, totalTaxableEarningsMinor: 1_800_000,
-  totalWithholdingTaxMinor: 21_000,
+  totalWithholdingTaxMinor: 21_000, productionAuthorization: null,
+});
+const productionAuthorization = Object.freeze({
+  authorizationId: 'authorization-001', evidenceId: 'authorization-evidence-001',
+  expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+  releaseCommitSha: 'c'.repeat(40), deploymentManifestHash: `sha256:${'d'.repeat(64)}`,
 });
 
 function config(overrides?: Readonly<Record<string, string>>) {
@@ -24,7 +29,7 @@ function config(overrides?: Readonly<Record<string, string>>) {
 function receipt(changes?: Readonly<Record<string, unknown>>) {
   return {
     submissionId: 'tax-submission-001', evidenceId: 'tax-evidence-001', accepted: true,
-    ...input, submissionMode: 'sandbox', ...changes,
+    ...input, productionAuthorization: undefined, submissionMode: 'sandbox', ...changes,
   };
 }
 
@@ -38,11 +43,19 @@ describe('Payroll Tax 税务网关 HTTPS Adapter', () => {
     vi.stubGlobal('fetch', fetchMock);
     await expect(new HttpPayrollTaxGateway(config()).submit(input)).resolves.toEqual({
       submissionId: 'tax-submission-001', evidenceId: 'tax-evidence-001', accepted: true,
+      productionAuthorizationEvidenceId: null,
     });
     const call = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     if (typeof call[1].body !== 'string') throw new Error('测试请求体必须是 JSON 字符串');
     expect(call[0]).toBe('https://tax-gateway.example.internal/v1/submissions');
-    expect(JSON.parse(call[1].body)).toEqual({ ...input, submissionMode: 'sandbox' });
+    expect(JSON.parse(call[1].body)).toEqual({
+      tenantId: input.tenantId, filingId: input.filingId, period: input.period,
+      objectRef: input.objectRef, contentHash: input.contentHash,
+      employeeCount: input.employeeCount,
+      totalTaxableEarningsMinor: input.totalTaxableEarningsMinor,
+      totalWithholdingTaxMinor: input.totalWithholdingTaxMinor,
+      submissionMode: 'sandbox',
+    });
     expect(call[1].body).not.toMatch(/employeeId|identityEvidence|certificate|taxpayerId/u);
     expect((call[1].headers as Record<string, string>)['idempotency-key'])
       .toMatch(/^[A-Za-z0-9_-]{43}$/u);
@@ -78,10 +91,21 @@ describe('Payroll Tax 税务网关 HTTPS Adapter', () => {
       .rejects.toThrow('PAYROLL_TAX_GATEWAY_HTTP_503');
   });
 
-  it('Adapter 防御性拒绝 production，且要求税务网关回显 sandbox', async () => {
+  it('production 必须携带短时授权且要求税务网关精确回显', async () => {
     await expect(new HttpPayrollTaxGateway(config({
       PAYROLL_TAX_GATEWAY_MODE: 'production',
-    })).submit(input)).rejects.toThrow('PAYROLL_TAX_PRODUCTION_SUBMISSION_NOT_AUTHORIZED');
+    })).submit(input)).rejects.toThrow('PAYROLL_TAX_PRODUCTION_AUTHORIZATION_INVALID');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(receipt({
+      submissionMode: 'production', productionAuthorizationId: 'authorization-001',
+      productionAuthorizationEvidenceId: 'authorization-evidence-001',
+      releaseCommitSha: productionAuthorization.releaseCommitSha,
+      deploymentManifestHash: productionAuthorization.deploymentManifestHash,
+    })), { status: 202, headers: { 'content-type': 'application/json' } })));
+    await expect(new HttpPayrollTaxGateway(config({
+      PAYROLL_TAX_GATEWAY_MODE: 'production',
+    })).submit({ ...input, productionAuthorization })).resolves.toMatchObject({
+      productionAuthorizationEvidenceId: 'authorization-evidence-001',
+    });
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(receipt({
       submissionMode: 'production',
     })), { status: 202, headers: { 'content-type': 'application/json' } })));

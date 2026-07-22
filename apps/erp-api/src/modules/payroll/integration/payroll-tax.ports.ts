@@ -18,6 +18,7 @@ export interface PayrollTaxSubmissionReceipt {
   readonly submissionId: string;
   readonly evidenceId: string;
   readonly accepted: true;
+  readonly productionAuthorizationEvidenceId: string | null;
 }
 
 export abstract class PayrollTaxGateway {
@@ -31,5 +32,7 @@ export abstract class PayrollTaxGateway {
     readonly employeeCount: number;
     readonly totalTaxableEarningsMinor: number;
     readonly totalWithholdingTaxMinor: number;
+    readonly productionAuthorization: ProductionExecutionAuthorization | null;
   }): Promise<PayrollTaxSubmissionReceipt>;
 }
+import type { ProductionExecutionAuthorization } from '../../../core/production-execution/production-execution-authorization.service.js';
