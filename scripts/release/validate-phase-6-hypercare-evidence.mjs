@@ -60,7 +60,7 @@ function validateEvidence(document, enforceEnvironment = false) {
   pattern(document.releaseId, ULID, 'PHASE6_HYPERCARE_RELEASE_ID_INVALID');
   const source = validateSource(document.source, enforceEnvironment);
   validateProduction(document.production, enforceEnvironment);
-  const cutoverCompletedAt = validateCutover(document.cutover, source);
+  const cutoverCompletedAt = validateCutover(document.cutover, source, document.releaseId);
   const period = validatePeriod(document.period, cutoverCompletedAt);
   const dailyHashes = validateDays(document.days, period);
   validateAggregate(document.aggregate, document.days);
@@ -112,12 +112,13 @@ function validateProduction(production, enforceEnvironment) {
   }
 }
 
-function validateCutover(cutover, source) {
+function validateCutover(cutover, source, releaseId) {
   object(cutover, [
     'releaseId', 'outcome', 'subjectCommitSha', 'releaseCandidate', 'evidenceHash',
     'completedAt',
   ], 'PHASE6_HYPERCARE_CUTOVER_INVALID');
   pattern(cutover.releaseId, ULID, 'PHASE6_HYPERCARE_CUTOVER_INVALID');
+  equal(cutover.releaseId, releaseId, 'PHASE6_HYPERCARE_CUTOVER_MISMATCH');
   equal(cutover.outcome, 'CUTOVER_COMPLETED', 'PHASE6_HYPERCARE_CUTOVER_INVALID');
   equal(cutover.subjectCommitSha, source.commitSha, 'PHASE6_HYPERCARE_CUTOVER_MISMATCH');
   equal(cutover.releaseCandidate, source.releaseCandidate, 'PHASE6_HYPERCARE_CUTOVER_MISMATCH');
@@ -166,7 +167,10 @@ function validateDays(days, period) {
     if (hashes.has(day.evidenceHash)) fail('PHASE6_HYPERCARE_DAILY_EVIDENCE_REUSED');
     hashes.add(day.evidenceHash);
     const closedAt = timestamp(day.closedAt);
-    if (closedAt < expectedDate + 24 * 60 * 60 * 1_000 || closedAt > period.completedAt) {
+    if (
+      closedAt < expectedDate + 24 * 60 * 60 * 1_000 ||
+      closedAt > expectedDate + 48 * 60 * 60 * 1_000 || closedAt > period.completedAt
+    ) {
       fail('PHASE6_HYPERCARE_DAY_CLOSE_TIME_INVALID');
     }
   }
@@ -334,7 +338,7 @@ function fixture() {
       production: true,
     },
     cutover: {
-      releaseId: id(2), outcome: 'CUTOVER_COMPLETED', subjectCommitSha: commitSha,
+      releaseId: id(1), outcome: 'CUTOVER_COMPLETED', subjectCommitSha: commitSha,
       releaseCandidate: 'rc-20260719-01', evidenceHash: hash(1),
       completedAt: '2026-07-19T06:00:00.000Z',
     },
@@ -392,6 +396,10 @@ function runSelfTest() {
     [(value) => { value.days.pop(); }, 'PHASE6_HYPERCARE_DAYS_INCOMPLETE'],
     [(value) => { value.days[3].date = value.days[2].date; },
       'PHASE6_HYPERCARE_DAY_ORDER_INVALID'],
+    [(value) => { value.cutover.releaseId = '01J8ZQK7V0A2M4N6P8R0T2W402'; },
+      'PHASE6_HYPERCARE_CUTOVER_MISMATCH'],
+    [(value) => { value.days[0].closedAt = value.period.completedAt; },
+      'PHASE6_HYPERCARE_DAY_CLOSE_TIME_INVALID'],
     [(value) => { value.days[5].slo.sloBreaches = 1; }, 'PHASE6_HYPERCARE_SLO_BREACH'],
     [(value) => { value.days[7].safety.crossTenantDenied = 1; },
       'PHASE6_HYPERCARE_TENANT_ESCAPE'],

@@ -69,7 +69,7 @@ function validateEvidence(document, enforceEnvironment = false) {
   pattern(document.releaseId, ULID, 'PHASE6_CUTOVER_RELEASE_ID_INVALID');
   const source = validateSource(document.source, enforceEnvironment);
   const environment = validateEnvironment(document.environment, enforceEnvironment);
-  validatePhase5Decision(document.phase5Decision, source, environment.startedAt);
+  validatePhase5Decision(document.phase5Decision, source, environment);
   const rehearsals = validateRehearsals(document.rehearsals, source, environment.startedAt);
   const rollback = validateRollback(document.rollbackRehearsal, source, environment.startedAt);
   validateWindow(document.window, environment);
@@ -149,7 +149,7 @@ function validateEnvironment(environment, enforceEnvironment) {
   return Object.freeze({ startedAt, endedAt });
 }
 
-function validatePhase5Decision(decision, source, cutoverStartedAt) {
+function validatePhase5Decision(decision, source, environment) {
   object(decision, [
     'decisionId', 'outcome', 'subjectCommitSha', 'releaseCandidate', 'evidenceHash',
     'decidedAt', 'validUntil',
@@ -162,7 +162,10 @@ function validatePhase5Decision(decision, source, cutoverStartedAt) {
   pattern(decision.evidenceHash, SHA256, 'PHASE6_CUTOVER_PHASE5_DECISION_INVALID');
   const decidedAt = timestamp(decision.decidedAt);
   const validUntil = timestamp(decision.validUntil);
-  if (decidedAt >= cutoverStartedAt || validUntil < cutoverStartedAt || validUntil <= decidedAt) {
+  if (
+    decidedAt >= environment.startedAt || validUntil < environment.endedAt ||
+    validUntil <= decidedAt
+  ) {
     fail('PHASE6_CUTOVER_PHASE5_DECISION_EXPIRED');
   }
 }
@@ -440,6 +443,8 @@ function runSelfTest() {
     [(value) => { value.rehearsals.pop(); }, 'PHASE6_CUTOVER_REHEARSALS_INCOMPLETE'],
     [(value) => { value.rollbackRehearsal.durationSeconds = 14_401; },
       'PHASE6_CUTOVER_ROLLBACK_RTO_EXCEEDED'],
+    [(value) => { value.phase5Decision.validUntil = value.environment.startedAt; },
+      'PHASE6_CUTOVER_PHASE5_DECISION_EXPIRED'],
     [(value) => { value.steps[2].reviewerEvidenceId = value.steps[2].operatorEvidenceId; },
       'PHASE6_CUTOVER_TWO_PERSON_REVIEW_REQUIRED'],
     [(value) => { value.acceptance.mcpR3ToolCount = 1; }, 'PHASE6_CUTOVER_ACCEPTANCE_FAILED'],
