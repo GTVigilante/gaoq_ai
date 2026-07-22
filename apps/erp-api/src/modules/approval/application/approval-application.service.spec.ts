@@ -117,7 +117,14 @@ function dependencies(overrides: Record<string, unknown> = {}) {
     },
     instances: { findById: vi.fn(), insert: vi.fn(), replace: vi.fn(), findInbox: vi.fn() },
     actions: { append: vi.fn(), findTimeline: vi.fn().mockResolvedValue([]) },
-    delegations: { isActive: vi.fn().mockResolvedValue(false) },
+    delegations: {
+      isActive: vi.fn().mockResolvedValue(false),
+      findMine: vi.fn().mockResolvedValue([]),
+      findById: vi.fn(),
+      hasOverlap: vi.fn().mockResolvedValue(false),
+      insert: vi.fn(),
+      replace: vi.fn(),
+    },
     resolvers: {
       resolve: vi.fn().mockResolvedValue([{ nodeId: 'manager', actorIds: ['manager-001'] }]),
     },
@@ -157,6 +164,58 @@ describe('ApprovalApplicationService', () => {
     expect(JSON.stringify(result)).not.toContain('employee-manager');
     expect(JSON.stringify(result)).not.toContain('resolver');
     expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it('本人创建委托时验证有效主体、禁止重叠并同事务写事件', async () => {
+    const deps = dependencies();
+    const validFrom = new Date(Date.now() + 60_000).toISOString();
+    const validUntil = new Date(Date.now() + 24 * 60 * 60 * 1_000).toISOString();
+    const result = await service(
+      deps,
+      trustedContext(['erp:approval:delegation:write'], 'manager-001'),
+    ).createDelegation('delegation-create-key', {
+      delegateId: 'manager-002', validFrom, validUntil,
+    });
+    expect(result.delegation).toMatchObject({
+      principalApproverId: 'manager-001', delegateId: 'manager-002', status: 'active', version: 1,
+    });
+    expect(JSON.stringify(result)).not.toContain('tenant-001');
+    expect(deps.profiles.resolveActive).toHaveBeenCalledTimes(2);
+    expect(deps.delegations.insert).toHaveBeenCalledOnce();
+    expect(deps.outbox.append).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'approval_delegation.created' }), SESSION,
+    );
+
+    deps.delegations.hasOverlap.mockResolvedValue(true);
+    await expect(service(
+      deps,
+      trustedContext(['erp:approval:delegation:write'], 'manager-001'),
+    ).createDelegation('delegation-overlap-key', {
+      delegateId: 'manager-003', validFrom, validUntil,
+    })).rejects.toMatchObject({ response: { code: 'APPROVAL_DELEGATION_OVERLAP' } });
+  });
+
+  it('本人按强版本撤销委托并返回最小投影', async () => {
+    const deps = dependencies();
+    deps.delegations.findById.mockResolvedValue({
+      id: 'delegation-001', tenantId: 'tenant-001', principalApproverId: 'manager-001',
+      delegateId: 'manager-002', validFrom: '2026-07-22T00:00:00.000Z',
+      validUntil: '2026-08-01T00:00:00.000Z', status: 'active', version: 1,
+      createdBy: 'manager-001', revokedBy: null,
+      createdAt: '2026-07-22T00:00:00.000Z', updatedAt: '2026-07-22T00:00:00.000Z',
+    });
+    const result = await service(
+      deps,
+      trustedContext(['erp:approval:delegation:write'], 'manager-001'),
+    ).revokeDelegation('delegation-001', 1, 'delegation-revoke-key');
+    expect(result.delegation).toMatchObject({ status: 'revoked', version: 2 });
+    expect(result.delegation).not.toHaveProperty('tenantId');
+    expect(deps.delegations.replace).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'revoked', revokedBy: 'manager-001' }), 1, SESSION,
+    );
+    expect(deps.outbox.append).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'approval_delegation.revoked' }), SESSION,
+    );
   });
 
   it('时间线先复用实例读取授权，再返回不含表单正文的动作投影', async () => {

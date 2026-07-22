@@ -27,7 +27,9 @@ export class ApprovalOutboxWriter {
     const eventType = `cn.gaoq.erp.${event.type}.v1`;
     const aggregateType = event.type.startsWith('approval_template.')
       ? 'approval.template'
-      : 'approval.instance';
+      : event.type.startsWith('approval_delegation.')
+        ? 'approval.delegation'
+        : 'approval.instance';
     const envelope: ApprovalCloudEvent = {
       specversion: '1.0',
       id: eventId,

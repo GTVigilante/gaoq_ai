@@ -34,6 +34,14 @@ describe('Phase 2 索引迁移清单', () => {
         name: 'expiresAt_1',
         options: { expireAfterSeconds: 86_400 },
       }),
+      expect.objectContaining({
+        collection: 'approval_delegations',
+        name: 'tenantId_1_principalApproverId_1_coverageDays_1',
+        options: {
+          unique: true,
+          partialFilterExpression: { status: 'active' },
+        },
+      }),
     ]));
   });
 

@@ -100,11 +100,13 @@ describe('审批持久化 Schema', () => {
     const delegation = {
       id: 'delegation-001', tenantId: 'tenant-001', principalApproverId: 'manager-001',
       delegateId: 'delegate-001', validFrom: NOW, validUntil: new Date(NOW.getTime() + 3_600_000),
-      status: 'active', version: 1, createdBy: 'manager-001', revokedBy: null,
+      coverageDays: ['2026-07-21'], status: 'active', version: 1,
+      createdBy: 'manager-001', revokedBy: null,
     };
     await valid(new DelegationModel(delegation));
     await invalid(new DelegationModel({ ...delegation, delegateId: 'manager-001' }), '不能相同');
     await invalid(new DelegationModel({ ...delegation, validUntil: NOW }), '必须晚于');
+    await invalid(new DelegationModel({ ...delegation, coverageDays: ['2026-07-22'] }), '覆盖日槽无效');
     await invalid(new DelegationModel({ ...delegation, status: 'revoked' }), '必须记录撤销人');
   });
 
@@ -115,9 +117,17 @@ describe('审批持久化 Schema', () => {
     const instanceIndexes = ApprovalInstanceRecordSchema.indexes() as Array<[
       Record<string, unknown>, Record<string, unknown>,
     ]>;
+    const delegationIndexes = ApprovalDelegationRecordSchema.indexes() as Array<[
+      Record<string, unknown>, Record<string, unknown>,
+    ]>;
     expect(templateIndexes.some(([keys, options]) =>
       keys.tenantId === 1 && keys.code === 1 && options.name === 'one_published_per_code')).toBe(true);
     expect(instanceIndexes.some(([keys]) =>
       keys.tenantId === 1 && keys.currentActorIds === 1 && keys.status === 1)).toBe(true);
+    expect(delegationIndexes.some(([keys, options]) =>
+      keys.tenantId === 1 && keys.principalApproverId === 1 && keys.coverageDays === 1 &&
+      options.unique === true &&
+      (options.partialFilterExpression as Record<string, unknown> | undefined)?.status === 'active'
+    )).toBe(true);
   });
 });

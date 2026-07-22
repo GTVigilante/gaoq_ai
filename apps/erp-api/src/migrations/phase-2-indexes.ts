@@ -25,7 +25,7 @@ import {
   type PhaseOneIndexDefinition,
 } from './phase-1-indexes.js';
 
-const MIGRATION_ID = 'phase-2-indexes-v1';
+const MIGRATION_ID = 'phase-2-indexes-v2';
 const LOCK_ID = `${MIGRATION_ID}:lock`;
 const LOCK_TTL_MS = 30 * 60 * 1_000;
 const INDEX_NAME_PATTERN = /^[A-Za-z0-9._:-]{1,127}$/;
@@ -99,6 +99,10 @@ export async function runPhaseTwoIndexMigration(
 }> {
   const database = connection.db;
   if (database === undefined) throw new Error('PHASE2_INDEX_DATABASE_UNAVAILABLE');
+  const legacyDelegations = await database.collection('approval_delegations').countDocuments({
+    $or: [{ coverageDays: { $exists: false } }, { coverageDays: { $size: 0 } }],
+  }, { limit: 1 });
+  if (legacyDelegations > 0) throw new Error('PHASE2_DELEGATION_COVERAGE_BACKFILL_REQUIRED');
   const manifest = buildPhaseTwoIndexManifest();
   const checksum = createHash('sha256').update(stableJson(manifest), 'utf8').digest('base64url');
   const grouped = groupManifest(manifest);

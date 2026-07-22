@@ -68,6 +68,16 @@ export interface ApprovalPublishedTemplateForm {
   readonly version: number;
 }
 
+export interface ApprovalDelegationView {
+  readonly id: string;
+  readonly principalApproverId: string;
+  readonly delegateId: string;
+  readonly validFrom: string;
+  readonly validUntil: string;
+  readonly status: 'active' | 'revoked';
+  readonly version: number;
+}
+
 const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/u;
 const CODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -179,6 +189,35 @@ export function parsePublishedTemplateForms(value: unknown): readonly ApprovalPu
   }));
 }
 
+/** 校验当前主体委托目录；拒绝租户和内部审计字段。 */
+export function parseApprovalDelegations(value: unknown): readonly ApprovalDelegationView[] {
+  if (!Array.isArray(value) || value.length > 200) throw new Error('APPROVAL_DELEGATIONS_INVALID');
+  return Object.freeze(value.map((item) => {
+    const record = objectRecord(item, 'APPROVAL_DELEGATIONS_INVALID');
+    if (
+      typeof record.id !== 'string' || !ULID_PATTERN.test(record.id) ||
+      typeof record.principalApproverId !== 'string' || !ID_PATTERN.test(record.principalApproverId) ||
+      typeof record.delegateId !== 'string' || !ID_PATTERN.test(record.delegateId) ||
+      record.principalApproverId === record.delegateId ||
+      typeof record.validFrom !== 'string' || !strictIso(record.validFrom) ||
+      typeof record.validUntil !== 'string' || !strictIso(record.validUntil) ||
+      Date.parse(record.validUntil) <= Date.parse(record.validFrom) ||
+      (record.status !== 'active' && record.status !== 'revoked') ||
+      !positiveInteger(record.version) ||
+      ['tenantId', 'createdBy', 'revokedBy'].some((key) => Object.hasOwn(record, key))
+    ) throw new Error('APPROVAL_DELEGATIONS_INVALID');
+    return Object.freeze({
+      id: record.id,
+      principalApproverId: record.principalApproverId,
+      delegateId: record.delegateId,
+      validFrom: record.validFrom,
+      validUntil: record.validUntil,
+      status: record.status,
+      version: record.version as number,
+    });
+  }));
+}
+
 function parseApprovalSummary(value: unknown): ApprovalSummary {
   const record = objectRecord(value, 'APPROVAL_SUMMARY_INVALID');
   if (
@@ -259,6 +298,11 @@ function positiveInteger(value: unknown): boolean {
 
 function nullableIso(value: unknown): boolean {
   return value === null || (typeof value === 'string' && !Number.isNaN(Date.parse(value)));
+}
+
+function strictIso(value: string): boolean {
+  const timestamp = Date.parse(value);
+  return !Number.isNaN(timestamp) && new Date(timestamp).toISOString() === value;
 }
 
 function nullableId(value: unknown): boolean {

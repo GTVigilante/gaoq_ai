@@ -57,6 +57,11 @@ function assemble() {
   const approvals = {
     getInbox: vi.fn().mockResolvedValue([]),
     listPublishedTemplateForms: vi.fn().mockResolvedValue([{ code: 'EXPENSE', fields: [] }]),
+    listMyDelegations: vi.fn().mockResolvedValue([{
+      id: 'delegation-001', principalApproverId: 'employee-001', delegateId: 'employee-002',
+      validFrom: '2026-07-22T00:00:00.000Z', validUntil: '2026-08-01T00:00:00.000Z',
+      status: 'active', version: 1,
+    }]),
     getInstance: vi.fn().mockResolvedValue({ id: 'instance-001', formData: { remark: { redacted: true } } }),
     getTimeline: vi.fn().mockResolvedValue([{ actionId: '01K00000000000000000000000', actionType: 'instance.submitted' }]),
     submitInstance: vi.fn(),
@@ -163,6 +168,20 @@ describe('McpToolService', () => {
       'erp:mcp:server:connect', 'erp:approval:instance:submit',
     ]));
     expect(result.structuredContent).toEqual({ templates: [{ code: 'EXPENSE', fields: [] }] });
+    expect(JSON.stringify(result)).not.toContain('tenant-001');
+  });
+
+  it('委托 Resource 只读且按独立 Scope 失败关闭', async () => {
+    const store = assemble();
+    const denied = await store.service.getApprovalDelegations(extra(['erp:mcp:server:connect']));
+    expect(denied.isError).toBe(true);
+    expect(store.approvals.listMyDelegations).not.toHaveBeenCalled();
+    const result = await store.service.getApprovalDelegations(extra([
+      'erp:mcp:server:connect', 'erp:approval:delegation:read',
+    ]));
+    expect(result.structuredContent).toMatchObject({
+      delegations: [{ principalApproverId: 'employee-001', delegateId: 'employee-002' }],
+    });
     expect(JSON.stringify(result)).not.toContain('tenant-001');
   });
 

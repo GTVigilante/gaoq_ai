@@ -1,5 +1,6 @@
 import {
   IsEnum,
+  IsDateString,
   IsObject,
   IsString,
   Matches,
@@ -61,4 +62,15 @@ export class TransferApprovalTaskDto {
 export class AddApprovalSignerDto {
   @Matches(ID_PATTERN)
   approverId!: string;
+}
+
+export class CreateApprovalDelegationDto {
+  @Matches(ID_PATTERN)
+  delegateId!: string;
+
+  @IsDateString({ strict: true, strictSeparator: true })
+  validFrom!: string;
+
+  @IsDateString({ strict: true, strictSeparator: true })
+  validUntil!: string;
 }

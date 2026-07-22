@@ -2,6 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { ULID_PATTERN } from '@gaoq/shared-utils';
 import type { HydratedDocument } from 'mongoose';
 
+import { approvalDelegationCoverageDays } from '../domain/delegation.js';
 import type { ApprovalInstanceStatus } from '../domain/instance.js';
 import type { ApprovalTemplateStatus } from '../domain/template.js';
 
@@ -363,6 +364,9 @@ export class ApprovalDelegationRecord {
   @Prop({ type: Date, required: true, immutable: true })
   validUntil!: Date;
 
+  @Prop({ type: [String], required: true, immutable: true })
+  coverageDays!: string[];
+
   @Prop({ type: String, enum: ['active', 'revoked'], required: true, default: 'active' })
   status!: 'active' | 'revoked';
 
@@ -390,6 +394,13 @@ ApprovalDelegationRecordSchema.pre('validate', function () {
   if (record.validUntil.getTime() <= record.validFrom.getTime()) {
     throw new Error('审批委托截止时间必须晚于开始时间');
   }
+  const expectedDays = approvalDelegationCoverageDays(
+    record.validFrom.toISOString(), record.validUntil.toISOString(),
+  );
+  if (
+    record.coverageDays.length !== expectedDays.length ||
+    record.coverageDays.some((day, index) => day !== expectedDays[index])
+  ) throw new Error('审批委托覆盖日槽无效');
   if (record.status === 'revoked' && record.revokedBy === null) {
     throw new Error('已撤销委托必须记录撤销人');
   }
@@ -403,3 +414,7 @@ ApprovalDelegationRecordSchema.index({
   tenantId: 1, principalApproverId: 1, delegateId: 1, status: 1, validFrom: 1, validUntil: 1,
 });
 ApprovalDelegationRecordSchema.index({ tenantId: 1, delegateId: 1, status: 1, validUntil: 1 });
+ApprovalDelegationRecordSchema.index(
+  { tenantId: 1, principalApproverId: 1, coverageDays: 1 },
+  { unique: true, partialFilterExpression: { status: 'active' } },
+);

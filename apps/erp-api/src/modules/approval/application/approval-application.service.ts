@@ -15,14 +15,17 @@ import {
   addApprovalSigner,
   archiveApprovalInstance,
   buildApprovalActionEvent,
+  buildApprovalDelegationEvent,
   buildApprovalInstanceCreatedEvent,
   buildApprovalTemplateEvent,
   createApprovalInstanceDraft,
+  createApprovalDelegation,
   createApprovalTemplateDraft,
   createNextApprovalTemplateRevision,
   decideApprovalInstance,
   publishApprovalTemplate,
   retireApprovalTemplate,
+  revokeApprovalDelegation,
   submitApprovalInstance,
   transferApprovalTask,
   withdrawApprovalInstance,
@@ -30,6 +33,7 @@ import {
   type ApprovalFormData,
   type ApprovalFormValue,
   type ApprovalInstance,
+  type ApprovalDelegation,
   type ApprovalTemplate,
   type ApprovalTemplateDefinition,
   type ApprovalFormField,
@@ -67,6 +71,16 @@ export interface ApprovalPublishedTemplateFormView {
   readonly riskLevel: 'R1' | 'R2';
   readonly definitionHash: string;
   readonly fields: readonly ApprovalFormField[];
+  readonly version: number;
+}
+
+export interface ApprovalDelegationView {
+  readonly id: string;
+  readonly principalApproverId: string;
+  readonly delegateId: string;
+  readonly validFrom: string;
+  readonly validUntil: string;
+  readonly status: 'active' | 'revoked';
   readonly version: number;
 }
 
@@ -242,6 +256,68 @@ export class ApprovalApplicationService {
       fields: template.definition.fields.map((field) => ({ ...field })),
       version: template.version,
     })));
+  }
+
+  /** 返回当前主体创建或承接的委托；不暴露租户、权限快照或内部审计字段。 */
+  async listMyDelegations(): Promise<readonly ApprovalDelegationView[]> {
+    this.requireActorScope('erp:approval:delegation:read');
+    const actorId = this.context.getActorRequired().actorId;
+    return deepFreeze((await this.delegations.findMine(actorId)).map(delegationView));
+  }
+
+  async createDelegation(
+    key: string,
+    input: { readonly delegateId: string; readonly validFrom: string; readonly validUntil: string },
+  ): Promise<{ readonly delegation: ApprovalDelegationView }> {
+    this.requireActorScope('erp:approval:delegation:write');
+    return this.run(async () => this.idempotency.execute(
+      'approval.delegation.create', key, input, async (session) => {
+        const trusted = this.context.getRequired();
+        const now = new Date();
+        await this.requireActiveActor(trusted.actor.actorId, session);
+        await this.requireActiveActor(input.delegateId, session);
+        const delegation = createApprovalDelegation({
+          ...input,
+          id: createEventId(now),
+          tenantId: trusted.tenant.tenantId,
+          principalApproverId: trusted.actor.actorId,
+          actorId: trusted.actor.actorId,
+        }, now);
+        if (await this.delegations.hasOverlap(
+          delegation.principalApproverId, delegation.validFrom, delegation.validUntil, session,
+        )) throw new ConflictException({
+          code: 'APPROVAL_DELEGATION_OVERLAP', message: '当前有效委托与所选时间范围重叠',
+        });
+        await this.delegations.insert(delegation, session);
+        await this.outbox.append(buildApprovalDelegationEvent(delegation, 'created'), session);
+        return { delegation: delegationView(delegation) };
+      },
+    ));
+  }
+
+  async revokeDelegation(
+    id: string,
+    expectedVersion: number,
+    key: string,
+  ): Promise<{ readonly delegation: ApprovalDelegationView }> {
+    this.requireActorScope('erp:approval:delegation:write');
+    return this.run(async () => this.idempotency.execute(
+      'approval.delegation.revoke', key, { id, expectedVersion }, async (session) => {
+        const current = await this.delegations.findById(id, session);
+        if (current === null) throw new NotFoundException({
+          code: 'APPROVAL_DELEGATION_NOT_FOUND', message: '审批委托不存在',
+        });
+        const trusted = this.context.getRequired();
+        const revoked = revokeApprovalDelegation(current, {
+          tenantId: trusted.tenant.tenantId,
+          expectedVersion,
+          actorId: trusted.actor.actorId,
+        }, new Date());
+        await this.delegations.replace(revoked, expectedVersion, session);
+        await this.outbox.append(buildApprovalDelegationEvent(revoked, 'revoked'), session);
+        return { delegation: delegationView(revoked) };
+      },
+    ));
   }
 
   async createInstance(
@@ -764,6 +840,12 @@ export class ApprovalApplicationService {
     });
   }
 
+  private requireActorScope(scope: string): void {
+    if (!this.context.getActorRequired().scopes.includes(scope)) {
+      throw new ForbiddenException({ code: 'APPROVAL_SCOPE_DENIED', message: '审批操作缺少必要权限' });
+    }
+  }
+
   private async run<T>(operation: () => Promise<T>): Promise<T> {
     try {
       return await operation();
@@ -856,6 +938,18 @@ function instanceSummary(instance: ApprovalInstance): ApprovalInstanceSummary {
     version: instance.version,
     submittedAt: instance.submittedAt,
     completedAt: instance.completedAt,
+  });
+}
+
+function delegationView(delegation: ApprovalDelegation): ApprovalDelegationView {
+  return Object.freeze({
+    id: delegation.id,
+    principalApproverId: delegation.principalApproverId,
+    delegateId: delegation.delegateId,
+    validFrom: delegation.validFrom,
+    validUntil: delegation.validUntil,
+    status: delegation.status,
+    version: delegation.version,
   });
 }
 

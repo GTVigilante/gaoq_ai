@@ -36,6 +36,7 @@ import {
   type ApprovalView,
 } from '../../lib/approval-contract';
 import { ApprovalInitiation } from './approval-initiation';
+import { ApprovalDelegationManagement } from './approval-delegation-management';
 import { ApprovalTaskOperations } from './approval-task-operations';
 
 interface IdentityProfile {
@@ -164,6 +165,7 @@ export function ApprovalWorkbench() {
           <Typography.Paragraph>待办和字段均由服务端按部门数据范围裁剪；写操作使用强版本与幂等键。</Typography.Paragraph>
         </div>
         <Space>
+          {profile === null ? null : <ApprovalDelegationManagement actorId={profile.actorId} scopes={profile.scopes} />}
           <ApprovalInitiation onSubmitted={load} />
           <Button icon={<ReloadOutlined />} onClick={() => { void load(); }} loading={loading}>刷新</Button>
         </Space>

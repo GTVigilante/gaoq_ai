@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   parseApprovalSummaries,
+  parseApprovalDelegations,
   parseApprovalTimeline,
   parseApprovalView,
   parsePublishedTemplateForms,
@@ -71,5 +72,18 @@ describe('审批工作台响应契约', () => {
       .toThrowError('APPROVAL_TEMPLATE_CATALOG_INVALID');
     expect(() => parsePublishedTemplateForms([{ ...template, resolver: { type: 'initiator_manager' } }]))
       .toThrowError('APPROVAL_TEMPLATE_CATALOG_INVALID');
+  });
+
+  it('委托目录拒绝租户和内部审计字段', () => {
+    const delegation = {
+      id: '01K00000000000000000000003', principalApproverId: 'manager-001',
+      delegateId: 'manager-002', validFrom: '2026-07-22T00:00:00.000Z',
+      validUntil: '2026-08-01T00:00:00.000Z', status: 'active', version: 1,
+    } as const;
+    expect(parseApprovalDelegations([delegation])).toEqual([delegation]);
+    expect(() => parseApprovalDelegations([{ ...delegation, tenantId: 'tenant-001' }]))
+      .toThrowError('APPROVAL_DELEGATIONS_INVALID');
+    expect(() => parseApprovalDelegations([{ ...delegation, createdBy: 'manager-001' }]))
+      .toThrowError('APPROVAL_DELEGATIONS_INVALID');
   });
 });

@@ -1,5 +1,6 @@
 import type { ApprovalAction, ApprovalInstance } from './instance.js';
 import type { ApprovalTemplate } from './template.js';
+import type { ApprovalDelegation } from './delegation.js';
 
 export interface ApprovalEvent<TType extends string, TPayload extends Record<string, unknown>> {
   readonly type: TType;
@@ -44,7 +45,47 @@ export type ApprovalDomainEvent =
       readonly actorId: string;
       readonly canceledApproverIds: readonly string[];
     }>
-  | ApprovalEvent<'approval_instance.archived', { readonly actorId: string }>;
+  | ApprovalEvent<'approval_instance.archived', { readonly actorId: string }>
+  | ApprovalEvent<'approval_delegation.created', {
+      readonly principalApproverId: string; readonly delegateId: string;
+      readonly validFrom: string; readonly validUntil: string;
+    }>
+  | ApprovalEvent<'approval_delegation.revoked', {
+      readonly principalApproverId: string; readonly delegateId: string; readonly revokedBy: string;
+    }>;
+
+/** 委托事件只披露授权主体、代理主体和有效期，不包含权限快照或组织数据。 */
+export function buildApprovalDelegationEvent(
+  delegation: ApprovalDelegation,
+  type: 'created' | 'revoked',
+): ApprovalDomainEvent {
+  const common = {
+    tenantId: delegation.tenantId,
+    aggregateId: delegation.id,
+    version: delegation.version,
+    occurredAt: delegation.updatedAt,
+  };
+  if (type === 'created') return {
+    ...common,
+    type: 'approval_delegation.created',
+    payload: {
+      principalApproverId: delegation.principalApproverId,
+      delegateId: delegation.delegateId,
+      validFrom: delegation.validFrom,
+      validUntil: delegation.validUntil,
+    },
+  };
+  if (delegation.revokedBy === null) throw new Error('委托撤销事件缺少撤销主体');
+  return {
+    ...common,
+    type: 'approval_delegation.revoked',
+    payload: {
+      principalApproverId: delegation.principalApproverId,
+      delegateId: delegation.delegateId,
+      revokedBy: delegation.revokedBy,
+    },
+  };
+}
 
 /** 模板事件只披露版本元数据和摘要，不外发字段定义。 */
 export function buildApprovalTemplateEvent(

@@ -7,6 +7,11 @@ import { z } from 'zod';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import { evaluateApprovalCondition, type ApprovalFormData } from '../domain/condition.js';
 import { ApprovalDomainError } from '../domain/approval.errors.js';
+import {
+  approvalDelegationCoverageDays,
+  restoreApprovalDelegation,
+  type ApprovalDelegation,
+} from '../domain/delegation.js';
 import type {
   ApprovalAction,
   ApprovalInstance,
@@ -468,6 +473,87 @@ export class ApprovalDelegationRepository extends TenantBoundApprovalRepository 
     });
     if (session !== undefined) query.session(session);
     return await query.exec() !== null;
+  }
+
+  async findById(id: string, session?: ClientSession): Promise<ApprovalDelegation | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), id });
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record === null ? null : this.toDomain(record);
+  }
+
+  /** 返回当前主体创建或承接的委托，固定上限防止无界读取。 */
+  async findMine(actorId: string): Promise<readonly ApprovalDelegation[]> {
+    const records = await this.records.find({
+      tenantId: this.tenantId(),
+      $or: [{ principalApproverId: actorId }, { delegateId: actorId }],
+    }).sort({ validUntil: -1, id: 1 }).limit(201).lean().exec();
+    if (records.length > 200) throw integrityError();
+    return Object.freeze(records.map((record) => this.toDomain(record)));
+  }
+
+  async hasOverlap(
+    principalApproverId: string,
+    validFrom: string,
+    validUntil: string,
+    session: ClientSession,
+  ): Promise<boolean> {
+    return await this.records.exists({
+      tenantId: this.tenantId(), principalApproverId, status: 'active',
+      validFrom: { $lt: new Date(validUntil) }, validUntil: { $gt: new Date(validFrom) },
+    }).session(session).exec() !== null;
+  }
+
+  async insert(delegation: ApprovalDelegation, session: ClientSession): Promise<void> {
+    this.assertTenant(delegation.tenantId);
+    await this.records.create([this.toRecord(delegation)], { session });
+  }
+
+  async replace(
+    delegation: ApprovalDelegation,
+    expectedVersion: number,
+    session: ClientSession,
+  ): Promise<void> {
+    this.assertTenant(delegation.tenantId);
+    const result = await this.records.updateOne(
+      { tenantId: this.tenantId(), id: delegation.id, version: expectedVersion },
+      { $set: {
+        status: delegation.status,
+        version: delegation.version,
+        revokedBy: delegation.revokedBy,
+        updatedAt: new Date(delegation.updatedAt),
+      } },
+      { session, timestamps: false },
+    );
+    if (result.matchedCount !== 1) throw new ApprovalWriteConflictError();
+  }
+
+  private toRecord(delegation: ApprovalDelegation): Record<string, unknown> {
+    return {
+      ...delegation,
+      validFrom: new Date(delegation.validFrom),
+      validUntil: new Date(delegation.validUntil),
+      coverageDays: [...approvalDelegationCoverageDays(delegation.validFrom, delegation.validUntil)],
+      createdAt: new Date(delegation.createdAt),
+      updatedAt: new Date(delegation.updatedAt),
+    };
+  }
+
+  private toDomain(record: ApprovalDelegationRecord): ApprovalDelegation {
+    return restoreApprovalDelegation({
+      id: record.id,
+      tenantId: record.tenantId,
+      principalApproverId: record.principalApproverId,
+      delegateId: record.delegateId,
+      validFrom: record.validFrom.toISOString(),
+      validUntil: record.validUntil.toISOString(),
+      status: record.status,
+      version: record.version,
+      createdBy: record.createdBy,
+      revokedBy: record.revokedBy,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString(),
+    });
   }
 }
 

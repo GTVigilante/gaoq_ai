@@ -20,10 +20,12 @@ import {
   type ApprovalTimelineEntry,
   type ApprovalTemplateSummary,
   type ApprovalPublishedTemplateFormView,
+  type ApprovalDelegationView,
 } from './application/approval-application.service.js';
 import {
   AddApprovalSignerDto,
   CreateApprovalInstanceDto,
+  CreateApprovalDelegationDto,
   CreateApprovalTemplateDto,
   DecideApprovalInstanceDto,
   TransferApprovalTaskDto,
@@ -53,6 +55,51 @@ export class ApprovalController {
       metadata: { count: templates.length },
     });
     return templates;
+  }
+
+  @Get('delegations/mine')
+  @RequiredScopes('erp:approval:delegation:read')
+  async listMyDelegations(): Promise<readonly ApprovalDelegationView[]> {
+    const delegations = await this.approvals.listMyDelegations();
+    await this.audit.record({
+      action: 'approval.delegation.list',
+      resourceType: 'approval_delegation',
+      resourceId: 'mine',
+      riskLevel: 'R0',
+      outcome: 'success',
+      metadata: { count: delegations.length },
+    });
+    return delegations;
+  }
+
+  @Post('delegations')
+  @RequiredScopes('erp:approval:delegation:write')
+  async createDelegation(
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: CreateApprovalDelegationDto,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<{ readonly delegation: ApprovalDelegationView }> {
+    const result = await this.approvals.createDelegation(this.requireKey(key), body);
+    this.setVersion(response, result.delegation.version);
+    await this.auditDelegation('approval.delegation.create', result.delegation);
+    return result;
+  }
+
+  @Post('delegations/:id/revoke')
+  @HttpCode(200)
+  @RequiredScopes('erp:approval:delegation:write')
+  async revokeDelegation(
+    @Param('id') id: string,
+    @Headers('if-match') ifMatch: string | undefined,
+    @Headers('idempotency-key') key: string | undefined,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<{ readonly delegation: ApprovalDelegationView }> {
+    const result = await this.approvals.revokeDelegation(
+      this.requireUlid(id), this.requireVersion(ifMatch), this.requireKey(key),
+    );
+    this.setVersion(response, result.delegation.version);
+    await this.auditDelegation('approval.delegation.revoke', result.delegation);
+    return result;
   }
 
   @Post('templates')
@@ -284,6 +331,17 @@ export class ApprovalController {
 
   private async auditInstance(action: string, instance: ApprovalInstanceSummary): Promise<void> {
     await this.auditSuccess(action, 'approval_instance', instance);
+  }
+
+  private async auditDelegation(action: string, delegation: ApprovalDelegationView): Promise<void> {
+    await this.audit.record({
+      action,
+      resourceType: 'approval_delegation',
+      resourceId: delegation.id,
+      riskLevel: 'R1',
+      outcome: 'success',
+      metadata: { version: delegation.version, status: delegation.status },
+    });
   }
 
   private async auditSuccess(

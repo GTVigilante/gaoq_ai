@@ -38,6 +38,10 @@ describe('MCP Streamable HTTP 协议集成', () => {
         content: [{ type: 'text' as const, text: '{"templates":[]}' }],
         structuredContent: { templates: [] },
       }),
+      getApprovalDelegations: vi.fn().mockResolvedValue({
+        content: [{ type: 'text' as const, text: '{"delegations":[]}' }],
+        structuredContent: { delegations: [] },
+      }),
       prepareApprovalSubmit: vi.fn(),
       executeApprovalSubmit: vi.fn(),
       prepareApprovalWithdraw: vi.fn(),
@@ -325,6 +329,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
         scopes: [
           'erp:mcp:server:connect', 'erp:org:chart:read',
           'erp:approval:instance:submit',
+          'erp:approval:delegation:read',
           'erp:op:operating_summary:read',
           'erp:analytics:management:read',
           'erp:analytics:management:export',
@@ -415,12 +420,18 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ uri: 'gaoq://mcp/guide' }),
       expect.objectContaining({ uri: 'erp://approval/pending' }),
       expect.objectContaining({ uri: 'erp://approval/templates/published' }),
+      expect.objectContaining({ uri: 'erp://approval/delegations/mine' }),
     ]));
     const templateCatalog = await client.readResource({ uri: 'erp://approval/templates/published' });
     expect(templateCatalog.contents[0]).toMatchObject({
       uri: 'erp://approval/templates/published', mimeType: 'application/json', text: '{"templates":[]}',
     });
     expect(tools.getApprovalTemplateCatalog).toHaveBeenCalledOnce();
+    const delegations = await client.readResource({ uri: 'erp://approval/delegations/mine' });
+    expect(delegations.contents[0]).toMatchObject({
+      uri: 'erp://approval/delegations/mine', mimeType: 'application/json', text: '{"delegations":[]}',
+    });
+    expect(tools.getApprovalDelegations).toHaveBeenCalledOnce();
     const resourceTemplates = await client.listResourceTemplates();
     expect(resourceTemplates.resourceTemplates).toEqual(expect.arrayContaining([
       expect.objectContaining({ uriTemplate: 'erp://recruitment/applications/{id}' }),

@@ -42,6 +42,46 @@ describe('ApprovalController', () => {
     expect(Reflect.getMetadata(REQUIRED_SCOPES_KEY, method)).toEqual(['erp:approval:instance:submit']);
   });
 
+  it('委托列表和写操作使用独立 Scope、强版本与最小审计', async () => {
+    const delegation = {
+      id: INSTANCE_ID, principalApproverId: 'manager-001', delegateId: 'manager-002',
+      validFrom: '2026-07-22T00:00:00.000Z', validUntil: '2026-08-01T00:00:00.000Z',
+      status: 'active' as const, version: 1,
+    };
+    const listMyDelegations = vi.fn().mockResolvedValue([delegation]);
+    const createDelegation = vi.fn().mockResolvedValue({ delegation });
+    const revokeDelegation = vi.fn().mockResolvedValue({
+      delegation: { ...delegation, status: 'revoked', version: 2 },
+    });
+    const record = vi.fn().mockResolvedValue(undefined);
+    const controller = new ApprovalController(
+      { listMyDelegations, createDelegation, revokeDelegation } as unknown as ApprovalApplicationService,
+      { record } as unknown as AuditService,
+    );
+    await expect(controller.listMyDelegations()).resolves.toEqual([delegation]);
+    const response = { setHeader: vi.fn() } as unknown as Response;
+    await controller.createDelegation('delegation-create-key', {
+      delegateId: 'manager-002',
+      validFrom: delegation.validFrom,
+      validUntil: delegation.validUntil,
+    }, response);
+    await controller.revokeDelegation(INSTANCE_ID, '"1"', 'delegation-revoke-key', response);
+    expect(createDelegation).toHaveBeenCalledWith('delegation-create-key', expect.objectContaining({
+      delegateId: 'manager-002',
+    }));
+    expect(revokeDelegation).toHaveBeenCalledWith(INSTANCE_ID, 1, 'delegation-revoke-key');
+    expect(record).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'approval.delegation.list', riskLevel: 'R0', metadata: { count: 1 },
+    }));
+    expect(record).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'approval.delegation.create', riskLevel: 'R1',
+    }));
+    expect(Reflect.getMetadata(
+      REQUIRED_SCOPES_KEY,
+      Object.getOwnPropertyDescriptor(ApprovalController.prototype, 'createDelegation')?.value as object,
+    )).toEqual(['erp:approval:delegation:write']);
+  });
+
   it('读取时间线使用严格 ULID、细粒度 Scope 和最小审计', async () => {
     const timeline = [{ actionId: INSTANCE_ID, actionType: 'instance.submitted' }];
     const getTimeline = vi.fn().mockResolvedValue(timeline);

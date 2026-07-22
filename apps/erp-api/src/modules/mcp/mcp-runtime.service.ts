@@ -605,6 +605,25 @@ export class McpRuntimeService {
     );
 
     server.registerResource(
+      'approval-delegations-mine',
+      'erp://approval/delegations/mine',
+      {
+        title: '我的审批委托',
+        description: '返回当前主体创建或承接的限期委托；AI 不可创建、修改或撤销授权关系。',
+        mimeType: 'application/json',
+      },
+      async (uri, extra) => {
+        const result = await this.tools.getApprovalDelegations(extra);
+        if (result.isError === true) throw new Error('无权读取审批委托');
+        return { contents: [{
+          uri: uri.toString(),
+          mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? { delegations: [] }),
+        }] };
+      },
+    );
+
+    server.registerResource(
       'recruitment-application',
       new ResourceTemplate('erp://recruitment/applications/{id}', { list: undefined }),
       {

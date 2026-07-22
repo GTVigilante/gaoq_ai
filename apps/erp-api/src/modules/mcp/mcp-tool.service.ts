@@ -727,6 +727,26 @@ export class McpToolService {
     });
   }
 
+  /** MCP 只读委托目录；授权关系写入不注册 AI Tool。 */
+  async getApprovalDelegations(extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:approval:delegation:read')) {
+        await this.auditTool(identity, 'approval_delegations', 'R0', 'denied');
+        return scopeError('erp:approval:delegation:read');
+      }
+      const delegations = await this.approvals.listMyDelegations();
+      const data: Record<string, unknown> = { delegations };
+      await this.auditTool(identity, 'approval_delegations', 'R0', 'success', {
+        count: delegations.length,
+      });
+      return {
+        content: [{ type: 'text', text: JSON.stringify(data) }],
+        structuredContent: data,
+      };
+    });
+  }
+
   async getApprovalInstance(instanceId: string, extra: McpExtra): Promise<McpToolResult> {
     const identity = parseMcpIdentity(extra.authInfo);
     return this.run(identity, async () => {

@@ -16,11 +16,13 @@ import {
 import { ApprovalDataCryptoService } from './approval-data-crypto.service.js';
 import {
   ApprovalActionRepository,
+  ApprovalDelegationRepository,
   ApprovalInstanceRepository,
   ApprovalTemplateRepository,
 } from './approval.repositories.js';
 import type {
   ApprovalActionDocument,
+  ApprovalDelegationDocument,
   ApprovalInstanceDocument,
   ApprovalTemplateDocument,
 } from './approval.schemas.js';
@@ -127,6 +129,31 @@ describe('审批租户仓储', () => {
       actionId: '01K00000000000000000000000', occurredAt: NOW.toISOString(),
     })]);
     expect(JSON.stringify(timeline)).not.toContain('tenant-001');
+  });
+
+  it('委托目录只按可信租户和当前主体双向查询并限制 200 条', async () => {
+    const stored = {
+      id: 'delegation-001', tenantId: 'tenant-001', principalApproverId: 'manager-001',
+      delegateId: 'manager-002', validFrom: NOW, validUntil: new Date('2026-08-01T00:00:00.000Z'),
+      status: 'active', version: 1, createdBy: 'manager-001', revokedBy: null,
+      createdAt: NOW, updatedAt: NOW,
+    };
+    const exec = vi.fn().mockResolvedValue([stored]);
+    const lean = vi.fn().mockReturnValue({ exec });
+    const limit = vi.fn().mockReturnValue({ lean });
+    const sort = vi.fn().mockReturnValue({ limit });
+    const find = vi.fn().mockReturnValue({ sort });
+    const repository = new ApprovalDelegationRepository(
+      context(), { find } as unknown as Model<ApprovalDelegationDocument>,
+    );
+    const result = await repository.findMine('manager-001');
+    expect(find).toHaveBeenCalledWith({
+      tenantId: 'tenant-001',
+      $or: [{ principalApproverId: 'manager-001' }, { delegateId: 'manager-001' }],
+    });
+    expect(sort).toHaveBeenCalledWith({ validUntil: -1, id: 1 });
+    expect(limit).toHaveBeenCalledWith(201);
+    expect(result).toEqual([expect.objectContaining({ id: 'delegation-001', version: 1 })]);
   });
 
   it('模板落库使用定义 JSON 且拒绝跨租户实体', async () => {
