@@ -16,8 +16,9 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { useState } from 'react';
 
-import { createIdempotencyKey, ErpApiError, erpFetch, strongEtag } from '../../lib/api-client';
+import { createIdempotencyKey, ErpApiError, erpFetch, isDefinitiveWriteRejection, strongEtag } from '../../lib/api-client';
 import { parseApprovalDelegations, type ApprovalDelegationView } from '../../lib/approval-contract';
+import { buildApprovalDelegationCreateInput } from '../../lib/approval-task-contract';
 
 interface ApprovalDelegationManagementProps {
   readonly actorId: string;
@@ -26,6 +27,13 @@ interface ApprovalDelegationManagementProps {
 
 interface PendingCreate {
   readonly body: { readonly delegateId: string; readonly validFrom: string; readonly validUntil: string };
+  readonly actorId: string;
+  readonly key: string;
+}
+
+interface PendingRevoke {
+  readonly item: ApprovalDelegationView;
+  readonly actorId: string;
   readonly key: string;
 }
 
@@ -40,6 +48,7 @@ export function ApprovalDelegationManagement({ actorId, scopes }: ApprovalDelega
   const [loading, setLoading] = useState(false);
   const [writing, setWriting] = useState(false);
   const [pendingCreate, setPendingCreate] = useState<PendingCreate | null>(null);
+  const [pendingRevoke, setPendingRevoke] = useState<PendingRevoke | null>(null);
   const canRead = scopes.includes('erp:approval:delegation:read');
   const canWrite = scopes.includes('erp:approval:delegation:write');
 
@@ -64,14 +73,17 @@ export function ApprovalDelegationManagement({ actorId, scopes }: ApprovalDelega
   };
 
   const finish = async (value: unknown) => {
-    if (pendingCreate !== null || writing || !canWrite) return;
-    const body = parseCreateInput(value, actorId);
-    if (body === null) {
+    if (pendingCreate !== null || pendingRevoke !== null || writing || !canWrite) return;
+    let body: PendingCreate['body'];
+    try {
+      body = buildApprovalDelegationCreateInput(value, actorId);
+    } catch {
       void message.error('委托主体或有效期无效');
       return;
     }
     const attempt = Object.freeze({
       body,
+      actorId,
       key: createIdempotencyKey('approval-delegation-create'),
     });
     setPendingCreate(attempt);
@@ -79,6 +91,11 @@ export function ApprovalDelegationManagement({ actorId, scopes }: ApprovalDelega
   };
 
   const create = async (attempt: PendingCreate) => {
+    if (attempt.actorId !== actorId) {
+      setPendingCreate(null);
+      void message.error('登录主体已变化，请重新创建委托');
+      return;
+    }
     setWriting(true);
     try {
       await erpFetch<unknown>('/api/approvals/delegations', {
@@ -95,7 +112,7 @@ export function ApprovalDelegationManagement({ actorId, scopes }: ApprovalDelega
       void message.success('审批委托已创建');
       await load();
     } catch (value) {
-      if (isDefinitiveClientRejection(value)) setPendingCreate(null);
+      if (isDefinitiveWriteRejection(value)) setPendingCreate(null);
       void message.error(errorMessage(value, '创建结果未知；请复用当前请求重试'));
     } finally {
       setWriting(false);
@@ -103,29 +120,48 @@ export function ApprovalDelegationManagement({ actorId, scopes }: ApprovalDelega
   };
 
   const confirmRevoke = (item: ApprovalDelegationView) => {
-    const key = createIdempotencyKey('approval-delegation-revoke');
+    if (pendingCreate !== null || pendingRevoke !== null || writing) return;
     modal.confirm({
       title: '确认撤销审批委托？',
       content: `撤销后 ${item.delegateId} 将不能再以你的名义处理新动作。`,
       okText: '撤销',
       okButtonProps: { danger: true },
       onOk: async () => {
-        try {
-          await erpFetch<unknown>(`/api/approvals/delegations/${encodeURIComponent(item.id)}/revoke`, {
-            method: 'POST',
-            headers: {
-              'if-match': strongEtag(item.version),
-              'idempotency-key': key,
-            },
-          });
-          void message.success('审批委托已撤销');
-          await load();
-        } catch (value) {
-          void message.error(errorMessage(value, '撤销失败；请刷新后重试'));
-          throw value;
-        }
+        const attempt = Object.freeze({
+          item,
+          actorId,
+          key: createIdempotencyKey('approval-delegation-revoke'),
+        });
+        setPendingRevoke(attempt);
+        await revoke(attempt);
       },
     });
+  };
+
+  const revoke = async (attempt: PendingRevoke) => {
+    if (attempt.actorId !== actorId) {
+      setPendingRevoke(null);
+      void message.error('登录主体已变化，请重新选择要撤销的委托');
+      return;
+    }
+    setWriting(true);
+    try {
+      await erpFetch<unknown>(`/api/approvals/delegations/${encodeURIComponent(attempt.item.id)}/revoke`, {
+        method: 'POST',
+        headers: {
+          'if-match': strongEtag(attempt.item.version),
+          'idempotency-key': attempt.key,
+        },
+      });
+      setPendingRevoke(null);
+      void message.success('审批委托已撤销');
+      await load();
+    } catch (value) {
+      if (isDefinitiveWriteRejection(value)) setPendingRevoke(null);
+      void message.error(errorMessage(value, '撤销结果未知；请复用当前请求重试'));
+    } finally {
+      setWriting(false);
+    }
   };
 
   const columns: ColumnsType<ApprovalDelegationView> = [
@@ -146,7 +182,13 @@ export function ApprovalDelegationManagement({ actorId, scopes }: ApprovalDelega
     {
       title: '操作', key: 'action', width: 90,
       render: (_, item) => item.status === 'active' && item.principalApproverId === actorId && canWrite
-        ? <Button danger type="link" icon={<StopOutlined />} onClick={() => confirmRevoke(item)}>撤销</Button>
+        ? <Button
+            danger
+            type="link"
+            icon={<StopOutlined />}
+            disabled={writing || pendingCreate !== null || (pendingRevoke !== null && pendingRevoke.item.id !== item.id)}
+            onClick={() => pendingRevoke?.item.id === item.id ? void revoke(pendingRevoke) : confirmRevoke(item)}
+          >{pendingRevoke?.item.id === item.id ? '重试撤销' : '撤销'}</Button>
         : '—',
     },
   ];
@@ -171,7 +213,7 @@ export function ApprovalDelegationManagement({ actorId, scopes }: ApprovalDelega
         {canWrite ? <Form
           form={form}
           layout="inline"
-          disabled={pendingCreate !== null}
+          disabled={pendingCreate !== null || pendingRevoke !== null}
           onFinish={(value: unknown) => { void finish(value); }}
         >
           <Form.Item name="delegateId" label="代理主体" rules={[{ required: true }, { pattern: ID_PATTERN }]}>
@@ -184,42 +226,18 @@ export function ApprovalDelegationManagement({ actorId, scopes }: ApprovalDelega
             <Input type="datetime-local" />
           </Form.Item>
           <Form.Item>
-            <Button type="primary" loading={writing} onClick={() => {
+            <Button type="primary" loading={writing} disabled={pendingRevoke !== null} onClick={() => {
               if (pendingCreate === null) form.submit();
               else void create(pendingCreate);
             }}>{pendingCreate === null ? '创建委托' : '重试同一请求'}</Button>
           </Form.Item>
         </Form> : null}
         {pendingCreate === null ? null : <Alert type="warning" showIcon message="创建结果尚未确认，将复用同一正文与幂等键重试" />}
+        {pendingRevoke === null ? null : <Alert type="warning" showIcon message={`委托 ${pendingRevoke.item.id} 的撤销结果尚未确认，将复用原版本与幂等键重试`} />}
         <Table rowKey="id" columns={columns} dataSource={[...items]} loading={loading} pagination={{ pageSize: 8 }} />
       </Space>
     </Modal>
   </>;
-}
-
-function parseCreateInput(
-  value: unknown,
-  actorId: string,
-): PendingCreate['body'] | null {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  const record = value as Readonly<Record<string, unknown>>;
-  if (
-    typeof record.delegateId !== 'string' || !ID_PATTERN.test(record.delegateId) ||
-    record.delegateId === actorId || typeof record.validFrom !== 'string' ||
-    typeof record.validUntil !== 'string'
-  ) return null;
-  const validFrom = new Date(record.validFrom);
-  const validUntil = new Date(record.validUntil);
-  if (
-    Number.isNaN(validFrom.getTime()) || Number.isNaN(validUntil.getTime()) ||
-    validUntil.getTime() <= validFrom.getTime() ||
-    validUntil.getTime() - validFrom.getTime() > 30 * 24 * 60 * 60 * 1_000
-  ) return null;
-  return Object.freeze({
-    delegateId: record.delegateId,
-    validFrom: validFrom.toISOString(),
-    validUntil: validUntil.toISOString(),
-  });
 }
 
 function defaultPeriod(): { readonly validFrom: string; readonly validUntil: string } {
@@ -240,9 +258,4 @@ function formatTime(value: string): string {
 function errorMessage(value: unknown, fallback: string): string {
   if (!(value instanceof ErpApiError)) return fallback;
   return `${value.message}${value.traceId === null ? '' : `（追踪标识：${value.traceId}）`}`;
-}
-
-function isDefinitiveClientRejection(value: unknown): boolean {
-  return value instanceof ErpApiError && value.status >= 400 && value.status < 500 &&
-    ![408, 409, 429].includes(value.status);
 }

@@ -4,8 +4,9 @@ import { NodeIndexOutlined, UserAddOutlined } from '@ant-design/icons';
 import { Alert, App as AntApp, Button, Form, Input, Modal, Space, Typography } from 'antd';
 import { useState } from 'react';
 
-import { createIdempotencyKey, ErpApiError, erpFetch, strongEtag } from '../../lib/api-client';
-import { parseApprovalSummaries, type ApprovalSummary } from '../../lib/approval-contract';
+import { createIdempotencyKey, ErpApiError, erpFetch, isDefinitiveWriteRejection, strongEtag } from '../../lib/api-client';
+import { type ApprovalSummary } from '../../lib/approval-contract';
+import { parseApprovalTaskResponse } from '../../lib/approval-task-contract';
 
 interface ApprovalTaskOperationsProps {
   readonly instance: ApprovalSummary;
@@ -82,7 +83,7 @@ export function ApprovalTaskOperations({
             : { approverId: attempt.targetActorId }),
         },
       );
-      const updated = parseInstanceResponse(result.data);
+      const updated = parseApprovalTaskResponse(result.data);
       void message.success(transfer ? '审批任务已转交' : '审批人已加入当前会签');
       setPending(null);
       setOperation(null);
@@ -93,7 +94,7 @@ export function ApprovalTaskOperations({
         void message.warning('操作已完成，但列表刷新失败；请手动刷新');
       }
     } catch (value) {
-      if (isDefinitiveClientRejection(value)) setPending(null);
+      if (isDefinitiveWriteRejection(value)) setPending(null);
       void message.error(errorMessage(value, '操作结果未知；请复用当前请求重试'));
     } finally {
       setWriting(false);
@@ -146,21 +147,7 @@ export function ApprovalTaskOperations({
   </>;
 }
 
-function parseInstanceResponse(value: unknown): ApprovalSummary {
-  if (typeof value !== 'object' || value === null || Array.isArray(value) || !Object.hasOwn(value, 'instance')) {
-    throw new Error('APPROVAL_TASK_RESPONSE_INVALID');
-  }
-  const instance = parseApprovalSummaries([(value as Readonly<Record<string, unknown>>).instance])[0];
-  if (instance === undefined) throw new Error('APPROVAL_TASK_RESPONSE_INVALID');
-  return instance;
-}
-
 function errorMessage(value: unknown, fallback: string): string {
   if (!(value instanceof ErpApiError)) return fallback;
   return `${value.message}${value.traceId === null ? '' : `（追踪标识：${value.traceId}）`}`;
-}
-
-function isDefinitiveClientRejection(value: unknown): boolean {
-  return value instanceof ErpApiError && value.status >= 400 && value.status < 500 &&
-    ![408, 409, 429].includes(value.status);
 }

@@ -18,7 +18,7 @@ import {
 } from 'antd';
 import { useMemo, useState } from 'react';
 
-import { createIdempotencyKey, ErpApiError, erpFetch, strongEtag } from '../../lib/api-client';
+import { createIdempotencyKey, ErpApiError, erpFetch, isDefinitiveWriteRejection, strongEtag } from '../../lib/api-client';
 import {
   buildApprovalCreateInput,
   parseCreatedApprovalInstance,
@@ -113,7 +113,7 @@ export function ApprovalInitiation({ onSubmitted }: ApprovalInitiationProps) {
       setPendingDraft(draft);
       await submit(draft).catch(() => undefined);
     } catch (value) {
-      if (isDefinitiveClientRejection(value)) setPendingCreate(null);
+      if (isDefinitiveWriteRejection(value)) setPendingCreate(null);
       void message.error(errorMessage(value, '草稿创建结果未知；请复用当前请求重试'));
     } finally {
       setWriting(false);
@@ -253,9 +253,4 @@ function TemplateField({ field }: { readonly field: ApprovalFormFieldView }) {
 function errorMessage(value: unknown, fallback: string): string {
   if (!(value instanceof ErpApiError)) return fallback;
   return `${value.message}${value.traceId === null ? '' : `（追踪标识：${value.traceId}）`}`;
-}
-
-function isDefinitiveClientRejection(value: unknown): boolean {
-  return value instanceof ErpApiError && value.status >= 400 && value.status < 500 &&
-    ![408, 409, 429].includes(value.status);
 }

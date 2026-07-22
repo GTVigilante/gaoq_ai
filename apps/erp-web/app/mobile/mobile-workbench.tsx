@@ -7,19 +7,30 @@ import {
   parseApprovalSummaries,
   parseApprovalTimeline,
   parseApprovalView,
+  parseIdentityProfile,
   type ApprovalStatus,
   type ApprovalSummary,
   type ApprovalTimelineEntry,
   type ApprovalView,
+  type IdentityProfileView,
 } from '../lib/approval-contract';
-import { createIdempotencyKey, ErpApiError, erpFetch, strongEtag } from '../lib/api-client';
+import { createIdempotencyKey, ErpApiError, erpFetch, isDefinitiveWriteRejection, strongEtag } from '../lib/api-client';
+import { MobileApprovalDelegation } from './mobile-approval-delegation';
 import { MobileApprovalInitiation } from './mobile-approval-initiation';
+import { MobileApprovalTaskOperation, type MobileTaskOperation } from './mobile-approval-task-operation';
 
 type MobileTab = 'home' | 'approvals' | 'knowledge' | 'profile';
 const STATUS_LABEL: Readonly<Record<ApprovalStatus, string>> = {
   draft: '草稿', running: '审批中', approved: '已通过', rejected: '已驳回',
   withdrawn: '已撤回', archived: '已归档',
 };
+
+interface PendingDecision {
+  readonly instance: ApprovalView;
+  readonly actorId: string;
+  readonly outcome: 'approved' | 'rejected';
+  readonly key: string;
+}
 
 /** H5 工作台不使用 localStorage/IndexedDB，敏感状态只保留在当前页面内存。 */
 export function MobileWorkbench() {
@@ -28,24 +39,31 @@ export function MobileWorkbench() {
   const [state, setState] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
   const [detail, setDetail] = useState<ApprovalView | null>(null);
   const [timeline, setTimeline] = useState<readonly ApprovalTimelineEntry[]>([]);
-  const [actorId, setActorId] = useState<string | null>(null);
+  const [identity, setIdentity] = useState<IdentityProfileView | null>(null);
   const [detailState, setDetailState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [detailError, setDetailError] = useState<string | null>(null);
   const [writing, setWriting] = useState(false);
+  const [pendingDecision, setPendingDecision] = useState<PendingDecision | null>(null);
   const [initiating, setInitiating] = useState(false);
+  const [delegating, setDelegating] = useState(false);
+  const [taskOperation, setTaskOperation] = useState<MobileTaskOperation | null>(null);
+  const [taskInstance, setTaskInstance] = useState<ApprovalSummary | null>(null);
 
   const loadApprovals = useCallback(async (signal?: AbortSignal): Promise<void> => {
     setState('loading');
     try {
-      const response = await erpFetch<unknown>('/api/approvals/instances/inbox', {
-        ...(signal === undefined ? {} : { signal }),
-      });
+      const [response, profile] = await Promise.all([
+        erpFetch<unknown>('/api/approvals/instances/inbox', { ...(signal === undefined ? {} : { signal }) }),
+        erpFetch<unknown>('/api/auth/profile', { ...(signal === undefined ? {} : { signal }) }),
+      ]);
       const items = parseApprovalSummaries(response.data);
       setApprovals(items);
+      setIdentity(parseIdentityProfile(profile.data));
       setState(items.length === 0 ? 'empty' : 'ready');
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return;
       setApprovals([]);
+      setIdentity(null);
       setState('error');
     }
   }, []);
@@ -56,18 +74,23 @@ export function MobileWorkbench() {
     return () => controller.abort();
   }, [loadApprovals]);
 
+  useEffect(() => {
+    if (pendingDecision !== null && identity?.actorId !== pendingDecision.actorId) {
+      setPendingDecision(null);
+      setDetailError('登录主体已变化，原待确认请求已失效');
+    }
+  }, [identity?.actorId, pendingDecision]);
+
   const openApproval = useCallback(async (id: string) => {
     setDetailState('loading');
     setDetailError(null);
     try {
-      const [instance, actions, profile] = await Promise.all([
+      const [instance, actions] = await Promise.all([
         erpFetch<unknown>(`/api/approvals/instances/${encodeURIComponent(id)}`),
         erpFetch<unknown>(`/api/approvals/instances/${encodeURIComponent(id)}/timeline`),
-        erpFetch<unknown>('/api/auth/profile'),
       ]);
       setDetail(parseApprovalView(instance.data));
       setTimeline(parseApprovalTimeline(actions.data));
-      setActorId(parseActorId(profile.data));
       setDetailState('ready');
     } catch (value) {
       const error = value instanceof ErpApiError ? value : null;
@@ -76,32 +99,61 @@ export function MobileWorkbench() {
     }
   }, []);
 
-  const decide = useCallback(async (outcome: 'approved' | 'rejected') => {
-    if (detail === null || actorId === null || writing || detail.riskLevel === 'R2') return;
-    const confirmed = window.confirm(outcome === 'approved' ? '确认通过此审批？' : '确认拒绝此审批？');
-    if (!confirmed) return;
+  const executeDecision = useCallback(async (attempt: PendingDecision) => {
+    if (identity?.actorId !== attempt.actorId) {
+      setPendingDecision(null);
+      setDetailError('登录主体已变化，请重新打开待办后操作');
+      return;
+    }
     setWriting(true);
     setDetailError(null);
     try {
-      await erpFetch(`/api/approvals/instances/${encodeURIComponent(detail.id)}/decisions`, {
+      await erpFetch(`/api/approvals/instances/${encodeURIComponent(attempt.instance.id)}/decisions`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          'if-match': strongEtag(detail.version),
-          'idempotency-key': createIdempotencyKey('mobile-approval-decision'),
+          'if-match': strongEtag(attempt.instance.version),
+          'idempotency-key': attempt.key,
         },
-        body: JSON.stringify({ principalApproverId: actorId, outcome }),
+        body: JSON.stringify({ principalApproverId: attempt.actorId, outcome: attempt.outcome }),
       });
+      setPendingDecision(null);
       setDetail(null);
       setDetailState('idle');
       await loadApprovals();
     } catch (value) {
+      if (isDefinitiveWriteRejection(value)) setPendingDecision(null);
       const error = value instanceof ErpApiError ? value : null;
-      setDetailError(error?.traceId === null || error === null ? (error?.message ?? '审批提交失败') : `${error.message} · ${error.traceId}`);
+      setDetailError(error?.traceId === null || error === null ? (error?.message ?? '提交结果未知；请复用当前动作重试') : `${error.message} · ${error.traceId}`);
     } finally {
       setWriting(false);
     }
-  }, [actorId, detail, loadApprovals, writing]);
+  }, [identity?.actorId, loadApprovals]);
+
+  const decide = useCallback(async (outcome: 'approved' | 'rejected') => {
+    if (
+      detail === null || identity === null || writing || detail.riskLevel === 'R2' ||
+      !identity.scopes.includes('erp:approval:task:decide')
+    ) return;
+    if (pendingDecision !== null) {
+      if (pendingDecision.instance.id !== detail.id || pendingDecision.outcome !== outcome) {
+        setDetailError('存在其他待确认审批请求，只能回到原审批并复用相同动作重试');
+        return;
+      }
+      await executeDecision(pendingDecision);
+      return;
+    }
+    const confirmed = window.confirm(outcome === 'approved' ? '确认通过此审批？' : '确认拒绝此审批？');
+    if (!confirmed) return;
+    const attempt = Object.freeze({
+      instance: detail,
+      actorId: identity.actorId,
+      outcome,
+      key: createIdempotencyKey('mobile-approval-decision'),
+    });
+    setPendingDecision(attempt);
+    await executeDecision(attempt);
+  }, [detail, executeDecision, identity, pendingDecision, writing]);
 
   return (
     <main className="mobile-shell">
@@ -117,7 +169,13 @@ export function MobileWorkbench() {
         {tab === 'home' ? <HomePanel approvals={approvals} state={state} onOpen={() => setTab('approvals')} /> : null}
         {tab === 'approvals' ? (
           <>
-            <div className="mobile-approval-toolbar"><p>只显示当前身份有权处理的待办。</p><button type="button" onClick={() => setInitiating(true)}>发起审批</button></div>
+            <div className="mobile-approval-toolbar">
+              <p>只显示当前身份有权处理的待办。</p>
+              <div>
+                {identity?.scopes.includes('erp:approval:delegation:read') ? <button type="button" className="secondary" onClick={() => setDelegating(true)}>审批委托</button> : null}
+                <button type="button" onClick={() => setInitiating(true)}>发起审批</button>
+              </div>
+            </div>
             <ApprovalPanel approvals={approvals} state={state} onRetry={() => { void loadApprovals(); }} onOpen={(id) => { void openApproval(id); }} />
           </>
         ) : null}
@@ -148,14 +206,38 @@ export function MobileWorkbench() {
           state={detailState}
           error={detailError}
           writing={writing}
+          pendingDecision={pendingDecision}
+          canDecide={identity?.scopes.includes('erp:approval:task:decide') ?? false}
+          canTransfer={identity?.scopes.includes('erp:approval:task:transfer') ?? false}
+          canAddSigner={identity?.scopes.includes('erp:approval:task:add_signer') ?? false}
           onClose={() => { setDetail(null); setDetailState('idle'); setDetailError(null); }}
           onDecide={(outcome) => { void decide(outcome); }}
+          onTaskOperation={(operation) => {
+            if (detail === null || pendingDecision !== null) return;
+            setTaskInstance(detail);
+            setTaskOperation(operation);
+          }}
         />
       )}
       <MobileApprovalInitiation
+        key={`initiation:${identity?.actorId ?? 'anonymous'}`}
         open={initiating}
         onClose={() => setInitiating(false)}
         onSubmitted={loadApprovals}
+      />
+      <MobileApprovalDelegation key={`delegation:${identity?.actorId ?? 'anonymous'}`} open={delegating} identity={identity} onClose={() => setDelegating(false)} />
+      <MobileApprovalTaskOperation
+        key={`task:${identity?.actorId ?? 'anonymous'}`}
+        open={taskOperation !== null}
+        operation={taskOperation}
+        instance={taskInstance}
+        identity={identity}
+        onClose={() => setTaskOperation(null)}
+        onCompleted={async () => {
+          setDetail(null);
+          setDetailState('idle');
+          await loadApprovals();
+        }}
       />
     </main>
   );
@@ -228,8 +310,13 @@ function ApprovalDetailSheet(props: {
   readonly state: 'loading' | 'ready' | 'error';
   readonly error: string | null;
   readonly writing: boolean;
+  readonly pendingDecision: PendingDecision | null;
+  readonly canDecide: boolean;
+  readonly canTransfer: boolean;
+  readonly canAddSigner: boolean;
   readonly onClose: () => void;
   readonly onDecide: (outcome: 'approved' | 'rejected') => void;
+  readonly onTaskOperation: (operation: MobileTaskOperation) => void;
 }) {
   return <div className="mobile-sheet-backdrop" role="presentation" onClick={props.onClose}>
     <section className="mobile-detail-sheet" role="dialog" aria-modal="true" aria-labelledby="mobile-detail-title" onClick={(event) => event.stopPropagation()}>
@@ -247,7 +334,12 @@ function ApprovalDetailSheet(props: {
         </dl>
         <section><h3>表单数据</h3><dl className="mobile-detail-fields">{Object.entries(props.detail.formData).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{formatFormValue(value)}</dd></div>)}</dl></section>
         <section><h3>动作时间线</h3>{props.timeline.length === 0 ? <p className="mobile-detail-muted">尚无动作记录</p> : <ol className="mobile-timeline">{props.timeline.map((entry) => <li key={entry.actionId}><span>{timelineLabel(entry)}</span><strong>{entry.actorId}</strong><time>{formatTime(entry.occurredAt)} · v{entry.aggregateVersion}</time></li>)}</ol>}</section>
-        {props.detail.status === 'running' && props.detail.riskLevel === 'R1' ? <div className="mobile-decision-actions"><button type="button" className="reject" disabled={props.writing} onClick={() => props.onDecide('rejected')}>拒绝</button><button type="button" className="approve" disabled={props.writing} onClick={() => props.onDecide('approved')}>{props.writing ? '提交中…' : '通过'}</button></div> : null}
+        {props.pendingDecision?.instance.id === props.detail.id ? <section className="mobile-initiation-notice"><strong>审批结果尚未确认</strong><p>请勿刷新页面；只能复用原版本、动作和幂等键重试。</p></section> : null}
+        {props.detail.status === 'running' && props.detail.riskLevel === 'R1' && (props.canTransfer || props.canAddSigner) ? <div className="mobile-task-operation-actions">
+          {props.canTransfer ? <button type="button" disabled={props.pendingDecision !== null} onClick={() => props.onTaskOperation('transfer')}>转交</button> : null}
+          {props.canAddSigner ? <button type="button" disabled={props.pendingDecision !== null} onClick={() => props.onTaskOperation('add_signer')}>加签</button> : null}
+        </div> : null}
+        {props.detail.status === 'running' && props.detail.riskLevel === 'R1' && props.canDecide ? <div className="mobile-decision-actions"><button type="button" className="reject" disabled={props.writing || (props.pendingDecision !== null && (props.pendingDecision.instance.id !== props.detail.id || props.pendingDecision.outcome !== 'rejected'))} onClick={() => props.onDecide('rejected')}>{props.pendingDecision?.instance.id === props.detail.id && props.pendingDecision.outcome === 'rejected' ? '重试拒绝' : '拒绝'}</button><button type="button" className="approve" disabled={props.writing || (props.pendingDecision !== null && (props.pendingDecision.instance.id !== props.detail.id || props.pendingDecision.outcome !== 'approved'))} onClick={() => props.onDecide('approved')}>{props.writing ? '提交中…' : props.pendingDecision?.instance.id === props.detail.id && props.pendingDecision.outcome === 'approved' ? '重试通过' : '通过'}</button></div> : null}
       </div> : null}
     </section>
   </div>;
@@ -272,13 +364,6 @@ function formatTime(value: string | null): string {
   return new Intl.DateTimeFormat('zh-CN', {
     month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
   }).format(date);
-}
-
-function parseActorId(value: unknown): string {
-  if (typeof value !== 'object' || value === null) throw new Error('IDENTITY_PROFILE_INVALID');
-  const actorId = (value as Readonly<Record<string, unknown>>).actorId;
-  if (typeof actorId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(actorId)) throw new Error('IDENTITY_PROFILE_INVALID');
-  return actorId;
 }
 
 function formatFormValue(value: unknown): string {

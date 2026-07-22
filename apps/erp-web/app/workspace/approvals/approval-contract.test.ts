@@ -5,6 +5,7 @@ import {
   parseApprovalDelegations,
   parseApprovalTimeline,
   parseApprovalView,
+  parseIdentityProfile,
   parsePublishedTemplateForms,
 } from '../../lib/approval-contract.js';
 
@@ -85,5 +86,19 @@ describe('审批工作台响应契约', () => {
       .toThrowError('APPROVAL_DELEGATIONS_INVALID');
     expect(() => parseApprovalDelegations([{ ...delegation, createdBy: 'manager-001' }]))
       .toThrowError('APPROVAL_DELEGATIONS_INVALID');
+  });
+
+  it('身份摘要拒绝租户、重复 Scope 和非标准授权范围', () => {
+    const profile = {
+      actorId: 'manager-001', actorType: 'user', roleCodes: ['manager'],
+      scopes: ['erp:approval:task:transfer'], departmentIds: ['department-001'],
+    } as const;
+    expect(parseIdentityProfile(profile)).toEqual(profile);
+    expect(() => parseIdentityProfile({ ...profile, tenantId: 'tenant-001' }))
+      .toThrowError('IDENTITY_PROFILE_INVALID');
+    expect(() => parseIdentityProfile({ ...profile, scopes: ['erp:approval:task:transfer', 'erp:approval:task:transfer'] }))
+      .toThrowError('IDENTITY_PROFILE_INVALID');
+    expect(() => parseIdentityProfile({ ...profile, scopes: ['approval:transfer'] }))
+      .toThrowError('IDENTITY_PROFILE_INVALID');
   });
 });

@@ -103,6 +103,14 @@ export function strongEtag(version: number): string {
   return `"${version}"`;
 }
 
+/** 判断写请求是否已被服务端明确拒绝；只有超时、限流和处理中允许复用原请求重试。 */
+export function isDefinitiveWriteRejection(value: unknown): boolean {
+  if (!(value instanceof ErpApiError) || value.status < 400 || value.status >= 500) return false;
+  if (value.status === 408 || value.status === 429) return false;
+  if (value.status === 409) return value.code !== 'IDEMPOTENCY_IN_PROGRESS';
+  return true;
+}
+
 /** 从统一响应信封中提取业务数据。 */
 export function parseApiEnvelope<T>(value: unknown): ApiEnvelope<T> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {

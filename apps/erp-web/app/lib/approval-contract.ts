@@ -78,6 +78,14 @@ export interface ApprovalDelegationView {
   readonly version: number;
 }
 
+export interface IdentityProfileView {
+  readonly actorId: string;
+  readonly actorType: 'user' | 'service' | 'mcp_client' | 'system_job';
+  readonly roleCodes: readonly string[];
+  readonly scopes: readonly string[];
+  readonly departmentIds: readonly string[];
+}
+
 const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/u;
 const CODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -88,6 +96,8 @@ const FIELD_TYPES = new Set<ApprovalFormFieldType>([
   'text', 'number', 'money_minor', 'boolean', 'date', 'single_select',
   'multi_select', 'employee', 'department', 'file_reference',
 ]);
+const ACTOR_TYPES = new Set<IdentityProfileView['actorType']>(['user', 'service', 'mcp_client', 'system_job']);
+const SCOPE_PATTERN = /^erp:[a-z][a-z0-9_]*:[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/u;
 
 /** 在渲染前校验审批待办契约，拒绝未知状态和越界字段。 */
 export function parseApprovalSummaries(value: unknown): readonly ApprovalSummary[] {
@@ -218,6 +228,26 @@ export function parseApprovalDelegations(value: unknown): readonly ApprovalDeleg
   }));
 }
 
+/** 校验可信身份摘要；前端只消费显示操作入口所需的授权快照。 */
+export function parseIdentityProfile(value: unknown): IdentityProfileView {
+  const record = objectRecord(value, 'IDENTITY_PROFILE_INVALID');
+  if (
+    typeof record.actorId !== 'string' || !ID_PATTERN.test(record.actorId) ||
+    typeof record.actorType !== 'string' || !ACTOR_TYPES.has(record.actorType as IdentityProfileView['actorType']) ||
+    !validUniqueStrings(record.roleCodes, 100, ID_PATTERN) ||
+    !validUniqueStrings(record.scopes, 200, SCOPE_PATTERN) ||
+    !validUniqueStrings(record.departmentIds, 500, ID_PATTERN) ||
+    Object.hasOwn(record, 'tenantId')
+  ) throw new Error('IDENTITY_PROFILE_INVALID');
+  return Object.freeze({
+    actorId: record.actorId,
+    actorType: record.actorType as IdentityProfileView['actorType'],
+    roleCodes: Object.freeze([...(record.roleCodes as string[])]),
+    scopes: Object.freeze([...(record.scopes as string[])]),
+    departmentIds: Object.freeze([...(record.departmentIds as string[])]),
+  });
+}
+
 function parseApprovalSummary(value: unknown): ApprovalSummary {
   const record = objectRecord(value, 'APPROVAL_SUMMARY_INVALID');
   if (
@@ -307,4 +337,9 @@ function strictIso(value: string): boolean {
 
 function nullableId(value: unknown): boolean {
   return value === null || (typeof value === 'string' && ID_PATTERN.test(value));
+}
+
+function validUniqueStrings(value: unknown, maximum: number, pattern: RegExp): value is readonly string[] {
+  return Array.isArray(value) && value.length <= maximum && new Set(value).size === value.length &&
+    value.every((item) => typeof item === 'string' && pattern.test(item));
 }

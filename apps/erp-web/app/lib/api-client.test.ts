@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ErpApiError, parseApiEnvelope, strongEtag } from './api-client.js';
+import { ErpApiError, isDefinitiveWriteRejection, parseApiEnvelope, strongEtag } from './api-client.js';
 
 describe('ERP Web API Client', () => {
   it('只接受带 traceId 的统一成功信封', () => {
@@ -29,5 +29,13 @@ describe('ERP Web API Client', () => {
       traceId: 'trace-web-002', status: 401,
     });
     expect(JSON.stringify(error)).not.toContain('accessToken');
+  });
+
+  it('只把处理中、超时、限流和服务端故障视为可复用重试', () => {
+    expect(isDefinitiveWriteRejection(new ErpApiError('IDEMPOTENCY_IN_PROGRESS', '处理中', null, 409))).toBe(false);
+    expect(isDefinitiveWriteRejection(new ErpApiError('APPROVAL_VERSION_CONFLICT', '版本冲突', null, 409))).toBe(true);
+    expect(isDefinitiveWriteRejection(new ErpApiError('IDEMPOTENCY_KEY_REUSED', '键已被其他请求使用', null, 409))).toBe(true);
+    expect(isDefinitiveWriteRejection(new ErpApiError('RATE_LIMITED', '稍后重试', null, 429))).toBe(false);
+    expect(isDefinitiveWriteRejection(new ErpApiError('UPSTREAM_FAILED', '服务异常', null, 503))).toBe(false);
   });
 });

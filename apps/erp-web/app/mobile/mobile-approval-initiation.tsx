@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 
-import { createIdempotencyKey, ErpApiError, erpFetch, strongEtag } from '../lib/api-client';
+import { createIdempotencyKey, ErpApiError, erpFetch, isDefinitiveWriteRejection, strongEtag } from '../lib/api-client';
 import {
   buildApprovalCreateInput,
   parseCreatedApprovalInstance,
@@ -83,7 +83,7 @@ export function MobileApprovalInitiation(props: {
       setPendingDraft(draft);
       await submit(draft).catch(() => undefined);
     } catch (value) {
-      if (isDefinitiveClientRejection(value)) setPendingCreate(null);
+      if (isDefinitiveWriteRejection(value)) setPendingCreate(null);
       setError(errorMessage(value, '草稿创建结果未知；请使用当前按钮重试'));
     } finally {
       setWriting(false);
@@ -222,8 +222,4 @@ function readForm(form: HTMLFormElement, selected: ApprovalPublishedTemplateForm
 function errorMessage(value: unknown, fallback: string): string {
   if (!(value instanceof ErpApiError)) return fallback;
   return `${value.message}${value.traceId === null ? '' : `（追踪标识：${value.traceId}）`}`;
-}
-
-function isDefinitiveClientRejection(value: unknown): boolean {
-  return value instanceof ErpApiError && value.status >= 400 && value.status < 500 && ![408, 409, 429].includes(value.status);
 }
