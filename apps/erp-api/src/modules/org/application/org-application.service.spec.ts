@@ -332,6 +332,69 @@ describe('OrgApplicationService', () => {
     );
   });
 
+  it('迁移同步在一个事务内更新员工资料、状态与开放劳动关系', async () => {
+    const store = assemble();
+    const migrationContext = {
+      ...trustedContext,
+      actor: {
+        ...trustedContext.actor,
+        actorType: 'service' as const,
+        scopes: [...trustedContext.actor.scopes, 'erp:migration:execute'],
+      },
+    };
+    store.employeeRepo.findById.mockResolvedValue(employee('employee-001', ['dept-a']));
+    store.departmentRepo.findByIds.mockResolvedValue([department('dept-a', null)]);
+    store.employmentRepo.findOpenByEmployeeId.mockResolvedValue(employment());
+
+    const result = await store.context.run(migrationContext, () =>
+      store.service.synchronizeEmployeeFromMigration(
+        'employee-001', 1, 'key-migration-employee-001', {
+          employeeNo: 'EMPLOYEE-001', displayName: '迁移员工', status: 'suspended',
+          departmentIds: ['dept-a'], primaryDepartmentId: 'dept-a',
+          positionIds: [], jobLevelId: null,
+        },
+      ));
+
+    expect(result.employee).toMatchObject({
+      displayName: '迁移员工', status: 'suspended', version: 3,
+    });
+    expect(store.employmentRepo.replace).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'suspended', version: 2 }), 1, session,
+    );
+    expect(store.employeeRepo.replace).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'suspended', version: 3 }), 1, session,
+    );
+    expect(store.outbox.append).toHaveBeenCalledTimes(3);
+  });
+
+  it('迁移同步不能把既有员工直接改为离职', async () => {
+    const store = assemble();
+    const migrationContext = {
+      ...trustedContext,
+      actor: {
+        ...trustedContext.actor,
+        actorType: 'service' as const,
+        scopes: [...trustedContext.actor.scopes, 'erp:migration:execute'],
+      },
+    };
+    store.employeeRepo.findById.mockResolvedValue(employee('employee-001', ['dept-a']));
+
+    const failure = store.context.run(migrationContext, () =>
+      store.service.synchronizeEmployeeFromMigration(
+        'employee-001', 1, 'key-migration-employee-terminate-001', {
+          employeeNo: 'EMPLOYEE-001', displayName: '迁移员工', status: 'terminated',
+          departmentIds: ['dept-a'], primaryDepartmentId: 'dept-a',
+          positionIds: [], jobLevelId: null,
+        },
+      ));
+
+    await expect(failure).rejects.toMatchObject({
+      response: { code: 'ORG_CARE_WORKFLOW_REQUIRED' },
+    });
+    expect(store.employeeRepo.replace).not.toHaveBeenCalled();
+    expect(store.employmentRepo.replace).not.toHaveBeenCalled();
+  });
+
   it('受信任入职工作流在同一事务建立三层主数据且工号由服务端生成', async () => {
     const store = assemble();
     const context = {

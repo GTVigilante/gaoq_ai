@@ -399,9 +399,9 @@ const analyticsExportSchema = z.object({
 });
 const dataMigrationReportSchema = z.object({
   runId: recruitmentIdSchema, sourceSystem: z.string(),
-  mode: z.enum(['full', 'incremental']), scope: z.literal('org_reference'),
+  mode: z.enum(['full', 'incremental']), scope: z.enum(['org_reference', 'org_workforce']),
   status: z.enum(['running', 'completed', 'failed']),
-  expectedSourceCount: z.number().int().positive(), checkpoint: z.number().int().nonnegative(),
+  expectedSourceCount: z.number().int().nonnegative(), checkpoint: z.number().int().nonnegative(),
   counts: z.object({
     applied: z.number().int().nonnegative(), duplicate: z.number().int().nonnegative(),
     rejected: z.number().int().nonnegative(),

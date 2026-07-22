@@ -13,9 +13,9 @@ export class DataMigrationRunRecord {
   @Prop({ type: String, required: true, immutable: true, match: SOURCE_ID }) sourceRunId!: string;
   @Prop({ type: String, required: true, immutable: true, enum: ['full', 'incremental'] })
   mode!: 'full' | 'incremental';
-  @Prop({ type: String, required: true, immutable: true, enum: ['org_reference'] })
-  scope!: 'org_reference';
-  @Prop({ type: Number, required: true, immutable: true, min: 1, max: 10_000_000 })
+  @Prop({ type: String, required: true, immutable: true, enum: ['org_reference', 'org_workforce'] })
+  scope!: 'org_reference' | 'org_workforce';
+  @Prop({ type: Number, required: true, immutable: true, min: 0, max: 10_000_000 })
   expectedSourceCount!: number;
   @Prop({ type: String, required: true, immutable: true, match: HASH })
   expectedSourceChecksum!: string;
@@ -44,8 +44,8 @@ export class DataMigrationItemRecord {
   @Prop({ type: Number, required: true, immutable: true, min: 1 }) sequence!: number;
   @Prop({ type: String, required: true, immutable: true, match: SOURCE_ID }) sourceRecordId!: string;
   @Prop({ type: String, required: true, immutable: true, maxlength: 64 }) sourceVersion!: string;
-  @Prop({ type: String, required: true, immutable: true, enum: ['org.department', 'org.position', 'org.job_level'] })
-  entityType!: 'org.department' | 'org.position' | 'org.job_level';
+  @Prop({ type: String, required: true, immutable: true, enum: ['org.department', 'org.position', 'org.job_level', 'org.employee'] })
+  entityType!: 'org.department' | 'org.position' | 'org.job_level' | 'org.employee';
   @Prop({ type: String, required: true, immutable: true, match: HASH }) payloadHash!: string;
   @Prop({ type: String, required: true, immutable: true, match: HASH }) sourceFactHash!: string;
   @Prop({ type: String, required: true, enum: ['applied', 'duplicate', 'rejected'] })
@@ -68,8 +68,8 @@ DataMigrationItemRecordSchema.index({ tenantId: 1, runId: 1, status: 1 });
 export class DataMigrationMappingRecord {
   @Prop({ type: String, required: true, immutable: true, maxlength: 128 }) tenantId!: string;
   @Prop({ type: String, required: true, immutable: true, match: SOURCE_ID }) sourceSystem!: string;
-  @Prop({ type: String, required: true, immutable: true, enum: ['org.department', 'org.position', 'org.job_level'] })
-  entityType!: 'org.department' | 'org.position' | 'org.job_level';
+  @Prop({ type: String, required: true, immutable: true, enum: ['org.department', 'org.position', 'org.job_level', 'org.employee'] })
+  entityType!: 'org.department' | 'org.position' | 'org.job_level' | 'org.employee';
   @Prop({ type: String, required: true, immutable: true, match: SOURCE_ID }) sourceRecordId!: string;
   @Prop({ type: String, required: true, maxlength: 64 }) sourceVersion!: string;
   @Prop({ type: String, required: true, match: HASH }) payloadHash!: string;
@@ -93,8 +93,22 @@ export class DataMigrationAssociationRecord {
   @Prop({ type: String, required: true, immutable: true, maxlength: 128 }) tenantId!: string;
   @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) runId!: string;
   @Prop({ type: Number, required: true, immutable: true, min: 1 }) sequence!: number;
-  @Prop({ type: String, required: true, immutable: true, enum: ['parent_department', 'declared_reference'] })
-  relationship!: 'parent_department' | 'declared_reference';
+  @Prop({
+    type: String,
+    required: true,
+    immutable: true,
+    enum: [
+      'parent_department', 'department', 'primary_department', 'position', 'job_level',
+      'declared_reference',
+    ],
+  })
+  relationship!:
+    | 'parent_department'
+    | 'department'
+    | 'primary_department'
+    | 'position'
+    | 'job_level'
+    | 'declared_reference';
   @Prop({ type: String, required: true, immutable: true, match: SOURCE_ID })
   sourceAssociationId!: string;
   @Prop({ type: String, default: null, maxlength: 128 }) targetId!: string | null;

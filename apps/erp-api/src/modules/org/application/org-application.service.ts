@@ -472,6 +472,88 @@ export class OrgApplicationService {
     ));
   }
 
+  /** 数据迁移专用：在一个事务内同步员工资料、状态与开放劳动关系。 */
+  async synchronizeEmployeeFromMigration(
+    id: string,
+    expectedVersion: number,
+    key: string,
+    input: CreateEmployeeDto,
+  ): Promise<{ readonly employee: Employee }> {
+    this.assertTrustedScope('erp:migration:execute');
+    return this.run(async () => this.idempotency.execute(
+      'org.employee.synchronize_from_migration',
+      key,
+      { id, expectedVersion, input },
+      async (session) => {
+        const current = await this.requireEmployee(id, session);
+        this.assertExpectedVersion(current.version, expectedVersion);
+        if (input.status === 'terminated' && current.status !== 'terminated') {
+          throw new ConflictException({
+            code: 'ORG_CARE_WORKFLOW_REQUIRED',
+            message: '既有员工离职必须通过 Care 清算与生效日编排',
+          });
+        }
+        const now = new Date();
+        const updated = updateEmployee(current, {
+          tenantId: this.context.getTenantRequired().tenantId,
+          employeeNo: input.employeeNo,
+          displayName: input.displayName,
+          departmentIds: input.departmentIds,
+          primaryDepartmentId: input.primaryDepartmentId,
+          positionIds: input.positionIds ?? [],
+          jobLevelId: input.jobLevelId ?? null,
+        }, now);
+        await this.assertEmployeeReferences(updated, session);
+
+        let employee = updated;
+        let employmentChange: {
+          readonly before: Employment;
+          readonly after: Employment;
+        } | null = null;
+        const desiredStatus = input.status ?? current.status;
+        if (desiredStatus !== current.status) {
+          employee = transitionEmployeeStatus(updated, desiredStatus, now);
+          const currentEmployment = await this.employments.findOpenByEmployeeId(id, session);
+          if (currentEmployment !== null) {
+            if (employee.status !== 'active' && employee.status !== 'suspended') {
+              throw new ConflictException({
+                code: 'ORG_EMPLOYMENT_STATUS_SYNC_INVALID',
+                message: '当前员工状态不能同步到劳动关系',
+              });
+            }
+            employmentChange = {
+              before: currentEmployment,
+              after: transitionEmploymentStatus(currentEmployment, {
+                tenantId: this.context.getTenantRequired().tenantId,
+                expectedVersion: currentEmployment.version,
+                status: employee.status,
+              }, now),
+            };
+          }
+        }
+
+        if (employmentChange !== null) {
+          await this.employments.replace(
+            employmentChange.after, employmentChange.before.version, session,
+          );
+        }
+        await this.employees.replace(employee, expectedVersion, session);
+        await this.outbox.append(buildEmployeeUpdatedEvent(updated, now), session);
+        if (employmentChange !== null) {
+          await this.outbox.append(buildEmploymentStatusChangedEvent(
+            employmentChange.after, employmentChange.before.status, now,
+          ), session);
+        }
+        if (employee.status !== current.status) {
+          await this.outbox.append(
+            buildEmployeeStatusChangedEvent(employee, current.status, now), session,
+          );
+        }
+        return { employee };
+      },
+    ));
+  }
+
   async transitionEmployeeStatus(
     id: string,
     expectedVersion: number,

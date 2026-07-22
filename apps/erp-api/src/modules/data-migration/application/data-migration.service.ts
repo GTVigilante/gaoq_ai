@@ -15,6 +15,7 @@ import { TenantContextService } from '../../../core/tenant/tenant-context.servic
 import { OrgApplicationService } from '../../org/application/org-application.service.js';
 import type {
   CreateDepartmentDto,
+  CreateEmployeeDto,
   CreateJobLevelDto,
   CreatePositionDto,
 } from '../../org/application/org.dto.js';
@@ -52,7 +53,7 @@ export interface DataMigrationReport {
   readonly runId: string;
   readonly sourceSystem: string;
   readonly mode: 'full' | 'incremental';
-  readonly scope: 'org_reference';
+  readonly scope: 'org_reference' | 'org_workforce';
   readonly status: 'running' | 'completed' | 'failed';
   readonly expectedSourceCount: number;
   readonly checkpoint: number;
@@ -128,6 +129,7 @@ export class DataMigrationService {
     if (input.sequence > run.expectedSourceCount) throw new BadRequestException({
       code: 'DATA_MIGRATION_SEQUENCE_OUT_OF_RANGE', message: '来源序号超过声明记录数',
     });
+    assertEntityInScope(run.scope, input.entityType);
     const existing = await this.items.findOne({ tenantId, runId, sequence: input.sequence }).lean().exec();
     if (existing !== null) {
       if (existing.sourceFactHash !== sourceFactHash) {
@@ -256,7 +258,14 @@ export class DataMigrationService {
       return;
     }
     if (input.entityType === 'org.position') positionPayload(input.payload);
-    else jobLevelPayload(input.payload);
+    else if (input.entityType === 'org.job_level') jobLevelPayload(input.payload);
+    else {
+      const payload = employeePayload(input.payload);
+      assertAssociations(input.associationSourceIds, employeeAssociationIds(payload));
+      await Promise.all(employeeAssociationSpecs(payload).map(async (association) =>
+        this.requireMapping(run, association.entityType, association.sourceAssociationId)));
+      return;
+    }
     assertAssociations(input.associationSourceIds, []);
   }
 
@@ -293,12 +302,44 @@ export class DataMigrationService {
         : await this.organization.updatePosition(mapping.targetId, mapping.targetVersion, key, command);
       return target(result.position);
     }
-    const command = jobLevelPayload(input.payload);
-    assertAssociations(input.associationSourceIds, []);
+    if (input.entityType === 'org.job_level') {
+      const command = jobLevelPayload(input.payload);
+      assertAssociations(input.associationSourceIds, []);
+      const result = mapping === null
+        ? await this.organization.createJobLevel(key, command)
+        : await this.organization.updateJobLevel(
+          mapping.targetId, mapping.targetVersion, key, command,
+        );
+      return target(result.jobLevel);
+    }
+    const payload = employeePayload(input.payload);
+    const command = await this.employeeCommand(run, payload);
     const result = mapping === null
-      ? await this.organization.createJobLevel(key, command)
-      : await this.organization.updateJobLevel(mapping.targetId, mapping.targetVersion, key, command);
-    return target(result.jobLevel);
+      ? await this.organization.createEmployee(key, command)
+      : await this.organization.synchronizeEmployeeFromMigration(
+        mapping.targetId, mapping.targetVersion, key, command,
+      );
+    return target(result.employee);
+  }
+
+  private async employeeCommand(
+    run: DataMigrationRunRecord,
+    payload: EmployeeMigrationPayload,
+  ): Promise<CreateEmployeeDto> {
+    const departmentIds = await Promise.all(payload.departmentSourceIds.map(async (sourceId) =>
+      (await this.requireMapping(run, 'org.department', sourceId)).targetId));
+    const positionIds = await Promise.all(payload.positionSourceIds.map(async (sourceId) =>
+      (await this.requireMapping(run, 'org.position', sourceId)).targetId));
+    const primaryDepartmentId = (await this.requireMapping(
+      run, 'org.department', payload.primaryDepartmentSourceId,
+    )).targetId;
+    const jobLevelId = payload.jobLevelSourceId === null ? null : (await this.requireMapping(
+      run, 'org.job_level', payload.jobLevelSourceId,
+    )).targetId;
+    return {
+      employeeNo: payload.employeeNo, displayName: payload.displayName, status: payload.status,
+      departmentIds, primaryDepartmentId, positionIds, jobLevelId,
+    };
   }
 
   private async requireMapping(
@@ -336,24 +377,26 @@ export class DataMigrationService {
     run: DataMigrationRunRecord,
     input: ApplyDataMigrationRecordDto,
   ): Promise<void> {
-    const relationship = input.entityType === 'org.department'
-      ? 'parent_department' as const : 'declared_reference' as const;
-    for (const sourceAssociationId of input.associationSourceIds) {
-      const mapping = input.entityType === 'org.department'
-        ? await this.mappings.findOne({
+    const evidence = associationEvidence(input);
+    for (const association of evidence) {
+      const mapping = association.entityType === null
+        ? null
+        : await this.mappings.findOne({
           tenantId: run.tenantId, sourceSystem: run.sourceSystem,
-          entityType: 'org.department', sourceRecordId: sourceAssociationId,
-        }).lean().exec() as MappingView | null
-        : null;
+          entityType: association.entityType,
+          sourceRecordId: association.sourceAssociationId,
+        }).lean().exec() as MappingView | null;
       await this.associations.findOneAndUpdate(
         {
           tenantId: run.tenantId, runId: run.id, sequence: input.sequence,
-          relationship, sourceAssociationId,
+          relationship: association.relationship,
+          sourceAssociationId: association.sourceAssociationId,
         },
         {
           $setOnInsert: {
             id: createEventId(), tenantId: run.tenantId, runId: run.id,
-            sequence: input.sequence, relationship, sourceAssociationId,
+            sequence: input.sequence, relationship: association.relationship,
+            sourceAssociationId: association.sourceAssociationId,
           },
           $set: {
             targetId: mapping?.targetId ?? null,
@@ -554,6 +597,113 @@ function jobLevelPayload(value: Readonly<Record<string, unknown>>): CreateJobLev
   };
 }
 
+interface EmployeeMigrationPayload {
+  readonly employeeNo: string;
+  readonly displayName: string;
+  readonly status: 'probation' | 'active' | 'suspended' | 'terminated';
+  readonly departmentSourceIds: readonly string[];
+  readonly primaryDepartmentSourceId: string;
+  readonly positionSourceIds: readonly string[];
+  readonly jobLevelSourceId: string | null;
+}
+
+type AssociationRelationship = DataMigrationAssociationRecord['relationship'];
+type AssociationTargetType = 'org.department' | 'org.position' | 'org.job_level';
+interface AssociationEvidence {
+  readonly relationship: AssociationRelationship;
+  readonly sourceAssociationId: string;
+  readonly entityType: AssociationTargetType | null;
+}
+
+function employeePayload(value: Readonly<Record<string, unknown>>): EmployeeMigrationPayload {
+  exactKeys(value, [
+    'departmentSourceIds', 'displayName', 'employeeNo', 'jobLevelSourceId',
+    'positionSourceIds', 'primaryDepartmentSourceId', 'status',
+  ]);
+  const departments = stringSourceIds(value.departmentSourceIds, 1, 100);
+  const positions = stringSourceIds(value.positionSourceIds, 0, 100);
+  if (typeof value.employeeNo !== 'string' || typeof value.displayName !== 'string' ||
+    !['probation', 'active', 'suspended', 'terminated'].includes(String(value.status)) ||
+    typeof value.primaryDepartmentSourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.primaryDepartmentSourceId) ||
+    (value.jobLevelSourceId !== null &&
+      (typeof value.jobLevelSourceId !== 'string' || !SOURCE_ID_PATTERN.test(value.jobLevelSourceId))) ||
+    !departments.includes(value.primaryDepartmentSourceId)) throw invalidPayload();
+  return {
+    employeeNo: value.employeeNo,
+    displayName: value.displayName,
+    status: value.status as EmployeeMigrationPayload['status'],
+    departmentSourceIds: departments,
+    primaryDepartmentSourceId: value.primaryDepartmentSourceId,
+    positionSourceIds: positions,
+    jobLevelSourceId: value.jobLevelSourceId,
+  };
+}
+
+function stringSourceIds(value: unknown, minimum: number, maximum: number): readonly string[] {
+  if (!Array.isArray(value) || value.length < minimum || value.length > maximum ||
+    value.some((item) => typeof item !== 'string' || !SOURCE_ID_PATTERN.test(item)) ||
+    new Set(value).size !== value.length) throw invalidPayload();
+  return value as string[];
+}
+
+function employeeAssociationSpecs(
+  payload: EmployeeMigrationPayload,
+): readonly (AssociationEvidence & { readonly entityType: AssociationTargetType })[] {
+  return [
+    ...payload.departmentSourceIds.map((sourceAssociationId) => ({
+      relationship: 'department' as const,
+      sourceAssociationId,
+      entityType: 'org.department' as const,
+    })),
+    {
+      relationship: 'primary_department' as const,
+      sourceAssociationId: payload.primaryDepartmentSourceId,
+      entityType: 'org.department' as const,
+    },
+    ...payload.positionSourceIds.map((sourceAssociationId) => ({
+      relationship: 'position' as const,
+      sourceAssociationId,
+      entityType: 'org.position' as const,
+    })),
+    ...(payload.jobLevelSourceId === null ? [] : [{
+      relationship: 'job_level' as const,
+      sourceAssociationId: payload.jobLevelSourceId,
+      entityType: 'org.job_level' as const,
+    }]),
+  ];
+}
+
+function employeeAssociationIds(payload: EmployeeMigrationPayload): readonly string[] {
+  return [...new Set(employeeAssociationSpecs(payload).map((item) => item.sourceAssociationId))];
+}
+
+function associationEvidence(input: ApplyDataMigrationRecordDto): readonly AssociationEvidence[] {
+  let derived: readonly AssociationEvidence[];
+  try {
+    if (input.entityType === 'org.department') {
+      const parent = departmentPayload(input.payload).parentSourceId;
+      derived = parent === null ? [] : [{
+        relationship: 'parent_department', sourceAssociationId: parent,
+        entityType: 'org.department',
+      }];
+    } else if (input.entityType === 'org.employee') {
+      derived = employeeAssociationSpecs(employeePayload(input.payload));
+    } else derived = [];
+  } catch {
+    derived = [];
+  }
+  const derivedIds = new Set(derived.map((item) => item.sourceAssociationId));
+  return [
+    ...derived,
+    ...input.associationSourceIds
+      .filter((sourceAssociationId) => !derivedIds.has(sourceAssociationId))
+      .map((sourceAssociationId) => ({
+        relationship: 'declared_reference' as const, sourceAssociationId, entityType: null,
+      })),
+  ];
+}
+
 function exactKeys(value: Readonly<Record<string, unknown>>, expected: readonly string[]): void {
   if (Object.keys(value).sort().join('|') !== [...expected].sort().join('|')) throw invalidPayload();
 }
@@ -596,6 +746,18 @@ function assertAssociations(actual: readonly string[], expected: readonly string
   }
 }
 
+function assertEntityInScope(
+  scope: DataMigrationRunRecord['scope'],
+  entityType: ApplyDataMigrationRecordDto['entityType'],
+): void {
+  const allowed = scope === 'org_reference'
+    ? ['org.department', 'org.position', 'org.job_level']
+    : ['org.employee'];
+  if (!allowed.includes(entityType)) throw new BadRequestException({
+    code: 'DATA_MIGRATION_ENTITY_OUT_OF_SCOPE', message: '实体类型不属于当前迁移范围',
+  });
+}
+
 function assertUniqueEvidence(input: ApplyDataMigrationRecordDto): void {
   if (new Set(input.associationSourceIds).size !== input.associationSourceIds.length) {
     throw new BadRequestException({
@@ -626,6 +788,8 @@ function migrationSourceFactHash(input: ApplyDataMigrationRecordDto): string {
 function isDuplicateKeyError(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 11000;
 }
+
+const SOURCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 export const dataMigrationChecksum = Object.freeze({
   canonicalJson, digest, roll, sourceFactHash: migrationSourceFactHash, empty: EMPTY_CHECKSUM,

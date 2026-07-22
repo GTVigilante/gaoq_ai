@@ -2,17 +2,18 @@
 
 ## 范围与当前能力
 
-本切片建立可重复、可恢复、可审计的迁移控制面。首批白名单为组织参考主数据：部门、岗位、职级；员工、劳动关系、审批、招聘、考勤、薪资、附件实体将在同一账本协议上按域追加，完成前 Issue #34 与 Phase 5 迁移门禁保持未完成。
+本切片建立可重复、可恢复、可审计的迁移控制面。当前白名单包含 `org_reference`（部门、岗位、职级）与 `org_workforce`（员工）两个独立 Scope；劳动关系、审批、招聘、考勤、薪资、附件实体将在同一账本协议上按域追加，完成前 Issue #34 与 Phase 5 迁移门禁保持未完成。
 
-目标业务数据禁止由迁移模块直接写集合。`org.department`、`org.position`、`org.job_level` 的创建与增量更新均调用 `OrgApplicationService`，继续执行领域校验、引用校验、幂等、Outbox 和版本并发控制。迁移模块只直写自己拥有的运行、条目和来源映射账本。
+目标业务数据禁止由迁移模块直接写集合。`org.department`、`org.position`、`org.job_level`、`org.employee` 的创建与增量更新均调用 `OrgApplicationService`，继续执行领域校验、引用校验、幂等、Outbox 和版本并发控制。员工更新、状态变更与开放劳动关系在一个事务内同步；既有员工离职仍必须进入 Care，迁移不得绕过清算、身份吊销与生效日控制。迁移模块只直写自己拥有的运行、条目、来源映射与证据账本。
 
 ## 来源包与确定性
 
-- 运行声明：`sourceSystem`、来源唯一 `sourceRunId`、`full|incremental`、固定 Scope、来源总数和预期滚动校验和。
+- 运行声明：`sourceSystem`、来源唯一 `sourceRunId`、`full|incremental`、固定 Scope、来源总数和预期滚动校验和。空数据域允许声明总数为 0，但预期校验和必须与空滚动结果一致。
 - 条目声明：连续 `sequence`、来源记录/版本、白名单实体类型、内存态 payload、payload SHA-256、显式关联来源 ID 和附件摘要清单。服务端另行计算覆盖实体类型、来源版本、关联与附件摘要的 `sourceFactHash`，用于识别“正文相同但控制事实已变化”的重放。
 - 服务端先对规范 JSON 重算 payload SHA-256；不匹配立即拒绝请求且不推进检查点。
 - 检查点只能逐条推进；同一运行/序号重复提交必须绑定同一来源记录和摘要。中断发生在领域写入、映射或条目之间时，领域幂等键和 `lastRunId + lastSequence` 可恢复原结果，不重复创建目标。
 - 相同来源记录和相同摘要跨运行识别为 `duplicate`；摘要变化按目标版本执行增量更新。
+- `org_workforce` 的员工 payload 只接受固定字段：工号、显示名、状态、部门/主部门/岗位/职级来源引用。服务端把来源引用解析为当前租户的 ERP ID；主部门必须属于部门集合，引用缺失、重复或跨 Scope 均拒绝。
 
 `sourceFactHash` 的规范对象固定为 `sourceRecordId`、`sourceVersion`、`entityType`、`payloadHash`、按字典序排列的 `associationSourceIds`，以及按 `sourceAttachmentId` 排列且仅含 ID 与 checksum 的附件数组。滚动来源校验和初值为 `base64url(SHA-256(""))`，第 N 条为 `base64url(SHA-256(previous + "\\n" + sequence + ":" + sourceFactHash))`。来源导出程序必须使用相同算法，并固定 UTF-8、对象键字典序与数组规则。
 

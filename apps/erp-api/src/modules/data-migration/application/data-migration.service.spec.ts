@@ -25,6 +25,17 @@ function trusted<T>(context: TenantContextService, action: () => T): T {
   }, action);
 }
 
+function reader<T>(context: TenantContextService, action: () => T): T {
+  return context.run({
+    tenant: { tenantId: 'tenant-001', source: 'access_token' },
+    actor: {
+      actorId: 'auditor-001', actorType: 'user', tenantId: 'tenant-001',
+      roleCodes: ['auditor'], scopes: ['erp:migration:read'], departmentIds: [],
+      traceId: 'trace-migration-report-001',
+    },
+  }, action);
+}
+
 function run() {
   return {
     id: RUN_ID, tenantId: 'tenant-001', sourceSystem: 'legacy-hr', sourceRunId: 'full-001',
@@ -33,6 +44,10 @@ function run() {
     targetChecksum: dataMigrationChecksum.empty, checkpoint: 0, status: 'running' as const,
     completedAt: null,
   };
+}
+
+function workforceRun() {
+  return { ...run(), scope: 'org_workforce' as const };
 }
 
 function query<T>(value: T) { return { lean: () => ({ exec: () => Promise.resolve(value) }) }; }
@@ -221,6 +236,75 @@ describe('DataMigrationService', () => {
     expect(organization.updatePosition).not.toHaveBeenCalled();
   });
 
+  it('员工迁移把来源组织引用解析为 ERP 主数据 ID', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      employeeNo: 'E1001', displayName: '迁移员工', status: 'active',
+      departmentSourceIds: ['legacy-department-001'],
+      primaryDepartmentSourceId: 'legacy-department-001',
+      positionSourceIds: ['legacy-position-001'], jobLevelSourceId: 'legacy-level-001',
+    };
+    const input = {
+      sequence: 1, sourceRecordId: 'legacy-employee-001', sourceVersion: '1',
+      entityType: 'org.employee' as const, payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: [
+        'legacy-department-001', 'legacy-position-001', 'legacy-level-001',
+      ],
+      attachments: [],
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(workforceRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const targetIds: Readonly<Record<string, string>> = {
+      'legacy-department-001': 'department-001',
+      'legacy-position-001': 'position-001',
+      'legacy-level-001': 'level-001',
+    };
+    const mappings = {
+      findOne: vi.fn((filter: { entityType: string; sourceRecordId: string }) => query(
+        filter.entityType === 'org.employee'
+          ? null
+          : { targetId: targetIds[filter.sourceRecordId], targetVersion: 1 },
+      )),
+      findOneAndUpdate: vi.fn().mockReturnValue(query({ targetId: 'employee-001' })),
+    };
+    const associations = { findOneAndUpdate: vi.fn().mockReturnValue(query({})) };
+    const attachments = {};
+    const organization = {
+      createEmployee: vi.fn().mockResolvedValue({ employee: {
+        id: 'employee-001', tenantId: 'tenant-001', employeeNo: 'E1001',
+        displayName: '迁移员工', status: 'active', departmentIds: ['department-001'],
+        primaryDepartmentId: 'department-001', positionIds: ['position-001'],
+        jobLevelId: 'level-001', version: 1,
+        createdAt: '2026-07-22T00:00:00.000Z', updatedAt: '2026-07-22T00:00:00.000Z',
+      } }),
+    };
+    const service = new DataMigrationService(
+      context, organization as unknown as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      mappings as unknown as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+    );
+
+    const result = await trusted(context, () => service.apply(RUN_ID, input));
+
+    expect(result).toMatchObject({ status: 'applied', targetId: 'employee-001' });
+    expect(organization.createEmployee).toHaveBeenCalledWith(
+      expect.stringMatching(/^migration:/u),
+      {
+        employeeNo: 'E1001', displayName: '迁移员工', status: 'active',
+        departmentIds: ['department-001'], primaryDepartmentId: 'department-001',
+        positionIds: ['position-001'], jobLevelId: 'level-001',
+      },
+    );
+    expect(associations.findOneAndUpdate).toHaveBeenCalledTimes(4);
+  });
+
   it('规范 JSON 与滚动校验和不受对象字段顺序影响', () => {
     const left = dataMigrationChecksum.canonicalJson({ b: 2, a: { y: 2, x: 1 } });
     const right = dataMigrationChecksum.canonicalJson({ a: { x: 1, y: 2 }, b: 2 });
@@ -241,5 +325,40 @@ describe('DataMigrationService', () => {
     const changed = { ...base, sourceVersion: '2' };
     expect(dataMigrationChecksum.sourceFactHash(base))
       .not.toBe(dataMigrationChecksum.sourceFactHash(changed));
+  });
+
+  it('未解析关联和未决附件进入 Phase 6 硬门禁', async () => {
+    const context = new TenantContextService();
+    const completedRun = {
+      ...run(), checkpoint: 1, sourceChecksum: 'e'.repeat(43), targetChecksum: 't'.repeat(43),
+    };
+    const runs = { findOne: vi.fn().mockReturnValue(query(completedRun)) };
+    const items = { aggregate: vi.fn().mockReturnValue({
+      exec: () => Promise.resolve([{ _id: 'applied', count: 1 }]),
+    }) };
+    const associations = { aggregate: vi.fn().mockReturnValue({
+      exec: () => Promise.resolve([{ _id: 'missing', count: 1 }]),
+    }) };
+    const attachments = { aggregate: vi.fn().mockReturnValue({
+      exec: () => Promise.resolve([{ _id: 'pending', count: 2 }]),
+    }) };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      {} as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+    );
+
+    const report = await reader(context, () => service.report(RUN_ID));
+
+    expect(report).toMatchObject({
+      associationCount: 1, unresolvedAssociationCount: 1,
+      attachmentCount: 2, pendingAttachmentCount: 2, phaseSixEligible: false,
+    });
+    expect(report.differences.map((item) => item.code)).toEqual([
+      'ASSOCIATION_UNRESOLVED', 'ATTACHMENT_MIGRATION_NOT_CONFIGURED',
+    ]);
   });
 });
