@@ -369,6 +369,38 @@ export function snapshotApprovalTemplate(template: ApprovalTemplate): ApprovalTe
   }));
 }
 
+/**
+ * 数据迁移专用：按实例创建时点截取曾发布的模板版本。
+ * 允许当前已退役模板，但实例创建时间必须落在其发布生命周期内。
+ */
+export function snapshotApprovalTemplateForMigration(
+  template: ApprovalTemplate,
+  instanceCreatedAt: string,
+): ApprovalTemplateSnapshot {
+  const createdAt = migrationIso(instanceCreatedAt, 'instanceCreatedAt');
+  if (
+    !['published', 'retired'].includes(template.status) ||
+    template.approvedBy === null || template.publishedAt === null ||
+    createdAt < template.publishedAt ||
+    (template.retiredAt !== null && createdAt > template.retiredAt)
+  ) throw new ApprovalDomainError(
+    'APPROVAL_MIGRATION_INSTANCE_TEMPLATE_LIFECYCLE_INVALID',
+    '迁移审批实例的创建时间不在模板发布生命周期内',
+  );
+  assertTemplateDefinitionIntegrity(template);
+  return deepFreeze(structuredClone({
+    templateId: template.id,
+    templateCode: template.code,
+    templateName: template.name,
+    riskLevel: template.riskLevel,
+    revision: template.revision,
+    definition: template.definition,
+    definitionHash: template.definitionHash,
+    approvedBy: template.approvedBy,
+    publishedAt: template.publishedAt,
+  }));
+}
+
 /** 按模板字段白名单校验并冻结表单数据，拒绝未知字段和类型漂移。 */
 export function validateAndFreezeApprovalFormData(
   definition: ApprovalTemplateDefinition,

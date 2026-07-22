@@ -36,6 +36,12 @@ export type ApprovalDomainEvent =
       readonly initiatorId: string; readonly templateCode: string; readonly templateRevision: number;
       readonly riskLevel: 'R1' | 'R2'; readonly formDataHash: string;
     }>
+  | ApprovalEvent<'approval_instance.migrated', {
+      readonly status: 'draft' | 'running'; readonly templateCode: string;
+      readonly templateRevision: number; readonly riskLevel: 'R1' | 'R2';
+      readonly formDataHash: string; readonly actionCount: number;
+      readonly evidenceChecksum: string;
+    }>
   | ApprovalEvent<'approval_instance.submitted', {
       readonly actorId: string;
     }>
@@ -188,6 +194,33 @@ export function buildApprovalInstanceCreatedEvent(instance: ApprovalInstance): A
       templateRevision: instance.templateSnapshot.revision,
       riskLevel: instance.templateSnapshot.riskLevel,
       formDataHash: instance.formDataHash,
+    },
+  };
+}
+
+/** 活动实例迁移事件只披露状态、模板和摘要，不伪装成提交/决策动作。 */
+export function buildApprovalInstanceMigratedEvent(
+  instance: ApprovalInstance,
+  actionCount: number,
+  evidenceChecksum: string,
+): ApprovalDomainEvent {
+  if (!['draft', 'running'].includes(instance.status)) {
+    throw new Error('活动审批迁移事件只允许草稿或运行中状态');
+  }
+  return {
+    type: 'approval_instance.migrated',
+    tenantId: instance.tenantId,
+    aggregateId: instance.id,
+    version: instance.version,
+    occurredAt: instance.updatedAt,
+    payload: {
+      status: instance.status as 'draft' | 'running',
+      templateCode: instance.templateSnapshot.templateCode,
+      templateRevision: instance.templateSnapshot.revision,
+      riskLevel: instance.templateSnapshot.riskLevel,
+      formDataHash: instance.formDataHash,
+      actionCount,
+      evidenceChecksum,
     },
   };
 }

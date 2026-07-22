@@ -3,6 +3,7 @@ import { ApprovalDomainError } from './approval.errors.js';
 import {
   hashApprovalJson,
   snapshotApprovalTemplate,
+  snapshotApprovalTemplateForMigration,
   type ApprovalProcessNode,
   type ApprovalTemplate,
   type ApprovalTemplateSnapshot,
@@ -127,6 +128,52 @@ export function createApprovalInstanceDraft(
   const snapshot = snapshotApprovalTemplate(input.template);
   const formData = validateAndFreezeApprovalFormData(snapshot.definition, input.formData);
   const occurredAt = toApprovalIso(now);
+  return deepFreeze({
+    id: input.id,
+    tenantId: input.tenantId,
+    title: input.title.trim(),
+    initiatorId: input.initiatorId,
+    status: 'draft',
+    templateSnapshot: snapshot,
+    formData,
+    formDataHash: hashApprovalJson(formData),
+    resolvedNodes: [],
+    currentNodeIndex: null,
+    version: 1,
+    submittedAt: null,
+    completedAt: null,
+    archivedAt: null,
+    createdAt: occurredAt,
+    updatedAt: occurredAt,
+  });
+}
+
+/** 数据迁移专用：按历史创建时点恢复无文件草稿，允许引用当时已发布且现已退役的模板。 */
+export function createApprovalInstanceDraftFromMigration(
+  input: {
+    readonly id: string;
+    readonly tenantId: string;
+    readonly title: string;
+    readonly initiatorId: string;
+    readonly template: ApprovalTemplate;
+    readonly formData: ApprovalFormData;
+    readonly createdAt: string;
+  },
+): ApprovalInstance {
+  assertApprovalId(input.id, 'id');
+  assertApprovalId(input.tenantId, 'tenantId');
+  assertApprovalId(input.initiatorId, 'initiatorId');
+  assertSameTenant(input.tenantId, input.template.tenantId);
+  if (input.title.trim().length < 1 || input.title.length > 256) {
+    throw new ApprovalDomainError('APPROVAL_INSTANCE_TITLE_INVALID', '审批标题长度必须为 1..256');
+  }
+  const snapshot = snapshotApprovalTemplateForMigration(input.template, input.createdAt);
+  const formData = validateAndFreezeApprovalFormData(snapshot.definition, input.formData);
+  const occurredAt = toApprovalIso(new Date(input.createdAt));
+  if (occurredAt !== input.createdAt) throw new ApprovalDomainError(
+    'APPROVAL_MIGRATION_INSTANCE_DATE_INVALID',
+    '迁移审批实例创建时间必须为规范 UTC ISO 时间',
+  );
   return deepFreeze({
     id: input.id,
     tenantId: input.tenantId,

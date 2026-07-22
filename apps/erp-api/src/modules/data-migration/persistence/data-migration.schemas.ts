@@ -111,6 +111,9 @@ export class DataMigrationAssociationRecord {
       'fixed_approver', 'condition_employee', 'condition_department',
       'initiator',
       'template',
+      'form_employee', 'form_department', 'resolved_approver',
+      'action_actor', 'principal_approver', 'transfer_from', 'transfer_to',
+      'added_approver', 'expected_pending_approver',
       'declared_reference',
     ],
   })
@@ -129,6 +132,15 @@ export class DataMigrationAssociationRecord {
     | 'condition_department'
     | 'initiator'
     | 'template'
+    | 'form_employee'
+    | 'form_department'
+    | 'resolved_approver'
+    | 'action_actor'
+    | 'principal_approver'
+    | 'transfer_from'
+    | 'transfer_to'
+    | 'added_approver'
+    | 'expected_pending_approver'
     | 'declared_reference';
   @Prop({ type: String, required: true, immutable: true, match: SOURCE_ID })
   sourceAssociationId!: string;

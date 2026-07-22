@@ -77,6 +77,10 @@ function approvalHistoryRun() {
   return { ...run(), scope: 'approval_history' as const };
 }
 
+function approvalActiveRun() {
+  return { ...run(), scope: 'approval_active_instances' as const };
+}
+
 function query<T>(value: T) { return { lean: () => ({ exec: () => Promise.resolve(value) }) }; }
 function listQuery<T>(value: readonly T[]) {
   return {
@@ -692,6 +696,113 @@ describe('DataMigrationService', () => {
       status: 'rejected', rejectionCode: 'DATA_MIGRATION_HISTORY_EVIDENCE_REQUIRED',
     });
     expect(approvals.importLegacyHistoryFromMigration).not.toHaveBeenCalled();
+  });
+
+  it('活动审批解析表单、节点与动作员工引用后调用审批状态机入口', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      templateSourceId: 'legacy-template-001', templateCode: 'LEGACY_EXPENSE',
+      templateRevision: 1, title: '迁移中的费用审批',
+      initiatorEmployeeSourceId: 'legacy-initiator',
+      formData: { amount: 12_345, employee_ref: 'legacy-form-employee' },
+      formReferenceFields: [{ fieldKey: 'employee_ref', entityType: 'org.employee' }],
+      resolvedNodes: [{
+        nodeId: 'manager',
+        actorEmployeeSourceIds: ['legacy-manager-1', 'legacy-manager-2'],
+      }],
+      actions: [{
+        type: 'submitted', actorEmployeeSourceId: 'legacy-initiator',
+        occurredAt: '2026-07-21T00:10:00.000Z',
+      }, {
+        type: 'decided', actorEmployeeSourceId: 'legacy-manager-1',
+        principalApproverEmployeeSourceId: 'legacy-manager-1', outcome: 'approved',
+        occurredAt: '2026-07-21T00:20:00.000Z',
+      }],
+      expectedStatus: 'running', expectedVersion: 3, expectedCurrentNodeId: 'manager',
+      expectedPendingApproverEmployeeSourceIds: ['legacy-manager-2'],
+      createdAt: '2026-07-21T00:05:00.000Z',
+      submittedAt: '2026-07-21T00:10:00.000Z',
+      updatedAt: '2026-07-21T00:20:00.000Z',
+      activityEvidenceSourceAttachmentId: 'legacy-active-evidence-001',
+      activityEvidenceChecksum: 'c'.repeat(43),
+    };
+    const input = {
+      sequence: 1, sourceRecordId: 'legacy-active-001', sourceVersion: '1',
+      entityType: 'approval.instance' as const, payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: [
+        'legacy-template-001', 'legacy-initiator', 'legacy-form-employee',
+        'legacy-manager-1', 'legacy-manager-2',
+      ],
+      attachments: [{
+        sourceAttachmentId: 'legacy-active-evidence-001', checksum: 'c'.repeat(43),
+      }],
+    };
+    const targets: Readonly<Record<string, string>> = {
+      'legacy-template-001': 'template-001',
+      'legacy-initiator': 'employee-initiator',
+      'legacy-form-employee': 'employee-form',
+      'legacy-manager-1': 'employee-manager-1',
+      'legacy-manager-2': 'employee-manager-2',
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(approvalActiveRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const mappings = {
+      findOne: vi.fn((filter: { entityType: string; sourceRecordId: string }) => query(
+        filter.entityType === 'approval.instance'
+          ? null
+          : { targetId: targets[filter.sourceRecordId], targetVersion: 1 },
+      )),
+      findOneAndUpdate: vi.fn().mockReturnValue(query({ targetId: 'instance-001' })),
+    };
+    const associations = { findOneAndUpdate: vi.fn().mockReturnValue(query({})) };
+    const attachments = {
+      findOne: vi.fn().mockReturnValue(query(null)),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 0 }) }),
+    };
+    const approvals = {
+      importActiveInstanceFromMigration: vi.fn().mockResolvedValue({ instance: {
+        id: 'instance-001', tenantId: 'tenant-001', version: 3,
+        createdAt: payload.createdAt, updatedAt: payload.updatedAt,
+      } }),
+    };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      mappings as unknown as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+      approvals as unknown as ApprovalApplicationService,
+    );
+
+    const result = await trusted(context, () => service.apply(RUN_ID, input));
+
+    expect(result).toMatchObject({ status: 'applied', targetId: 'instance-001', targetVersion: 3 });
+    expect(approvals.importActiveInstanceFromMigration).toHaveBeenCalledWith(
+      expect.stringMatching(/^migration:/u),
+      expect.objectContaining({
+        templateId: 'template-001', initiatorEmployeeId: 'employee-initiator',
+        formData: { amount: 12_345, employee_ref: 'employee-form' },
+        resolvedNodes: [{
+          nodeId: 'manager', actorEmployeeIds: ['employee-manager-1', 'employee-manager-2'],
+        }],
+        actions: [
+          expect.objectContaining({ actorEmployeeId: 'employee-initiator' }),
+          expect.objectContaining({ principalApproverEmployeeId: 'employee-manager-1' }),
+        ],
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${RUN_ID}/attachments/legacy-active-evidence-001`,
+      }),
+    );
+    expect(associations.findOneAndUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ relationship: 'form_employee' }),
+      expect.objectContaining({ $set: { targetId: 'employee-form', status: 'resolved' } }),
+      expect.objectContaining({ upsert: true }),
+    );
   });
 
   it('规范 JSON 与滚动校验和不受对象字段顺序影响', () => {

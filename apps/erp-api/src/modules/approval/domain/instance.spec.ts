@@ -4,6 +4,7 @@ import {
   addApprovalSigner,
   archiveApprovalInstance,
   createApprovalInstanceDraft,
+  createApprovalInstanceDraftFromMigration,
   currentApprovalNode,
   decideApprovalInstance,
   submitApprovalInstance,
@@ -15,6 +16,7 @@ import {
 import {
   createApprovalTemplateDraft,
   publishApprovalTemplate,
+  retireApprovalTemplate,
   type ApprovalTemplate,
   type ApprovalTemplateDefinition,
 } from './template.js';
@@ -87,6 +89,28 @@ function decide(
 }
 
 describe('审批实例提交与快照', () => {
+  it('迁移可按历史时点引用现已退役模板，但拒绝生命周期之外的实例', () => {
+    const published = publishedTemplate();
+    const retired = retireApprovalTemplate(published, {
+      tenantId: 'tenant-001', expectedVersion: published.version, actorId: 'publisher-001',
+    }, LATER);
+    const migrated = createApprovalInstanceDraftFromMigration({
+      id: 'instance-migrated-001', tenantId: 'tenant-001', title: '历史活动审批',
+      initiatorId: 'employee-001', template: retired, formData: { amount: 200_00 },
+      createdAt: '2026-07-21T00:30:00.000Z',
+    });
+    expect(migrated).toMatchObject({
+      status: 'draft', createdAt: '2026-07-21T00:30:00.000Z', version: 1,
+    });
+    expect(() => createApprovalInstanceDraftFromMigration({
+      id: 'instance-migrated-002', tenantId: 'tenant-001', title: '越界历史审批',
+      initiatorId: 'employee-001', template: retired, formData: { amount: 200_00 },
+      createdAt: '2026-07-21T02:00:00.000Z',
+    })).toThrowError(expect.objectContaining({
+      code: 'APPROVAL_MIGRATION_INSTANCE_TEMPLATE_LIFECYCLE_INVALID',
+    }));
+  });
+
   it('创建草稿即固定模板和表单快照，提交后固定条件命中节点及审批人', () => {
     const draft = instance();
     const running = submit(draft);

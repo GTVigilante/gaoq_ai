@@ -18,7 +18,7 @@
 
 `records.ndjson` 每行是一条完整 JSON 记录，字段与迁移记录 REST 契约一致。禁止空行、额外字段和超过 10 MiB 的单行；序号必须从 1 连续递增。来源生成器必须先计算 payload 摘要，再按控制面契约计算 `sourceFactHash` 与滚动校验和。来源包不得纳入 Git，必须位于受控迁移工作区并执行保留期与销毁策略。
 
-当前 Scope 的执行顺序固定为 `org_reference` → `org_workforce` → 身份开户核对 → `org_employment` → `approval_templates` → `approval_history`。每个 Scope 使用独立来源包、`sourceRunId`、控制总数和签署证据；劳动关系、审批模板与审批历史包内的员工来源引用必须能在同一 `sourceSystem` 的员工映射中解析，审批责任员工和历史发起员工还必须已绑定 ERP 身份。审批历史必须同时引用已经迁移的来源模板记录，并为每条历史提供一份 checksum 精确一致的 WORM 证据附件。禁止把多个 Scope 混入同一包。
+当前 Scope 的执行顺序固定为 `org_reference` → `org_workforce` → 身份开户核对 → `org_employment` → `approval_templates` → `approval_history` → `approval_active_instances`。每个 Scope 使用独立来源包、`sourceRunId`、控制总数和签署证据；劳动关系、审批模板与两类审批实例包内的员工来源引用必须能在同一 `sourceSystem` 的员工映射中解析，审批责任员工、历史发起员工、草稿所有者和运行态当前待办人还必须已绑定 ERP 身份，后两者必须为 active。审批实例必须同时引用已经迁移的来源模板记录，并为每条记录提供一份 checksum 精确一致的 WORM 证据附件。禁止把多个 Scope 混入同一包。
 
 ## 离线预检
 
@@ -38,7 +38,7 @@ pnpm --filter @gaoq/erp-api migration:package -- apply /secure/path/to/package
 unset ERP_MIGRATION_TOKEN
 ```
 
-令牌必须绑定可信租户、`service|system_job` 身份以及 `erp:migration:execute`、当前目标域写权限（组织三个 Scope 为 `erp:org:master:write`，审批模板和审批历史为 `erp:approval:migration:write`）、`erp:migration:attachment:execute` Scope。工具不接受命令行 Token，避免进入 shell history；除 `localhost`/`127.0.0.1` 外只允许 HTTPS。每次 apply 都先完整预检，然后幂等创建来源运行；服务端返回的 checkpoint 决定续传起点，已确认序号不会再次发送。全部记录处理后请求附件搬运并轮询聚合报告，未决附件归零后才调用 complete；默认等待 1800 秒，可通过 `ERP_MIGRATION_ATTACHMENT_WAIT_SECONDS` 设置 10–86400 秒。
+令牌必须绑定可信租户、`service|system_job` 身份以及 `erp:migration:execute`、当前目标域写权限（组织三个 Scope 为 `erp:org:master:write`，审批模板及两类审批实例为 `erp:approval:migration:write`）、`erp:migration:attachment:execute` Scope。工具不接受命令行 Token，避免进入 shell history；除 `localhost`/`127.0.0.1` 外只允许 HTTPS。每次 apply 都先完整预检，然后幂等创建来源运行；服务端返回的 checkpoint 决定续传起点，已确认序号不会再次发送。全部记录处理后请求附件搬运并轮询聚合报告，未决附件归零后才调用 complete；默认等待 1800 秒，可通过 `ERP_MIGRATION_ATTACHMENT_WAIT_SECONDS` 设置 10–86400 秒。
 
 ## 操作门禁
 

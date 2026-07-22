@@ -18,9 +18,11 @@ import {
   buildApprovalDelegationEvent,
   buildApprovalLegacyHistoryMigratedEvent,
   buildApprovalInstanceCreatedEvent,
+  buildApprovalInstanceMigratedEvent,
   buildApprovalTemplateEvent,
   buildApprovalTemplateMigratedEvent,
   createApprovalInstanceDraft,
+  createApprovalInstanceDraftFromMigration,
   createApprovalLegacyHistory,
   createApprovalDelegation,
   createApprovalTemplateDraft,
@@ -33,6 +35,7 @@ import {
   submitApprovalInstance,
   transferApprovalTask,
   withdrawApprovalInstance,
+  currentApprovalNode,
   ApprovalDomainError,
   type ApprovalFormData,
   type ApprovalFormValue,
@@ -58,6 +61,8 @@ import { ApprovalNotificationWriter } from '../notification/approval-notificatio
 
 const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 const HASH_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const MIGRATION_EVIDENCE_REF_PATTERN =
+  /^erp:\/\/data-migrations\/runs\/[0-7][0-9A-HJKMNP-TV-Z]{25}\/attachments\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 export interface ApprovalTemplateSummary extends Record<string, unknown> {
   readonly id: string;
@@ -195,6 +200,50 @@ export interface ImportApprovalLegacyHistoryFromMigrationInput {
   readonly evidenceChecksum: string;
 }
 
+export type ImportApprovalActiveActionFromMigration =
+  | {
+      readonly type: 'submitted'; readonly actorEmployeeId: string; readonly occurredAt: string;
+    }
+  | {
+      readonly type: 'decided'; readonly actorEmployeeId: string;
+      readonly principalApproverEmployeeId: string; readonly outcome: 'approved' | 'rejected';
+      readonly occurredAt: string;
+    }
+  | {
+      readonly type: 'approver_transferred'; readonly actorEmployeeId: string;
+      readonly fromApproverEmployeeId: string; readonly toApproverEmployeeId: string;
+      readonly occurredAt: string;
+    }
+  | {
+      readonly type: 'approver_added'; readonly actorEmployeeId: string;
+      readonly approverEmployeeId: string; readonly occurredAt: string;
+    };
+
+export interface ImportApprovalActiveInstanceFromMigrationInput {
+  readonly templateId: string;
+  readonly templateCode: string;
+  readonly templateRevision: number;
+  readonly title: string;
+  readonly initiatorEmployeeId: string;
+  readonly formData: ApprovalFormData;
+  readonly mappedFormReferenceFields: readonly {
+    readonly fieldKey: string; readonly entityType: 'org.employee' | 'org.department';
+  }[];
+  readonly resolvedNodes: readonly {
+    readonly nodeId: string; readonly actorEmployeeIds: readonly string[];
+  }[];
+  readonly actions: readonly ImportApprovalActiveActionFromMigration[];
+  readonly expectedStatus: 'draft' | 'running';
+  readonly expectedVersion: number;
+  readonly expectedCurrentNodeId: string | null;
+  readonly expectedPendingApproverEmployeeIds: readonly string[];
+  readonly createdAt: string;
+  readonly submittedAt: string | null;
+  readonly updatedAt: string;
+  readonly migrationEvidenceRef: string;
+  readonly evidenceChecksum: string;
+}
+
 /** 审批应用服务：唯一事务编排入口，REST、Worker 与 MCP 必须复用本服务。 */
 @Injectable()
 export class ApprovalApplicationService {
@@ -284,6 +333,87 @@ export class ApprovalApplicationService {
         await this.legacyHistories.insert(candidate, session);
         await this.outbox.append(buildApprovalLegacyHistoryMigratedEvent(candidate), session);
         return { history: candidate };
+      },
+    ));
+  }
+
+  /** 数据迁移专用：通过现有状态机重放无文件草稿或运行中审批，不产生正常通知。 */
+  async importActiveInstanceFromMigration(
+    key: string,
+    input: ImportApprovalActiveInstanceFromMigrationInput,
+  ): Promise<{ readonly instance: ApprovalInstanceSummary }> {
+    this.assertMigrationWriter();
+    return this.run(async () => this.idempotency.execute(
+      'approval.instance.import_active_from_migration', key, input, async (session) => {
+        const tenantId = this.context.getTenantRequired().tenantId;
+        const template = await this.templates.findById(input.templateId, session);
+        if (template === null || template.code !== input.templateCode ||
+          template.revision !== input.templateRevision || template.status === 'draft') {
+          throw new BadRequestException({
+            code: 'APPROVAL_MIGRATION_ACTIVE_TEMPLATE_MISSING',
+            message: '活动审批必须精确引用已迁移的发布或退役模板版本',
+          });
+        }
+        assertActiveMigrationEvidence(input.migrationEvidenceRef, input.evidenceChecksum);
+        assertActiveMigrationFormBoundary(
+          template.definition,
+          input.formData,
+          input.mappedFormReferenceFields,
+        );
+        validateActiveMigrationTimeline(input, new Date());
+        const employeeIds = activeMigrationEmployeeIds(input);
+        if (employeeIds.length > 100) throw new ApprovalDomainError(
+          'APPROVAL_MIGRATION_ACTIVE_ACTOR_LIMIT',
+          '活动审批关联员工不能超过 100 人',
+        );
+        const actors = new Map<string, string>();
+        await Promise.all(employeeIds.map(async (employeeId) => {
+          actors.set(employeeId, await this.requireMigrationActor(employeeId, session));
+        }));
+        const actor = (employeeId: string): string => {
+          const actorId = actors.get(employeeId);
+          if (actorId === undefined) throw new Error('活动审批迁移身份映射丢失');
+          return actorId;
+        };
+        const requiredActiveEmployeeIds = input.expectedStatus === 'draft'
+          ? [input.initiatorEmployeeId]
+          : input.expectedPendingApproverEmployeeIds;
+        await Promise.all(requiredActiveEmployeeIds.map(async (employeeId) =>
+          this.requireActiveMigrationEmployee(employeeId, actor(employeeId), session)));
+        let instance = createApprovalInstanceDraftFromMigration({
+          id: createEventId(),
+          tenantId,
+          title: input.title,
+          initiatorId: actor(input.initiatorEmployeeId),
+          template,
+          formData: input.formData,
+          createdAt: input.createdAt,
+        });
+        const transitions: Array<{
+          readonly instance: ApprovalInstance;
+          readonly action: Parameters<ApprovalActionRepository['append']>[1];
+        }> = [];
+        for (const migrationAction of input.actions) {
+          const transition = replayActiveMigrationAction(
+            instance,
+            migrationAction,
+            input.resolvedNodes,
+            actor,
+          );
+          transitions.push(transition);
+          instance = transition.instance;
+        }
+        assertActiveMigrationResult(instance, input, actor);
+        await this.instances.insert(instance, session);
+        for (const transition of transitions) {
+          await this.actions.append(transition.instance, transition.action, session);
+        }
+        await this.outbox.append(buildApprovalInstanceMigratedEvent(
+          instance,
+          transitions.length,
+          input.evidenceChecksum,
+        ), session);
+        return { instance: instanceSummary(instance) };
       },
     ));
   }
@@ -977,9 +1107,25 @@ export class ApprovalApplicationService {
     );
     if (actorId === null) throw new BadRequestException({
       code: 'APPROVAL_MIGRATION_IDENTITY_MISSING',
-      message: '审批模板责任员工未映射 ERP 身份',
+      message: '审批迁移员工未映射 ERP 身份',
     });
     return actorId;
+  }
+
+  private async requireActiveMigrationEmployee(
+    employeeId: string,
+    actorId: string,
+    session: ClientSession,
+  ): Promise<void> {
+    const profile = await this.profiles.resolveActive(
+      this.context.getTenantRequired().tenantId,
+      actorId,
+      session,
+    );
+    if (profile === null || profile.employeeId !== employeeId) throw new BadRequestException({
+      code: 'APPROVAL_MIGRATION_ACTIVE_ACTOR_INACTIVE',
+      message: '活动审批草稿所有者或当前待办员工身份不可用',
+    });
   }
 
   private assertMigrationWriter(): void {
@@ -1140,6 +1286,183 @@ function sameMigratedLegacyHistory(
     left.archivedAt === right.archivedAt &&
     left.migrationEvidenceRef === right.migrationEvidenceRef &&
     left.evidenceChecksum === right.evidenceChecksum;
+}
+
+function assertActiveMigrationEvidence(reference: string, checksum: string): void {
+  if (!MIGRATION_EVIDENCE_REF_PATTERN.test(reference) || !HASH_PATTERN.test(checksum)) {
+    throw new ApprovalDomainError(
+      'APPROVAL_MIGRATION_ACTIVE_EVIDENCE_INVALID',
+      '活动审批必须绑定当前迁移运行的有效证据附件',
+    );
+  }
+}
+
+function assertActiveMigrationFormBoundary(
+  definition: ApprovalTemplateDefinition,
+  formData: ApprovalFormData,
+  mappedFields: ImportApprovalActiveInstanceFromMigrationInput['mappedFormReferenceFields'],
+): void {
+  if (typeof formData !== 'object' || formData === null || Array.isArray(formData)) {
+    throw new ApprovalDomainError('APPROVAL_MIGRATION_ACTIVE_FORM_INVALID', '活动审批表单无效');
+  }
+  const expected: string[] = [];
+  for (const field of definition.fields) {
+    const value = Object.hasOwn(formData, field.key) ? formData[field.key] : undefined;
+    if (!hasMigrationFormValue(value)) continue;
+    if (field.type === 'file_reference') throw new ApprovalDomainError(
+      'APPROVAL_MIGRATION_ACTIVE_FILE_UNSUPPORTED',
+      '带文件引用的活动审批必须在切换前排空或经批准重建',
+    );
+    if (field.type === 'employee' || field.type === 'department') {
+      expected.push(`${field.key}:${field.type === 'employee' ? 'org.employee' : 'org.department'}`);
+    }
+  }
+  const actual = mappedFields.map((field) => `${field.fieldKey}:${field.entityType}`);
+  if (new Set(actual).size !== actual.length ||
+    [...actual].sort().join('|') !== [...expected].sort().join('|')) {
+    throw new ApprovalDomainError(
+      'APPROVAL_MIGRATION_ACTIVE_FORM_MAPPING_INVALID',
+      '活动审批表单主数据引用声明与模板不一致',
+    );
+  }
+}
+
+function validateActiveMigrationTimeline(
+  input: ImportApprovalActiveInstanceFromMigrationInput,
+  now: Date,
+): void {
+  const createdAt = strictMigrationIso(input.createdAt);
+  const updatedAt = strictMigrationIso(input.updatedAt);
+  const submittedAt = input.submittedAt === null ? null : strictMigrationIso(input.submittedAt);
+  if (Date.parse(createdAt) > now.getTime() + 5 * 60 * 1_000 ||
+    Date.parse(updatedAt) < Date.parse(createdAt) || input.actions.length > 500 ||
+    !Number.isSafeInteger(input.expectedVersion) || input.expectedVersion !== input.actions.length + 1) {
+    throw new ApprovalDomainError(
+      'APPROVAL_MIGRATION_ACTIVE_TIMELINE_INVALID',
+      '活动审批时间线、版本或动作数量无效',
+    );
+  }
+  let previous = createdAt;
+  for (const action of input.actions) {
+    const occurredAt = strictMigrationIso(action.occurredAt);
+    if (occurredAt < previous || Date.parse(occurredAt) > now.getTime() + 5 * 60 * 1_000) {
+      throw new ApprovalDomainError(
+        'APPROVAL_MIGRATION_ACTIVE_TIMELINE_INVALID',
+        '活动审批动作时间必须按顺序且不能位于未来',
+      );
+    }
+    previous = occurredAt;
+  }
+  const first = input.actions[0];
+  if (
+    (input.expectedStatus === 'draft' &&
+      (input.actions.length !== 0 || input.resolvedNodes.length !== 0 || submittedAt !== null)) ||
+    (input.expectedStatus === 'running' &&
+      (first?.type !== 'submitted' || submittedAt !== first.occurredAt)) ||
+    updatedAt !== previous
+  ) throw new ApprovalDomainError(
+    'APPROVAL_MIGRATION_ACTIVE_TIMELINE_INVALID',
+    '活动审批声明状态与动作时间线不一致',
+  );
+}
+
+function activeMigrationEmployeeIds(
+  input: ImportApprovalActiveInstanceFromMigrationInput,
+): readonly string[] {
+  const values = [
+    input.initiatorEmployeeId,
+    ...input.expectedPendingApproverEmployeeIds,
+    ...input.resolvedNodes.flatMap((node) => node.actorEmployeeIds),
+  ];
+  for (const action of input.actions) {
+    values.push(action.actorEmployeeId);
+    if (action.type === 'decided') values.push(action.principalApproverEmployeeId);
+    else if (action.type === 'approver_transferred') {
+      values.push(action.fromApproverEmployeeId, action.toApproverEmployeeId);
+    } else if (action.type === 'approver_added') values.push(action.approverEmployeeId);
+  }
+  return [...new Set(values)];
+}
+
+function replayActiveMigrationAction(
+  instance: ApprovalInstance,
+  action: ImportApprovalActiveActionFromMigration,
+  resolvedNodes: ImportApprovalActiveInstanceFromMigrationInput['resolvedNodes'],
+  actor: (employeeId: string) => string,
+): { readonly instance: ApprovalInstance; readonly action: Parameters<ApprovalActionRepository['append']>[1] } {
+  const common = { tenantId: instance.tenantId, expectedVersion: instance.version };
+  const occurredAt = new Date(action.occurredAt);
+  switch (action.type) {
+    case 'submitted':
+      return submitApprovalInstance(instance, {
+        ...common,
+        actorId: actor(action.actorEmployeeId),
+        resolvedNodes: resolvedNodes.map((node) => ({
+          nodeId: node.nodeId,
+          actorIds: node.actorEmployeeIds.map(actor),
+        })),
+      }, occurredAt);
+    case 'decided':
+      return decideApprovalInstance(instance, {
+        ...common,
+        actorId: actor(action.actorEmployeeId),
+        principalApproverId: actor(action.principalApproverEmployeeId),
+        delegationVerified: true,
+        outcome: action.outcome,
+      }, occurredAt);
+    case 'approver_transferred':
+      return transferApprovalTask(instance, {
+        ...common,
+        actorId: actor(action.actorEmployeeId),
+        fromApproverId: actor(action.fromApproverEmployeeId),
+        toApproverId: actor(action.toApproverEmployeeId),
+        delegationVerified: true,
+      }, occurredAt);
+    case 'approver_added':
+      return addApprovalSigner(instance, {
+        ...common,
+        actorId: actor(action.actorEmployeeId),
+        approverId: actor(action.approverEmployeeId),
+        authorizationVerified: true,
+      }, occurredAt);
+  }
+}
+
+function assertActiveMigrationResult(
+  instance: ApprovalInstance,
+  input: ImportApprovalActiveInstanceFromMigrationInput,
+  actor: (employeeId: string) => string,
+): void {
+  const node = currentApprovalNode(instance);
+  const decided = new Set(node?.decisions.map((decision) => decision.principalApproverId) ?? []);
+  const pending = node?.actorIds.filter((actorId) => !decided.has(actorId)) ?? [];
+  const expectedPending = input.expectedPendingApproverEmployeeIds.map(actor);
+  if (
+    instance.status !== input.expectedStatus || instance.version !== input.expectedVersion ||
+    instance.submittedAt !== input.submittedAt || instance.updatedAt !== input.updatedAt ||
+    (node?.id ?? null) !== input.expectedCurrentNodeId ||
+    new Set(expectedPending).size !== expectedPending.length ||
+    [...pending].sort().join('|') !== [...expectedPending].sort().join('|')
+  ) throw new ApprovalDomainError(
+    'APPROVAL_MIGRATION_ACTIVE_RESULT_MISMATCH',
+    '活动审批状态机重放结果与来源控制事实不一致',
+  );
+}
+
+function strictMigrationIso(value: string): string {
+  const parsed = new Date(value);
+  if (typeof value !== 'string' || Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value) {
+    throw new ApprovalDomainError(
+      'APPROVAL_MIGRATION_ACTIVE_TIMELINE_INVALID',
+      '活动审批时间必须为规范 UTC ISO 时间',
+    );
+  }
+  return value;
+}
+
+function hasMigrationFormValue(value: ApprovalFormValue | undefined): boolean {
+  return value !== undefined && value !== null && value !== '' &&
+    (!Array.isArray(value) || value.length > 0);
 }
 
 function cloneReadableValue(value: ApprovalFormValue): ApprovalFormValue {

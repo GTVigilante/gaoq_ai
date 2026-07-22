@@ -14,11 +14,14 @@ import { TenantContextService } from '../../../core/tenant/tenant-context.servic
 import { ApprovalApplicationService } from '../../approval/application/approval-application.service.js';
 import type {
   ImportApprovalLegacyHistoryFromMigrationInput,
+  ImportApprovalActiveActionFromMigration,
   ImportApprovalTemplateFromMigrationInput,
 } from '../../approval/application/approval-application.service.js';
 import {
   validateAndFreezeApprovalTemplateDefinition,
   type ApprovalCondition,
+  type ApprovalFormData,
+  type ApprovalFormValue,
   type ApprovalScalar,
   type ApprovalTemplateDefinition,
 } from '../../approval/domain/index.js';
@@ -426,7 +429,22 @@ export class DataMigrationService {
       if (input.attachments.length !== 1 || evidence?.checksum !== payload.historyEvidenceChecksum) {
         throw new Error('DATA_MIGRATION_HISTORY_EVIDENCE_REQUIRED');
       }
-      await Promise.all(specs.map(async (spec) =>
+      await Promise.all(uniqueAssociationTargets(specs).map(async (spec) =>
+        this.requireMapping(run, spec.entityType, spec.sourceAssociationId)));
+      return;
+    } else if (input.entityType === 'approval.instance') {
+      const payload = approvalActiveInstancePayload(input.payload);
+      const specs = approvalActiveInstanceAssociationSpecs(payload);
+      assertAssociations(
+        input.associationSourceIds,
+        [...new Set(specs.map((spec) => spec.sourceAssociationId))],
+      );
+      const evidence = input.attachments.find((attachment) =>
+        attachment.sourceAttachmentId === payload.activityEvidenceSourceAttachmentId);
+      if (input.attachments.length !== 1 || evidence?.checksum !== payload.activityEvidenceChecksum) {
+        throw new Error('DATA_MIGRATION_ACTIVE_APPROVAL_EVIDENCE_REQUIRED');
+      }
+      await Promise.all(uniqueAssociationTargets(specs).map(async (spec) =>
         this.requireMapping(run, spec.entityType, spec.sourceAssociationId)));
       return;
     } else {
@@ -540,6 +558,60 @@ export class DataMigrationService {
         evidenceChecksum: payload.historyEvidenceChecksum,
       });
       return target(result.history);
+    }
+    if (input.entityType === 'approval.instance') {
+      const payload = approvalActiveInstancePayload(input.payload);
+      if (this.approvals === undefined) throw new Error('迁移审批适配器未装配');
+      const mappingCache = new Map<string, Promise<string>>();
+      const targetId = (
+        entityType: 'org.employee' | 'org.department',
+        sourceId: string,
+      ): Promise<string> => cachedTargetId(mappingCache, entityType, sourceId, async () =>
+        (await this.requireMapping(run, entityType, sourceId)).targetId);
+      const templateId = await cachedTargetId(
+        mappingCache,
+        'approval.template',
+        payload.templateSourceId,
+        async () => (await this.requireMapping(
+          run,
+          'approval.template',
+          payload.templateSourceId,
+        )).targetId,
+      );
+      const employeeId = (sourceId: string): Promise<string> =>
+        targetId('org.employee', sourceId);
+      const formData = await mapActiveApprovalFormData(payload, targetId);
+      const result = await this.approvals.importActiveInstanceFromMigration(key, {
+        templateId,
+        templateCode: payload.templateCode,
+        templateRevision: payload.templateRevision,
+        title: payload.title,
+        initiatorEmployeeId: await employeeId(payload.initiatorEmployeeSourceId),
+        formData,
+        mappedFormReferenceFields: payload.formReferenceFields.map((field) => ({
+          fieldKey: field.fieldKey,
+          entityType: field.entityType,
+        })),
+        resolvedNodes: await Promise.all(payload.resolvedNodes.map(async (node) => ({
+          nodeId: node.nodeId,
+          actorEmployeeIds: await Promise.all(node.actorEmployeeSourceIds.map(employeeId)),
+        }))),
+        actions: await Promise.all(payload.actions.map(async (action) =>
+          mapActiveApprovalAction(action, employeeId))),
+        expectedStatus: payload.expectedStatus,
+        expectedVersion: payload.expectedVersion,
+        expectedCurrentNodeId: payload.expectedCurrentNodeId,
+        expectedPendingApproverEmployeeIds: await Promise.all(
+          payload.expectedPendingApproverEmployeeSourceIds.map(employeeId),
+        ),
+        createdAt: payload.createdAt,
+        submittedAt: payload.submittedAt,
+        updatedAt: payload.updatedAt,
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${run.id}/attachments/${payload.activityEvidenceSourceAttachmentId}`,
+        evidenceChecksum: payload.activityEvidenceChecksum,
+      });
+      return target(result.instance);
     }
     const payload = approvalTemplatePayload(input.payload);
     if (this.approvals === undefined) throw new Error('迁移审批适配器未装配');
@@ -988,6 +1060,33 @@ interface AssociationEvidence {
   readonly entityType: AssociationTargetType | null;
 }
 
+function uniqueAssociationTargets(
+  specs: readonly (AssociationEvidence & { readonly entityType: AssociationTargetType })[],
+): readonly { readonly entityType: AssociationTargetType; readonly sourceAssociationId: string }[] {
+  const unique = new Map<string, {
+    readonly entityType: AssociationTargetType; readonly sourceAssociationId: string;
+  }>();
+  for (const spec of specs) unique.set(
+    `${spec.entityType}:${spec.sourceAssociationId}`,
+    { entityType: spec.entityType, sourceAssociationId: spec.sourceAssociationId },
+  );
+  return [...unique.values()];
+}
+
+function cachedTargetId(
+  cache: Map<string, Promise<string>>,
+  entityType: AssociationTargetType,
+  sourceId: string,
+  load: () => Promise<string>,
+): Promise<string> {
+  const key = `${entityType}:${sourceId}`;
+  const existing = cache.get(key);
+  if (existing !== undefined) return existing;
+  const pending = load();
+  cache.set(key, pending);
+  return pending;
+}
+
 function employeePayload(value: Readonly<Record<string, unknown>>): EmployeeMigrationPayload {
   exactKeys(value, [
     'departmentSourceIds', 'displayName', 'employeeNo', 'jobLevelSourceId',
@@ -1170,6 +1269,334 @@ function approvalLegacyHistoryAssociationSpecs(
       entityType: 'org.employee',
     },
   ]);
+}
+
+interface ApprovalActiveFormReference {
+  readonly fieldKey: string;
+  readonly entityType: 'org.employee' | 'org.department';
+}
+
+interface ApprovalActiveResolvedNode {
+  readonly nodeId: string;
+  readonly actorEmployeeSourceIds: readonly string[];
+}
+
+type ApprovalActiveMigrationAction =
+  | {
+      readonly type: 'submitted'; readonly actorEmployeeSourceId: string;
+      readonly occurredAt: string;
+    }
+  | {
+      readonly type: 'decided'; readonly actorEmployeeSourceId: string;
+      readonly principalApproverEmployeeSourceId: string;
+      readonly outcome: 'approved' | 'rejected'; readonly occurredAt: string;
+    }
+  | {
+      readonly type: 'approver_transferred'; readonly actorEmployeeSourceId: string;
+      readonly fromApproverEmployeeSourceId: string;
+      readonly toApproverEmployeeSourceId: string; readonly occurredAt: string;
+    }
+  | {
+      readonly type: 'approver_added'; readonly actorEmployeeSourceId: string;
+      readonly approverEmployeeSourceId: string; readonly occurredAt: string;
+    };
+
+interface ApprovalActiveInstanceMigrationPayload {
+  readonly templateSourceId: string;
+  readonly templateCode: string;
+  readonly templateRevision: number;
+  readonly title: string;
+  readonly initiatorEmployeeSourceId: string;
+  readonly formData: ApprovalFormData;
+  readonly formReferenceFields: readonly ApprovalActiveFormReference[];
+  readonly resolvedNodes: readonly ApprovalActiveResolvedNode[];
+  readonly actions: readonly ApprovalActiveMigrationAction[];
+  readonly expectedStatus: 'draft' | 'running';
+  readonly expectedVersion: number;
+  readonly expectedCurrentNodeId: string | null;
+  readonly expectedPendingApproverEmployeeSourceIds: readonly string[];
+  readonly createdAt: string;
+  readonly submittedAt: string | null;
+  readonly updatedAt: string;
+  readonly activityEvidenceSourceAttachmentId: string;
+  readonly activityEvidenceChecksum: string;
+}
+
+function approvalActiveInstancePayload(
+  value: Readonly<Record<string, unknown>>,
+): ApprovalActiveInstanceMigrationPayload {
+  exactKeys(value, [
+    'actions', 'activityEvidenceChecksum', 'activityEvidenceSourceAttachmentId',
+    'createdAt', 'expectedCurrentNodeId', 'expectedPendingApproverEmployeeSourceIds',
+    'expectedStatus', 'expectedVersion', 'formData', 'formReferenceFields',
+    'initiatorEmployeeSourceId', 'resolvedNodes', 'submittedAt', 'templateCode',
+    'templateRevision', 'templateSourceId', 'title', 'updatedAt',
+  ]);
+  if (typeof value.templateSourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.templateSourceId) ||
+    typeof value.initiatorEmployeeSourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.initiatorEmployeeSourceId) ||
+    typeof value.activityEvidenceSourceAttachmentId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.activityEvidenceSourceAttachmentId) ||
+    typeof value.activityEvidenceChecksum !== 'string' ||
+    !HASH_PATTERN.test(value.activityEvidenceChecksum) ||
+    typeof value.templateCode !== 'string' || !APPROVAL_CODE_PATTERN.test(value.templateCode) ||
+    !Number.isSafeInteger(value.templateRevision) || Number(value.templateRevision) < 1 ||
+    typeof value.title !== 'string' || value.title.trim().length < 1 || value.title.length > 256 ||
+    !['draft', 'running'].includes(String(value.expectedStatus)) ||
+    !Number.isSafeInteger(value.expectedVersion) || Number(value.expectedVersion) < 1 ||
+    (value.expectedCurrentNodeId !== null &&
+      (typeof value.expectedCurrentNodeId !== 'string' ||
+        !FIELD_KEY_PATTERN.test(value.expectedCurrentNodeId))) ||
+    !isStrictUtcIso(value.createdAt) || !isStrictUtcIso(value.updatedAt) ||
+    (value.submittedAt !== null && !isStrictUtcIso(value.submittedAt)) ||
+    !isMigrationFormData(value.formData)) throw invalidPayload();
+  const formReferenceFields = activeFormReferenceFields(value.formReferenceFields, value.formData);
+  const resolvedNodes = activeResolvedNodes(value.resolvedNodes);
+  const actions = activeMigrationActions(value.actions);
+  const expectedPending = stringSourceIds(
+    value.expectedPendingApproverEmployeeSourceIds,
+    0,
+    100,
+  );
+  return {
+    templateSourceId: value.templateSourceId,
+    templateCode: value.templateCode,
+    templateRevision: Number(value.templateRevision),
+    title: value.title,
+    initiatorEmployeeSourceId: value.initiatorEmployeeSourceId,
+    formData: value.formData,
+    formReferenceFields,
+    resolvedNodes,
+    actions,
+    expectedStatus: value.expectedStatus as 'draft' | 'running',
+    expectedVersion: Number(value.expectedVersion),
+    expectedCurrentNodeId: value.expectedCurrentNodeId,
+    expectedPendingApproverEmployeeSourceIds: expectedPending,
+    createdAt: value.createdAt,
+    submittedAt: value.submittedAt,
+    updatedAt: value.updatedAt,
+    activityEvidenceSourceAttachmentId: value.activityEvidenceSourceAttachmentId,
+    activityEvidenceChecksum: value.activityEvidenceChecksum,
+  };
+}
+
+function activeFormReferenceFields(
+  value: unknown,
+  formData: ApprovalFormData,
+): readonly ApprovalActiveFormReference[] {
+  if (!Array.isArray(value) || value.length > 100) throw invalidPayload();
+  const fields = value.map((item) => {
+    if (!isPlainMigrationObject(item)) throw invalidPayload();
+    exactKeys(item, ['entityType', 'fieldKey']);
+    const fieldValue = typeof item.fieldKey === 'string' ? formData[item.fieldKey] : undefined;
+    if (typeof item.fieldKey !== 'string' || !FIELD_KEY_PATTERN.test(item.fieldKey) ||
+      !['org.employee', 'org.department'].includes(String(item.entityType)) ||
+      typeof fieldValue !== 'string' || !SOURCE_ID_PATTERN.test(fieldValue)) throw invalidPayload();
+    return {
+      fieldKey: item.fieldKey,
+      entityType: item.entityType as ApprovalActiveFormReference['entityType'],
+    };
+  });
+  if (new Set(fields.map((field) => field.fieldKey)).size !== fields.length) throw invalidPayload();
+  return fields;
+}
+
+function activeResolvedNodes(value: unknown): readonly ApprovalActiveResolvedNode[] {
+  if (!Array.isArray(value) || value.length > 50) throw invalidPayload();
+  const nodes = value.map((item) => {
+    if (!isPlainMigrationObject(item)) throw invalidPayload();
+    exactKeys(item, ['actorEmployeeSourceIds', 'nodeId']);
+    if (typeof item.nodeId !== 'string' || !FIELD_KEY_PATTERN.test(item.nodeId)) {
+      throw invalidPayload();
+    }
+    return {
+      nodeId: item.nodeId,
+      actorEmployeeSourceIds: stringSourceIds(item.actorEmployeeSourceIds, 0, 100),
+    };
+  });
+  if (new Set(nodes.map((node) => node.nodeId)).size !== nodes.length) throw invalidPayload();
+  return nodes;
+}
+
+function activeMigrationActions(value: unknown): readonly ApprovalActiveMigrationAction[] {
+  if (!Array.isArray(value) || value.length > 500) throw invalidPayload();
+  return value.map((item) => activeMigrationAction(item));
+}
+
+function activeMigrationAction(value: unknown): ApprovalActiveMigrationAction {
+  if (!isPlainMigrationObject(value) || typeof value.type !== 'string' ||
+    typeof value.actorEmployeeSourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.actorEmployeeSourceId) ||
+    !isStrictUtcIso(value.occurredAt)) throw invalidPayload();
+  if (value.type === 'submitted') {
+    exactKeys(value, ['actorEmployeeSourceId', 'occurredAt', 'type']);
+    return {
+      type: value.type,
+      actorEmployeeSourceId: value.actorEmployeeSourceId,
+      occurredAt: value.occurredAt,
+    };
+  }
+  if (value.type === 'decided') {
+    exactKeys(value, [
+      'actorEmployeeSourceId', 'occurredAt', 'outcome',
+      'principalApproverEmployeeSourceId', 'type',
+    ]);
+    if (typeof value.principalApproverEmployeeSourceId !== 'string' ||
+      !SOURCE_ID_PATTERN.test(value.principalApproverEmployeeSourceId) ||
+      !['approved', 'rejected'].includes(String(value.outcome))) throw invalidPayload();
+    return {
+      type: value.type,
+      actorEmployeeSourceId: value.actorEmployeeSourceId,
+      principalApproverEmployeeSourceId: value.principalApproverEmployeeSourceId,
+      outcome: value.outcome as 'approved' | 'rejected',
+      occurredAt: value.occurredAt,
+    };
+  }
+  if (value.type === 'approver_transferred') {
+    exactKeys(value, [
+      'actorEmployeeSourceId', 'fromApproverEmployeeSourceId', 'occurredAt',
+      'toApproverEmployeeSourceId', 'type',
+    ]);
+    if (typeof value.fromApproverEmployeeSourceId !== 'string' ||
+      !SOURCE_ID_PATTERN.test(value.fromApproverEmployeeSourceId) ||
+      typeof value.toApproverEmployeeSourceId !== 'string' ||
+      !SOURCE_ID_PATTERN.test(value.toApproverEmployeeSourceId)) throw invalidPayload();
+    return {
+      type: value.type,
+      actorEmployeeSourceId: value.actorEmployeeSourceId,
+      fromApproverEmployeeSourceId: value.fromApproverEmployeeSourceId,
+      toApproverEmployeeSourceId: value.toApproverEmployeeSourceId,
+      occurredAt: value.occurredAt,
+    };
+  }
+  if (value.type === 'approver_added') {
+    exactKeys(value, [
+      'actorEmployeeSourceId', 'approverEmployeeSourceId', 'occurredAt', 'type',
+    ]);
+    if (typeof value.approverEmployeeSourceId !== 'string' ||
+      !SOURCE_ID_PATTERN.test(value.approverEmployeeSourceId)) throw invalidPayload();
+    return {
+      type: value.type,
+      actorEmployeeSourceId: value.actorEmployeeSourceId,
+      approverEmployeeSourceId: value.approverEmployeeSourceId,
+      occurredAt: value.occurredAt,
+    };
+  }
+  throw invalidPayload();
+}
+
+function approvalActiveInstanceAssociationSpecs(
+  payload: ApprovalActiveInstanceMigrationPayload,
+): readonly (AssociationEvidence & { readonly entityType: AssociationTargetType })[] {
+  const specs: (AssociationEvidence & { readonly entityType: AssociationTargetType })[] = [
+    {
+      relationship: 'template', sourceAssociationId: payload.templateSourceId,
+      entityType: 'approval.template',
+    },
+    {
+      relationship: 'initiator', sourceAssociationId: payload.initiatorEmployeeSourceId,
+      entityType: 'org.employee',
+    },
+  ];
+  for (const field of payload.formReferenceFields) specs.push({
+    relationship: field.entityType === 'org.employee' ? 'form_employee' : 'form_department',
+    sourceAssociationId: payload.formData[field.fieldKey] as string,
+    entityType: field.entityType,
+  });
+  for (const node of payload.resolvedNodes) {
+    for (const sourceAssociationId of node.actorEmployeeSourceIds) specs.push({
+      relationship: 'resolved_approver', sourceAssociationId, entityType: 'org.employee',
+    });
+  }
+  for (const action of payload.actions) specs.push(...activeActionAssociationSpecs(action));
+  for (const sourceAssociationId of payload.expectedPendingApproverEmployeeSourceIds) specs.push({
+    relationship: 'expected_pending_approver', sourceAssociationId, entityType: 'org.employee',
+  });
+  const unique = new Map<string, typeof specs[number]>();
+  for (const spec of specs) unique.set(
+    `${spec.relationship}:${spec.entityType}:${spec.sourceAssociationId}`,
+    spec,
+  );
+  return [...unique.values()];
+}
+
+function activeActionAssociationSpecs(
+  action: ApprovalActiveMigrationAction,
+): (AssociationEvidence & { readonly entityType: 'org.employee' })[] {
+  const specs: (AssociationEvidence & { readonly entityType: 'org.employee' })[] = [{
+    relationship: 'action_actor',
+    sourceAssociationId: action.actorEmployeeSourceId,
+    entityType: 'org.employee',
+  }];
+  if (action.type === 'decided') specs.push({
+    relationship: 'principal_approver',
+    sourceAssociationId: action.principalApproverEmployeeSourceId,
+    entityType: 'org.employee',
+  });
+  else if (action.type === 'approver_transferred') specs.push(
+    {
+      relationship: 'transfer_from', sourceAssociationId: action.fromApproverEmployeeSourceId,
+      entityType: 'org.employee',
+    },
+    {
+      relationship: 'transfer_to', sourceAssociationId: action.toApproverEmployeeSourceId,
+      entityType: 'org.employee',
+    },
+  );
+  else if (action.type === 'approver_added') specs.push({
+    relationship: 'added_approver', sourceAssociationId: action.approverEmployeeSourceId,
+    entityType: 'org.employee',
+  });
+  return specs;
+}
+
+async function mapActiveApprovalFormData(
+  payload: ApprovalActiveInstanceMigrationPayload,
+  resolve: (
+    entityType: 'org.employee' | 'org.department',
+    sourceId: string,
+  ) => Promise<string>,
+): Promise<ApprovalFormData> {
+  const formData = structuredClone(payload.formData) as Record<string, ApprovalFormValue>;
+  await Promise.all(payload.formReferenceFields.map(async (field) => {
+    const sourceId = formData[field.fieldKey];
+    if (typeof sourceId !== 'string') throw invalidPayload();
+    formData[field.fieldKey] = await resolve(field.entityType, sourceId);
+  }));
+  return formData;
+}
+
+async function mapActiveApprovalAction(
+  action: ApprovalActiveMigrationAction,
+  employeeId: (sourceId: string) => Promise<string>,
+): Promise<ImportApprovalActiveActionFromMigration> {
+  const actorEmployeeId = await employeeId(action.actorEmployeeSourceId);
+  if (action.type === 'submitted') return {
+    type: action.type,
+    actorEmployeeId,
+    occurredAt: action.occurredAt,
+  };
+  if (action.type === 'decided') return {
+    type: action.type,
+    actorEmployeeId,
+    principalApproverEmployeeId: await employeeId(action.principalApproverEmployeeSourceId),
+    outcome: action.outcome,
+    occurredAt: action.occurredAt,
+  };
+  if (action.type === 'approver_transferred') return {
+    type: action.type,
+    actorEmployeeId,
+    fromApproverEmployeeId: await employeeId(action.fromApproverEmployeeSourceId),
+    toApproverEmployeeId: await employeeId(action.toApproverEmployeeSourceId),
+    occurredAt: action.occurredAt,
+  };
+  return {
+    type: action.type,
+    actorEmployeeId,
+    approverEmployeeId: await employeeId(action.approverEmployeeSourceId),
+    occurredAt: action.occurredAt,
+  };
 }
 
 function approvalTemplatePayload(
@@ -1403,6 +1830,10 @@ function associationEvidence(input: ApplyDataMigrationRecordDto): readonly Assoc
       derived = approvalLegacyHistoryAssociationSpecs(
         approvalLegacyHistoryPayload(input.payload),
       );
+    } else if (input.entityType === 'approval.instance') {
+      derived = approvalActiveInstanceAssociationSpecs(
+        approvalActiveInstancePayload(input.payload),
+      );
     } else derived = [];
   } catch {
     derived = [];
@@ -1426,6 +1857,30 @@ function isStrictUtcIso(value: unknown): value is string {
   if (typeof value !== 'string') return false;
   const parsed = new Date(value);
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
+}
+function isPlainMigrationObject(value: unknown): value is Readonly<Record<string, unknown>> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+function isMigrationFormData(value: unknown): value is ApprovalFormData {
+  if (!isPlainMigrationObject(value) || Object.keys(value).length > 100) return false;
+  for (const [key, fieldValue] of Object.entries(value)) {
+    if (!FIELD_KEY_PATTERN.test(key) || !isMigrationFormValue(fieldValue)) return false;
+  }
+  return true;
+}
+function isMigrationFormValue(value: unknown): value is ApprovalFormValue {
+  if (Array.isArray(value)) {
+    return value.length <= 200 && value.every((item) => isMigrationScalar(item)) &&
+      new Set(value).size === value.length;
+  }
+  return isMigrationScalar(value);
+}
+function isMigrationScalar(value: unknown): value is ApprovalScalar {
+  return value === null || typeof value === 'boolean' ||
+    (typeof value === 'number' && Number.isFinite(value)) ||
+    (typeof value === 'string' && value.length <= 10_000);
 }
 function target<T extends object & { readonly id: string; readonly version: number }>(value: T) {
   const projection = Object.fromEntries(Object.entries(value));
@@ -1482,12 +1937,17 @@ function isDuplicateKeyError(error: unknown): boolean {
 
 const SOURCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const HASH_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const FIELD_KEY_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
+const APPROVAL_CODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const ASSOCIATION_RELATIONSHIPS = [
   'parent_department', 'department', 'primary_department', 'position', 'job_level',
   'employee',
   'created_by', 'updated_by', 'approved_by',
   'fixed_approver', 'condition_employee', 'condition_department',
   'initiator', 'template',
+  'form_employee', 'form_department', 'resolved_approver',
+  'action_actor', 'principal_approver', 'transfer_from', 'transfer_to',
+  'added_approver', 'expected_pending_approver',
   'declared_reference',
 ] as const;
 const ASSOCIATION_RELATIONSHIP_SET: ReadonlySet<string> = new Set(ASSOCIATION_RELATIONSHIPS);

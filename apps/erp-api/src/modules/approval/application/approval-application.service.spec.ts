@@ -108,7 +108,10 @@ function idempotency(): IdempotencyService {
 function dependencies(overrides: Record<string, unknown> = {}) {
   return {
     profiles: {
-      resolveActive: vi.fn().mockResolvedValue({ actorId: 'actor-001' }),
+      resolveActive: vi.fn((_: string, actorId: string) => Promise.resolve({
+        actorId,
+        employeeId: actorId.replace(/^actor-/u, ''),
+      })),
       findActorIdByEmployee: vi.fn((_: string, employeeId: string) =>
         Promise.resolve(`actor-${employeeId}`)),
     },
@@ -215,6 +218,117 @@ describe('ApprovalApplicationService', () => {
       response: { code: 'APPROVAL_MIGRATION_HISTORY_TEMPLATE_MISSING' },
     });
     expect(deps.legacyHistories.insert).not.toHaveBeenCalled();
+  });
+
+  it('活动审批按历史动作重放运行态并只发布迁移事件', async () => {
+    const deps = dependencies();
+    const result = await service(
+      deps,
+      opWorkerContext(['erp:migration:execute', 'erp:approval:migration:write']),
+    ).importActiveInstanceFromMigration('migration-active-key', {
+      templateId: 'template-001', templateCode: 'EXPENSE', templateRevision: 1,
+      title: '迁移中的费用审批', initiatorEmployeeId: 'employee-initiator',
+      formData: { amount: 12_345 }, mappedFormReferenceFields: [],
+      resolvedNodes: [{
+        nodeId: 'manager',
+        actorEmployeeIds: ['employee-manager-1', 'employee-manager-2'],
+      }],
+      actions: [{
+        type: 'submitted', actorEmployeeId: 'employee-initiator',
+        occurredAt: '2026-07-21T00:10:00.000Z',
+      }, {
+        type: 'decided', actorEmployeeId: 'employee-manager-1',
+        principalApproverEmployeeId: 'employee-manager-1', outcome: 'approved',
+        occurredAt: '2026-07-21T00:20:00.000Z',
+      }],
+      expectedStatus: 'running', expectedVersion: 3, expectedCurrentNodeId: 'manager',
+      expectedPendingApproverEmployeeIds: ['employee-manager-2'],
+      createdAt: '2026-07-21T00:05:00.000Z',
+      submittedAt: '2026-07-21T00:10:00.000Z',
+      updatedAt: '2026-07-21T00:20:00.000Z',
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/active-evidence-001',
+      evidenceChecksum: 'c'.repeat(43),
+    });
+
+    expect(result.instance).toMatchObject({
+      status: 'running', version: 3, submittedAt: '2026-07-21T00:10:00.000Z',
+    });
+    expect(result.instance).not.toHaveProperty('formData');
+    expect(deps.instances.insert).toHaveBeenCalledOnce();
+    expect(deps.actions.append).toHaveBeenCalledTimes(2);
+    const migratedEvent = deps.outbox.append.mock.calls[0]?.[0] as unknown as {
+      type: string; payload: { actionCount: number; evidenceChecksum: string };
+    };
+    expect(migratedEvent).toMatchObject({
+      type: 'approval_instance.migrated',
+      payload: { actionCount: 2, evidenceChecksum: 'c'.repeat(43) },
+    });
+    expect(deps.outbox.append.mock.calls[0]?.[1]).toBe(SESSION);
+    expect(deps.notifications.append).not.toHaveBeenCalled();
+  });
+
+  it('活动审批表单含文件引用时失败关闭', async () => {
+    const fileDraft = createApprovalTemplateDraft({
+      id: 'template-file', tenantId: 'tenant-001', code: 'FILE_FLOW', name: '文件审批',
+      riskLevel: 'R1', actorId: 'editor-001', definition: {
+        fields: [{
+          key: 'files', label: '附件', type: 'file_reference', required: true, sensitivity: 'L3',
+        }],
+        nodes: [{
+          id: 'manager', name: '经理审批', type: 'approval', approvalMode: 'all',
+          resolver: { type: 'initiator_manager' },
+        }],
+      },
+    }, NOW);
+    const fileTemplate = publishApprovalTemplate(fileDraft, {
+      tenantId: 'tenant-001', expectedVersion: 1, approverId: 'publisher-001',
+    }, NOW);
+    const deps = dependencies({
+      templates: { ...dependencies().templates, findById: vi.fn().mockResolvedValue(fileTemplate) },
+    });
+    await expect(service(
+      deps,
+      opWorkerContext(['erp:migration:execute', 'erp:approval:migration:write']),
+    ).importActiveInstanceFromMigration('migration-active-file-key', {
+      templateId: 'template-file', templateCode: 'FILE_FLOW', templateRevision: 1,
+      title: '带文件审批', initiatorEmployeeId: 'employee-initiator',
+      formData: { files: ['source-file-001'] }, mappedFormReferenceFields: [],
+      resolvedNodes: [], actions: [], expectedStatus: 'draft', expectedVersion: 1,
+      expectedCurrentNodeId: null, expectedPendingApproverEmployeeIds: [],
+      createdAt: '2026-07-21T00:05:00.000Z', submittedAt: null,
+      updatedAt: '2026-07-21T00:05:00.000Z',
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/active-evidence-002',
+      evidenceChecksum: 'd'.repeat(43),
+    })).rejects.toMatchObject({
+      response: { code: 'APPROVAL_MIGRATION_ACTIVE_FILE_UNSUPPORTED' },
+    });
+    expect(deps.instances.insert).not.toHaveBeenCalled();
+  });
+
+  it('活动草稿所有者身份停用时拒绝迁移', async () => {
+    const base = dependencies();
+    const deps = dependencies({
+      profiles: { ...base.profiles, resolveActive: vi.fn().mockResolvedValue(null) },
+    });
+    await expect(service(
+      deps,
+      opWorkerContext(['erp:migration:execute', 'erp:approval:migration:write']),
+    ).importActiveInstanceFromMigration('migration-active-inactive-key', {
+      templateId: 'template-001', templateCode: 'EXPENSE', templateRevision: 1,
+      title: '停用员工草稿', initiatorEmployeeId: 'employee-inactive',
+      formData: { amount: 100 }, mappedFormReferenceFields: [], resolvedNodes: [], actions: [],
+      expectedStatus: 'draft', expectedVersion: 1, expectedCurrentNodeId: null,
+      expectedPendingApproverEmployeeIds: [], createdAt: '2026-07-21T00:05:00.000Z',
+      submittedAt: null, updatedAt: '2026-07-21T00:05:00.000Z',
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/active-evidence-003',
+      evidenceChecksum: 'e'.repeat(43),
+    })).rejects.toMatchObject({
+      response: { code: 'APPROVAL_MIGRATION_ACTIVE_ACTOR_INACTIVE' },
+    });
+    expect(deps.instances.insert).not.toHaveBeenCalled();
   });
 
   it('迁移服务按员工身份映射连续恢复模板版本且不重放通知', async () => {
