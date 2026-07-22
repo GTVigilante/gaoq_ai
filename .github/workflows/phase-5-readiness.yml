@@ -1,0 +1,80 @@
+name: Phase 5 七类发布就绪证据验收
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-5-readiness
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    name: 校验七类独立 verdict 契约
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 只允许默认分支执行现场验收
+        shell: bash
+        run: test "$GITHUB_REF" = 'refs/heads/main'
+
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - name: 校验就绪证据失败关闭边界
+        run: node scripts/release/validate-phase-5-readiness-evidence.mjs --self-test
+
+  evidence:
+    name: 验收工程、供应链、镜像、权限、UAT、隐私与运行证据
+    needs: contract
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - phase-5-readiness
+    timeout-minutes: 30
+    environment: phase-5-readiness
+    env:
+      READINESS_EVIDENCE_PATH: /var/lib/gaoq/readiness/phase-5-readiness.json
+      READINESS_EXPECTED_ENVIRONMENT: ${{ vars.READINESS_ENVIRONMENT_NAME }}
+      READINESS_EXPECTED_REGION: ${{ vars.READINESS_REGION }}
+      READINESS_EXPECTED_COMMIT: ${{ github.sha }}
+      READINESS_EXPECTED_API_IMAGE: ${{ vars.READINESS_API_IMAGE_DIGEST }}
+      READINESS_EXPECTED_WORKER_IMAGE: ${{ vars.READINESS_WORKER_IMAGE_DIGEST }}
+      READINESS_EXPECTED_WEB_IMAGE: ${{ vars.READINESS_WEB_IMAGE_DIGEST }}
+      READINESS_EXPECTED_DEPLOYMENT_MANIFEST: ${{ vars.READINESS_DEPLOYMENT_MANIFEST_SHA256 }}
+      READINESS_VERDICT_PATH: ${{ runner.temp }}/phase-5-readiness-verdicts.json
+    steps:
+      - name: 检出受信任代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - name: 验证版本绑定并生成七类独立 verdict
+        run: >-
+          node scripts/release/validate-phase-5-readiness-evidence.mjs
+          --enforce-environment
+          "$READINESS_EVIDENCE_PATH"
+          > "$READINESS_VERDICT_PATH"
+
+      - name: 保存不含业务数据的 verdict bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: phase-5-readiness-verdicts-${{ github.sha }}
+          path: ${{ runner.temp }}/phase-5-readiness-verdicts.json
+          if-no-files-found: error
+          retention-days: 30

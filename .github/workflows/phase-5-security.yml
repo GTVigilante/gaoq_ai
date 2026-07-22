@@ -263,6 +263,24 @@ jobs:
           node scripts/resilience/validate-phase-5-resilience-evidence.mjs --self-test
           node scripts/validate-security-workflow.mjs
 
+  readiness-contract:
+    name: 七类发布就绪 verdict 契约
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - name: 检查工程、供应链、镜像、权限、UAT、隐私与运行证据
+        run: node scripts/release/validate-phase-5-readiness-evidence.mjs --self-test
+
   go-no-go-contract:
     name: 跨职能 Go-No-Go 契约
     runs-on: ubuntu-latest

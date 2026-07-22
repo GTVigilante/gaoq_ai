@@ -8,7 +8,8 @@ const ENVIRONMENT_NAME = /^[a-z][a-z0-9-]{2,31}$/u;
 const REGION = /^[a-z0-9-]{2,32}$/u;
 const GATE_NAMES = [
   'authorization', 'business-uat', 'dast-asvs', 'engineering-quality', 'integration-mcp',
-  'migration', 'operations', 'performance', 'production-images', 'resilience', 'supply-chain',
+  'migration', 'operations', 'performance', 'privacy-compliance', 'production-images',
+  'resilience', 'supply-chain',
 ];
 const GATE_SUITES = Object.freeze({
   authorization: 'gaoq.phase5.authorization.verdict',
@@ -19,6 +20,7 @@ const GATE_SUITES = Object.freeze({
   migration: 'gaoq.phase5.migration-rehearsal.verdict',
   operations: 'gaoq.phase5.operations.verdict',
   performance: 'gaoq.phase5.capacity.comparison',
+  'privacy-compliance': 'gaoq.phase5.privacy-compliance.verdict',
   'production-images': 'gaoq.phase5.production-images.verdict',
   resilience: 'gaoq.phase5.resilience.verdict',
   'supply-chain': 'gaoq.phase5.supply-chain.verdict',

@@ -28,6 +28,7 @@ Phase 5 在已验收的组织、审批、招聘入职、考勤薪酬底座之上
    - [容灾恢复与外部系统断连追赶门禁](./17-resilience-rehearsal-gate.md)
    - [跨职能 Go/No-Go 证据门禁](./18-go-no-go-evidence-gate.md)
    - [MCP 完整能力目录与联调门禁](./19-mcp-capability-catalog.md)
+   - [七类发布就绪 verdict 门禁](./20-readiness-verdicts.md)
 
 后续切片各自拥有独立契约文档；禁止借任何已立项切片隐式扩张范围。
 
