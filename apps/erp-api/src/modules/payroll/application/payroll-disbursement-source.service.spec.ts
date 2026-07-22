@@ -52,7 +52,7 @@ function assemble(aggregateHash = runHash) {
   }])) };
   const crypto = { unprotect: vi.fn().mockReturnValue(result) };
   const service = new PayrollRunService(
-    {} as never, context, crypto as never, {} as never, periods as never,
+    {} as never, context, {} as never, crypto as never, {} as never, periods as never,
     {} as never, {} as never, {} as never, {} as never, {} as never,
     calculationLines as never,
   );

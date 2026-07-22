@@ -1,9 +1,10 @@
 import type { ActorContext } from '@gaoq/shared-types';
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import type { ClientSession } from 'mongoose';
 import { describe, expect, it, vi } from 'vitest';
 
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
+import { payrollDigest } from '../domain/index.js';
 import { PayrollRunService } from './payroll-run.service.js';
 
 const tenant = { tenantId: 'tenant-001', source: 'access_token' as const };
@@ -25,13 +26,14 @@ function assemble() {
     handler: (value: ClientSession) => Promise<Record<string, unknown>>,
   ) => handler(session)) };
   const periods = { create: vi.fn().mockResolvedValue([]), findOne: vi.fn() };
+  const profiles = { findActorIdByEmployee: vi.fn().mockResolvedValue('actor-preparer-001') };
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
   const service = new PayrollRunService(
-    idempotency as never, context, {} as never, outbox as never,
+    idempotency as never, context, profiles as never, {} as never, outbox as never,
     periods as never, {} as never, {} as never, {} as never,
     {} as never, {} as never, {} as never,
   );
-  return { context, idempotency, periods, outbox, service };
+  return { context, idempotency, periods, profiles, outbox, service };
 }
 
 describe('PayrollRunService 信任边界', () => {
@@ -80,5 +82,224 @@ describe('PayrollRunService 信任边界', () => {
       } as never],
     }))).rejects.toBeInstanceOf(BadRequestException);
     expect(store.idempotency.execute).not.toHaveBeenCalled();
+  });
+
+  it('迁移周期只恢复 draft/collecting 基线并把制单员工解析为可信主体', async () => {
+    const store = assemble();
+    const result = await store.context.run({
+      tenant,
+      actor: actor(['erp:migration:execute', 'erp:payroll:migration:write'], 'service'),
+    }, () => store.service.importPeriodFromMigration('migration-period-001', {
+      targetId: null, period: '2026-06', status: 'collecting',
+      preparedByEmployeeId: 'employee-preparer-001',
+      createdAt: '2026-06-01T00:00:00.000Z', updatedAt: '2026-06-02T00:00:00.000Z',
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/period-001',
+      evidenceChecksum: 'e'.repeat(43),
+    }));
+    expect(result).toMatchObject({ period: '2026-06', status: 'collecting', version: 2 });
+    expect(store.profiles.findActorIdByEmployee).toHaveBeenCalledWith(
+      'tenant-001', 'employee-preparer-001', session,
+    );
+    expect(store.periods.create).toHaveBeenCalledWith([
+      expect.objectContaining({
+        preparedBy: 'actor-preparer-001', status: 'collecting', version: 2,
+        migrationEvidenceChecksum: 'e'.repeat(43),
+      }),
+    ], { session });
+    expect(store.outbox.append).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'payroll.period.migrated', data: { period: '2026-06', status: 'collecting' },
+    }), session);
+  });
+
+  it('普通人员即使持有迁移 scope 也不能恢复工资周期', async () => {
+    const store = assemble();
+    await expect(store.context.run({
+      tenant,
+      actor: actor(['erp:migration:execute', 'erp:payroll:migration:write']),
+    }, () => store.service.importPeriodFromMigration('migration-period-001', {
+      targetId: null, period: '2026-06', status: 'draft',
+      preparedByEmployeeId: 'employee-preparer-001',
+      createdAt: '2026-06-01T00:00:00.000Z', updatedAt: '2026-06-01T00:00:00.000Z',
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/period-001',
+      evidenceChecksum: 'e'.repeat(43),
+    }))).rejects.toBeInstanceOf(ForbiddenException);
+    expect(store.periods.create).not.toHaveBeenCalled();
+  });
+});
+
+function query<T>(value: T) {
+  const result = {
+    sort: vi.fn(), limit: vi.fn(), session: vi.fn(), lean: vi.fn(),
+    exec: vi.fn().mockResolvedValue(value),
+  };
+  result.sort.mockReturnValue(result);
+  result.limit.mockReturnValue(result);
+  result.session.mockReturnValue(result);
+  result.lean.mockReturnValue(result);
+  return result;
+}
+
+describe('PayrollRunService 迁移重算控制', () => {
+  it('目标确定性员工行与来源金额不一致时不落库', async () => {
+    const context = new TenantContextService();
+    const idempotency = { execute: vi.fn(async (
+      _operation: string, _key: string, _request: unknown,
+      handler: (value: ClientSession) => Promise<Record<string, unknown>>,
+    ) => handler(session)) };
+    const periodId = '01J8ZQK7V0A2M4N6P8R0T2W4P1';
+    const rulePackId = '01J8ZQK7V0A2M4N6P8R0T2W4R1';
+    const profileId = '01J8ZQK7V0A2M4N6P8R0T2W4C1';
+    const attendanceId = '01J8ZQK7V0A2M4N6P8R0T2W4A1';
+    const profileData = {
+      currency: 'CNY' as const,
+      taxableEarnings: [{ code: 'BASE', amountMinor: 100_000 }],
+      nonTaxableEarnings: [], employeeSocialInsuranceMinor: 0,
+      employeeHousingFundMinor: 0, specialAdditionalDeductionMinor: 0,
+      otherPreTaxWithholdingMinor: 0, postTaxDeductionMinor: 0,
+      attendanceAdjustment: {
+        overtimePayMinorPerMinute: 0, absenceDeductionMinorPerMinute: 0,
+        unpaidLeaveDeductionMinorPerMinute: 0,
+      },
+    };
+    const ruleSnapshot = {
+      id: rulePackId, version: 1, monthlyBasicDeductionMinor: 50_000,
+      taxBrackets: [{ upperBoundMinor: null, rateBps: 300, quickDeductionMinor: 0 }],
+      roundingMode: 'HALF_UP' as const,
+    };
+    const periods = {
+      findOne: vi.fn().mockReturnValue(query({
+        id: periodId, tenantId: 'tenant-001', period: '2026-06', currency: 'CNY',
+        status: 'collecting', preparedBy: 'actor-preparer-001', version: 2,
+        activeRunId: null, inputSnapshotHash: null, resultHash: null, employeeCount: null,
+        totalGrossMinor: null, totalTaxMinor: null, totalNetMinor: null,
+        approvalInstanceId: null, approvedBy: null, approvalEvidenceId: null,
+        lockedBy: null, strongAuthEvidenceId: null, disbursementBatchId: null,
+        disbursementPreparedBy: null, disbursementExportEvidenceId: null,
+        reconciliationEvidenceId: null, reconciledBy: null,
+        createdAt: new Date('2026-06-01T00:00:00.000Z'),
+        updatedAt: new Date('2026-06-02T00:00:00.000Z'),
+      })),
+      find: vi.fn().mockReturnValue(query([{
+        id: '01J8ZQK7V0A2M4N6P8R0T2W4P0', tenantId: 'tenant-001', period: '2026-05',
+        status: 'review', activeRunId: '01J8ZQK7V0A2M4N6P8R0T2W4N0',
+        inputSnapshotHash: 'i'.repeat(43), resultHash: 'r'.repeat(43),
+        employeeCount: 1, totalGrossMinor: 100_000, totalTaxMinor: 1_500,
+        totalNetMinor: 98_500,
+      }])), updateOne: vi.fn().mockResolvedValue({ modifiedCount: 1 }),
+    };
+    const rulePacks = { findOne: vi.fn().mockReturnValue(query({
+      ...ruleSnapshot, tenantId: 'tenant-001', status: 'published',
+      effectiveFrom: '2026-01-01', effectiveTo: '2026-12-31',
+      rulesHash: payrollDigest(ruleSnapshot),
+    })) };
+    const compensation = { findOne: vi.fn().mockReturnValue(query({
+      id: profileId, tenantId: 'tenant-001', employeeId: 'employee-001', version: 1,
+      profileHash: payrollDigest(profileData), dataKeyId: 'key', dataIv: 'iv',
+      dataCiphertext: 'cipher', dataAuthTag: 'tag',
+    })) };
+    const attendance = { findOne: vi.fn().mockReturnValue(query({
+      id: attendanceId, employeeId: 'employee-001', month: '2026-06', status: 'active',
+      snapshotHash: 's'.repeat(43), workedMinutes: 0, leaveMinutes: 0,
+      overtimeMinutes: 0, absentMinutes: 0,
+    })) };
+    const runs = { findOne: vi.fn((filter: { id?: string }) => query(
+      filter.id === undefined ? null : {
+        id: filter.id, periodId: '01J8ZQK7V0A2M4N6P8R0T2W4P0', status: 'completed',
+        inputSnapshotHash: 'i'.repeat(43), resultHash: 'r'.repeat(43),
+        employeeCount: 1, totalGrossMinor: 100_000, totalTaxMinor: 1_500,
+        totalNetMinor: 98_500, migrationEvidenceRef: 'erp://migration',
+        migrationEvidenceChecksum: 'm'.repeat(43),
+      },
+    )), create: vi.fn() };
+    const calculationLines = {
+      findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn().mockResolvedValue([]),
+    };
+    const snapshots = { create: vi.fn().mockResolvedValue([]) };
+    const outbox = { append: vi.fn().mockResolvedValue(undefined) };
+    const crypto = {
+      unprotect: vi.fn().mockReturnValue(profileData),
+      protect: vi.fn().mockReturnValue({
+        keyId: 'payroll-key-001', iv: 'i'.repeat(16),
+        ciphertext: 'c'.repeat(32), authTag: 'a'.repeat(22),
+      }),
+    };
+    const service = new PayrollRunService(
+      idempotency as never, context, {} as never,
+      crypto as never, outbox as never,
+      periods as never, rulePacks as never, compensation as never, attendance as never,
+      runs as never, snapshots as never, calculationLines as never,
+    );
+    await expect(context.run({
+      tenant,
+      actor: actor(['erp:migration:execute', 'erp:payroll:migration:write'], 'service'),
+    }, () => service.importCalculationRunFromMigration('migration-run-001', {
+      targetId: null, periodId, expectedPeriodVersion: 2, runNumber: 1,
+      rulePackId, rulePackVersion: 1,
+      lines: [{
+        employeeId: 'employee-001', compensationProfileId: profileId,
+        attendanceSnapshotId: attendanceId,
+        expectedGrossMinor: 1, expectedWithholdingTaxMinor: 0, expectedNetMinor: 1,
+      }],
+      expectedEmployeeCount: 1, expectedTotalGrossMinor: 1,
+      expectedTotalTaxMinor: 0, expectedTotalNetMinor: 1,
+      completedAt: '2026-06-03T00:00:00.000Z',
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/run-001',
+      evidenceChecksum: 'e'.repeat(43),
+    }))).rejects.toBeInstanceOf(ConflictException);
+    expect(runs.create).not.toHaveBeenCalled();
+    const periodFilter = periods.find.mock.calls[0]?.[0] as {
+      readonly status: { readonly $in: readonly string[] };
+    };
+    expect(periodFilter.status.$in).toContain('review');
+    expect(periodFilter.status.$in).toContain('locked');
+    expect(runs.findOne).toHaveBeenCalledWith(expect.objectContaining({
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4N0',
+    }));
+
+    const imported = await context.run({
+      tenant,
+      actor: actor(['erp:migration:execute', 'erp:payroll:migration:write'], 'service'),
+    }, () => service.importCalculationRunFromMigration('migration-run-002', {
+      targetId: null, periodId, expectedPeriodVersion: 2, runNumber: 1,
+      rulePackId, rulePackVersion: 1,
+      lines: [{
+        employeeId: 'employee-001', compensationProfileId: profileId,
+        attendanceSnapshotId: attendanceId,
+        expectedGrossMinor: 100_000, expectedWithholdingTaxMinor: 1_500,
+        expectedNetMinor: 98_500,
+      }],
+      expectedEmployeeCount: 1, expectedTotalGrossMinor: 100_000,
+      expectedTotalTaxMinor: 1_500, expectedTotalNetMinor: 98_500,
+      completedAt: '2026-06-03T00:00:00.000Z',
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/run-002',
+      evidenceChecksum: 'f'.repeat(43),
+    }));
+    expect(imported).toMatchObject({
+      version: 1, runNumber: 1, periodId, employeeCount: 1,
+      totalGrossMinor: 100_000, totalTaxMinor: 1_500, totalNetMinor: 98_500,
+    });
+    expect(snapshots.create).toHaveBeenCalledWith(
+      [expect.objectContaining({ employeeId: 'employee-001', createdAt: new Date(
+        '2026-06-03T00:00:00.000Z',
+      ) })], { session },
+    );
+    expect(calculationLines.create).toHaveBeenCalledWith(
+      [expect.objectContaining({ employeeId: 'employee-001' })], { session },
+    );
+    expect(outbox.append).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'payroll.run.migrated', version: 3,
+    }), session);
+    const periodUpdate = periods.updateOne.mock.calls[0] as unknown as [
+      Record<string, unknown>, { $set: Record<string, unknown> }, Record<string, unknown>,
+    ];
+    expect(periodUpdate[0]).toMatchObject({ id: periodId, version: 2, status: 'collecting' });
+    expect(periodUpdate[1].$set).toMatchObject({
+      status: 'review', updatedAt: new Date('2026-06-03T00:00:00.000Z'),
+    });
+    expect(periodUpdate[2]).toEqual({ session, runValidators: true, timestamps: false });
   });
 });

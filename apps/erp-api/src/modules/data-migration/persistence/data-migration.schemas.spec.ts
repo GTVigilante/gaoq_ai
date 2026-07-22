@@ -73,6 +73,11 @@ describe('数据迁移账本 Schema', () => {
       .toContain('source_fact');
     expect(DataMigrationAssociationRecordSchema.path('relationship').options.enum)
       .toContain('previous_snapshot');
+    expect(DataMigrationAssociationRecordSchema.path('relationship').options.enum)
+      .toEqual(expect.arrayContaining([
+        'prepared_by', 'payroll_period', 'rule_pack',
+        'compensation_profile', 'attendance_snapshot',
+      ]));
   });
 
   it('附件 processing、verified、rejected 状态必须分别绑定租约或证据', async () => {

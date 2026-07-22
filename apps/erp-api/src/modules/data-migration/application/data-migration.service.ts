@@ -56,6 +56,11 @@ import {
   type ImportPayrollCompensationFromMigrationInput,
   type ImportPayrollRulePackFromMigrationInput,
 } from '../../payroll/application/payroll-master-data.service.js';
+import {
+  PayrollRunService,
+  type ImportPayrollCalculationRunFromMigrationInput,
+  type ImportPayrollPeriodFromMigrationInput,
+} from '../../payroll/application/payroll-run.service.js';
 import type {
   CreateDepartmentDto,
   CreateEmployeeDto,
@@ -165,6 +170,8 @@ export class DataMigrationService {
     private readonly attendance?: AttendanceApplicationService,
     @Inject(PayrollMasterDataService)
     private readonly payrollMasterData?: PayrollMasterDataService,
+    @Inject(PayrollRunService)
+    private readonly payrollRuns?: PayrollRunService,
   ) {}
 
   async start(input: CreateDataMigrationRunDto) {
@@ -250,7 +257,7 @@ export class DataMigrationService {
       id: createEventId(), tenantId, runId, sequence: input.sequence,
       sourceRecordId: input.sourceRecordId, sourceVersion: input.sourceVersion,
       entityType: input.entityType, payloadHash: input.payloadHash, sourceFactHash,
-      ...outcome, associationCount: input.associationSourceIds.length,
+      ...outcome, associationCount: associationEvidence(input).length,
       attachmentCount: input.attachments.length,
     };
     await this.persistEvidence(run, input);
@@ -643,6 +650,22 @@ export class DataMigrationService {
         this.requireMapping(run, 'org.employee', payload.employeeSourceId),
         this.requireMapping(run, 'approval.history', payload.approvalHistorySourceId),
       ]);
+      return;
+    } else if (input.entityType === 'payroll.period') {
+      const payload = payrollPeriodPayload(input.payload);
+      assertAssociations(input.associationSourceIds, [payload.preparedByEmployeeSourceId]);
+      assertSingleMigrationEvidence(input, payload);
+      await this.requireMapping(run, 'org.employee', payload.preparedByEmployeeSourceId);
+      return;
+    } else if (input.entityType === 'payroll.calculation_run') {
+      const payload = payrollCalculationRunPayload(input.payload);
+      const specs = payrollCalculationRunAssociationSpecs(payload);
+      assertAssociations(
+        input.associationSourceIds,
+        [...new Set(uniqueAssociationTargets(specs).map((spec) => spec.sourceAssociationId))],
+      );
+      assertSingleMigrationEvidence(input, payload);
+      await this.requireMappings(run, specs);
       return;
     } else {
       const payload = approvalTemplatePayload(input.payload);
@@ -1143,6 +1166,63 @@ export class DataMigrationService {
       });
       return target(result);
     }
+    if (input.entityType === 'payroll.period') {
+      const payload = payrollPeriodPayload(input.payload);
+      if (this.payrollRuns === undefined) throw new Error('迁移工资运行适配器未装配');
+      const preparedBy = await this.requireMapping(
+        run, 'org.employee', payload.preparedByEmployeeSourceId,
+      );
+      const result = await this.payrollRuns.importPeriodFromMigration(key, {
+        targetId: mapping?.targetId ?? null, period: payload.period, status: payload.status,
+        preparedByEmployeeId: preparedBy.targetId, createdAt: payload.createdAt,
+        updatedAt: payload.updatedAt,
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${run.id}/attachments/${payload.sourceEvidenceSourceAttachmentId}`,
+        evidenceChecksum: payload.sourceEvidenceChecksum,
+      });
+      return target(result);
+    }
+    if (input.entityType === 'payroll.calculation_run') {
+      const payload = payrollCalculationRunPayload(input.payload);
+      if (this.payrollRuns === undefined) throw new Error('迁移工资运行适配器未装配');
+      const targets = await this.requireMappings(
+        run, payrollCalculationRunAssociationSpecs(payload),
+      );
+      const targetId = (entityType: AssociationTargetType, sourceId: string): string =>
+        requiredMapping(targets, entityType, sourceId).targetId;
+      const periodId = targetId('payroll.period', payload.periodSourceId);
+      const rulePackId = targetId('payroll.rule_pack', payload.rulePackSourceId);
+      const lines = payload.lines.map((line) => {
+        return {
+          employeeId: targetId('org.employee', line.employeeSourceId),
+          compensationProfileId: targetId(
+            'payroll.compensation_profile', line.compensationProfileSourceId,
+          ),
+          attendanceSnapshotId: targetId(
+            'attendance.monthly_snapshot', line.attendanceSnapshotSourceId,
+          ),
+          expectedGrossMinor: line.expectedGrossMinor,
+          expectedWithholdingTaxMinor: line.expectedWithholdingTaxMinor,
+          expectedNetMinor: line.expectedNetMinor,
+        };
+      });
+      const command: ImportPayrollCalculationRunFromMigrationInput = {
+        targetId: mapping?.targetId ?? null, periodId,
+        expectedPeriodVersion: payload.expectedPeriodVersion,
+        runNumber: payload.runNumber, rulePackId,
+        rulePackVersion: payload.rulePackVersion, lines,
+        expectedEmployeeCount: payload.expectedEmployeeCount,
+        expectedTotalGrossMinor: payload.expectedTotalGrossMinor,
+        expectedTotalTaxMinor: payload.expectedTotalTaxMinor,
+        expectedTotalNetMinor: payload.expectedTotalNetMinor,
+        completedAt: payload.completedAt,
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${run.id}/attachments/${payload.sourceEvidenceSourceAttachmentId}`,
+        evidenceChecksum: payload.sourceEvidenceChecksum,
+      };
+      const result = await this.payrollRuns.importCalculationRunFromMigration(key, command);
+      return target(result);
+    }
     const payload = approvalTemplatePayload(input.payload);
     if (this.approvals === undefined) throw new Error('迁移审批适配器未装配');
     const employeeId = async (sourceId: string): Promise<string> =>
@@ -1204,6 +1284,33 @@ export class DataMigrationService {
     return mapping;
   }
 
+  private async requireMappings(
+    run: DataMigrationRunRecord,
+    specs: readonly { readonly entityType: AssociationTargetType;
+      readonly sourceAssociationId: string }[],
+  ): Promise<ReadonlyMap<string, MappingView>> {
+    const unique = uniqueAssociationTargets(specs);
+    const grouped = new Map<AssociationTargetType, Set<string>>();
+    for (const spec of unique) {
+      const sourceIds = grouped.get(spec.entityType) ?? new Set<string>();
+      sourceIds.add(spec.sourceAssociationId);
+      grouped.set(spec.entityType, sourceIds);
+    }
+    const records = await this.mappings.find({
+      tenantId: run.tenantId, sourceSystem: run.sourceSystem,
+      $or: [...grouped].map(([entityType, sourceIds]) => ({
+        entityType, sourceRecordId: { $in: [...sourceIds] },
+      })),
+    }).lean().exec() as MappingView[];
+    const result = new Map(records.map((record) => [
+      mappingKey(record.entityType as AssociationTargetType, record.sourceRecordId), record,
+    ]));
+    for (const spec of unique) requiredMapping(
+      result, spec.entityType, spec.sourceAssociationId,
+    );
+    return result;
+  }
+
   private async preflightEvidence(
     run: DataMigrationRunRecord,
     input: ApplyDataMigrationRecordDto,
@@ -1228,33 +1335,76 @@ export class DataMigrationService {
     input: ApplyDataMigrationRecordDto,
   ): Promise<void> {
     const evidence = associationEvidence(input);
-    for (const association of evidence) {
-      const mapping = association.entityType === null
-        ? null
-        : await this.mappings.findOne({
-          tenantId: run.tenantId, sourceSystem: run.sourceSystem,
-          entityType: association.entityType,
-          sourceRecordId: association.sourceAssociationId,
-        }).lean().exec() as MappingView | null;
-      await this.associations.findOneAndUpdate(
-        {
-          tenantId: run.tenantId, runId: run.id, sequence: input.sequence,
-          relationship: association.relationship,
-          sourceAssociationId: association.sourceAssociationId,
-        },
-        {
-          $setOnInsert: {
-            id: createEventId(), tenantId: run.tenantId, runId: run.id,
-            sequence: input.sequence, relationship: association.relationship,
+    if (input.entityType === 'payroll.calculation_run') {
+      const resolvable = evidence.filter((association): association is AssociationEvidence & {
+        readonly entityType: AssociationTargetType;
+      } => association.entityType !== null);
+      const mappings = resolvable.length === 0
+        ? new Map<string, MappingView>()
+        : await this.requireMappings(run, resolvable.map((association) => ({
+            entityType: association.entityType,
+            sourceAssociationId: association.sourceAssociationId,
+          })));
+      for (let offset = 0; offset < evidence.length; offset += 500) {
+        const operations = evidence.slice(offset, offset + 500).map((association) => {
+          const mapping = association.entityType === null
+            ? null
+            : requiredMapping(
+                mappings, association.entityType, association.sourceAssociationId,
+              );
+          return {
+            updateOne: {
+              filter: {
+                tenantId: run.tenantId, runId: run.id, sequence: input.sequence,
+                relationship: association.relationship,
+                sourceAssociationId: association.sourceAssociationId,
+              },
+              update: {
+                $setOnInsert: {
+                  id: createEventId(), tenantId: run.tenantId, runId: run.id,
+                  sequence: input.sequence, relationship: association.relationship,
+                  sourceAssociationId: association.sourceAssociationId,
+                },
+                $set: {
+                  targetId: mapping?.targetId ?? null,
+                  status: mapping === null ? 'missing' as const : 'resolved' as const,
+                },
+              },
+              upsert: true,
+            },
+          };
+        });
+        await this.associations.bulkWrite(operations, { ordered: true });
+      }
+    } else {
+      for (const association of evidence) {
+        const mapping = association.entityType === null
+          ? null
+          : await this.mappings.findOne({
+            tenantId: run.tenantId, sourceSystem: run.sourceSystem,
+            entityType: association.entityType,
+            sourceRecordId: association.sourceAssociationId,
+          }).lean().exec() as MappingView | null;
+        await this.associations.findOneAndUpdate(
+          {
+            tenantId: run.tenantId, runId: run.id, sequence: input.sequence,
+            relationship: association.relationship,
             sourceAssociationId: association.sourceAssociationId,
           },
-          $set: {
-            targetId: mapping?.targetId ?? null,
-            status: mapping === null ? 'missing' : 'resolved',
+          {
+            $setOnInsert: {
+              id: createEventId(), tenantId: run.tenantId, runId: run.id,
+              sequence: input.sequence, relationship: association.relationship,
+              sourceAssociationId: association.sourceAssociationId,
+            },
+            $set: {
+              targetId: mapping?.targetId ?? null,
+              status: mapping === null ? 'missing' : 'resolved',
+            },
           },
-        },
-        { upsert: true, returnDocument: 'after', runValidators: true },
-      ).lean().exec();
+          { upsert: true, returnDocument: 'after', runValidators: true },
+        ).lean().exec();
+      }
     }
     for (const attachment of input.attachments) {
       try {
@@ -1592,7 +1742,10 @@ type AssociationTargetType =
   | 'recruitment.application'
   | 'recruitment.interview'
   | 'attendance.source_fact'
-  | 'attendance.monthly_snapshot';
+  | 'attendance.monthly_snapshot'
+  | 'payroll.rule_pack'
+  | 'payroll.compensation_profile'
+  | 'payroll.period';
 interface AssociationEvidence {
   readonly relationship: AssociationRelationship;
   readonly sourceAssociationId: string;
@@ -1600,7 +1753,9 @@ interface AssociationEvidence {
 }
 
 function uniqueAssociationTargets(
-  specs: readonly (AssociationEvidence & { readonly entityType: AssociationTargetType })[],
+  specs: readonly {
+    readonly entityType: AssociationTargetType; readonly sourceAssociationId: string;
+  }[],
 ): readonly { readonly entityType: AssociationTargetType; readonly sourceAssociationId: string }[] {
   const unique = new Map<string, {
     readonly entityType: AssociationTargetType; readonly sourceAssociationId: string;
@@ -1624,6 +1779,20 @@ function cachedTargetId(
   const pending = load();
   cache.set(key, pending);
   return pending;
+}
+
+function mappingKey(entityType: AssociationTargetType, sourceId: string): string {
+  return `${entityType}:${sourceId}`;
+}
+
+function requiredMapping(
+  mappings: ReadonlyMap<string, MappingView>,
+  entityType: AssociationTargetType,
+  sourceId: string,
+): MappingView {
+  const mapping = mappings.get(mappingKey(entityType, sourceId));
+  if (mapping === undefined) throw new Error('DATA_MIGRATION_ASSOCIATION_MISSING');
+  return mapping;
 }
 
 function employeePayload(value: Readonly<Record<string, unknown>>): EmployeeMigrationPayload {
@@ -3142,6 +3311,161 @@ function payrollCompensationPayload(
   };
 }
 
+type PayrollPeriodMigrationPayload = Omit<
+  ImportPayrollPeriodFromMigrationInput,
+  'targetId' | 'preparedByEmployeeId' | 'migrationEvidenceRef' | 'evidenceChecksum'
+> & MigrationEvidencePayload & { readonly preparedByEmployeeSourceId: string };
+
+function payrollPeriodPayload(
+  value: Readonly<Record<string, unknown>>,
+): PayrollPeriodMigrationPayload {
+  exactKeys(value, [
+    'createdAt', 'period', 'preparedByEmployeeSourceId', 'sourceEvidenceChecksum',
+    'sourceEvidenceSourceAttachmentId', 'status', 'updatedAt',
+  ]);
+  if (typeof value.period !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(value.period) ||
+    !['draft', 'collecting'].includes(String(value.status)) ||
+    typeof value.preparedByEmployeeSourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.preparedByEmployeeSourceId) ||
+    !isStrictUtcIso(value.createdAt) || !isStrictUtcIso(value.updatedAt) ||
+    Date.parse(value.updatedAt) < Date.parse(value.createdAt) ||
+    (value.status === 'draft' && value.updatedAt !== value.createdAt) ||
+    !migrationEvidence(value)) throw invalidPayload();
+  return {
+    period: value.period, status: value.status as 'draft' | 'collecting',
+    preparedByEmployeeSourceId: value.preparedByEmployeeSourceId,
+    createdAt: value.createdAt, updatedAt: value.updatedAt,
+    sourceEvidenceSourceAttachmentId: value.sourceEvidenceSourceAttachmentId,
+    sourceEvidenceChecksum: value.sourceEvidenceChecksum,
+  };
+}
+
+interface PayrollCalculationRunMigrationLinePayload {
+  readonly employeeSourceId: string;
+  readonly compensationProfileSourceId: string;
+  readonly attendanceSnapshotSourceId: string;
+  readonly expectedGrossMinor: number;
+  readonly expectedWithholdingTaxMinor: number;
+  readonly expectedNetMinor: number;
+}
+
+interface PayrollCalculationRunMigrationPayload extends MigrationEvidencePayload {
+  readonly periodSourceId: string;
+  readonly expectedPeriodVersion: number;
+  readonly runNumber: number;
+  readonly rulePackSourceId: string;
+  readonly rulePackVersion: number;
+  readonly lines: readonly PayrollCalculationRunMigrationLinePayload[];
+  readonly expectedEmployeeCount: number;
+  readonly expectedTotalGrossMinor: number;
+  readonly expectedTotalTaxMinor: number;
+  readonly expectedTotalNetMinor: number;
+  readonly completedAt: string;
+}
+
+function payrollCalculationRunPayload(
+  value: Readonly<Record<string, unknown>>,
+): PayrollCalculationRunMigrationPayload {
+  exactKeys(value, [
+    'completedAt', 'expectedEmployeeCount', 'expectedPeriodVersion',
+    'expectedTotalGrossMinor', 'expectedTotalNetMinor', 'expectedTotalTaxMinor', 'lines',
+    'periodSourceId', 'rulePackSourceId', 'rulePackVersion', 'runNumber',
+    'sourceEvidenceChecksum', 'sourceEvidenceSourceAttachmentId',
+  ]);
+  if (typeof value.periodSourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.periodSourceId) ||
+    typeof value.rulePackSourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.rulePackSourceId) ||
+    !migrationVersion(value.expectedPeriodVersion) || Number(value.expectedPeriodVersion) < 2 ||
+    !migrationVersion(value.runNumber) || !migrationVersion(value.rulePackVersion) ||
+    !Array.isArray(value.lines) || value.lines.length < 1 || value.lines.length > 5_000 ||
+    !Number.isSafeInteger(value.expectedEmployeeCount) ||
+    Number(value.expectedEmployeeCount) !== value.lines.length ||
+    !nonnegativeSafeInteger(value.expectedTotalGrossMinor) ||
+    !Number.isSafeInteger(value.expectedTotalTaxMinor) ||
+    !nonnegativeSafeInteger(value.expectedTotalNetMinor) ||
+    !isStrictUtcIso(value.completedAt) || !migrationEvidence(value)) throw invalidPayload();
+  const lines = value.lines.map((item) => {
+    if (!isPlainMigrationObject(item)) throw invalidPayload();
+    exactKeys(item, [
+      'attendanceSnapshotSourceId', 'compensationProfileSourceId', 'employeeSourceId',
+      'expectedGrossMinor', 'expectedNetMinor', 'expectedWithholdingTaxMinor',
+    ]);
+    if (typeof item.employeeSourceId !== 'string' ||
+      !SOURCE_ID_PATTERN.test(item.employeeSourceId) ||
+      typeof item.compensationProfileSourceId !== 'string' ||
+      !SOURCE_ID_PATTERN.test(item.compensationProfileSourceId) ||
+      typeof item.attendanceSnapshotSourceId !== 'string' ||
+      !SOURCE_ID_PATTERN.test(item.attendanceSnapshotSourceId) ||
+      !nonnegativeSafeInteger(item.expectedGrossMinor) ||
+      !Number.isSafeInteger(item.expectedWithholdingTaxMinor) ||
+      !nonnegativeSafeInteger(item.expectedNetMinor)) throw invalidPayload();
+    return {
+      employeeSourceId: item.employeeSourceId,
+      compensationProfileSourceId: item.compensationProfileSourceId,
+      attendanceSnapshotSourceId: item.attendanceSnapshotSourceId,
+      expectedGrossMinor: Number(item.expectedGrossMinor),
+      expectedWithholdingTaxMinor: Number(item.expectedWithholdingTaxMinor),
+      expectedNetMinor: Number(item.expectedNetMinor),
+    };
+  });
+  if (new Set(lines.map((line) => line.employeeSourceId)).size !== lines.length) {
+    throw invalidPayload();
+  }
+  return {
+    periodSourceId: value.periodSourceId,
+    expectedPeriodVersion: Number(value.expectedPeriodVersion),
+    runNumber: Number(value.runNumber), rulePackSourceId: value.rulePackSourceId,
+    rulePackVersion: Number(value.rulePackVersion), lines,
+    expectedEmployeeCount: Number(value.expectedEmployeeCount),
+    expectedTotalGrossMinor: Number(value.expectedTotalGrossMinor),
+    expectedTotalTaxMinor: Number(value.expectedTotalTaxMinor),
+    expectedTotalNetMinor: Number(value.expectedTotalNetMinor),
+    completedAt: value.completedAt,
+    sourceEvidenceSourceAttachmentId: value.sourceEvidenceSourceAttachmentId,
+    sourceEvidenceChecksum: value.sourceEvidenceChecksum,
+  };
+}
+
+function payrollCalculationRunAssociationSpecs(
+  payload: PayrollCalculationRunMigrationPayload,
+): readonly (AssociationEvidence & { readonly entityType: AssociationTargetType })[] {
+  return [
+    {
+      relationship: 'payroll_period', sourceAssociationId: payload.periodSourceId,
+      entityType: 'payroll.period',
+    },
+    {
+      relationship: 'rule_pack', sourceAssociationId: payload.rulePackSourceId,
+      entityType: 'payroll.rule_pack',
+    },
+    ...payload.lines.flatMap((line) => [
+      {
+        relationship: 'employee' as const, sourceAssociationId: line.employeeSourceId,
+        entityType: 'org.employee' as const,
+      },
+      {
+        relationship: 'compensation_profile' as const,
+        sourceAssociationId: line.compensationProfileSourceId,
+        entityType: 'payroll.compensation_profile' as const,
+      },
+      {
+        relationship: 'attendance_snapshot' as const,
+        sourceAssociationId: line.attendanceSnapshotSourceId,
+        entityType: 'attendance.monthly_snapshot' as const,
+      },
+    ]),
+  ];
+}
+
+function migrationEvidence(value: Readonly<Record<string, unknown>>): value is
+Readonly<Record<string, unknown>> & MigrationEvidencePayload {
+  return typeof value.sourceEvidenceSourceAttachmentId === 'string' &&
+    SOURCE_ID_PATTERN.test(value.sourceEvidenceSourceAttachmentId) &&
+    typeof value.sourceEvidenceChecksum === 'string' &&
+    HASH_PATTERN.test(value.sourceEvidenceChecksum);
+}
+
 function migrationApprovalAndEvidence(value: Readonly<Record<string, unknown>>): value is
 Readonly<Record<string, unknown>> & {
   approvalHistorySourceId: string;
@@ -3494,6 +3818,17 @@ function associationEvidence(input: ApplyDataMigrationRecordDto): readonly Assoc
           entityType: 'approval.history',
         },
       ];
+    } else if (input.entityType === 'payroll.period') {
+      const payload = payrollPeriodPayload(input.payload);
+      derived = [{
+        relationship: 'prepared_by',
+        sourceAssociationId: payload.preparedByEmployeeSourceId,
+        entityType: 'org.employee',
+      }];
+    } else if (input.entityType === 'payroll.calculation_run') {
+      derived = payrollCalculationRunAssociationSpecs(
+        payrollCalculationRunPayload(input.payload),
+      );
     } else if (input.entityType === 'attendance.monthly_snapshot') {
       const payload = attendanceMonthPayload(input.payload);
       derived = [
@@ -3632,6 +3967,8 @@ const ASSOCIATION_RELATIONSHIPS = [
   'candidate', 'application', 'interviewer', 'interview',
   'source_fact',
   'previous_snapshot',
+  'prepared_by', 'payroll_period', 'rule_pack',
+  'compensation_profile', 'attendance_snapshot',
   'declared_reference',
 ] as const;
 const ASSOCIATION_RELATIONSHIP_SET: ReadonlySet<string> = new Set(ASSOCIATION_RELATIONSHIPS);

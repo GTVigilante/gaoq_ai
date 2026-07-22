@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   PayrollCompensationProfileRecordSchema,
+  PayrollCalculationRunRecordSchema,
   PayrollPeriodRecordSchema,
   PayrollReconciliationRecordSchema,
   PayrollRulePackRecordSchema,
@@ -70,6 +71,33 @@ describe('Payroll 持久化契约', () => {
     await expect(new RuleModel({
       ...valid, migrationEvidenceChecksum: null,
     }).validate()).rejects.toThrow('必须成对出现');
+  });
+
+  it('迁移工资周期与计算运行要求唯一且成对的 WORM 证据', async () => {
+    const PeriodModel = mongoose.model('SpecPayrollMigrationPeriod', PayrollPeriodRecordSchema);
+    const RunModel = mongoose.model('SpecPayrollMigrationRun', PayrollCalculationRunRecordSchema);
+    const evidenceRef =
+      'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/payroll-001';
+    await expect(new PeriodModel({
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4P1', tenantId: 'tenant-001', period: '2026-06',
+      currency: 'CNY', status: 'collecting', preparedBy: 'actor-001', version: 2,
+      migrationEvidenceRef: evidenceRef, migrationEvidenceChecksum: null,
+    }).validate()).rejects.toThrow('必须成对出现');
+    await expect(new RunModel({
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4R1', tenantId: 'tenant-001',
+      periodId: '01J8ZQK7V0A2M4N6P8R0T2W4P1', period: '2026-06', runNumber: 1,
+      engineVersion: 'cn-cumulative-withholding-v1',
+      rulePackId: '01J8ZQK7V0A2M4N6P8R0T2W4T1', rulePackVersion: 1,
+      status: 'completed', inputSnapshotHash: 'i'.repeat(43), resultHash: 'r'.repeat(43),
+      employeeCount: 1, totalGrossMinor: 1, totalTaxMinor: 0, totalNetMinor: 1,
+      completedAt: new Date('2026-06-03T00:00:00.000Z'),
+      migrationEvidenceRef: evidenceRef, migrationEvidenceChecksum: null,
+    }).validate()).rejects.toThrow('必须成对出现');
+    for (const schema of [PayrollPeriodRecordSchema, PayrollCalculationRunRecordSchema]) {
+      expect(schema.indexes()).toContainEqual([
+        { tenantId: 1, migrationEvidenceRef: 1 }, expect.objectContaining({ unique: true }),
+      ]);
+    }
   });
 
   it('规则、周期与薪酬版本唯一约束均包含租户前缀', () => {

@@ -119,6 +119,8 @@ export class DataMigrationAssociationRecord {
       'application', 'interviewer', 'interview',
       'source_fact',
       'previous_snapshot',
+      'prepared_by', 'payroll_period', 'rule_pack',
+      'compensation_profile', 'attendance_snapshot',
       'declared_reference',
     ],
   })
@@ -155,6 +157,11 @@ export class DataMigrationAssociationRecord {
     | 'interview'
     | 'source_fact'
     | 'previous_snapshot'
+    | 'prepared_by'
+    | 'payroll_period'
+    | 'rule_pack'
+    | 'compensation_profile'
+    | 'attendance_snapshot'
     | 'declared_reference';
   @Prop({ type: String, required: true, immutable: true, match: SOURCE_ID })
   sourceAssociationId!: string;

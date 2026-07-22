@@ -12,6 +12,8 @@ export interface PayrollEvent {
     | 'payroll.period.created'
     | 'payroll.period.collecting'
     | 'payroll.run.completed'
+    | 'payroll.period.migrated'
+    | 'payroll.run.migrated'
     | 'payroll.compensation_profile.attested'
     | 'payroll.rule_pack.attested'
     | 'payroll.rule_pack.migrated'

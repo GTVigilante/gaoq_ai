@@ -23,6 +23,8 @@ export const DATA_MIGRATION_SCOPE_ENTITIES = Object.freeze({
   attendance_monthly_snapshots: Object.freeze(['attendance.monthly_snapshot']),
   payroll_rule_packs: Object.freeze(['payroll.rule_pack']),
   payroll_compensation_profiles: Object.freeze(['payroll.compensation_profile']),
+  payroll_periods: Object.freeze(['payroll.period']),
+  payroll_calculation_runs: Object.freeze(['payroll.calculation_run']),
 } as const);
 
 export type DataMigrationScope = keyof typeof DATA_MIGRATION_SCOPE_ENTITIES;
@@ -57,6 +59,8 @@ export const DATA_MIGRATION_SCOPE_WRITE_SCOPE: Readonly<Record<DataMigrationScop
     attendance_monthly_snapshots: 'erp:attendance:migration:write',
     payroll_rule_packs: 'erp:payroll:migration:write',
     payroll_compensation_profiles: 'erp:payroll:migration:write',
+    payroll_periods: 'erp:payroll:migration:write',
+    payroll_calculation_runs: 'erp:payroll:migration:write',
   });
 
 /** 附件分级只由服务端 Scope 决定，禁止来源包或客户端降级。 */
@@ -78,6 +82,8 @@ Readonly<Record<DataMigrationScope, DataMigrationDataClassification>> = Object.f
   attendance_monthly_snapshots: 'L4',
   payroll_rule_packs: 'L3',
   payroll_compensation_profiles: 'L4',
+  payroll_periods: 'L3',
+  payroll_calculation_runs: 'L4',
 });
 
 /** 失败关闭地校验实体是否属于本批次范围。 */

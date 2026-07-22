@@ -178,14 +178,32 @@ export class PayrollPeriodRecord {
   reconciliationEvidenceId!: string | null;
   @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN }) reconciledBy!: string | null;
   @Prop({ type: Number, required: true, min: 1 }) version!: number;
+  @Prop({
+    type: String, default: null, immutable: true, maxlength: 256,
+    match: MIGRATION_EVIDENCE_REF_PATTERN,
+  })
+  migrationEvidenceRef!: string | null;
+  @Prop({ type: String, default: null, immutable: true, match: HASH_PATTERN })
+  migrationEvidenceChecksum!: string | null;
   createdAt!: Date;
   updatedAt!: Date;
 }
 export type PayrollPeriodDocument = HydratedDocument<PayrollPeriodRecord>;
 export const PayrollPeriodRecordSchema = SchemaFactory.createForClass(PayrollPeriodRecord);
+PayrollPeriodRecordSchema.pre('validate', function () {
+  const record = this as PayrollPeriodRecord;
+  if ((record.migrationEvidenceRef === null) !==
+    (record.migrationEvidenceChecksum === null)) {
+    throw new Error('工资周期迁移证据引用与校验和必须成对出现');
+  }
+});
 PayrollPeriodRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 PayrollPeriodRecordSchema.index({ tenantId: 1, period: 1 }, { unique: true });
 PayrollPeriodRecordSchema.index({ tenantId: 1, status: 1, period: 1 });
+PayrollPeriodRecordSchema.index(
+  { tenantId: 1, migrationEvidenceRef: 1 },
+  { unique: true, partialFilterExpression: { migrationEvidenceRef: { $type: 'string' } } },
+);
 
 @Schema({ collection: 'payroll_calculation_runs', timestamps: true, versionKey: false, id: false })
 export class PayrollCalculationRunRecord {
@@ -209,6 +227,13 @@ export class PayrollCalculationRunRecord {
   @Prop({ type: Number, required: true, immutable: true }) totalTaxMinor!: number;
   @Prop({ type: Number, required: true, immutable: true, min: 0 }) totalNetMinor!: number;
   @Prop({ type: Date, required: true, immutable: true }) completedAt!: Date;
+  @Prop({
+    type: String, default: null, immutable: true, maxlength: 256,
+    match: MIGRATION_EVIDENCE_REF_PATTERN,
+  })
+  migrationEvidenceRef!: string | null;
+  @Prop({ type: String, default: null, immutable: true, match: HASH_PATTERN })
+  migrationEvidenceChecksum!: string | null;
   createdAt!: Date;
   updatedAt!: Date;
 }
@@ -216,8 +241,19 @@ export type PayrollCalculationRunDocument = HydratedDocument<PayrollCalculationR
 export const PayrollCalculationRunRecordSchema = SchemaFactory.createForClass(
   PayrollCalculationRunRecord,
 );
+PayrollCalculationRunRecordSchema.pre('validate', function () {
+  const record = this as PayrollCalculationRunRecord;
+  if ((record.migrationEvidenceRef === null) !==
+    (record.migrationEvidenceChecksum === null)) {
+    throw new Error('工资计算运行迁移证据引用与校验和必须成对出现');
+  }
+});
 PayrollCalculationRunRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 PayrollCalculationRunRecordSchema.index({ tenantId: 1, periodId: 1, runNumber: 1 }, { unique: true });
+PayrollCalculationRunRecordSchema.index(
+  { tenantId: 1, migrationEvidenceRef: 1 },
+  { unique: true, partialFilterExpression: { migrationEvidenceRef: { $type: 'string' } } },
+);
 
 @Schema({ collection: 'payroll_input_snapshots', timestamps: true, versionKey: false, id: false })
 export class PayrollInputSnapshotRecord extends ProtectedPayrollRecord {

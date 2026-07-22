@@ -10,6 +10,7 @@ import type { RecruitmentInterviewService } from '../../recruitment/application/
 import type { RecruitmentOfferService } from '../../recruitment/application/recruitment-offer.service.js';
 import type { AttendanceApplicationService } from '../../attendance/application/attendance-application.service.js';
 import type { PayrollMasterDataService } from '../../payroll/application/payroll-master-data.service.js';
+import type { PayrollRunService } from '../../payroll/application/payroll-run.service.js';
 import type {
   DataMigrationAssociationDocument,
   DataMigrationAttachmentDocument,
@@ -128,6 +129,14 @@ function payrollRulePacksRun() {
 
 function payrollCompensationProfilesRun() {
   return { ...run(), scope: 'payroll_compensation_profiles' as const };
+}
+
+function payrollPeriodsRun() {
+  return { ...run(), scope: 'payroll_periods' as const };
+}
+
+function payrollCalculationRunsRun() {
+  return { ...run(), scope: 'payroll_calculation_runs' as const };
 }
 
 function query<T>(value: T) { return { lean: () => ({ exec: () => Promise.resolve(value) }) }; }
@@ -1692,6 +1701,166 @@ describe('DataMigrationService', () => {
     );
     const item = items.create.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
     expect(JSON.stringify(item)).not.toMatch(/BASE|1000000|taxableEarnings/u);
+  });
+
+  it('工资周期迁移解析制单员工且只下发 draft/collecting 基线', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      period: '2026-06', status: 'collecting',
+      preparedByEmployeeSourceId: 'legacy-preparer-001',
+      createdAt: '2026-06-01T00:00:00.000Z', updatedAt: '2026-06-02T00:00:00.000Z',
+      sourceEvidenceSourceAttachmentId: 'payroll-period-001',
+      sourceEvidenceChecksum: 'p'.repeat(43),
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(payrollPeriodsRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const mappings = {
+      findOne: vi.fn((filter: { entityType: string }) => query(
+        filter.entityType === 'payroll.period' ? null : {
+          targetId: 'employee-preparer-001', targetVersion: 1,
+        },
+      )),
+      findOneAndUpdate: vi.fn().mockReturnValue(query({ targetId: 'period-001' })),
+    };
+    const associations = { findOneAndUpdate: vi.fn().mockReturnValue(query({})) };
+    const attachments = {
+      findOne: vi.fn().mockReturnValue(query(null)),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const payrollRuns = { importPeriodFromMigration: vi.fn().mockResolvedValue({
+      id: 'period-001', period: '2026-06', status: 'collecting', version: 2,
+    }) };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      mappings as unknown as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      payrollRuns as unknown as PayrollRunService,
+    );
+    const result = await trusted(context, () => service.apply(RUN_ID, {
+      sequence: 1, sourceRecordId: 'legacy-period-001', sourceVersion: '1',
+      entityType: 'payroll.period', payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: ['legacy-preparer-001'],
+      attachments: [{ sourceAttachmentId: 'payroll-period-001', checksum: 'p'.repeat(43) }],
+    }));
+    expect(result).toMatchObject({ status: 'applied', targetId: 'period-001' });
+    expect(payrollRuns.importPeriodFromMigration).toHaveBeenCalledWith(
+      expect.stringMatching(/^migration:/u),
+      expect.objectContaining({
+        preparedByEmployeeId: 'employee-preparer-001', status: 'collecting',
+      }),
+    );
+  });
+
+  it('工资计算迁移把所有来源引用映射为目标引用且账本不保存 L4 金额', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      periodSourceId: 'legacy-period-001', expectedPeriodVersion: 2, runNumber: 1,
+      rulePackSourceId: 'legacy-rule-001', rulePackVersion: 1,
+      lines: [{
+        employeeSourceId: 'legacy-employee-001',
+        compensationProfileSourceId: 'legacy-compensation-001',
+        attendanceSnapshotSourceId: 'legacy-attendance-001',
+        expectedGrossMinor: 1_000_000, expectedWithholdingTaxMinor: 20_000,
+        expectedNetMinor: 980_000,
+      }],
+      expectedEmployeeCount: 1, expectedTotalGrossMinor: 1_000_000,
+      expectedTotalTaxMinor: 20_000, expectedTotalNetMinor: 980_000,
+      completedAt: '2026-06-03T00:00:00.000Z',
+      sourceEvidenceSourceAttachmentId: 'payroll-run-001',
+      sourceEvidenceChecksum: 'r'.repeat(43),
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(payrollCalculationRunsRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const targetIds: Readonly<Record<string, string>> = {
+      'payroll.period': '01J8ZQK7V0A2M4N6P8R0T2W4P1',
+      'payroll.rule_pack': '01J8ZQK7V0A2M4N6P8R0T2W4R1',
+      'org.employee': 'employee-001',
+      'payroll.compensation_profile': '01J8ZQK7V0A2M4N6P8R0T2W4C1',
+      'attendance.monthly_snapshot': '01J8ZQK7V0A2M4N6P8R0T2W4A1',
+    };
+    const mappings = {
+      findOne: vi.fn((filter: { entityType: string }) => query(
+        filter.entityType === 'payroll.calculation_run' ? null : {
+          targetId: targetIds[filter.entityType], targetVersion: 1,
+        },
+      )),
+      find: vi.fn().mockReturnValue(query([
+        { entityType: 'payroll.period', sourceRecordId: 'legacy-period-001',
+          targetId: targetIds['payroll.period'] },
+        { entityType: 'payroll.rule_pack', sourceRecordId: 'legacy-rule-001',
+          targetId: targetIds['payroll.rule_pack'] },
+        { entityType: 'org.employee', sourceRecordId: 'legacy-employee-001',
+          targetId: targetIds['org.employee'] },
+        { entityType: 'payroll.compensation_profile',
+          sourceRecordId: 'legacy-compensation-001',
+          targetId: targetIds['payroll.compensation_profile'] },
+        { entityType: 'attendance.monthly_snapshot',
+          sourceRecordId: 'legacy-attendance-001',
+          targetId: targetIds['attendance.monthly_snapshot'] },
+      ])),
+      findOneAndUpdate: vi.fn().mockReturnValue(query({ targetId: 'run-001' })),
+    };
+    const associations = {
+      findOneAndUpdate: vi.fn().mockReturnValue(query({})),
+      bulkWrite: vi.fn().mockResolvedValue({}),
+    };
+    const attachments = {
+      findOne: vi.fn().mockReturnValue(query(null)),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const payrollRuns = { importCalculationRunFromMigration: vi.fn().mockResolvedValue({
+      id: 'run-001', version: 1, periodId: targetIds['payroll.period'], runNumber: 1,
+      inputSnapshotHash: 'i'.repeat(43), resultHash: 'r'.repeat(43), employeeCount: 1,
+      totalGrossMinor: 1_000_000, totalTaxMinor: 20_000, totalNetMinor: 980_000,
+    }) };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      mappings as unknown as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      payrollRuns as unknown as PayrollRunService,
+    );
+    const result = await trusted(context, () => service.apply(RUN_ID, {
+      sequence: 1, sourceRecordId: 'legacy-run-001', sourceVersion: '1',
+      entityType: 'payroll.calculation_run', payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: [
+        'legacy-period-001', 'legacy-rule-001', 'legacy-employee-001',
+        'legacy-compensation-001', 'legacy-attendance-001',
+      ],
+      attachments: [{ sourceAttachmentId: 'payroll-run-001', checksum: 'r'.repeat(43) }],
+    }));
+    expect(result).toMatchObject({ status: 'applied', targetId: 'run-001' });
+    expect(payrollRuns.importCalculationRunFromMigration).toHaveBeenCalledWith(
+      expect.stringMatching(/^migration:/u),
+      expect.objectContaining({
+        periodId: targetIds['payroll.period'], rulePackId: targetIds['payroll.rule_pack'],
+        lines: [expect.objectContaining({
+          employeeId: 'employee-001',
+          compensationProfileId: targetIds['payroll.compensation_profile'],
+          attendanceSnapshotId: targetIds['attendance.monthly_snapshot'],
+        })],
+      }),
+    );
+    const bulkOperations = associations.bulkWrite.mock.calls[0]?.[0] as unknown[];
+    expect(bulkOperations[0]).toMatchObject({ updateOne: { upsert: true } });
+    expect(associations.bulkWrite.mock.calls[0]?.[1]).toEqual({ ordered: true });
+    const item = items.create.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
+    expect(JSON.stringify(item)).not.toMatch(/1000000|980000|20000/u);
   });
 
   it('未解析关联和未决附件进入 Phase 6 硬门禁', async () => {

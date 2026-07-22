@@ -16,6 +16,7 @@ import {
   AttendanceMonthlySnapshotRecord,
   type AttendanceMonthlySnapshotDocument,
 } from '../../attendance/persistence/attendance.schemas.js';
+import { AccessProfileRepository } from '../../identity/access-profile.repository.js';
 import {
   calculatePayroll,
   createPayrollPeriod,
@@ -49,6 +50,10 @@ import {
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const MAX_EMPLOYEES_PER_RUN = 5_000;
 const PAYROLL_ENGINE_VERSION = 'cn-cumulative-withholding-v1';
+const HASH_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
+const MIGRATION_EVIDENCE_REF_PATTERN =
+  /^erp:\/\/data-migrations\/runs\/[0-7][0-9A-HJKMNP-TV-Z]{25}\/attachments\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 const componentSchema = z.object({
   code: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/),
@@ -104,6 +109,53 @@ export interface ExecutePayrollRunInput {
   readonly lines: readonly PayrollRunLineInput[];
 }
 
+export interface ImportPayrollPeriodFromMigrationInput {
+  readonly targetId: string | null;
+  readonly period: string;
+  readonly status: 'draft' | 'collecting';
+  readonly preparedByEmployeeId: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly migrationEvidenceRef: string;
+  readonly evidenceChecksum: string;
+}
+
+export interface ImportPayrollCalculationRunLineFromMigrationInput extends PayrollRunLineInput {
+  readonly expectedGrossMinor: number;
+  readonly expectedWithholdingTaxMinor: number;
+  readonly expectedNetMinor: number;
+}
+
+export interface ImportPayrollCalculationRunFromMigrationInput {
+  readonly targetId: string | null;
+  readonly periodId: string;
+  readonly expectedPeriodVersion: number;
+  readonly runNumber: number;
+  readonly rulePackId: string;
+  readonly rulePackVersion: number;
+  readonly lines: readonly ImportPayrollCalculationRunLineFromMigrationInput[];
+  readonly expectedEmployeeCount: number;
+  readonly expectedTotalGrossMinor: number;
+  readonly expectedTotalTaxMinor: number;
+  readonly expectedTotalNetMinor: number;
+  readonly completedAt: string;
+  readonly migrationEvidenceRef: string;
+  readonly evidenceChecksum: string;
+}
+
+export interface PayrollCalculationRunMigrationSummary extends Record<string, unknown> {
+  readonly id: string;
+  readonly version: number;
+  readonly periodId: string;
+  readonly runNumber: number;
+  readonly inputSnapshotHash: string;
+  readonly resultHash: string;
+  readonly employeeCount: number;
+  readonly totalGrossMinor: number;
+  readonly totalTaxMinor: number;
+  readonly totalNetMinor: number;
+}
+
 export interface PayrollPeriodSummary extends Record<string, unknown> {
   readonly id: string;
   readonly period: string;
@@ -134,12 +186,20 @@ export interface LockedPayrollDisbursementSource {
   }[];
 }
 
+interface CalculatedPayrollLine {
+  readonly input: PayrollCalculationInput;
+  readonly result: PayrollCalculationResult;
+  readonly reference: PayrollRunLineInput;
+  readonly attendanceSnapshotHash: string;
+}
+
 /** 工资周期与计算运行应用服务；仅系统任务可提交已冻结的规范输入。 */
 @Injectable()
 export class PayrollRunService {
   constructor(
     private readonly idempotency: IdempotencyService,
     private readonly context: TenantContextService,
+    private readonly profiles: AccessProfileRepository,
     private readonly crypto: PayrollDataCryptoService,
     private readonly outbox: PayrollOutboxWriter,
     @InjectModel(PayrollPeriodRecord.name)
@@ -157,6 +217,173 @@ export class PayrollRunService {
     @InjectModel(PayrollCalculationLineRecord.name)
     private readonly calculationLines: Model<PayrollCalculationLineDocument>,
   ) {}
+
+  /** 迁移专用：只恢复未进入计算/审批链的工资周期基线。 */
+  async importPeriodFromMigration(
+    key: string,
+    input: ImportPayrollPeriodFromMigrationInput,
+  ): Promise<PayrollPeriodSummary> {
+    this.assertMigrationWriter();
+    assertPeriodMigrationInput(input);
+    return this.run(() => this.idempotency.execute(
+      'payroll.period.import_from_migration', key, input, async (session) => {
+        const preparedBy = await this.profiles.findActorIdByEmployee(
+          this.tenantId(), input.preparedByEmployeeId, session,
+        );
+        if (preparedBy === null) throw new NotFoundException({
+          code: 'PAYROLL_MIGRATION_PREPARER_IDENTITY_NOT_FOUND',
+          message: '迁移工资周期制单员工未绑定可信身份',
+        });
+        if (input.targetId !== null) {
+          const existing = await this.periods.findOne({
+            tenantId: this.tenantId(), id: input.targetId,
+          }).session(session).lean().exec();
+          if (existing === null || existing.period !== input.period ||
+            existing.status !== input.status || existing.preparedBy !== preparedBy ||
+            existing.version !== (input.status === 'draft' ? 1 : 2) ||
+            existing.createdAt.toISOString() !== input.createdAt ||
+            existing.updatedAt.toISOString() !== input.updatedAt ||
+            existing.migrationEvidenceRef !== input.migrationEvidenceRef ||
+            existing.migrationEvidenceChecksum !== input.evidenceChecksum ||
+            existing.activeRunId !== null) throw new ConflictException({
+            code: 'PAYROLL_MIGRATION_PERIOD_IMMUTABLE',
+            message: '既有工资周期基线或 WORM 证据不一致，禁止覆盖',
+          });
+          return payrollPeriodSummary(payrollPeriodFromRecord(existing));
+        }
+        const createdAt = strictMigrationInstant(input.createdAt);
+        const updatedAt = strictMigrationInstant(input.updatedAt);
+        const id = createEventId(createdAt);
+        let period = createPayrollPeriod({
+          id, tenantId: this.tenantId(), period: input.period, preparedBy,
+        }, createdAt);
+        if (input.status === 'collecting') period = startPayrollCollection(period, {
+          tenantId: this.tenantId(), expectedVersion: 1,
+        }, updatedAt);
+        await this.periods.create([{
+          ...toPeriodRecord(period), createdAt, updatedAt,
+          migrationEvidenceRef: input.migrationEvidenceRef,
+          migrationEvidenceChecksum: input.evidenceChecksum,
+        }], { session });
+        await this.outbox.append({
+          type: 'payroll.period.migrated', tenantId: period.tenantId,
+          aggregateId: period.id, version: period.version, occurredAt: period.updatedAt,
+          data: { period: period.period, status: period.status },
+        }, session);
+        return payrollPeriodSummary(period);
+      },
+    ));
+  }
+
+  /** 迁移专用：使用目标规则、薪酬与考勤事实重算，拒绝来源结果直写。 */
+  async importCalculationRunFromMigration(
+    key: string,
+    input: ImportPayrollCalculationRunFromMigrationInput,
+  ): Promise<PayrollCalculationRunMigrationSummary> {
+    this.assertMigrationWriter();
+    assertCalculationRunMigrationInput(input);
+    return this.run(() => this.idempotency.execute(
+      'payroll.run.import_from_migration', key, input, async (session) => {
+        const current = await this.periods.findOne({
+          tenantId: this.tenantId(), id: input.periodId,
+        }).session(session).lean().exec();
+        if (current === null) throw new NotFoundException({
+          code: 'PAYROLL_MIGRATION_PERIOD_NOT_FOUND', message: '迁移工资周期不存在',
+        });
+        if (input.targetId !== null) {
+          return this.verifyMigratedRunReplay(current, input, session);
+        }
+        const expectedStatus = input.runNumber === 1 ? 'collecting' : 'review';
+        if (current.status !== expectedStatus || current.version !== input.expectedPeriodVersion) {
+          throw new ConflictException({
+            code: 'PAYROLL_MIGRATION_PERIOD_STATE_INVALID',
+            message: '迁移计算只能按运行序号写入声明版本的采集或复核周期',
+          });
+        }
+        const rulePack = await this.requireEffectiveRulePack(
+          current, input.rulePackId, input.rulePackVersion, session,
+        );
+        const priorRun = await this.runs.findOne({
+          tenantId: this.tenantId(), periodId: current.id,
+        }).sort({ runNumber: -1 }).session(session).lean().exec();
+        if ((priorRun?.runNumber ?? 0) + 1 !== input.runNumber) throw new ConflictException({
+          code: 'PAYROLL_MIGRATION_RUN_CHAIN_INVALID', message: '迁移工资运行序号不连续',
+        });
+        if (priorRun === null && (current.activeRunId !== null ||
+          current.inputSnapshotHash !== null || current.resultHash !== null ||
+          current.employeeCount !== null || current.totalGrossMinor !== null ||
+          current.totalTaxMinor !== null || current.totalNetMinor !== null)) {
+          throw new ConflictException({
+            code: 'PAYROLL_MIGRATION_RUN_CHAIN_INVALID',
+            message: '迁移工资首个运行的周期基线不为空',
+          });
+        }
+        if (priorRun !== null && (priorRun.migrationEvidenceRef === null ||
+          priorRun.migrationEvidenceChecksum === null || current.activeRunId !== priorRun.id ||
+          current.inputSnapshotHash !== priorRun.inputSnapshotHash ||
+          current.resultHash !== priorRun.resultHash ||
+          current.employeeCount !== priorRun.employeeCount ||
+          current.totalGrossMinor !== priorRun.totalGrossMinor ||
+          current.totalTaxMinor !== priorRun.totalTaxMinor ||
+          current.totalNetMinor !== priorRun.totalNetMinor)) throw new ConflictException({
+          code: 'PAYROLL_MIGRATION_PRIOR_RUN_INTEGRITY_FAILED',
+          message: '迁移工资前一运行不是完整可信的迁移重算结果',
+        });
+        const completedAt = strictMigrationInstant(input.completedAt);
+        if (completedAt.getTime() < current.updatedAt.getTime()) throw new BadRequestException({
+          code: 'PAYROLL_MIGRATION_RUN_TIME_INVALID', message: '计算完成时间早于工资周期基线',
+        });
+        const calculated = await this.calculateLines(
+          current, input.lines.map(lineReference), toRuleSnapshot(rulePack), session, true,
+        );
+        assertMigrationRunControls(input, calculated);
+        const runId = createEventId(completedAt);
+        const inputSnapshotHash = payrollDigest(calculated.map((line) => ({
+          employeeId: line.input.employeeId,
+          compensationProfileId: line.reference.compensationProfileId,
+          attendanceSnapshotId: line.reference.attendanceSnapshotId,
+          attendanceSnapshotHash: line.attendanceSnapshotHash,
+          inputHash: line.result.inputHash,
+        })));
+        const resultHash = payrollDigest(calculated.map((line) => ({
+          employeeId: line.input.employeeId, resultHash: line.result.resultHash,
+        })));
+        const totals = totalsOf(calculated.map((line) => line.result));
+        const firstLine = required(calculated[0]);
+        const runRecord = {
+          id: runId, tenantId: this.tenantId(), periodId: current.id, period: current.period,
+          runNumber: input.runNumber, engineVersion: firstLine.input.engineVersion,
+          rulePackId: rulePack.id, rulePackVersion: rulePack.version, status: 'completed' as const,
+          inputSnapshotHash, resultHash, employeeCount: calculated.length, ...totals,
+          completedAt, createdAt: completedAt, updatedAt: completedAt,
+          migrationEvidenceRef: input.migrationEvidenceRef,
+          migrationEvidenceChecksum: input.evidenceChecksum,
+        };
+        await this.runs.create([runRecord], { session });
+        await this.writeCalculatedLines(current, runId, calculated, completedAt, session);
+        const next = recordPayrollCalculation(payrollPeriodFromRecord(current), {
+          tenantId: this.tenantId(), expectedVersion: input.expectedPeriodVersion,
+          run: {
+            id: runId, inputSnapshotHash, resultHash, employeeCount: calculated.length,
+            totalGrossMinor: totals.totalGrossMinor, totalTaxMinor: totals.totalTaxMinor,
+            totalNetMinor: totals.totalNetMinor,
+          },
+        }, completedAt);
+        await this.replacePeriod(current, next, session, true);
+        await this.outbox.append({
+          type: 'payroll.run.migrated', tenantId: next.tenantId,
+          aggregateId: next.id, version: next.version, occurredAt: next.updatedAt,
+          data: {
+            period: next.period, status: next.status, runId,
+            inputSnapshotHash, resultHash, employeeCount: calculated.length,
+            totalGrossMinor: totals.totalGrossMinor, totalTaxMinor: totals.totalTaxMinor,
+            totalNetMinor: totals.totalNetMinor,
+          },
+        }, session);
+        return migrationRunSummary(runRecord);
+      },
+    ));
+  }
 
   async createPeriod(key: string, period: string): Promise<PayrollPeriodSummary> {
     this.assertScope('erp:payroll:period:create');
@@ -393,12 +620,161 @@ export class PayrollRunService {
     });
   }
 
+  private async requireEffectiveRulePack(
+    period: PayrollPeriodRecord,
+    rulePackId: string,
+    rulePackVersion: number,
+    session: ClientSession,
+  ): Promise<PayrollRulePackRecord> {
+    const rulePack = await this.rulePacks.findOne({
+      tenantId: this.tenantId(), id: rulePackId, version: rulePackVersion,
+      status: 'published', effectiveFrom: { $lte: `${period.period}-01` },
+      $or: [{ effectiveTo: null }, { effectiveTo: { $gte: monthEnd(period.period) } }],
+    }).session(session).lean().exec();
+    if (rulePack === null) throw new Error('PAYROLL_RULE_PACK_NOT_EFFECTIVE');
+    if (payrollDigest(toRuleSnapshot(rulePack)) !== rulePack.rulesHash) {
+      throw new Error('PAYROLL_RULE_PACK_INTEGRITY_FAILED');
+    }
+    return rulePack;
+  }
+
+  private async writeCalculatedLines(
+    period: PayrollPeriodRecord,
+    runId: string,
+    calculated: readonly CalculatedPayrollLine[],
+    occurredAt: Date,
+    session: ClientSession,
+  ): Promise<void> {
+    for (let offset = 0; offset < calculated.length; offset += 250) {
+      const chunk = calculated.slice(offset, offset + 250);
+      const snapshotRecords = chunk.map((line) => {
+        const id = createEventId(occurredAt);
+        const protectedData = this.crypto.protect({
+          tenantId: this.tenantId(), resourceType: 'input_snapshot', resourceId: id, version: 1,
+        }, line.input);
+        return {
+          id, tenantId: this.tenantId(), runId, periodId: period.id,
+          employeeId: line.input.employeeId,
+          compensationProfileId: line.reference.compensationProfileId,
+          attendanceSnapshotId: line.reference.attendanceSnapshotId,
+          attendanceSnapshotHash: line.attendanceSnapshotHash,
+          inputHash: line.result.inputHash, ...protectedRecord(protectedData),
+          createdAt: occurredAt, updatedAt: occurredAt,
+        };
+      });
+      const calculationRecords = chunk.map((line) => {
+        const id = createEventId(occurredAt);
+        const protectedData = this.crypto.protect({
+          tenantId: this.tenantId(), resourceType: 'calculation_line', resourceId: id, version: 1,
+        }, line.result);
+        return {
+          id, tenantId: this.tenantId(), runId, periodId: period.id,
+          employeeId: line.input.employeeId, resultHash: line.result.resultHash,
+          ...protectedRecord(protectedData), createdAt: occurredAt, updatedAt: occurredAt,
+        };
+      });
+      await this.snapshots.create(snapshotRecords, { session });
+      await this.calculationLines.create(calculationRecords, { session });
+    }
+  }
+
+  private async verifyMigratedRunReplay(
+    period: PayrollPeriodRecord,
+    input: ImportPayrollCalculationRunFromMigrationInput,
+    session: ClientSession,
+  ): Promise<PayrollCalculationRunMigrationSummary> {
+    const run = await this.runs.findOne({
+      tenantId: this.tenantId(), id: input.targetId,
+    }).session(session).lean().exec();
+    if (run === null || run.periodId !== input.periodId || run.period !== period.period ||
+      run.runNumber !== input.runNumber || run.engineVersion !== PAYROLL_ENGINE_VERSION ||
+      run.rulePackId !== input.rulePackId || run.rulePackVersion !== input.rulePackVersion ||
+      run.status !== 'completed' || run.employeeCount !== input.expectedEmployeeCount ||
+      run.totalGrossMinor !== input.expectedTotalGrossMinor ||
+      run.totalTaxMinor !== input.expectedTotalTaxMinor ||
+      run.totalNetMinor !== input.expectedTotalNetMinor ||
+      run.completedAt.toISOString() !== input.completedAt ||
+      run.createdAt.toISOString() !== input.completedAt ||
+      run.updatedAt.toISOString() !== input.completedAt ||
+      run.migrationEvidenceRef !== input.migrationEvidenceRef ||
+      run.migrationEvidenceChecksum !== input.evidenceChecksum ||
+      period.status !== 'review' || period.version !== input.expectedPeriodVersion + 1 ||
+      period.activeRunId !== run.id || period.inputSnapshotHash !== run.inputSnapshotHash ||
+      period.resultHash !== run.resultHash || period.employeeCount !== run.employeeCount ||
+      period.totalGrossMinor !== run.totalGrossMinor || period.totalTaxMinor !== run.totalTaxMinor ||
+      period.totalNetMinor !== run.totalNetMinor ||
+      period.updatedAt.toISOString() !== input.completedAt) throw new ConflictException({
+      code: 'PAYROLL_MIGRATION_RUN_IMMUTABLE',
+      message: '既有工资计算运行、周期引用或 WORM 证据不一致，禁止覆盖',
+    });
+    const [snapshots, resultLines] = await Promise.all([
+      this.snapshots.find({ tenantId: this.tenantId(), runId: run.id })
+        .sort({ employeeId: 1 }).session(session).lean().exec(),
+      this.calculationLines.find({ tenantId: this.tenantId(), runId: run.id })
+        .sort({ employeeId: 1 }).session(session).lean().exec(),
+    ]);
+    const expected = [...input.lines].sort((left, right) =>
+      left.employeeId.localeCompare(right.employeeId));
+    if (snapshots.length !== expected.length || resultLines.length !== expected.length) {
+      throw migratedRunImmutable();
+    }
+    const verified: PayrollCalculationResult[] = [];
+    for (const [index, expectedLine] of expected.entries()) {
+      const snapshot = required(snapshots[index]);
+      const resultLine = required(resultLines[index]);
+      if (snapshot.employeeId !== expectedLine.employeeId ||
+        resultLine.employeeId !== expectedLine.employeeId ||
+        snapshot.compensationProfileId !== expectedLine.compensationProfileId ||
+        snapshot.attendanceSnapshotId !== expectedLine.attendanceSnapshotId) {
+        throw migratedRunImmutable();
+      }
+      const protectedInput = this.crypto.unprotect({
+        tenantId: this.tenantId(), resourceType: 'input_snapshot',
+        resourceId: snapshot.id, version: 1,
+      }, protectedValue(snapshot)) as PayrollCalculationInput;
+      if (protectedInput.tenantId !== this.tenantId() ||
+        protectedInput.employeeId !== expectedLine.employeeId ||
+        protectedInput.period !== period.period || protectedInput.currency !== 'CNY' ||
+        protectedInput.engineVersion !== PAYROLL_ENGINE_VERSION ||
+        protectedInput.rulePack.id !== input.rulePackId ||
+        protectedInput.rulePack.version !== input.rulePackVersion) throw migratedRunImmutable();
+      const recalculated = calculatePayroll(protectedInput);
+      const stored = payrollResultSchema.parse(this.crypto.unprotect({
+        tenantId: this.tenantId(), resourceType: 'calculation_line',
+        resourceId: resultLine.id, version: 1,
+      }, protectedValue(resultLine)));
+      if (recalculated.inputHash !== snapshot.inputHash ||
+        recalculated.resultHash !== resultLine.resultHash ||
+        payrollDigest(recalculated) !== payrollDigest(stored) ||
+        stored.grossPayMinor !== expectedLine.expectedGrossMinor ||
+        stored.withholdingTaxMinor !== expectedLine.expectedWithholdingTaxMinor ||
+        stored.netPayMinor !== expectedLine.expectedNetMinor) throw migratedRunImmutable();
+      verified.push(recalculated);
+    }
+    const inputSnapshotHash = payrollDigest(snapshots.map((snapshot) => ({
+      employeeId: snapshot.employeeId,
+      compensationProfileId: snapshot.compensationProfileId,
+      attendanceSnapshotId: snapshot.attendanceSnapshotId,
+      attendanceSnapshotHash: snapshot.attendanceSnapshotHash,
+      inputHash: snapshot.inputHash,
+    })));
+    const resultHash = payrollDigest(resultLines.map((line) => ({
+      employeeId: line.employeeId, resultHash: line.resultHash,
+    })));
+    const totals = totalsOf(verified);
+    if (inputSnapshotHash !== run.inputSnapshotHash || resultHash !== run.resultHash ||
+      totals.totalGrossMinor !== run.totalGrossMinor || totals.totalTaxMinor !== run.totalTaxMinor ||
+      totals.totalNetMinor !== run.totalNetMinor) throw migratedRunImmutable();
+    return migrationRunSummary(run);
+  }
+
   private async calculateLines(
     period: PayrollPeriodRecord,
     lines: readonly PayrollRunLineInput[],
     rulePack: PayrollRulePackSnapshot,
     session: ClientSession,
-  ) {
+    allowMigratedPrior = false,
+  ): Promise<readonly CalculatedPayrollLine[]> {
     const sorted = [...lines].sort((left, right) => left.employeeId.localeCompare(right.employeeId));
     const output: Array<{
       readonly input: PayrollCalculationInput;
@@ -429,7 +805,7 @@ export class PayrollRunService {
         throw new Error('PAYROLL_COMPENSATION_PROFILE_INTEGRITY_FAILED');
       }
       const cumulativeBefore = await this.resolveCumulativeBefore(
-        period, line.employeeId, session,
+        period, line.employeeId, session, allowMigratedPrior,
       );
       const overtimePayMinor = safeMultiply(
         attendance.overtimeMinutes,
@@ -475,17 +851,39 @@ export class PayrollRunService {
     period: PayrollPeriodRecord,
     employeeId: string,
     session: ClientSession,
+    allowMigratedPrior: boolean,
   ): Promise<PayrollCalculationInput['cumulativeBefore']> {
+    const trustedStatuses: PayrollPeriod['status'][] = allowMigratedPrior
+      ? ['review', 'pending_approval', 'approved', 'locked', 'disbursing', 'reconciling', 'reconciled']
+      : ['locked', 'disbursing', 'reconciling', 'reconciled'];
     const previousPeriods = await this.periods.find({
       tenantId: this.tenantId(), period: {
         $gte: `${period.period.slice(0, 4)}-01`, $lt: period.period,
       },
-      status: { $in: ['locked', 'disbursing', 'reconciling', 'reconciled'] },
+      status: { $in: trustedStatuses },
       activeRunId: { $type: 'string' },
     }).sort({ period: -1 }).limit(12).session(session).lean().exec();
     let previousLine: PayrollCalculationLineRecord | null = null;
     for (const previousPeriod of previousPeriods) {
       if (previousPeriod.activeRunId === null) continue;
+      if (['review', 'pending_approval', 'approved'].includes(previousPeriod.status)) {
+        const migratedRun = await this.runs.findOne({
+          tenantId: this.tenantId(), id: previousPeriod.activeRunId,
+          periodId: previousPeriod.id, status: 'completed',
+        }).session(session).lean().exec();
+        if (migratedRun === null || (migratedRun.migrationEvidenceRef === null &&
+          migratedRun.migrationEvidenceChecksum === null)) continue;
+        if (migratedRun.migrationEvidenceRef === null ||
+          migratedRun.migrationEvidenceChecksum === null ||
+          migratedRun.resultHash !== previousPeriod.resultHash ||
+          migratedRun.inputSnapshotHash !== previousPeriod.inputSnapshotHash ||
+          migratedRun.employeeCount !== previousPeriod.employeeCount ||
+          migratedRun.totalGrossMinor !== previousPeriod.totalGrossMinor ||
+          migratedRun.totalTaxMinor !== previousPeriod.totalTaxMinor ||
+          migratedRun.totalNetMinor !== previousPeriod.totalNetMinor) {
+          throw new Error('PAYROLL_MIGRATION_PRIOR_RUN_INTEGRITY_FAILED');
+        }
+      }
       previousLine = await this.calculationLines.findOne({
         tenantId: this.tenantId(), runId: previousPeriod.activeRunId, employeeId,
       }).session(session).lean().exec();
@@ -510,11 +908,18 @@ export class PayrollRunService {
     current: PayrollPeriodRecord,
     next: PayrollPeriod,
     session: ClientSession,
+    preserveHistoricalTimestamp = false,
   ): Promise<void> {
     const result = await this.periods.updateOne(
       { tenantId: this.tenantId(), id: current.id, version: current.version, status: current.status },
-      { $set: toMutablePayrollPeriodRecord(next) },
-      { session, runValidators: true },
+      { $set: {
+        ...toMutablePayrollPeriodRecord(next),
+        ...(preserveHistoricalTimestamp ? { updatedAt: new Date(next.updatedAt) } : {}),
+      } },
+      {
+        session, runValidators: true,
+        ...(preserveHistoricalTimestamp ? { timestamps: false } : {}),
+      },
     );
     if (result.modifiedCount !== 1) throw new Error('PAYROLL_PERIOD_WRITE_CONFLICT');
   }
@@ -575,6 +980,18 @@ export class PayrollRunService {
     if (!this.context.getActorRequired().scopes.includes(scope)) throw new ForbiddenException({
       code: 'AUTH_SCOPE_DENIED', message: '缺少工资业务权限',
     });
+  }
+
+  private assertMigrationWriter(): void {
+    const actor = this.context.getActorRequired();
+    if (!['service', 'system_job'].includes(actor.actorType) ||
+      !actor.scopes.includes('erp:migration:execute') ||
+      !actor.scopes.includes('erp:payroll:migration:write')) {
+      throw new ForbiddenException({
+        code: 'PAYROLL_MIGRATION_WRITER_DENIED',
+        message: '工资运行迁移必须由受信任服务身份执行',
+      });
+    }
   }
 
   private tenantId(): string { return this.context.getTenantRequired().tenantId; }
@@ -654,6 +1071,26 @@ export function payrollPeriodSummary(period: PayrollPeriod): PayrollPeriodSummar
   });
 }
 
+function migrationRunSummary(record: {
+  readonly id: string;
+  readonly periodId: string;
+  readonly runNumber: number;
+  readonly inputSnapshotHash: string;
+  readonly resultHash: string;
+  readonly employeeCount: number;
+  readonly totalGrossMinor: number;
+  readonly totalTaxMinor: number;
+  readonly totalNetMinor: number;
+}): PayrollCalculationRunMigrationSummary {
+  return Object.freeze({
+    id: record.id, version: record.runNumber, periodId: record.periodId,
+    runNumber: record.runNumber, inputSnapshotHash: record.inputSnapshotHash,
+    resultHash: record.resultHash, employeeCount: record.employeeCount,
+    totalGrossMinor: record.totalGrossMinor, totalTaxMinor: record.totalTaxMinor,
+    totalNetMinor: record.totalNetMinor,
+  });
+}
+
 function totalsOf(results: readonly PayrollCalculationResult[]) {
   const values = results.reduce((totals, result) => ({
     gross: totals.gross + BigInt(result.grossPayMinor),
@@ -720,6 +1157,115 @@ function safeAddMinor(left: number, right: number): number {
   const result = BigInt(left) + BigInt(right);
   if (result > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('PAYROLL_AMOUNT_OVERFLOW');
   return Number(result);
+}
+
+function assertPeriodMigrationInput(input: ImportPayrollPeriodFromMigrationInput): void {
+  const createdAt = strictMigrationInstant(input.createdAt);
+  const updatedAt = strictMigrationInstant(input.updatedAt);
+  if (Object.keys(input).sort().join(',') !==
+      'createdAt,evidenceChecksum,migrationEvidenceRef,period,preparedByEmployeeId,status,targetId,updatedAt' ||
+    (input.targetId !== null && !ULID_PATTERN.test(input.targetId)) ||
+    !/^\d{4}-(0[1-9]|1[0-2])$/.test(input.period) ||
+    !['draft', 'collecting'].includes(input.status) ||
+    !ID_PATTERN.test(input.preparedByEmployeeId) ||
+    !MIGRATION_EVIDENCE_REF_PATTERN.test(input.migrationEvidenceRef) ||
+    !HASH_PATTERN.test(input.evidenceChecksum) || updatedAt.getTime() < createdAt.getTime() ||
+    (input.status === 'draft' && updatedAt.getTime() !== createdAt.getTime())) {
+    throw new BadRequestException({
+      code: 'PAYROLL_MIGRATION_PERIOD_INPUT_INVALID', message: '迁移工资周期基线非法',
+    });
+  }
+}
+
+function assertCalculationRunMigrationInput(
+  input: ImportPayrollCalculationRunFromMigrationInput,
+): void {
+  strictMigrationInstant(input.completedAt);
+  if (Object.keys(input).sort().join(',') !==
+      'completedAt,evidenceChecksum,expectedEmployeeCount,expectedPeriodVersion,expectedTotalGrossMinor,expectedTotalNetMinor,expectedTotalTaxMinor,lines,migrationEvidenceRef,periodId,rulePackId,rulePackVersion,runNumber,targetId' ||
+    (input.targetId !== null && !ULID_PATTERN.test(input.targetId)) ||
+    !ULID_PATTERN.test(input.periodId) || !ULID_PATTERN.test(input.rulePackId) ||
+    !Number.isSafeInteger(input.expectedPeriodVersion) || input.expectedPeriodVersion < 2 ||
+    !Number.isSafeInteger(input.runNumber) || input.runNumber < 1 || input.runNumber > 10_000 ||
+    input.expectedPeriodVersion !== input.runNumber + 1 ||
+    !Number.isSafeInteger(input.rulePackVersion) || input.rulePackVersion < 1 ||
+    input.lines.length < 1 || input.lines.length > MAX_EMPLOYEES_PER_RUN ||
+    input.expectedEmployeeCount !== input.lines.length ||
+    !Number.isSafeInteger(input.expectedEmployeeCount) ||
+    !nonnegativeSafeInteger(input.expectedTotalGrossMinor) ||
+    !Number.isSafeInteger(input.expectedTotalTaxMinor) ||
+    !nonnegativeSafeInteger(input.expectedTotalNetMinor) ||
+    !MIGRATION_EVIDENCE_REF_PATTERN.test(input.migrationEvidenceRef) ||
+    !HASH_PATTERN.test(input.evidenceChecksum) ||
+    new Set(input.lines.map((line) => line.employeeId)).size !== input.lines.length) {
+    throw new BadRequestException({
+      code: 'PAYROLL_MIGRATION_RUN_INPUT_INVALID', message: '迁移工资计算运行控制信息非法',
+    });
+  }
+  for (const line of input.lines) {
+    if (Object.keys(line).sort().join(',') !==
+      'attendanceSnapshotId,compensationProfileId,employeeId,expectedGrossMinor,expectedNetMinor,expectedWithholdingTaxMinor' ||
+      !ID_PATTERN.test(line.employeeId) || !ULID_PATTERN.test(line.compensationProfileId) ||
+      !ULID_PATTERN.test(line.attendanceSnapshotId) ||
+      !nonnegativeSafeInteger(line.expectedGrossMinor) ||
+      !Number.isSafeInteger(line.expectedWithholdingTaxMinor) ||
+      !nonnegativeSafeInteger(line.expectedNetMinor)) throw new BadRequestException({
+      code: 'PAYROLL_MIGRATION_RUN_LINE_INVALID', message: '迁移工资员工行引用或控制金额非法',
+    });
+  }
+}
+
+function assertMigrationRunControls(
+  input: ImportPayrollCalculationRunFromMigrationInput,
+  calculated: readonly CalculatedPayrollLine[],
+): void {
+  const expected = new Map(input.lines.map((line) => [line.employeeId, line]));
+  for (const line of calculated) {
+    const declared = expected.get(line.input.employeeId);
+    if (declared === undefined || line.result.grossPayMinor !== declared.expectedGrossMinor ||
+      line.result.withholdingTaxMinor !== declared.expectedWithholdingTaxMinor ||
+      line.result.netPayMinor !== declared.expectedNetMinor) throw new ConflictException({
+      code: 'PAYROLL_MIGRATION_RUN_LINE_MISMATCH',
+      message: '目标确定性重算与来源员工行控制金额不一致',
+    });
+  }
+  const totals = totalsOf(calculated.map((line) => line.result));
+  if (calculated.length !== input.expectedEmployeeCount ||
+    totals.totalGrossMinor !== input.expectedTotalGrossMinor ||
+    totals.totalTaxMinor !== input.expectedTotalTaxMinor ||
+    totals.totalNetMinor !== input.expectedTotalNetMinor) throw new ConflictException({
+    code: 'PAYROLL_MIGRATION_RUN_TOTAL_MISMATCH',
+    message: '目标确定性重算与来源工资运行汇总不一致',
+  });
+}
+
+function lineReference(
+  line: ImportPayrollCalculationRunLineFromMigrationInput,
+): PayrollRunLineInput {
+  return {
+    employeeId: line.employeeId, compensationProfileId: line.compensationProfileId,
+    attendanceSnapshotId: line.attendanceSnapshotId,
+  };
+}
+
+function strictMigrationInstant(value: string): Date {
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString() !== value ||
+    parsed.getTime() > Date.now() + 5 * 60 * 1_000) throw new BadRequestException({
+    code: 'PAYROLL_MIGRATION_TIME_INVALID', message: '薪资迁移时间必须为历史 UTC 毫秒时间',
+  });
+  return parsed;
+}
+
+function nonnegativeSafeInteger(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+function migratedRunImmutable(): ConflictException {
+  return new ConflictException({
+    code: 'PAYROLL_MIGRATION_RUN_IMMUTABLE',
+    message: '既有工资计算运行、密文快照或控制金额不一致，禁止覆盖',
+  });
 }
 
 function required<T>(value: T): NonNullable<T> {

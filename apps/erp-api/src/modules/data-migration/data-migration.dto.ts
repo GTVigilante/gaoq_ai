@@ -47,7 +47,7 @@ export class ApplyDataMigrationRecordDto {
   @IsEnum(DATA_MIGRATION_ENTITY_TYPES) entityType!: DataMigrationEntityType;
   @IsObject() payload!: Readonly<Record<string, unknown>>;
   @IsString() @Length(43, 43) @Matches(HASH) payloadHash!: string;
-  @IsArray() @ArrayMaxSize(100) @IsString({ each: true }) @Matches(SOURCE_ID, { each: true })
+  @IsArray() @ArrayMaxSize(20_000) @IsString({ each: true }) @Matches(SOURCE_ID, { each: true })
   associationSourceIds!: string[];
   @IsArray() @ArrayMaxSize(20) @ValidateNested({ each: true }) @Type(() => MigrationAttachmentDto)
   attachments!: MigrationAttachmentDto[];
