@@ -10,7 +10,7 @@ Phase 5 在已验收的组织、审批、招聘入职、考勤薪酬底座之上
 3. [OP 身份联合](./03-op-identity-federation-contract.md)（运行时代码已交付，初始绑定迁移与实体 UAT 待验收）
 4. [OP 审批桥契约](./04-op-approval-bridge-contract.md)（运行时代码已交付，OP 沙箱联调待验收）
    - [OP 审批桥索引迁移运行手册](./05-op-approval-index-migration-runbook.md)
-5. [移动工作台契约](./06-mobile-workbench-contract.md)（H5 首页与审批待办首切片已交付，决策/知识/小程序容器待续）
+5. [移动工作台契约](./06-mobile-workbench-contract.md)（H5 首页、审批待办/详情/时间线、R1 决策与模板驱动发起已交付；转交/加签/委托、知识、小程序容器及实体 UAT 待续）
 6. [管理驾驶舱与受控分析导出契约](./07-management-dashboard-contract.md)（Web、REST、MCP 与 R2 异步导出代码已交付，生产数据与管理层 UAT 待验收）
    - [管理分析索引迁移运行手册](./08-analytics-index-migration-runbook.md)
 7. [全量/增量迁移控制面契约](./09-data-migration-control-plane.md)（通用账本、组织参考数据与员工适配器已交付，其余领域与三次演练待续）

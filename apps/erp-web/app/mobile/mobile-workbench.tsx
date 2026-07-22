@@ -13,6 +13,7 @@ import {
   type ApprovalView,
 } from '../lib/approval-contract';
 import { createIdempotencyKey, ErpApiError, erpFetch, strongEtag } from '../lib/api-client';
+import { MobileApprovalInitiation } from './mobile-approval-initiation';
 
 type MobileTab = 'home' | 'approvals' | 'knowledge' | 'profile';
 const STATUS_LABEL: Readonly<Record<ApprovalStatus, string>> = {
@@ -31,6 +32,7 @@ export function MobileWorkbench() {
   const [detailState, setDetailState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [detailError, setDetailError] = useState<string | null>(null);
   const [writing, setWriting] = useState(false);
+  const [initiating, setInitiating] = useState(false);
 
   const loadApprovals = useCallback(async (signal?: AbortSignal): Promise<void> => {
     setState('loading');
@@ -114,7 +116,10 @@ export function MobileWorkbench() {
       <div className="mobile-content">
         {tab === 'home' ? <HomePanel approvals={approvals} state={state} onOpen={() => setTab('approvals')} /> : null}
         {tab === 'approvals' ? (
-          <ApprovalPanel approvals={approvals} state={state} onRetry={() => { void loadApprovals(); }} onOpen={(id) => { void openApproval(id); }} />
+          <>
+            <div className="mobile-approval-toolbar"><p>只显示当前身份有权处理的待办。</p><button type="button" onClick={() => setInitiating(true)}>发起审批</button></div>
+            <ApprovalPanel approvals={approvals} state={state} onRetry={() => { void loadApprovals(); }} onOpen={(id) => { void openApproval(id); }} />
+          </>
         ) : null}
         {tab === 'knowledge' ? <ComingSoon title="知识中心" text="培训任务将复用 ERP 知识应用服务与现有权限投影。" /> : null}
         {tab === 'profile' ? <ComingSoon title="我的" text="账号、安全设置和 Passkey 管理将保持服务端可信身份边界。" /> : null}
@@ -147,6 +152,11 @@ export function MobileWorkbench() {
           onDecide={(outcome) => { void decide(outcome); }}
         />
       )}
+      <MobileApprovalInitiation
+        open={initiating}
+        onClose={() => setInitiating(false)}
+        onSubmitted={loadApprovals}
+      />
     </main>
   );
 }

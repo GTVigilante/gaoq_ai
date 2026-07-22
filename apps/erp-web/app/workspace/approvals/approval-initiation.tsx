@@ -20,7 +20,11 @@ import { useMemo, useState } from 'react';
 
 import { createIdempotencyKey, ErpApiError, erpFetch, strongEtag } from '../../lib/api-client';
 import {
-  parseApprovalSummaries,
+  buildApprovalCreateInput,
+  parseCreatedApprovalInstance,
+  type ApprovalCreateInput,
+} from '../../lib/approval-initiation-contract';
+import {
   parsePublishedTemplateForms,
   type ApprovalFormFieldView,
   type ApprovalPublishedTemplateForm,
@@ -34,12 +38,6 @@ interface ApprovalInitiationProps {
 interface PendingDraft {
   readonly instance: ApprovalSummary;
   readonly submitKey: string;
-}
-
-interface ApprovalCreateInput {
-  readonly templateCode: string;
-  readonly title: string;
-  readonly formData: Readonly<Record<string, unknown>>;
 }
 
 interface PendingCreate {
@@ -83,7 +81,7 @@ export function ApprovalInitiation({ onSubmitted }: ApprovalInitiationProps) {
     if (pendingCreate !== null || pendingDraft !== null || writing) return;
     let input: ApprovalCreateInput;
     try {
-      input = buildCreateInput(values, selected);
+      input = buildApprovalCreateInput(values, selected);
     } catch {
       void message.error('审批表单包含无效字段，请检查后重试');
       return;
@@ -108,7 +106,7 @@ export function ApprovalInitiation({ onSubmitted }: ApprovalInitiationProps) {
         body: JSON.stringify(attempt.input),
       });
       const draft: PendingDraft = Object.freeze({
-        instance: parseInstanceResponse(created.data),
+        instance: parseCreatedApprovalInstance(created.data),
         submitKey: createIdempotencyKey('approval-instance-submit'),
       });
       setPendingCreate(null);
@@ -250,45 +248,6 @@ function TemplateField({ field }: { readonly field: ApprovalFormFieldView }) {
     case 'text':
       return <Form.Item name={name} label={field.label} rules={rules}><Input.TextArea maxLength={field.maximumLength ?? 10_000} showCount autoSize={{ minRows: 2, maxRows: 8 }} /></Form.Item>;
   }
-}
-
-function buildCreateInput(
-  value: unknown,
-  selected: ApprovalPublishedTemplateForm | null,
-): ApprovalCreateInput {
-  if (selected === null || typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error('APPROVAL_CREATE_INPUT_INVALID');
-  }
-  const record = value as Readonly<Record<string, unknown>>;
-  if (record.templateCode !== selected.code || typeof record.title !== 'string') {
-    throw new Error('APPROVAL_CREATE_INPUT_INVALID');
-  }
-  const raw = typeof record.formData === 'object' && record.formData !== null && !Array.isArray(record.formData)
-    ? record.formData as Readonly<Record<string, unknown>> : {};
-  const formData: Record<string, unknown> = {};
-  for (const field of selected.fields) {
-    const fieldValue = raw[field.key];
-    if (field.type === 'file_reference' && typeof fieldValue === 'string') {
-      const references = [...new Set(fieldValue.split(',').map((item) => item.trim()).filter(Boolean))];
-      if (references.length > 20 || references.some((item) => !ID_PATTERN.test(item))) {
-        throw new Error('APPROVAL_FILE_REFERENCE_INVALID');
-      }
-      if (references.length > 0 || field.required) formData[field.key] = references;
-    } else if (fieldValue !== undefined && fieldValue !== '') {
-      formData[field.key] = fieldValue;
-    }
-  }
-  return Object.freeze({ templateCode: selected.code, title: record.title.trim(), formData: Object.freeze(formData) });
-}
-
-function parseInstanceResponse(value: unknown): ApprovalSummary {
-  if (typeof value !== 'object' || value === null || Array.isArray(value) || !Object.hasOwn(value, 'instance')) {
-    throw new Error('APPROVAL_INSTANCE_RESPONSE_INVALID');
-  }
-  const parsed = parseApprovalSummaries([(value as Readonly<Record<string, unknown>>).instance]);
-  const instance = parsed[0];
-  if (instance === undefined) throw new Error('APPROVAL_INSTANCE_RESPONSE_INVALID');
-  return instance;
 }
 
 function errorMessage(value: unknown, fallback: string): string {

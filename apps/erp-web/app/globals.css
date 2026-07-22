@@ -242,6 +242,9 @@ h1 {
 .mobile-notice { padding: 18px; border: 1px solid rgb(31 107 69 / 14%); border-radius: 18px; background: var(--mobile-mint); }
 .mobile-notice p { margin: 6px 0 0; color: #425448; font-size: 14px; line-height: 1.6; }
 .mobile-list { display: grid; gap: 12px; }
+.mobile-approval-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; padding: 13px 14px; border: 1px solid rgb(22 35 25 / 9%); border-radius: 16px; background: rgb(255 255 255 / 68%); }
+.mobile-approval-toolbar p { margin: 0; color: var(--mobile-muted); font-size: 12px; line-height: 1.5; }
+.mobile-approval-toolbar button, .mobile-template-loader, .mobile-initiation-submit { min-height: 48px; padding: 0 18px; border: 0; border-radius: 14px; color: #fff; background: var(--mobile-green); font: inherit; font-weight: 800; cursor: pointer; }
 .mobile-approval-card { padding: 20px; border: 1px solid rgb(22 35 25 / 9%); border-radius: 22px; background: rgb(255 255 255 / 86%); box-shadow: 0 8px 26px rgb(22 35 25 / 6%); }
 .mobile-card-heading { display: flex; align-items: center; justify-content: space-between; color: var(--mobile-muted); font-size: 12px; }
 .mobile-status { display: inline-flex; min-height: 28px; align-items: center; padding: 0 10px; border-radius: 999px; color: #76500b; background: #fff0c7; font-weight: 800; }
@@ -292,6 +295,24 @@ h1 {
 .mobile-decision-actions .approve { color: #fff; background: var(--mobile-green); }
 .mobile-decision-actions button:disabled { cursor: wait; opacity: 0.55; }
 .mobile-detail-error { margin: 16px 20px 0; padding: 12px; border-radius: 12px; color: #8b332d; background: #f9dfdc; font-size: 13px; overflow-wrap: anywhere; }
+.mobile-initiation-sheet { width: min(720px, 100%); margin: 0 auto; }
+.mobile-initiation-body { display: grid; gap: 14px; padding: 18px 20px calc(28px + env(safe-area-inset-bottom)); }
+.mobile-initiation-body > .mobile-detail-error { margin: 0; }
+.mobile-initiation-notice { padding: 14px; border: 1px solid #e4a72b; border-radius: 14px; color: #61420b; background: #fff3cf; }
+.mobile-initiation-notice p { margin: 5px 0 0; font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+.mobile-template-loader { width: 100%; }
+.mobile-initiation-form { display: grid; gap: 16px; }
+.mobile-initiation-form label { display: grid; gap: 7px; color: #35463a; font-size: 13px; font-weight: 750; }
+.mobile-initiation-form input:not([type="checkbox"]), .mobile-initiation-form textarea, .mobile-initiation-form select { width: 100%; min-height: 48px; padding: 11px 12px; border: 1px solid #cfd8d0; border-radius: 12px; color: var(--mobile-ink); background: #fff; font: inherit; font-weight: 500; }
+.mobile-initiation-form select[multiple] { min-height: 112px; }
+.mobile-initiation-form textarea { resize: vertical; }
+.mobile-initiation-form fieldset { display: grid; gap: 16px; margin: 0; padding: 16px; border: 1px solid #dce5dd; border-radius: 16px; }
+.mobile-initiation-form legend { padding: 0 7px; font-weight: 850; }
+.mobile-initiation-form small, .mobile-definition-hash { margin: 0; color: var(--mobile-muted); font-size: 11px; font-weight: 500; }
+.mobile-initiation-form .mobile-checkbox { grid-template-columns: 24px 1fr; min-height: 48px; align-items: center; }
+.mobile-initiation-form .mobile-checkbox input { width: 20px; height: 20px; }
+.mobile-initiation-submit { position: sticky; bottom: 0; width: 100%; box-shadow: 0 9px 24px rgb(31 107 69 / 20%); }
+.mobile-approval-toolbar button:disabled, .mobile-template-loader:disabled, .mobile-initiation-submit:disabled { cursor: wait; opacity: 0.55; }
 
 @media (min-width: 768px) {
   .mobile-header { width: min(720px, 100%); margin: auto; }
