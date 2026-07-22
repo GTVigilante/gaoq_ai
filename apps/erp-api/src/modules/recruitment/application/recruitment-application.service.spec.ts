@@ -35,6 +35,18 @@ const application = {
   updatedAt: '2026-07-21T00:00:00.000Z',
 };
 
+const migratedCandidate = {
+  id: application.candidateId, tenantId: 'tenant-001', status: 'active' as const,
+  name: '张三', phone: '+8613800138000', email: 'candidate@example.com',
+  consent: {
+    evidenceId: CONSENT_ID, version: 'privacy-v1', purpose: '招聘评估与候选人联络',
+    source: 'manual_import' as const, capturedAt: '2026-07-20T00:00:00.000Z',
+    expiresAt: '2027-07-20T00:00:00.000Z', withdrawnAt: null,
+  },
+  retentionExpiresAt: '2028-07-20T00:00:00.000Z', version: 1,
+  createdAt: '2026-07-20T00:00:00.000Z', updatedAt: '2026-07-20T00:00:00.000Z',
+};
+
 function fixture(options?: {
   readonly matches?: readonly Record<string, unknown>[];
   readonly actorDepartments?: readonly string[];
@@ -60,7 +72,7 @@ function fixture(options?: {
   };
   const candidates = {
     findByContacts: vi.fn().mockResolvedValue(options?.matches ?? []),
-    findById: vi.fn().mockResolvedValue(null),
+    findById: vi.fn().mockResolvedValue(migratedCandidate),
     insert: vi.fn().mockResolvedValue(undefined),
     replace: vi.fn().mockResolvedValue(undefined),
   };
@@ -72,8 +84,10 @@ function fixture(options?: {
   const positions = { findById: vi.fn().mockResolvedValue(position) };
   const applications = {
     insert: vi.fn().mockResolvedValue(undefined),
+    insertMigrated: vi.fn().mockResolvedValue(undefined),
     replace: vi.fn().mockResolvedValue(undefined),
     findById: vi.fn().mockResolvedValue(application),
+    findMigrationEvidenceById: vi.fn().mockResolvedValue(null),
   };
   const stages = { append: vi.fn().mockResolvedValue(undefined) };
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
@@ -169,6 +183,48 @@ describe('RecruitmentApplicationService', () => {
     expect(store.outbox.append).toHaveBeenCalledWith(expect.objectContaining({
       type: 'recruitment.application.created', tenantId: 'tenant-001',
     }), session);
+    expect(JSON.stringify(result)).not.toMatch(/张三|13800138000|candidate@example/iu);
+  });
+
+  it('申请迁移验证候选人授权和职位后只写基线与迁移事件', async () => {
+    const store = fixture({
+      actorType: 'system_job',
+      actorScopes: ['erp:migration:execute', 'erp:recruitment:migration:write'],
+    });
+    const input = {
+      targetId: null,
+      candidateId: migratedCandidate.id,
+      positionId: POSITION_ID,
+      sourceChannel: 'legacy_ats',
+      actions: [
+        { targetStage: 'screening' as const, reasonCode: null, occurredAt: '2026-07-20T01:00:00.000Z' },
+        { targetStage: 'interview' as const, reasonCode: null, occurredAt: '2026-07-20T02:00:00.000Z' },
+      ],
+      expectedStage: 'interview' as const,
+      expectedVersion: 3,
+      appliedAt: '2026-07-20T00:00:00.000Z', endedAt: null,
+      updatedAt: '2026-07-20T02:00:00.000Z',
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/application-evidence-001',
+      evidenceChecksum: 'b'.repeat(43),
+    };
+
+    const result = await store.service.importApplicationBaselineFromMigration(
+      'application-migration-001', input,
+    );
+
+    expect(store.applications.insertMigrated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidateId: migratedCandidate.id, positionId: POSITION_ID,
+        consentEvidenceId: CONSENT_ID, stage: 'interview', version: 3,
+      }),
+      input.migrationEvidenceRef, input.evidenceChecksum, session,
+    );
+    expect(store.stages.append).not.toHaveBeenCalled();
+    expect(store.outbox.append).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'recruitment.application.migrated',
+    }), session);
+    expect(result.application).toMatchObject({ stage: 'interview', version: 3 });
     expect(JSON.stringify(result)).not.toMatch(/张三|13800138000|candidate@example/iu);
   });
 

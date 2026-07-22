@@ -51,6 +51,19 @@ export interface CandidateApplicationStageEvent {
   readonly occurredAt: string;
 }
 
+export type CandidateApplicationBaselineStage =
+  | 'applied'
+  | 'screening'
+  | 'interview'
+  | 'rejected'
+  | 'withdrawn';
+
+export interface CandidateApplicationBaselineAction {
+  readonly targetStage: Exclude<CandidateApplicationBaselineStage, 'applied'>;
+  readonly reasonCode: string | null;
+  readonly occurredAt: string;
+}
+
 export function createCandidateApplication(
   input: {
     readonly id: string;
@@ -84,6 +97,74 @@ export function createCandidateApplication(
     endedAt: null,
     updatedAt: occurredAt,
   });
+}
+
+/** 数据迁移专用：以内存状态机验证申请基线，不伪造在线普通阶段事件。 */
+export function restoreCandidateApplicationBaselineFromMigration(
+  input: {
+    readonly id: string;
+    readonly tenantId: string;
+    readonly candidateId: string;
+    readonly positionId: string;
+    readonly consentEvidenceId: string;
+    readonly sourceChannel: string;
+    readonly actorId: string;
+    readonly actions: readonly CandidateApplicationBaselineAction[];
+    readonly expectedStage: CandidateApplicationBaselineStage;
+    readonly expectedVersion: number;
+    readonly appliedAt: string;
+    readonly endedAt: string | null;
+    readonly updatedAt: string;
+  },
+  now: Date,
+): CandidateApplication {
+  if (input.actions.length > 20 || input.expectedVersion !== input.actions.length + 1) {
+    throw new RecruitmentDomainError(
+      'CANDIDATE_MIGRATION_APPLICATION_TIMELINE_INVALID',
+      '申请迁移动作数量与版本不一致',
+    );
+  }
+  const appliedAt = strictApplicationMigrationIso(input.appliedAt);
+  const updatedAt = strictApplicationMigrationIso(input.updatedAt);
+  const endedAt = input.endedAt === null ? null : strictApplicationMigrationIso(input.endedAt);
+  if (Date.parse(appliedAt) > now.getTime() + 5 * 60 * 1_000) throw new RecruitmentDomainError(
+    'CANDIDATE_MIGRATION_APPLICATION_TIMELINE_INVALID',
+    '申请时间不能位于未来',
+  );
+  let application = createCandidateApplication({
+    id: input.id,
+    tenantId: input.tenantId,
+    candidateId: input.candidateId,
+    positionId: input.positionId,
+    consentEvidenceId: input.consentEvidenceId,
+    sourceChannel: input.sourceChannel,
+  }, new Date(appliedAt));
+  let previous = appliedAt;
+  for (const action of input.actions) {
+    const occurredAt = strictApplicationMigrationIso(action.occurredAt);
+    if (occurredAt < previous || Date.parse(occurredAt) > now.getTime() + 5 * 60 * 1_000) {
+      throw new RecruitmentDomainError(
+        'CANDIDATE_MIGRATION_APPLICATION_TIMELINE_INVALID',
+        '申请迁移动作必须按时间排序且不能位于未来',
+      );
+    }
+    application = transitionCandidateApplication(application, {
+      tenantId: input.tenantId,
+      expectedVersion: application.version,
+      actorId: input.actorId,
+      targetStage: action.targetStage,
+      ...(action.reasonCode === null ? {} : { reasonCode: action.reasonCode }),
+    }, new Date(occurredAt)).application;
+    previous = occurredAt;
+  }
+  if (application.stage !== input.expectedStage || application.version !== input.expectedVersion ||
+    application.updatedAt !== updatedAt || application.endedAt !== endedAt) {
+    throw new RecruitmentDomainError(
+      'CANDIDATE_MIGRATION_APPLICATION_CONTROL_MISMATCH',
+      '申请迁移最终阶段、版本或时间控制事实不一致',
+    );
+  }
+  return application;
 }
 
 /** 单向推进申请阶段；跨聚合事实必须以受信任证据标识传入并固化。 */
@@ -178,5 +259,16 @@ function evidenceRequired(stage: CandidateApplicationStage): boolean {
 
 function validatedReason(value: string): string {
   assertRecruitmentCode(value, 'reasonCode');
+  return value;
+}
+
+function strictApplicationMigrationIso(value: string): string {
+  const parsed = new Date(value);
+  if (typeof value !== 'string' || Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value) {
+    throw new RecruitmentDomainError(
+      'CANDIDATE_MIGRATION_APPLICATION_TIME_INVALID',
+      '申请迁移时间必须为规范 UTC ISO 时间',
+    );
+  }
   return value;
 }

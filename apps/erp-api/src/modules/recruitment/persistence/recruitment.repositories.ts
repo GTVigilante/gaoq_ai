@@ -384,6 +384,38 @@ export class CandidateApplicationRepository extends TenantBoundRecruitmentReposi
     await this.records.create([applicationRecord(application)], { session });
   }
 
+  async insertMigrated(
+    application: CandidateApplication,
+    migrationEvidenceRef: string,
+    migrationEvidenceChecksum: string,
+    session: ClientSession,
+  ): Promise<void> {
+    this.assertTenant(application.tenantId);
+    await this.records.create([{
+      ...applicationRecord(application), migrationEvidenceRef, migrationEvidenceChecksum,
+    }], { session });
+  }
+
+  async findMigrationEvidenceById(
+    id: string,
+    session?: ClientSession,
+  ): Promise<{
+    readonly migrationEvidenceRef: string;
+    readonly migrationEvidenceChecksum: string;
+  } | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), id })
+      .select('migrationEvidenceRef migrationEvidenceChecksum -_id');
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record?.migrationEvidenceRef === null || record?.migrationEvidenceRef === undefined ||
+      record.migrationEvidenceChecksum === null || record.migrationEvidenceChecksum === undefined
+      ? null
+      : Object.freeze({
+          migrationEvidenceRef: record.migrationEvidenceRef,
+          migrationEvidenceChecksum: record.migrationEvidenceChecksum,
+        });
+  }
+
   async replace(
     application: CandidateApplication,
     expectedVersion: number,

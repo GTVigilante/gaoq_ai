@@ -8,6 +8,7 @@ import type { RecruitmentRequisition } from './requisition.js';
 export type RecruitmentEventType =
   | 'recruitment.application.created'
   | 'recruitment.application.stage_changed'
+  | 'recruitment.application.migrated'
   | 'recruitment.candidate.migrated'
   | 'recruitment.requisition.created'
   | 'recruitment.requisition.submitted'
@@ -66,6 +67,25 @@ export function buildCandidateApplicationCreatedEvent(
       positionId: application.positionId,
       consentEvidenceId: application.consentEvidenceId,
       sourceChannel: application.sourceChannel,
+      stage: application.stage,
+    }),
+  });
+}
+
+/** 申请迁移事件只披露聚合引用与当前阶段，不重放历史动作。 */
+export function buildCandidateApplicationMigratedEvent(
+  application: CandidateApplication,
+): RecruitmentDomainEvent {
+  return Object.freeze({
+    type: 'recruitment.application.migrated',
+    aggregateType: 'recruitment.application',
+    tenantId: application.tenantId,
+    aggregateId: application.id,
+    version: application.version,
+    occurredAt: application.updatedAt,
+    payload: Object.freeze({
+      candidateId: application.candidateId,
+      positionId: application.positionId,
       stage: application.stage,
     }),
   });

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { createCandidateApplication, transitionCandidateApplication } from './application.js';
+import {
+  createCandidateApplication,
+  restoreCandidateApplicationBaselineFromMigration,
+  transitionCandidateApplication,
+} from './application.js';
 
 const NOW = new Date('2026-07-21T08:00:00.000Z');
 
@@ -91,5 +95,32 @@ describe('CandidateApplication', () => {
     }, NOW);
     expect(result.event).toMatchObject({ from: 'applied', to: 'screening', resultingVersion: 2 });
     expect(JSON.stringify(result.event)).not.toMatch(/name|phone|email|resume|salary/iu);
+  });
+
+  it('迁移基线复用状态机验证动作顺序但不生成持久化阶段日志', () => {
+    const restored = restoreCandidateApplicationBaselineFromMigration({
+      id: 'application-001', tenantId: 'tenant-001', candidateId: 'candidate-001',
+      positionId: 'position-001', consentEvidenceId: 'consent-evidence-001',
+      sourceChannel: 'legacy_ats', actorId: 'migration-agent-001',
+      actions: [
+        { targetStage: 'screening', reasonCode: null, occurredAt: '2026-07-20T01:00:00.000Z' },
+        { targetStage: 'interview', reasonCode: null, occurredAt: '2026-07-20T02:00:00.000Z' },
+      ],
+      expectedStage: 'interview', expectedVersion: 3,
+      appliedAt: '2026-07-20T00:00:00.000Z', endedAt: null,
+      updatedAt: '2026-07-20T02:00:00.000Z',
+    }, new Date('2026-07-22T00:00:00.000Z'));
+    expect(restored).toMatchObject({ stage: 'interview', version: 3, endedAt: null });
+    expect(() => restoreCandidateApplicationBaselineFromMigration({
+      id: 'application-001', tenantId: 'tenant-001', candidateId: 'candidate-001',
+      positionId: 'position-001', consentEvidenceId: 'consent-evidence-001',
+      sourceChannel: 'legacy_ats', actorId: 'migration-agent-001',
+      actions: [{
+        targetStage: 'interview', reasonCode: null, occurredAt: '2026-07-20T01:00:00.000Z',
+      }],
+      expectedStage: 'interview', expectedVersion: 2,
+      appliedAt: '2026-07-20T00:00:00.000Z', endedAt: null,
+      updatedAt: '2026-07-20T01:00:00.000Z',
+    }, new Date('2026-07-22T00:00:00.000Z'))).toThrow('阶段迁移无效');
   });
 });

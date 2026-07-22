@@ -92,6 +92,10 @@ function recruitmentCandidatesRun() {
   return { ...run(), scope: 'recruitment_candidates' as const };
 }
 
+function recruitmentApplicationsRun() {
+  return { ...run(), scope: 'recruitment_applications' as const };
+}
+
 function query<T>(value: T) { return { lean: () => ({ exec: () => Promise.resolve(value) }) }; }
 function listQuery<T>(value: readonly T[]) {
   return {
@@ -1038,6 +1042,81 @@ describe('DataMigrationService', () => {
     );
     const item = items.create.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
     expect(JSON.stringify(item)).not.toMatch(/张三|13800138000|candidate@example/iu);
+  });
+
+  it('申请基线解析候选人与职位映射后调用内存状态机迁移入口', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      candidateSourceId: 'legacy-candidate-001', positionSourceId: 'legacy-position-001',
+      sourceChannel: 'legacy_ats',
+      actions: [
+        { targetStage: 'screening', reasonCode: null, occurredAt: '2026-07-20T01:00:00.000Z' },
+        { targetStage: 'interview', reasonCode: null, occurredAt: '2026-07-20T02:00:00.000Z' },
+      ],
+      expectedStage: 'interview', expectedVersion: 3,
+      appliedAt: '2026-07-20T00:00:00.000Z', endedAt: null,
+      updatedAt: '2026-07-20T02:00:00.000Z',
+      applicationEvidenceSourceAttachmentId: 'application-evidence-001',
+      applicationEvidenceChecksum: 'd'.repeat(43),
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(recruitmentApplicationsRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const targets: Readonly<Record<string, string>> = {
+      'legacy-candidate-001': 'candidate-001', 'legacy-position-001': 'position-001',
+    };
+    const mappings = {
+      findOne: vi.fn((filter: { entityType: string; sourceRecordId: string }) => query(
+        filter.entityType === 'recruitment.application'
+          ? null
+          : { targetId: targets[filter.sourceRecordId], targetVersion: 1 },
+      )),
+      findOneAndUpdate: vi.fn().mockReturnValue(query({ targetId: 'application-001' })),
+    };
+    const associations = { findOneAndUpdate: vi.fn().mockReturnValue(query({})) };
+    const attachments = {
+      findOne: vi.fn().mockReturnValue(query(null)),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const recruitmentApplications = {
+      importApplicationBaselineFromMigration: vi.fn().mockResolvedValue({ application: {
+        id: 'application-001', candidateId: 'candidate-001', positionId: 'position-001',
+        stage: 'interview', version: 3,
+        appliedAt: '2026-07-20T00:00:00.000Z', endedAt: null,
+      } }),
+    };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      mappings as unknown as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+      undefined,
+      undefined,
+      recruitmentApplications as unknown as RecruitmentApplicationService,
+    );
+
+    const result = await trusted(context, () => service.apply(RUN_ID, {
+      sequence: 1, sourceRecordId: 'legacy-application-001', sourceVersion: '1',
+      entityType: 'recruitment.application', payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: ['legacy-candidate-001', 'legacy-position-001'],
+      attachments: [{ sourceAttachmentId: 'application-evidence-001', checksum: 'd'.repeat(43) }],
+    }));
+
+    expect(result).toMatchObject({ status: 'applied', targetId: 'application-001' });
+    expect(recruitmentApplications.importApplicationBaselineFromMigration).toHaveBeenCalledWith(
+      expect.stringMatching(/^migration:/u),
+      expect.objectContaining({ candidateId: 'candidate-001', positionId: 'position-001' }),
+    );
+    expect(associations.findOneAndUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ relationship: 'candidate' }),
+      expect.objectContaining({ $set: { targetId: 'candidate-001', status: 'resolved' } }),
+      expect.objectContaining({ upsert: true }),
+    );
   });
 
   it('未解析关联和未决附件进入 Phase 6 硬门禁', async () => {

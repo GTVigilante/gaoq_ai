@@ -388,6 +388,15 @@ export class CandidateApplicationRecord {
   @Prop({ type: Date, default: null })
   endedAt!: Date | null;
 
+  @Prop({
+    type: String, default: null, immutable: true, maxlength: 256,
+    match: MIGRATION_EVIDENCE_REF_PATTERN,
+  })
+  migrationEvidenceRef!: string | null;
+
+  @Prop({ type: String, default: null, immutable: true, match: HASH_PATTERN })
+  migrationEvidenceChecksum!: string | null;
+
   createdAt!: Date;
   updatedAt!: Date;
 }
@@ -397,6 +406,10 @@ export const CandidateApplicationRecordSchema = SchemaFactory.createForClass(Can
 
 CandidateApplicationRecordSchema.pre('validate', function () {
   const record = this as CandidateApplicationRecord;
+  if ((record.migrationEvidenceRef === null) !==
+    (record.migrationEvidenceChecksum === null)) {
+    throw new Error('申请迁移证据定位符与 checksum 必须同时存在');
+  }
   const rank = applicationStageRank(record.stage);
   if (rank >= applicationStageRank('offer_approval') && record.completedInterviewId === null) {
     throw new Error('Offer 审批阶段必须引用已完成面试');

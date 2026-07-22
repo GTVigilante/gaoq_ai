@@ -159,6 +159,17 @@ describe('RecruitmentSchemas', () => {
 
   it('申请阶段证据和终态时间在持久层再次失败关闭', async () => {
     await new ApplicationModel(application()).validate();
+    await new ApplicationModel({
+      ...application(),
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/application-evidence-001',
+      migrationEvidenceChecksum: 'b'.repeat(43),
+    }).validate();
+    await expect(new ApplicationModel({
+      ...application(), migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/application-evidence-001',
+      migrationEvidenceChecksum: null,
+    }).validate()).rejects.toThrow('必须同时存在');
     await expect(new ApplicationModel({
       ...application(), stage: 'offer_sent', version: 5,
     }).validate()).rejects.toThrow('必须引用已完成面试');

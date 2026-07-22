@@ -2,7 +2,7 @@
 
 本门禁用于验证三次真实全量迁移演练的可重复性、幂等性和控制总量，不创建测试数据、不代替来源系统抽取，也不把本地工具结果冒充外部验收。三次演练必须使用同一份已批准来源快照、三个不同 `sourceRunId`，并分别形成冻结运行的完整证据 NDJSON。
 
-每轮必须按来源包手册完成全部已启用 Scope；`recruitment_reference` 位于审批 Scope 之后，且包内 HC 必须早于职位；`recruitment_candidates` 随后独立执行，并核验目标集合无身份明文、盲索引可精确检索且证据导出无 PII。任一 Scope 失败即整轮失败，不能用后续 Scope 的成功掩盖前置引用差异。
+每轮必须按来源包手册完成全部已启用 Scope；`recruitment_reference` 位于审批 Scope 之后，且包内 HC 必须早于职位；`recruitment_candidates` 随后独立执行，并核验目标集合无身份明文、盲索引可精确检索且证据导出无 PII；`recruitment_applications` 再验证候选人/职位关联、阶段基线和 WORM 档案。任一 Scope 失败即整轮失败，不能用后续 Scope 的成功掩盖前置引用差异。
 
 ## 执行顺序
 
