@@ -1,12 +1,15 @@
 # Phase 5 Payroll 迁移证据索引运行手册
 
-迁移标识为 `phase-5-payroll-migration-indexes-v1`。它只以追加方式核对 Payroll 六个迁移实体的既有业务索引，并新增租户内唯一 WORM 迁移证据索引；禁止修改已经执行的 Phase 4 Payroll 索引清单。
+两个追加迁移必须依次执行。`phase-5-payroll-migration-indexes-v1` 永久固定规则、薪酬、周期和计算运行四类实体；`phase-5-payroll-control-indexes-v2` 另行加入批准与锁定控制证据。禁止修改任一已执行 manifest 或 Phase 4 Payroll 索引清单。
 
 ```bash
 pnpm --filter @gaoq/erp-api build
 pnpm --filter @gaoq/erp-api migrate:phase5:payroll-migration-indexes -- --dry-run
 pnpm --filter @gaoq/erp-api migrate:phase5:payroll-migration-indexes
 pnpm --filter @gaoq/erp-api migrate:phase5:payroll-migration-indexes -- --dry-run
+pnpm --filter @gaoq/erp-api migrate:phase5:payroll-control-indexes -- --dry-run
+pnpm --filter @gaoq/erp-api migrate:phase5:payroll-control-indexes
+pnpm --filter @gaoq/erp-api migrate:phase5:payroll-control-indexes -- --dry-run
 ```
 
 执行顺序固定在对应数据 Scope 之前。apply 前必须完成备份、MongoDB Replica Set 健康检查、重复证据引用预检、复制延迟告警和变更窗口批准。六个必须核验的唯一键为：
