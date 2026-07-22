@@ -11,7 +11,9 @@ import { createEventId } from '@gaoq/shared-utils';
 
 import { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
+import { AccessProfileRepository } from '../../identity/access-profile.repository.js';
 import { OnboardingApplicationService } from '../../onboarding/application/onboarding-application.service.js';
+import { EmploymentRepository } from '../../org/persistence/org.repositories.js';
 import {
   KnowledgeDomainError,
   assignmentEvent,
@@ -70,6 +72,17 @@ export interface ExamAttemptSummary extends Record<string, unknown> {
   readonly gradedAt: string;
 }
 
+export interface PersonalTrainingAssignmentView extends Record<string, unknown> {
+  readonly id: string;
+  readonly course: CourseSummary;
+  readonly mandatory: boolean;
+  readonly examRequired: boolean;
+  readonly dueDate: string;
+  readonly status: TrainingAssignment['status'];
+  readonly progressBps: number;
+  readonly version: number;
+}
+
 /** Knowledge 应用服务；答案、标准答案、题库引用与提交引用均不进入响应或事件。 */
 @Injectable()
 export class KnowledgeApplicationService {
@@ -84,6 +97,8 @@ export class KnowledgeApplicationService {
     private readonly grader: KnowledgeGradingPort,
     private readonly verifier: KnowledgeContentVerificationPort,
     private readonly onboarding: OnboardingApplicationService,
+    private readonly profiles: AccessProfileRepository,
+    private readonly employments: EmploymentRepository,
   ) {}
 
   async createCourse(
@@ -185,6 +200,48 @@ export class KnowledgeApplicationService {
     await this.onboarding.get(onboardingInstanceId);
     const items = await this.assignments.findByOnboarding(onboardingInstanceId);
     return { items: items.map(assignmentSummary) };
+  }
+
+  /** 当前员工培训任务；主体到员工、任职与入职实例的映射只取服务端可信主数据。 */
+  async listMyAssignments(): Promise<{ readonly items: readonly PersonalTrainingAssignmentView[] }> {
+    this.assertScope('erp:knowledge:assignment:read');
+    const actor = this.context.getActorRequired();
+    const tenantId = this.context.getTenantRequired().tenantId;
+    if (actor.actorType !== 'user') throw new ForbiddenException({
+      code: 'KNOWLEDGE_EMPLOYEE_CONTEXT_REQUIRED', message: '当前主体不是员工用户',
+    });
+    const profile = await this.profiles.resolveActive(tenantId, actor.actorId);
+    if (profile === null || profile.actorId !== actor.actorId) throw new ForbiddenException({
+      code: 'KNOWLEDGE_EMPLOYEE_CONTEXT_REQUIRED', message: '当前主体没有有效员工授权快照',
+    });
+    const employment = await this.employments.findOpenByEmployeeId(profile.employeeId);
+    if (employment === null || employment.employeeId !== profile.employeeId) {
+      throw new ForbiddenException({
+        code: 'KNOWLEDGE_EMPLOYEE_CONTEXT_REQUIRED', message: '当前主体没有有效任职关系',
+      });
+    }
+    const assignments = await this.assignments.findByOnboarding(employment.onboardingInstanceId);
+    const courses = await this.courses.findByIds(
+      [...new Set(assignments.map((item) => item.courseVersionId))],
+    );
+    const courseById = new Map(courses.map((course) => [course.id, course]));
+    const items = assignments.map((assignment) => {
+      const course = courseById.get(assignment.courseVersionId);
+      if (course === undefined) throw new NotFoundException({
+        code: 'KNOWLEDGE_COURSE_NOT_FOUND', message: '培训任务引用的课程版本不存在',
+      });
+      return Object.freeze({
+        id: assignment.id,
+        course: courseSummary(course),
+        mandatory: assignment.mandatory,
+        examRequired: assignment.examRequired,
+        dueDate: assignment.dueDate,
+        status: assignment.status,
+        progressBps: assignment.progressBps,
+        version: assignment.version,
+      });
+    }).sort((left, right) => left.dueDate.localeCompare(right.dueDate) || left.id.localeCompare(right.id));
+    return Object.freeze({ items: Object.freeze(items) });
   }
 
   /** LMS/内容播放器专用：只接受可信源绝对进度与唯一源事件。 */

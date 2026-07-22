@@ -24,7 +24,9 @@ RUN pnpm --filter @gaoq/shared-types build && \
 
 FROM dependencies AS web-build
 ARG NEXT_PUBLIC_ERP_API_ORIGIN
+ARG ERP_MOBILE_FRAME_ANCESTORS
 ENV NEXT_PUBLIC_ERP_API_ORIGIN=${NEXT_PUBLIC_ERP_API_ORIGIN}
+ENV ERP_MOBILE_FRAME_ANCESTORS=${ERP_MOBILE_FRAME_ANCESTORS}
 COPY apps/erp-web apps/erp-web
 RUN node -e "const endpoint = new URL(process.env.NEXT_PUBLIC_ERP_API_ORIGIN); if (endpoint.protocol !== 'https:' || endpoint.pathname !== '/' || endpoint.search || endpoint.hash || endpoint.username || endpoint.password) process.exit(1)" && \
     pnpm --filter @gaoq/erp-web build

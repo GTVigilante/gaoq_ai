@@ -10,6 +10,7 @@ const ID = '01J8ZQK7V0A2M4N6P8R0T2W4Y6';
 
 function fixture() {
   const service = {
+    listMyAssignments: vi.fn().mockResolvedValue({ items: [] }),
     completeAssignment: vi.fn().mockResolvedValue({ assignment: {
       id: ID, onboardingInstanceId: ID, status: 'completed', version: 3,
     } }),
@@ -27,6 +28,7 @@ describe('KnowledgeController', () => {
     expect(scope('createCourse')).toEqual(['erp:knowledge:course:create']);
     expect(scope('publishCourse')).toEqual(['erp:knowledge:course:publish']);
     expect(scope('getCourse')).toEqual(['erp:knowledge:course:read']);
+    expect(scope('listMyAssignments')).toEqual(['erp:knowledge:assignment:read']);
     expect(scope('recordProgress')).toEqual(['erp:integration:knowledge:progress']);
     expect(scope('gradeExam')).toEqual(['erp:knowledge:exam:grade']);
     expect(scope('completeAssignment')).toEqual(['erp:knowledge:assignment:complete']);
@@ -41,6 +43,19 @@ describe('KnowledgeController', () => {
       'not-an-id', '"2"', 'knowledge-complete-001', {}, store.response as never,
     )).rejects.toBeInstanceOf(BadRequestException);
     expect(store.service.completeAssignment).not.toHaveBeenCalled();
+  });
+
+  it('本人任务目录复用应用服务并记录 R0 读取审计', async () => {
+    const store = fixture();
+    await expect(store.controller.listMyAssignments()).resolves.toEqual({ items: [] });
+    expect(store.service.listMyAssignments).toHaveBeenCalledOnce();
+    expect(store.audit.record).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'knowledge.assignment.mine.read',
+      resourceType: 'knowledge_training_assignment_list',
+      resourceId: 'mine',
+      riskLevel: 'R0',
+      metadata: { count: 0 },
+    }));
   });
 });
 

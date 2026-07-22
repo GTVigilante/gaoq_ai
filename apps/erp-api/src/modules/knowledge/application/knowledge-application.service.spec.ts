@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import type { OnboardingApplicationService } from '../../onboarding/application/onboarding-application.service.js';
+import type { AccessProfileRepository } from '../../identity/access-profile.repository.js';
+import type { EmploymentRepository } from '../../org/persistence/org.repositories.js';
 import {
   createCourseVersion,
   createTrainingAssignment,
@@ -57,6 +59,8 @@ function fixture(options?: {
   let attestation: { readonly id: string; readonly digest: string } | null = null;
   const courses = {
     findById: vi.fn().mockImplementation((id: string) => Promise.resolve(id === course.id ? course : null)),
+    findByIds: vi.fn().mockImplementation((ids: readonly string[]) =>
+      Promise.resolve(ids.includes(course.id) ? [course] : [])),
     insert: vi.fn().mockResolvedValue(undefined),
     replace: vi.fn().mockImplementation((value: CourseVersion) => { course = value; return Promise.resolve(); }),
   };
@@ -97,6 +101,17 @@ function fixture(options?: {
     get: vi.fn().mockResolvedValue({ id: 'onboarding-001', version: 4 }),
     recordTaskEvidence: vi.fn().mockResolvedValue({ onboarding: { id: 'onboarding-001', version: 5 } }),
   };
+  const profiles = {
+    resolveActive: vi.fn().mockResolvedValue({
+      tenantId: 'tenant-001', actorId: 'employee-actor', employeeId: 'employee-001', status: 'active',
+      roleCodes: [], scopes: [], departmentIds: [], version: 1,
+    }),
+  };
+  const employments = {
+    findOpenByEmployeeId: vi.fn().mockResolvedValue({
+      id: 'employment-001', employeeId: 'employee-001', onboardingInstanceId: 'onboarding-001',
+    }),
+  };
   const idempotency = { execute: vi.fn().mockImplementation(
     async (
       _operation: string,
@@ -116,6 +131,8 @@ function fixture(options?: {
     grader,
     verifier,
     onboarding as unknown as OnboardingApplicationService,
+    profiles as unknown as AccessProfileRepository,
+    employments as unknown as EmploymentRepository,
   );
   const trusted = {
     tenant: { tenantId: 'tenant-001', source: 'access_token' as const },
@@ -133,13 +150,43 @@ function fixture(options?: {
   };
   return {
     service, context, trusted, courses, assignments, attempts, evidence,
-    outbox, grader, verifier, onboarding,
+    outbox, grader, verifier, onboarding, profiles, employments,
     get assignment() { return assignment; },
     get attempt() { return attempt; },
   };
 }
 
 describe('KnowledgeApplicationService', () => {
+  it('本人任务只从可信主体映射到员工、当前任职与入职实例', async () => {
+    const store = fixture();
+    const trusted = {
+      tenant: store.trusted.tenant,
+      actor: { ...store.trusted.actor, actorId: 'employee-actor', actorType: 'user' as const },
+    };
+    const result = await store.context.run(trusted, () => store.service.listMyAssignments());
+    expect(store.profiles.resolveActive).toHaveBeenCalledWith('tenant-001', 'employee-actor');
+    expect(store.employments.findOpenByEmployeeId).toHaveBeenCalledWith('employee-001');
+    expect(result.items[0]).toMatchObject({
+      id: 'assignment-001', course: { title: '安全培训' }, mandatory: true, progressBps: 10_000,
+    });
+    expect(result.items[0]).not.toHaveProperty('onboardingInstanceId');
+    expect(JSON.stringify(result)).not.toContain('content-001');
+    expect(JSON.stringify(result)).not.toContain('bank-001');
+  });
+
+  it('本人任务拒绝服务主体和缺失员工主数据映射', async () => {
+    const store = fixture();
+    await expect(store.context.run(store.trusted, () => store.service.listMyAssignments()))
+      .rejects.toMatchObject({ response: { code: 'KNOWLEDGE_EMPLOYEE_CONTEXT_REQUIRED' } });
+    const trusted = {
+      tenant: store.trusted.tenant,
+      actor: { ...store.trusted.actor, actorId: 'employee-actor', actorType: 'user' as const },
+    };
+    store.profiles.resolveActive.mockResolvedValueOnce(null);
+    await expect(store.context.run(trusted, () => store.service.listMyAssignments()))
+      .rejects.toMatchObject({ response: { code: 'KNOWLEDGE_EMPLOYEE_CONTEXT_REQUIRED' } });
+  });
+
   it('课程发布证明只来自校验端口，响应不暴露内容与题库引用', async () => {
     const draft = createCourseVersion({
       id: 'course-001', tenantId: 'tenant-001', courseCode: 'SECURITY', revision: 1,

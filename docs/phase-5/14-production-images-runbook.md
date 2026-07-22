@@ -11,12 +11,12 @@
 
 ## 构建命令
 
-Web 的 `NEXT_PUBLIC_ERP_API_ORIGIN` 会写入浏览器产物，只能传公开 HTTPS 根地址，禁止凭据、路径、query 和 fragment。
+Web 的 `NEXT_PUBLIC_ERP_API_ORIGIN` 会写入浏览器产物，只能传公开 HTTPS 根地址，禁止凭据、路径、query 和 fragment。`ERP_MOBILE_FRAME_ANCESTORS` 只接受空格分隔、最多 10 个精确 HTTPS Origin；禁止通配符、路径、query、fragment 和凭据，留空时移动端仅允许同源嵌入。二者都不是身份或租户配置，平台容器身份仍必须经过 ERP SSO 与本地授权快照裁决。
 
 ```bash
 docker build --target erp-api --build-arg IMAGE_REVISION="$(git rev-parse HEAD)" -t gaoq-os/api:local .
 docker build --target erp-worker --build-arg IMAGE_REVISION="$(git rev-parse HEAD)" -t gaoq-os/worker:local .
-docker build --target erp-web --build-arg IMAGE_REVISION="$(git rev-parse HEAD)" --build-arg NEXT_PUBLIC_ERP_API_ORIGIN=https://erp.example.com -t gaoq-os/web:local .
+docker build --target erp-web --build-arg IMAGE_REVISION="$(git rev-parse HEAD)" --build-arg NEXT_PUBLIC_ERP_API_ORIGIN=https://erp.example.com --build-arg ERP_MOBILE_FRAME_ANCESTORS="https://h5.dingtalk.com https://open.feishu.cn" -t gaoq-os/web:local .
 ```
 
 构建时只允许仓库根目录作为 context；`.dockerignore` 必须排除 Git 元数据、环境文件、依赖目录和本地产物。生产发布必须使用不可变镜像 digest，禁止部署 `latest` 或仅靠可变 tag 定位。

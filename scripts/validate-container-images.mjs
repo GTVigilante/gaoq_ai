@@ -16,6 +16,7 @@ for (const marker of [
   'USER 65532:65532',
   'org.opencontainers.image.revision',
   'NEXT_PUBLIC_ERP_API_ORIGIN',
+  'ERP_MOBILE_FRAME_ANCESTORS',
 ]) {
   if (!dockerfile.includes(marker)) throw new Error('PHASE5_CONTAINER_BASELINE_INCOMPLETE');
 }
@@ -36,6 +37,7 @@ for (const marker of [
   'target: erp-api',
   'target: erp-worker',
   'target: erp-web',
+  '--build-arg ERP_MOBILE_FRAME_ANCESTORS=https://container.example.invalid',
   "test \"$configured_user\" = '65532:65532'",
   'artifact-name: gaoq-os-${{ matrix.image }}-sbom',
   'image-ref: gaoq-os/${{ matrix.image }}:${{ github.sha }}',

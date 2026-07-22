@@ -17,6 +17,7 @@ import {
   KnowledgeApplicationService,
   type CourseSummary,
   type ExamAttemptSummary,
+  type PersonalTrainingAssignmentView,
   type TrainingAssignmentSummary,
 } from './application/knowledge-application.service.js';
 import {
@@ -102,6 +103,17 @@ export class KnowledgeController {
     @Param('onboardingId') onboardingId: string,
   ): Promise<{ readonly items: readonly TrainingAssignmentSummary[] }> {
     return this.knowledge.listOnboardingAssignments(this.id(onboardingId));
+  }
+
+  @Get('assignments/mine')
+  @RequiredScopes('erp:knowledge:assignment:read')
+  async listMyAssignments(): Promise<{ readonly items: readonly PersonalTrainingAssignmentView[] }> {
+    const result = await this.knowledge.listMyAssignments();
+    await this.auditResult(
+      'knowledge.assignment.mine.read', 'knowledge_training_assignment_list', 'mine', 'R0',
+      { count: result.items.length },
+    );
+    return result;
   }
 
   @Get('assignments/:id')
@@ -209,7 +221,7 @@ export class KnowledgeController {
     action: string,
     resourceType: string,
     resourceId: string,
-    riskLevel: 'R1' | 'R2',
+    riskLevel: 'R0' | 'R1' | 'R2',
     metadata: Readonly<Record<string, string | number | boolean>>,
   ): Promise<void> {
     await this.audit.record({ action, resourceType, resourceId, riskLevel, outcome: 'success', metadata });

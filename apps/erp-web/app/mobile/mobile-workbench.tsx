@@ -18,6 +18,7 @@ import { createIdempotencyKey, ErpApiError, erpFetch, isDefinitiveWriteRejection
 import { MobileApprovalDelegation } from './mobile-approval-delegation';
 import { MobileApprovalInitiation } from './mobile-approval-initiation';
 import { MobileApprovalTaskOperation, type MobileTaskOperation } from './mobile-approval-task-operation';
+import { MobileKnowledgePanel } from './mobile-knowledge-panel';
 
 type MobileTab = 'home' | 'approvals' | 'knowledge' | 'profile';
 const STATUS_LABEL: Readonly<Record<ApprovalStatus, string>> = {
@@ -179,7 +180,7 @@ export function MobileWorkbench() {
             <ApprovalPanel approvals={approvals} state={state} onRetry={() => { void loadApprovals(); }} onOpen={(id) => { void openApproval(id); }} />
           </>
         ) : null}
-        {tab === 'knowledge' ? <ComingSoon title="知识中心" text="培训任务将复用 ERP 知识应用服务与现有权限投影。" /> : null}
+        {tab === 'knowledge' ? <MobileKnowledgePanel key={`knowledge:${identity?.actorId ?? 'anonymous'}`} active canRead={identity?.scopes.includes('erp:knowledge:assignment:read') ?? false} /> : null}
         {tab === 'profile' ? <ComingSoon title="我的" text="账号、安全设置和 Passkey 管理将保持服务端可信身份边界。" /> : null}
       </div>
 

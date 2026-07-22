@@ -318,6 +318,7 @@ jobs:
             --target "${{ matrix.target }}" \
             --build-arg IMAGE_REVISION="$GITHUB_SHA" \
             --build-arg NEXT_PUBLIC_ERP_API_ORIGIN=https://erp.example.invalid \
+            --build-arg ERP_MOBILE_FRAME_ANCESTORS=https://container.example.invalid \
             --tag "gaoq-os/${{ matrix.image }}:$GITHUB_SHA" \
             .
 

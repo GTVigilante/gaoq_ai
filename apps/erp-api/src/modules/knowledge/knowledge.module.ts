@@ -2,7 +2,9 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 
 import { IdempotencyModule } from '../../core/idempotency/idempotency.module.js';
+import { IdentityModule } from '../identity/identity.module.js';
 import { OnboardingModule } from '../onboarding/onboarding.module.js';
+import { OrgModule } from '../org/org.module.js';
 import { OutboxRecord, OutboxRecordSchema } from '../org/persistence/outbox.schema.js';
 import { KnowledgeApplicationService } from './application/knowledge-application.service.js';
 import {
@@ -35,7 +37,9 @@ import {
 @Module({
   imports: [
     IdempotencyModule,
+    IdentityModule,
     OnboardingModule,
+    OrgModule,
     MongooseModule.forFeature([
       { name: KnowledgeCourseVersionRecord.name, schema: KnowledgeCourseVersionRecordSchema },
       { name: KnowledgeTrainingAssignmentRecord.name, schema: KnowledgeTrainingAssignmentRecordSchema },

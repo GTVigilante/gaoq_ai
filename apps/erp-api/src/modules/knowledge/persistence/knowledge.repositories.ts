@@ -53,6 +53,21 @@ export class CourseVersionRepository extends TenantRepository {
     });
   }
 
+  async findByIds(ids: readonly string[], session?: ClientSession): Promise<readonly CourseVersion[]> {
+    if (ids.length > 200) throw new Error('知识课程批量读取超过 200 条上限');
+    if (ids.length === 0) return Object.freeze([]);
+    const query = this.records.find({ tenantId: this.tenantId(), id: { $in: [...ids] } }).sort({ id: 1 });
+    if (session !== undefined) query.session(session);
+    const values = await query.lean().exec();
+    return Object.freeze(values.map((value) => Object.freeze({
+      id: value.id, tenantId: value.tenantId, courseCode: value.courseCode,
+      revision: value.revision, title: value.title, contentRef: value.contentRef,
+      questionBankRef: value.questionBankRef, questionBankDigest: value.questionBankDigest,
+      passingScoreBps: value.passingScoreBps, status: value.status, version: value.version,
+      createdAt: value.createdAt.toISOString(), updatedAt: value.updatedAt.toISOString(),
+    })));
+  }
+
   async insert(course: CourseVersion, session: ClientSession): Promise<void> {
     this.assertTenant(course.tenantId);
     await this.records.create([{ ...course,
@@ -93,9 +108,11 @@ export class TrainingAssignmentRepository extends TenantRepository {
     onboardingInstanceId: string,
     session?: ClientSession,
   ): Promise<readonly TrainingAssignment[]> {
-    const query = this.records.find({ tenantId: this.tenantId(), onboardingInstanceId }).sort({ id: 1 });
+    const query = this.records.find({ tenantId: this.tenantId(), onboardingInstanceId }).sort({ id: 1 }).limit(201);
     if (session !== undefined) query.session(session);
-    return (await query.lean().exec()).map((value) => this.toDomain(value));
+    const values = await query.lean().exec();
+    if (values.length > 200) throw new Error('单个入职实例培训任务超过 200 条上限');
+    return Object.freeze(values.map((value) => this.toDomain(value)));
   }
 
   async insert(assignment: TrainingAssignment, session: ClientSession): Promise<void> {
