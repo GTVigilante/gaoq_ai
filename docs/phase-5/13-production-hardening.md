@@ -5,7 +5,9 @@
 
 ## 安全与供应链门禁
 
-所有 Pull Request 执行依赖变更审查、Bearer SAST、Gitleaks 完整 Git 历史 Secret Scan、`pnpm audit`、Trivy 文件系统扫描，并生成保留 30 天的 SPDX JSON SBOM。High/Critical 依赖漏洞和扫描发现均阻断；GitHub Action 必须固定到 40 位 commit SHA，检出步骤不保留写凭据。Bearer 与 Gitleaks CLI 均固定版本并验证官方发布包 SHA-256，不执行远端浮动安装脚本。
+所有 Pull Request 执行冻结锁文件安装、生产依赖许可证审查、Bearer SAST、Gitleaks 完整 Git 历史 Secret Scan、`pnpm audit`、Trivy 文件系统扫描，并生成保留 30 天的 SPDX JSON SBOM。High/Critical 依赖漏洞和扫描发现均阻断；GitHub Action 必须固定到 40 位 commit SHA，检出步骤不保留写凭据。Bearer 与 Gitleaks CLI 均固定版本并验证官方发布包 SHA-256，不执行远端浮动安装脚本。
+
+当前仓库为未启用 GitHub Advanced Security 的私有仓库，GitHub 官方 Dependency Review Action 会直接拒绝执行。因此许可证和漏洞策略使用仓库内可复现的 pnpm 清单门禁实现，拒绝 GPL-3.0、AGPL-3.0、未声明或无法识别的生产依赖许可证；不得以平台能力不足为由跳过门禁。若后续启用 GitHub Advanced Security，可叠加官方 Dependency Review，但仓库内门禁仍作为可移植基线保留。
 
 Dependabot 每周分别检查 pnpm/npm 依赖与 GitHub Actions。许可证门禁拒绝 GPL-3.0 与 AGPL-3.0；例外必须由法务、安全和架构共同批准并形成可追踪 ADR，禁止在工作流中静默降级为警告。
 

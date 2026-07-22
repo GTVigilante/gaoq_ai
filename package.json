@@ -16,6 +16,7 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "test:coverage": "pnpm -r --if-present test:coverage",
+    "security:licenses": "pnpm licenses list --prod --json | node scripts/validate-dependency-licenses.mjs",
     "security:validate": "node scripts/validate-security-workflow.mjs",
     "check": "pnpm lint && pnpm typecheck && pnpm test && node scripts/validate-docs.mjs && pnpm security:validate"
   },

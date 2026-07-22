@@ -20,7 +20,8 @@ for (const marker of [
   'sast:',
   'secret-scan:',
   'supply-chain:',
-  'fail-on-severity: high',
+  'pnpm audit --audit-level high',
+  'pnpm security:licenses',
   'Bearer/bearer/releases/download/v2.0.2',
   '865c80c5f80aaca1f83e98bca4decb0fd5b5d024e13f8ec48e94d69430d0d23b',
   'gitleaks/gitleaks/releases/download/v8.30.1',
@@ -33,6 +34,10 @@ for (const marker of [
   'format: spdx-json',
 ]) {
   if (!workflow.includes(marker)) throw new Error('PHASE5_SECURITY_GATE_INCOMPLETE');
+}
+
+if (workflow.includes('actions/dependency-review-action@')) {
+  throw new Error('PHASE5_SECURITY_GHAS_DEPENDENCY_FORBIDDEN');
 }
 
 const expectedBearerFingerprints = [
