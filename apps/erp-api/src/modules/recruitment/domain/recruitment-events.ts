@@ -33,7 +33,8 @@ export type RecruitmentEventType =
   | 'recruitment.offer.accepted'
   | 'recruitment.offer.declined'
   | 'recruitment.offer.expired'
-  | 'recruitment.offer.signed';
+  | 'recruitment.offer.signed'
+  | 'recruitment.offer.migrated';
 
 export interface RecruitmentDomainEvent {
   readonly type: RecruitmentEventType;
@@ -300,11 +301,34 @@ export function buildRecruitmentOfferEvent(
       positionId: offer.positionId,
       status: offer.status,
       approvalInstanceId: offer.approvalInstanceId,
+      approvalHistoryId: offer.approvalHistoryId,
       sendRequestId: offer.sendRequestId,
       sentEvidenceId: offer.sentEvidenceId,
       acceptanceEvidenceId: offer.acceptanceEvidenceId,
       esignFlowId: offer.esignFlowId,
       signedEvidenceId: offer.signedEvidenceId,
+    }),
+  });
+}
+
+/** Offer 迁移事件不输出 L4 条款或外部证据正文。 */
+export function buildRecruitmentOfferMigratedEvent(
+  offer: RecruitmentOffer,
+): RecruitmentDomainEvent {
+  return Object.freeze({
+    type: 'recruitment.offer.migrated',
+    aggregateType: 'recruitment.offer',
+    tenantId: offer.tenantId,
+    aggregateId: offer.id,
+    version: offer.version,
+    occurredAt: offer.updatedAt,
+    payload: Object.freeze({
+      applicationId: offer.applicationId,
+      positionId: offer.positionId,
+      completedInterviewId: offer.completedInterviewId,
+      status: offer.status,
+      approvalInstanceId: offer.approvalInstanceId,
+      approvalHistoryId: offer.approvalHistoryId,
     }),
   });
 }

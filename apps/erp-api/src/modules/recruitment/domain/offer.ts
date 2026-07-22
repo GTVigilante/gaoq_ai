@@ -48,6 +48,7 @@ export interface RecruitmentOffer {
   readonly retentionExpiresAt: string;
   readonly status: RecruitmentOfferStatus;
   readonly approvalInstanceId: string | null;
+  readonly approvalHistoryId: string | null;
   readonly sendRequestId: string | null;
   readonly sentEvidenceId: string | null;
   readonly acceptanceEvidenceId: string | null;
@@ -106,6 +107,7 @@ export function createRecruitmentOffer(
     retentionExpiresAt,
     status: 'draft' as const,
     approvalInstanceId: null,
+    approvalHistoryId: null,
     sendRequestId: null,
     sentEvidenceId: null,
     acceptanceEvidenceId: null,
@@ -115,6 +117,106 @@ export function createRecruitmentOffer(
     createdBy: input.actorId,
     createdAt: occurredAt,
     updatedAt: occurredAt,
+  });
+}
+
+/** 数据迁移专用：验证 Offer 最终控制快照，历史动作原文保留在 WORM。 */
+export function restoreRecruitmentOfferFromMigration(
+  input: {
+    readonly id: string;
+    readonly tenantId: string;
+    readonly applicationId: string;
+    readonly candidateId: string;
+    readonly positionId: string;
+    readonly completedInterviewId: string;
+    readonly terms: RecruitmentOfferTerms;
+    readonly expiresAt: string;
+    readonly retentionExpiresAt: string;
+    readonly status: RecruitmentOfferStatus;
+    readonly approvalInstanceId: string | null;
+    readonly approvalHistoryId: string | null;
+    readonly sendRequestId: string | null;
+    readonly sentEvidenceId: string | null;
+    readonly acceptanceEvidenceId: string | null;
+    readonly esignFlowId: string | null;
+    readonly signedEvidenceId: string | null;
+    readonly version: number;
+    readonly createdBy: string;
+    readonly createdAt: string;
+    readonly updatedAt: string;
+  },
+  now: Date,
+): RecruitmentOffer {
+  for (const [field, value] of Object.entries({
+    id: input.id, tenantId: input.tenantId, applicationId: input.applicationId,
+    candidateId: input.candidateId, positionId: input.positionId,
+    completedInterviewId: input.completedInterviewId, createdBy: input.createdBy,
+  })) assertRecruitmentId(value, field);
+  const createdAt = strictOfferMigrationIso(input.createdAt);
+  const updatedAt = strictOfferMigrationIso(input.updatedAt);
+  const expiresAt = strictOfferMigrationIso(input.expiresAt);
+  const retentionExpiresAt = strictOfferMigrationIso(input.retentionExpiresAt);
+  if (createdAt > updatedAt || Date.parse(updatedAt) > now.getTime() + 5 * 60 * 1_000 ||
+    Date.parse(expiresAt) <= Date.parse(createdAt) ||
+    Date.parse(retentionExpiresAt) <= Date.parse(expiresAt) ||
+    Date.parse(retentionExpiresAt) <= now.getTime()) throw new RecruitmentDomainError(
+    'RECRUITMENT_MIGRATION_OFFER_TIMELINE_INVALID', 'Offer 迁移时间线或保留期无效',
+  );
+  for (const [field, value] of Object.entries({
+    approvalInstanceId: input.approvalInstanceId,
+    approvalHistoryId: input.approvalHistoryId,
+    sendRequestId: input.sendRequestId,
+    sentEvidenceId: input.sentEvidenceId,
+    acceptanceEvidenceId: input.acceptanceEvidenceId,
+    esignFlowId: input.esignFlowId,
+    signedEvidenceId: input.signedEvidenceId,
+  })) if (value !== null) assertRecruitmentId(value, field);
+  const pending = input.status === 'pending_approval';
+  const approvedHistory = !['draft', 'pending_approval'].includes(input.status);
+  if (pending !== (input.approvalInstanceId !== null) ||
+    approvedHistory !== (input.approvalHistoryId !== null) ||
+    (input.approvalInstanceId !== null && input.approvalHistoryId !== null)) {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_MIGRATION_OFFER_APPROVAL_INVALID', 'Offer 迁移审批引用与状态不一致',
+    );
+  }
+  const sendRequested = input.sendRequestId !== null;
+  const sent = input.sentEvidenceId !== null;
+  const decided = input.acceptanceEvidenceId !== null;
+  const signed = input.esignFlowId !== null || input.signedEvidenceId !== null;
+  if ((sent && !sendRequested) || (decided && !sent) ||
+    ((input.esignFlowId === null) !== (input.signedEvidenceId === null)) || (signed && !decided)) {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_MIGRATION_OFFER_EVIDENCE_INVALID', 'Offer 迁移外部证据链不完整',
+    );
+  }
+  const exactShape = (
+    input.status === 'draft' && !sendRequested && !sent && !decided && !signed
+  ) || (
+    input.status === 'pending_approval' && !sendRequested && !sent && !decided && !signed
+  ) || (
+    ['approved', 'rejected'].includes(input.status) && !sendRequested && !sent && !decided && !signed
+  ) || (input.status === 'sending' && sendRequested && !sent && !decided && !signed) ||
+    (input.status === 'sent' && sendRequested && sent && !decided && !signed) ||
+    (['accepted', 'declined'].includes(input.status) && sendRequested && sent && decided && !signed) ||
+    (input.status === 'signed' && sendRequested && sent && decided && signed) ||
+    (['expired', 'cancelled'].includes(input.status) && !decided && !signed);
+  if (!exactShape) throw new RecruitmentDomainError(
+    'RECRUITMENT_MIGRATION_OFFER_EVIDENCE_INVALID', 'Offer 迁移状态与证据形状不一致',
+  );
+  const expectedVersion = 1 + (pending ? 1 : approvedHistory ? 2 : 0) +
+    (sendRequested ? 1 : 0) + (sent ? 1 : 0) + (decided ? 1 : 0) + (signed ? 1 : 0) +
+    (['expired', 'cancelled'].includes(input.status) ? 1 : 0);
+  if (input.version !== expectedVersion) throw new RecruitmentDomainError(
+    'RECRUITMENT_MIGRATION_OFFER_VERSION_INVALID', 'Offer 迁移版本与控制动作不一致',
+  );
+  return deepFreezeRecruitment({
+    ...input,
+    terms: validateRecruitmentOfferTerms(input.terms),
+    createdAt,
+    updatedAt,
+    expiresAt,
+    retentionExpiresAt,
   });
 }
 
@@ -350,4 +452,14 @@ function invalidTransition(): RecruitmentDomainError {
   return new RecruitmentDomainError(
     'RECRUITMENT_OFFER_TRANSITION_INVALID', 'Offer 状态迁移无效',
   );
+}
+
+function strictOfferMigrationIso(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value) {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_MIGRATION_OFFER_TIMELINE_INVALID', 'Offer 迁移时间必须为严格 UTC ISO',
+    );
+  }
+  return value;
 }

@@ -264,6 +264,20 @@ describe('RecruitmentSchemas', () => {
       signedEvidenceId: null, version: 1, createdBy: 'actor-001',
     };
     await new OfferModel(offer).validate();
+    await new OfferModel({
+      ...offer, status: 'approved', version: 3, approvalInstanceId: null,
+      approvalHistoryId: '01J8ZQK7V0A2M4N6P8R0T2W4X4',
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/offer-evidence-001',
+      migrationEvidenceChecksum: 'e'.repeat(43),
+    }).validate();
+    await expect(new OfferModel({
+      ...offer, status: 'approved', version: 3, approvalInstanceId: null,
+      approvalHistoryId: '01J8ZQK7V0A2M4N6P8R0T2W4X4',
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/offer-evidence-001',
+      migrationEvidenceChecksum: null,
+    }).validate()).rejects.toThrow('必须成对出现');
     await expect(new OfferModel({
       ...offer, status: 'sent', approvalInstanceId: '01J8ZQK7V0A2M4N6P8R0T2W4X4',
     }).validate()).rejects.toThrow('发送请求');

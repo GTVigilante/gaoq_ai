@@ -42,7 +42,7 @@ function offer(): RecruitmentOffer {
       benefitsSummary: '受保护内容',
     },
     expiresAt: '2026-09-01T00:00:00.000Z', retentionExpiresAt: '2032-09-01T00:00:00.000Z',
-    approvalInstanceId: 'approval-001', sendRequestId: 'send-001',
+    approvalInstanceId: 'approval-001', approvalHistoryId: null, sendRequestId: 'send-001',
     sentEvidenceId: 'sent-001', acceptanceEvidenceId: 'acceptance-001',
     esignFlowId: null, signedEvidenceId: null, version: 6, createdBy: 'actor-001',
     createdAt: NOW, updatedAt: NOW,

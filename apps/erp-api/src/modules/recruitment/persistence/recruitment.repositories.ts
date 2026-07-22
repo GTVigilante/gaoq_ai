@@ -680,7 +680,9 @@ export class RecruitmentOfferRepository extends TenantBoundRecruitmentRepository
       completedInterviewId: record.completedInterviewId, terms,
       expiresAt: record.expiresAt.toISOString(),
       retentionExpiresAt: record.retentionExpiresAt.toISOString(), status: record.status,
-      approvalInstanceId: record.approvalInstanceId, sendRequestId: record.sendRequestId,
+      approvalInstanceId: record.approvalInstanceId,
+      approvalHistoryId: record.approvalHistoryId,
+      sendRequestId: record.sendRequestId,
       sentEvidenceId: record.sentEvidenceId,
       acceptanceEvidenceId: record.acceptanceEvidenceId, esignFlowId: record.esignFlowId,
       signedEvidenceId: record.signedEvidenceId, version: record.version,
@@ -690,6 +692,47 @@ export class RecruitmentOfferRepository extends TenantBoundRecruitmentRepository
   }
 
   async insert(offer: RecruitmentOffer, session: ClientSession): Promise<void> {
+    await this.insertWithMigrationEvidence(offer, null, null, session);
+  }
+
+  async insertMigrated(
+    offer: RecruitmentOffer,
+    migrationEvidenceRef: string,
+    migrationEvidenceChecksum: string,
+    session: ClientSession,
+  ): Promise<void> {
+    await this.insertWithMigrationEvidence(
+      offer, migrationEvidenceRef, migrationEvidenceChecksum, session,
+    );
+  }
+
+  async findMigrationEvidenceById(
+    id: string,
+    session?: ClientSession,
+  ): Promise<{
+    readonly migrationEvidenceRef: string;
+    readonly migrationEvidenceChecksum: string;
+  } | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), id })
+      .select('migrationEvidenceRef migrationEvidenceChecksum -_id');
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record?.migrationEvidenceRef === null || record?.migrationEvidenceRef === undefined ||
+      record.migrationEvidenceChecksum === null ||
+      record.migrationEvidenceChecksum === undefined
+      ? null
+      : {
+          migrationEvidenceRef: record.migrationEvidenceRef,
+          migrationEvidenceChecksum: record.migrationEvidenceChecksum,
+        };
+  }
+
+  private async insertWithMigrationEvidence(
+    offer: RecruitmentOffer,
+    migrationEvidenceRef: string | null,
+    migrationEvidenceChecksum: string | null,
+    session: ClientSession,
+  ): Promise<void> {
     this.assertTenant(offer.tenantId);
     const protectedData = this.crypto.protect({
       tenantId: offer.tenantId, resourceType: 'offer_terms', resourceId: offer.id,
@@ -702,9 +745,11 @@ export class RecruitmentOfferRepository extends TenantBoundRecruitmentRepository
       termsCiphertext: protectedData.ciphertext, termsAuthTag: protectedData.authTag,
       expiresAt: new Date(offer.expiresAt), retentionExpiresAt: new Date(offer.retentionExpiresAt),
       status: offer.status, approvalInstanceId: offer.approvalInstanceId,
+      approvalHistoryId: offer.approvalHistoryId,
       sendRequestId: offer.sendRequestId, sentEvidenceId: offer.sentEvidenceId,
       acceptanceEvidenceId: offer.acceptanceEvidenceId, esignFlowId: offer.esignFlowId,
       signedEvidenceId: offer.signedEvidenceId, version: offer.version,
+      migrationEvidenceRef, migrationEvidenceChecksum,
       createdBy: offer.createdBy, createdAt: new Date(offer.createdAt),
       updatedAt: new Date(offer.updatedAt),
     }], { session });
@@ -720,6 +765,7 @@ export class RecruitmentOfferRepository extends TenantBoundRecruitmentRepository
       { tenantId: this.tenantId(), id: offer.id, version: expectedVersion },
       { $set: {
         status: offer.status, approvalInstanceId: offer.approvalInstanceId,
+        approvalHistoryId: offer.approvalHistoryId,
         sendRequestId: offer.sendRequestId, sentEvidenceId: offer.sentEvidenceId,
         acceptanceEvidenceId: offer.acceptanceEvidenceId, esignFlowId: offer.esignFlowId,
         signedEvidenceId: offer.signedEvidenceId, version: offer.version,

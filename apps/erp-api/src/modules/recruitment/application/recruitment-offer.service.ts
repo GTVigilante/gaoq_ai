@@ -51,6 +51,7 @@ export interface RecruitmentOfferSummary extends Record<string, unknown> {
   readonly status: RecruitmentOffer['status'];
   readonly expiresAt: string;
   readonly approvalInstanceId: string | null;
+  readonly approvalHistoryId: string | null;
   readonly sendRequestId: string | null;
   readonly sentEvidenceId: string | null;
   readonly acceptanceEvidenceId: string | null;
@@ -528,6 +529,7 @@ function offerSummary(offer: RecruitmentOffer): RecruitmentOfferSummary {
     id: offer.id, applicationId: offer.applicationId, positionId: offer.positionId,
     completedInterviewId: offer.completedInterviewId, status: offer.status,
     expiresAt: offer.expiresAt, approvalInstanceId: offer.approvalInstanceId,
+    approvalHistoryId: offer.approvalHistoryId,
     sendRequestId: offer.sendRequestId, sentEvidenceId: offer.sentEvidenceId,
     acceptanceEvidenceId: offer.acceptanceEvidenceId, esignFlowId: offer.esignFlowId,
     signedEvidenceId: offer.signedEvidenceId, version: offer.version,

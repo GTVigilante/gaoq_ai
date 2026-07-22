@@ -697,6 +697,9 @@ export class RecruitmentOfferRecord {
   @Prop({ type: String, default: null, match: ULID_PATTERN })
   approvalInstanceId!: string | null;
 
+  @Prop({ type: String, default: null, match: ULID_PATTERN })
+  approvalHistoryId!: string | null;
+
   @Prop({ type: String, default: null, maxlength: 128, match: RECRUITMENT_ID_PATTERN })
   sendRequestId!: string | null;
 
@@ -718,6 +721,15 @@ export class RecruitmentOfferRecord {
   @Prop({ ...STRING_ID, immutable: true })
   createdBy!: string;
 
+  @Prop({
+    type: String, default: null, immutable: true, maxlength: 256,
+    match: MIGRATION_EVIDENCE_REF_PATTERN,
+  })
+  migrationEvidenceRef!: string | null;
+
+  @Prop({ type: String, default: null, immutable: true, match: HASH_PATTERN })
+  migrationEvidenceChecksum!: string | null;
+
   createdAt!: Date;
   updatedAt!: Date;
 }
@@ -727,16 +739,29 @@ export const RecruitmentOfferRecordSchema = SchemaFactory.createForClass(Recruit
 
 RecruitmentOfferRecordSchema.pre('validate', function () {
   const record = this as RecruitmentOfferRecord;
-  const needsApproval = !['draft'].includes(record.status);
-  if (needsApproval !== (record.approvalInstanceId !== null)) {
-    throw new Error('Offer 状态与审批实例引用不一致');
+  const needsApproval = record.status !== 'draft';
+  const approvalCount = Number(record.approvalInstanceId !== null) +
+    Number(record.approvalHistoryId !== null);
+  if ((needsApproval && approvalCount !== 1) || (!needsApproval && approvalCount !== 0)) {
+    throw new Error('Offer 状态与审批引用不一致');
   }
-  if (['sending', 'sent', 'accepted', 'declined', 'signed'].includes(record.status) !==
-    (record.sendRequestId !== null)) throw new Error('Offer 发送状态与发送请求不一致');
-  if (['sent', 'accepted', 'declined', 'signed'].includes(record.status) !==
-    (record.sentEvidenceId !== null)) throw new Error('Offer 已发送状态必须引用投递证据');
-  if (['accepted', 'declined', 'signed'].includes(record.status) !==
-    (record.acceptanceEvidenceId !== null)) throw new Error('Offer 候选人决定必须引用接受证据');
+  const flexibleTerminal = ['expired', 'cancelled'].includes(record.status);
+  if (!flexibleTerminal &&
+    (['sending', 'sent', 'accepted', 'declined', 'signed'].includes(record.status) !==
+      (record.sendRequestId !== null))) throw new Error('Offer 发送状态与发送请求不一致');
+  if (!flexibleTerminal &&
+    (['sent', 'accepted', 'declined', 'signed'].includes(record.status) !==
+      (record.sentEvidenceId !== null))) throw new Error('Offer 已发送状态必须引用投递证据');
+  if (!flexibleTerminal &&
+    (['accepted', 'declined', 'signed'].includes(record.status) !==
+      (record.acceptanceEvidenceId !== null))) {
+    throw new Error('Offer 候选人决定必须引用接受证据');
+  }
+  if (flexibleTerminal && (record.acceptanceEvidenceId !== null ||
+    record.esignFlowId !== null || record.signedEvidenceId !== null ||
+    (record.sentEvidenceId !== null && record.sendRequestId === null))) {
+    throw new Error('Offer 终止状态的外部证据链不完整');
+  }
   const signed = record.status === 'signed';
   if (signed !== (record.esignFlowId !== null) || signed !== (record.signedEvidenceId !== null)) {
     throw new Error('Offer 签署状态必须引用完整 eSign 证据');
@@ -744,12 +769,20 @@ RecruitmentOfferRecordSchema.pre('validate', function () {
   if (record.retentionExpiresAt.getTime() <= record.expiresAt.getTime()) {
     throw new Error('Offer 保留期必须晚于有效期');
   }
+  if ((record.migrationEvidenceRef === null) !==
+    (record.migrationEvidenceChecksum === null)) {
+    throw new Error('Offer 迁移证据引用与校验和必须成对出现');
+  }
 });
 
 RecruitmentOfferRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 RecruitmentOfferRecordSchema.index({ tenantId: 1, applicationId: 1 }, { unique: true });
 RecruitmentOfferRecordSchema.index({ tenantId: 1, status: 1, expiresAt: 1 });
 RecruitmentOfferRecordSchema.index({ tenantId: 1, retentionExpiresAt: 1 });
+RecruitmentOfferRecordSchema.index(
+  { tenantId: 1, migrationEvidenceRef: 1 },
+  { unique: true, partialFilterExpression: { migrationEvidenceRef: { $type: 'string' } } },
+);
 
 /** Offer 外部事实证据账本；只保存摘要与内部引用，不保存回执正文。 */
 @Schema({

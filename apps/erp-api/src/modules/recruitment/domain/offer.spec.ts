@@ -7,6 +7,7 @@ import {
   recordRecruitmentOfferSent,
   recordRecruitmentOfferSigned,
   requestRecruitmentOfferSend,
+  restoreRecruitmentOfferFromMigration,
   submitRecruitmentOffer,
   type RecruitmentOfferTerms,
 } from './offer.js';
@@ -97,5 +98,26 @@ describe('RecruitmentOffer', () => {
       acceptanceEvidenceId: 'accept-evidence-001', esignFlowId: 'esign-flow-001',
       signedEvidenceId: 'signed-evidence-001', version: 7,
     });
+  });
+
+  it('迁移 Offer 使用终结审批历史并验证 L4 快照版本', () => {
+    const restored = restoreRecruitmentOfferFromMigration({
+      id: 'offer-002', tenantId: 'tenant-001', applicationId: 'application-001',
+      candidateId: 'candidate-001', positionId: 'position-001',
+      completedInterviewId: 'interview-001', terms: TERMS,
+      expiresAt: '2026-08-01T00:00:00.000Z',
+      retentionExpiresAt: '2033-08-01T00:00:00.000Z', status: 'approved',
+      approvalInstanceId: null, approvalHistoryId: 'approval-history-001',
+      sendRequestId: null, sentEvidenceId: null, acceptanceEvidenceId: null,
+      esignFlowId: null, signedEvidenceId: null, version: 3, createdBy: 'actor-001',
+      createdAt: '2026-07-20T00:00:00.000Z', updatedAt: '2026-07-21T00:00:00.000Z',
+    }, new Date('2026-07-22T00:00:00.000Z'));
+    expect(restored).toMatchObject({
+      status: 'approved', approvalInstanceId: null,
+      approvalHistoryId: 'approval-history-001', version: 3,
+    });
+    expect(() => restoreRecruitmentOfferFromMigration({
+      ...restored, version: 4,
+    }, new Date('2026-07-22T00:00:00.000Z'))).toThrow(/版本/u);
   });
 });
