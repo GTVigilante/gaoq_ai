@@ -42,6 +42,8 @@ describe('validateEnvironment', () => {
     expect(environment.PAYROLL_TAX_GATEWAY_MODE).toBe('sandbox');
     expect(environment.PAYROLL_TAX_WORM_RETENTION_DAYS).toBe(3_650);
     expect(environment.METRICS_BEARER_TOKEN).toBeUndefined();
+    expect(environment.DATA_MIGRATION_ATTACHMENT_GATEWAY_ENDPOINT).toBeUndefined();
+    expect(environment.DATA_MIGRATION_ATTACHMENT_RETENTION_DAYS).toBe(2_555);
     expect(environment.ESIGN_MALWARE_SCAN_ENDPOINT).toBeUndefined();
     expect(environment.ESIGN_WORM_ARCHIVE_ENDPOINT).toBeUndefined();
     expect(environment.ESIGN_WORM_RETENTION_DAYS).toBe(3_650);
@@ -50,6 +52,39 @@ describe('validateEnvironment', () => {
     expect(environment.OP_SSO_CLIENT_SECRET).toBeUndefined();
     expect(environment.OP_SSO_REDIRECT_URI).toBeUndefined();
     expect(environment.MCP_OAUTH_CLIENTS_JSON).toBe('[]');
+  });
+
+  it('迁移附件网关端点与凭据必须成套且使用独立标准 HTTPS', () => {
+    const base = {
+      NODE_ENV: 'test',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0',
+      WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://erp.example.com',
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://erp.example.com/.well-known/jwks.json',
+      MCP_AUTHORIZATION_SERVER: 'https://erp.example.com',
+      MCP_ALLOWED_ORIGINS: 'https://client.example.com',
+    };
+    const token = 'migration-attachment-gateway-token-0001';
+    expect(validateEnvironment({
+      ...base,
+      DATA_MIGRATION_ATTACHMENT_GATEWAY_ENDPOINT: 'https://migration-files.example.net/v1/transfer',
+      DATA_MIGRATION_ATTACHMENT_GATEWAY_BEARER_TOKEN: token,
+    })).toMatchObject({
+      DATA_MIGRATION_ATTACHMENT_GATEWAY_ENDPOINT:
+        'https://migration-files.example.net/v1/transfer',
+    });
+    expect(() => validateEnvironment({
+      ...base,
+      DATA_MIGRATION_ATTACHMENT_GATEWAY_ENDPOINT: 'https://migration-files.example.net/v1/transfer',
+    })).toThrow('端点与凭据必须成套配置');
+    expect(() => validateEnvironment({
+      ...base,
+      DATA_MIGRATION_ATTACHMENT_GATEWAY_ENDPOINT: 'https://erp.example.com/v1/transfer',
+      DATA_MIGRATION_ATTACHMENT_GATEWAY_BEARER_TOKEN: token,
+    })).toThrow('独立权限域标准 HTTPS');
   });
 
   it('OP 组织下发只接受独立权限域的标准 HTTPS 根地址', () => {

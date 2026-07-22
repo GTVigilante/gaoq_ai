@@ -119,9 +119,39 @@ export async function applyMigrationPackage(
       method: 'POST', headers, body: JSON.stringify(record),
     });
   }
+  const transfer = await requestJson(
+    `${endpoint}/data-migrations/runs/${encodeURIComponent(runId)}/attachments/transfer`,
+    { method: 'POST', headers, body: '{}' },
+  );
+  const pendingCount = requiredInteger(transfer, 'pendingCount');
+  if (pendingCount > 0) {
+    await waitForAttachments(endpoint, runId, headers, environment);
+  }
   return requestJson(`${endpoint}/data-migrations/runs/${encodeURIComponent(runId)}/complete`, {
     method: 'POST', headers, body: '{}',
   });
+}
+
+async function waitForAttachments(
+  endpoint: string,
+  runId: string,
+  headers: Readonly<Record<string, string>>,
+  environment: NodeJS.ProcessEnv,
+): Promise<void> {
+  const configured = Number(environment.ERP_MIGRATION_ATTACHMENT_WAIT_SECONDS ?? '1800');
+  if (!Number.isSafeInteger(configured) || configured < 10 || configured > 86_400) {
+    throw packageError('ATTACHMENT_WAIT_INVALID');
+  }
+  const deadline = Date.now() + configured * 1_000;
+  while (Date.now() < deadline) {
+    const report = await requestJson(
+      `${endpoint}/data-migrations/runs/${encodeURIComponent(runId)}/report`,
+      { method: 'GET', headers },
+    );
+    if (controlTotal(report, 'pendingAttachmentCount') === 0) return;
+    await new Promise<void>((resolveWait) => setTimeout(resolveWait, 2_000));
+  }
+  throw packageError('ATTACHMENT_WAIT_TIMEOUT');
 }
 
 export async function exportMigrationEvidence(

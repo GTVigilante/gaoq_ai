@@ -13,6 +13,7 @@ import { IntegrationWorkerModule } from './modules/integration/integration-worke
 import { ApprovalNotificationWorkerModule } from './modules/approval/notification/approval-notification-worker.module.js';
 import { CareWorkerModule } from './modules/care/care-worker.module.js';
 import { AnalyticsWorkerModule } from './modules/analytics/analytics-worker.module.js';
+import { DataMigrationWorkerModule } from './modules/data-migration/data-migration-worker.module.js';
 
 const mongoLogger = new Logger('WorkerMongoDB');
 
@@ -45,6 +46,7 @@ const mongoLogger = new Logger('WorkerMongoDB');
     ApprovalNotificationWorkerModule,
     CareWorkerModule,
     AnalyticsWorkerModule,
+    DataMigrationWorkerModule,
     AuditWorkerModule,
     ObservabilityModule,
   ],

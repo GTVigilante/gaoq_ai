@@ -2,6 +2,7 @@ import { BadRequestException, Body, Controller, Get, Param, Post, Query } from '
 
 import { AuditService } from '../../core/audit/audit.service.js';
 import { RequiredScopes } from '../identity/auth.decorators.js';
+import { DataMigrationAttachmentService } from './application/data-migration-attachment.service.js';
 import { DataMigrationService } from './application/data-migration.service.js';
 import {
   ApplyDataMigrationRecordDto,
@@ -16,6 +17,7 @@ const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 export class DataMigrationController {
   constructor(
     private readonly migrations: DataMigrationService,
+    private readonly attachments: DataMigrationAttachmentService,
     private readonly audit: AuditService,
   ) {}
 
@@ -56,6 +58,19 @@ export class DataMigrationController {
       },
     });
     return report;
+  }
+
+  @Post('runs/:id/attachments/transfer')
+  @RequiredScopes('erp:migration:execute', 'erp:migration:attachment:execute')
+  async transferAttachments(@Param('id') id: string) {
+    const result = await this.attachments.request(requireRunId(id));
+    await this.audit.record({
+      action: 'data_migration.attachment.transfer.request',
+      resourceType: 'data_migration_run', resourceId: id,
+      riskLevel: 'R2', outcome: 'success',
+      metadata: { status: result.status, pendingCount: result.pendingCount },
+    });
+    return result;
   }
 
   @Get('runs/:id/report')

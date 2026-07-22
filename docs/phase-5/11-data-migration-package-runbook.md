@@ -36,7 +36,7 @@ pnpm --filter @gaoq/erp-api migration:package -- apply /secure/path/to/package
 unset ERP_MIGRATION_TOKEN
 ```
 
-令牌必须绑定可信租户、`service|system_job` 身份以及 `erp:migration:execute`、`erp:org:master:write` Scope。工具不接受命令行 Token，避免进入 shell history；除 `localhost`/`127.0.0.1` 外只允许 HTTPS。每次 apply 都先完整预检，然后幂等创建来源运行；服务端返回的 checkpoint 决定续传起点，已确认序号不会再次发送。全部记录处理后调用 complete 并输出聚合差异报告。
+令牌必须绑定可信租户、`service|system_job` 身份以及 `erp:migration:execute`、`erp:org:master:write`、`erp:migration:attachment:execute` Scope。工具不接受命令行 Token，避免进入 shell history；除 `localhost`/`127.0.0.1` 外只允许 HTTPS。每次 apply 都先完整预检，然后幂等创建来源运行；服务端返回的 checkpoint 决定续传起点，已确认序号不会再次发送。全部记录处理后请求附件搬运并轮询聚合报告，未决附件归零后才调用 complete；默认等待 1800 秒，可通过 `ERP_MIGRATION_ATTACHMENT_WAIT_SECONDS` 设置 10–86400 秒。
 
 ## 操作门禁
 
@@ -45,6 +45,8 @@ unset ERP_MIGRATION_TOKEN
 - 工具不会替代领域校验，也不会直接连接 MongoDB；所有目标写入仍由 REST 进入应用服务。
 - 网络超时或进程中断后使用同一来源包重跑 apply；禁止修改原包后复用 `sourceRunId`。
 - 当前实现会在预检期间维护来源记录 ID 集合；超大数据包必须按已批准 Scope 和容量演练结果拆分，不得绕过服务端总控制量。
+
+附件网关通过 `DATA_MIGRATION_ATTACHMENT_GATEWAY_ENDPOINT` 与 `DATA_MIGRATION_ATTACHMENT_GATEWAY_BEARER_TOKEN` 成套配置，必须位于 ERP 授权域之外的标准 HTTPS 权限域。网关负责来源凭据、正文拉取、扫描与 WORM 归档；ERP 只发送来源标识、预期 checksum、L3 分级和不少于 2555 天的保留期。任何正文、来源 Token 或文件字节均不得进入 BullMQ Job、ERP 日志或迁移账本。
 
 ## 完整差异证据导出
 

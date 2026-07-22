@@ -1,0 +1,195 @@
+import { InjectQueue } from '@nestjs/bullmq';
+import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { InjectModel } from '@nestjs/mongoose';
+import { createEventId } from '@gaoq/shared-utils';
+import type { Queue } from 'bullmq';
+import type { Model } from 'mongoose';
+
+import type { AppEnvironment } from '../../../config/environment.js';
+import { AuditService } from '../../../core/audit/audit.service.js';
+import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
+import {
+  DATA_MIGRATION_ATTACHMENT_QUEUE,
+  DATA_MIGRATION_ATTACHMENT_TRANSFER_JOB,
+  type DataMigrationAttachmentJobData,
+} from '../data-migration-attachment.queue.js';
+import { DataMigrationAttachmentGateway } from '../integration/data-migration-attachment.ports.js';
+import {
+  DataMigrationAttachmentRecord,
+  type DataMigrationAttachmentDocument,
+  DataMigrationRunRecord,
+  type DataMigrationRunDocument,
+} from '../persistence/data-migration.schemas.js';
+
+const LEASE_MS = 5 * 60 * 1_000;
+const BATCH_SIZE = 100;
+const MAX_ATTEMPTS = 5;
+
+/** 附件搬运编排：队列只传租户与运行标识，正文始终留在隔离网关。 */
+@Injectable()
+export class DataMigrationAttachmentService {
+  constructor(
+    private readonly context: TenantContextService,
+    private readonly gateway: DataMigrationAttachmentGateway,
+    private readonly audit: AuditService,
+    private readonly config: ConfigService<AppEnvironment, true>,
+    @InjectQueue(DATA_MIGRATION_ATTACHMENT_QUEUE)
+    private readonly queue: Queue<DataMigrationAttachmentJobData>,
+    @InjectModel(DataMigrationRunRecord.name) private readonly runs: Model<DataMigrationRunDocument>,
+    @InjectModel(DataMigrationAttachmentRecord.name)
+    private readonly attachments: Model<DataMigrationAttachmentDocument>,
+  ) {}
+
+  async request(runId: string) {
+    this.assertRequester();
+    const tenantId = this.context.getTenantRequired().tenantId;
+    const run = await this.runs.findOne({ tenantId, id: runId }).lean().exec();
+    if (run === null) throw new NotFoundException({
+      code: 'DATA_MIGRATION_RUN_NOT_FOUND', message: '迁移运行不存在',
+    });
+    if (run.status !== 'running' || run.checkpoint !== run.expectedSourceCount) {
+      throw new ConflictException({
+        code: 'DATA_MIGRATION_ATTACHMENT_TRANSFER_NOT_READY',
+        message: '必须在全部来源记录处理完成且运行冻结前搬运附件',
+      });
+    }
+    const pendingCount = await this.attachments.countDocuments({
+      tenantId, runId, status: { $in: ['pending', 'processing'] },
+    }).exec();
+    if (pendingCount > 0) await this.enqueue({ tenantId, runId });
+    return Object.freeze({ runId, status: pendingCount === 0 ? 'ready' : 'queued', pendingCount });
+  }
+
+  async process(input: DataMigrationAttachmentJobData): Promise<void> {
+    const run = await this.runs.findOne({ tenantId: input.tenantId, id: input.runId }).lean().exec();
+    if (run === null || run.status !== 'running') return;
+    for (let processed = 0; processed < BATCH_SIZE; processed += 1) {
+      const attachment = await this.claim(input.tenantId, input.runId);
+      if (attachment === null) break;
+      try {
+        const receipt = await this.gateway.transfer({
+          tenantId: input.tenantId, runId: input.runId, sourceSystem: run.sourceSystem,
+          sourceAttachmentId: attachment.sourceAttachmentId,
+          expectedChecksum: attachment.checksum,
+          retentionDays: this.config.get(
+            'DATA_MIGRATION_ATTACHMENT_RETENTION_DAYS', { infer: true },
+          ),
+        });
+        await this.audit.recordSystem(input.tenantId, {
+          action: 'data_migration.attachment.transfer', resourceType: 'data_migration_run',
+          resourceId: input.runId, riskLevel: 'R2', outcome: 'success', traceId: input.runId,
+          metadata: {
+            sourceAttachmentId: attachment.sourceAttachmentId,
+            targetEvidenceId: receipt.targetEvidenceId,
+            malwareScanEvidenceId: receipt.malwareScanEvidenceId,
+            checksum: receipt.checksum,
+          },
+        });
+        const updated = await this.attachments.updateOne(
+          { tenantId: input.tenantId, id: attachment.id, status: 'processing' },
+          { $set: {
+            status: 'verified', processingStartedAt: null,
+            targetEvidenceId: receipt.targetEvidenceId, rejectionCode: null,
+          } },
+          { runValidators: true },
+        ).exec();
+        if (updated.modifiedCount !== 1) throw new Error('DATA_MIGRATION_ATTACHMENT_STATE_CONFLICT');
+      } catch (error) {
+        await this.handleFailure(input, attachment, error);
+        if (!permanentFailure(error, attachment.attempts)) throw error;
+      }
+    }
+    const remaining = await this.attachments.countDocuments({
+      tenantId: input.tenantId, runId: input.runId,
+      $or: [
+        { status: 'pending', attempts: { $lt: MAX_ATTEMPTS } },
+        {
+          status: 'processing', attempts: { $lte: MAX_ATTEMPTS },
+          processingStartedAt: { $lt: new Date(Date.now() - LEASE_MS) },
+        },
+      ],
+    }).exec();
+    if (remaining > 0) await this.enqueue(input);
+  }
+
+  private async claim(tenantId: string, runId: string) {
+    const now = new Date();
+    return this.attachments.findOneAndUpdate(
+      {
+        tenantId, runId,
+        $or: [
+          { status: 'pending', attempts: { $lt: MAX_ATTEMPTS } },
+          {
+            status: 'processing', attempts: { $lte: MAX_ATTEMPTS },
+            processingStartedAt: { $lt: new Date(now.getTime() - LEASE_MS) },
+          },
+        ],
+      },
+      { $set: { status: 'processing', processingStartedAt: now }, $inc: { attempts: 1 } },
+      { sort: { sequence: 1, sourceAttachmentId: 1 }, returnDocument: 'after', runValidators: true },
+    ).lean().exec();
+  }
+
+  private async handleFailure(
+    input: DataMigrationAttachmentJobData,
+    attachment: DataMigrationAttachmentRecord,
+    error: unknown,
+  ): Promise<void> {
+    const rejected = permanentFailure(error, attachment.attempts);
+    const rejectionCode = rejected ? safeFailureCode(error, attachment.attempts) : null;
+    await this.audit.recordSystem(input.tenantId, {
+      action: 'data_migration.attachment.transfer', resourceType: 'data_migration_run',
+      resourceId: input.runId, riskLevel: 'R2', outcome: 'failure', traceId: input.runId,
+      metadata: {
+        sourceAttachmentId: attachment.sourceAttachmentId,
+        failureCode: rejectionCode ?? 'DATA_MIGRATION_ATTACHMENT_TRANSIENT_FAILURE',
+        retryable: !rejected,
+      },
+    });
+    await this.attachments.updateOne(
+      { tenantId: input.tenantId, id: attachment.id, status: 'processing' },
+      { $set: {
+        status: rejected ? 'rejected' : 'pending', processingStartedAt: null,
+        rejectionCode,
+      } },
+      { runValidators: true },
+    ).exec();
+  }
+
+  private async enqueue(data: DataMigrationAttachmentJobData): Promise<void> {
+    await this.queue.add(DATA_MIGRATION_ATTACHMENT_TRANSFER_JOB, data, {
+      jobId: `${data.runId}:${createEventId()}`, attempts: 6,
+      backoff: { type: 'exponential', delay: 2_000 },
+      removeOnComplete: { age: 86_400, count: 10_000 },
+      removeOnFail: { age: 604_800, count: 10_000 },
+    });
+  }
+
+  private assertRequester(): void {
+    const actor = this.context.getActorRequired();
+    if (!['service', 'system_job'].includes(actor.actorType) ||
+      !actor.scopes.includes('erp:migration:execute') ||
+      !actor.scopes.includes('erp:migration:attachment:execute')) throw new ForbiddenException({
+      code: 'DATA_MIGRATION_ATTACHMENT_EXECUTOR_FORBIDDEN',
+      message: '当前身份无权执行迁移附件搬运',
+    });
+  }
+}
+
+function permanentFailure(error: unknown, attempts: number): boolean {
+  const code = error instanceof Error ? error.message : '';
+  return attempts >= MAX_ATTEMPTS || [
+    'DATA_MIGRATION_ATTACHMENT_HASH_INVALID',
+    'DATA_MIGRATION_ATTACHMENT_RECEIPT_INVALID',
+    'DATA_MIGRATION_ATTACHMENT_GATEWAY_HTTP_404',
+    'DATA_MIGRATION_ATTACHMENT_GATEWAY_HTTP_409',
+    'DATA_MIGRATION_ATTACHMENT_GATEWAY_HTTP_422',
+  ].includes(code);
+}
+
+function safeFailureCode(error: unknown, attempts: number): string {
+  if (attempts >= MAX_ATTEMPTS) return 'DATA_MIGRATION_ATTACHMENT_RETRY_EXHAUSTED';
+  return error instanceof Error && /^DATA_MIGRATION_ATTACHMENT_[A-Z0-9_]{2,80}$/u.test(error.message)
+    ? error.message : 'DATA_MIGRATION_ATTACHMENT_TRANSFER_REJECTED';
+}

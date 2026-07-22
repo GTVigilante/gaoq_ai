@@ -11,7 +11,7 @@ import {
 } from '../modules/data-migration/persistence/data-migration.schemas.js';
 import { buildIndexManifestFromSchemas, runAdditiveIndexMigration } from './phase-3-indexes.js';
 
-const MIGRATION_ID = 'phase-5-data-migration-indexes-v1';
+const MIGRATION_ID = 'phase-5-data-migration-indexes-v2';
 
 export function buildPhaseFiveDataMigrationIndexManifest() {
   return buildIndexManifestFromSchemas([

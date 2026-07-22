@@ -24,13 +24,14 @@
 - 账本不保存来源 payload、姓名、附件内容或 Token，只保存摘要、来源/目标引用、版本、状态和标准拒绝码。
 - `data_migration_associations` 逐项保存关系类型、来源关联 ID、解析后的目标 ID 与 `resolved|missing` 状态；`data_migration_attachments` 逐项保存来源附件 ID、checksum、搬运状态和目标证据引用，严禁保存附件正文。
 - 未知基础设施错误不允许伪装为业务拒绝或推进检查点；只有稳定的 `ORG_*` / `DATA_MIGRATION_*` 规则错误进入拒绝账本。
-- 当前附件证据逐项登记为 `pending`，但尚未配置搬运适配器；每个未决附件均生成 High 差异并阻止 Phase 6 资格，禁止假报成功。未解析关联生成 Critical 差异。
+- 附件证据逐项登记为 `pending`，全部来源记录处理完成后由独立 Worker 调用隔离附件网关。网关自行拉取来源正文，完成 checksum 复核、恶意文件扫描与不可变归档；ERP 进程只接收严格绑定摘要的回执。`pending|processing` 生成 High 差异，网关拒绝生成 Critical 差异并阻止 Phase 6。未解析关联同样生成 Critical 差异。
 
 ## REST、MCP 与审计
 
 - `POST /api/data-migrations/runs`：创建或重放同一来源运行。
 - `POST /api/data-migrations/runs/{id}/records`：严格按检查点应用一条记录。
 - `POST /api/data-migrations/runs/{id}/complete`：冻结运行并生成差异结论。
+- `POST /api/data-migrations/runs/{id}/attachments/transfer`：来源记录全部完成后入队搬运附件；要求可信服务身份及 `erp:migration:attachment:execute`，按 R2 审计。
 - `GET /api/data-migrations/runs/{id}/report`：读取控制量报告，Scope `erp:migration:read`。
 - `GET /api/data-migrations/runs/{id}/evidence`：按 `items|associations|attachments` 固定顺序分页读取完整证据账本；要求 `erp:migration:read` 与 `erp:migration:evidence:export`，每页返回 SHA-256，按 R2 审计。
 - MCP Tool：`data_migration_report_get`；Resource：`erp://data-migrations/runs/{id}/report`；Prompt：`data_migration_report_review_guide`。全部只读且复用 `DataMigrationService.report`。

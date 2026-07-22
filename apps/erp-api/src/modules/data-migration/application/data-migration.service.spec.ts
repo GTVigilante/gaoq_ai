@@ -377,7 +377,7 @@ describe('DataMigrationService', () => {
       attachmentCount: 2, pendingAttachmentCount: 2, phaseSixEligible: false,
     });
     expect(report.differences.map((item) => item.code)).toEqual([
-      'ASSOCIATION_UNRESOLVED', 'ATTACHMENT_MIGRATION_NOT_CONFIGURED',
+      'ASSOCIATION_UNRESOLVED', 'ATTACHMENT_MIGRATION_PENDING',
     ]);
   });
 

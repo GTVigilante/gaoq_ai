@@ -136,8 +136,10 @@ export class DataMigrationAttachmentRecord {
   @Prop({ type: String, required: true, immutable: true, match: SOURCE_ID })
   sourceAttachmentId!: string;
   @Prop({ type: String, required: true, immutable: true, match: HASH }) checksum!: string;
-  @Prop({ type: String, required: true, enum: ['pending', 'verified', 'rejected'] })
-  status!: 'pending' | 'verified' | 'rejected';
+  @Prop({ type: String, required: true, enum: ['pending', 'processing', 'verified', 'rejected'] })
+  status!: 'pending' | 'processing' | 'verified' | 'rejected';
+  @Prop({ type: Number, required: true, min: 0, max: 20 }) attempts!: number;
+  @Prop({ type: Date, default: null }) processingStartedAt!: Date | null;
   @Prop({ type: String, default: null, maxlength: 256 }) targetEvidenceId!: string | null;
   @Prop({ type: String, default: null, maxlength: 96 }) rejectionCode!: string | null;
   createdAt!: Date;
@@ -147,6 +149,17 @@ export type DataMigrationAttachmentDocument = HydratedDocument<DataMigrationAtta
 export const DataMigrationAttachmentRecordSchema = SchemaFactory.createForClass(
   DataMigrationAttachmentRecord,
 );
+DataMigrationAttachmentRecordSchema.pre('validate', function validateAttachmentState() {
+  if ((this.status === 'processing') !== (this.processingStartedAt !== null)) {
+    this.invalidate('processingStartedAt', 'processing 状态必须持有执行租约');
+  }
+  if ((this.status === 'verified') !== (this.targetEvidenceId !== null)) {
+    this.invalidate('targetEvidenceId', 'verified 状态必须持有目标证据');
+  }
+  if ((this.status === 'rejected') !== (this.rejectionCode !== null)) {
+    this.invalidate('rejectionCode', 'rejected 状态必须持有拒绝码');
+  }
+});
 DataMigrationAttachmentRecordSchema.index(
   { tenantId: 1, runId: 1, sourceAttachmentId: 1 }, { unique: true },
 );
@@ -154,3 +167,7 @@ DataMigrationAttachmentRecordSchema.index(
   { tenantId: 1, runId: 1, sequence: 1, sourceAttachmentId: 1 },
 );
 DataMigrationAttachmentRecordSchema.index({ tenantId: 1, runId: 1, status: 1 });
+DataMigrationAttachmentRecordSchema.index({
+  tenantId: 1, runId: 1, status: 1, processingStartedAt: 1,
+  attempts: 1, sequence: 1, sourceAttachmentId: 1,
+});

@@ -12,5 +12,7 @@ describe('Phase 5 数据迁移控制面索引', () => {
     expect(serialized).toContain('data_migration_attachments');
     expect(serialized).toContain('sourceRunId');
     expect(serialized).toContain('sourceRecordId');
+    expect(serialized).toContain('processingStartedAt');
+    expect(serialized).toContain('attempts');
   });
 });

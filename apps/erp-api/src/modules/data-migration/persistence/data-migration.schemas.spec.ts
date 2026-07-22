@@ -1,3 +1,4 @@
+import { model } from 'mongoose';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -40,5 +41,25 @@ describe('数据迁移账本 Schema', () => {
     expect(DataMigrationItemRecordSchema.path('sourceFactHash')).toBeDefined();
     expect(DataMigrationItemRecordSchema.path('targetHash')).toBeDefined();
     expect(DataMigrationAttachmentRecordSchema.path('checksum')).toBeDefined();
+    expect(DataMigrationAttachmentRecordSchema.path('attempts')).toBeDefined();
+    expect(DataMigrationAttachmentRecordSchema.path('processingStartedAt')).toBeDefined();
+  });
+
+  it('附件 processing、verified、rejected 状态必须分别绑定租约或证据', async () => {
+    const Attachment = model(
+      'DataMigrationAttachmentValidationSpec', DataMigrationAttachmentRecordSchema,
+    );
+    const base = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4F2', tenantId: 'tenant-001',
+      runId: '01J8ZQK7V0A2M4N6P8R0T2W4F1', sequence: 1,
+      sourceAttachmentId: 'legacy-file-001', checksum: 'c'.repeat(43), attempts: 1,
+      processingStartedAt: null, targetEvidenceId: null, rejectionCode: null,
+    };
+    await expect(new Attachment({ ...base, status: 'processing' }).validate())
+      .rejects.toThrow('processingStartedAt');
+    await expect(new Attachment({ ...base, status: 'verified' }).validate())
+      .rejects.toThrow('targetEvidenceId');
+    await expect(new Attachment({ ...base, status: 'rejected' }).validate())
+      .rejects.toThrow('rejectionCode');
   });
 });

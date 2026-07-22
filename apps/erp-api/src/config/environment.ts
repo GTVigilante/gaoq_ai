@@ -50,6 +50,17 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(64).max(16_384).optional(),
   ),
+  /** 数据迁移附件隔离网关：网关负责来源拉取、恶意文件扫描与不可变归档。 */
+  DATA_MIGRATION_ATTACHMENT_GATEWAY_ENDPOINT: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().url().optional(),
+  ),
+  DATA_MIGRATION_ATTACHMENT_GATEWAY_BEARER_TOKEN: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/).optional(),
+  ),
+  DATA_MIGRATION_ATTACHMENT_RETENTION_DAYS: z.coerce
+    .number().int().min(2_555).max(36_500).default(2_555),
   /** 薪酬 L4 输入、步骤和结果密钥环；不得复用考勤、审批或招聘密钥。 */
   PAYROLL_DATA_ENCRYPTION_KEYS: z.preprocess(
     (value) => value === '' ? undefined : value,
@@ -217,6 +228,51 @@ const environmentSchema = z.object({
   const issuer = new URL(environment.AUTH_ISSUER);
   const authorizationServer = new URL(environment.MCP_AUTHORIZATION_SERVER);
   const resource = new URL(environment.AUTH_RESOURCE);
+  const migrationAttachmentInfrastructure = [
+    environment.DATA_MIGRATION_ATTACHMENT_GATEWAY_ENDPOINT,
+    environment.DATA_MIGRATION_ATTACHMENT_GATEWAY_BEARER_TOKEN,
+  ];
+  if (
+    migrationAttachmentInfrastructure.some((value) => value !== undefined) &&
+    migrationAttachmentInfrastructure.some((value) => value === undefined)
+  ) context.addIssue({
+    code: 'custom', path: ['DATA_MIGRATION_ATTACHMENT_GATEWAY_ENDPOINT'],
+    message: '数据迁移附件网关端点与凭据必须成套配置',
+  });
+  if (environment.DATA_MIGRATION_ATTACHMENT_GATEWAY_ENDPOINT !== undefined) {
+    const endpoint = new URL(environment.DATA_MIGRATION_ATTACHMENT_GATEWAY_ENDPOINT);
+    const forbiddenOrigins = [
+      issuer.origin,
+      environment.TREASURY_WORM_ARCHIVE_ENDPOINT,
+      environment.TREASURY_BANK_SUBMISSION_ENDPOINT,
+      environment.TREASURY_BANK_RETURN_INBOX_ENDPOINT,
+      environment.PAYROLL_TAX_WORM_ARCHIVE_ENDPOINT,
+      environment.PAYROLL_TAX_GATEWAY_ENDPOINT,
+      environment.ESIGN_MALWARE_SCAN_ENDPOINT,
+      environment.ESIGN_WORM_ARCHIVE_ENDPOINT,
+    ].filter((value): value is string => value !== undefined)
+      .map((value) => new URL(value).origin);
+    if (
+      endpoint.protocol !== 'https:' || endpoint.username !== '' || endpoint.password !== '' ||
+      endpoint.search !== '' || endpoint.hash !== '' ||
+      (endpoint.port !== '' && endpoint.port !== '443') || forbiddenOrigins.includes(endpoint.origin)
+    ) context.addIssue({
+      code: 'custom', path: ['DATA_MIGRATION_ATTACHMENT_GATEWAY_ENDPOINT'],
+      message: '数据迁移附件网关必须为独立权限域标准 HTTPS，禁止凭据、query、fragment 和非标准端口',
+    });
+  }
+  if (environment.DATA_MIGRATION_ATTACHMENT_GATEWAY_BEARER_TOKEN !== undefined && [
+    environment.TREASURY_WORM_ARCHIVE_BEARER_TOKEN,
+    environment.TREASURY_BANK_SUBMISSION_BEARER_TOKEN,
+    environment.TREASURY_BANK_RETURN_INBOX_BEARER_TOKEN,
+    environment.PAYROLL_TAX_WORM_ARCHIVE_BEARER_TOKEN,
+    environment.PAYROLL_TAX_GATEWAY_BEARER_TOKEN,
+    environment.ESIGN_MALWARE_SCAN_BEARER_TOKEN,
+    environment.ESIGN_WORM_ARCHIVE_BEARER_TOKEN,
+  ].includes(environment.DATA_MIGRATION_ATTACHMENT_GATEWAY_BEARER_TOKEN)) context.addIssue({
+    code: 'custom', path: ['DATA_MIGRATION_ATTACHMENT_GATEWAY_BEARER_TOKEN'],
+    message: '数据迁移附件网关不得复用资金、税务或合同证据凭据',
+  });
   if (
     issuer.pathname !== '/' || issuer.search !== '' || issuer.hash !== '' ||
     authorizationServer.origin !== issuer.origin || authorizationServer.pathname !== '/' ||

@@ -538,8 +538,8 @@ export class DataMigrationService {
           { $setOnInsert: {
             id: createEventId(), tenantId: run.tenantId, runId: run.id,
             sequence: input.sequence, sourceAttachmentId: attachment.sourceAttachmentId,
-            checksum: attachment.checksum, status: 'pending', targetEvidenceId: null,
-            rejectionCode: null,
+            checksum: attachment.checksum, status: 'pending', attempts: 0,
+            processingStartedAt: null, targetEvidenceId: null, rejectionCode: null,
           } },
           { upsert: true, runValidators: true },
         ).exec();
@@ -595,8 +595,10 @@ export class DataMigrationService {
     const unresolvedAssociationCount = associationStatuses
       .find((entry) => entry._id === 'missing')?.count ?? 0;
     const attachmentCount = attachmentStatuses.reduce((sum, entry) => sum + entry.count, 0);
-    const pendingAttachmentCount = attachmentStatuses
-      .find((entry) => entry._id === 'pending')?.count ?? 0;
+    const pendingAttachmentCount = ['pending', 'processing'].reduce(
+      (sum, status) => sum + (attachmentStatuses.find((entry) => entry._id === status)?.count ?? 0),
+      0,
+    );
     const rejectedAttachmentCount = attachmentStatuses
       .find((entry) => entry._id === 'rejected')?.count ?? 0;
     const differences = [
@@ -615,7 +617,7 @@ export class DataMigrationService {
         count: unresolvedAssociationCount,
       }]),
       ...(pendingAttachmentCount === 0 ? [] : [{
-        code: 'ATTACHMENT_MIGRATION_NOT_CONFIGURED', severity: 'high' as const,
+        code: 'ATTACHMENT_MIGRATION_PENDING', severity: 'high' as const,
         count: pendingAttachmentCount,
       }]),
       ...(rejectedAttachmentCount === 0 ? [] : [{
@@ -774,6 +776,7 @@ function attachmentEvidenceRecord(
     sourceAttachmentId: item.sourceAttachmentId,
     checksum: item.checksum,
     status: item.status,
+    attempts: item.attempts,
     targetEvidenceId: item.targetEvidenceId,
     rejectionCode: item.rejectionCode,
   });
