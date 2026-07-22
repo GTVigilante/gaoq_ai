@@ -1,15 +1,21 @@
+import Link from 'next/link';
+
 /**
- * Phase 1平台状态页，后续由受认证的工作台替换。
+ * ERP 入口页；受认证业务统一进入工作台。
  */
 export default function HomePage() {
   return (
     <main className="shell">
       <section className="hero" aria-labelledby="page-title">
-        <p className="eyebrow">GaoQ-OS · Phase 1</p>
-        <h1 id="page-title">企业运营底座正在构建</h1>
+        <p className="eyebrow">GaoQ-OS · Enterprise Operations</p>
+        <h1 id="page-title">企业运营，从可信主数据开始</h1>
         <p className="summary">
-          多租户、组织主数据、外部系统集成和标准MCP服务将作为所有业务模块的共同基础。
+          统一组织、审批、人才、薪酬与外部系统连接，并通过标准 MCP 为各类 AI 提供受控能力。
         </p>
+        <div className="hero-actions">
+          <Link className="hero-primary" href="/login">企业 SSO 登录</Link>
+          <Link className="hero-secondary" href="/workspace">进入工作台</Link>
+        </div>
         <dl className="status-grid">
           <div>
             <dt>租户策略</dt>

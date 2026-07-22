@@ -1,5 +1,7 @@
+import { AntdRegistry } from '@ant-design/nextjs-registry';
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
+import { AppProviders } from './providers';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -24,7 +26,11 @@ interface RootLayoutProps {
 export default function RootLayout({ children }: RootLayoutProps) {
   return (
     <html lang="zh-CN">
-      <body>{children}</body>
+      <body>
+        <AntdRegistry>
+          <AppProviders>{children}</AppProviders>
+        </AntdRegistry>
+      </body>
     </html>
   );
 }

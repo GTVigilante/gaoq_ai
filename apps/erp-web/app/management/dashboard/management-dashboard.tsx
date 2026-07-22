@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+import { erpFetch } from '../../lib/api-client';
+
 interface Dashboard {
   readonly asOf: string;
   readonly window: { readonly from: string; readonly to: string; readonly timezone: 'Asia/Shanghai' };
@@ -54,7 +56,6 @@ type PayrollStatus =
   | 'draft' | 'collecting' | 'review' | 'pending_approval' | 'approved'
   | 'locked' | 'disbursing' | 'reconciling' | 'reconciled';
 
-const API_ORIGIN = process.env.NEXT_PUBLIC_ERP_API_ORIGIN ?? 'http://localhost:3001';
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const SOURCE_LABELS: Readonly<Record<string, string>> = {
   org_employees: '员工主数据', approval_instances: '审批实例',
@@ -78,15 +79,11 @@ export function ManagementDashboard({ initialAsOf }: { readonly initialAsOf: str
     if (!DATE_PATTERN.test(date)) return;
     setState('loading');
     try {
-      const response = await fetch(
-        `${API_ORIGIN}/api/analytics/management-dashboard?asOf=${encodeURIComponent(date)}`,
-        {
-          credentials: 'include', cache: 'no-store', headers: { accept: 'application/json' },
-          ...(signal === undefined ? {} : { signal }),
-        },
+      const response = await erpFetch<unknown>(
+        `/api/analytics/management-dashboard?asOf=${encodeURIComponent(date)}`,
+        { ...(signal === undefined ? {} : { signal }) },
       );
-      if (!response.ok) throw new Error('DASHBOARD_UNAVAILABLE');
-      setDashboard(parseDashboard(await response.json() as unknown));
+      setDashboard(parseDashboard(response.data));
       setState('ready');
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return;

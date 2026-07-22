@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
+import { erpFetch } from '../lib/api-client';
+
 type MobileTab = 'home' | 'approvals' | 'knowledge' | 'profile';
 type ApprovalStatus = 'draft' | 'running' | 'approved' | 'rejected' | 'withdrawn' | 'archived';
 
@@ -16,7 +18,6 @@ interface ApprovalSummary {
   readonly completedAt: string | null;
 }
 
-const API_ORIGIN = process.env.NEXT_PUBLIC_ERP_API_ORIGIN ?? 'http://localhost:3001';
 const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 const STATUS_LABEL: Readonly<Record<ApprovalStatus, string>> = {
   draft: '草稿', running: '审批中', approved: '已通过', rejected: '已驳回',
@@ -32,14 +33,10 @@ export function MobileWorkbench() {
   const loadApprovals = useCallback(async (signal?: AbortSignal): Promise<void> => {
     setState('loading');
     try {
-      const response = await fetch(`${API_ORIGIN}/api/approvals/instances/inbox`, {
-        credentials: 'include', cache: 'no-store',
+      const response = await erpFetch<unknown>('/api/approvals/instances/inbox', {
         ...(signal === undefined ? {} : { signal }),
-        headers: { accept: 'application/json' },
       });
-      if (!response.ok) throw new Error(response.status === 401 ? 'unauthorized' : 'unavailable');
-      const value = await response.json() as unknown;
-      const items = parseApprovalSummaries(value);
+      const items = parseApprovalSummaries(response.data);
       setApprovals(items);
       setState(items.length === 0 ? 'empty' : 'ready');
     } catch (error) {
