@@ -395,6 +395,96 @@ describe('OrgApplicationService', () => {
     expect(store.employmentRepo.replace).not.toHaveBeenCalled();
   });
 
+  it('迁移恢复劳动关系只绑定既有员工并写入证据化 Person 与 Outbox', async () => {
+    const store = assemble();
+    const migrationContext = {
+      ...trustedContext,
+      actor: {
+        ...trustedContext.actor,
+        actorType: 'service' as const,
+        scopes: [...trustedContext.actor.scopes, 'erp:migration:execute'],
+      },
+    };
+    store.employeeRepo.findById.mockResolvedValue(employee('employee-001', ['dept-a']));
+
+    const result = await store.context.run(migrationContext, () =>
+      store.service.importEmploymentFromMigration('key-migration-employment-001', {
+        employeeId: 'employee-001', sourcePersonId: 'legacy-person-001',
+        identityEvidenceId: 'identity-evidence-001',
+        onboardingInstanceId: 'legacy-onboarding-001',
+        onboardingCompletionEvidenceId: 'onboarding-evidence-001',
+        offerId: 'legacy-offer-001', signedEvidenceId: 'signed-evidence-001',
+        status: 'active', effectiveFrom: '2018-01-01', effectiveTo: null,
+        terminationCareCaseId: null, terminationExecutionEvidenceId: null,
+        terminationEvidenceId: null,
+      }));
+
+    expect(result.employment).toMatchObject({
+      employeeId: 'employee-001', status: 'active', effectiveFrom: '2018-01-01',
+    });
+    expect(store.personRepo.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceCandidateId: 'legacy-person-001' }), session,
+    );
+    expect(store.employmentRepo.insert).toHaveBeenCalledWith(result.employment, session);
+    expect(store.employeeRepo.insert).not.toHaveBeenCalled();
+    expect(store.outbox.append).toHaveBeenCalledTimes(2);
+  });
+
+  it('迁移恢复拒绝劳动关系与员工状态不一致', async () => {
+    const store = assemble();
+    const migrationContext = {
+      ...trustedContext,
+      actor: {
+        ...trustedContext.actor,
+        actorType: 'service' as const,
+        scopes: [...trustedContext.actor.scopes, 'erp:migration:execute'],
+      },
+    };
+    store.employeeRepo.findById.mockResolvedValue(employee('employee-001', ['dept-a']));
+
+    await expect(store.context.run(migrationContext, () =>
+      store.service.importEmploymentFromMigration('key-migration-employment-002', {
+        employeeId: 'employee-001', sourcePersonId: 'legacy-person-001',
+        identityEvidenceId: 'identity-evidence-001',
+        onboardingInstanceId: 'legacy-onboarding-001',
+        onboardingCompletionEvidenceId: 'onboarding-evidence-001',
+        offerId: 'legacy-offer-001', signedEvidenceId: 'signed-evidence-001',
+        status: 'resigned', effectiveFrom: '2018-01-01', effectiveTo: '2024-06-30',
+        terminationCareCaseId: 'legacy-care-001',
+        terminationExecutionEvidenceId: 'legacy-execution-001',
+        terminationEvidenceId: 'legacy-termination-001',
+      }))).rejects.toMatchObject({
+      response: { code: 'ORG_MIGRATION_EMPLOYMENT_STATUS_MISMATCH' },
+    });
+    expect(store.employmentRepo.insert).not.toHaveBeenCalled();
+  });
+
+  it('迁移恢复劳动关系必须同时持有组织域写权限', async () => {
+    const store = assemble();
+    const migrationContext = {
+      ...trustedContext,
+      actor: {
+        ...trustedContext.actor,
+        actorType: 'service' as const,
+        scopes: ['erp:migration:execute'],
+      },
+    };
+    await expect(store.context.run(migrationContext, () =>
+      store.service.importEmploymentFromMigration('key-migration-employment-003', {
+        employeeId: 'employee-001', sourcePersonId: 'legacy-person-001',
+        identityEvidenceId: 'identity-evidence-001',
+        onboardingInstanceId: 'legacy-onboarding-001',
+        onboardingCompletionEvidenceId: 'onboarding-evidence-001',
+        offerId: 'legacy-offer-001', signedEvidenceId: 'signed-evidence-001',
+        status: 'active', effectiveFrom: '2018-01-01', effectiveTo: null,
+        terminationCareCaseId: null, terminationExecutionEvidenceId: null,
+        terminationEvidenceId: null,
+      }))).rejects.toMatchObject({
+      response: { code: 'ORG_TRUSTED_WORKFLOW_REQUIRED' },
+    });
+    expect(store.employeeRepo.findById).not.toHaveBeenCalled();
+  });
+
   it('受信任入职工作流在同一事务建立三层主数据且工号由服务端生成', async () => {
     const store = assemble();
     const context = {

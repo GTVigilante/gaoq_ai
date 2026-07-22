@@ -62,6 +62,10 @@ function workforceRun() {
   return { ...run(), scope: 'org_workforce' as const };
 }
 
+function employmentRun() {
+  return { ...run(), scope: 'org_employment' as const };
+}
+
 function query<T>(value: T) { return { lean: () => ({ exec: () => Promise.resolve(value) }) }; }
 function listQuery<T>(value: readonly T[]) {
   return {
@@ -322,6 +326,75 @@ describe('DataMigrationService', () => {
       },
     );
     expect(associations.findOneAndUpdate).toHaveBeenCalledTimes(4);
+  });
+
+  it('劳动关系迁移只经组织应用服务绑定已映射员工并保留关联证据', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      employeeSourceId: 'legacy-employee-001', sourcePersonId: 'legacy-person-001',
+      identityEvidenceId: 'identity-evidence-001',
+      onboardingInstanceId: 'legacy-onboarding-001',
+      onboardingCompletionEvidenceId: 'onboarding-evidence-001',
+      offerId: 'legacy-offer-001', signedEvidenceId: 'signed-evidence-001',
+      status: 'active', effectiveFrom: '2018-01-01', effectiveTo: null,
+      terminationCareCaseId: null, terminationExecutionEvidenceId: null,
+      terminationEvidenceId: null,
+    };
+    const input = {
+      sequence: 1, sourceRecordId: 'legacy-employment-001', sourceVersion: '1',
+      entityType: 'org.employment' as const, payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: ['legacy-employee-001'], attachments: [],
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(employmentRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const employeeMapping = { targetId: 'employee-001', targetVersion: 1 };
+    const mappings = {
+      findOne: vi.fn((filter: { entityType: string }) => query(
+        filter.entityType === 'org.employment' ? null : employeeMapping,
+      )),
+      findOneAndUpdate: vi.fn().mockReturnValue(query({ targetId: 'employment-001' })),
+    };
+    const associations = { findOneAndUpdate: vi.fn().mockReturnValue(query({})) };
+    const organization = {
+      importEmploymentFromMigration: vi.fn().mockResolvedValue({
+        employment: {
+          id: 'employment-001', tenantId: 'tenant-001', personId: 'person-001',
+          employeeId: 'employee-001', onboardingInstanceId: 'legacy-onboarding-001',
+          onboardingCompletionEvidenceId: 'onboarding-evidence-001',
+          offerId: 'legacy-offer-001', signedEvidenceId: 'signed-evidence-001',
+          status: 'active', effectiveFrom: '2018-01-01', effectiveTo: null,
+          terminationCareCaseId: null, terminationExecutionEvidenceId: null,
+          terminationEvidenceId: null, version: 1,
+          createdAt: '2026-07-22T00:00:00.000Z', updatedAt: '2026-07-22T00:00:00.000Z',
+        },
+        personId: 'person-001',
+      }),
+    };
+    const service = new DataMigrationService(
+      context, organization as unknown as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      mappings as unknown as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      {} as Model<DataMigrationAttachmentDocument>,
+    );
+
+    const result = await trusted(context, () => service.apply(RUN_ID, input));
+
+    expect(result).toMatchObject({ status: 'applied', targetId: 'employment-001' });
+    expect(organization.importEmploymentFromMigration).toHaveBeenCalledWith(
+      expect.stringMatching(/^migration:/u),
+      expect.objectContaining({ employeeId: 'employee-001', sourcePersonId: 'legacy-person-001' }),
+    );
+    expect(associations.findOneAndUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ relationship: 'employee' }),
+      expect.objectContaining({ $set: { targetId: 'employee-001', status: 'resolved' } }),
+      expect.objectContaining({ upsert: true }),
+    );
   });
 
   it('规范 JSON 与滚动校验和不受对象字段顺序影响', () => {

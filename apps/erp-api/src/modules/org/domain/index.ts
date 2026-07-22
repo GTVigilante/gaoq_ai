@@ -23,8 +23,18 @@ export {
 } from './employee.js';
 export { createPerson } from './person.js';
 export type { CreatePersonInput, Person } from './person.js';
-export { createEmployment, terminateEmployment, transitionEmploymentStatus } from './employment.js';
-export type { CreateEmploymentInput, Employment, EmploymentStatus } from './employment.js';
+export {
+  createEmployment,
+  restoreEmploymentFromMigration,
+  terminateEmployment,
+  transitionEmploymentStatus,
+} from './employment.js';
+export type {
+  CreateEmploymentInput,
+  Employment,
+  EmploymentStatus,
+  RestoreEmploymentFromMigrationInput,
+} from './employment.js';
 export type {
   CreateEmployeeInput,
   Employee,

@@ -29,6 +29,7 @@ import {
   createDepartment,
   createEmployee,
   createEmployment,
+  restoreEmploymentFromMigration,
   createPerson,
   createJobLevel,
   createPosition,
@@ -79,6 +80,22 @@ export interface OrgChart {
 export interface CareEmploymentSource {
   readonly employee: Employee;
   readonly employment: Employment;
+}
+
+export interface ImportEmploymentFromMigrationInput {
+  readonly employeeId: string;
+  readonly sourcePersonId: string;
+  readonly identityEvidenceId: string;
+  readonly onboardingInstanceId: string;
+  readonly onboardingCompletionEvidenceId: string;
+  readonly offerId: string;
+  readonly signedEvidenceId: string;
+  readonly status: Employment['status'];
+  readonly effectiveFrom: string;
+  readonly effectiveTo: string | null;
+  readonly terminationCareCaseId: string | null;
+  readonly terminationExecutionEvidenceId: string | null;
+  readonly terminationEvidenceId: string | null;
 }
 
 /** 组织主数据应用服务：统一事务、引用校验、并发控制、Outbox 与数据权限。 */
@@ -417,6 +434,81 @@ export class OrgApplicationService {
           employment, employeeId: employee.id, employeeNo: employee.employeeNo,
           personId: person.id,
         };
+      },
+    ));
+  }
+
+  /** 数据迁移专用：为既有员工恢复证据完备、状态一致的劳动关系。 */
+  async importEmploymentFromMigration(
+    key: string,
+    input: ImportEmploymentFromMigrationInput,
+  ): Promise<{ readonly employment: Employment; readonly personId: string }> {
+    this.assertTrustedScope('erp:migration:execute');
+    this.assertTrustedScope('erp:org:master:write');
+    return this.run(async () => this.idempotency.execute(
+      'org.employment.import_from_migration', key, input, async (session) => {
+        const employee = await this.requireEmployee(input.employeeId, session);
+        const expectedEmployeeStatus = input.status === 'resigned' ? 'terminated' : input.status;
+        if (employee.status !== expectedEmployeeStatus) throw new ConflictException({
+          code: 'ORG_MIGRATION_EMPLOYMENT_STATUS_MISMATCH',
+          message: '劳动关系状态与员工主数据状态不一致',
+        });
+        const existing = await this.employments.findByOnboardingInstanceId(
+          input.onboardingInstanceId,
+          session,
+        );
+        if (existing !== null) {
+          const existingPerson = await this.persons.findBySourceCandidateId(
+            input.sourcePersonId,
+            session,
+          );
+          if (existingPerson === null || !sameEmploymentMigrationFact(existing, existingPerson, input)) {
+            throw new ConflictException({
+              code: 'ORG_MIGRATION_EMPLOYMENT_IMMUTABLE',
+              message: '既有劳动关系与迁移快照不一致，禁止覆盖历史事实',
+            });
+          }
+          return { employment: existing, personId: existingPerson.id };
+        }
+
+        const now = new Date();
+        const tenantId = this.context.getTenantRequired().tenantId;
+        let person = await this.persons.findBySourceCandidateId(input.sourcePersonId, session);
+        let personCreated = false;
+        if (person === null) {
+          person = createPerson({
+            id: createEventId(now), tenantId,
+            sourceCandidateId: input.sourcePersonId,
+            identityEvidenceId: input.identityEvidenceId,
+          }, now);
+          personCreated = true;
+        } else if (person.identityEvidenceId !== input.identityEvidenceId) {
+          throw new ConflictException({
+            code: 'ORG_PERSON_IDENTITY_EVIDENCE_MISMATCH',
+            message: '自然人来源已绑定不同身份核验证据，必须人工复核',
+          });
+        }
+        const employment = restoreEmploymentFromMigration({
+          id: createEventId(now), tenantId, personId: person.id,
+          employeeId: input.employeeId,
+          onboardingInstanceId: input.onboardingInstanceId,
+          onboardingCompletionEvidenceId: input.onboardingCompletionEvidenceId,
+          offerId: input.offerId,
+          signedEvidenceId: input.signedEvidenceId,
+          status: input.status,
+          effectiveFrom: input.effectiveFrom,
+          effectiveTo: input.effectiveTo,
+          terminationCareCaseId: input.terminationCareCaseId,
+          terminationExecutionEvidenceId: input.terminationExecutionEvidenceId,
+          terminationEvidenceId: input.terminationEvidenceId,
+        }, now);
+        if (personCreated) {
+          await this.persons.insert(person, session);
+          await this.outbox.append(buildPersonCreatedEvent(person, now), session);
+        }
+        await this.employments.insert(employment, session);
+        await this.outbox.append(buildEmploymentEstablishedEvent(employment, now), session);
+        return { employment, personId: person.id };
       },
     ));
   }
@@ -779,4 +871,29 @@ export class OrgApplicationService {
   private isDuplicateKeyError(error: unknown): boolean {
     return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 11000;
   }
+}
+
+function sameEmploymentMigrationFact(
+  employment: Employment,
+  person: {
+    readonly id: string;
+    readonly sourceCandidateId: string;
+    readonly identityEvidenceId: string;
+  },
+  input: ImportEmploymentFromMigrationInput,
+): boolean {
+  return person.sourceCandidateId === input.sourcePersonId &&
+    person.identityEvidenceId === input.identityEvidenceId &&
+    employment.personId === person.id &&
+    employment.employeeId === input.employeeId &&
+    employment.onboardingInstanceId === input.onboardingInstanceId &&
+    employment.onboardingCompletionEvidenceId === input.onboardingCompletionEvidenceId &&
+    employment.offerId === input.offerId &&
+    employment.signedEvidenceId === input.signedEvidenceId &&
+    employment.status === input.status &&
+    employment.effectiveFrom === input.effectiveFrom &&
+    employment.effectiveTo === input.effectiveTo &&
+    employment.terminationCareCaseId === input.terminationCareCaseId &&
+    employment.terminationExecutionEvidenceId === input.terminationExecutionEvidenceId &&
+    employment.terminationEvidenceId === input.terminationEvidenceId;
 }

@@ -13,6 +13,11 @@ import {
   migrationSourceFactHash,
   roll,
 } from '../modules/data-migration/data-migration-checksum.js';
+import {
+  DATA_MIGRATION_ENTITY_TYPES,
+  DATA_MIGRATION_SCOPES,
+  isEntityInMigrationScope,
+} from '../modules/data-migration/data-migration-contract.js';
 import { compareMigrationRehearsals } from './data-migration-rehearsal.js';
 
 const HASH = /^[A-Za-z0-9_-]{43}$/;
@@ -28,7 +33,7 @@ const recordSchema = z.object({
   sequence: z.number().int().min(1).max(10_000_000),
   sourceRecordId: z.string().regex(SOURCE_ID),
   sourceVersion: z.string().min(1).max(64),
-  entityType: z.enum(['org.department', 'org.position', 'org.job_level', 'org.employee']),
+  entityType: z.enum(DATA_MIGRATION_ENTITY_TYPES),
   payload: z.record(z.string(), z.unknown()),
   payloadHash: z.string().regex(HASH),
   associationSourceIds: z.array(z.string().regex(SOURCE_ID)).max(100),
@@ -48,7 +53,7 @@ const manifestSchema = z.object({
   sourceSystem: z.string().regex(SOURCE_ID),
   sourceRunId: z.string().regex(SOURCE_ID),
   mode: z.enum(['full', 'incremental']),
-  scope: z.enum(['org_reference', 'org_workforce']),
+  scope: z.enum(DATA_MIGRATION_SCOPES),
   expectedSourceCount: z.number().int().min(0).max(10_000_000),
   expectedSourceChecksum: z.string().regex(HASH),
 }).strict();
@@ -269,10 +274,7 @@ function assertRecordScope(
   scope: MigrationPackageManifest['scope'],
   entityType: MigrationPackageRecord['entityType'],
 ): void {
-  const valid = scope === 'org_reference'
-    ? ['org.department', 'org.position', 'org.job_level'].includes(entityType)
-    : entityType === 'org.employee';
-  if (!valid) throw packageError('ENTITY_OUT_OF_SCOPE');
+  if (!isEntityInMigrationScope(scope, entityType)) throw packageError('ENTITY_OUT_OF_SCOPE');
 }
 
 function withoutFormatVersion(manifest: MigrationPackageManifest): Record<string, unknown> {

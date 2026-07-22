@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   createEmployment,
+  restoreEmploymentFromMigration,
   terminateEmployment,
   transitionEmploymentStatus,
 } from './employment.js';
@@ -70,5 +71,33 @@ describe('Person 与 Employment 分层', () => {
     expect(() => transitionEmploymentStatus(probation, {
       tenantId: 'tenant-001', expectedVersion: 1, status: 'suspended',
     }, NOW)).toThrowError(expect.objectContaining({ code: 'EMPLOYMENT_STATUS_TRANSITION_INVALID' }));
+  });
+
+  it('迁移恢复历史离职关系时强制完整终止证据', () => {
+    const restored = restoreEmploymentFromMigration({
+      id: 'employment-legacy-001', tenantId: 'tenant-001', personId: 'person-001',
+      employeeId: 'employee-001', onboardingInstanceId: 'legacy-onboarding-001',
+      onboardingCompletionEvidenceId: 'legacy-onboarding-evidence-001',
+      offerId: 'legacy-offer-001', signedEvidenceId: 'legacy-signed-001',
+      status: 'resigned', effectiveFrom: '2018-01-01', effectiveTo: '2024-06-30',
+      terminationCareCaseId: 'legacy-care-001',
+      terminationExecutionEvidenceId: 'legacy-execution-001',
+      terminationEvidenceId: 'legacy-termination-001',
+    }, NOW);
+    expect(restored).toMatchObject({
+      status: 'resigned', effectiveFrom: '2018-01-01', effectiveTo: '2024-06-30', version: 1,
+    });
+    expect(() => restoreEmploymentFromMigration({
+      ...restored,
+      id: 'employment-legacy-002',
+      terminationEvidenceId: null,
+    }, NOW)).toThrowError(expect.objectContaining({
+      code: 'EMPLOYMENT_MIGRATION_TERMINATION_EVIDENCE_REQUIRED',
+    }));
+    expect(() => restoreEmploymentFromMigration({
+      ...restored,
+      id: 'employment-legacy-003',
+      status: 'deleted' as never,
+    }, NOW)).toThrowError(expect.objectContaining({ code: 'INVALID_STATUS' }));
   });
 });

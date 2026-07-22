@@ -8,6 +8,7 @@ import { z } from 'zod';
 
 import type { AppEnvironment } from '../../config/environment.js';
 import type { ErpRequest } from '../../core/http/request-context.js';
+import { DATA_MIGRATION_SCOPES } from '../data-migration/data-migration-contract.js';
 import { McpToolService } from './mcp-tool.service.js';
 
 const permissionsOutputSchema = z.object({
@@ -420,7 +421,7 @@ const analyticsExportSchema = z.object({
 });
 const dataMigrationReportSchema = z.object({
   runId: recruitmentIdSchema, sourceSystem: z.string(),
-  mode: z.enum(['full', 'incremental']), scope: z.enum(['org_reference', 'org_workforce']),
+  mode: z.enum(['full', 'incremental']), scope: z.enum(DATA_MIGRATION_SCOPES),
   status: z.enum(['running', 'completed', 'failed']),
   expectedSourceCount: z.number().int().nonnegative(), checkpoint: z.number().int().nonnegative(),
   counts: z.object({

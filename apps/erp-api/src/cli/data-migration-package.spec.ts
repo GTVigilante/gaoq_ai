@@ -24,19 +24,27 @@ afterEach(async () => {
     rm(directory, { recursive: true, force: true })));
 });
 
-async function packageDirectory(overrides: Readonly<Record<string, unknown>> = {}): Promise<string> {
+async function packageDirectory(
+  overrides: Readonly<Record<string, unknown>> = {},
+  recordOverrides: Readonly<Record<string, unknown>> = {},
+): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), 'gaoq-migration-package-'));
   temporaryDirectories.push(directory);
   const payload = { code: 'POS-001', name: '产品经理', status: 'active' };
-  const record = {
+  const draftRecord = {
     sequence: 1,
     sourceRecordId: 'legacy-position-001',
     sourceVersion: '1',
     entityType: 'org.position' as const,
     payload,
-    payloadHash: digest(canonicalJson(payload)),
+    payloadHash: '',
     associationSourceIds: [],
     attachments: [],
+    ...recordOverrides,
+  };
+  const record = {
+    ...draftRecord,
+    payloadHash: digest(canonicalJson(draftRecord.payload)),
   };
   const sourceChecksum = roll(
     EMPTY_MIGRATION_CHECKSUM, record.sequence, migrationSourceFactHash(record),
@@ -77,6 +85,29 @@ describe('数据迁移来源包 CLI', () => {
     const directory = await packageDirectory({ expectedSourceChecksum: 'x'.repeat(43) });
     await expect(validateMigrationPackage(directory))
       .rejects.toThrow('DATA_MIGRATION_PACKAGE_SOURCE_CHECKSUM_MISMATCH');
+  });
+
+  it('统一白名单允许劳动关系独立来源包', async () => {
+    const payload = {
+      employeeSourceId: 'legacy-employee-001', sourcePersonId: 'legacy-person-001',
+      identityEvidenceId: 'identity-evidence-001',
+      onboardingInstanceId: 'legacy-onboarding-001',
+      onboardingCompletionEvidenceId: 'onboarding-evidence-001',
+      offerId: 'legacy-offer-001', signedEvidenceId: 'signed-evidence-001',
+      status: 'active', effectiveFrom: '2018-01-01', effectiveTo: null,
+      terminationCareCaseId: null, terminationExecutionEvidenceId: null,
+      terminationEvidenceId: null,
+    };
+    const directory = await packageDirectory(
+      { scope: 'org_employment', sourceRunId: 'employment-001' },
+      {
+        entityType: 'org.employment', sourceRecordId: 'legacy-employment-001', payload,
+        associationSourceIds: ['legacy-employee-001'],
+      },
+    );
+    await expect(validateMigrationPackage(directory)).resolves.toMatchObject({
+      manifest: { scope: 'org_employment' }, recordCount: 1,
+    });
   });
 
   it('导出逐页验证页面校验和并生成全量证据封印', async () => {

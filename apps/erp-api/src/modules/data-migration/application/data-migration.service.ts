@@ -11,6 +11,7 @@ import type { Model } from 'mongoose';
 
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import { OrgApplicationService } from '../../org/application/org-application.service.js';
+import type { ImportEmploymentFromMigrationInput } from '../../org/application/org-application.service.js';
 import type {
   CreateDepartmentDto,
   CreateEmployeeDto,
@@ -30,6 +31,11 @@ import {
   migrationSourceFactHash,
   roll,
 } from '../data-migration-checksum.js';
+import {
+  DATA_MIGRATION_SCOPE_WRITE_SCOPE,
+  isEntityInMigrationScope,
+  type DataMigrationScope,
+} from '../data-migration-contract.js';
 import {
   DataMigrationAssociationRecord,
   type DataMigrationAssociationDocument,
@@ -61,7 +67,7 @@ export interface DataMigrationReport {
   readonly runId: string;
   readonly sourceSystem: string;
   readonly mode: 'full' | 'incremental';
-  readonly scope: 'org_reference' | 'org_workforce';
+  readonly scope: DataMigrationScope;
   readonly status: 'running' | 'completed' | 'failed';
   readonly expectedSourceCount: number;
   readonly checkpoint: number;
@@ -104,7 +110,7 @@ export class DataMigrationService {
   ) {}
 
   async start(input: CreateDataMigrationRunDto) {
-    this.assertExecutor();
+    this.assertExecutor(input.scope);
     const tenantId = this.context.getTenantRequired().tenantId;
     const run = Object.freeze({
       id: createEventId(), tenantId, sourceSystem: input.sourceSystem, mode: input.mode,
@@ -141,6 +147,7 @@ export class DataMigrationService {
     }
     const tenantId = this.context.getTenantRequired().tenantId;
     const run = await this.requireRunningRun(tenantId, runId);
+    this.assertExecutor(run.scope);
     const sourceFactHash = migrationSourceFactHash(input);
     if (input.sequence > run.expectedSourceCount) throw new BadRequestException({
       code: 'DATA_MIGRATION_SEQUENCE_OUT_OF_RANGE', message: '来源序号超过声明记录数',
@@ -198,6 +205,7 @@ export class DataMigrationService {
     this.assertExecutor();
     const tenantId = this.context.getTenantRequired().tenantId;
     const run = await this.requireRunningRun(tenantId, runId);
+    this.assertExecutor(run.scope);
     if (run.checkpoint !== run.expectedSourceCount) throw new ConflictException({
       code: 'DATA_MIGRATION_SOURCE_INCOMPLETE', message: '来源记录尚未全部处理',
     });
@@ -381,11 +389,16 @@ export class DataMigrationService {
     }
     if (input.entityType === 'org.position') positionPayload(input.payload);
     else if (input.entityType === 'org.job_level') jobLevelPayload(input.payload);
-    else {
+    else if (input.entityType === 'org.employee') {
       const payload = employeePayload(input.payload);
       assertAssociations(input.associationSourceIds, employeeAssociationIds(payload));
       await Promise.all(employeeAssociationSpecs(payload).map(async (association) =>
         this.requireMapping(run, association.entityType, association.sourceAssociationId)));
+      return;
+    } else {
+      const payload = employmentPayload(input.payload);
+      assertAssociations(input.associationSourceIds, [payload.employeeSourceId]);
+      await this.requireMapping(run, 'org.employee', payload.employeeSourceId);
       return;
     }
     assertAssociations(input.associationSourceIds, []);
@@ -434,14 +447,25 @@ export class DataMigrationService {
         );
       return target(result.jobLevel);
     }
-    const payload = employeePayload(input.payload);
-    const command = await this.employeeCommand(run, payload);
-    const result = mapping === null
-      ? await this.organization.createEmployee(key, command)
-      : await this.organization.synchronizeEmployeeFromMigration(
-        mapping.targetId, mapping.targetVersion, key, command,
-      );
-    return target(result.employee);
+    if (input.entityType === 'org.employee') {
+      const payload = employeePayload(input.payload);
+      const command = await this.employeeCommand(run, payload);
+      const result = mapping === null
+        ? await this.organization.createEmployee(key, command)
+        : await this.organization.synchronizeEmployeeFromMigration(
+          mapping.targetId, mapping.targetVersion, key, command,
+        );
+      return target(result.employee);
+    }
+    const payload = employmentPayload(input.payload);
+    const employeeId = (await this.requireMapping(
+      run, 'org.employee', payload.employeeSourceId,
+    )).targetId;
+    const result = await this.organization.importEmploymentFromMigration(key, {
+      ...payload,
+      employeeId,
+    });
+    return target(result.employment);
   }
 
   private async employeeCommand(
@@ -649,13 +673,16 @@ export class DataMigrationService {
     return run;
   }
 
-  private assertExecutor(): void {
+  private assertExecutor(scope?: DataMigrationScope): void {
     const actor = this.context.getActorRequired();
     if (!['service', 'system_job'].includes(actor.actorType) ||
       !actor.scopes.includes('erp:migration:execute') ||
-      !actor.scopes.includes('erp:org:master:write')) throw new ForbiddenException({
+      (scope !== undefined &&
+        !actor.scopes.includes(DATA_MIGRATION_SCOPE_WRITE_SCOPE[scope]))) {
+      throw new ForbiddenException({
       code: 'DATA_MIGRATION_EXECUTOR_FORBIDDEN', message: '当前身份无权执行数据迁移',
-    });
+      });
+    }
   }
 
   private assertReader(): void {
@@ -847,7 +874,7 @@ interface EmployeeMigrationPayload {
 }
 
 type AssociationRelationship = DataMigrationAssociationRecord['relationship'];
-type AssociationTargetType = 'org.department' | 'org.position' | 'org.job_level';
+type AssociationTargetType = 'org.department' | 'org.position' | 'org.job_level' | 'org.employee';
 interface AssociationEvidence {
   readonly relationship: AssociationRelationship;
   readonly sourceAssociationId: string;
@@ -917,6 +944,52 @@ function employeeAssociationIds(payload: EmployeeMigrationPayload): readonly str
   return [...new Set(employeeAssociationSpecs(payload).map((item) => item.sourceAssociationId))];
 }
 
+type EmploymentMigrationPayload = Omit<ImportEmploymentFromMigrationInput, 'employeeId'> & {
+  readonly employeeSourceId: string;
+};
+
+function employmentPayload(
+  value: Readonly<Record<string, unknown>>,
+): EmploymentMigrationPayload {
+  exactKeys(value, [
+    'effectiveFrom', 'effectiveTo', 'employeeSourceId', 'identityEvidenceId',
+    'offerId', 'onboardingCompletionEvidenceId', 'onboardingInstanceId',
+    'signedEvidenceId', 'sourcePersonId', 'status', 'terminationCareCaseId',
+    'terminationEvidenceId', 'terminationExecutionEvidenceId',
+  ]);
+  const requiredIds = [
+    value.employeeSourceId, value.identityEvidenceId, value.offerId,
+    value.onboardingCompletionEvidenceId, value.onboardingInstanceId,
+    value.signedEvidenceId, value.sourcePersonId,
+  ];
+  const optionalIds = [
+    value.terminationCareCaseId,
+    value.terminationEvidenceId,
+    value.terminationExecutionEvidenceId,
+  ];
+  if (requiredIds.some((item) => typeof item !== 'string' || !SOURCE_ID_PATTERN.test(item)) ||
+    optionalIds.some((item) => item !== null &&
+      (typeof item !== 'string' || !SOURCE_ID_PATTERN.test(item))) ||
+    !['probation', 'active', 'suspended', 'resigned'].includes(String(value.status)) ||
+    typeof value.effectiveFrom !== 'string' ||
+    (value.effectiveTo !== null && typeof value.effectiveTo !== 'string')) throw invalidPayload();
+  return {
+    employeeSourceId: value.employeeSourceId as string,
+    sourcePersonId: value.sourcePersonId as string,
+    identityEvidenceId: value.identityEvidenceId as string,
+    onboardingInstanceId: value.onboardingInstanceId as string,
+    onboardingCompletionEvidenceId: value.onboardingCompletionEvidenceId as string,
+    offerId: value.offerId as string,
+    signedEvidenceId: value.signedEvidenceId as string,
+    status: value.status as EmploymentMigrationPayload['status'],
+    effectiveFrom: value.effectiveFrom,
+    effectiveTo: value.effectiveTo,
+    terminationCareCaseId: value.terminationCareCaseId as string | null,
+    terminationExecutionEvidenceId: value.terminationExecutionEvidenceId as string | null,
+    terminationEvidenceId: value.terminationEvidenceId as string | null,
+  };
+}
+
 function associationEvidence(input: ApplyDataMigrationRecordDto): readonly AssociationEvidence[] {
   let derived: readonly AssociationEvidence[];
   try {
@@ -928,6 +1001,12 @@ function associationEvidence(input: ApplyDataMigrationRecordDto): readonly Assoc
       }];
     } else if (input.entityType === 'org.employee') {
       derived = employeeAssociationSpecs(employeePayload(input.payload));
+    } else if (input.entityType === 'org.employment') {
+      const employeeSourceId = employmentPayload(input.payload).employeeSourceId;
+      derived = [{
+        relationship: 'employee', sourceAssociationId: employeeSourceId,
+        entityType: 'org.employee',
+      }];
     } else derived = [];
   } catch {
     derived = [];
@@ -976,10 +1055,7 @@ function assertEntityInScope(
   scope: DataMigrationRunRecord['scope'],
   entityType: ApplyDataMigrationRecordDto['entityType'],
 ): void {
-  const allowed = scope === 'org_reference'
-    ? ['org.department', 'org.position', 'org.job_level']
-    : ['org.employee'];
-  if (!allowed.includes(entityType)) throw new BadRequestException({
+  if (!isEntityInMigrationScope(scope, entityType)) throw new BadRequestException({
     code: 'DATA_MIGRATION_ENTITY_OUT_OF_SCOPE', message: '实体类型不属于当前迁移范围',
   });
 }
@@ -1006,6 +1082,7 @@ function isDuplicateKeyError(error: unknown): boolean {
 const SOURCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const ASSOCIATION_RELATIONSHIPS = [
   'parent_department', 'department', 'primary_department', 'position', 'job_level',
+  'employee',
   'declared_reference',
 ] as const;
 const ASSOCIATION_RELATIONSHIP_SET: ReadonlySet<string> = new Set(ASSOCIATION_RELATIONSHIPS);

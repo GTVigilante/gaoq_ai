@@ -40,6 +40,14 @@ export interface CreateEmploymentInput {
   readonly effectiveFrom: string;
 }
 
+export interface RestoreEmploymentFromMigrationInput extends CreateEmploymentInput {
+  readonly status: EmploymentStatus;
+  readonly effectiveTo: string | null;
+  readonly terminationCareCaseId: string | null;
+  readonly terminationExecutionEvidenceId: string | null;
+  readonly terminationEvidenceId: string | null;
+}
+
 /** 建立候选人入职产生的劳动关系，默认进入试用期。 */
 export function createEmployment(input: CreateEmploymentInput, now: Date): Employment {
   assertTenantId(input.tenantId);
@@ -77,6 +85,70 @@ export function createEmployment(input: CreateEmploymentInput, now: Date): Emplo
     status: 'probation',
     effectiveFrom,
     effectiveTo: null,
+    version: 1,
+    createdAt: occurredAt,
+    updatedAt: occurredAt,
+  });
+}
+
+/**
+ * 数据迁移专用：从完整证据快照恢复劳动关系，不执行入职或离职副作用。
+ * 已离职记录必须携带完整终止证据；开放记录禁止夹带终止字段。
+ */
+export function restoreEmploymentFromMigration(
+  input: RestoreEmploymentFromMigrationInput,
+  now: Date,
+): Employment {
+  assertTenantId(input.tenantId);
+  if (!['probation', 'active', 'suspended', 'resigned'].includes(input.status)) {
+    throw new OrgDomainError('INVALID_STATUS', '劳动关系状态非法');
+  }
+  for (const [field, value] of Object.entries({
+    id: input.id,
+    personId: input.personId,
+    employeeId: input.employeeId,
+    onboardingInstanceId: input.onboardingInstanceId,
+    onboardingCompletionEvidenceId: input.onboardingCompletionEvidenceId,
+    offerId: input.offerId,
+    signedEvidenceId: input.signedEvidenceId,
+  })) assertEntityId(value, field);
+  const effectiveFrom = assertLocalDate(input.effectiveFrom, 'effectiveFrom');
+  const terminationValues = [
+    input.terminationCareCaseId,
+    input.terminationExecutionEvidenceId,
+    input.terminationEvidenceId,
+  ];
+  if (input.status === 'resigned') {
+    if (input.effectiveTo === null || terminationValues.some((value) => value === null)) {
+      throw new OrgDomainError(
+        'EMPLOYMENT_MIGRATION_TERMINATION_EVIDENCE_REQUIRED',
+        '已离职劳动关系必须包含结束日期与完整终止证据',
+      );
+    }
+  } else if (input.effectiveTo !== null || terminationValues.some((value) => value !== null)) {
+    throw new OrgDomainError(
+      'EMPLOYMENT_MIGRATION_OPEN_STATE_INVALID',
+      '开放劳动关系不能包含结束日期或终止证据',
+    );
+  }
+  for (const [field, value] of Object.entries({
+    terminationCareCaseId: input.terminationCareCaseId,
+    terminationExecutionEvidenceId: input.terminationExecutionEvidenceId,
+    terminationEvidenceId: input.terminationEvidenceId,
+  })) {
+    if (value !== null) assertEntityId(value, field);
+  }
+  const effectiveTo = input.effectiveTo === null
+    ? null
+    : assertLocalDate(input.effectiveTo, 'effectiveTo');
+  if (effectiveTo !== null && effectiveTo < effectiveFrom) throw new OrgDomainError(
+    'EMPLOYMENT_END_BEFORE_START', '劳动关系结束日期不能早于生效日期',
+  );
+  const occurredAt = toIso(now);
+  return Object.freeze({
+    ...input,
+    effectiveFrom,
+    effectiveTo,
     version: 1,
     createdAt: occurredAt,
     updatedAt: occurredAt,

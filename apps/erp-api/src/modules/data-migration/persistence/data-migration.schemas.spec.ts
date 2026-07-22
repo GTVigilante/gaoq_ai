@@ -8,6 +8,10 @@ import {
   DataMigrationMappingRecordSchema,
   DataMigrationRunRecordSchema,
 } from './data-migration.schemas.js';
+import {
+  DATA_MIGRATION_ENTITY_TYPES,
+  DATA_MIGRATION_SCOPES,
+} from '../data-migration-contract.js';
 
 describe('数据迁移账本 Schema', () => {
   it('运行、条目、来源映射与证据台账均以可信租户建立唯一键', () => {
@@ -43,6 +47,20 @@ describe('数据迁移账本 Schema', () => {
     expect(DataMigrationAttachmentRecordSchema.path('checksum')).toBeDefined();
     expect(DataMigrationAttachmentRecordSchema.path('attempts')).toBeDefined();
     expect(DataMigrationAttachmentRecordSchema.path('processingStartedAt')).toBeDefined();
+  });
+
+  it('运行、条目与映射复用统一迁移白名单', () => {
+    expect(DataMigrationRunRecordSchema.path('scope').options.enum).toEqual(
+      DATA_MIGRATION_SCOPES,
+    );
+    expect(DataMigrationItemRecordSchema.path('entityType').options.enum).toEqual(
+      DATA_MIGRATION_ENTITY_TYPES,
+    );
+    expect(DataMigrationMappingRecordSchema.path('entityType').options.enum).toEqual(
+      DATA_MIGRATION_ENTITY_TYPES,
+    );
+    expect(DataMigrationAssociationRecordSchema.path('relationship').options.enum)
+      .toContain('employee');
   });
 
   it('附件 processing、verified、rejected 状态必须分别绑定租约或证据', async () => {
