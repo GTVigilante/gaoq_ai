@@ -51,6 +51,11 @@ import {
   type ImportAttendanceMonthFromMigrationInput,
   type ImportAttendanceSourceFactFromMigrationInput,
 } from '../../attendance/application/attendance-application.service.js';
+import {
+  PayrollMasterDataService,
+  type ImportPayrollCompensationFromMigrationInput,
+  type ImportPayrollRulePackFromMigrationInput,
+} from '../../payroll/application/payroll-master-data.service.js';
 import type {
   CreateDepartmentDto,
   CreateEmployeeDto,
@@ -158,6 +163,8 @@ export class DataMigrationService {
     private readonly recruitmentOffers?: RecruitmentOfferService,
     @Inject(AttendanceApplicationService)
     private readonly attendance?: AttendanceApplicationService,
+    @Inject(PayrollMasterDataService)
+    private readonly payrollMasterData?: PayrollMasterDataService,
   ) {}
 
   async start(input: CreateDataMigrationRunDto) {
@@ -620,6 +627,23 @@ export class DataMigrationService {
         ]),
       ]);
       return;
+    } else if (input.entityType === 'payroll.rule_pack') {
+      const payload = payrollRulePackPayload(input.payload);
+      assertAssociations(input.associationSourceIds, [payload.approvalHistorySourceId]);
+      assertSingleMigrationEvidence(input, payload);
+      await this.requireMapping(run, 'approval.history', payload.approvalHistorySourceId);
+      return;
+    } else if (input.entityType === 'payroll.compensation_profile') {
+      const payload = payrollCompensationPayload(input.payload);
+      assertAssociations(input.associationSourceIds, [
+        payload.approvalHistorySourceId, payload.employeeSourceId,
+      ]);
+      assertSingleMigrationEvidence(input, payload);
+      await Promise.all([
+        this.requireMapping(run, 'org.employee', payload.employeeSourceId),
+        this.requireMapping(run, 'approval.history', payload.approvalHistorySourceId),
+      ]);
+      return;
     } else {
       const payload = approvalTemplatePayload(input.payload);
       const specs = approvalTemplateAssociationSpecs(payload);
@@ -1076,6 +1100,48 @@ export class DataMigrationService {
         evidenceChecksum: payload.sourceEvidenceChecksum,
       });
       return target(result.month);
+    }
+    if (input.entityType === 'payroll.rule_pack') {
+      const payload = payrollRulePackPayload(input.payload);
+      if (this.payrollMasterData === undefined) throw new Error('迁移薪资规则适配器未装配');
+      const approval = await this.requireMapping(
+        run, 'approval.history', payload.approvalHistorySourceId,
+      );
+      const result = await this.payrollMasterData.importRulePackFromMigration(key, {
+        targetId: mapping?.targetId ?? null,
+        code: payload.code, jurisdictionCode: payload.jurisdictionCode,
+        version: payload.version, effectiveFrom: payload.effectiveFrom,
+        effectiveTo: payload.effectiveTo,
+        monthlyBasicDeductionMinor: payload.monthlyBasicDeductionMinor,
+        taxBrackets: payload.taxBrackets,
+        sourceDigest: payload.sourceDigest, sourceReference: payload.sourceReference,
+        approvalHistoryId: approval.targetId,
+        approvalEvidenceChecksum: payload.approvalEvidenceChecksum,
+        createdAt: payload.createdAt,
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${run.id}/attachments/${payload.sourceEvidenceSourceAttachmentId}`,
+        evidenceChecksum: payload.sourceEvidenceChecksum,
+      });
+      return target(result);
+    }
+    if (input.entityType === 'payroll.compensation_profile') {
+      const payload = payrollCompensationPayload(input.payload);
+      if (this.payrollMasterData === undefined) throw new Error('迁移薪酬档案适配器未装配');
+      const [employee, approval] = await Promise.all([
+        this.requireMapping(run, 'org.employee', payload.employeeSourceId),
+        this.requireMapping(run, 'approval.history', payload.approvalHistorySourceId),
+      ]);
+      const result = await this.payrollMasterData.importCompensationFromMigration(key, {
+        targetId: mapping?.targetId ?? null, employeeId: employee.targetId,
+        version: payload.version, effectiveFrom: payload.effectiveFrom,
+        effectiveTo: payload.effectiveTo, approvalHistoryId: approval.targetId,
+        approvalEvidenceChecksum: payload.approvalEvidenceChecksum,
+        data: payload.data, createdAt: payload.createdAt,
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${run.id}/attachments/${payload.sourceEvidenceSourceAttachmentId}`,
+        evidenceChecksum: payload.sourceEvidenceChecksum,
+      });
+      return target(result);
     }
     const payload = approvalTemplatePayload(input.payload);
     if (this.approvals === undefined) throw new Error('迁移审批适配器未装配');
@@ -2940,6 +3006,183 @@ function nullableHash(value: unknown): value is string | null {
   return value === null || (typeof value === 'string' && HASH_PATTERN.test(value));
 }
 
+type PayrollRulePackMigrationPayload = Omit<
+  ImportPayrollRulePackFromMigrationInput,
+  'targetId' | 'approvalHistoryId' | 'migrationEvidenceRef' | 'evidenceChecksum'
+> & MigrationEvidencePayload & { readonly approvalHistorySourceId: string };
+
+type PayrollCompensationMigrationPayload = Omit<
+  ImportPayrollCompensationFromMigrationInput,
+  'targetId' | 'employeeId' | 'approvalHistoryId' | 'migrationEvidenceRef' | 'evidenceChecksum'
+> & MigrationEvidencePayload & {
+  readonly employeeSourceId: string;
+  readonly approvalHistorySourceId: string;
+};
+
+interface MigrationEvidencePayload {
+  readonly sourceEvidenceSourceAttachmentId: string;
+  readonly sourceEvidenceChecksum: string;
+}
+
+function payrollRulePackPayload(
+  value: Readonly<Record<string, unknown>>,
+): PayrollRulePackMigrationPayload {
+  exactKeys(value, [
+    'approvalEvidenceChecksum', 'approvalHistorySourceId', 'code', 'createdAt',
+    'effectiveFrom', 'effectiveTo', 'jurisdictionCode', 'monthlyBasicDeductionMinor',
+    'sourceDigest', 'sourceEvidenceChecksum', 'sourceEvidenceSourceAttachmentId',
+    'sourceReference', 'taxBrackets', 'version',
+  ]);
+  if (typeof value.code !== 'string' || !SOURCE_ID_PATTERN.test(value.code) ||
+    typeof value.jurisdictionCode !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.jurisdictionCode) ||
+    !migrationVersion(value.version) || !migrationInterval(value.effectiveFrom, value.effectiveTo) ||
+    !nonnegativeSafeInteger(value.monthlyBasicDeductionMinor) ||
+    !Array.isArray(value.taxBrackets) || value.taxBrackets.length < 1 ||
+    value.taxBrackets.length > 64 || typeof value.sourceDigest !== 'string' ||
+    !HASH_PATTERN.test(value.sourceDigest) || typeof value.sourceReference !== 'string' ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/.test(value.sourceReference) ||
+    !migrationApprovalAndEvidence(value) || !isStrictUtcIso(value.createdAt)) throw invalidPayload();
+  const taxBrackets = value.taxBrackets.map((item) => {
+    if (!isPlainMigrationObject(item)) throw invalidPayload();
+    exactKeys(item, ['quickDeductionMinor', 'rateBps', 'upperBoundMinor']);
+    if ((item.upperBoundMinor !== null && !nonnegativeSafeInteger(item.upperBoundMinor)) ||
+      !Number.isSafeInteger(item.rateBps) || Number(item.rateBps) < 0 ||
+      Number(item.rateBps) > 10_000 || !nonnegativeSafeInteger(item.quickDeductionMinor)) {
+      throw invalidPayload();
+    }
+    return {
+      upperBoundMinor: item.upperBoundMinor === null ? null : Number(item.upperBoundMinor),
+      rateBps: Number(item.rateBps), quickDeductionMinor: Number(item.quickDeductionMinor),
+    };
+  });
+  return {
+    code: value.code, jurisdictionCode: value.jurisdictionCode,
+    version: Number(value.version), effectiveFrom: value.effectiveFrom,
+    effectiveTo: value.effectiveTo as string | null,
+    monthlyBasicDeductionMinor: Number(value.monthlyBasicDeductionMinor), taxBrackets,
+    sourceDigest: value.sourceDigest, sourceReference: value.sourceReference,
+    approvalHistorySourceId: value.approvalHistorySourceId,
+    approvalEvidenceChecksum: value.approvalEvidenceChecksum,
+    createdAt: value.createdAt,
+    sourceEvidenceSourceAttachmentId: value.sourceEvidenceSourceAttachmentId,
+    sourceEvidenceChecksum: value.sourceEvidenceChecksum,
+  };
+}
+
+function payrollCompensationPayload(
+  value: Readonly<Record<string, unknown>>,
+): PayrollCompensationMigrationPayload {
+  exactKeys(value, [
+    'approvalEvidenceChecksum', 'approvalHistorySourceId', 'createdAt', 'data',
+    'effectiveFrom', 'effectiveTo', 'employeeSourceId', 'sourceEvidenceChecksum',
+    'sourceEvidenceSourceAttachmentId', 'version',
+  ]);
+  if (typeof value.employeeSourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.employeeSourceId) || !migrationVersion(value.version) ||
+    !migrationInterval(value.effectiveFrom, value.effectiveTo) ||
+    !migrationApprovalAndEvidence(value) || !isStrictUtcIso(value.createdAt) ||
+    !isPlainMigrationObject(value.data)) throw invalidPayload();
+  exactKeys(value.data, [
+    'attendanceAdjustment', 'currency', 'employeeHousingFundMinor',
+    'employeeSocialInsuranceMinor', 'nonTaxableEarnings', 'otherPreTaxWithholdingMinor',
+    'postTaxDeductionMinor', 'specialAdditionalDeductionMinor', 'taxableEarnings',
+  ]);
+  if (value.data.currency !== 'CNY' ||
+    !Array.isArray(value.data.taxableEarnings) || value.data.taxableEarnings.length > 128 ||
+    !Array.isArray(value.data.nonTaxableEarnings) || value.data.nonTaxableEarnings.length > 128 ||
+    !isPlainMigrationObject(value.data.attendanceAdjustment)) throw invalidPayload();
+  const component = (item: unknown): { code: string; amountMinor: number } => {
+    if (!isPlainMigrationObject(item)) throw invalidPayload();
+    exactKeys(item, ['amountMinor', 'code']);
+    if (typeof item.code !== 'string' || !/^[A-Z][A-Z0-9_]{0,63}$/.test(item.code) ||
+      !nonnegativeSafeInteger(item.amountMinor)) throw invalidPayload();
+    return { code: item.code, amountMinor: Number(item.amountMinor) };
+  };
+  exactKeys(value.data.attendanceAdjustment, [
+    'absenceDeductionMinorPerMinute', 'overtimePayMinorPerMinute',
+    'unpaidLeaveDeductionMinorPerMinute',
+  ]);
+  const numeric = [
+    value.data.employeeSocialInsuranceMinor, value.data.employeeHousingFundMinor,
+    value.data.specialAdditionalDeductionMinor, value.data.otherPreTaxWithholdingMinor,
+    value.data.postTaxDeductionMinor,
+    value.data.attendanceAdjustment.overtimePayMinorPerMinute,
+    value.data.attendanceAdjustment.absenceDeductionMinorPerMinute,
+    value.data.attendanceAdjustment.unpaidLeaveDeductionMinorPerMinute,
+  ];
+  if (numeric.some((item) => !nonnegativeSafeInteger(item))) throw invalidPayload();
+  return {
+    employeeSourceId: value.employeeSourceId,
+    version: Number(value.version), effectiveFrom: value.effectiveFrom,
+    effectiveTo: value.effectiveTo as string | null,
+    approvalHistorySourceId: value.approvalHistorySourceId,
+    approvalEvidenceChecksum: value.approvalEvidenceChecksum,
+    data: {
+      currency: 'CNY',
+      taxableEarnings: value.data.taxableEarnings.map(component),
+      nonTaxableEarnings: value.data.nonTaxableEarnings.map(component),
+      employeeSocialInsuranceMinor: Number(value.data.employeeSocialInsuranceMinor),
+      employeeHousingFundMinor: Number(value.data.employeeHousingFundMinor),
+      specialAdditionalDeductionMinor: Number(value.data.specialAdditionalDeductionMinor),
+      otherPreTaxWithholdingMinor: Number(value.data.otherPreTaxWithholdingMinor),
+      postTaxDeductionMinor: Number(value.data.postTaxDeductionMinor),
+      attendanceAdjustment: {
+        overtimePayMinorPerMinute:
+          Number(value.data.attendanceAdjustment.overtimePayMinorPerMinute),
+        absenceDeductionMinorPerMinute:
+          Number(value.data.attendanceAdjustment.absenceDeductionMinorPerMinute),
+        unpaidLeaveDeductionMinorPerMinute:
+          Number(value.data.attendanceAdjustment.unpaidLeaveDeductionMinorPerMinute),
+      },
+    },
+    createdAt: value.createdAt,
+    sourceEvidenceSourceAttachmentId: value.sourceEvidenceSourceAttachmentId,
+    sourceEvidenceChecksum: value.sourceEvidenceChecksum,
+  };
+}
+
+function migrationApprovalAndEvidence(value: Readonly<Record<string, unknown>>): value is
+Readonly<Record<string, unknown>> & {
+  approvalHistorySourceId: string;
+  approvalEvidenceChecksum: string;
+  sourceEvidenceSourceAttachmentId: string;
+  sourceEvidenceChecksum: string;
+} {
+  return typeof value.approvalHistorySourceId === 'string' &&
+    SOURCE_ID_PATTERN.test(value.approvalHistorySourceId) &&
+    typeof value.approvalEvidenceChecksum === 'string' &&
+    HASH_PATTERN.test(value.approvalEvidenceChecksum) &&
+    typeof value.sourceEvidenceSourceAttachmentId === 'string' &&
+    SOURCE_ID_PATTERN.test(value.sourceEvidenceSourceAttachmentId) &&
+    typeof value.sourceEvidenceChecksum === 'string' &&
+    HASH_PATTERN.test(value.sourceEvidenceChecksum);
+}
+
+function migrationVersion(value: unknown): boolean {
+  return Number.isSafeInteger(value) && Number(value) >= 1 && Number(value) <= 10_000;
+}
+
+function migrationInterval(from: unknown, to: unknown): from is string {
+  return typeof from === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(from) &&
+    (to === null || (typeof to === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(to) && to >= from));
+}
+
+function nonnegativeSafeInteger(value: unknown): boolean {
+  return Number.isSafeInteger(value) && Number(value) >= 0;
+}
+
+function assertSingleMigrationEvidence(
+  input: ApplyDataMigrationRecordDto,
+  payload: MigrationEvidencePayload,
+): void {
+  const evidence = input.attachments.find((attachment) =>
+    attachment.sourceAttachmentId === payload.sourceEvidenceSourceAttachmentId);
+  if (input.attachments.length !== 1 || evidence?.checksum !== payload.sourceEvidenceChecksum) {
+    throw new Error('DATA_MIGRATION_PAYROLL_EVIDENCE_REQUIRED');
+  }
+}
+
 function assertGovernanceEvidence(
   input: ApplyDataMigrationRecordDto,
   payload: {
@@ -3231,6 +3474,26 @@ function associationEvidence(input: ApplyDataMigrationRecordDto): readonly Assoc
           entityType: 'approval.history',
         },
       ];
+    } else if (input.entityType === 'payroll.rule_pack') {
+      const payload = payrollRulePackPayload(input.payload);
+      derived = [{
+        relationship: 'approval_history',
+        sourceAssociationId: payload.approvalHistorySourceId,
+        entityType: 'approval.history',
+      }];
+    } else if (input.entityType === 'payroll.compensation_profile') {
+      const payload = payrollCompensationPayload(input.payload);
+      derived = [
+        {
+          relationship: 'employee', sourceAssociationId: payload.employeeSourceId,
+          entityType: 'org.employee',
+        },
+        {
+          relationship: 'approval_history',
+          sourceAssociationId: payload.approvalHistorySourceId,
+          entityType: 'approval.history',
+        },
+      ];
     } else if (input.entityType === 'attendance.monthly_snapshot') {
       const payload = attendanceMonthPayload(input.payload);
       derived = [
@@ -3310,11 +3573,11 @@ function rejectionCode(error: unknown): string | null {
     if (typeof response === 'object' && response !== null) {
       const code = (response as { code?: unknown }).code;
       if (typeof code === 'string' &&
-        /^(ORG|APPROVAL|RECRUITMENT|ATTENDANCE|DATA_MIGRATION)_[A-Z0-9_]{2,80}$/.test(code)) return code;
+        /^(ORG|APPROVAL|RECRUITMENT|ATTENDANCE|PAYROLL|DATA_MIGRATION)_[A-Z0-9_]{2,80}$/.test(code)) return code;
     }
   }
   return error instanceof Error &&
-    /^(ORG|APPROVAL|RECRUITMENT|ATTENDANCE|DATA_MIGRATION)_[A-Z0-9_]{2,80}$/.test(error.message)
+    /^(ORG|APPROVAL|RECRUITMENT|ATTENDANCE|PAYROLL|DATA_MIGRATION)_[A-Z0-9_]{2,80}$/.test(error.message)
     ? error.message : null;
 }
 

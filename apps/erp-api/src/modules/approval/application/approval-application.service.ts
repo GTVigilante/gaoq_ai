@@ -263,6 +263,13 @@ export interface ApprovalAttendanceMonthReopenMigrationReference {
   readonly evidenceChecksum: string;
 }
 
+export interface ApprovalPayrollMigrationReference {
+  readonly id: string;
+  readonly templateCode: 'payroll_rule_pack' | 'payroll_compensation';
+  readonly completedAt: string;
+  readonly evidenceChecksum: string;
+}
+
 /** 审批应用服务：唯一事务编排入口，REST、Worker 与 MCP 必须复用本服务。 */
 @Injectable()
 export class ApprovalApplicationService {
@@ -508,6 +515,27 @@ export class ApprovalApplicationService {
     return Object.freeze({
       id: history.id,
       completedAt: history.completedAt,
+      evidenceChecksum: history.evidenceChecksum,
+    });
+  }
+
+  /** 薪资主数据迁移只读校验：只接受已通过的专用审批历史。 */
+  async verifyPayrollMigrationReference(
+    id: string,
+    templateCode: ApprovalPayrollMigrationReference['templateCode'],
+    session: ClientSession,
+  ): Promise<ApprovalPayrollMigrationReference> {
+    this.assertPayrollMigrationVerifier();
+    const history = await this.legacyHistories.findById(id, session);
+    if (history === null || history.templateCode !== templateCode ||
+      history.outcome !== 'approved') {
+      throw new BadRequestException({
+        code: 'APPROVAL_MIGRATION_PAYROLL_REFERENCE_INVALID',
+        message: '薪资迁移必须引用已迁移且已通过的专用审批历史',
+      });
+    }
+    return Object.freeze({
+      id: history.id, templateCode, completedAt: history.completedAt,
       evidenceChecksum: history.evidenceChecksum,
     });
   }
@@ -1254,6 +1282,18 @@ export class ApprovalApplicationService {
       throw new ForbiddenException({
         code: 'APPROVAL_MIGRATION_ATTENDANCE_VERIFIER_DENIED',
         message: '考勤迁移审批引用校验只允许受信任服务身份',
+      });
+    }
+  }
+
+  private assertPayrollMigrationVerifier(): void {
+    const actor = this.context.getActorRequired();
+    if (!['service', 'system_job'].includes(actor.actorType) ||
+      !actor.scopes.includes('erp:migration:execute') ||
+      !actor.scopes.includes('erp:payroll:migration:write')) {
+      throw new ForbiddenException({
+        code: 'APPROVAL_MIGRATION_PAYROLL_VERIFIER_DENIED',
+        message: '薪资迁移审批引用校验只允许受信任服务身份',
       });
     }
   }

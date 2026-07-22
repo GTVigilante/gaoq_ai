@@ -93,6 +93,7 @@ import {
   ],
   exports: [
     PayrollRunService, PayrollPayslipService,
+    PayrollMasterDataService,
     PayrollTaxFilingService, PayrollReconciliationService,
     PayrollShadowService,
   ],

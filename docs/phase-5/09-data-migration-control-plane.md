@@ -2,7 +2,7 @@
 
 ## 范围与当前能力
 
-本切片建立可重复、可恢复、可审计的迁移控制面。当前白名单包含 `org_reference`（部门、岗位、职级）、`org_workforce`（员工）、`org_employment`（劳动关系）、`approval_templates`（审批模板版本）、`approval_history`（已终结审批历史）、`approval_active_instances`（无文件草稿/运行中实例）、`recruitment_reference`（HC 与职位）、`recruitment_candidates`（候选人隐私主档）、`recruitment_applications`（面试前申请基线）、`recruitment_interviews`（面试及评价）、`recruitment_offers`（Offer 及申请后续阶段）、`attendance_source_facts`（考勤原始事实）、`attendance_corrections`（已批准考勤修订）与 `attendance_monthly_snapshots`（月结版本链）十四个独立 Scope；薪资与业务附件实体仍需在同一账本协议上按域追加，完成前 Issue #34 与 Phase 5 迁移门禁保持未完成。
+本切片建立可重复、可恢复、可审计的迁移控制面。当前白名单在组织、审批、招聘与考勤完整链路之外，新增 `payroll_rule_packs`（法定规则版本）与 `payroll_compensation_profiles`（员工薪酬档案），共十六个独立 Scope；薪资期间/计算/支付/税务证据与业务附件仍需按域追加，完成前 Issue #34 与 Phase 5 迁移门禁保持未完成。
 
 目标业务数据禁止由迁移模块直接写集合。组织与劳动关系实体调用 `OrgApplicationService`，审批模板、已终结审批历史与活动审批调用 `ApprovalApplicationService`，HC 与职位调用 `RecruitmentManagementService`，候选人与申请调用 `RecruitmentApplicationService`，面试与评价调用 `RecruitmentInterviewService`，Offer 与后续申请阶段调用 `RecruitmentOfferService`，继续执行领域校验、引用校验、加密、盲索引、幂等、Outbox 和版本并发控制。员工更新、状态变更与开放劳动关系在一个事务内同步；既有员工离职仍必须进入 Care，迁移不得绕过清算、身份吊销与生效日控制。历史劳动关系使用独立恢复入口，不触发正常入职、离职或身份副作用，也不生成新员工。审批迁移分别只发布 `approval_template.migrated`、`approval_history.migrated` 与 `approval_instance.migrated`；招聘迁移只发布各聚合的 `.migrated` 专用事件，包括申请、面试和 Offer。所有迁移事件均不得伪装成正常创建、排期、评价、提交、决策、发送、签署、发布或退役动作，也不创建通知、外部日历或 eSign 任务。迁移模块只直写自己拥有的运行、条目、来源映射与证据账本。
 
@@ -53,6 +53,9 @@
 - `attendance_monthly_snapshots` 必须在源事实与修订之后按员工、月份、版本升序执行。来源只声明规则版本、截止/关账时间、控制总量和版本链引用；目标服务按截止时间重新读取已迁移事实与修订并复用正式关账算法重算逐日明细、总计与 `snapshotHash`，禁止直接采信或写入来源快照正文。
 - v1 不得包含前序或重开证据；v2+ 必须引用同员工同月份的 v(n-1) 目标映射、已通过 `attendance_month_reopen` 历史及其 WORM checksum，并满足重开审批完成 ≤ 关账时间。每一版另绑定唯一 WORM，激活新版本时只把直接前序标记为 superseded。
 - 只发布 `attendance.month.migrated`，不伪造普通关账/重开事件。逐日明细继续使用 AES-256-GCM；迁移账本、报告、事件与 MCP 不输出逐日明细或来源控制 payload。
+- `payroll_rule_packs` 必须先执行。每条规则版本引用 `payroll_rule_pack` approved 审批历史、审批 WORM checksum、法规来源摘要/引用和独立 WORM；目标重新运行确定性税率校验，按法域要求版本连续、生效区间不重叠，只发布 `payroll.rule_pack.migrated`。
+- `payroll_compensation_profiles` 随后按员工、版本升序执行。员工只来自 ERP 主数据映射，审批只接受 `payroll_compensation` approved 历史；金额组件、扣缴与考勤调整策略使用 Payroll 独立 AES-256-GCM 密钥域，目标重算 `profileHash`，版本不连续、生效区间重叠、审批/WORM 或密文重放不一致均失败关闭。
+- 两个 Scope 均不触发普通 attest、工资计算、审批、代发或税务动作。迁移账本、报告、事件与 MCP 不输出员工级金额、规则正文、来源引用或 WORM 定位符；MCP 不提供薪资迁移写工具。
 
 `sourceFactHash` 的规范对象固定为 `sourceRecordId`、`sourceVersion`、`entityType`、`payloadHash`、按字典序排列的 `associationSourceIds`，以及按 `sourceAttachmentId` 排列且仅含 ID 与 checksum 的附件数组。滚动来源校验和初值为 `base64url(SHA-256(""))`，第 N 条为 `base64url(SHA-256(previous + "\\n" + sequence + ":" + sourceFactHash))`。来源导出程序必须使用相同算法，并固定 UTF-8、对象键字典序与数组规则。
 
@@ -62,7 +65,7 @@
 - 租户只来自已验证服务身份；payload 不允许 tenantId，实体类型、字段和关联均走固定白名单。
 - 账本不保存来源 payload、姓名、附件内容或 Token，只保存摘要、来源/目标引用、版本、状态和标准拒绝码。
 - `data_migration_associations` 逐项保存关系类型、来源关联 ID、解析后的目标 ID 与 `resolved|missing` 状态；`data_migration_attachments` 逐项保存来源附件 ID、checksum、搬运状态和目标证据引用，严禁保存附件正文。
-- 未知基础设施错误不允许伪装为业务拒绝或推进检查点；只有稳定的 `ORG_*` / `APPROVAL_*` / `RECRUITMENT_*` / `ATTENDANCE_*` / `DATA_MIGRATION_*` 规则错误进入拒绝账本。
+- 未知基础设施错误不允许伪装为业务拒绝或推进检查点；只有稳定的 `ORG_*` / `APPROVAL_*` / `RECRUITMENT_*` / `ATTENDANCE_*` / `PAYROLL_*` / `DATA_MIGRATION_*` 规则错误进入拒绝账本。
 - 附件证据逐项登记为 `pending`，全部来源记录处理完成后由独立 Worker 调用隔离附件网关。网关自行拉取来源正文，完成 checksum 复核、恶意文件扫描与不可变归档；ERP 进程只接收严格绑定摘要的回执。`pending|processing` 生成 High 差异，网关拒绝生成 Critical 差异并阻止 Phase 6。未解析关联同样生成 Critical 差异。
 
 ## REST、MCP 与审计

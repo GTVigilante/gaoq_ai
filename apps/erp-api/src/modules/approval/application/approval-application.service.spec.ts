@@ -216,6 +216,31 @@ describe('ApprovalApplicationService', () => {
     });
   });
 
+  it('薪资迁移只读取已通过专用历史的安全投影', async () => {
+    const deps = dependencies({
+      legacyHistories: {
+        ...dependencies().legacyHistories,
+        findById: vi.fn().mockResolvedValue({
+          id: 'history-payroll-001', templateCode: 'payroll_compensation',
+          outcome: 'approved', completedAt: '2026-01-01T00:00:00.000Z',
+          evidenceChecksum: 'p'.repeat(43), migrationEvidenceRef: '不得输出',
+        }),
+      },
+    });
+    const application = service(
+      deps,
+      opWorkerContext(['erp:migration:execute', 'erp:payroll:migration:write']),
+    );
+    const result = await application.verifyPayrollMigrationReference(
+      'history-payroll-001', 'payroll_compensation', SESSION,
+    );
+    expect(result).toEqual({
+      id: 'history-payroll-001', templateCode: 'payroll_compensation',
+      completedAt: '2026-01-01T00:00:00.000Z', evidenceChecksum: 'p'.repeat(43),
+    });
+    expect(JSON.stringify(result)).not.toContain('不得输出');
+  });
+
   it('招聘迁移只能读取活动审批或终结历史的最小引用投影', async () => {
     const running = submitApprovalInstance(draftInstance('recruitment_hc'), {
       tenantId: 'tenant-001', expectedVersion: 1, actorId: 'actor-001',

@@ -14,6 +14,8 @@ export interface PayrollEvent {
     | 'payroll.run.completed'
     | 'payroll.compensation_profile.attested'
     | 'payroll.rule_pack.attested'
+    | 'payroll.rule_pack.migrated'
+    | 'payroll.compensation_profile.migrated'
     | 'payroll.approval.requested'
     | 'payroll.approval.applied'
     | 'payroll.period.locked'

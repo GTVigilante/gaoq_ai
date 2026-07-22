@@ -44,6 +44,32 @@ describe('Payroll 持久化契约', () => {
     expect(document.toObject()).not.toHaveProperty('baseSalaryMinor');
     await expect(new ProfileModel({ ...document.toObject(), dataAuthTag: '' }).validate())
       .rejects.toThrow(/dataAuthTag/);
+    await expect(new ProfileModel({
+      ...document.toObject(),
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/profile-001',
+      migrationEvidenceChecksum: null,
+    }).validate()).rejects.toThrow('必须成对出现');
+  });
+
+  it('迁移规则包要求 WORM 引用与校验和成对出现', async () => {
+    const RuleModel = mongoose.model('SpecPayrollMigrationRule', PayrollRulePackRecordSchema);
+    const valid = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4R1', tenantId: 'tenant-001', code: 'CN_IIT',
+      version: 1, jurisdictionCode: 'CN', effectiveFrom: '2026-01-01',
+      effectiveTo: '2026-12-31', monthlyBasicDeductionMinor: 500_000,
+      taxBrackets: [{ upperBoundMinor: null, rateBps: 300, quickDeductionMinor: 0 }],
+      roundingMode: 'HALF_UP', rulesHash: 'r'.repeat(43), sourceDigest: 's'.repeat(43),
+      sourceReference: 'tax-law-2026', approvalEvidenceId: 'approval-history-001',
+      status: 'published',
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/rule-001',
+      migrationEvidenceChecksum: 'w'.repeat(43),
+    };
+    await expect(new RuleModel(valid).validate()).resolves.toBeUndefined();
+    await expect(new RuleModel({
+      ...valid, migrationEvidenceChecksum: null,
+    }).validate()).rejects.toThrow('必须成对出现');
   });
 
   it('规则、周期与薪酬版本唯一约束均包含租户前缀', () => {
@@ -56,6 +82,12 @@ describe('Payroll 持久化契约', () => {
     ]));
     expect(PayrollCompensationProfileRecordSchema.indexes()).toContainEqual([
       { tenantId: 1, employeeId: 1, version: 1 }, expect.objectContaining({ unique: true }),
+    ]);
+    expect(PayrollCompensationProfileRecordSchema.indexes()).toContainEqual([
+      { tenantId: 1, migrationEvidenceRef: 1 }, expect.objectContaining({ unique: true }),
+    ]);
+    expect(PayrollRulePackRecordSchema.indexes()).toContainEqual([
+      { tenantId: 1, migrationEvidenceRef: 1 }, expect.objectContaining({ unique: true }),
     ]);
     expect(PayrollPeriodRecordSchema.indexes()).toContainEqual([
       { tenantId: 1, period: 1 }, expect.objectContaining({ unique: true }),

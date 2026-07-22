@@ -7,12 +7,13 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { createEventId } from '@gaoq/shared-utils';
-import type { Model } from 'mongoose';
+import type { ClientSession, Model } from 'mongoose';
 import { z } from 'zod';
 
 import { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import { EmployeeRepository } from '../../org/persistence/org.repositories.js';
+import { ApprovalApplicationService } from '../../approval/application/approval-application.service.js';
 import {
   calculatePayroll,
   payrollDigest,
@@ -75,6 +76,42 @@ export interface RulePackSummary extends Record<string, unknown> {
   readonly sourceDigest: string;
 }
 
+export interface ImportPayrollCompensationFromMigrationInput {
+  readonly targetId: string | null;
+  readonly employeeId: string;
+  readonly version: number;
+  readonly effectiveFrom: string;
+  readonly effectiveTo: string | null;
+  readonly approvalHistoryId: string;
+  readonly approvalEvidenceChecksum: string;
+  readonly data: z.infer<typeof profileSchema>;
+  readonly createdAt: string;
+  readonly migrationEvidenceRef: string;
+  readonly evidenceChecksum: string;
+}
+
+export interface ImportPayrollRulePackFromMigrationInput {
+  readonly targetId: string | null;
+  readonly code: string;
+  readonly jurisdictionCode: string;
+  readonly version: number;
+  readonly effectiveFrom: string;
+  readonly effectiveTo: string | null;
+  readonly monthlyBasicDeductionMinor: number;
+  readonly taxBrackets: readonly {
+    readonly upperBoundMinor: number | null;
+    readonly rateBps: number;
+    readonly quickDeductionMinor: number;
+  }[];
+  readonly sourceDigest: string;
+  readonly sourceReference: string;
+  readonly approvalHistoryId: string;
+  readonly approvalEvidenceChecksum: string;
+  readonly createdAt: string;
+  readonly migrationEvidenceRef: string;
+  readonly evidenceChecksum: string;
+}
+
 /** 接收外部审批/法规发布器的可信证明，并形成不可变薪资主数据版本。 */
 @Injectable()
 export class PayrollMasterDataService {
@@ -82,6 +119,7 @@ export class PayrollMasterDataService {
     private readonly idempotency: IdempotencyService,
     private readonly context: TenantContextService,
     private readonly employees: EmployeeRepository,
+    private readonly approvals: ApprovalApplicationService,
     private readonly crypto: PayrollDataCryptoService,
     private readonly outbox: PayrollOutboxWriter,
     @InjectModel(PayrollCompensationProfileRecord.name)
@@ -89,6 +127,169 @@ export class PayrollMasterDataService {
     @InjectModel(PayrollRulePackRecord.name)
     private readonly rulePacks: Model<PayrollRulePackDocument>,
   ) {}
+
+  /** 迁移专用：恢复 L4 薪酬版本，不触发普通证明事件或覆盖既有版本。 */
+  async importCompensationFromMigration(
+    key: string,
+    input: ImportPayrollCompensationFromMigrationInput,
+  ): Promise<CompensationProfileSummary> {
+    this.assertMigrationWriter();
+    this.assertInterval(input.effectiveFrom, input.effectiveTo);
+    assertMigrationEnvelope(input);
+    const parsed = profileSchema.safeParse(input.data);
+    if (!parsed.success) throw new BadRequestException({
+      code: 'PAYROLL_MIGRATION_COMPENSATION_DATA_INVALID', message: '迁移薪酬档案结构非法',
+    });
+    this.assertUniqueComponents(parsed.data.taxableEarnings, parsed.data.nonTaxableEarnings);
+    return this.run(() => this.idempotency.execute(
+      'payroll.compensation.import_from_migration', key, input, async (session) => {
+        if (await this.employees.findById(input.employeeId, session) === null) {
+          throw new NotFoundException({
+            code: 'PAYROLL_MIGRATION_EMPLOYEE_NOT_FOUND', message: '迁移薪酬员工不存在',
+          });
+        }
+        const approval = await this.approvals.verifyPayrollMigrationReference(
+          input.approvalHistoryId, 'payroll_compensation', session,
+        );
+        const createdAt = strictMigrationInstant(input.createdAt);
+        if (approval.evidenceChecksum !== input.approvalEvidenceChecksum ||
+          Date.parse(approval.completedAt) > createdAt.getTime()) {
+          throw invalidMigrationApproval();
+        }
+        const id = input.targetId ?? createEventId(createdAt);
+        const profileHash = payrollDigest(parsed.data);
+        if (input.targetId !== null) {
+          const existing = await this.profiles.findOne({ tenantId: this.tenantId(), id })
+            .session(session).lean().exec();
+          if (existing === null || existing.employeeId !== input.employeeId ||
+            existing.version !== input.version || existing.effectiveFrom !== input.effectiveFrom ||
+            existing.effectiveTo !== input.effectiveTo ||
+            existing.approvalEvidenceId !== approval.id || existing.profileHash !== profileHash ||
+            existing.createdAt.toISOString() !== input.createdAt ||
+            existing.migrationEvidenceRef !== input.migrationEvidenceRef ||
+            existing.migrationEvidenceChecksum !== input.evidenceChecksum ||
+            payrollDigest(this.unprotectProfile(existing)) !== profileHash) {
+            throw new ConflictException({
+              code: 'PAYROLL_MIGRATION_COMPENSATION_IMMUTABLE',
+              message: '既有薪酬档案、审批或 WORM 证据不一致，禁止覆盖',
+            });
+          }
+          return compensationSummary(existing);
+        }
+        await this.assertCompensationVersionAndInterval(input, session);
+        const protectedData = this.crypto.protect({
+          tenantId: this.tenantId(), resourceType: 'compensation_profile',
+          resourceId: id, version: input.version,
+        }, parsed.data);
+        await this.profiles.create([{
+          id, tenantId: this.tenantId(), employeeId: input.employeeId, version: input.version,
+          effectiveFrom: input.effectiveFrom, effectiveTo: input.effectiveTo,
+          approvalEvidenceId: approval.id, status: 'active', profileHash,
+          dataKeyId: protectedData.keyId, dataIv: protectedData.iv,
+          dataCiphertext: protectedData.ciphertext, dataAuthTag: protectedData.authTag,
+          migrationEvidenceRef: input.migrationEvidenceRef,
+          migrationEvidenceChecksum: input.evidenceChecksum,
+          createdAt, updatedAt: createdAt,
+        }], { session });
+        await this.outbox.append({
+          type: 'payroll.compensation_profile.migrated', tenantId: this.tenantId(),
+          aggregateId: id, version: input.version, occurredAt: input.createdAt, data: {
+            employeeId: input.employeeId, effectiveFrom: input.effectiveFrom,
+            effectiveTo: input.effectiveTo, profileHash,
+          },
+        }, session);
+        return Object.freeze({
+          id, employeeId: input.employeeId, version: input.version,
+          effectiveFrom: input.effectiveFrom, effectiveTo: input.effectiveTo, profileHash,
+        });
+      },
+    ));
+  }
+
+  /** 迁移专用：恢复法定规则版本并重新运行确定性规则校验。 */
+  async importRulePackFromMigration(
+    key: string,
+    input: ImportPayrollRulePackFromMigrationInput,
+  ): Promise<RulePackSummary> {
+    this.assertMigrationWriter();
+    this.assertInterval(input.effectiveFrom, input.effectiveTo);
+    assertMigrationEnvelope(input);
+    if (!ID_PATTERN.test(input.code) || !ID_PATTERN.test(input.jurisdictionCode) ||
+      !HASH_PATTERN.test(input.sourceDigest) ||
+      !SOURCE_REFERENCE_PATTERN.test(input.sourceReference)) throw new BadRequestException({
+      code: 'PAYROLL_MIGRATION_RULE_REFERENCE_INVALID', message: '迁移规则来源非法',
+    });
+    return this.run(() => this.idempotency.execute(
+      'payroll.rule_pack.import_from_migration', key, input, async (session) => {
+        const approval = await this.approvals.verifyPayrollMigrationReference(
+          input.approvalHistoryId, 'payroll_rule_pack', session,
+        );
+        const createdAt = strictMigrationInstant(input.createdAt);
+        if (approval.evidenceChecksum !== input.approvalEvidenceChecksum ||
+          Date.parse(approval.completedAt) > createdAt.getTime()) throw invalidMigrationApproval();
+        const id = input.targetId ?? createEventId(createdAt);
+        const rulePack: PayrollRulePackSnapshot = Object.freeze({
+          id, version: input.version,
+          monthlyBasicDeductionMinor: input.monthlyBasicDeductionMinor,
+          taxBrackets: Object.freeze(input.taxBrackets.map((item) => Object.freeze({ ...item }))),
+          roundingMode: 'HALF_UP',
+        });
+        this.validateRulePack(rulePack);
+        const rulesHash = payrollDigest(rulePack);
+        if (input.targetId !== null) {
+          const existing = await this.rulePacks.findOne({ tenantId: this.tenantId(), id })
+            .session(session).lean().exec();
+          if (existing === null || existing.code !== input.code ||
+            existing.jurisdictionCode !== input.jurisdictionCode ||
+            existing.version !== input.version || existing.effectiveFrom !== input.effectiveFrom ||
+            existing.effectiveTo !== input.effectiveTo ||
+            existing.monthlyBasicDeductionMinor !== input.monthlyBasicDeductionMinor ||
+            existing.roundingMode !== 'HALF_UP' ||
+            payrollDigest(existing.taxBrackets) !== payrollDigest(input.taxBrackets) ||
+            existing.rulesHash !== rulesHash ||
+            existing.sourceDigest !== input.sourceDigest ||
+            existing.sourceReference !== input.sourceReference ||
+            existing.approvalEvidenceId !== approval.id ||
+            existing.createdAt.toISOString() !== input.createdAt ||
+            existing.migrationEvidenceRef !== input.migrationEvidenceRef ||
+            existing.migrationEvidenceChecksum !== input.evidenceChecksum) {
+            throw new ConflictException({
+              code: 'PAYROLL_MIGRATION_RULE_IMMUTABLE',
+              message: '既有规则包、审批或 WORM 证据不一致，禁止覆盖',
+            });
+          }
+          return rulePackSummary(existing);
+        }
+        await this.assertRuleVersionAndInterval(input, session);
+        await this.rulePacks.create([{
+          id, tenantId: this.tenantId(), code: input.code, version: input.version,
+          jurisdictionCode: input.jurisdictionCode, effectiveFrom: input.effectiveFrom,
+          effectiveTo: input.effectiveTo,
+          monthlyBasicDeductionMinor: input.monthlyBasicDeductionMinor,
+          taxBrackets: input.taxBrackets.map((item) => ({ ...item })),
+          roundingMode: 'HALF_UP', rulesHash,
+          sourceDigest: input.sourceDigest, sourceReference: input.sourceReference,
+          approvalEvidenceId: approval.id, status: 'published',
+          migrationEvidenceRef: input.migrationEvidenceRef,
+          migrationEvidenceChecksum: input.evidenceChecksum,
+          createdAt, updatedAt: createdAt,
+        }], { session });
+        await this.outbox.append({
+          type: 'payroll.rule_pack.migrated', tenantId: this.tenantId(),
+          aggregateId: id, version: input.version, occurredAt: input.createdAt, data: {
+            code: input.code, jurisdictionCode: input.jurisdictionCode,
+            effectiveFrom: input.effectiveFrom, effectiveTo: input.effectiveTo,
+            rulesHash, sourceDigest: input.sourceDigest,
+          },
+        }, session);
+        return Object.freeze({
+          id, code: input.code, jurisdictionCode: input.jurisdictionCode,
+          version: input.version, effectiveFrom: input.effectiveFrom,
+          effectiveTo: input.effectiveTo, rulesHash, sourceDigest: input.sourceDigest,
+        });
+      },
+    ));
+  }
 
   async attestCompensation(
     key: string,
@@ -238,6 +439,69 @@ export class PayrollMasterDataService {
     });
   }
 
+  private async assertCompensationVersionAndInterval(
+    input: ImportPayrollCompensationFromMigrationInput,
+    session: ClientSession,
+  ): Promise<void> {
+    const [overlap, latest] = await Promise.all([
+      this.profiles.findOne({
+        tenantId: this.tenantId(), employeeId: input.employeeId,
+        ...overlapFilter(input.effectiveFrom, input.effectiveTo),
+      }).session(session).lean().exec(),
+      this.profiles.findOne({ tenantId: this.tenantId(), employeeId: input.employeeId })
+        .sort({ version: -1 }).session(session).lean().exec(),
+    ]);
+    if (overlap !== null || (latest?.version ?? 0) + 1 !== input.version) {
+      throw new ConflictException({
+        code: 'PAYROLL_MIGRATION_COMPENSATION_CHAIN_INVALID',
+        message: '薪酬档案版本不连续或生效区间重叠',
+      });
+    }
+  }
+
+  private async assertRuleVersionAndInterval(
+    input: ImportPayrollRulePackFromMigrationInput,
+    session: ClientSession,
+  ): Promise<void> {
+    const [overlap, latest] = await Promise.all([
+      this.rulePacks.findOne({
+        tenantId: this.tenantId(), jurisdictionCode: input.jurisdictionCode,
+        ...overlapFilter(input.effectiveFrom, input.effectiveTo),
+      }).session(session).lean().exec(),
+      this.rulePacks.findOne({
+        tenantId: this.tenantId(), jurisdictionCode: input.jurisdictionCode,
+      }).sort({ version: -1 }).session(session).lean().exec(),
+    ]);
+    if (overlap !== null || (latest?.version ?? 0) + 1 !== input.version) {
+      throw new ConflictException({
+        code: 'PAYROLL_MIGRATION_RULE_CHAIN_INVALID',
+        message: '规则包版本不连续或生效区间重叠',
+      });
+    }
+  }
+
+  private unprotectProfile(record: PayrollCompensationProfileRecord): z.infer<typeof profileSchema> {
+    return profileSchema.parse(this.crypto.unprotect({
+      tenantId: record.tenantId, resourceType: 'compensation_profile',
+      resourceId: record.id, version: record.version,
+    }, {
+      keyId: record.dataKeyId, iv: record.dataIv,
+      ciphertext: record.dataCiphertext, authTag: record.dataAuthTag,
+    }));
+  }
+
+  private assertMigrationWriter(): void {
+    const actor = this.context.getActorRequired();
+    if (!['service', 'system_job'].includes(actor.actorType) ||
+      !actor.scopes.includes('erp:migration:execute') ||
+      !actor.scopes.includes('erp:payroll:migration:write')) {
+      throw new ForbiddenException({
+        code: 'PAYROLL_MIGRATION_WRITER_DENIED',
+        message: '薪资迁移必须由受信任服务身份执行',
+      });
+    }
+  }
+
   private assertTrustedService(scope: string): void {
     const actor = this.context.getActorRequired();
     if (!actor.scopes.includes(scope)) throw new ForbiddenException({
@@ -305,3 +569,54 @@ function isCalendarDate(value: string): boolean {
 function isDuplicateKeyError(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 11_000;
 }
+
+function assertMigrationEnvelope(input: {
+  readonly version: number;
+  readonly approvalHistoryId: string;
+  readonly approvalEvidenceChecksum: string;
+  readonly migrationEvidenceRef: string;
+  readonly evidenceChecksum: string;
+}): void {
+  if (!Number.isSafeInteger(input.version) || input.version < 1 || input.version > 10_000 ||
+    !ID_PATTERN.test(input.approvalHistoryId) ||
+    !HASH_PATTERN.test(input.approvalEvidenceChecksum) ||
+    !MIGRATION_EVIDENCE_REF_PATTERN.test(input.migrationEvidenceRef) ||
+    !HASH_PATTERN.test(input.evidenceChecksum)) throw new BadRequestException({
+    code: 'PAYROLL_MIGRATION_ENVELOPE_INVALID', message: '薪资迁移版本或证据无效',
+  });
+}
+
+function strictMigrationInstant(value: string): Date {
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString() !== value ||
+    parsed.getTime() > Date.now() + 5 * 60 * 1_000) throw new BadRequestException({
+    code: 'PAYROLL_MIGRATION_TIME_INVALID', message: '薪资迁移时间必须为历史 UTC 毫秒时间',
+  });
+  return parsed;
+}
+
+function invalidMigrationApproval(): ConflictException {
+  return new ConflictException({
+    code: 'PAYROLL_MIGRATION_APPROVAL_MISMATCH', message: '薪资迁移审批或证据摘要不一致',
+  });
+}
+
+function compensationSummary(record: PayrollCompensationProfileRecord): CompensationProfileSummary {
+  return Object.freeze({
+    id: record.id, employeeId: record.employeeId, version: record.version,
+    effectiveFrom: record.effectiveFrom, effectiveTo: record.effectiveTo,
+    profileHash: record.profileHash,
+  });
+}
+
+function rulePackSummary(record: PayrollRulePackRecord): RulePackSummary {
+  return Object.freeze({
+    id: record.id, code: record.code, jurisdictionCode: record.jurisdictionCode,
+    version: record.version, effectiveFrom: record.effectiveFrom,
+    effectiveTo: record.effectiveTo, rulesHash: record.rulesHash,
+    sourceDigest: record.sourceDigest,
+  });
+}
+
+const MIGRATION_EVIDENCE_REF_PATTERN =
+  /^erp:\/\/data-migrations\/runs\/[0-7][0-9A-HJKMNP-TV-Z]{25}\/attachments\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;

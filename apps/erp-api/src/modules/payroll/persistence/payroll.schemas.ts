@@ -9,6 +9,8 @@ const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const HASH_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
+const MIGRATION_EVIDENCE_REF_PATTERN =
+  /^erp:\/\/data-migrations\/runs\/[0-7][0-9A-HJKMNP-TV-Z]{25}\/attachments\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 abstract class ProtectedPayrollRecord {
   @Prop({ type: String, required: true, maxlength: 64, match: ID_PATTERN }) dataKeyId!: string;
@@ -54,11 +56,25 @@ export class PayrollRulePackRecord {
   approvalEvidenceId!: string;
   @Prop({ type: String, enum: ['published', 'retired'], required: true })
   status!: 'published' | 'retired';
+  @Prop({
+    type: String, default: null, immutable: true, maxlength: 256,
+    match: MIGRATION_EVIDENCE_REF_PATTERN,
+  })
+  migrationEvidenceRef!: string | null;
+  @Prop({ type: String, default: null, immutable: true, match: HASH_PATTERN })
+  migrationEvidenceChecksum!: string | null;
   createdAt!: Date;
   updatedAt!: Date;
 }
 export type PayrollRulePackDocument = HydratedDocument<PayrollRulePackRecord>;
 export const PayrollRulePackRecordSchema = SchemaFactory.createForClass(PayrollRulePackRecord);
+PayrollRulePackRecordSchema.pre('validate', function () {
+  const record = this as PayrollRulePackRecord;
+  if ((record.migrationEvidenceRef === null) !==
+    (record.migrationEvidenceChecksum === null)) {
+    throw new Error('薪资规则包迁移证据引用与校验和必须成对出现');
+  }
+});
 PayrollRulePackRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 PayrollRulePackRecordSchema.index({ tenantId: 1, code: 1, version: 1 }, { unique: true });
 PayrollRulePackRecordSchema.index(
@@ -66,6 +82,10 @@ PayrollRulePackRecordSchema.index(
 );
 PayrollRulePackRecordSchema.index(
   { tenantId: 1, jurisdictionCode: 1, effectiveFrom: 1, effectiveTo: 1 },
+);
+PayrollRulePackRecordSchema.index(
+  { tenantId: 1, migrationEvidenceRef: 1 },
+  { unique: true, partialFilterExpression: { migrationEvidenceRef: { $type: 'string' } } },
 );
 
 /** 员工薪酬结构版本；金额组件与扣款策略全部密文保存。 */
@@ -85,6 +105,13 @@ export class PayrollCompensationProfileRecord extends ProtectedPayrollRecord {
   @Prop({ type: String, enum: ['active', 'superseded'], required: true })
   status!: 'active' | 'superseded';
   @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN }) profileHash!: string;
+  @Prop({
+    type: String, default: null, immutable: true, maxlength: 256,
+    match: MIGRATION_EVIDENCE_REF_PATTERN,
+  })
+  migrationEvidenceRef!: string | null;
+  @Prop({ type: String, default: null, immutable: true, match: HASH_PATTERN })
+  migrationEvidenceChecksum!: string | null;
   createdAt!: Date;
   updatedAt!: Date;
 }
@@ -92,12 +119,23 @@ export type PayrollCompensationProfileDocument = HydratedDocument<PayrollCompens
 export const PayrollCompensationProfileRecordSchema = SchemaFactory.createForClass(
   PayrollCompensationProfileRecord,
 );
+PayrollCompensationProfileRecordSchema.pre('validate', function () {
+  const record = this as PayrollCompensationProfileRecord;
+  if ((record.migrationEvidenceRef === null) !==
+    (record.migrationEvidenceChecksum === null)) {
+    throw new Error('薪酬档案迁移证据引用与校验和必须成对出现');
+  }
+});
 PayrollCompensationProfileRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 PayrollCompensationProfileRecordSchema.index(
   { tenantId: 1, employeeId: 1, version: 1 }, { unique: true },
 );
 PayrollCompensationProfileRecordSchema.index(
   { tenantId: 1, employeeId: 1, status: 1, effectiveFrom: 1 },
+);
+PayrollCompensationProfileRecordSchema.index(
+  { tenantId: 1, migrationEvidenceRef: 1 },
+  { unique: true, partialFilterExpression: { migrationEvidenceRef: { $type: 'string' } } },
 );
 
 const PERIOD_STATUSES: readonly PayrollPeriodStatus[] = [
