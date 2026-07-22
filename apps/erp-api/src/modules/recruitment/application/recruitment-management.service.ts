@@ -13,6 +13,7 @@ import type { ClientSession } from 'mongoose';
 import { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import { ApprovalApplicationService } from '../../approval/application/approval-application.service.js';
+import { AccessProfileRepository } from '../../identity/access-profile.repository.js';
 import {
   DepartmentRepository,
   JobLevelRepository,
@@ -20,10 +21,14 @@ import {
 import {
   applyRecruitmentApprovalOutcome,
   buildRecruitmentPositionEvent,
+  buildRecruitmentPositionMigratedEvent,
   buildRecruitmentRequisitionEvent,
+  buildRecruitmentRequisitionMigratedEvent,
   createRecruitmentPosition,
   createRecruitmentRequisition,
   RecruitmentDomainError,
+  restoreRecruitmentPositionFromMigration,
+  restoreRecruitmentRequisitionFromMigration,
   submitRecruitmentRequisition,
   transitionRecruitmentPosition,
   type RecruitmentPosition,
@@ -46,6 +51,7 @@ export interface RecruitmentRequisitionSummary extends Record<string, unknown> {
   readonly headcount: number;
   readonly status: RecruitmentRequisition['status'];
   readonly approvalInstanceId: string | null;
+  readonly approvalHistoryId: string | null;
   readonly version: number;
 }
 
@@ -63,6 +69,42 @@ export interface RecruitmentPositionSummary extends Record<string, unknown> {
   readonly closedAt: string | null;
 }
 
+export interface ImportRecruitmentRequisitionFromMigrationInput {
+  readonly targetId: string | null;
+  readonly departmentId: string;
+  readonly positionTitle: string;
+  readonly headcount: number;
+  readonly justification: string;
+  readonly status: RecruitmentRequisition['status'];
+  readonly approvalReferenceType: 'approval_instance' | 'legacy_history' | null;
+  readonly approvalReferenceId: string | null;
+  readonly version: number;
+  readonly createdByEmployeeId: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ImportRecruitmentPositionFromMigrationInput {
+  readonly targetId: string | null;
+  readonly requisitionId: string;
+  readonly title: string;
+  readonly departmentId: string;
+  readonly jobLevelId: string;
+  readonly location: string;
+  readonly headcount: number;
+  readonly status: RecruitmentPositionStatus;
+  readonly version: number;
+  readonly publishedAt: string | null;
+  readonly closedAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+type MigratedRequisitionApprovalReference =
+  | { readonly type: 'approval_instance'; readonly id: string }
+  | { readonly type: 'legacy_history'; readonly id: string }
+  | { readonly type: null; readonly id: null };
+
 /** HC 与职位编排服务；审批跨域调用使用可恢复 Saga，不开启嵌套 Mongo 事务。 */
 @Injectable()
 export class RecruitmentManagementService {
@@ -70,12 +112,117 @@ export class RecruitmentManagementService {
     private readonly idempotency: IdempotencyService,
     private readonly context: TenantContextService,
     private readonly approvals: ApprovalApplicationService,
+    private readonly profiles: AccessProfileRepository,
     private readonly departments: DepartmentRepository,
     private readonly jobLevels: JobLevelRepository,
     private readonly requisitions: RecruitmentRequisitionRepository,
     private readonly positions: RecruitmentPositionRepository,
     private readonly outbox: RecruitmentOutboxWriter,
   ) {}
+
+  /** 数据迁移专用：恢复 HC 与审批证据引用，不创建或推进审批。 */
+  async importRequisitionFromMigration(
+    key: string,
+    input: ImportRecruitmentRequisitionFromMigrationInput,
+  ): Promise<{ readonly requisition: RecruitmentRequisitionSummary }> {
+    this.assertMigrationWriter();
+    return this.run(async () => this.idempotency.execute(
+      'recruitment.requisition.import_from_migration', key, input, async (session) => {
+        const tenantId = this.context.getTenantRequired().tenantId;
+        const department = await this.departments.findById(input.departmentId, session);
+        if (department === null ||
+          (!['rejected', 'closed'].includes(input.status) && department.status !== 'active')) {
+          throw new BadRequestException({
+            code: 'RECRUITMENT_MIGRATION_DEPARTMENT_INVALID',
+            message: 'HC 迁移引用的 ERP 部门不存在或活动 HC 引用了失效部门',
+          });
+        }
+        const createdBy = await this.requireMigrationActor(
+          input.createdByEmployeeId,
+          ['draft', 'pending_approval'].includes(input.status),
+          session,
+        );
+        const approval = await this.verifyMigratedRequisitionApproval(input, session);
+        const candidate = restoreRecruitmentRequisitionFromMigration({
+          id: input.targetId ?? createEventId(),
+          tenantId,
+          departmentId: input.departmentId,
+          positionTitle: input.positionTitle,
+          headcount: input.headcount,
+          justification: input.justification,
+          status: input.status,
+          approvalInstanceId: approval.type === 'approval_instance' ? approval.id : null,
+          approvalHistoryId: approval.type === 'legacy_history' ? approval.id : null,
+          version: input.version,
+          createdBy,
+          createdAt: input.createdAt,
+          updatedAt: input.updatedAt,
+        });
+        if (input.targetId !== null) {
+          const existing = await this.requisitions.findById(input.targetId, session);
+          if (existing === null || !sameMigratedRequisition(existing, candidate)) {
+            throw new ConflictException({
+              code: 'RECRUITMENT_MIGRATION_REQUISITION_IMMUTABLE',
+              message: '既有 HC 与迁移快照不一致，禁止覆盖',
+            });
+          }
+          return { requisition: requisitionSummary(existing) };
+        }
+        await this.requisitions.insert(candidate, session);
+        await this.outbox.append(buildRecruitmentRequisitionMigratedEvent(candidate), session);
+        return { requisition: requisitionSummary(candidate) };
+      },
+    ));
+  }
+
+  /** 数据迁移专用：恢复已审批 HC 下的职位生命周期，不重放发布或关闭事件。 */
+  async importPositionFromMigration(
+    key: string,
+    input: ImportRecruitmentPositionFromMigrationInput,
+  ): Promise<{ readonly position: RecruitmentPositionSummary }> {
+    this.assertMigrationWriter();
+    return this.run(async () => this.idempotency.execute(
+      'recruitment.position.import_from_migration', key, input, async (session) => {
+        const tenantId = this.context.getTenantRequired().tenantId;
+        const [requisition, department, jobLevel] = await Promise.all([
+          this.requisitions.findById(input.requisitionId, session),
+          this.departments.findById(input.departmentId, session),
+          this.jobLevels.findById(input.jobLevelId, session),
+        ]);
+        const activePosition = input.status !== 'closed';
+        if (requisition === null || department === null || jobLevel === null ||
+          (activePosition && department.status !== 'active') ||
+          requisition.departmentId !== input.departmentId ||
+          requisition.positionTitle !== input.title.trim() ||
+          requisition.headcount !== input.headcount ||
+          (activePosition && requisition.status !== 'approved') ||
+          (!activePosition && !['approved', 'closed'].includes(requisition.status))) {
+          throw new BadRequestException({
+            code: 'RECRUITMENT_MIGRATION_POSITION_REFERENCE_INVALID',
+            message: '职位迁移的 HC、部门、职级或控制数量引用不一致',
+          });
+        }
+        const candidate = restoreRecruitmentPositionFromMigration({
+          ...input,
+          id: input.targetId ?? createEventId(),
+          tenantId,
+        });
+        if (input.targetId !== null) {
+          const existing = await this.positions.findById(input.targetId, session);
+          if (existing === null || !sameMigratedPosition(existing, candidate)) {
+            throw new ConflictException({
+              code: 'RECRUITMENT_MIGRATION_POSITION_IMMUTABLE',
+              message: '既有职位与迁移快照不一致，禁止覆盖',
+            });
+          }
+          return { position: positionSummary(existing) };
+        }
+        await this.positions.insert(candidate, session);
+        await this.outbox.append(buildRecruitmentPositionMigratedEvent(candidate), session);
+        return { position: positionSummary(candidate) };
+      },
+    ));
+  }
 
   async createRequisition(
     key: string,
@@ -156,10 +303,10 @@ export class RecruitmentManagementService {
     return this.run(async () => {
       const current = await this.requireRequisition(id);
       if (current.status === 'approved' || current.status === 'rejected') {
-        if (current.approvalInstanceId === null) throw new Error('RECRUITMENT_APPROVAL_REFERENCE_INVALID');
-        return this.applyApproval(
-          id, expectedVersion, key, current.approvalInstanceId, current.status,
+        if (current.version !== expectedVersion) throw new RecruitmentDomainError(
+          'RECRUITMENT_VERSION_CONFLICT', 'HC 需求版本冲突',
         );
+        return { requisition: requisitionSummary(current) };
       }
       if (current.status !== 'pending_approval' || current.approvalInstanceId === null) {
         throw new ConflictException({
@@ -327,6 +474,71 @@ export class RecruitmentManagementService {
     return position;
   }
 
+  private assertMigrationWriter(): void {
+    const actor = this.context.getActorRequired();
+    if (!['service', 'system_job'].includes(actor.actorType) ||
+      !actor.scopes.includes('erp:migration:execute') ||
+      !actor.scopes.includes('erp:recruitment:migration:write')) {
+      throw new ForbiddenException({
+        code: 'RECRUITMENT_MIGRATION_WRITER_DENIED',
+        message: '招聘迁移必须由受信任服务身份执行',
+      });
+    }
+  }
+
+  private async requireMigrationActor(
+    employeeId: string,
+    requireActive: boolean,
+    session: ClientSession,
+  ): Promise<string> {
+    const tenantId = this.context.getTenantRequired().tenantId;
+    const actorId = await this.profiles.findActorIdByEmployee(tenantId, employeeId, session);
+    if (actorId === null) throw new BadRequestException({
+      code: 'RECRUITMENT_MIGRATION_CREATOR_IDENTITY_MISSING',
+      message: 'HC 创建人缺少已迁移的员工身份映射',
+    });
+    if (requireActive) {
+      const profile = await this.profiles.resolveActive(tenantId, actorId, session);
+      if (profile === null || profile.employeeId !== employeeId) throw new BadRequestException({
+        code: 'RECRUITMENT_MIGRATION_CREATOR_IDENTITY_INACTIVE',
+        message: '活动 HC 的创建员工身份必须有效',
+      });
+    }
+    return actorId;
+  }
+
+  private async verifyMigratedRequisitionApproval(
+    input: ImportRecruitmentRequisitionFromMigrationInput,
+    session: ClientSession,
+  ): Promise<MigratedRequisitionApprovalReference> {
+    if (input.status === 'draft') {
+      if (input.approvalReferenceType === null && input.approvalReferenceId === null) {
+        return { type: null, id: null };
+      }
+      throw invalidMigratedApprovalReference();
+    }
+    const expectedType = input.status === 'pending_approval'
+      ? 'approval_instance' as const
+      : 'legacy_history' as const;
+    if (input.approvalReferenceType !== expectedType || input.approvalReferenceId === null) {
+      throw invalidMigratedApprovalReference();
+    }
+    const reference = await this.approvals.verifyRecruitmentMigrationReference(
+      expectedType,
+      input.approvalReferenceId,
+      session,
+    );
+    const expectedOutcome = input.status === 'pending_approval'
+      ? 'running'
+      : input.status === 'rejected'
+        ? 'rejected'
+        : 'approved';
+    if (reference.id !== input.approvalReferenceId ||
+      reference.templateCode !== HC_APPROVAL_TEMPLATE_CODE ||
+      reference.outcome !== expectedOutcome) throw invalidMigratedApprovalReference();
+    return { type: expectedType, id: reference.id };
+  }
+
   private assertDepartmentRead(departmentId: string): void {
     const actor = this.context.getActorRequired();
     if (
@@ -382,6 +594,7 @@ function requisitionSummary(value: RecruitmentRequisition): RecruitmentRequisiti
     id: value.id, departmentId: value.departmentId, positionTitle: value.positionTitle,
     headcount: value.headcount, status: value.status,
     approvalInstanceId: value.approvalInstanceId, version: value.version,
+    approvalHistoryId: value.approvalHistoryId,
   });
 }
 
@@ -391,6 +604,36 @@ function positionSummary(value: RecruitmentPosition): RecruitmentPositionSummary
     departmentId: value.departmentId, jobLevelId: value.jobLevelId,
     location: value.location, headcount: value.headcount, status: value.status,
     version: value.version, publishedAt: value.publishedAt, closedAt: value.closedAt,
+  });
+}
+
+function sameMigratedRequisition(
+  left: RecruitmentRequisition,
+  right: RecruitmentRequisition,
+): boolean {
+  return left.id === right.id && left.tenantId === right.tenantId &&
+    left.departmentId === right.departmentId && left.positionTitle === right.positionTitle &&
+    left.headcount === right.headcount && left.justification === right.justification &&
+    left.status === right.status && left.approvalInstanceId === right.approvalInstanceId &&
+    left.approvalHistoryId === right.approvalHistoryId && left.version === right.version &&
+    left.createdBy === right.createdBy && left.createdAt === right.createdAt &&
+    left.updatedAt === right.updatedAt;
+}
+
+function sameMigratedPosition(left: RecruitmentPosition, right: RecruitmentPosition): boolean {
+  return left.id === right.id && left.tenantId === right.tenantId &&
+    left.requisitionId === right.requisitionId && left.title === right.title &&
+    left.departmentId === right.departmentId && left.jobLevelId === right.jobLevelId &&
+    left.location === right.location && left.headcount === right.headcount &&
+    left.status === right.status && left.version === right.version &&
+    left.publishedAt === right.publishedAt && left.closedAt === right.closedAt &&
+    left.createdAt === right.createdAt && left.updatedAt === right.updatedAt;
+}
+
+function invalidMigratedApprovalReference(): BadRequestException {
+  return new BadRequestException({
+    code: 'RECRUITMENT_MIGRATION_APPROVAL_REFERENCE_INVALID',
+    message: 'HC 状态、招聘 HC 审批模板与审批引用终态不一致',
   });
 }
 

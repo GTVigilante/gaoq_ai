@@ -215,6 +215,9 @@ export class RecruitmentRequisitionRecord {
   @Prop({ type: String, default: null, match: ULID_PATTERN })
   approvalInstanceId!: string | null;
 
+  @Prop({ type: String, default: null, match: ULID_PATTERN })
+  approvalHistoryId!: string | null;
+
   @Prop({ type: Number, required: true, min: 1 })
   version!: number;
 
@@ -230,9 +233,15 @@ export const RecruitmentRequisitionRecordSchema = SchemaFactory.createForClass(R
 
 RecruitmentRequisitionRecordSchema.pre('validate', function () {
   const record = this as RecruitmentRequisitionRecord;
-  const approvalRequired = ['pending_approval', 'approved', 'rejected'].includes(record.status);
-  if (approvalRequired !== (record.approvalInstanceId !== null)) {
-    throw new Error('HC 审批状态与审批实例引用不一致');
+  const referenceCount = Number(record.approvalInstanceId !== null) +
+    Number(record.approvalHistoryId !== null);
+  const valid = record.status === 'draft'
+    ? referenceCount === 0
+    : record.status === 'pending_approval'
+      ? record.approvalInstanceId !== null && record.approvalHistoryId === null
+      : referenceCount === 1;
+  if (!valid) {
+    throw new Error('HC 状态与活动审批/终结历史引用不一致');
   }
 });
 

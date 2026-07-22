@@ -158,13 +158,21 @@ describe('RecruitmentSchemas', () => {
     await new RequisitionModel({
       id: REQUISITION_ID, tenantId: 'tenant-001', departmentId: 'department-001',
       positionTitle: '小红书经纪人', headcount: 2, justification: '业务增长需要补充招聘人数',
-      status: 'draft', approvalInstanceId: null, version: 1, createdBy: 'actor-001',
+      status: 'draft', approvalInstanceId: null, approvalHistoryId: null,
+      version: 1, createdBy: 'actor-001',
+    }).validate();
+    await new RequisitionModel({
+      id: REQUISITION_ID, tenantId: 'tenant-001', departmentId: 'department-001',
+      positionTitle: '小红书经纪人', headcount: 2, justification: '业务增长需要补充招聘人数',
+      status: 'closed', approvalInstanceId: null,
+      approvalHistoryId: '01J8ZQK7V0A2M4N6P8R0T2W4X4', version: 4, createdBy: 'actor-001',
     }).validate();
     await expect(new RequisitionModel({
       id: REQUISITION_ID, tenantId: 'tenant-001', departmentId: 'department-001',
       positionTitle: '小红书经纪人', headcount: 2, justification: '业务增长需要补充招聘人数',
-      status: 'approved', approvalInstanceId: null, version: 2, createdBy: 'actor-001',
-    }).validate()).rejects.toThrow('审批实例引用不一致');
+      status: 'approved', approvalInstanceId: '01J8ZQK7V0A2M4N6P8R0T2W4X3',
+      approvalHistoryId: '01J8ZQK7V0A2M4N6P8R0T2W4X4', version: 3, createdBy: 'actor-001',
+    }).validate()).rejects.toThrow('活动审批/终结历史引用不一致');
   });
 
   it('面试地点与评价只定义密文字段，终态时间失败关闭', async () => {

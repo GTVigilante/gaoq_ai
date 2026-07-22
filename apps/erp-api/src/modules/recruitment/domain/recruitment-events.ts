@@ -12,8 +12,10 @@ export type RecruitmentEventType =
   | 'recruitment.requisition.approved'
   | 'recruitment.requisition.rejected'
   | 'recruitment.requisition.closed'
+  | 'recruitment.requisition.migrated'
   | 'recruitment.position.created'
   | 'recruitment.position.status_changed'
+  | 'recruitment.position.migrated'
   | 'recruitment.interview.scheduled'
   | 'recruitment.interview.feedback_submitted'
   | 'recruitment.interview.completed'
@@ -103,6 +105,7 @@ export function buildRecruitmentRequisitionEvent(
       headcount: requisition.headcount,
       status: requisition.status,
       approvalInstanceId: requisition.approvalInstanceId,
+      approvalHistoryId: requisition.approvalHistoryId,
     }),
   });
 }
@@ -113,6 +116,47 @@ export function buildRecruitmentPositionEvent(
 ): RecruitmentDomainEvent {
   return Object.freeze({
     type: `recruitment.position.${action}`,
+    aggregateType: 'recruitment.position',
+    tenantId: position.tenantId,
+    aggregateId: position.id,
+    version: position.version,
+    occurredAt: position.updatedAt,
+    payload: Object.freeze({
+      requisitionId: position.requisitionId,
+      departmentId: position.departmentId,
+      headcount: position.headcount,
+      status: position.status,
+    }),
+  });
+}
+
+/** HC 迁移事件不伪装成创建或审批动作，只披露控制状态与审批引用。 */
+export function buildRecruitmentRequisitionMigratedEvent(
+  requisition: RecruitmentRequisition,
+): RecruitmentDomainEvent {
+  return Object.freeze({
+    type: 'recruitment.requisition.migrated',
+    aggregateType: 'recruitment.requisition',
+    tenantId: requisition.tenantId,
+    aggregateId: requisition.id,
+    version: requisition.version,
+    occurredAt: requisition.updatedAt,
+    payload: Object.freeze({
+      departmentId: requisition.departmentId,
+      headcount: requisition.headcount,
+      status: requisition.status,
+      approvalInstanceId: requisition.approvalInstanceId,
+      approvalHistoryId: requisition.approvalHistoryId,
+    }),
+  });
+}
+
+/** 职位迁移事件只披露主数据引用和生命周期状态。 */
+export function buildRecruitmentPositionMigratedEvent(
+  position: RecruitmentPosition,
+): RecruitmentDomainEvent {
+  return Object.freeze({
+    type: 'recruitment.position.migrated',
     aggregateType: 'recruitment.position',
     tenantId: position.tenantId,
     aggregateId: position.id,

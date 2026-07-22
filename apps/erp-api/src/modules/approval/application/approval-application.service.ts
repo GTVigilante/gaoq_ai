@@ -244,6 +244,13 @@ export interface ImportApprovalActiveInstanceFromMigrationInput {
   readonly evidenceChecksum: string;
 }
 
+export interface ApprovalRecruitmentMigrationReference {
+  readonly id: string;
+  readonly type: 'approval_instance' | 'legacy_history';
+  readonly templateCode: string;
+  readonly outcome: 'running' | 'approved' | 'rejected' | 'withdrawn';
+}
+
 /** 审批应用服务：唯一事务编排入口，REST、Worker 与 MCP 必须复用本服务。 */
 @Injectable()
 export class ApprovalApplicationService {
@@ -416,6 +423,39 @@ export class ApprovalApplicationService {
         return { instance: instanceSummary(instance) };
       },
     ));
+  }
+
+  /** 招聘迁移只读校验：返回不含表单、标题、人员与证据定位符的审批引用投影。 */
+  async verifyRecruitmentMigrationReference(
+    type: ApprovalRecruitmentMigrationReference['type'],
+    id: string,
+    session: ClientSession,
+  ): Promise<ApprovalRecruitmentMigrationReference> {
+    this.assertRecruitmentMigrationVerifier();
+    if (type === 'approval_instance') {
+      const instance = await this.instances.findById(id, session);
+      if (instance === null || instance.status !== 'running') throw new BadRequestException({
+        code: 'APPROVAL_MIGRATION_RECRUITMENT_REFERENCE_INVALID',
+        message: '招聘迁移的活动审批引用不存在或不在运行状态',
+      });
+      return Object.freeze({
+        id: instance.id,
+        type,
+        templateCode: instance.templateSnapshot.templateCode,
+        outcome: 'running',
+      });
+    }
+    const history = await this.legacyHistories.findById(id, session);
+    if (history === null) throw new BadRequestException({
+      code: 'APPROVAL_MIGRATION_RECRUITMENT_REFERENCE_INVALID',
+      message: '招聘迁移的终结审批历史不存在',
+    });
+    return Object.freeze({
+      id: history.id,
+      type,
+      templateCode: history.templateCode,
+      outcome: history.outcome,
+    });
   }
 
   /** 数据迁移专用：恢复模板版本，不重放发布、退役、通知或业务执行。 */
@@ -1136,6 +1176,18 @@ export class ApprovalApplicationService {
       throw new ForbiddenException({
         code: 'APPROVAL_MIGRATION_WRITER_DENIED',
         message: '审批迁移必须由受信任服务身份执行',
+      });
+    }
+  }
+
+  private assertRecruitmentMigrationVerifier(): void {
+    const actor = this.context.getActorRequired();
+    if (!['service', 'system_job'].includes(actor.actorType) ||
+      !actor.scopes.includes('erp:migration:execute') ||
+      !actor.scopes.includes('erp:recruitment:migration:write')) {
+      throw new ForbiddenException({
+        code: 'APPROVAL_MIGRATION_RECRUITMENT_VERIFIER_DENIED',
+        message: '招聘迁移审批引用校验只允许受信任服务身份',
       });
     }
   }

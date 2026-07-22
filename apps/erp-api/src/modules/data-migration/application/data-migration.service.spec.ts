@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import type { ApprovalApplicationService } from '../../approval/application/approval-application.service.js';
 import type { OrgApplicationService } from '../../org/application/org-application.service.js';
+import type { RecruitmentManagementService } from '../../recruitment/application/recruitment-management.service.js';
 import type {
   DataMigrationAssociationDocument,
   DataMigrationAttachmentDocument,
@@ -22,6 +23,7 @@ function trusted<T>(context: TenantContextService, action: () => T): T {
       actorId: 'migration-agent-001', actorType: 'service', tenantId: 'tenant-001',
       roleCodes: ['migration'], scopes: [
         'erp:migration:execute', 'erp:org:master:write', 'erp:approval:migration:write',
+        'erp:recruitment:migration:write',
       ],
       departmentIds: [], traceId: 'trace-migration-001',
     },
@@ -79,6 +81,10 @@ function approvalHistoryRun() {
 
 function approvalActiveRun() {
   return { ...run(), scope: 'approval_active_instances' as const };
+}
+
+function recruitmentReferenceRun() {
+  return { ...run(), scope: 'recruitment_reference' as const };
 }
 
 function query<T>(value: T) { return { lean: () => ({ exec: () => Promise.resolve(value) }) }; }
@@ -825,6 +831,143 @@ describe('DataMigrationService', () => {
     const changed = { ...base, sourceVersion: '2' };
     expect(dataMigrationChecksum.sourceFactHash(base))
       .not.toBe(dataMigrationChecksum.sourceFactHash(changed));
+  });
+
+  it('招聘 HC 解析组织、员工与终结审批映射后调用领域迁移入口', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      departmentSourceId: 'legacy-department-001',
+      positionTitle: '小红书经纪人',
+      headcount: 2,
+      justification: '历史 HC 需求证据已进入迁移账本',
+      status: 'approved',
+      approvalReferenceType: 'approval.history',
+      approvalReferenceSourceId: 'legacy-approval-history-001',
+      version: 3,
+      createdByEmployeeSourceId: 'legacy-employee-001',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      updatedAt: '2026-07-21T00:00:00.000Z',
+      governanceEvidenceSourceAttachmentId: 'legacy-hc-evidence-001',
+      governanceEvidenceChecksum: 'h'.repeat(43),
+    };
+    const input = {
+      sequence: 1, sourceRecordId: 'legacy-requisition-001', sourceVersion: '1',
+      entityType: 'recruitment.requisition' as const, payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: [
+        'legacy-department-001', 'legacy-employee-001', 'legacy-approval-history-001',
+      ],
+      attachments: [{ sourceAttachmentId: 'legacy-hc-evidence-001', checksum: 'h'.repeat(43) }],
+    };
+    const targets: Readonly<Record<string, string>> = {
+      'legacy-department-001': 'department-001',
+      'legacy-employee-001': 'employee-001',
+      'legacy-approval-history-001': 'approval-history-001',
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(recruitmentReferenceRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const mappings = {
+      findOne: vi.fn((filter: { entityType: string; sourceRecordId: string }) => query(
+        filter.entityType === 'recruitment.requisition'
+          ? null
+          : { targetId: targets[filter.sourceRecordId], targetVersion: 1 },
+      )),
+      findOneAndUpdate: vi.fn().mockReturnValue(query({ targetId: 'requisition-001' })),
+    };
+    const associations = { findOneAndUpdate: vi.fn().mockReturnValue(query({})) };
+    const attachments = {
+      findOne: vi.fn().mockReturnValue(query(null)),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const recruitment = {
+      importRequisitionFromMigration: vi.fn().mockResolvedValue({ requisition: {
+        id: 'requisition-001', departmentId: 'department-001', positionTitle: '小红书经纪人',
+        headcount: 2, status: 'approved', approvalInstanceId: null,
+        approvalHistoryId: 'approval-history-001', version: 3,
+      } }),
+    };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      mappings as unknown as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+      undefined,
+      recruitment as unknown as RecruitmentManagementService,
+    );
+
+    const result = await trusted(context, () => service.apply(RUN_ID, input));
+
+    expect(result).toMatchObject({ status: 'applied', targetId: 'requisition-001' });
+    expect(recruitment.importRequisitionFromMigration).toHaveBeenCalledWith(
+      expect.stringMatching(/^migration:/u),
+      expect.objectContaining({
+        targetId: null, departmentId: 'department-001', createdByEmployeeId: 'employee-001',
+        approvalReferenceType: 'legacy_history', approvalReferenceId: 'approval-history-001',
+      }),
+    );
+    expect(associations.findOneAndUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ relationship: 'approval_history' }),
+      expect.objectContaining({ $set: { targetId: 'approval-history-001', status: 'resolved' } }),
+      expect.objectContaining({ upsert: true }),
+    );
+  });
+
+  it('招聘职位解析 HC、部门和职级映射且缺少治理证据时失败关闭', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      requisitionSourceId: 'legacy-requisition-001',
+      departmentSourceId: 'legacy-department-001',
+      jobLevelSourceId: 'legacy-job-level-001',
+      title: '小红书经纪人', location: '上海', headcount: 2,
+      status: 'open', version: 2,
+      publishedAt: '2026-07-21T00:00:00.000Z', closedAt: null,
+      createdAt: '2026-07-20T00:00:00.000Z', updatedAt: '2026-07-21T00:00:00.000Z',
+      governanceEvidenceSourceAttachmentId: 'legacy-position-evidence-001',
+      governanceEvidenceChecksum: 'p'.repeat(43),
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(recruitmentReferenceRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const recruitment = { importPositionFromMigration: vi.fn() };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      { findOne: vi.fn().mockReturnValue(query(null)) } as unknown as
+        Model<DataMigrationMappingDocument>,
+      { findOneAndUpdate: vi.fn().mockReturnValue(query({})) } as unknown as
+        Model<DataMigrationAssociationDocument>,
+      {
+        findOne: vi.fn().mockReturnValue(query(null)),
+        updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+      } as unknown as Model<DataMigrationAttachmentDocument>,
+      undefined,
+      recruitment as unknown as RecruitmentManagementService,
+    );
+
+    const result = await trusted(context, () => service.apply(RUN_ID, {
+      sequence: 1, sourceRecordId: 'legacy-position-001', sourceVersion: '1',
+      entityType: 'recruitment.position', payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: [
+        'legacy-requisition-001', 'legacy-department-001', 'legacy-job-level-001',
+      ],
+      attachments: [{
+        sourceAttachmentId: 'legacy-position-evidence-001', checksum: 'x'.repeat(43),
+      }],
+    }));
+    expect(result).toMatchObject({
+      status: 'rejected',
+      rejectionCode: 'DATA_MIGRATION_RECRUITMENT_GOVERNANCE_EVIDENCE_REQUIRED',
+    });
+    expect(recruitment.importPositionFromMigration).not.toHaveBeenCalled();
   });
 
   it('未解析关联和未决附件进入 Phase 6 硬门禁', async () => {

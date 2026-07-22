@@ -17,6 +17,7 @@ export interface RecruitmentRequisition {
   readonly justification: string;
   readonly status: 'draft' | 'pending_approval' | 'approved' | 'rejected' | 'closed';
   readonly approvalInstanceId: string | null;
+  readonly approvalHistoryId: string | null;
   readonly version: number;
   readonly createdBy: string;
   readonly createdAt: string;
@@ -49,7 +50,7 @@ export function createRecruitmentRequisition(
     id: input.id, tenantId: input.tenantId, departmentId: input.departmentId,
     positionTitle: input.positionTitle.trim(), headcount: input.headcount,
     justification: input.justification.trim(), status: 'draft' as const,
-    approvalInstanceId: null, version: 1, createdBy: input.actorId,
+    approvalInstanceId: null, approvalHistoryId: null, version: 1, createdBy: input.actorId,
     createdAt: occurredAt, updatedAt: occurredAt,
   });
 }
@@ -75,8 +76,83 @@ export function submitRecruitmentRequisition(
     ...requisition,
     status: 'pending_approval' as const,
     approvalInstanceId: input.approvalInstanceId,
+    approvalHistoryId: null,
     version: requisition.version + 1,
     updatedAt: toRecruitmentIso(now),
+  });
+}
+
+export interface RestoreRecruitmentRequisitionFromMigrationInput {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly departmentId: string;
+  readonly positionTitle: string;
+  readonly headcount: number;
+  readonly justification: string;
+  readonly status: RecruitmentRequisition['status'];
+  readonly approvalInstanceId: string | null;
+  readonly approvalHistoryId: string | null;
+  readonly version: number;
+  readonly createdBy: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+/** 数据迁移专用：恢复 HC 控制事实，不创建或推进审批。 */
+export function restoreRecruitmentRequisitionFromMigration(
+  input: RestoreRecruitmentRequisitionFromMigrationInput,
+): RecruitmentRequisition {
+  for (const [field, value] of Object.entries({
+    id: input.id,
+    tenantId: input.tenantId,
+    departmentId: input.departmentId,
+    createdBy: input.createdBy,
+  })) assertRecruitmentId(value, field);
+  assertRecruitmentLabel(input.positionTitle, 'positionTitle', 128);
+  assertRecruitmentLabel(input.justification, 'justification', 4_096);
+  assertRecruitmentVersion(input.version);
+  if (!Number.isSafeInteger(input.headcount) || input.headcount < 1 || input.headcount > 10_000) {
+    throw new RecruitmentDomainError('RECRUITMENT_HEADCOUNT_INVALID', 'HC 数量必须为 1..10000 的整数');
+  }
+  if (!['draft', 'pending_approval', 'approved', 'rejected', 'closed'].includes(input.status)) {
+    throw new RecruitmentDomainError('RECRUITMENT_REQUISITION_STATUS_INVALID', 'HC 迁移状态无效');
+  }
+  if (input.approvalInstanceId !== null) {
+    assertRecruitmentId(input.approvalInstanceId, 'approvalInstanceId');
+  }
+  if (input.approvalHistoryId !== null) {
+    assertRecruitmentId(input.approvalHistoryId, 'approvalHistoryId');
+  }
+  const referenceCount = Number(input.approvalInstanceId !== null) +
+    Number(input.approvalHistoryId !== null);
+  const referenceValid = input.status === 'draft'
+    ? referenceCount === 0
+    : input.status === 'pending_approval'
+      ? input.approvalInstanceId !== null && input.approvalHistoryId === null
+      : referenceCount === 1;
+  const expectedVersion = input.status === 'draft'
+    ? 1
+    : input.status === 'pending_approval'
+      ? 2
+      : input.status === 'closed'
+        ? 4
+        : 3;
+  if (!referenceValid || input.version !== expectedVersion) throw new RecruitmentDomainError(
+    'RECRUITMENT_REQUISITION_MIGRATION_STATE_INVALID',
+    'HC 迁移状态、审批引用与版本不一致',
+  );
+  const createdAt = strictMigrationIso(input.createdAt);
+  const updatedAt = strictMigrationIso(input.updatedAt);
+  if (updatedAt < createdAt) throw new RecruitmentDomainError(
+    'RECRUITMENT_REQUISITION_MIGRATION_TIME_INVALID',
+    'HC 更新时间不能早于创建时间',
+  );
+  return deepFreezeRecruitment({
+    ...input,
+    positionTitle: input.positionTitle.trim(),
+    justification: input.justification.trim(),
+    createdAt,
+    updatedAt,
   });
 }
 
@@ -132,4 +208,15 @@ function assertCommand(
   if (requisition.version !== expectedVersion) throw new RecruitmentDomainError(
     'RECRUITMENT_VERSION_CONFLICT', 'HC 需求版本冲突',
   );
+}
+
+function strictMigrationIso(value: string): string {
+  const parsed = new Date(value);
+  if (typeof value !== 'string' || Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value) {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_REQUISITION_MIGRATION_TIME_INVALID',
+      'HC 迁移时间必须为规范 UTC ISO 时间',
+    );
+  }
+  return value;
 }

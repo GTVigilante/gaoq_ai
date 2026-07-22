@@ -260,6 +260,16 @@ export class ApprovalLegacyHistoryRepository extends TenantBoundApprovalReposito
     return record === null ? null : this.toDomain(record);
   }
 
+  async findById(
+    id: string,
+    session?: ClientSession,
+  ): Promise<ApprovalLegacyHistory | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), id });
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record === null ? null : this.toDomain(record);
+  }
+
   async insert(history: ApprovalLegacyHistory, session: ClientSession): Promise<void> {
     this.assertTenant(history.tenantId);
     await this.records.create([{

@@ -124,7 +124,11 @@ function dependencies(overrides: Record<string, unknown> = {}) {
       insert: vi.fn(),
       replace: vi.fn(),
     },
-    legacyHistories: { findByEvidenceRef: vi.fn().mockResolvedValue(null), insert: vi.fn() },
+    legacyHistories: {
+      findByEvidenceRef: vi.fn().mockResolvedValue(null),
+      findById: vi.fn().mockResolvedValue(null),
+      insert: vi.fn(),
+    },
     instances: { findById: vi.fn(), insert: vi.fn(), replace: vi.fn(), findInbox: vi.fn() },
     actions: { append: vi.fn(), findTimeline: vi.fn().mockResolvedValue([]) },
     delegations: {
@@ -164,6 +168,43 @@ function service(
 }
 
 describe('ApprovalApplicationService', () => {
+  it('招聘迁移只能读取活动审批或终结历史的最小引用投影', async () => {
+    const running = submitApprovalInstance(draftInstance('recruitment_hc'), {
+      tenantId: 'tenant-001', expectedVersion: 1, actorId: 'actor-001',
+      resolvedNodes: [{ nodeId: 'manager', actorIds: ['manager-001'] }],
+    }, NOW).instance;
+    const deps = dependencies({
+      instances: {
+        ...dependencies().instances,
+        findById: vi.fn().mockResolvedValue(running),
+      },
+      legacyHistories: {
+        ...dependencies().legacyHistories,
+        findById: vi.fn().mockResolvedValue({
+          id: 'history-001', templateCode: 'recruitment_hc', outcome: 'approved',
+        }),
+      },
+    });
+    const application = service(
+      deps,
+      opWorkerContext(['erp:migration:execute', 'erp:recruitment:migration:write']),
+    );
+
+    await expect(application.verifyRecruitmentMigrationReference(
+      'approval_instance', running.id, SESSION,
+    )).resolves.toEqual({
+      id: running.id, type: 'approval_instance', templateCode: 'recruitment_hc', outcome: 'running',
+    });
+    await expect(application.verifyRecruitmentMigrationReference(
+      'legacy_history', 'history-001', SESSION,
+    )).resolves.toEqual({
+      id: 'history-001', type: 'legacy_history', templateCode: 'recruitment_hc', outcome: 'approved',
+    });
+    expect(JSON.stringify(await application.verifyRecruitmentMigrationReference(
+      'approval_instance', running.id, SESSION,
+    ))).not.toContain('formData');
+  });
+
   it('旧审批历史只写不可变索引和迁移事件，不重放通知', async () => {
     const deps = dependencies({
       templates: {

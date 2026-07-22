@@ -4,6 +4,7 @@ import {
   applyRecruitmentApprovalOutcome,
   closeRecruitmentRequisition,
   createRecruitmentRequisition,
+  restoreRecruitmentRequisitionFromMigration,
   submitRecruitmentRequisition,
 } from './requisition.js';
 
@@ -59,5 +60,27 @@ describe('RecruitmentRequisition', () => {
     expect(closeRecruitmentRequisition(approved, {
       tenantId: 'tenant-001', expectedVersion: 3,
     }, NOW)).toMatchObject({ status: 'closed', version: 4 });
+  });
+
+  it('迁移按 HC 状态严格区分活动审批和终结历史引用', () => {
+    const migrated = restoreRecruitmentRequisitionFromMigration({
+      id: 'requisition-001', tenantId: 'tenant-001', departmentId: 'department-001',
+      positionTitle: '小红书经纪人', headcount: 2,
+      justification: '历史 HC 需求证据已进入迁移账本', status: 'approved',
+      approvalInstanceId: null, approvalHistoryId: 'approval-history-001', version: 3,
+      createdBy: 'actor-001', createdAt: '2026-07-20T00:00:00.000Z',
+      updatedAt: '2026-07-21T00:00:00.000Z',
+    });
+    expect(migrated).toMatchObject({
+      status: 'approved', approvalInstanceId: null,
+      approvalHistoryId: 'approval-history-001', version: 3,
+    });
+    expect(() => restoreRecruitmentRequisitionFromMigration({
+      ...migrated,
+      status: 'pending_approval',
+      approvalInstanceId: null,
+      approvalHistoryId: 'approval-history-001',
+      version: 2,
+    })).toThrow('状态、审批引用与版本不一致');
   });
 });

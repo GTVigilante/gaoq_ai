@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { createRecruitmentPosition, transitionRecruitmentPosition } from './position.js';
+import {
+  createRecruitmentPosition,
+  restoreRecruitmentPositionFromMigration,
+  transitionRecruitmentPosition,
+} from './position.js';
 
 const NOW = new Date('2026-07-21T08:00:00.000Z');
 
@@ -48,5 +52,21 @@ describe('RecruitmentPosition', () => {
       tenantId: 'tenant-001', expectedVersion: 5, targetStatus: 'open',
       requisitionApproved: true,
     }, NOW)).toThrow('职位状态迁移无效');
+  });
+
+  it('迁移恢复职位生命周期且拒绝伪造发布时间', () => {
+    const migrated = restoreRecruitmentPositionFromMigration({
+      ...position(),
+      status: 'open',
+      version: 2,
+      publishedAt: '2026-07-22T08:00:00.000Z',
+      createdAt: '2026-07-21T08:00:00.000Z',
+      updatedAt: '2026-07-22T08:00:00.000Z',
+    });
+    expect(migrated).toMatchObject({ status: 'open', version: 2 });
+    expect(() => restoreRecruitmentPositionFromMigration({
+      ...migrated,
+      publishedAt: null,
+    })).toThrow('状态、版本或生命周期时间不一致');
   });
 });

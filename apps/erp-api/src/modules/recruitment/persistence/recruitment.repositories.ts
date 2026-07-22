@@ -277,7 +277,9 @@ export class RecruitmentRequisitionRepository extends TenantBoundRecruitmentRepo
       id: record.id, tenantId: record.tenantId, departmentId: record.departmentId,
       positionTitle: record.positionTitle, headcount: record.headcount,
       justification: record.justification, status: record.status,
-      approvalInstanceId: record.approvalInstanceId, version: record.version,
+      approvalInstanceId: record.approvalInstanceId,
+      approvalHistoryId: record.approvalHistoryId ?? null,
+      version: record.version,
       createdBy: record.createdBy, createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
     });
@@ -299,6 +301,7 @@ export class RecruitmentRequisitionRepository extends TenantBoundRecruitmentRepo
       { tenantId: this.tenantId(), id: requisition.id, version: expectedVersion },
       { $set: {
         status: record.status, approvalInstanceId: record.approvalInstanceId,
+        approvalHistoryId: record.approvalHistoryId,
         version: record.version, updatedAt: record.updatedAt,
       } },
       { session, timestamps: false, runValidators: true },

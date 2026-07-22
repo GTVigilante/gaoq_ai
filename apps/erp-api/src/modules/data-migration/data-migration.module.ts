@@ -6,6 +6,7 @@ import { AuditModule } from '../../core/audit/audit.module.js';
 import { TenantContextModule } from '../../core/tenant/tenant-context.module.js';
 import { OrgModule } from '../org/org.module.js';
 import { ApprovalModule } from '../approval/approval.module.js';
+import { RecruitmentModule } from '../recruitment/recruitment.module.js';
 import { DataMigrationAttachmentService } from './application/data-migration-attachment.service.js';
 import { DataMigrationService } from './application/data-migration.service.js';
 import { DATA_MIGRATION_ATTACHMENT_QUEUE } from './data-migration-attachment.queue.js';
@@ -27,7 +28,7 @@ import {
 
 @Module({
   imports: [
-    AuditModule, TenantContextModule, OrgModule, ApprovalModule,
+    AuditModule, TenantContextModule, OrgModule, ApprovalModule, RecruitmentModule,
     BullModule.registerQueue({ name: DATA_MIGRATION_ATTACHMENT_QUEUE }),
     MongooseModule.forFeature([
       { name: DataMigrationRunRecord.name, schema: DataMigrationRunRecordSchema },

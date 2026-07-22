@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
 import type { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import type { ApprovalApplicationService } from '../../approval/application/approval-application.service.js';
+import type { AccessProfileRepository } from '../../identity/access-profile.repository.js';
 import type {
   DepartmentRepository,
   JobLevelRepository,
@@ -24,6 +25,7 @@ const draftRequisition = {
   id: REQUISITION_ID, tenantId: 'tenant-001', departmentId: 'department-001',
   positionTitle: '小红书经纪人', headcount: 2, justification: '业务增长需要补充招聘人数',
   status: 'draft' as const, approvalInstanceId: null, version: 1, createdBy: 'actor-001',
+  approvalHistoryId: null,
   createdAt: '2026-07-21T00:00:00.000Z', updatedAt: '2026-07-21T00:00:00.000Z',
 };
 
@@ -48,6 +50,7 @@ function requisition(status: 'draft' | 'pending_approval' | 'approved' | 'reject
 function fixture(options?: {
   readonly requisitionStatus?: 'draft' | 'pending_approval' | 'approved' | 'rejected';
   readonly approvalStatus?: 'draft' | 'running' | 'approved' | 'rejected';
+  readonly actorType?: 'user' | 'service' | 'system_job';
   readonly actorDepartments?: readonly string[];
   readonly actorScopes?: readonly string[];
 }) {
@@ -62,7 +65,7 @@ function fixture(options?: {
   const trusted = {
     tenant: { tenantId: 'tenant-001', source: 'access_token' as const },
     actor: {
-      actorId: 'actor-001', tenantId: 'tenant-001', actorType: 'user' as const,
+      actorId: 'actor-001', tenantId: 'tenant-001', actorType: options?.actorType ?? 'user',
       roleCodes: [], scopes: options?.actorScopes ?? ['erp:recruitment:requisition:sync_approval'],
       departmentIds: options?.actorDepartments ?? ['department-001'], traceId: 'trace-001',
     },
@@ -85,6 +88,14 @@ function fixture(options?: {
       templateCode: 'recruitment_hc', templateRevision: 1, riskLevel: 'R2', version: 3,
       submittedAt: '2026-07-21T00:01:00.000Z', completedAt: '2026-07-21T00:02:00.000Z',
     }),
+    verifyRecruitmentMigrationReference: vi.fn().mockResolvedValue({
+      id: APPROVAL_ID, type: 'approval_instance', templateCode: 'recruitment_hc',
+      outcome: 'running',
+    }),
+  };
+  const profiles = {
+    findActorIdByEmployee: vi.fn().mockResolvedValue('actor-001'),
+    resolveActive: vi.fn().mockResolvedValue({ actorId: 'actor-001', employeeId: 'employee-001' }),
   };
   const departments = {
     findById: vi.fn().mockResolvedValue({
@@ -109,6 +120,7 @@ function fixture(options?: {
     { execute } as unknown as IdempotencyService,
     context as unknown as TenantContextService,
     approvals as unknown as ApprovalApplicationService,
+    profiles as unknown as AccessProfileRepository,
     departments as unknown as DepartmentRepository,
     jobLevels as unknown as JobLevelRepository,
     requisitions as unknown as RecruitmentRequisitionRepository,
@@ -116,7 +128,8 @@ function fixture(options?: {
     outbox as unknown as RecruitmentOutboxWriter,
   );
   return {
-    service, execute, context, approvals, departments, jobLevels, requisitions, positions, outbox,
+    service, execute, context, approvals, profiles, departments, jobLevels,
+    requisitions, positions, outbox,
   };
 }
 
@@ -254,5 +267,87 @@ describe('RecruitmentManagementService', () => {
       departmentId: 'department-001', positionTitle: '小红书经纪人',
       headcount: 2, justification: '业务增长需要补充招聘人数',
     })).resolves.toHaveProperty('requisition');
+  });
+
+  it('招聘迁移仅允许服务身份，并把终结 HC 绑定到最小审批历史', async () => {
+    const denied = fixture({ actorScopes: ['erp:migration:execute', 'erp:recruitment:migration:write'] });
+    await expect(denied.service.importRequisitionFromMigration('migration-key-denied', {
+      targetId: null,
+      departmentId: 'department-001',
+      positionTitle: '小红书经纪人',
+      headcount: 2,
+      justification: '历史 HC 需求证据已进入迁移账本',
+      status: 'approved',
+      approvalReferenceType: 'legacy_history',
+      approvalReferenceId: APPROVAL_ID,
+      version: 3,
+      createdByEmployeeId: 'employee-001',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      updatedAt: '2026-07-21T00:00:00.000Z',
+    })).rejects.toMatchObject({ response: { code: 'RECRUITMENT_MIGRATION_WRITER_DENIED' } });
+
+    const store = fixture({
+      actorType: 'service',
+      actorScopes: ['erp:migration:execute', 'erp:recruitment:migration:write'],
+    });
+    store.approvals.verifyRecruitmentMigrationReference.mockResolvedValue({
+      id: APPROVAL_ID, type: 'legacy_history', templateCode: 'recruitment_hc',
+      outcome: 'approved',
+    });
+    const result = await store.service.importRequisitionFromMigration('migration-key-001', {
+      targetId: null,
+      departmentId: 'department-001',
+      positionTitle: '小红书经纪人',
+      headcount: 2,
+      justification: '历史 HC 需求证据已进入迁移账本',
+      status: 'approved',
+      approvalReferenceType: 'legacy_history',
+      approvalReferenceId: APPROVAL_ID,
+      version: 3,
+      createdByEmployeeId: 'employee-001',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      updatedAt: '2026-07-21T00:00:00.000Z',
+    });
+    expect(store.profiles.findActorIdByEmployee).toHaveBeenCalledWith(
+      'tenant-001', 'employee-001', SESSION,
+    );
+    expect(store.requisitions.insert).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'approved', approvalInstanceId: null, approvalHistoryId: APPROVAL_ID,
+      createdBy: 'actor-001', version: 3,
+    }), SESSION);
+    expect(store.outbox.append).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'recruitment.requisition.migrated',
+    }), SESSION);
+    expect(result.requisition).not.toHaveProperty('justification');
+  });
+
+  it('职位迁移复用已迁移 HC、部门与职级且只发迁移事件', async () => {
+    const store = fixture({
+      requisitionStatus: 'approved',
+      actorType: 'system_job',
+      actorScopes: ['erp:migration:execute', 'erp:recruitment:migration:write'],
+    });
+    const result = await store.service.importPositionFromMigration('migration-key-002', {
+      targetId: null,
+      requisitionId: REQUISITION_ID,
+      departmentId: 'department-001',
+      jobLevelId: 'job-level-001',
+      title: '小红书经纪人',
+      location: '上海',
+      headcount: 2,
+      status: 'open',
+      version: 2,
+      publishedAt: '2026-07-21T00:00:00.000Z',
+      closedAt: null,
+      createdAt: '2026-07-20T00:00:00.000Z',
+      updatedAt: '2026-07-21T00:00:00.000Z',
+    });
+    expect(store.positions.insert).toHaveBeenCalledWith(expect.objectContaining({
+      requisitionId: REQUISITION_ID, status: 'open', version: 2,
+    }), SESSION);
+    expect(store.outbox.append).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'recruitment.position.migrated',
+    }), SESSION);
+    expect(result.position).toMatchObject({ status: 'open', version: 2 });
   });
 });

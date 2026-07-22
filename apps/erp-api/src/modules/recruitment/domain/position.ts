@@ -57,6 +57,57 @@ export function createRecruitmentPosition(
   });
 }
 
+/** 数据迁移专用：恢复职位生命周期事实，不重放发布、暂停或关闭副作用。 */
+export function restoreRecruitmentPositionFromMigration(
+  input: RecruitmentPosition,
+): RecruitmentPosition {
+  for (const [field, value] of Object.entries({
+    id: input.id,
+    tenantId: input.tenantId,
+    requisitionId: input.requisitionId,
+    departmentId: input.departmentId,
+    jobLevelId: input.jobLevelId,
+  })) assertRecruitmentId(value, field);
+  assertRecruitmentLabel(input.title, 'title', 128);
+  assertRecruitmentLabel(input.location, 'location', 128);
+  assertRecruitmentVersion(input.version);
+  if (!Number.isSafeInteger(input.headcount) || input.headcount < 1 || input.headcount > 10_000) {
+    throw new RecruitmentDomainError('RECRUITMENT_HEADCOUNT_INVALID', '招聘人数必须为 1..10000 的整数');
+  }
+  if (!['draft', 'open', 'paused', 'closed'].includes(input.status)) {
+    throw new RecruitmentDomainError('RECRUITMENT_POSITION_STATUS_INVALID', '职位迁移状态无效');
+  }
+  const createdAt = migrationIso(input.createdAt);
+  const updatedAt = migrationIso(input.updatedAt);
+  const publishedAt = input.publishedAt === null ? null : migrationIso(input.publishedAt);
+  const closedAt = input.closedAt === null ? null : migrationIso(input.closedAt);
+  const stateValid = input.status === 'draft'
+    ? input.version === 1 && publishedAt === null && closedAt === null
+    : input.status === 'open'
+      ? input.version >= 2 && publishedAt !== null && closedAt === null
+      : input.status === 'paused'
+        ? input.version >= 3 && publishedAt !== null && closedAt === null
+        : input.version >= 2 && closedAt !== null;
+  if (!stateValid || updatedAt < createdAt ||
+    (publishedAt !== null && (publishedAt < createdAt || publishedAt > updatedAt)) ||
+    (closedAt !== null && (closedAt < createdAt || closedAt > updatedAt ||
+      (publishedAt !== null && closedAt < publishedAt)))) {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_POSITION_MIGRATION_STATE_INVALID',
+      '职位迁移状态、版本或生命周期时间不一致',
+    );
+  }
+  return deepFreezeRecruitment({
+    ...input,
+    title: input.title.trim(),
+    location: input.location.trim(),
+    publishedAt,
+    closedAt,
+    createdAt,
+    updatedAt,
+  });
+}
+
 export function transitionRecruitmentPosition(
   position: RecruitmentPosition,
   input: {
@@ -95,4 +146,15 @@ export function transitionRecruitmentPosition(
     closedAt: input.targetStatus === 'closed' ? occurredAt : null,
     updatedAt: occurredAt,
   });
+}
+
+function migrationIso(value: string): string {
+  const parsed = new Date(value);
+  if (typeof value !== 'string' || Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value) {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_POSITION_MIGRATION_TIME_INVALID',
+      '职位迁移时间必须为规范 UTC ISO 时间',
+    );
+  }
+  return value;
 }
