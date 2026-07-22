@@ -1,5 +1,5 @@
 import type { ClientSession } from 'mongoose';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
 import type { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
@@ -17,6 +17,7 @@ import { RecruitmentInterviewService } from './recruitment-interview.service.js'
 const APPLICATION_ID = '01J8ZQK7V0A2M4N6P8R0T2W4Y7';
 const INTERVIEW_ID = '01J8ZQK7V0A2M4N6P8R0T2W4X1';
 const SESSION = { id: 'session' } as unknown as ClientSession;
+const TEST_NOW = new Date('2026-07-22T07:00:00.000Z');
 
 const application = {
   id: APPLICATION_ID, tenantId: 'tenant-001', candidateId: 'candidate-001',
@@ -105,6 +106,15 @@ const scheduleInput = {
 };
 
 describe('RecruitmentInterviewService', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(TEST_NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('排期在同一幂等事务内验证 ERP 有效员工、加密持久并写 Outbox', async () => {
     const store = fixture();
     const result = await store.service.schedule(
