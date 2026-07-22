@@ -110,6 +110,41 @@ describe('数据迁移来源包 CLI', () => {
     });
   });
 
+  it('统一白名单允许审批模板独立来源包', async () => {
+    const payload = {
+      code: 'LEGACY_EXPENSE', name: '历史费用审批', riskLevel: 'R2', revision: 1,
+      status: 'published',
+      definition: {
+        fields: [{
+          key: 'amount', label: '金额', type: 'money_minor', required: true, sensitivity: 'L2',
+        }],
+        nodes: [{
+          id: 'manager', name: '经理审批', type: 'approval', approvalMode: 'all',
+          resolver: { type: 'initiator_manager' },
+        }],
+      },
+      createdByEmployeeSourceId: 'legacy-employee-editor',
+      updatedByEmployeeSourceId: 'legacy-employee-approver',
+      approvedByEmployeeSourceId: 'legacy-employee-approver',
+      governanceEvidenceSourceAttachmentId: 'legacy-template-evidence-001',
+      publishedAt: '2020-01-02T00:00:00.000Z', retiredAt: null,
+      createdAt: '2020-01-01T00:00:00.000Z', updatedAt: '2020-01-02T00:00:00.000Z',
+    };
+    const directory = await packageDirectory(
+      { scope: 'approval_templates', sourceRunId: 'approval-templates-001' },
+      {
+        entityType: 'approval.template', sourceRecordId: 'legacy-template-001', payload,
+        associationSourceIds: ['legacy-employee-editor', 'legacy-employee-approver'],
+        attachments: [{
+          sourceAttachmentId: 'legacy-template-evidence-001', checksum: 'a'.repeat(43),
+        }],
+      },
+    );
+    await expect(validateMigrationPackage(directory)).resolves.toMatchObject({
+      manifest: { scope: 'approval_templates' }, recordCount: 1,
+    });
+  });
+
   it('导出逐页验证页面校验和并生成全量证据封印', async () => {
     const runId = '01J8ZQK7V0A2M4N6P8R0T2W4F1';
     const report = {

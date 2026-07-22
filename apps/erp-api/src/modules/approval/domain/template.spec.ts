@@ -6,6 +6,7 @@ import {
   createNextApprovalTemplateRevision,
   hashApprovalJson,
   publishApprovalTemplate,
+  restoreApprovalTemplateFromMigration,
   retireApprovalTemplate,
   snapshotApprovalTemplate,
   updateApprovalTemplateDraft,
@@ -125,6 +126,28 @@ describe('审批模板版本与发布', () => {
       id: 'template-002', tenantId: 'tenant-001', code: 'INVALID', name: '非法模板',
       riskLevel: 'R1', definition: invalid, actorId: 'editor-001',
     }, NOW)).toThrowError(expect.objectContaining({ code: 'APPROVAL_CONDITION_FIELD_DENIED' }));
+  });
+
+  it('迁移恢复模板版本时校验生命周期并重算定义摘要', () => {
+    const restored = restoreApprovalTemplateFromMigration({
+      id: 'template-legacy-001', tenantId: 'tenant-001', code: 'LEGACY_EXPENSE',
+      name: '历史费用审批', riskLevel: 'R2', revision: 3, status: 'retired',
+      definition: definition(), createdBy: 'actor-editor', updatedBy: 'actor-retirer',
+      approvedBy: 'actor-approver', publishedAt: '2020-01-02T00:00:00.000Z',
+      retiredAt: '2025-01-01T00:00:00.000Z',
+      createdAt: '2020-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z',
+    });
+    expect(restored).toMatchObject({
+      revision: 3, status: 'retired', version: 1, approvedBy: 'actor-approver',
+    });
+    expect(restored.definitionHash).toBe(hashApprovalJson(restored.definition));
+    expect(() => restoreApprovalTemplateFromMigration({
+      ...restored,
+      id: 'template-legacy-002',
+      status: 'published',
+    })).toThrowError(expect.objectContaining({
+      code: 'APPROVAL_TEMPLATE_MIGRATION_STATE_INVALID',
+    }));
   });
 });
 

@@ -106,6 +106,19 @@ describe('审批租户仓储', () => {
     expect(templates).toEqual([expect.objectContaining({ code: 'EXPENSE', status: 'published' })]);
   });
 
+  it('迁移按模板编码与修订号查询时强制可信租户', async () => {
+    const findOne = vi.fn().mockReturnValue({
+      lean: () => ({ exec: () => Promise.resolve(null) }),
+    });
+    const repository = new ApprovalTemplateRepository(
+      context(), { findOne } as unknown as Model<ApprovalTemplateDocument>,
+    );
+    await expect(repository.findByCodeAndRevision('EXPENSE', 3)).resolves.toBeNull();
+    expect(findOne).toHaveBeenCalledWith({
+      tenantId: 'tenant-001', code: 'EXPENSE', revision: 3,
+    });
+  });
+
   it('时间线查询固定可信租户、聚合版本顺序与最大记录数', async () => {
     const exec = vi.fn().mockResolvedValue([{
       actionId: '01K00000000000000000000000', tenantId: 'tenant-001', instanceId: 'instance-001',

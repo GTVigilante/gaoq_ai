@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -10,6 +11,14 @@ import { createEventId } from '@gaoq/shared-utils';
 import type { Model } from 'mongoose';
 
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
+import { ApprovalApplicationService } from '../../approval/application/approval-application.service.js';
+import type { ImportApprovalTemplateFromMigrationInput } from '../../approval/application/approval-application.service.js';
+import {
+  validateAndFreezeApprovalTemplateDefinition,
+  type ApprovalCondition,
+  type ApprovalScalar,
+  type ApprovalTemplateDefinition,
+} from '../../approval/domain/index.js';
 import { OrgApplicationService } from '../../org/application/org-application.service.js';
 import type { ImportEmploymentFromMigrationInput } from '../../org/application/org-application.service.js';
 import type {
@@ -107,6 +116,8 @@ export class DataMigrationService {
     private readonly associations: Model<DataMigrationAssociationDocument>,
     @InjectModel(DataMigrationAttachmentRecord.name)
     private readonly attachments: Model<DataMigrationAttachmentDocument>,
+    @Inject(ApprovalApplicationService)
+    private readonly approvals?: ApprovalApplicationService,
   ) {}
 
   async start(input: CreateDataMigrationRunDto) {
@@ -395,10 +406,27 @@ export class DataMigrationService {
       await Promise.all(employeeAssociationSpecs(payload).map(async (association) =>
         this.requireMapping(run, association.entityType, association.sourceAssociationId)));
       return;
-    } else {
+    } else if (input.entityType === 'org.employment') {
       const payload = employmentPayload(input.payload);
       assertAssociations(input.associationSourceIds, [payload.employeeSourceId]);
       await this.requireMapping(run, 'org.employee', payload.employeeSourceId);
+      return;
+    } else {
+      const payload = approvalTemplatePayload(input.payload);
+      const specs = approvalTemplateAssociationSpecs(payload);
+      assertAssociations(
+        input.associationSourceIds,
+        [...new Set(specs.map((spec) => spec.sourceAssociationId))],
+      );
+      const governanceEvidenceAttached = payload.governanceEvidenceSourceAttachmentId !== null &&
+        input.attachments.some((attachment) =>
+          attachment.sourceAttachmentId === payload.governanceEvidenceSourceAttachmentId);
+      if ((payload.status === 'draft' && payload.governanceEvidenceSourceAttachmentId !== null) ||
+        (payload.status !== 'draft' && !governanceEvidenceAttached)) {
+        throw new Error('DATA_MIGRATION_GOVERNANCE_EVIDENCE_REQUIRED');
+      }
+      await Promise.all(specs.map(async (spec) =>
+        this.requireMapping(run, spec.entityType, spec.sourceAssociationId)));
       return;
     }
     assertAssociations(input.associationSourceIds, []);
@@ -457,15 +485,44 @@ export class DataMigrationService {
         );
       return target(result.employee);
     }
-    const payload = employmentPayload(input.payload);
-    const employeeId = (await this.requireMapping(
-      run, 'org.employee', payload.employeeSourceId,
-    )).targetId;
-    const result = await this.organization.importEmploymentFromMigration(key, {
-      ...payload,
-      employeeId,
+    if (input.entityType === 'org.employment') {
+      const payload = employmentPayload(input.payload);
+      const employeeId = (await this.requireMapping(
+        run, 'org.employee', payload.employeeSourceId,
+      )).targetId;
+      const result = await this.organization.importEmploymentFromMigration(key, {
+        ...payload,
+        employeeId,
+      });
+      return target(result.employment);
+    }
+    const payload = approvalTemplatePayload(input.payload);
+    if (this.approvals === undefined) throw new Error('迁移审批适配器未装配');
+    const employeeId = async (sourceId: string): Promise<string> =>
+      (await this.requireMapping(run, 'org.employee', sourceId)).targetId;
+    const definition = await mapApprovalTemplateDefinition(
+      payload.definition,
+      async (entityType, sourceId) =>
+        (await this.requireMapping(run, entityType, sourceId)).targetId,
+    );
+    const result = await this.approvals.importTemplateFromMigration(key, {
+      code: payload.code,
+      name: payload.name,
+      riskLevel: payload.riskLevel,
+      revision: payload.revision,
+      status: payload.status,
+      definition,
+      createdByEmployeeId: await employeeId(payload.createdByEmployeeSourceId),
+      updatedByEmployeeId: await employeeId(payload.updatedByEmployeeSourceId),
+      approvedByEmployeeId: payload.approvedByEmployeeSourceId === null
+        ? null
+        : await employeeId(payload.approvedByEmployeeSourceId),
+      publishedAt: payload.publishedAt,
+      retiredAt: payload.retiredAt,
+      createdAt: payload.createdAt,
+      updatedAt: payload.updatedAt,
     });
-    return target(result.employment);
+    return target(result.template);
   }
 
   private async employeeCommand(
@@ -990,6 +1047,223 @@ function employmentPayload(
   };
 }
 
+type ApprovalTemplateMigrationPayload = Omit<
+  ImportApprovalTemplateFromMigrationInput,
+  'createdByEmployeeId' | 'updatedByEmployeeId' | 'approvedByEmployeeId'
+> & {
+  readonly createdByEmployeeSourceId: string;
+  readonly updatedByEmployeeSourceId: string;
+  readonly approvedByEmployeeSourceId: string | null;
+  readonly governanceEvidenceSourceAttachmentId: string | null;
+};
+
+function approvalTemplatePayload(
+  value: Readonly<Record<string, unknown>>,
+): ApprovalTemplateMigrationPayload {
+  exactKeys(value, [
+    'approvedByEmployeeSourceId', 'code', 'createdAt', 'createdByEmployeeSourceId',
+    'definition', 'governanceEvidenceSourceAttachmentId', 'name', 'publishedAt',
+    'retiredAt', 'revision', 'riskLevel',
+    'status', 'updatedAt', 'updatedByEmployeeSourceId',
+  ]);
+  const requiredIds = [value.createdByEmployeeSourceId, value.updatedByEmployeeSourceId];
+  if (requiredIds.some((item) => typeof item !== 'string' || !SOURCE_ID_PATTERN.test(item)) ||
+    (value.approvedByEmployeeSourceId !== null &&
+      (typeof value.approvedByEmployeeSourceId !== 'string' ||
+        !SOURCE_ID_PATTERN.test(value.approvedByEmployeeSourceId))) ||
+    (value.governanceEvidenceSourceAttachmentId !== null &&
+      (typeof value.governanceEvidenceSourceAttachmentId !== 'string' ||
+        !SOURCE_ID_PATTERN.test(value.governanceEvidenceSourceAttachmentId))) ||
+    typeof value.code !== 'string' || typeof value.name !== 'string' ||
+    !['R1', 'R2'].includes(String(value.riskLevel)) ||
+    !Number.isSafeInteger(value.revision) || Number(value.revision) < 1 ||
+    !['draft', 'published', 'retired'].includes(String(value.status)) ||
+    typeof value.definition !== 'object' || value.definition === null ||
+    Array.isArray(value.definition) ||
+    (value.publishedAt !== null && typeof value.publishedAt !== 'string') ||
+    (value.retiredAt !== null && typeof value.retiredAt !== 'string') ||
+    typeof value.createdAt !== 'string' || typeof value.updatedAt !== 'string') {
+    throw invalidPayload();
+  }
+  return {
+    code: value.code,
+    name: value.name,
+    riskLevel: value.riskLevel as 'R1' | 'R2',
+    revision: Number(value.revision),
+    status: value.status as ApprovalTemplateMigrationPayload['status'],
+    definition: validateAndFreezeApprovalTemplateDefinition(
+      value.definition as ApprovalTemplateMigrationPayload['definition'],
+    ),
+    createdByEmployeeSourceId: value.createdByEmployeeSourceId as string,
+    updatedByEmployeeSourceId: value.updatedByEmployeeSourceId as string,
+    approvedByEmployeeSourceId: value.approvedByEmployeeSourceId,
+    governanceEvidenceSourceAttachmentId:
+      value.governanceEvidenceSourceAttachmentId,
+    publishedAt: value.publishedAt,
+    retiredAt: value.retiredAt,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+  };
+}
+
+function approvalTemplateAssociationSpecs(
+  payload: ApprovalTemplateMigrationPayload,
+): readonly (AssociationEvidence & { readonly entityType: AssociationTargetType })[] {
+  const specs: (AssociationEvidence & { readonly entityType: AssociationTargetType })[] = [
+    {
+      relationship: 'created_by', sourceAssociationId: payload.createdByEmployeeSourceId,
+      entityType: 'org.employee',
+    },
+    {
+      relationship: 'updated_by', sourceAssociationId: payload.updatedByEmployeeSourceId,
+      entityType: 'org.employee',
+    },
+    ...(payload.approvedByEmployeeSourceId === null ? [] : [{
+      relationship: 'approved_by' as const,
+      sourceAssociationId: payload.approvedByEmployeeSourceId,
+      entityType: 'org.employee' as const,
+    }]),
+  ];
+  for (const node of payload.definition.nodes) {
+    if (node.resolver.type === 'employees') {
+      for (const sourceAssociationId of node.resolver.employeeIds) specs.push({
+        relationship: 'fixed_approver', sourceAssociationId, entityType: 'org.employee',
+      });
+    }
+    if (node.condition !== undefined) {
+      specs.push(...approvalConditionAssociationSpecs(payload.definition, node.condition));
+    }
+  }
+  const unique = new Map<string, typeof specs[number]>();
+  for (const spec of specs) {
+    unique.set(`${spec.relationship}:${spec.entityType}:${spec.sourceAssociationId}`, spec);
+  }
+  return [...unique.values()];
+}
+
+function approvalConditionAssociationSpecs(
+  definition: ApprovalTemplateDefinition,
+  condition: ApprovalCondition,
+): (AssociationEvidence & { readonly entityType: AssociationTargetType })[] {
+  switch (condition.op) {
+    case 'and':
+    case 'or':
+      return condition.conditions.flatMap((nested) =>
+        approvalConditionAssociationSpecs(definition, nested));
+    case 'not':
+      return approvalConditionAssociationSpecs(definition, condition.condition);
+    case 'eq':
+    case 'ne':
+      return conditionReferenceSpecs(
+        definition,
+        condition.field,
+        Array.isArray(condition.value) ? condition.value : [condition.value],
+      );
+    case 'in':
+      return conditionReferenceSpecs(definition, condition.field, condition.values);
+    default:
+      return [];
+  }
+}
+
+function conditionReferenceSpecs(
+  definition: ApprovalTemplateDefinition,
+  fieldKey: string,
+  values: readonly unknown[],
+): (AssociationEvidence & { readonly entityType: AssociationTargetType })[] {
+  const field = definition.fields.find((candidate) => candidate.key === fieldKey);
+  const entityType = field?.type === 'employee'
+    ? 'org.employee' as const
+    : field?.type === 'department'
+      ? 'org.department' as const
+      : null;
+  if (entityType === null) return [];
+  return values.filter((value): value is string => typeof value === 'string').map(
+    (sourceAssociationId) => ({
+      relationship: entityType === 'org.employee' ? 'condition_employee' : 'condition_department',
+      sourceAssociationId,
+      entityType,
+    }),
+  );
+}
+
+async function mapApprovalTemplateDefinition(
+  definition: ApprovalTemplateDefinition,
+  resolve: (entityType: AssociationTargetType, sourceId: string) => Promise<string>,
+): Promise<ApprovalTemplateDefinition> {
+  const fieldTypes = new Map(definition.fields.map((field) => [field.key, field.type]));
+  return {
+    fields: definition.fields.map((field) => structuredClone(field)),
+    nodes: await Promise.all(definition.nodes.map(async (node) => ({
+      ...structuredClone(node),
+      resolver: node.resolver.type === 'employees'
+        ? {
+            type: 'employees' as const,
+            employeeIds: await Promise.all(node.resolver.employeeIds.map(async (sourceId) =>
+              resolve('org.employee', sourceId))),
+          }
+        : structuredClone(node.resolver),
+      ...(node.condition === undefined ? {} : {
+        condition: await mapApprovalCondition(node.condition, fieldTypes, resolve),
+      }),
+    }))),
+  };
+}
+
+async function mapApprovalCondition(
+  condition: ApprovalCondition,
+  fieldTypes: ReadonlyMap<string, string>,
+  resolve: (entityType: AssociationTargetType, sourceId: string) => Promise<string>,
+): Promise<ApprovalCondition> {
+  switch (condition.op) {
+    case 'and':
+    case 'or':
+      return {
+        ...condition,
+        conditions: await Promise.all(condition.conditions.map(async (nested) =>
+          mapApprovalCondition(nested, fieldTypes, resolve))),
+      };
+    case 'not':
+      return {
+        ...condition,
+        condition: await mapApprovalCondition(condition.condition, fieldTypes, resolve),
+      };
+    case 'eq':
+    case 'ne': {
+      const entityType = conditionEntityType(fieldTypes.get(condition.field));
+      if (entityType === null) return structuredClone(condition);
+      const value = isApprovalScalarArray(condition.value)
+        ? await Promise.all(condition.value.map((item) =>
+            typeof item === 'string' ? resolve(entityType, item) : Promise.resolve(item)))
+        : typeof condition.value === 'string'
+          ? await resolve(entityType, condition.value)
+          : condition.value;
+      return { ...condition, value };
+    }
+    case 'in': {
+      const entityType = conditionEntityType(fieldTypes.get(condition.field));
+      if (entityType === null) return structuredClone(condition);
+      return {
+        ...condition,
+        values: await Promise.all(condition.values.map(async (value) =>
+          typeof value === 'string' ? resolve(entityType, value) : value)),
+      };
+    }
+    default:
+      return structuredClone(condition);
+  }
+}
+
+function conditionEntityType(fieldType: string | undefined): AssociationTargetType | null {
+  if (fieldType === 'employee') return 'org.employee';
+  if (fieldType === 'department') return 'org.department';
+  return null;
+}
+
+function isApprovalScalarArray(value: unknown): value is readonly ApprovalScalar[] {
+  return Array.isArray(value);
+}
+
 function associationEvidence(input: ApplyDataMigrationRecordDto): readonly AssociationEvidence[] {
   let derived: readonly AssociationEvidence[];
   try {
@@ -1007,6 +1281,9 @@ function associationEvidence(input: ApplyDataMigrationRecordDto): readonly Assoc
         relationship: 'employee', sourceAssociationId: employeeSourceId,
         entityType: 'org.employee',
       }];
+    } else if (input.entityType === 'approval.template') {
+      const payload = approvalTemplatePayload(input.payload);
+      derived = approvalTemplateAssociationSpecs(payload);
     } else derived = [];
   } catch {
     derived = [];
@@ -1038,10 +1315,10 @@ function rejectionCode(error: unknown): string | null {
     const response = (error as { response?: unknown }).response;
     if (typeof response === 'object' && response !== null) {
       const code = (response as { code?: unknown }).code;
-      if (typeof code === 'string' && /^(ORG|DATA_MIGRATION)_[A-Z0-9_]{2,80}$/.test(code)) return code;
+      if (typeof code === 'string' && /^(ORG|APPROVAL|DATA_MIGRATION)_[A-Z0-9_]{2,80}$/.test(code)) return code;
     }
   }
-  return error instanceof Error && /^(ORG|DATA_MIGRATION)_[A-Z0-9_]{2,80}$/.test(error.message)
+  return error instanceof Error && /^(ORG|APPROVAL|DATA_MIGRATION)_[A-Z0-9_]{2,80}$/.test(error.message)
     ? error.message : null;
 }
 
@@ -1083,6 +1360,8 @@ const SOURCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const ASSOCIATION_RELATIONSHIPS = [
   'parent_department', 'department', 'primary_department', 'position', 'job_level',
   'employee',
+  'created_by', 'updated_by', 'approved_by',
+  'fixed_approver', 'condition_employee', 'condition_department',
   'declared_reference',
 ] as const;
 const ASSOCIATION_RELATIONSHIP_SET: ReadonlySet<string> = new Set(ASSOCIATION_RELATIONSHIPS);

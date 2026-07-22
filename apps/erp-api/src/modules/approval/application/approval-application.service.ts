@@ -18,12 +18,14 @@ import {
   buildApprovalDelegationEvent,
   buildApprovalInstanceCreatedEvent,
   buildApprovalTemplateEvent,
+  buildApprovalTemplateMigratedEvent,
   createApprovalInstanceDraft,
   createApprovalDelegation,
   createApprovalTemplateDraft,
   createNextApprovalTemplateRevision,
   decideApprovalInstance,
   publishApprovalTemplate,
+  restoreApprovalTemplateFromMigration,
   retireApprovalTemplate,
   revokeApprovalDelegation,
   submitApprovalInstance,
@@ -161,6 +163,22 @@ export interface OpApprovalSubmissionInput {
   readonly sourceDocumentId: string;
 }
 
+export interface ImportApprovalTemplateFromMigrationInput {
+  readonly code: string;
+  readonly name: string;
+  readonly riskLevel: 'R1' | 'R2';
+  readonly revision: number;
+  readonly status: ApprovalTemplate['status'];
+  readonly definition: ApprovalTemplateDefinition;
+  readonly createdByEmployeeId: string;
+  readonly updatedByEmployeeId: string;
+  readonly approvedByEmployeeId: string | null;
+  readonly publishedAt: string | null;
+  readonly retiredAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 /** 审批应用服务：唯一事务编排入口，REST、Worker 与 MCP 必须复用本服务。 */
 @Injectable()
 export class ApprovalApplicationService {
@@ -207,6 +225,55 @@ export class ApprovalApplicationService {
         await this.templates.insert(template, session);
         await this.outbox.append(buildApprovalTemplateEvent(template, 'draft_created'), session);
         return { template: templateSummary(template) };
+      },
+    ));
+  }
+
+  /** 数据迁移专用：恢复模板版本，不重放发布、退役、通知或业务执行。 */
+  async importTemplateFromMigration(
+    key: string,
+    input: ImportApprovalTemplateFromMigrationInput,
+  ): Promise<{ readonly template: ApprovalTemplate }> {
+    this.assertMigrationWriter();
+    return this.run(async () => this.idempotency.execute(
+      'approval.template.import_from_migration', key, input, async (session) => {
+        const tenantId = this.context.getTenantRequired().tenantId;
+        const [createdBy, updatedBy, approvedBy] = await Promise.all([
+          this.requireMigrationActor(input.createdByEmployeeId, session),
+          this.requireMigrationActor(input.updatedByEmployeeId, session),
+          input.approvedByEmployeeId === null
+            ? Promise.resolve(null)
+            : this.requireMigrationActor(input.approvedByEmployeeId, session),
+        ]);
+        const candidate = restoreApprovalTemplateFromMigration({
+          id: createEventId(), tenantId,
+          code: input.code, name: input.name, riskLevel: input.riskLevel,
+          revision: input.revision, status: input.status, definition: input.definition,
+          createdBy, updatedBy, approvedBy,
+          publishedAt: input.publishedAt, retiredAt: input.retiredAt,
+          createdAt: input.createdAt, updatedAt: input.updatedAt,
+        });
+        const existing = await this.templates.findByCodeAndRevision(
+          input.code,
+          input.revision,
+          session,
+        );
+        if (existing !== null) {
+          if (!sameMigratedTemplate(existing, candidate)) throw new ConflictException({
+            code: 'APPROVAL_MIGRATION_TEMPLATE_IMMUTABLE',
+            message: '既有审批模板版本与迁移快照不一致，禁止覆盖',
+          });
+          return { template: existing };
+        }
+        const latest = await this.templates.findLatestByCode(input.code, session);
+        const expectedRevision = latest === null ? 1 : latest.revision + 1;
+        if (input.revision !== expectedRevision) throw new ConflictException({
+          code: 'APPROVAL_MIGRATION_TEMPLATE_REVISION_GAP',
+          message: '审批模板必须按修订号连续迁移',
+        });
+        await this.templates.insert(candidate, session);
+        await this.outbox.append(buildApprovalTemplateMigratedEvent(candidate), session);
+        return { template: candidate };
       },
     ));
   }
@@ -840,6 +907,34 @@ export class ApprovalApplicationService {
     });
   }
 
+  private async requireMigrationActor(
+    employeeId: string,
+    session: ClientSession,
+  ): Promise<string> {
+    const actorId = await this.profiles.findActorIdByEmployee(
+      this.context.getTenantRequired().tenantId,
+      employeeId,
+      session,
+    );
+    if (actorId === null) throw new BadRequestException({
+      code: 'APPROVAL_MIGRATION_IDENTITY_MISSING',
+      message: '审批模板责任员工未映射 ERP 身份',
+    });
+    return actorId;
+  }
+
+  private assertMigrationWriter(): void {
+    const actor = this.context.getActorRequired();
+    if (!['service', 'system_job'].includes(actor.actorType) ||
+      !actor.scopes.includes('erp:migration:execute') ||
+      !actor.scopes.includes('erp:approval:migration:write')) {
+      throw new ForbiddenException({
+        code: 'APPROVAL_MIGRATION_WRITER_DENIED',
+        message: '审批迁移必须由受信任服务身份执行',
+      });
+    }
+  }
+
   private requireActorScope(scope: string): void {
     if (!this.context.getActorRequired().scopes.includes(scope)) {
       throw new ForbiddenException({ code: 'APPROVAL_SCOPE_DENIED', message: '审批操作缺少必要权限' });
@@ -955,6 +1050,22 @@ function delegationView(delegation: ApprovalDelegation): ApprovalDelegationView 
 
 function isDuplicateKeyError(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 11000;
+}
+
+function sameMigratedTemplate(left: ApprovalTemplate, right: ApprovalTemplate): boolean {
+  return left.code === right.code &&
+    left.name === right.name &&
+    left.riskLevel === right.riskLevel &&
+    left.revision === right.revision &&
+    left.status === right.status &&
+    left.definitionHash === right.definitionHash &&
+    left.approvedBy === right.approvedBy &&
+    left.publishedAt === right.publishedAt &&
+    left.retiredAt === right.retiredAt &&
+    left.createdBy === right.createdBy &&
+    left.updatedBy === right.updatedBy &&
+    left.createdAt === right.createdAt &&
+    left.updatedAt === right.updatedAt;
 }
 
 function cloneReadableValue(value: ApprovalFormValue): ApprovalFormValue {

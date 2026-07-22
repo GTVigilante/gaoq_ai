@@ -2,9 +2,9 @@
 
 ## 范围与当前能力
 
-本切片建立可重复、可恢复、可审计的迁移控制面。当前白名单包含 `org_reference`（部门、岗位、职级）、`org_workforce`（员工）与 `org_employment`（劳动关系）三个独立 Scope；审批、招聘、考勤、薪资、附件实体仍需在同一账本协议上按域追加，完成前 Issue #34 与 Phase 5 迁移门禁保持未完成。
+本切片建立可重复、可恢复、可审计的迁移控制面。当前白名单包含 `org_reference`（部门、岗位、职级）、`org_workforce`（员工）、`org_employment`（劳动关系）与 `approval_templates`（审批模板版本）四个独立 Scope；审批实例/动作、招聘、考勤、薪资、附件实体仍需在同一账本协议上按域追加，完成前 Issue #34 与 Phase 5 迁移门禁保持未完成。
 
-目标业务数据禁止由迁移模块直接写集合。`org.department`、`org.position`、`org.job_level`、`org.employee`、`org.employment` 均调用 `OrgApplicationService`，继续执行领域校验、引用校验、幂等、Outbox 和版本并发控制。员工更新、状态变更与开放劳动关系在一个事务内同步；既有员工离职仍必须进入 Care，迁移不得绕过清算、身份吊销与生效日控制。历史劳动关系使用独立恢复入口，不触发正常入职、离职或身份副作用，也不生成新员工。迁移模块只直写自己拥有的运行、条目、来源映射与证据账本。
+目标业务数据禁止由迁移模块直接写集合。组织与劳动关系实体调用 `OrgApplicationService`，审批模板调用 `ApprovalApplicationService`，继续执行领域校验、引用校验、幂等、Outbox 和版本并发控制。员工更新、状态变更与开放劳动关系在一个事务内同步；既有员工离职仍必须进入 Care，迁移不得绕过清算、身份吊销与生效日控制。历史劳动关系使用独立恢复入口，不触发正常入职、离职或身份副作用，也不生成新员工。审批模板迁移只发布明确的 `approval_template.migrated` 事件，不伪装成草稿创建、发布或退役，也不创建通知。迁移模块只直写自己拥有的运行、条目、来源映射与证据账本。
 
 ## 来源包与确定性
 
@@ -16,6 +16,8 @@
 - `org_workforce` 的员工 payload 只接受固定字段：工号、显示名、状态、部门/主部门/岗位/职级来源引用。服务端把来源引用解析为当前租户的 ERP ID；主部门必须属于部门集合，引用缺失、重复或跨 Scope 均拒绝。
 - `org_employment` 必须在对应 `org_workforce` 运行成功后执行。payload 只接受员工来源引用、自然人来源引用、身份核验/入职完成/Offer/签署证据引用、劳动关系状态和起止日期，以及离职时的 Care/执行/终止证据引用。员工引用必须解析为当前租户既有 ERP 员工；开放关系必须与员工状态一致且不能夹带终止字段，已离职关系必须对应 `terminated` 员工并同时具备结束日期与三类终止证据。迁移不接收身份证号、联系方式、合同正文或附件字节。
 - 劳动关系一经恢复即作为历史事实冻结；同一来源记录的相同摘要可安全重放，变更后的快照不得覆盖既有劳动关系，必须进入人工差异处置与经批准的领域修复流程。
+- `approval_templates` 必须在员工及其身份开户完成后执行，并按同一模板编码的修订号从 1 连续导入。payload 只接受模板编码/名称/风险等级/修订/状态、完整定义、责任员工来源引用与生命周期时间；应用服务先把责任员工映射解析为 ERP employeeId，再由身份仓储解析为 actorId，禁止来源系统直接注入 actorId。定义中的固定审批人，以及员工/部门字段条件中的来源引用，也必须逐项进入关联账本并转换成 ERP 主数据 ID。找不到身份、固定审批人或条件引用，修订断层、定义不合法或既有版本不同均失败关闭。
+- 已发布或退役模板必须声明 `governanceEvidenceSourceAttachmentId`，且该标识必须精确存在于本条附件清单；草稿必须为 `null`。治理证据由附件网关校验摘要、扫描并进入 WORM，用于补足历史编辑/独立审批/发布记录；模板集合不保存证明正文。模板版本恢复后不可由后续来源快照覆盖。
 
 `sourceFactHash` 的规范对象固定为 `sourceRecordId`、`sourceVersion`、`entityType`、`payloadHash`、按字典序排列的 `associationSourceIds`，以及按 `sourceAttachmentId` 排列且仅含 ID 与 checksum 的附件数组。滚动来源校验和初值为 `base64url(SHA-256(""))`，第 N 条为 `base64url(SHA-256(previous + "\\n" + sequence + ":" + sourceFactHash))`。来源导出程序必须使用相同算法，并固定 UTF-8、对象键字典序与数组规则。
 
@@ -25,7 +27,7 @@
 - 租户只来自已验证服务身份；payload 不允许 tenantId，实体类型、字段和关联均走固定白名单。
 - 账本不保存来源 payload、姓名、附件内容或 Token，只保存摘要、来源/目标引用、版本、状态和标准拒绝码。
 - `data_migration_associations` 逐项保存关系类型、来源关联 ID、解析后的目标 ID 与 `resolved|missing` 状态；`data_migration_attachments` 逐项保存来源附件 ID、checksum、搬运状态和目标证据引用，严禁保存附件正文。
-- 未知基础设施错误不允许伪装为业务拒绝或推进检查点；只有稳定的 `ORG_*` / `DATA_MIGRATION_*` 规则错误进入拒绝账本。
+- 未知基础设施错误不允许伪装为业务拒绝或推进检查点；只有稳定的 `ORG_*` / `APPROVAL_*` / `DATA_MIGRATION_*` 规则错误进入拒绝账本。
 - 附件证据逐项登记为 `pending`，全部来源记录处理完成后由独立 Worker 调用隔离附件网关。网关自行拉取来源正文，完成 checksum 复核、恶意文件扫描与不可变归档；ERP 进程只接收严格绑定摘要的回执。`pending|processing` 生成 High 差异，网关拒绝生成 Critical 差异并阻止 Phase 6。未解析关联同样生成 Critical 差异。
 
 ## REST、MCP 与审计

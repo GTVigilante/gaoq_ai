@@ -107,6 +107,8 @@ export class DataMigrationAssociationRecord {
     enum: [
       'parent_department', 'department', 'primary_department', 'position', 'job_level',
       'employee',
+      'created_by', 'updated_by', 'approved_by',
+      'fixed_approver', 'condition_employee', 'condition_department',
       'declared_reference',
     ],
   })
@@ -117,6 +119,12 @@ export class DataMigrationAssociationRecord {
     | 'position'
     | 'job_level'
     | 'employee'
+    | 'created_by'
+    | 'updated_by'
+    | 'approved_by'
+    | 'fixed_approver'
+    | 'condition_employee'
+    | 'condition_department'
     | 'declared_reference';
   @Prop({ type: String, required: true, immutable: true, match: SOURCE_ID })
   sourceAssociationId!: string;

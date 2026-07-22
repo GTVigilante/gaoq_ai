@@ -110,6 +110,24 @@ export interface CreateApprovalTemplateInput {
   readonly actorId: string;
 }
 
+export interface RestoreApprovalTemplateFromMigrationInput {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly code: string;
+  readonly name: string;
+  readonly riskLevel: 'R1' | 'R2';
+  readonly revision: number;
+  readonly status: ApprovalTemplateStatus;
+  readonly definition: ApprovalTemplateDefinition;
+  readonly createdBy: string;
+  readonly updatedBy: string;
+  readonly approvedBy: string | null;
+  readonly publishedAt: string | null;
+  readonly retiredAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 const MAX_FIELDS = 100;
 const MAX_NODES = 50;
 const MAX_OPTIONS = 200;
@@ -145,6 +163,81 @@ export function createApprovalTemplateDraft(
     updatedBy: input.actorId,
     createdAt: occurredAt,
     updatedAt: occurredAt,
+  });
+}
+
+/** 数据迁移专用：恢复模板版本事实，不重放发布或退役业务动作。 */
+export function restoreApprovalTemplateFromMigration(
+  input: RestoreApprovalTemplateFromMigrationInput,
+): ApprovalTemplate {
+  validateTemplateIdentity({
+    id: input.id,
+    tenantId: input.tenantId,
+    code: input.code,
+    name: input.name,
+    riskLevel: input.riskLevel,
+    definition: input.definition,
+    actorId: input.createdBy,
+  });
+  assertApprovalId(input.updatedBy, 'updatedBy');
+  assertPositiveVersion(input.revision, 'revision');
+  if (!['draft', 'published', 'retired'].includes(input.status)) {
+    throw new ApprovalDomainError('APPROVAL_TEMPLATE_STATUS_INVALID', '模板迁移状态无效');
+  }
+  const definition = normalizeAndValidateDefinition(input.definition);
+  const createdAt = migrationIso(input.createdAt, 'createdAt');
+  const updatedAt = migrationIso(input.updatedAt, 'updatedAt');
+  if (updatedAt < createdAt) throw new ApprovalDomainError(
+    'APPROVAL_TEMPLATE_MIGRATION_TIME_INVALID', '模板更新时间早于创建时间',
+  );
+  const publishedAt = input.publishedAt === null
+    ? null
+    : migrationIso(input.publishedAt, 'publishedAt');
+  const retiredAt = input.retiredAt === null
+    ? null
+    : migrationIso(input.retiredAt, 'retiredAt');
+  if (input.status === 'draft') {
+    if (input.approvedBy !== null || publishedAt !== null || retiredAt !== null) {
+      throw new ApprovalDomainError(
+        'APPROVAL_TEMPLATE_MIGRATION_STATE_INVALID', '草稿模板不能包含发布或退役事实',
+      );
+    }
+  } else {
+    if (input.approvedBy === null || publishedAt === null) throw new ApprovalDomainError(
+      'APPROVAL_TEMPLATE_MIGRATION_STATE_INVALID', '已发布模板缺少审批人与发布时间',
+    );
+    assertApprovalId(input.approvedBy, 'approvedBy');
+    if (publishedAt < createdAt || publishedAt > updatedAt) throw new ApprovalDomainError(
+      'APPROVAL_TEMPLATE_MIGRATION_TIME_INVALID', '模板发布时间不在版本生命周期内',
+    );
+    if (input.status === 'retired') {
+      if (retiredAt === null || retiredAt < publishedAt || retiredAt > updatedAt) {
+        throw new ApprovalDomainError(
+          'APPROVAL_TEMPLATE_MIGRATION_TIME_INVALID', '模板退役时间不在版本生命周期内',
+        );
+      }
+    } else if (retiredAt !== null) throw new ApprovalDomainError(
+      'APPROVAL_TEMPLATE_MIGRATION_STATE_INVALID', '已发布模板不能包含退役时间',
+    );
+  }
+  return deepFreeze({
+    id: input.id,
+    tenantId: input.tenantId,
+    code: input.code,
+    name: input.name.trim(),
+    riskLevel: input.riskLevel,
+    revision: input.revision,
+    status: input.status,
+    definition,
+    definitionHash: hashDefinition(definition),
+    approvedBy: input.approvedBy,
+    publishedAt,
+    retiredAt,
+    version: 1,
+    createdBy: input.createdBy,
+    updatedBy: input.updatedBy,
+    createdAt,
+    updatedAt,
   });
 }
 
@@ -327,6 +420,17 @@ function assertRiskLevel(value: unknown): asserts value is 'R1' | 'R2' {
   if (value !== 'R1' && value !== 'R2') {
     throw new ApprovalDomainError('APPROVAL_TEMPLATE_RISK_INVALID', '模板风险等级只允许 R1/R2');
   }
+}
+
+function migrationIso(value: string, field: string): string {
+  if (typeof value !== 'string') {
+    throw new ApprovalDomainError('APPROVAL_INVALID_DATE', `${field} 时间无效`);
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new ApprovalDomainError('APPROVAL_INVALID_DATE', `${field} 时间无效`);
+  }
+  return parsed.toISOString();
 }
 
 function normalizeAndValidateDefinition(

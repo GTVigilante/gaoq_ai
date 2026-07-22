@@ -106,11 +106,16 @@ function idempotency(): IdempotencyService {
 
 function dependencies(overrides: Record<string, unknown> = {}) {
   return {
-    profiles: { resolveActive: vi.fn().mockResolvedValue({ actorId: 'actor-001' }) },
+    profiles: {
+      resolveActive: vi.fn().mockResolvedValue({ actorId: 'actor-001' }),
+      findActorIdByEmployee: vi.fn((_: string, employeeId: string) =>
+        Promise.resolve(`actor-${employeeId}`)),
+    },
     templates: {
       findPublishedByCode: vi.fn().mockResolvedValue(template()),
       findPublished: vi.fn().mockResolvedValue([template()]),
       findLatestByCode: vi.fn().mockResolvedValue(null),
+      findByCodeAndRevision: vi.fn().mockResolvedValue(null),
       findById: vi.fn().mockResolvedValue(template()),
       insert: vi.fn(),
       replace: vi.fn(),
@@ -153,6 +158,53 @@ function service(
 }
 
 describe('ApprovalApplicationService', () => {
+  it('迁移服务按员工身份映射连续恢复模板版本且不重放通知', async () => {
+    const deps = dependencies();
+    const result = await service(
+      deps,
+      opWorkerContext(['erp:migration:execute', 'erp:approval:migration:write']),
+    ).importTemplateFromMigration('migration-template-key', {
+      code: 'LEGACY_EXPENSE', name: '历史费用审批', riskLevel: 'R2', revision: 1,
+      status: 'published', definition: definition(),
+      createdByEmployeeId: 'employee-editor', updatedByEmployeeId: 'employee-approver',
+      approvedByEmployeeId: 'employee-approver',
+      publishedAt: '2020-01-02T00:00:00.000Z', retiredAt: null,
+      createdAt: '2020-01-01T00:00:00.000Z', updatedAt: '2020-01-02T00:00:00.000Z',
+    });
+
+    expect(result.template).toMatchObject({
+      code: 'LEGACY_EXPENSE', revision: 1, status: 'published',
+      createdBy: 'actor-employee-editor', approvedBy: 'actor-employee-approver',
+    });
+    expect(deps.templates.insert).toHaveBeenCalledWith(result.template, SESSION);
+    expect(deps.outbox.append).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'approval_template.migrated' }), SESSION,
+    );
+    expect(deps.notifications.append).not.toHaveBeenCalled();
+  });
+
+  it('审批模板迁移拒绝修订号断层和普通用户执行', async () => {
+    const deps = dependencies();
+    deps.templates.findLatestByCode.mockResolvedValue(template());
+    const input = {
+      code: 'EXPENSE', name: '历史费用审批', riskLevel: 'R1' as const, revision: 3,
+      status: 'draft' as const, definition: definition(),
+      createdByEmployeeId: 'employee-editor', updatedByEmployeeId: 'employee-editor',
+      approvedByEmployeeId: null, publishedAt: null, retiredAt: null,
+      createdAt: '2020-01-01T00:00:00.000Z', updatedAt: '2020-01-01T00:00:00.000Z',
+    };
+    await expect(service(
+      deps,
+      opWorkerContext(['erp:migration:execute', 'erp:approval:migration:write']),
+    ).importTemplateFromMigration('migration-template-gap', input)).rejects.toMatchObject({
+      response: { code: 'APPROVAL_MIGRATION_TEMPLATE_REVISION_GAP' },
+    });
+    await expect(service(deps).importTemplateFromMigration(
+      'migration-template-user', input,
+    )).rejects.toBeInstanceOf(ForbiddenException);
+    expect(deps.templates.insert).not.toHaveBeenCalled();
+  });
+
   it('已发布模板目录只返回表单字段，不泄漏审批节点、审批人或租户', async () => {
     const deps = dependencies();
     const result = await service(deps).listPublishedTemplateForms();

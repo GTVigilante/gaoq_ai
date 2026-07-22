@@ -23,6 +23,10 @@ export type ApprovalDomainEvent =
   | ApprovalEvent<'approval_template.retired', {
       readonly code: string; readonly revision: number;
     }>
+  | ApprovalEvent<'approval_template.migrated', {
+      readonly code: string; readonly revision: number; readonly status: ApprovalTemplate['status'];
+      readonly riskLevel: 'R1' | 'R2'; readonly definitionHash: string;
+    }>
   | ApprovalEvent<'approval_instance.draft_created', {
       readonly initiatorId: string; readonly templateCode: string; readonly templateRevision: number;
       readonly riskLevel: 'R1' | 'R2'; readonly formDataHash: string;
@@ -123,6 +127,26 @@ export function buildApprovalTemplateEvent(
     ...common,
     type: 'approval_template.retired',
     payload: { code: template.code, revision: template.revision },
+  };
+}
+
+/** 迁移事件只披露模板控制元数据，不伪装成发布或退役动作。 */
+export function buildApprovalTemplateMigratedEvent(
+  template: ApprovalTemplate,
+): ApprovalDomainEvent {
+  return {
+    type: 'approval_template.migrated',
+    tenantId: template.tenantId,
+    aggregateId: template.id,
+    version: template.version,
+    occurredAt: template.updatedAt,
+    payload: {
+      code: template.code,
+      revision: template.revision,
+      status: template.status,
+      riskLevel: template.riskLevel,
+      definitionHash: template.definitionHash,
+    },
   };
 }
 

@@ -2,6 +2,7 @@ import type { Model } from 'mongoose';
 import { describe, expect, it, vi } from 'vitest';
 
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
+import type { ApprovalApplicationService } from '../../approval/application/approval-application.service.js';
 import type { OrgApplicationService } from '../../org/application/org-application.service.js';
 import type {
   DataMigrationAssociationDocument,
@@ -19,7 +20,9 @@ function trusted<T>(context: TenantContextService, action: () => T): T {
     tenant: { tenantId: 'tenant-001', source: 'service_identity' },
     actor: {
       actorId: 'migration-agent-001', actorType: 'service', tenantId: 'tenant-001',
-      roleCodes: ['migration'], scopes: ['erp:migration:execute', 'erp:org:master:write'],
+      roleCodes: ['migration'], scopes: [
+        'erp:migration:execute', 'erp:org:master:write', 'erp:approval:migration:write',
+      ],
       departmentIds: [], traceId: 'trace-migration-001',
     },
   }, action);
@@ -64,6 +67,10 @@ function workforceRun() {
 
 function employmentRun() {
   return { ...run(), scope: 'org_employment' as const };
+}
+
+function approvalTemplateRun() {
+  return { ...run(), scope: 'approval_templates' as const };
 }
 
 function query<T>(value: T) { return { lean: () => ({ exec: () => Promise.resolve(value) }) }; }
@@ -395,6 +402,156 @@ describe('DataMigrationService', () => {
       expect.objectContaining({ $set: { targetId: 'employee-001', status: 'resolved' } }),
       expect.objectContaining({ upsert: true }),
     );
+  });
+
+  it('审批模板迁移解析责任员工、要求治理附件并只调用审批应用服务', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      code: 'LEGACY_EXPENSE', name: '历史费用审批', riskLevel: 'R2', revision: 1,
+      status: 'published',
+      definition: {
+        fields: [{
+          key: 'amount', label: '金额', type: 'money_minor', required: true, sensitivity: 'L2',
+        }, {
+          key: 'department_id', label: '部门', type: 'department',
+          required: true, sensitivity: 'L2',
+        }],
+        nodes: [{
+          id: 'manager', name: '经理审批', type: 'approval', approvalMode: 'all',
+          resolver: { type: 'employees', employeeIds: ['legacy-employee-manager'] },
+          condition: { op: 'eq', field: 'department_id', value: 'legacy-department-finance' },
+        }],
+      },
+      createdByEmployeeSourceId: 'legacy-employee-editor',
+      updatedByEmployeeSourceId: 'legacy-employee-approver',
+      approvedByEmployeeSourceId: 'legacy-employee-approver',
+      governanceEvidenceSourceAttachmentId: 'legacy-template-evidence-001',
+      publishedAt: '2020-01-02T00:00:00.000Z', retiredAt: null,
+      createdAt: '2020-01-01T00:00:00.000Z', updatedAt: '2020-01-02T00:00:00.000Z',
+    };
+    const input = {
+      sequence: 1, sourceRecordId: 'legacy-template-001', sourceVersion: '1',
+      entityType: 'approval.template' as const, payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: [
+        'legacy-employee-editor', 'legacy-employee-approver', 'legacy-employee-manager',
+        'legacy-department-finance',
+      ],
+      attachments: [{ sourceAttachmentId: 'legacy-template-evidence-001', checksum: 'a'.repeat(43) }],
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(approvalTemplateRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const employeeTargets: Readonly<Record<string, string>> = {
+      'legacy-employee-editor': 'employee-editor',
+      'legacy-employee-approver': 'employee-approver',
+      'legacy-employee-manager': 'employee-manager',
+      'legacy-department-finance': 'department-finance',
+    };
+    const mappings = {
+      findOne: vi.fn((filter: { entityType: string; sourceRecordId: string }) => query(
+        filter.entityType === 'approval.template'
+          ? null
+          : { targetId: employeeTargets[filter.sourceRecordId], targetVersion: 1 },
+      )),
+      findOneAndUpdate: vi.fn().mockReturnValue(query({ targetId: 'template-001' })),
+    };
+    const associations = { findOneAndUpdate: vi.fn().mockReturnValue(query({})) };
+    const attachments = {
+      findOne: vi.fn().mockReturnValue(query(null)),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 0 }) }),
+    };
+    const approvals = {
+      importTemplateFromMigration: vi.fn().mockResolvedValue({ template: {
+        id: 'template-001', tenantId: 'tenant-001', code: 'LEGACY_EXPENSE',
+        name: '历史费用审批', riskLevel: 'R2', revision: 1, status: 'published',
+        definition: payload.definition, definitionHash: 'd'.repeat(43),
+        createdBy: 'actor-editor', updatedBy: 'actor-approver', approvedBy: 'actor-approver',
+        publishedAt: payload.publishedAt, retiredAt: null, version: 1,
+        createdAt: payload.createdAt, updatedAt: payload.updatedAt,
+      } }),
+    };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      mappings as unknown as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+      approvals as unknown as ApprovalApplicationService,
+    );
+
+    const result = await trusted(context, () => service.apply(RUN_ID, input));
+
+    expect(result).toMatchObject({ status: 'applied', targetId: 'template-001' });
+    expect(approvals.importTemplateFromMigration).toHaveBeenCalledWith(
+      expect.stringMatching(/^migration:/u),
+      expect.any(Object),
+    );
+    const approvalCommand = approvals.importTemplateFromMigration.mock.calls[0]?.[1] as unknown;
+    expect(approvalCommand).toMatchObject({
+      createdByEmployeeId: 'employee-editor',
+      updatedByEmployeeId: 'employee-approver',
+      approvedByEmployeeId: 'employee-approver',
+      definition: {
+        nodes: [expect.objectContaining({
+          resolver: { type: 'employees', employeeIds: ['employee-manager'] },
+          condition: { op: 'eq', field: 'department_id', value: 'department-finance' },
+        })],
+      },
+    });
+    expect(associations.findOneAndUpdate).toHaveBeenCalledTimes(5);
+  });
+
+  it('已发布审批模板缺少治理附件时拒绝且不调用领域服务', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      code: 'LEGACY', name: '历史审批', riskLevel: 'R1', revision: 1,
+      status: 'published', definition: {
+        fields: [{
+          key: 'amount', label: '金额', type: 'money_minor', required: true, sensitivity: 'L2',
+        }],
+        nodes: [{
+          id: 'manager', name: '经理审批', type: 'approval', approvalMode: 'all',
+          resolver: { type: 'initiator_manager' },
+        }],
+      },
+      createdByEmployeeSourceId: 'legacy-editor',
+      updatedByEmployeeSourceId: 'legacy-approver',
+      approvedByEmployeeSourceId: 'legacy-approver',
+      governanceEvidenceSourceAttachmentId: 'legacy-template-evidence-001',
+      publishedAt: '2020-01-02T00:00:00.000Z', retiredAt: null,
+      createdAt: '2020-01-01T00:00:00.000Z', updatedAt: '2020-01-02T00:00:00.000Z',
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(approvalTemplateRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const mappings = { findOne: vi.fn().mockReturnValue(query(null)) };
+    const associations = { findOneAndUpdate: vi.fn().mockReturnValue(query({})) };
+    const approvals = { importTemplateFromMigration: vi.fn() };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      mappings as unknown as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      {} as Model<DataMigrationAttachmentDocument>,
+      approvals as unknown as ApprovalApplicationService,
+    );
+    const result = await trusted(context, () => service.apply(RUN_ID, {
+      sequence: 1, sourceRecordId: 'legacy-template-001', sourceVersion: '1',
+      entityType: 'approval.template', payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: ['legacy-editor', 'legacy-approver'], attachments: [],
+    }));
+    expect(result).toMatchObject({
+      status: 'rejected', rejectionCode: 'DATA_MIGRATION_GOVERNANCE_EVIDENCE_REQUIRED',
+    });
+    expect(approvals.importTemplateFromMigration).not.toHaveBeenCalled();
   });
 
   it('规范 JSON 与滚动校验和不受对象字段顺序影响', () => {

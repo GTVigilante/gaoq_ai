@@ -113,6 +113,17 @@ export class ApprovalTemplateRepository extends TenantBoundApprovalRepository {
     return record === null ? null : this.toDomain(record);
   }
 
+  async findByCodeAndRevision(
+    code: string,
+    revision: number,
+    session?: ClientSession,
+  ): Promise<ApprovalTemplate | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), code, revision });
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record === null ? null : this.toDomain(record);
+  }
+
   async findPublishedByCode(code: string, session?: ClientSession): Promise<ApprovalTemplate | null> {
     const query = this.records.findOne({ tenantId: this.tenantId(), code, status: 'published' });
     if (session !== undefined) query.session(session);
