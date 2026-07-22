@@ -1,10 +1,12 @@
 import { readFile } from 'node:fs/promises';
 
 const workflowPath = new URL('../.github/workflows/phase-5-security.yml', import.meta.url);
+const resilienceWorkflowPath = new URL('../.github/workflows/phase-5-resilience.yml', import.meta.url);
 const packagePath = new URL('../package.json', import.meta.url);
 const bearerIgnorePath = new URL('../bearer.ignore', import.meta.url);
 const gitleaksConfigPath = new URL('../.gitleaks.toml', import.meta.url);
 const workflow = await readFile(workflowPath, 'utf8');
+const resilienceWorkflow = await readFile(resilienceWorkflowPath, 'utf8');
 const packageDocument = JSON.parse(await readFile(packagePath, 'utf8'));
 const bearerIgnore = JSON.parse(await readFile(bearerIgnorePath, 'utf8'));
 const gitleaksConfig = await readFile(gitleaksConfigPath, 'utf8');
@@ -37,8 +39,44 @@ for (const marker of [
   '6124dba176dc563f66363a11ae0c47f9b86b8a4a84c66a793670bd196ed86cd5',
   'node scripts/security/run-phase-5-dast.mjs --self-test',
   'node scripts/security/validate-phase-5-dast-evidence.mjs --self-test',
+  'resilience-contract:',
+  'node scripts/resilience/validate-phase-5-resilience-evidence.mjs --self-test',
 ]) {
   if (!workflow.includes(marker)) throw new Error('PHASE5_SECURITY_GATE_INCOMPLETE');
+}
+
+const resilienceActionReferences = [
+  ...resilienceWorkflow.matchAll(/^\s*uses:\s*([^\s#]+)(?:\s*#.*)?$/gmu),
+].map((match) => match[1]);
+if (resilienceActionReferences.length !== 5 || resilienceActionReferences.some(
+  (reference) => reference === undefined || !/@[a-f0-9]{40}$/u.test(reference),
+)) throw new Error('PHASE5_RESILIENCE_ACTION_NOT_PINNED');
+
+for (const marker of [
+  'workflow_dispatch:',
+  "test \"$GITHUB_REF\" = 'refs/heads/main'",
+  'environment: phase-5-resilience',
+  '- phase-5-resilience',
+  'RESILIENCE_EVIDENCE_PATH: /var/lib/gaoq/resilience/phase-5-resilience.json',
+  'RESILIENCE_EXPECTED_ENVIRONMENT: ${{ vars.RESILIENCE_ENVIRONMENT_NAME }}',
+  'RESILIENCE_EXPECTED_REGION: ${{ vars.RESILIENCE_REGION }}',
+  'RESILIENCE_EXPECTED_COMMIT: ${{ github.sha }}',
+  'RESILIENCE_EXPECTED_API_IMAGE: ${{ vars.RESILIENCE_API_IMAGE_DIGEST }}',
+  'RESILIENCE_EXPECTED_WORKER_IMAGE: ${{ vars.RESILIENCE_WORKER_IMAGE_DIGEST }}',
+  'RESILIENCE_EXPECTED_WEB_IMAGE: ${{ vars.RESILIENCE_WEB_IMAGE_DIGEST }}',
+  'RESILIENCE_EXPECTED_DEPLOYMENT_MANIFEST: ${{ vars.RESILIENCE_DEPLOYMENT_MANIFEST_SHA256 }}',
+  '--enforce-environment',
+  'phase-5-resilience-verdict-${{ github.sha }}',
+  'retention-days: 30',
+]) {
+  if (!resilienceWorkflow.includes(marker)) throw new Error('PHASE5_RESILIENCE_WORKFLOW_INCOMPLETE');
+}
+for (const forbidden of [
+  'pull_request:', 'push:', 'workflow_call:', '${{ inputs.', '${{ secrets.',
+]) {
+  if (resilienceWorkflow.includes(forbidden)) {
+    throw new Error('PHASE5_RESILIENCE_WORKFLOW_UNSAFE');
+  }
 }
 
 if (workflow.includes('actions/dependency-review-action@')) {

@@ -24,7 +24,9 @@
     "security:dast:validate-evidence": "node scripts/security/validate-phase-5-dast-evidence.mjs",
     "performance:validate": "node scripts/performance/validate-phase-5-capacity.mjs",
     "performance:self-test": "node scripts/performance/validate-phase-5-capacity.mjs --self-test",
-    "check": "pnpm lint && pnpm typecheck && pnpm test && node scripts/validate-docs.mjs && pnpm security:validate && pnpm security:containers && pnpm security:dast:self-test && pnpm performance:self-test"
+    "resilience:validate-evidence": "node scripts/resilience/validate-phase-5-resilience-evidence.mjs",
+    "resilience:self-test": "node scripts/resilience/validate-phase-5-resilience-evidence.mjs --self-test",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && node scripts/validate-docs.mjs && pnpm security:validate && pnpm security:containers && pnpm security:dast:self-test && pnpm performance:self-test && pnpm resilience:self-test"
   },
   "pnpm": {
     "overrides": {
