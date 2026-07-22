@@ -8,6 +8,8 @@ const HASH_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const BLIND_INDEX_PATTERN = /^[A-Za-z0-9._-]{1,64}\.[A-Za-z0-9_-]{43}$/;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 const FACT_TYPES = ['punch_in', 'punch_out', 'shift', 'leave', 'overtime', 'travel'] as const;
+const MIGRATION_EVIDENCE_REF_PATTERN =
+  /^erp:\/\/data-migrations\/runs\/[0-7][0-9A-HJKMNP-TV-Z]{25}\/attachments\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 abstract class ProtectedRecord {
   @Prop({ type: String, required: true, maxlength: 64, match: ID_PATTERN }) dataKeyId!: string;
@@ -34,17 +36,35 @@ export class AttendanceSourceFactRecord extends ProtectedRecord {
   @Prop({ type: Date, required: true, immutable: true }) sourceObservedAt!: Date;
   @Prop({ type: [{ type: String, match: BLIND_INDEX_PATTERN }], required: true, immutable: true })
   sourceEventBlindIndexes!: string[];
+  @Prop({
+    type: String, default: null, immutable: true, maxlength: 256,
+    match: MIGRATION_EVIDENCE_REF_PATTERN,
+  })
+  migrationEvidenceRef!: string | null;
+  @Prop({ type: String, default: null, immutable: true, match: HASH_PATTERN })
+  migrationEvidenceChecksum!: string | null;
   createdAt!: Date;
   updatedAt!: Date;
 }
 export type AttendanceSourceFactDocument = HydratedDocument<AttendanceSourceFactRecord>;
 export const AttendanceSourceFactRecordSchema = SchemaFactory.createForClass(AttendanceSourceFactRecord);
+AttendanceSourceFactRecordSchema.pre('validate', function () {
+  const record = this as AttendanceSourceFactRecord;
+  if ((record.migrationEvidenceRef === null) !==
+    (record.migrationEvidenceChecksum === null)) {
+    throw new Error('考勤源事实迁移证据引用与校验和必须成对出现');
+  }
+});
 AttendanceSourceFactRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 AttendanceSourceFactRecordSchema.index(
   { tenantId: 1, sourceEventBlindIndexes: 1 }, { unique: true },
 );
 AttendanceSourceFactRecordSchema.index({ tenantId: 1, employeeId: 1, businessDate: 1 });
 AttendanceSourceFactRecordSchema.index({ tenantId: 1, sourceObservedAt: 1 });
+AttendanceSourceFactRecordSchema.index(
+  { tenantId: 1, migrationEvidenceRef: 1 },
+  { unique: true, partialFilterExpression: { migrationEvidenceRef: { $type: 'string' } } },
+);
 
 /** 审批通过后的替换影响只追加，不覆盖源事实。 */
 @Schema({ collection: 'attendance_corrections', timestamps: true, versionKey: false, id: false })

@@ -8,6 +8,7 @@ import type { RecruitmentManagementService } from '../../recruitment/application
 import type { RecruitmentApplicationService } from '../../recruitment/application/recruitment-application.service.js';
 import type { RecruitmentInterviewService } from '../../recruitment/application/recruitment-interview.service.js';
 import type { RecruitmentOfferService } from '../../recruitment/application/recruitment-offer.service.js';
+import type { AttendanceApplicationService } from '../../attendance/application/attendance-application.service.js';
 import type {
   DataMigrationAssociationDocument,
   DataMigrationAttachmentDocument,
@@ -27,6 +28,7 @@ function trusted<T>(context: TenantContextService, action: () => T): T {
       roleCodes: ['migration'], scopes: [
         'erp:migration:execute', 'erp:org:master:write', 'erp:approval:migration:write',
         'erp:recruitment:migration:write',
+        'erp:attendance:migration:write',
       ],
       departmentIds: [], traceId: 'trace-migration-001',
     },
@@ -104,6 +106,10 @@ function recruitmentInterviewsRun() {
 
 function recruitmentOffersRun() {
   return { ...run(), scope: 'recruitment_offers' as const };
+}
+
+function attendanceSourceFactsRun() {
+  return { ...run(), scope: 'attendance_source_facts' as const };
 }
 
 function query<T>(value: T) { return { lean: () => ({ exec: () => Promise.resolve(value) }) }; }
@@ -1332,6 +1338,70 @@ describe('DataMigrationService', () => {
     );
     const item = items.create.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
     expect(JSON.stringify(item)).not.toMatch(/标准福利计划|monthlyBaseSalaryMinor/u);
+  });
+
+  it('考勤源事实迁移解析员工并且账本不保存 L4 分钟或外部事件标识', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      employeeSourceId: 'legacy-employee-001', providerCode: 'legacy_hr',
+      externalEventId: 'legacy-attendance-event-001', factType: 'shift',
+      occurredAt: '2026-04-01T01:00:00.000Z', timeZone: 'Asia/Shanghai',
+      impact: { workedMinutes: 480, leaveMinutes: 0, overtimeMinutes: 0, absentMinutes: 0 },
+      sourceObservedAt: '2026-04-01T01:01:00.000Z',
+      createdAt: '2026-04-01T01:02:00.000Z',
+      sourceEvidenceSourceAttachmentId: 'attendance-source-001',
+      sourceEvidenceChecksum: 'd'.repeat(43),
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(attendanceSourceFactsRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const mappings = {
+      findOne: vi.fn((filter: { entityType: string }) => query(
+        filter.entityType === 'attendance.source_fact'
+          ? null
+          : { targetId: 'employee-001', targetVersion: 1 },
+      )),
+      findOneAndUpdate: vi.fn().mockReturnValue(query({ targetId: 'attendance-fact-001' })),
+    };
+    const associations = { findOneAndUpdate: vi.fn().mockReturnValue(query({})) };
+    const attachments = {
+      findOne: vi.fn().mockReturnValue(query(null)),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const attendance = { importSourceFactFromMigration: vi.fn().mockResolvedValue({ fact: {
+      id: 'attendance-fact-001', employeeId: 'employee-001', providerCode: 'legacy_hr',
+      factType: 'shift', businessDate: '2026-04-01', version: 1,
+    } }) };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      mappings as unknown as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+      undefined, undefined, undefined, undefined, undefined,
+      attendance as unknown as AttendanceApplicationService,
+    );
+    const result = await trusted(context, () => service.apply(RUN_ID, {
+      sequence: 1, sourceRecordId: 'legacy-attendance-001', sourceVersion: '1',
+      entityType: 'attendance.source_fact', payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: ['legacy-employee-001'],
+      attachments: [{ sourceAttachmentId: 'attendance-source-001', checksum: 'd'.repeat(43) }],
+    }));
+    expect(result).toMatchObject({ status: 'applied', targetId: 'attendance-fact-001' });
+    expect(attendance.importSourceFactFromMigration).toHaveBeenCalledWith(
+      expect.stringMatching(/^migration:/u),
+      expect.objectContaining({
+        employeeId: 'employee-001', externalEventId: 'legacy-attendance-event-001',
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${RUN_ID}/attachments/attendance-source-001`,
+      }),
+    );
+    const item = items.create.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
+    expect(JSON.stringify(item)).not.toMatch(/workedMinutes|480|legacy-attendance-event-001/u);
   });
 
   it('未解析关联和未决附件进入 Phase 6 硬门禁', async () => {

@@ -45,6 +45,10 @@ import {
   RecruitmentOfferService,
   type ImportRecruitmentOfferFromMigrationInput,
 } from '../../recruitment/application/recruitment-offer.service.js';
+import {
+  AttendanceApplicationService,
+  type ImportAttendanceSourceFactFromMigrationInput,
+} from '../../attendance/application/attendance-application.service.js';
 import type {
   CreateDepartmentDto,
   CreateEmployeeDto,
@@ -150,6 +154,8 @@ export class DataMigrationService {
     private readonly recruitmentInterviews?: RecruitmentInterviewService,
     @Inject(RecruitmentOfferService)
     private readonly recruitmentOffers?: RecruitmentOfferService,
+    @Inject(AttendanceApplicationService)
+    private readonly attendance?: AttendanceApplicationService,
   ) {}
 
   async start(input: CreateDataMigrationRunDto) {
@@ -553,6 +559,17 @@ export class DataMigrationService {
       await Promise.all(uniqueAssociationTargets(specs).map(async (spec) =>
         this.requireMapping(run, spec.entityType, spec.sourceAssociationId)));
       return;
+    } else if (input.entityType === 'attendance.source_fact') {
+      const payload = attendanceSourceFactPayload(input.payload);
+      assertAssociations(input.associationSourceIds, [payload.employeeSourceId]);
+      const evidence = input.attachments.find((attachment) =>
+        attachment.sourceAttachmentId === payload.sourceEvidenceSourceAttachmentId);
+      if (input.attachments.length !== 1 ||
+        evidence?.checksum !== payload.sourceEvidenceChecksum) {
+        throw new Error('DATA_MIGRATION_ATTENDANCE_SOURCE_EVIDENCE_REQUIRED');
+      }
+      await this.requireMapping(run, 'org.employee', payload.employeeSourceId);
+      return;
     } else {
       const payload = approvalTemplatePayload(input.payload);
       const specs = approvalTemplateAssociationSpecs(payload);
@@ -929,6 +946,27 @@ export class DataMigrationService {
         evidenceChecksum: payload.offerEvidenceChecksum,
       });
       return target(result.offer);
+    }
+    if (input.entityType === 'attendance.source_fact') {
+      const payload = attendanceSourceFactPayload(input.payload);
+      if (this.attendance === undefined) throw new Error('迁移考勤源事实适配器未装配');
+      const employee = await this.requireMapping(run, 'org.employee', payload.employeeSourceId);
+      const result = await this.attendance.importSourceFactFromMigration(key, {
+        targetId: mapping?.targetId ?? null,
+        employeeId: employee.targetId,
+        providerCode: payload.providerCode,
+        externalEventId: payload.externalEventId,
+        factType: payload.factType,
+        occurredAt: payload.occurredAt,
+        timeZone: payload.timeZone,
+        impact: payload.impact,
+        sourceObservedAt: payload.sourceObservedAt,
+        createdAt: payload.createdAt,
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${run.id}/attachments/${payload.sourceEvidenceSourceAttachmentId}`,
+        evidenceChecksum: payload.sourceEvidenceChecksum,
+      });
+      return target(result.fact);
     }
     const payload = approvalTemplatePayload(input.payload);
     if (this.approvals === undefined) throw new Error('迁移审批适配器未装配');
@@ -2574,6 +2612,67 @@ function recruitmentOfferAssociationSpecs(
   ]);
 }
 
+type AttendanceSourceFactMigrationPayload = Omit<
+  ImportAttendanceSourceFactFromMigrationInput,
+  'targetId' | 'employeeId' | 'migrationEvidenceRef' | 'evidenceChecksum'
+> & {
+  readonly employeeSourceId: string;
+  readonly sourceEvidenceSourceAttachmentId: string;
+  readonly sourceEvidenceChecksum: string;
+};
+
+function attendanceSourceFactPayload(
+  value: Readonly<Record<string, unknown>>,
+): AttendanceSourceFactMigrationPayload {
+  exactKeys(value, [
+    'createdAt', 'employeeSourceId', 'externalEventId', 'factType', 'impact',
+    'occurredAt', 'providerCode', 'sourceEvidenceChecksum',
+    'sourceEvidenceSourceAttachmentId', 'sourceObservedAt', 'timeZone',
+  ]);
+  if (typeof value.employeeSourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.employeeSourceId) ||
+    typeof value.sourceEvidenceSourceAttachmentId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.sourceEvidenceSourceAttachmentId) ||
+    typeof value.providerCode !== 'string' || !/^[a-z][a-z0-9_]{1,31}$/.test(value.providerCode) ||
+    typeof value.externalEventId !== 'string' ||
+    !/^[\x20-\x7e]{1,256}$/.test(value.externalEventId) ||
+    !['punch_in', 'punch_out', 'shift', 'leave', 'overtime', 'travel']
+      .includes(String(value.factType)) ||
+    typeof value.timeZone !== 'string' || value.timeZone.length < 1 || value.timeZone.length > 64 ||
+    !isStrictUtcIso(value.occurredAt) || !isStrictUtcIso(value.sourceObservedAt) ||
+    !isStrictUtcIso(value.createdAt) || typeof value.sourceEvidenceChecksum !== 'string' ||
+    !HASH_PATTERN.test(value.sourceEvidenceChecksum) || !isPlainMigrationObject(value.impact)) {
+    throw invalidPayload();
+  }
+  exactKeys(value.impact, [
+    'absentMinutes', 'leaveMinutes', 'overtimeMinutes', 'workedMinutes',
+  ]);
+  const minutes = [
+    value.impact.workedMinutes, value.impact.leaveMinutes,
+    value.impact.overtimeMinutes, value.impact.absentMinutes,
+  ];
+  if (minutes.some((minute) => !Number.isSafeInteger(minute) || Number(minute) < 0 ||
+    Number(minute) > 44_640)) throw invalidPayload();
+  return {
+    employeeSourceId: value.employeeSourceId,
+    providerCode: value.providerCode,
+    externalEventId: value.externalEventId,
+    factType: value.factType as AttendanceSourceFactMigrationPayload['factType'],
+    occurredAt: value.occurredAt,
+    timeZone: value.timeZone,
+    impact: {
+      workedMinutes: Number(value.impact.workedMinutes),
+      leaveMinutes: Number(value.impact.leaveMinutes),
+      overtimeMinutes: Number(value.impact.overtimeMinutes),
+      absentMinutes: Number(value.impact.absentMinutes),
+    },
+    sourceObservedAt: value.sourceObservedAt,
+    createdAt: value.createdAt,
+    sourceEvidenceSourceAttachmentId: value.sourceEvidenceSourceAttachmentId,
+    sourceEvidenceChecksum: value.sourceEvidenceChecksum,
+  };
+}
+
 function assertGovernanceEvidence(
   input: ApplyDataMigrationRecordDto,
   payload: {
@@ -2842,6 +2941,12 @@ function associationEvidence(input: ApplyDataMigrationRecordDto): readonly Assoc
       );
     } else if (input.entityType === 'recruitment.offer') {
       derived = recruitmentOfferAssociationSpecs(recruitmentOfferPayload(input.payload));
+    } else if (input.entityType === 'attendance.source_fact') {
+      const employeeSourceId = attendanceSourceFactPayload(input.payload).employeeSourceId;
+      derived = [{
+        relationship: 'employee', sourceAssociationId: employeeSourceId,
+        entityType: 'org.employee',
+      }];
     } else derived = [];
   } catch {
     derived = [];
@@ -2903,11 +3008,11 @@ function rejectionCode(error: unknown): string | null {
     if (typeof response === 'object' && response !== null) {
       const code = (response as { code?: unknown }).code;
       if (typeof code === 'string' &&
-        /^(ORG|APPROVAL|RECRUITMENT|DATA_MIGRATION)_[A-Z0-9_]{2,80}$/.test(code)) return code;
+        /^(ORG|APPROVAL|RECRUITMENT|ATTENDANCE|DATA_MIGRATION)_[A-Z0-9_]{2,80}$/.test(code)) return code;
     }
   }
   return error instanceof Error &&
-    /^(ORG|APPROVAL|RECRUITMENT|DATA_MIGRATION)_[A-Z0-9_]{2,80}$/.test(error.message)
+    /^(ORG|APPROVAL|RECRUITMENT|ATTENDANCE|DATA_MIGRATION)_[A-Z0-9_]{2,80}$/.test(error.message)
     ? error.message : null;
 }
 

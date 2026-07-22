@@ -19,6 +19,9 @@ import {
   closeAttendanceMonth,
   createAttendanceCorrection,
   createAttendanceSourceFact,
+  restoreAttendanceSourceFactFromMigration,
+  type AttendanceFactType,
+  type AttendanceImpact,
   type AttendanceMonthlySnapshot,
   type AttendanceSourceFact,
 } from '../domain/index.js';
@@ -78,6 +81,21 @@ export interface AttendanceMonthSummary extends Record<string, unknown> {
   readonly closedAt: string;
 }
 
+export interface ImportAttendanceSourceFactFromMigrationInput {
+  readonly targetId: string | null;
+  readonly employeeId: string;
+  readonly providerCode: string;
+  readonly externalEventId: string;
+  readonly factType: AttendanceFactType;
+  readonly occurredAt: string;
+  readonly timeZone: string;
+  readonly impact: AttendanceImpact;
+  readonly sourceObservedAt: string;
+  readonly createdAt: string;
+  readonly migrationEvidenceRef: string;
+  readonly evidenceChecksum: string;
+}
+
 @Injectable()
 export class AttendanceApplicationService {
   constructor(
@@ -92,6 +110,66 @@ export class AttendanceApplicationService {
     private readonly snapshots: AttendanceMonthlySnapshotRepository,
     private readonly outbox: AttendanceOutboxWriter,
   ) {}
+
+  /** 数据迁移专用：L4 明细只进入既有密文仓储，外部标识只形成盲索引。 */
+  async importSourceFactFromMigration(
+    key: string,
+    input: ImportAttendanceSourceFactFromMigrationInput,
+  ): Promise<{ readonly fact: AttendanceFactSummary & { readonly version: 1 } }> {
+    this.assertMigrationWriter();
+    assertMigrationEvidence(input.migrationEvidenceRef, input.evidenceChecksum);
+    return this.run(async () => this.idempotency.execute(
+      'attendance.source_fact.import_from_migration', key, input, async (session) => {
+        const tenantId = this.context.getTenantRequired().tenantId;
+        const employee = await this.employees.findById(input.employeeId, session);
+        if (employee === null) throw new NotFoundException({
+          code: 'ATTENDANCE_MIGRATION_EMPLOYEE_NOT_FOUND', message: '考勤迁移员工主数据不存在',
+        });
+        const fingerprints = this.crypto.sourceEventFingerprints(
+          tenantId, input.providerCode, input.externalEventId,
+        );
+        const collision = await this.facts.findByEventFingerprints(fingerprints, session);
+        const id = input.targetId ?? createEventId(new Date(input.createdAt));
+        const fact = restoreAttendanceSourceFactFromMigration({
+          id, tenantId, employeeId: employee.id, providerCode: input.providerCode,
+          factType: input.factType, occurredAt: input.occurredAt, timeZone: input.timeZone,
+          impact: input.impact, sourceObservedAt: input.sourceObservedAt,
+          createdAt: input.createdAt,
+        }, new Date());
+        if (input.targetId !== null) {
+          const [existing, evidence] = await Promise.all([
+            this.facts.findById(input.targetId, session),
+            this.facts.findMigrationEvidenceById(input.targetId, session),
+          ]);
+          if (existing === null || evidence === null || collision?.id !== input.targetId ||
+            !sameMigratedSourceFact(existing, fact) ||
+            evidence.migrationEvidenceRef !== input.migrationEvidenceRef ||
+            evidence.migrationEvidenceChecksum !== input.evidenceChecksum) {
+            throw new ConflictException({
+              code: 'ATTENDANCE_MIGRATION_SOURCE_FACT_IMMUTABLE',
+              message: '既有考勤源事实、外部标识或 WORM 证据不一致，禁止覆盖',
+            });
+          }
+          return { fact: migratedFactSummary(existing) };
+        }
+        if (collision !== null) throw new ConflictException({
+          code: 'ATTENDANCE_MIGRATION_SOURCE_EVENT_CONFLICT',
+          message: '迁移外部事件已绑定既有考勤事实',
+        });
+        await this.facts.insertMigrated(
+          fact, fingerprints, input.migrationEvidenceRef, input.evidenceChecksum, session,
+        );
+        await this.outbox.append({
+          type: 'attendance.source_fact.migrated', tenantId, aggregateId: fact.id,
+          version: 1, occurredAt: fact.createdAt, data: {
+            employeeId: fact.employeeId, providerCode: fact.providerCode,
+            factType: fact.factType, businessDate: fact.businessDate,
+          },
+        }, session);
+        return { fact: migratedFactSummary(fact) };
+      },
+    ));
+  }
 
   /** 准备 MCP/REST 修订申请时只校验本人归属与是否已有生效修订，不产生写入。 */
   async validateCorrectionRequest(
@@ -399,6 +477,18 @@ export class AttendanceApplicationService {
     });
   }
 
+  private assertMigrationWriter(): void {
+    const actor = this.context.getActorRequired();
+    if (!['service', 'system_job'].includes(actor.actorType) ||
+      !actor.scopes.includes('erp:migration:execute') ||
+      !actor.scopes.includes('erp:attendance:migration:write')) {
+      throw new ForbiddenException({
+        code: 'ATTENDANCE_MIGRATION_WRITER_DENIED',
+        message: '考勤迁移必须由受信任服务身份执行',
+      });
+    }
+  }
+
   private async run<T>(operation: () => Promise<T>): Promise<T> {
     try { return await operation(); } catch (error) {
       if (error instanceof AttendanceDomainError) {
@@ -429,6 +519,12 @@ function factSummary(fact: AttendanceSourceFact): AttendanceFactSummary {
   });
 }
 
+function migratedFactSummary(
+  fact: AttendanceSourceFact,
+): AttendanceFactSummary & { readonly version: 1 } {
+  return Object.freeze({ ...factSummary(fact), version: 1 as const });
+}
+
 function monthSummary(snapshot: AttendanceMonthlySnapshot): AttendanceMonthSummary {
   return Object.freeze({
     id: snapshot.id, employeeId: snapshot.employeeId, month: snapshot.month,
@@ -457,3 +553,28 @@ function deriveKey(root: string, stage: string): string {
   const digest = createHash('sha256').update(JSON.stringify([root, stage]), 'utf8').digest('base64url');
   return `attendance:${digest}`;
 }
+
+function sameMigratedSourceFact(
+  left: AttendanceSourceFact,
+  right: AttendanceSourceFact,
+): boolean {
+  return left.id === right.id && left.tenantId === right.tenantId &&
+    left.employeeId === right.employeeId && left.providerCode === right.providerCode &&
+    left.factType === right.factType && left.occurredAt === right.occurredAt &&
+    left.timeZone === right.timeZone && left.businessDate === right.businessDate &&
+    JSON.stringify(left.impact) === JSON.stringify(right.impact) &&
+    left.sourceObservedAt === right.sourceObservedAt && left.createdAt === right.createdAt;
+}
+
+function assertMigrationEvidence(reference: string, checksum: string): void {
+  if (!MIGRATION_EVIDENCE_REF_PATTERN.test(reference) || !HASH_PATTERN.test(checksum)) {
+    throw new BadRequestException({
+      code: 'ATTENDANCE_MIGRATION_EVIDENCE_INVALID',
+      message: '考勤迁移必须精确引用 WORM 证据与校验和',
+    });
+  }
+}
+
+const HASH_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const MIGRATION_EVIDENCE_REF_PATTERN =
+  /^erp:\/\/data-migrations\/runs\/[0-7][0-9A-HJKMNP-TV-Z]{25}\/attachments\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;

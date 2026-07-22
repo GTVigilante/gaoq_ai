@@ -6,6 +6,7 @@ import {
   closeAttendanceMonth,
   createAttendanceCorrection,
   createAttendanceSourceFact,
+  restoreAttendanceSourceFactFromMigration,
 } from './attendance.js';
 
 const now = new Date('2026-04-02T00:00:00.000Z');
@@ -83,5 +84,24 @@ describe('Attendance 领域', () => {
       sourceCutoffAt: '2026-04-02T00:00:00.000Z', facts: [source], corrections: [],
       previousSnapshotId: null, supersessionEvidenceId: null,
     }, now)).toThrowError(/不属于当前租户、员工或月份/);
+  });
+
+  it('迁移源事实保留严格历史时间并拒绝未来或倒置时间线', () => {
+    const restored = restoreAttendanceSourceFactFromMigration({
+      id: 'fact-legacy-001', tenantId: 'tenant-001', employeeId: 'employee-001',
+      providerCode: 'legacy_hr', factType: 'shift',
+      occurredAt: '2026-04-01T01:00:00.000Z', timeZone: 'Asia/Shanghai', impact,
+      sourceObservedAt: '2026-04-01T01:01:00.000Z',
+      createdAt: '2026-04-01T01:02:00.000Z',
+    }, now);
+    expect(restored).toMatchObject({
+      businessDate: '2026-04-01', createdAt: '2026-04-01T01:02:00.000Z',
+    });
+    expect(() => restoreAttendanceSourceFactFromMigration({
+      ...restored, sourceObservedAt: '2026-04-01T00:59:00.000Z',
+    }, now)).toThrow('时间线');
+    expect(() => restoreAttendanceSourceFactFromMigration({
+      ...restored, createdAt: '2026-04-02T00:06:00.000Z',
+    }, now)).toThrow('时间线');
   });
 });

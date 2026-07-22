@@ -30,11 +30,27 @@ describe('Attendance 持久化契约', () => {
       .rejects.toThrow(/factType/);
     await expect(new FactModel({ ...valid, businessDate: '2026/04/01' }).validate())
       .rejects.toThrow(/businessDate/);
+    await expect(new FactModel({
+      ...valid,
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/attendance-001',
+      migrationEvidenceChecksum: 'd'.repeat(43),
+    }).validate()).resolves.toBeUndefined();
+    await expect(new FactModel({
+      ...valid,
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/attendance-001',
+      migrationEvidenceChecksum: null,
+    }).validate()).rejects.toThrow('必须成对出现');
   });
 
   it('外部事件、单事实修订、审批实例、活动快照和版本链均有唯一约束', () => {
     expect(AttendanceSourceFactRecordSchema.indexes()).toContainEqual([
       { tenantId: 1, sourceEventBlindIndexes: 1 }, expect.objectContaining({ unique: true }),
+    ]);
+    expect(AttendanceSourceFactRecordSchema.indexes()).toContainEqual([
+      { tenantId: 1, migrationEvidenceRef: 1 },
+      expect.objectContaining({ unique: true }),
     ]);
     expect(AttendanceCorrectionRecordSchema.indexes()).toEqual(expect.arrayContaining([
       [{ tenantId: 1, sourceFactId: 1 }, expect.objectContaining({ unique: true })],

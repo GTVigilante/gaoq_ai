@@ -53,6 +53,8 @@ function assemble() {
     findById: vi.fn().mockResolvedValue(sourceFact()),
     findForMonth: vi.fn().mockResolvedValue([sourceFact()]),
     insert: vi.fn().mockResolvedValue(undefined),
+    insertMigrated: vi.fn().mockResolvedValue(undefined),
+    findMigrationEvidenceById: vi.fn().mockResolvedValue(null),
   };
   const corrections = {
     findForMonth: vi.fn().mockResolvedValue([]), findBySourceFactId: vi.fn().mockResolvedValue(null),
@@ -73,6 +75,39 @@ function assemble() {
 }
 
 describe('AttendanceApplicationService', () => {
+  it('迁移源事实只写 L4 密文入口、盲索引、WORM 与专用事件', async () => {
+    const store = assemble();
+    store.crypto.sourceEventFingerprints.mockReturnValue(['blind-key.digest']);
+    const result = await store.context.run({
+      tenant,
+      actor: actor(
+        ['erp:migration:execute', 'erp:attendance:migration:write'], 'service',
+      ),
+    }, () => store.service.importSourceFactFromMigration('attendance-migration-key-001', {
+      targetId: null, employeeId: 'employee-001', providerCode: 'legacy_hr',
+      externalEventId: 'legacy-event-001', factType: 'shift',
+      occurredAt: '2026-04-01T01:00:00.000Z', timeZone: 'Asia/Shanghai',
+      impact: { workedMinutes: 480, leaveMinutes: 0, overtimeMinutes: 0, absentMinutes: 0 },
+      sourceObservedAt: '2026-04-01T01:01:00.000Z',
+      createdAt: '2026-04-01T01:02:00.000Z',
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/attendance-001',
+      evidenceChecksum: 'c'.repeat(43),
+    }));
+    expect(store.facts.insertMigrated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        employeeId: 'employee-001', businessDate: '2026-04-01',
+        createdAt: '2026-04-01T01:02:00.000Z',
+      }),
+      ['blind-key.digest'], expect.stringContaining('/attachments/attendance-001'),
+      'c'.repeat(43), session,
+    );
+    const event = store.outbox.append.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
+    expect(event).toMatchObject({ type: 'attendance.source_fact.migrated' });
+    expect(JSON.stringify(event)).not.toMatch(/workedMinutes|480|legacy-event-001/u);
+    expect(result.fact).toMatchObject({ version: 1, businessDate: '2026-04-01' });
+  });
+
   it('本人查询从可信 actor 反查员工，不接受客户端 employeeId', async () => {
     const store = assemble();
     store.snapshots.findActive.mockResolvedValue({

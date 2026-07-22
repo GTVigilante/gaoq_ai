@@ -94,6 +94,49 @@ export class AttendanceSourceFactRepository extends TenantRepository {
     sourceEventBlindIndexes: readonly string[],
     session: ClientSession,
   ): Promise<void> {
+    await this.insertWithMigrationEvidence(fact, sourceEventBlindIndexes, null, null, session);
+  }
+
+  async insertMigrated(
+    fact: AttendanceSourceFact,
+    sourceEventBlindIndexes: readonly string[],
+    migrationEvidenceRef: string,
+    migrationEvidenceChecksum: string,
+    session: ClientSession,
+  ): Promise<void> {
+    await this.insertWithMigrationEvidence(
+      fact, sourceEventBlindIndexes, migrationEvidenceRef, migrationEvidenceChecksum, session,
+    );
+  }
+
+  async findMigrationEvidenceById(
+    id: string,
+    session?: ClientSession,
+  ): Promise<{
+    readonly migrationEvidenceRef: string;
+    readonly migrationEvidenceChecksum: string;
+  } | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), id })
+      .select('migrationEvidenceRef migrationEvidenceChecksum -_id');
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record?.migrationEvidenceRef === null || record?.migrationEvidenceRef === undefined ||
+      record.migrationEvidenceChecksum === null ||
+      record.migrationEvidenceChecksum === undefined
+      ? null
+      : Object.freeze({
+          migrationEvidenceRef: record.migrationEvidenceRef,
+          migrationEvidenceChecksum: record.migrationEvidenceChecksum,
+        });
+  }
+
+  private async insertWithMigrationEvidence(
+    fact: AttendanceSourceFact,
+    sourceEventBlindIndexes: readonly string[],
+    migrationEvidenceRef: string | null,
+    migrationEvidenceChecksum: string | null,
+    session: ClientSession,
+  ): Promise<void> {
     this.assertTenant(fact.tenantId);
     const protectedData = this.crypto.protect(
       { tenantId: fact.tenantId, resourceType: 'source_fact', resourceId: fact.id },
@@ -103,6 +146,7 @@ export class AttendanceSourceFactRepository extends TenantRepository {
       id: fact.id, tenantId: fact.tenantId, employeeId: fact.employeeId,
       providerCode: fact.providerCode, factType: fact.factType, businessDate: fact.businessDate,
       sourceObservedAt: new Date(fact.sourceObservedAt), sourceEventBlindIndexes: [...sourceEventBlindIndexes],
+      migrationEvidenceRef, migrationEvidenceChecksum,
       ...toProtectedRecord(protectedData), createdAt: new Date(fact.createdAt), updatedAt: new Date(fact.createdAt),
     }], { session });
   }

@@ -10,6 +10,7 @@ import { OutboxRecord, type OutboxDocument } from '../../org/persistence/outbox.
 export interface AttendanceEvent {
   readonly type:
     | 'attendance.source_fact.ingested'
+    | 'attendance.source_fact.migrated'
     | 'attendance.correction.requested'
     | 'attendance.correction.approved'
     | 'attendance.month.closed'

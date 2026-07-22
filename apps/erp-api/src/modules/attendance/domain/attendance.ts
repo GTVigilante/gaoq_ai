@@ -119,6 +119,27 @@ export function createAttendanceSourceFact(
   });
 }
 
+/** 数据迁移专用：恢复严格历史时间，不伪造在线采集事实。 */
+export function restoreAttendanceSourceFactFromMigration(
+  input: Omit<AttendanceSourceFact, 'businessDate'>,
+  now: Date,
+): AttendanceSourceFact {
+  const occurredAt = strictMigrationInstant(input.occurredAt);
+  const sourceObservedAt = strictMigrationInstant(input.sourceObservedAt);
+  const createdAt = strictMigrationInstant(input.createdAt);
+  if (!/^[a-z][a-z0-9_]{1,31}$/.test(input.providerCode) ||
+    Date.parse(occurredAt) > Date.parse(sourceObservedAt) ||
+    Date.parse(sourceObservedAt) > Date.parse(createdAt) ||
+    Date.parse(createdAt) > now.getTime() + 5 * 60 * 1_000) {
+    fail('ATTENDANCE_MIGRATION_SOURCE_TIMELINE_INVALID', '考勤源事实迁移时间线或来源无效');
+  }
+  return createAttendanceSourceFact({
+    id: input.id, tenantId: input.tenantId, employeeId: input.employeeId,
+    providerCode: input.providerCode, factType: input.factType,
+    occurredAt, timeZone: input.timeZone, impact: input.impact, sourceObservedAt,
+  }, new Date(createdAt));
+}
+
 export function createAttendanceCorrection(
   input: Omit<AttendanceCorrection, 'createdAt'>,
   now: Date,
@@ -380,6 +401,14 @@ function parseInstant(value: string, code: string): Date {
     fail(code, '时间必须为 UTC ISO-8601 instant');
   }
   return parsed;
+}
+
+function strictMigrationInstant(value: string): string {
+  const parsed = parseInstant(value, 'ATTENDANCE_MIGRATION_SOURCE_TIME_INVALID');
+  if (parsed.toISOString() !== value) {
+    fail('ATTENDANCE_MIGRATION_SOURCE_TIME_INVALID', '迁移时间必须为毫秒精度 UTC ISO instant');
+  }
+  return value;
 }
 
 function hashCanonical(value: unknown): string {
