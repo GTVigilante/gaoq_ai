@@ -52,12 +52,14 @@ async function validateHarnessSource() {
     'document.length < 1_000',
     "if (inspectOnly) fail('PERFORMANCE_INSPECT_MODE_CANNOT_RUN')",
     "const corePaths = ['/api/org/chart', '/api/approvals/instances/inbox']",
+    'value.length > 264',
   ]) {
     if (!HARNESS_SOURCE.includes(marker)) fail('PHASE5_PERFORMANCE_HARNESS_INCOMPLETE');
   }
   if (/http\.(?:post|put|patch|del)\(/u.test(HARNESS_SOURCE)) {
     fail('PHASE5_PERFORMANCE_WRITE_REQUEST_FORBIDDEN');
   }
+  if (HARNESS_SOURCE.includes('new URL(')) fail('PHASE5_PERFORMANCE_K6_API_INCOMPATIBLE');
   for (const marker of [
     'performance-contract:',
     'grafana/k6/releases/download/v2.0.0/k6-v2.0.0-linux-amd64.tar.gz',

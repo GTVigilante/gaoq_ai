@@ -1,4 +1,4 @@
-/* global __ENV, __VU, open, URL */
+/* global __ENV, __VU, open */
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Rate, Trend } from 'k6/metrics';
@@ -78,13 +78,10 @@ export function handleSummary(data) {
 
 function requireBaseUrl(value) {
   if (typeof value !== 'string') fail('PERFORMANCE_BASE_URL_REQUIRED');
-  const endpoint = new URL(value);
-  if (
-    endpoint.protocol !== 'https:' || endpoint.username !== '' || endpoint.password !== '' ||
-    endpoint.pathname !== '/' || endpoint.search !== '' || endpoint.hash !== '' ||
-    (endpoint.port !== '' && endpoint.port !== '443')
-  ) fail('PERFORMANCE_BASE_URL_INVALID');
-  return endpoint.origin;
+  const httpsFqdn =
+    /^https:\/\/(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?::443)?\/?$/;
+  if (value.length > 264 || !httpsFqdn.test(value)) fail('PERFORMANCE_BASE_URL_INVALID');
+  return value.endsWith('/') ? value.slice(0, -1) : value;
 }
 
 function requireDate(value) {
