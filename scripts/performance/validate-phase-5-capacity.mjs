@@ -62,11 +62,16 @@ async function validateHarnessSource() {
     'performance-contract:',
     'grafana/k6/releases/download/v2.0.0/k6-v2.0.0-linux-amd64.tar.gz',
     '2ae87d976f6cdba17185bdd980d8819a3a98e9092c6f0638cd58272ecefc8b90',
-    "PERFORMANCE_INSPECT_ONLY: 'true'",
-    '"$RUNNER_TEMP/k6-bin/k6" inspect scripts/load/phase-5-api-capacity.js',
+    '--env PERFORMANCE_INSPECT_ONLY=true',
+    '--env PERFORMANCE_BASE_URL=https://erp.example.invalid',
+    '--env PERFORMANCE_AS_OF=2026-07-01',
+    '--env PERFORMANCE_API_RESULT_PATH=/tmp/phase-5-k6-inspect.json',
     'node scripts/performance/validate-phase-5-capacity.mjs --self-test',
   ]) {
     if (!workflow.includes(marker)) fail('PHASE5_PERFORMANCE_CI_GATE_INCOMPLETE');
+  }
+  if (workflow.includes('--include-system-env-vars')) {
+    fail('PHASE5_PERFORMANCE_CI_ENV_EXPOSURE_FORBIDDEN');
   }
 }
 

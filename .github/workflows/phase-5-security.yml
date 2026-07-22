@@ -187,13 +187,13 @@ jobs:
             --directory "$RUNNER_TEMP/k6-bin" --strip-components=1
 
       - name: 检查只读容量脚本与证据契约
-        env:
-          PERFORMANCE_INSPECT_ONLY: 'true'
-          PERFORMANCE_BASE_URL: https://erp.example.invalid
-          PERFORMANCE_AS_OF: '2026-07-01'
-          PERFORMANCE_API_RESULT_PATH: /tmp/phase-5-k6-inspect.json
         run: |
-          "$RUNNER_TEMP/k6-bin/k6" inspect scripts/load/phase-5-api-capacity.js
+          "$RUNNER_TEMP/k6-bin/k6" inspect \
+            --env PERFORMANCE_INSPECT_ONLY=true \
+            --env PERFORMANCE_BASE_URL=https://erp.example.invalid \
+            --env PERFORMANCE_AS_OF=2026-07-01 \
+            --env PERFORMANCE_API_RESULT_PATH=/tmp/phase-5-k6-inspect.json \
+            scripts/load/phase-5-api-capacity.js
           node scripts/performance/validate-phase-5-capacity.mjs --self-test
 
   container-images:
