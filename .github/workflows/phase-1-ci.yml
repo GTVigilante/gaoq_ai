@@ -12,7 +12,8 @@ on:
       - 'pnpm-workspace.yaml'
       - 'tsconfig.base.json'
       - 'eslint.config.mjs'
-      - '.github/workflows/phase-1-ci.yml'
+      - '.github/workflows/**'
+      - 'scripts/**'
   push:
     branches:
       - main
@@ -26,6 +27,8 @@ on:
       - 'pnpm-workspace.yaml'
       - 'tsconfig.base.json'
       - 'eslint.config.mjs'
+      - '.github/workflows/**'
+      - 'scripts/**'
 
 permissions:
   contents: read

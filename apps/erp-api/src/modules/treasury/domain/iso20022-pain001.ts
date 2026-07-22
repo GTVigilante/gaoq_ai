@@ -124,7 +124,8 @@ function normalizeText(value: string, maxLength: number): string {
   const normalized = value.normalize('NFKC').trim();
   if (
     normalized.length < 1 || normalized.length > maxLength ||
-    /[\p{Cc}\p{Cf}]/u.test(normalized)
+    !/^[\u0020-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]+$/u.test(normalized) ||
+    /\p{Cf}/u.test(normalized)
   ) invalid('TREASURY_TEXT_INVALID', '代发文本字段非法');
   return normalized;
 }

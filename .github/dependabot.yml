@@ -1,6 +1,20 @@
 version: 2
 
 updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "01:30"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 10
+    labels:
+      - type:task
+      - domain:security
+    commit-message:
+      prefix: "[依赖] 升级"
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -10,7 +24,7 @@ updates:
       timezone: Asia/Shanghai
     open-pull-requests-limit: 5
     labels:
-      - dependencies
-      - github-actions
+      - type:task
+      - domain:devops
     commit-message:
       prefix: "[CI] 升级"

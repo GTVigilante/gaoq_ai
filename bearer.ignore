@@ -1,0 +1,14 @@
+{
+  "1d546f90f6a5a07e971e29ff4aec6097_0": {
+    "author": "GaoQ-OS 架构与安全 CR",
+    "comment": "误报：FetchSsoHttpClient 在 fetch 前通过 requireAllowedEndpoint 精确匹配钉钉、飞书和配置派生的 OP token/userinfo 端点；任意域、query、凭据、非 HTTPS 和非 443 端口均有回归测试。复核到期：2026-10-20。",
+    "false_positive": true,
+    "ignored_at": "2026-07-22T01:25:00Z"
+  },
+  "b951826b6dd26ef7f2d776a337264409_0": {
+    "author": "GaoQ-OS 架构与安全 CR",
+    "comment": "误报：该函数仅编码 ISO 20022 XML 文本节点，不生成 HTML；输入先按 XML 1.0 字符范围验证，再完整转义五个预定义实体，并由注入回归测试覆盖。复核到期：2026-10-20。",
+    "false_positive": true,
+    "ignored_at": "2026-07-22T01:25:00Z"
+  }
+}

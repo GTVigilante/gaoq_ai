@@ -30,10 +30,22 @@ describe('ISO 20022 pain.001 代发生成器', () => {
   });
 
   it('XML 转义姓名且不产生公式或标签注入', () => {
-    const document = generatePain001(input);
+    const document = generatePain001({
+      ...input,
+      lines: [{ ...input.lines[0]!, creditorName: `李四 & < > " '` }, input.lines[1]!],
+    });
     expect(document.content).toContain('高企科技 &amp; 服务');
     expect(document.content).toContain('张三 &lt;测试&gt;');
+    expect(document.content).toContain('李四 &amp; &lt; &gt; &quot; &apos;');
     expect(document.content).not.toContain('<测试>');
+  });
+
+  it('拒绝 XML 1.0 不允许的控制字符、孤立代理项和格式控制字符', () => {
+    for (const creditorName of ['李\u0000四', '李\uD800四', '李\uFFFF四', '李\u200B四']) {
+      expect(() => generatePain001({
+        ...input, lines: [{ ...input.lines[0]!, creditorName }],
+      })).toThrow(/代发文本字段非法/u);
+    }
   });
 
   it('拒绝重复收款账号、重复指令、零金额和非法账号', () => {

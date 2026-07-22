@@ -465,8 +465,8 @@ export class McpRuntimeService {
     // SDK 1.29 明确要求无状态模式每个 HTTP 请求创建独立 transport；复用会被拒绝。
     const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
     transport.onerror = (error) => this.logger.error(`MCP transport：${error.message}`);
-    const server = this.createServer();
-    await server.connect(transport);
+    const mcpServer = this.createMcpServer();
+    await mcpServer.connect(transport);
     const headers = new Headers();
     for (const [name, value] of Object.entries(request.headers)) {
       if (typeof value === 'string') headers.set(name, value);
@@ -501,11 +501,11 @@ export class McpRuntimeService {
       }
       if (!response.writableEnded) response.end();
     } finally {
-      await server.close();
+      await mcpServer.close();
     }
   }
 
-  private createServer(): McpServer {
+  private createMcpServer(): McpServer {
     const server = new McpServer(
       {
         name: 'gaoq-erp',

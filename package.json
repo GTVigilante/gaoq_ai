@@ -16,7 +16,13 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "test:coverage": "pnpm -r --if-present test:coverage",
-    "check": "pnpm lint && pnpm typecheck && pnpm test && node scripts/validate-docs.mjs"
+    "security:validate": "node scripts/validate-security-workflow.mjs",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && node scripts/validate-docs.mjs && pnpm security:validate"
+  },
+  "pnpm": {
+    "overrides": {
+      "sharp": "0.35.3"
+    }
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
