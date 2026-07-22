@@ -423,6 +423,12 @@ export class PayrollTaxFilingRecord extends ProtectedPayrollRecord {
   @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN }) approvedBy!: string | null;
   @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
   strongAuthEvidenceId!: string | null;
+  @Prop({
+    type: String, default: null,
+    enum: ['webauthn_evidence', 'migration_tax_approval_evidence'],
+  })
+  strongAuthReferenceType!:
+    'webauthn_evidence' | 'migration_tax_approval_evidence' | null;
   @Prop({ type: String, default: null, maxlength: 512, match: /^[A-Za-z0-9][A-Za-z0-9/._:-]{0,511}$/ })
   objectRef!: string | null;
   @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
@@ -437,17 +443,41 @@ export class PayrollTaxFilingRecord extends ProtectedPayrollRecord {
   })
   status!: 'archiving' | 'prepared' | 'approved' | 'submitting' | 'submitted' | 'rejected';
   @Prop({ type: Number, required: true, min: 1 }) version!: number;
+  @Prop({
+    type: String, default: null, immutable: true, maxlength: 256,
+    match: MIGRATION_EVIDENCE_REF_PATTERN,
+  })
+  migrationEvidenceRef!: string | null;
+  @Prop({ type: String, default: null, immutable: true, match: HASH_PATTERN })
+  migrationEvidenceChecksum!: string | null;
   createdAt!: Date;
   updatedAt!: Date;
 }
 export type PayrollTaxFilingDocument = HydratedDocument<PayrollTaxFilingRecord>;
 export const PayrollTaxFilingRecordSchema = SchemaFactory.createForClass(PayrollTaxFilingRecord);
+PayrollTaxFilingRecordSchema.pre('validate', function () {
+  const record = this as PayrollTaxFilingRecord;
+  if (record.strongAuthReferenceType === null && record.strongAuthEvidenceId !== null) {
+    record.strongAuthReferenceType = 'webauthn_evidence';
+  }
+  if ((record.strongAuthReferenceType === null) !== (record.strongAuthEvidenceId === null)) {
+    throw new Error('个税审批强认证引用类型与标识必须成对出现');
+  }
+  if ((record.migrationEvidenceRef === null) !==
+    (record.migrationEvidenceChecksum === null)) {
+    throw new Error('个税申报迁移证据引用与校验和必须成对出现');
+  }
+});
 PayrollTaxFilingRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 PayrollTaxFilingRecordSchema.index({ tenantId: 1, periodId: 1 }, { unique: true });
 PayrollTaxFilingRecordSchema.index({ tenantId: 1, status: 1, createdAt: 1 });
 PayrollTaxFilingRecordSchema.index(
   { tenantId: 1, taxSubmissionId: 1 },
   { unique: true, partialFilterExpression: { taxSubmissionId: { $type: 'string' } } },
+);
+PayrollTaxFilingRecordSchema.index(
+  { tenantId: 1, migrationEvidenceRef: 1 },
+  { unique: true, partialFilterExpression: { migrationEvidenceRef: { $type: 'string' } } },
 );
 
 const RECONCILIATION_DIFFERENCE_CODES = [

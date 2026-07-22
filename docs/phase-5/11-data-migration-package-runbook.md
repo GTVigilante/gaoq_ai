@@ -18,7 +18,7 @@
 
 `records.ndjson` 每行是一条完整 JSON 记录，字段与迁移记录 REST 契约一致。禁止空行、额外字段和超过 8 MiB 的单行；该上限与 API JSON 入口一致。序号必须从 1 连续递增。来源生成器必须先计算 payload 摘要，再按控制面契约计算 `sourceFactHash` 与滚动校验和。来源包不得纳入 Git，必须位于受控迁移工作区并执行保留期与销毁策略。
 
-当前 Scope 的执行顺序固定为 `org_reference` → `org_workforce` → 身份开户核对 → `org_employment` → 三个审批 Scope → 五个招聘 Scope → `attendance_source_facts` → `attendance_corrections` → `attendance_monthly_snapshots` → `payroll_rule_packs` → `payroll_compensation_profiles` → `payroll_periods` → `payroll_calculation_runs` → `payroll_period_approvals` → `payroll_period_locks`。每个 Scope 使用独立来源包、`sourceRunId`、控制总数和签署证据。薪资规则必须引用已迁移的专用 approved 审批历史；薪酬档案必须引用已迁移员工和专用 approved 审批历史，并按法域/员工及版本升序排列。审批实例及各业务实体必须为每条记录提供一份 checksum 精确一致的 WORM 证据附件。禁止把多个 Scope 混入同一包。
+当前 Scope 的执行顺序固定为 `org_reference` → `org_workforce` → 身份开户核对 → `org_employment` → 三个审批 Scope → 五个招聘 Scope → `attendance_source_facts` → `attendance_corrections` → `attendance_monthly_snapshots` → `payroll_rule_packs` → `payroll_compensation_profiles` → `payroll_periods` → `payroll_calculation_runs` → `payroll_period_approvals` → `payroll_period_locks` → `payroll_tax_filings`。每个 Scope 使用独立来源包、`sourceRunId`、控制总数和签署证据。薪资规则必须引用已迁移的专用 approved 审批历史；薪酬档案必须引用已迁移员工和专用 approved 审批历史，并按法域/员工及版本升序排列。审批实例及各业务实体必须为每条记录提供一份 checksum 精确一致的 WORM 证据附件。禁止把多个 Scope 混入同一包。
 
 `recruitment_candidates` 包含 L3 直接身份，必须在受控迁移工作区静态加密，读权限只授予迁移服务与双人复核角色，apply 完成后按批准保留期销毁。CLI、服务日志和证据导出不得输出 payload；候选人明文不得进入命令行参数、Git、工单、聊天或 MCP 上下文。
 
@@ -37,6 +37,8 @@
 `payroll_periods` 只提交月份、`draft|collecting`、制单员工来源引用、创建/更新时间和唯一 WORM。不得提交目标 actorId、运行摘要、审批、锁定、支付或对账状态。`payroll_calculation_runs` 必须按税年、月份、运行序号升序，且 `expectedPeriodVersion = runNumber + 1`；每条记录引用一个已迁移周期、一个生效规则包，以及每位员工对应的已迁移员工、薪酬档案和 active 考勤月结。运行 1 把周期从 collecting 推到 review；运行 2+ 只有在前次迁移运行的 WORM、活动引用和控制摘要全部一致时才允许 review 重算。来源提交员工行应发/税额/实发及期间控制汇总，目标重新计算并逐项核对；前月尚未迁移锁定时，只能继承运行 WORM 与周期摘要一致的目标重算结果。该包包含 L4 工资控制金额，必须在隔离区静态加密；不得包含目标哈希、计算步骤、累计税状态、银行卡、身份证件或密钥。单条最多 5,000 名员工、20,000 个去重来源关联，并受 API 8 MiB 请求上限约束；容量演练必须覆盖最大实际工资人数。
 
 `payroll_period_approvals` 只提交已迁移周期、`payroll_period_approval` approved 历史、审批历史 checksum、审批员工来源引用、期望周期版本和独立批准控制 WORM。`expectedPeriodVersion` 必须精确指向 review 周期；目标恢复后版本增加 2。`payroll_period_locks` 随后提交周期、前述批准控制来源引用、独立锁定员工、严格 UTC 锁定时间、固定 `webauthn_uv` 方法和独立锁定 WORM；目标恢复后版本增加 1。两个包均为 L4，必须严格保持制单、审批、锁定三人分离；禁止提交 actorId、在线审批实例、WebAuthn credential/challenge、银行卡、金额或认证正文。进行中的历史工资审批禁止进入这两个终态包，必须在切换前清理或上线后按在线审批重新发起。
+
+`payroll_tax_filings` 只提交已锁定周期、活动计算运行、税务制备/审批员工、`payroll_tax_filing_approval` approved 历史及 checksum、员工数/应税总额/税额控制量、税局提交回执标识、提交时间和唯一 WORM。该包为 L4；目标端从既有工资计算密文和组织身份凭证重新生成并加密内部清单，控制量完全一致后才恢复 submitted v4。不得提交税务行、身份证件、actorId、在线 WebAuthn 记录、对象正文、来源凭据或目标 contentHash；迁移不得调用归档或税局网关。
 
 ## 离线预检
 
@@ -66,7 +68,7 @@ unset ERP_MIGRATION_TOKEN
 - 网络超时或进程中断后使用同一来源包重跑 apply；禁止修改原包后复用 `sourceRunId`。
 - 当前实现会在预检期间维护来源记录 ID 集合；超大数据包必须按已批准 Scope 和容量演练结果拆分，不得绕过服务端总控制量。
 
-附件网关通过 `DATA_MIGRATION_ATTACHMENT_GATEWAY_ENDPOINT` 与 `DATA_MIGRATION_ATTACHMENT_GATEWAY_BEARER_TOKEN` 成套配置，必须位于 ERP 授权域之外的标准 HTTPS 权限域。网关负责来源凭据、正文拉取、扫描与 WORM 归档；ERP 只发送来源标识、预期 checksum、由服务端 Scope 固定映射的 `L3|L4` 分级和不少于 2555 天的保留期。`recruitment_offers`、三个考勤 Scope、`payroll_compensation_profiles`、`payroll_calculation_runs`、`payroll_period_approvals` 与 `payroll_period_locks` 强制为 L4；`payroll_rule_packs` 与 `payroll_periods` 为 L3。来源包和客户端不能提交或降低分级，网关回执必须原样确认。
+附件网关通过 `DATA_MIGRATION_ATTACHMENT_GATEWAY_ENDPOINT` 与 `DATA_MIGRATION_ATTACHMENT_GATEWAY_BEARER_TOKEN` 成套配置，必须位于 ERP 授权域之外的标准 HTTPS 权限域。网关负责来源凭据、正文拉取、扫描与 WORM 归档；ERP 只发送来源标识、预期 checksum、由服务端 Scope 固定映射的 `L3|L4` 分级和不少于 2555 天的保留期。`recruitment_offers`、三个考勤 Scope、`payroll_compensation_profiles`、`payroll_calculation_runs`、`payroll_period_approvals`、`payroll_period_locks` 与 `payroll_tax_filings` 强制为 L4；`payroll_rule_packs` 与 `payroll_periods` 为 L3。来源包和客户端不能提交或降低分级，网关回执必须原样确认。
 
 ## 完整差异证据导出
 

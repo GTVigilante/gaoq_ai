@@ -29,6 +29,7 @@ export interface PayrollEvent {
     | 'payroll.tax_filing.prepared'
     | 'payroll.tax_filing.approved'
     | 'payroll.tax_filing.submitted'
+    | 'payroll.tax_filing.migrated'
     | 'payroll.shadow_cycle.compared'
     | 'payroll.shadow_difference.explained'
     | 'payroll.shadow_cycle.signed'

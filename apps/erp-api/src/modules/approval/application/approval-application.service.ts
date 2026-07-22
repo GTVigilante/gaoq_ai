@@ -266,7 +266,8 @@ export interface ApprovalAttendanceMonthReopenMigrationReference {
 export interface ApprovalPayrollMigrationReference {
   readonly id: string;
   readonly templateCode:
-    | 'payroll_rule_pack' | 'payroll_compensation' | 'payroll_period_approval';
+    | 'payroll_rule_pack' | 'payroll_compensation' | 'payroll_period_approval'
+    | 'payroll_tax_filing_approval';
   readonly completedAt: string;
   readonly evidenceChecksum: string;
 }

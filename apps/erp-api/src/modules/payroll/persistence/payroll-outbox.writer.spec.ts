@@ -31,7 +31,7 @@ function setup() {
 }
 
 describe('Payroll Tax Outbox 白名单', () => {
-  it('仅发布制备、批准和提交所需的最小控制字段', async () => {
+  it('仅发布制备、批准、提交和迁移所需的最小控制字段', async () => {
     const store = setup();
     const events: readonly PayrollEvent[] = [
       {
@@ -51,11 +51,17 @@ describe('Payroll Tax Outbox 白名单', () => {
           taxSubmissionEvidenceId: 'tax-evidence-001', status: 'submitted',
         },
       },
+      {
+        ...base, version: 4, type: 'payroll.tax_filing.migrated', data: {
+          ...summary, taxSubmissionId: 'legacy-tax-submission-001',
+          taxSubmissionEvidenceId: 'legacy-tax-evidence-001', status: 'submitted',
+        },
+      },
     ];
     await store.context.run({ tenant, actor }, async () => {
       for (const event of events) await store.writer.append(event, session);
     });
-    expect(store.records.create).toHaveBeenCalledTimes(3);
+    expect(store.records.create).toHaveBeenCalledTimes(4);
     const persisted = JSON.stringify(store.records.create.mock.calls);
     expect(persisted).not.toMatch(/employeeId|identityEvidence|preparedBy|approvedBy/u);
   });

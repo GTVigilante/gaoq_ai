@@ -6,7 +6,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import type { VerifiedAccessToken } from '../../identity/auth.types.js';
 import { payrollDigest } from '../domain/index.js';
-import { PayrollTaxFilingService } from './payroll-tax-filing.service.js';
+import {
+  type ImportPayrollTaxFilingFromMigrationInput,
+  PayrollTaxFilingService,
+} from './payroll-tax-filing.service.js';
 
 const tenant = { tenantId: 'tenant-001', source: 'access_token' as const };
 const PERIOD_ID = '01J8ZQK7V0A2M4N6P8R0T2W4P1';
@@ -28,6 +31,12 @@ const connector: ActorContext = {
   actorType: 'service', actorId: 'tax-connector', tenantId: tenant.tenantId,
   roleCodes: ['payroll_tax_connector'], scopes: ['erp:payroll:tax:submit'],
   departmentIds: [], traceId: 'trace-tax-submit-001',
+};
+const migrationActor: ActorContext = {
+  actorType: 'service', actorId: 'migration-agent-001', tenantId: tenant.tenantId,
+  roleCodes: ['migration'],
+  scopes: ['erp:migration:execute', 'erp:payroll:migration:write'],
+  departmentIds: [], traceId: 'trace-tax-migration-001',
 };
 const approvalToken: VerifiedAccessToken = {
   issuer: 'https://issuer.example.com', subject: approver.actorId,
@@ -68,6 +77,8 @@ function assemble(options: {
     id: PERIOD_ID, tenantId: tenant.tenantId, period: '2026-07', status: 'locked', version: 6,
     activeRunId: RUN_ID, resultHash, employeeCount: 1, totalTaxMinor: 10_500,
     lockedBy: options.lockedBy ?? 'payroll-locker', preparedBy: 'payroll-maker',
+    approvedBy: 'payroll-approver', strongAuthReferenceType: 'migration_lock_evidence',
+    updatedAt: new Date('2026-07-02T00:00:00.000Z'),
   };
   const line = {
     id: LINE_ID, tenantId: tenant.tenantId, periodId: PERIOD_ID, runId: RUN_ID,
@@ -78,7 +89,11 @@ function assemble(options: {
   const filings = {
     findOne: vi.fn().mockImplementation(() => query(() => filing)),
     create: vi.fn().mockImplementation((records: readonly Record<string, unknown>[]) => {
-      filing = { ...records[0], createdAt: new Date(), updatedAt: new Date() };
+      filing = {
+        ...records[0],
+        createdAt: records[0]?.createdAt ?? new Date(),
+        updatedAt: records[0]?.updatedAt ?? new Date(),
+      };
       return Promise.resolve([]);
     }),
     updateOne: vi.fn().mockImplementation((
@@ -127,6 +142,13 @@ function assemble(options: {
     });
   }) };
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
+  const profiles = { findActorIdByEmployee: vi.fn((
+    _tenantId: string, employeeId: string,
+  ) => Promise.resolve(employeeId === 'employee-tax-maker' ? 'tax-maker' : 'tax-approver')) };
+  const approvals = { verifyPayrollMigrationReference: vi.fn().mockResolvedValue({
+    id: '01J8ZQK7V0A2M4N6P8R0T2W4H1', templateCode: 'payroll_tax_filing_approval',
+    completedAt: '2026-07-03T00:00:00.000Z', evidenceChecksum: 'a'.repeat(43),
+  }) };
   const idempotency = { execute: vi.fn(async (
     _operation: string, _key: string, _request: unknown,
     handler: (value: ClientSession) => Promise<Record<string, unknown>>,
@@ -137,14 +159,120 @@ function assemble(options: {
     new ConfigService({ PAYROLL_TAX_GATEWAY_MODE: options.gatewayMode ?? 'sandbox' }) as never,
     outbox as never,
     periods as never, lines as never, filings as never,
+    profiles as never, approvals as never,
   );
   return {
     context, service, filings, archive, outbox, strongAuth, gateway,
-    archived: () => archived, employments, persons,
+    archived: () => archived, employments, persons, profiles, approvals, crypto,
+  };
+}
+
+function migrationInput(
+  overrides: Partial<ImportPayrollTaxFilingFromMigrationInput> = {},
+): ImportPayrollTaxFilingFromMigrationInput {
+  return {
+    targetId: null, periodId: PERIOD_ID, payrollRunId: RUN_ID,
+    expectedPeriodVersion: 6, preparedByEmployeeId: 'employee-tax-maker',
+    approvedByEmployeeId: 'employee-tax-approver',
+    approvalHistoryId: '01J8ZQK7V0A2M4N6P8R0T2W4H1',
+    approvalEvidenceChecksum: 'a'.repeat(43), expectedEmployeeCount: 1,
+    expectedTotalTaxableEarningsMinor: 1_000_000,
+    expectedTotalWithholdingTaxMinor: 10_500,
+    taxSubmissionId: 'legacy-tax-submission-001',
+    taxSubmissionEvidenceId: 'legacy-tax-evidence-001',
+    submittedAt: '2026-07-04T00:00:00.000Z',
+    migrationEvidenceRef:
+      'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/tax-001',
+    evidenceChecksum: 'e'.repeat(43),
+    ...overrides,
   };
 }
 
 describe('PayrollTaxFilingService', () => {
+  it('迁移时重建清单并恢复已提交回执但不调用归档或税局网关', async () => {
+    const store = assemble();
+    const result = await store.context.run({
+      tenant: { tenantId: tenant.tenantId, source: 'service_identity' },
+      actor: migrationActor,
+    }, () => store.service.importSubmittedFromMigration(
+      'payroll-tax-migration-001', migrationInput(),
+    ));
+
+    expect(result).toMatchObject({
+      periodId: PERIOD_ID, payrollRunId: RUN_ID, status: 'submitted', version: 4,
+      employeeCount: 1, totalTaxableEarningsMinor: 1_000_000,
+      totalWithholdingTaxMinor: 10_500,
+      taxSubmissionId: 'legacy-tax-submission-001',
+      taxSubmissionEvidenceId: 'legacy-tax-evidence-001',
+    });
+    const createCall = store.filings.create.mock.calls[0] as unknown as [
+      readonly Record<string, unknown>[], Record<string, unknown>,
+    ];
+    expect(createCall[0][0]).toMatchObject({
+      preparedBy: 'tax-maker', approvedBy: 'tax-approver',
+      strongAuthReferenceType: 'migration_tax_approval_evidence',
+      objectRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/tax-001',
+    });
+    expect(store.archive.put).not.toHaveBeenCalled();
+    expect(store.gateway.submit).not.toHaveBeenCalled();
+    expect(store.outbox.append).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'payroll.tax_filing.migrated', version: 4,
+    }), session);
+  });
+
+  it('只允许具有双重迁移权限的服务身份恢复个税提交证据', async () => {
+    const store = assemble();
+    const untrustedActor: ActorContext = {
+      ...migrationActor, actorType: 'user', actorId: 'migration-user-001',
+    };
+    await expect(store.context.run({ tenant, actor: untrustedActor }, () =>
+      store.service.importSubmittedFromMigration(
+        'payroll-tax-migration-untrusted', migrationInput(),
+      ))).rejects.toThrow('受信任服务身份');
+    expect(store.profiles.findActorIdByEmployee).not.toHaveBeenCalled();
+    expect(store.filings.create).not.toHaveBeenCalled();
+  });
+
+  it('税务角色与工资制备审批锁定角色冲突时失败关闭', async () => {
+    const store = assemble();
+    store.profiles.findActorIdByEmployee.mockImplementation(
+      (_tenantId: string, employeeId: string) => Promise.resolve(
+        employeeId === 'employee-tax-maker' ? 'payroll-maker' : 'tax-approver',
+      ),
+    );
+    await expect(store.context.run({
+      tenant: { tenantId: tenant.tenantId, source: 'service_identity' },
+      actor: migrationActor,
+    }, () => store.service.importSubmittedFromMigration(
+      'payroll-tax-migration-role-conflict', migrationInput(),
+    ))).rejects.toThrow('职责分离');
+    expect(store.filings.create).not.toHaveBeenCalled();
+    expect(store.outbox.append).not.toHaveBeenCalled();
+  });
+
+  it('目标记录重放时重新计算清单并逐项校验不可变证据', async () => {
+    const store = assemble();
+    const context = {
+      tenant: { tenantId: tenant.tenantId, source: 'service_identity' as const },
+      actor: migrationActor,
+    };
+    const imported = await store.context.run(context, () =>
+      store.service.importSubmittedFromMigration(
+        'payroll-tax-migration-replay-create', migrationInput(),
+      ));
+    const replayed = await store.context.run(context, () =>
+      store.service.importSubmittedFromMigration(
+        'payroll-tax-migration-replay-verify', migrationInput({ targetId: imported.id }),
+      ));
+    expect(replayed).toEqual(imported);
+    expect(store.filings.create).toHaveBeenCalledOnce();
+    expect(store.outbox.append).toHaveBeenCalledOnce();
+    expect(store.crypto.unprotect).toHaveBeenCalledWith(expect.objectContaining({
+      resourceType: 'tax_filing', resourceId: imported.id,
+    }), expect.any(Object));
+  });
+
   it('Phase 6 总体切换授权未实现前真实税务模式始终失败关闭', async () => {
     const store = assemble({ gatewayMode: 'production' });
     await expect(store.context.run({ tenant, actor: connector }, () => store.service.submit(

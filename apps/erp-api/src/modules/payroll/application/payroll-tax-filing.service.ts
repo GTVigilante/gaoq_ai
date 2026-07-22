@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -16,6 +17,8 @@ import { z } from 'zod';
 import { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
 import type { AppEnvironment } from '../../../config/environment.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
+import { ApprovalApplicationService } from '../../approval/application/approval-application.service.js';
+import { AccessProfileRepository } from '../../identity/access-profile.repository.js';
 import {
   EmploymentRepository,
   PersonRepository,
@@ -26,6 +29,7 @@ import {
   generateTaxFilingManifest,
   payrollDigest,
   TaxFilingManifestError,
+  type GeneratedTaxFilingManifest,
 } from '../domain/index.js';
 import {
   PayrollTaxGateway,
@@ -44,6 +48,9 @@ import {
 
 const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 const HASH = /^[A-Za-z0-9_-]{43}$/;
+const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const MIGRATION_EVIDENCE_REF =
+  /^erp:\/\/data-migrations\/runs\/[0-7][0-9A-HJKMNP-TV-Z]{25}\/attachments\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const cumulativeSchema = z.object({
   taxableIncomeMinor: z.number().int().safe().nonnegative(),
   basicDeductionMinor: z.number().int().safe().nonnegative(),
@@ -78,6 +85,25 @@ export interface PayrollTaxFilingSummary extends Record<string, unknown> {
   readonly taxSubmissionEvidenceId: string | null;
 }
 
+export interface ImportPayrollTaxFilingFromMigrationInput {
+  readonly targetId: string | null;
+  readonly periodId: string;
+  readonly payrollRunId: string;
+  readonly expectedPeriodVersion: number;
+  readonly preparedByEmployeeId: string;
+  readonly approvedByEmployeeId: string;
+  readonly approvalHistoryId: string;
+  readonly approvalEvidenceChecksum: string;
+  readonly expectedEmployeeCount: number;
+  readonly expectedTotalTaxableEarningsMinor: number;
+  readonly expectedTotalWithholdingTaxMinor: number;
+  readonly taxSubmissionId: string;
+  readonly taxSubmissionEvidenceId: string;
+  readonly submittedAt: string;
+  readonly migrationEvidenceRef: string;
+  readonly evidenceChecksum: string;
+}
+
 /** 锁定工资到税务内部规范清单的两阶段 WORM 制备；不接触证件明文或官方税局凭据。 */
 @Injectable()
 export class PayrollTaxFilingService {
@@ -98,7 +124,106 @@ export class PayrollTaxFilingService {
     private readonly lines: Model<PayrollCalculationLineDocument>,
     @InjectModel(PayrollTaxFilingRecord.name)
     private readonly filings: Model<PayrollTaxFilingDocument>,
+    @Inject(AccessProfileRepository)
+    private readonly profiles?: AccessProfileRepository,
+    @Inject(ApprovalApplicationService)
+    private readonly approvals?: ApprovalApplicationService,
   ) {}
+
+  /** 迁移专用：重建内部清单并恢复已提交税务证据，不调用归档或税局网关。 */
+  async importSubmittedFromMigration(
+    key: string,
+    input: ImportPayrollTaxFilingFromMigrationInput,
+  ): Promise<PayrollTaxFilingSummary> {
+    this.assertMigrationWriter();
+    assertMigrationInput(input);
+    if (this.profiles === undefined || this.approvals === undefined) {
+      throw new Error('工资税务迁移依赖未装配');
+    }
+    const profiles = this.profiles;
+    const approvals = this.approvals;
+    return this.run(() => this.idempotency.execute(
+      'payroll.tax_filing.import_from_migration', key, input, async (session) => {
+        const [preparedBy, approvedBy, approval, period] = await Promise.all([
+          profiles.findActorIdByEmployee(
+            this.tenantId(), input.preparedByEmployeeId, session,
+          ),
+          profiles.findActorIdByEmployee(
+            this.tenantId(), input.approvedByEmployeeId, session,
+          ),
+          approvals.verifyPayrollMigrationReference(
+            input.approvalHistoryId, 'payroll_tax_filing_approval', session,
+          ),
+          this.requirePeriod(input.periodId, session),
+        ]);
+        if (preparedBy === null || approvedBy === null) {
+          throw new NotFoundException({
+            code: 'PAYROLL_TAX_MIGRATION_IDENTITY_NOT_FOUND',
+            message: '个税迁移制备人或审批人未绑定可信身份',
+          });
+        }
+        if (approval.evidenceChecksum !== input.approvalEvidenceChecksum) {
+          throw new ConflictException({
+            code: 'PAYROLL_TAX_MIGRATION_APPROVAL_EVIDENCE_MISMATCH',
+            message: '个税迁移审批历史证据摘要不一致',
+          });
+        }
+        const approvedAt = strictMigrationInstant(approval.completedAt);
+        const submittedAt = strictMigrationInstant(input.submittedAt);
+        const conflictingActors = new Set([
+          period.preparedBy, period.approvedBy, period.lockedBy,
+        ].filter((value): value is string => typeof value === 'string'));
+        if (
+          period.status !== 'locked' || period.version !== input.expectedPeriodVersion ||
+          period.activeRunId !== input.payrollRunId || period.resultHash === null ||
+          period.strongAuthReferenceType !== 'migration_lock_evidence' ||
+          preparedBy === approvedBy || conflictingActors.has(preparedBy) ||
+          conflictingActors.has(approvedBy) ||
+          approvedAt.getTime() < period.updatedAt.getTime() ||
+          submittedAt.getTime() < approvedAt.getTime()
+        ) throw new ConflictException({
+          code: 'PAYROLL_TAX_MIGRATION_STATE_INVALID',
+          message: '个税迁移工资状态、职责分离或时间线非法',
+        });
+        if (input.targetId !== null) return this.verifyMigrationReplay(
+          period, input, preparedBy, approvedBy, submittedAt, session,
+        );
+        const filingId = createEventId(submittedAt);
+        const evidenceId = migrationTaxEvidenceId(input.migrationEvidenceRef);
+        const generated = await this.generateManifest(period, filingId, session);
+        assertMigrationControls(input, generated);
+        const protectedManifest = this.crypto.protect({
+          tenantId: this.tenantId(), resourceType: 'tax_filing',
+          resourceId: filingId, version: 1,
+        }, { content: generated.content });
+        const record = {
+          id: filingId, tenantId: this.tenantId(), periodId: period.id,
+          payrollRunId: input.payrollRunId, payrollResultHash: period.resultHash,
+          format: generated.format, contentHash: generated.contentHash,
+          employeeCount: generated.employeeCount,
+          totalTaxableEarningsMinor: generated.totalTaxableEarningsMinor,
+          totalWithholdingTaxMinor: generated.totalWithholdingTaxMinor,
+          preparedBy, approvedBy, strongAuthEvidenceId: evidenceId,
+          strongAuthReferenceType: 'migration_tax_approval_evidence' as const,
+          objectRef: input.migrationEvidenceRef, objectEvidenceId: evidenceId,
+          taxSubmissionId: input.taxSubmissionId,
+          taxSubmissionEvidenceId: input.taxSubmissionEvidenceId,
+          status: 'submitted' as const, version: 4,
+          migrationEvidenceRef: input.migrationEvidenceRef,
+          migrationEvidenceChecksum: input.evidenceChecksum,
+          ...protectedRecord(protectedManifest),
+          createdAt: submittedAt, updatedAt: submittedAt,
+        };
+        await this.filings.create([record], { session });
+        await this.outbox.append({
+          type: 'payroll.tax_filing.migrated', tenantId: this.tenantId(),
+          aggregateId: filingId, version: 4, occurredAt: input.submittedAt,
+          data: taxMigratedEventData(period.period, record),
+        }, session);
+        return summary(record);
+      },
+    ));
+  }
 
   async getStatus(filingId: string): Promise<PayrollTaxFilingSummary> {
     const actor = this.context.getActorRequired();
@@ -160,6 +285,7 @@ export class PayrollTaxFilingService {
         }, { $set: {
           status: 'approved', version: expectedVersion + 1,
           approvedBy: actor.actorId, strongAuthEvidenceId: evidence.evidenceId,
+          strongAuthReferenceType: 'webauthn_evidence',
         } }, { session, runValidators: true });
         if (updated.modifiedCount !== 1) throw new ConflictException({
           code: 'PAYROLL_TAX_APPROVAL_WRITE_CONFLICT', message: '个税申报审批发生并发冲突',
@@ -178,6 +304,7 @@ export class PayrollTaxFilingService {
         return summary({
           ...filing, status: 'approved', version: expectedVersion + 1,
           approvedBy: actor.actorId, strongAuthEvidenceId: evidence.evidenceId,
+          strongAuthReferenceType: 'webauthn_evidence',
         });
       },
     ));
@@ -363,6 +490,47 @@ export class PayrollTaxFilingService {
     ) throw new ConflictException({
       code: 'PAYROLL_TAX_PERIOD_NOT_READY', message: '工资周期未锁定、版本变化或职责未分离',
     });
+    const filingId = createEventId();
+    const generated = await this.generateManifest(period, filingId, session);
+    const protectedManifest = this.crypto.protect({
+      tenantId: this.tenantId(), resourceType: 'tax_filing', resourceId: filingId, version: 1,
+    }, { content: generated.content });
+    await this.filings.create([{
+      id: filingId, tenantId: this.tenantId(), periodId: period.id,
+      payrollRunId: period.activeRunId, payrollResultHash: period.resultHash,
+      format: generated.format, contentHash: generated.contentHash,
+      employeeCount: generated.employeeCount,
+      totalTaxableEarningsMinor: generated.totalTaxableEarningsMinor,
+      totalWithholdingTaxMinor: generated.totalWithholdingTaxMinor,
+      preparedBy, approvedBy: null, strongAuthEvidenceId: null,
+      strongAuthReferenceType: null,
+      objectRef: null, objectEvidenceId: null, taxSubmissionId: null,
+      taxSubmissionEvidenceId: null, status: 'archiving', version: 1,
+      migrationEvidenceRef: null, migrationEvidenceChecksum: null,
+      ...protectedRecord(protectedManifest),
+    }], { session });
+    return Object.freeze({
+      id: filingId, periodId: period.id, payrollRunId: period.activeRunId,
+      format: generated.format, status: 'archiving', version: 1,
+      contentHash: generated.contentHash, employeeCount: generated.employeeCount,
+      totalTaxableEarningsMinor: generated.totalTaxableEarningsMinor,
+      totalWithholdingTaxMinor: generated.totalWithholdingTaxMinor,
+      objectEvidenceId: null, taxSubmissionId: null, taxSubmissionEvidenceId: null,
+    });
+  }
+
+  private async generateManifest(
+    period: PayrollPeriodRecord,
+    filingId: string,
+    session: ClientSession,
+  ): Promise<GeneratedTaxFilingManifest> {
+    if (period.activeRunId === null || period.resultHash === null ||
+      period.employeeCount === null || period.totalTaxMinor === null) {
+      throw new ConflictException({
+        code: 'PAYROLL_TAX_PERIOD_CONTROLS_INCOMPLETE',
+        message: '工资周期缺少税务清单所需控制量',
+      });
+    }
     const records = await this.lines.find({
       tenantId: this.tenantId(), periodId: period.id, runId: period.activeRunId,
     }).sort({ employeeId: 1 }).session(session).lean().exec();
@@ -372,9 +540,9 @@ export class PayrollTaxFilingService {
     ) throw new ConflictException({
       code: 'PAYROLL_TAX_LINES_INCOMPLETE', message: '锁定工资税务员工行不完整',
     });
-    const employeeIds = records.map((record) => record.employeeId);
     const employmentRecords = await this.employments.findOverlappingByEmployeeIds(
-      employeeIds, `${period.period}-01`, monthEnd(period.period), session,
+      records.map((record) => record.employeeId),
+      `${period.period}-01`, monthEnd(period.period), session,
     );
     if (
       employmentRecords.length !== records.length ||
@@ -385,12 +553,15 @@ export class PayrollTaxFilingService {
     const people = await this.persons.findByIds(
       employmentRecords.map((record) => record.personId), session,
     );
-    if (people.length !== records.length || new Set(people.map((person) => person.id)).size !== records.length) {
+    if (people.length !== records.length ||
+      new Set(people.map((person) => person.id)).size !== records.length) {
       throw new ConflictException({
         code: 'PAYROLL_TAX_IDENTITY_EVIDENCE_INCOMPLETE', message: '税务身份核验证据不完整',
       });
     }
-    const employmentByEmployee = new Map(employmentRecords.map((record) => [record.employeeId, record]));
+    const employmentByEmployee = new Map(
+      employmentRecords.map((record) => [record.employeeId, record]),
+    );
     const personById = new Map(people.map((person) => [person.id, person]));
     const manifestLines = records.map((record) => {
       const result = resultSchema.parse(this.crypto.unprotect({
@@ -416,7 +587,6 @@ export class PayrollTaxFilingService {
         resultHash,
       });
     });
-    const filingId = createEventId();
     const generated = generateTaxFilingManifest({
       filingId, tenantId: this.tenantId(), period: period.period,
       payrollRunId: period.activeRunId, payrollResultHash: period.resultHash,
@@ -428,29 +598,48 @@ export class PayrollTaxFilingService {
     if (totalTax !== BigInt(period.totalTaxMinor)) throw new ConflictException({
       code: 'PAYROLL_TAX_TOTAL_MISMATCH', message: '税务清单与锁定工资税额不一致',
     });
-    const protectedManifest = this.crypto.protect({
-      tenantId: this.tenantId(), resourceType: 'tax_filing', resourceId: filingId, version: 1,
-    }, { content: generated.content });
-    await this.filings.create([{
-      id: filingId, tenantId: this.tenantId(), periodId: period.id,
-      payrollRunId: period.activeRunId, payrollResultHash: period.resultHash,
-      format: generated.format, contentHash: generated.contentHash,
-      employeeCount: generated.employeeCount,
-      totalTaxableEarningsMinor: generated.totalTaxableEarningsMinor,
-      totalWithholdingTaxMinor: generated.totalWithholdingTaxMinor,
-      preparedBy, approvedBy: null, strongAuthEvidenceId: null,
-      objectRef: null, objectEvidenceId: null, taxSubmissionId: null,
-      taxSubmissionEvidenceId: null, status: 'archiving', version: 1,
-      ...protectedRecord(protectedManifest),
-    }], { session });
-    return Object.freeze({
-      id: filingId, periodId: period.id, payrollRunId: period.activeRunId,
-      format: generated.format, status: 'archiving', version: 1,
-      contentHash: generated.contentHash, employeeCount: generated.employeeCount,
-      totalTaxableEarningsMinor: generated.totalTaxableEarningsMinor,
-      totalWithholdingTaxMinor: generated.totalWithholdingTaxMinor,
-      objectEvidenceId: null, taxSubmissionId: null, taxSubmissionEvidenceId: null,
-    });
+    return generated;
+  }
+
+  private async verifyMigrationReplay(
+    period: PayrollPeriodRecord,
+    input: ImportPayrollTaxFilingFromMigrationInput,
+    preparedBy: string,
+    approvedBy: string,
+    submittedAt: Date,
+    session: ClientSession,
+  ): Promise<PayrollTaxFilingSummary> {
+    const filing = await this.filings.findOne({
+      tenantId: this.tenantId(), id: input.targetId,
+    }).session(session).lean().exec();
+    if (filing === null) throw taxMigrationImmutable();
+    const generated = await this.generateManifest(period, filing.id, session);
+    assertMigrationControls(input, generated);
+    const manifest = protectedManifestSchema.parse(this.crypto.unprotect({
+      tenantId: this.tenantId(), resourceType: 'tax_filing',
+      resourceId: filing.id, version: 1,
+    }, protectedValue(filing)));
+    if (
+      filing.periodId !== input.periodId || filing.payrollRunId !== input.payrollRunId ||
+      filing.payrollResultHash !== period.resultHash || filing.format !== generated.format ||
+      filing.contentHash !== generated.contentHash || manifest.content !== generated.content ||
+      filing.employeeCount !== generated.employeeCount ||
+      filing.totalTaxableEarningsMinor !== generated.totalTaxableEarningsMinor ||
+      filing.totalWithholdingTaxMinor !== generated.totalWithholdingTaxMinor ||
+      filing.preparedBy !== preparedBy || filing.approvedBy !== approvedBy ||
+      filing.strongAuthEvidenceId !== migrationTaxEvidenceId(input.migrationEvidenceRef) ||
+      filing.strongAuthReferenceType !== 'migration_tax_approval_evidence' ||
+      filing.objectRef !== input.migrationEvidenceRef ||
+      filing.objectEvidenceId !== filing.strongAuthEvidenceId ||
+      filing.taxSubmissionId !== input.taxSubmissionId ||
+      filing.taxSubmissionEvidenceId !== input.taxSubmissionEvidenceId ||
+      filing.status !== 'submitted' || filing.version !== 4 ||
+      filing.migrationEvidenceRef !== input.migrationEvidenceRef ||
+      filing.migrationEvidenceChecksum !== input.evidenceChecksum ||
+      filing.createdAt.toISOString() !== submittedAt.toISOString() ||
+      filing.updatedAt.toISOString() !== submittedAt.toISOString()
+    ) throw taxMigrationImmutable();
+    return summary(filing);
   }
 
   private async materialize(key: string, filingId: string): Promise<PayrollTaxFilingSummary> {
@@ -563,6 +752,18 @@ export class PayrollTaxFilingService {
     }
   }
 
+  private assertMigrationWriter(): void {
+    const actor = this.context.getActorRequired();
+    if (!['service', 'system_job'].includes(actor.actorType) ||
+      !actor.scopes.includes('erp:migration:execute') ||
+      !actor.scopes.includes('erp:payroll:migration:write')) {
+      throw new ForbiddenException({
+        code: 'PAYROLL_TAX_MIGRATION_WRITER_DENIED',
+        message: '个税申报迁移必须由受信任服务身份执行',
+      });
+    }
+  }
+
   private tenantId(): string { return this.context.getTenantRequired().tenantId; }
 }
 
@@ -606,4 +807,86 @@ function monthEnd(month: string): string {
   const [year, value] = month.split('-').map(Number);
   if (year === undefined || value === undefined) throw new Error('PAYROLL_TAX_PERIOD_INVALID');
   return new Date(Date.UTC(year, value, 0)).toISOString().slice(0, 10);
+}
+
+function assertMigrationInput(input: ImportPayrollTaxFilingFromMigrationInput): void {
+  strictMigrationInstant(input.submittedAt);
+  if (Object.keys(input).sort().join(',') !==
+      'approvalEvidenceChecksum,approvalHistoryId,approvedByEmployeeId,evidenceChecksum,expectedEmployeeCount,expectedPeriodVersion,expectedTotalTaxableEarningsMinor,expectedTotalWithholdingTaxMinor,migrationEvidenceRef,payrollRunId,periodId,preparedByEmployeeId,submittedAt,targetId,taxSubmissionEvidenceId,taxSubmissionId' ||
+    (input.targetId !== null && !ULID.test(input.targetId)) ||
+    !ULID.test(input.periodId) || !ULID.test(input.payrollRunId) ||
+    !ULID.test(input.approvalHistoryId) || !ID.test(input.preparedByEmployeeId) ||
+    !ID.test(input.approvedByEmployeeId) || !ID.test(input.taxSubmissionId) ||
+    !ID.test(input.taxSubmissionEvidenceId) ||
+    !Number.isSafeInteger(input.expectedPeriodVersion) || input.expectedPeriodVersion < 6 ||
+    !Number.isSafeInteger(input.expectedEmployeeCount) ||
+    input.expectedEmployeeCount < 1 || input.expectedEmployeeCount > 5_000 ||
+    !nonnegativeSafe(input.expectedTotalTaxableEarningsMinor) ||
+    !Number.isSafeInteger(input.expectedTotalWithholdingTaxMinor) ||
+    !HASH.test(input.approvalEvidenceChecksum) ||
+    !MIGRATION_EVIDENCE_REF.test(input.migrationEvidenceRef) ||
+    !HASH.test(input.evidenceChecksum)) throw new BadRequestException({
+    code: 'PAYROLL_TAX_MIGRATION_INPUT_INVALID', message: '个税申报迁移控制信息非法',
+  });
+}
+
+function assertMigrationControls(
+  input: ImportPayrollTaxFilingFromMigrationInput,
+  generated: GeneratedTaxFilingManifest,
+): void {
+  if (generated.employeeCount !== input.expectedEmployeeCount ||
+    generated.totalTaxableEarningsMinor !== input.expectedTotalTaxableEarningsMinor ||
+    generated.totalWithholdingTaxMinor !== input.expectedTotalWithholdingTaxMinor) {
+    throw new ConflictException({
+      code: 'PAYROLL_TAX_MIGRATION_CONTROLS_MISMATCH',
+      message: '目标重建个税清单与来源控制总量不一致',
+    });
+  }
+}
+
+function strictMigrationInstant(value: string): Date {
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString() !== value ||
+    parsed.getTime() > Date.now() + 5 * 60 * 1_000) throw new BadRequestException({
+    code: 'PAYROLL_TAX_MIGRATION_TIME_INVALID',
+    message: '个税申报迁移时间必须为历史 UTC 毫秒时间',
+  });
+  return parsed;
+}
+
+function taxMigratedEventData(
+  period: string,
+  record: {
+    readonly payrollRunId: string;
+    readonly contentHash: string;
+    readonly employeeCount: number;
+    readonly totalTaxableEarningsMinor: number;
+    readonly totalWithholdingTaxMinor: number;
+    readonly taxSubmissionId: string;
+    readonly taxSubmissionEvidenceId: string;
+  },
+) {
+  return {
+    period, payrollRunId: record.payrollRunId, contentHash: record.contentHash,
+    employeeCount: record.employeeCount,
+    totalTaxableEarningsMinor: record.totalTaxableEarningsMinor,
+    totalWithholdingTaxMinor: record.totalWithholdingTaxMinor,
+    taxSubmissionId: record.taxSubmissionId,
+    taxSubmissionEvidenceId: record.taxSubmissionEvidenceId, status: 'submitted',
+  } as const;
+}
+
+function taxMigrationImmutable(): ConflictException {
+  return new ConflictException({
+    code: 'PAYROLL_TAX_MIGRATION_IMMUTABLE',
+    message: '既有个税申报清单、回执或迁移证据不一致，禁止覆盖',
+  });
+}
+
+function nonnegativeSafe(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+function migrationTaxEvidenceId(reference: string): string {
+  return `migration-tax:${createHash('sha256').update(reference, 'utf8').digest('base64url')}`;
 }

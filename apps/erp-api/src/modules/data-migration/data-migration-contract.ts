@@ -27,6 +27,7 @@ export const DATA_MIGRATION_SCOPE_ENTITIES = Object.freeze({
   payroll_calculation_runs: Object.freeze(['payroll.calculation_run']),
   payroll_period_approvals: Object.freeze(['payroll.period_approval']),
   payroll_period_locks: Object.freeze(['payroll.period_lock']),
+  payroll_tax_filings: Object.freeze(['payroll.tax_filing']),
 } as const);
 
 export type DataMigrationScope = keyof typeof DATA_MIGRATION_SCOPE_ENTITIES;
@@ -65,6 +66,7 @@ export const DATA_MIGRATION_SCOPE_WRITE_SCOPE: Readonly<Record<DataMigrationScop
     payroll_calculation_runs: 'erp:payroll:migration:write',
     payroll_period_approvals: 'erp:payroll:migration:write',
     payroll_period_locks: 'erp:payroll:migration:write',
+    payroll_tax_filings: 'erp:payroll:migration:write',
   });
 
 /** 附件分级只由服务端 Scope 决定，禁止来源包或客户端降级。 */
@@ -90,6 +92,7 @@ Readonly<Record<DataMigrationScope, DataMigrationDataClassification>> = Object.f
   payroll_calculation_runs: 'L4',
   payroll_period_approvals: 'L4',
   payroll_period_locks: 'L4',
+  payroll_tax_filings: 'L4',
 });
 
 /** 失败关闭地校验实体是否属于本批次范围。 */

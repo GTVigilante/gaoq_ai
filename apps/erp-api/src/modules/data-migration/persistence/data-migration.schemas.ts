@@ -119,7 +119,7 @@ export class DataMigrationAssociationRecord {
       'application', 'interviewer', 'interview',
       'source_fact',
       'previous_snapshot',
-      'prepared_by', 'payroll_period', 'rule_pack',
+      'prepared_by', 'payroll_period', 'payroll_run', 'rule_pack',
       'compensation_profile', 'attendance_snapshot',
       'approval_control', 'locked_by',
       'declared_reference',
@@ -160,6 +160,7 @@ export class DataMigrationAssociationRecord {
     | 'previous_snapshot'
     | 'prepared_by'
     | 'payroll_period'
+    | 'payroll_run'
     | 'rule_pack'
     | 'compensation_profile'
     | 'attendance_snapshot'

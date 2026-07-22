@@ -206,6 +206,23 @@ describe('Payroll 持久化契约', () => {
       ...document.toObject(), totalTaxableEarningsMinor: Number.MAX_SAFE_INTEGER + 1,
     });
     await expect(unsafe.validate()).rejects.toThrow(/totalTaxableEarningsMinor/);
+    const migrated = new TaxFilingModel({
+      ...document.toObject(), status: 'submitted', version: 4,
+      approvedBy: 'tax-approver', strongAuthEvidenceId: 'migration-evidence-001',
+      strongAuthReferenceType: 'migration_tax_approval_evidence',
+      objectRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/tax-001',
+      objectEvidenceId: 'migration-evidence-001',
+      taxSubmissionId: 'legacy-tax-submission-001',
+      taxSubmissionEvidenceId: 'legacy-tax-evidence-001',
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/tax-001',
+      migrationEvidenceChecksum: 'm'.repeat(43),
+    });
+    await expect(migrated.validate()).resolves.toBeUndefined();
+    expect(PayrollTaxFilingRecordSchema.indexes()).toContainEqual([
+      { tenantId: 1, migrationEvidenceRef: 1 }, expect.objectContaining({ unique: true }),
+    ]);
   });
 
   it('四方对账快照固化完整证据引用且拒绝未知差异码', async () => {

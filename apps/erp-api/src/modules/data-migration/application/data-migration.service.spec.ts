@@ -12,6 +12,7 @@ import type { AttendanceApplicationService } from '../../attendance/application/
 import type { PayrollMasterDataService } from '../../payroll/application/payroll-master-data.service.js';
 import type { PayrollApprovalService } from '../../payroll/application/payroll-approval.service.js';
 import type { PayrollRunService } from '../../payroll/application/payroll-run.service.js';
+import type { PayrollTaxFilingService } from '../../payroll/application/payroll-tax-filing.service.js';
 import type {
   DataMigrationAssociationDocument,
   DataMigrationAttachmentDocument,
@@ -146,6 +147,10 @@ function payrollPeriodApprovalsRun() {
 
 function payrollPeriodLocksRun() {
   return { ...run(), scope: 'payroll_period_locks' as const };
+}
+
+function payrollTaxFilingsRun() {
+  return { ...run(), scope: 'payroll_tax_filings' as const };
 }
 
 function query<T>(value: T) { return { lean: () => ({ exec: () => Promise.resolve(value) }) }; }
@@ -2014,6 +2019,97 @@ describe('DataMigrationService', () => {
         lockedByEmployeeId: targetIds['org.employee'], strongAuthMethod: 'webauthn_uv',
       }),
     );
+  });
+
+  it('个税提交证据迁移解析工资、身份和批准历史且不保存清单正文', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      periodSourceId: 'legacy-period-001', payrollRunSourceId: 'legacy-run-001',
+      expectedPeriodVersion: 6, preparedByEmployeeSourceId: 'legacy-tax-maker-001',
+      approvedByEmployeeSourceId: 'legacy-tax-approver-001',
+      approvalHistorySourceId: 'legacy-tax-approval-001',
+      approvalEvidenceChecksum: 'a'.repeat(43), expectedEmployeeCount: 1,
+      expectedTotalTaxableEarningsMinor: 1_000_000,
+      expectedTotalWithholdingTaxMinor: 10_500,
+      taxSubmissionId: 'legacy-tax-submission-001',
+      taxSubmissionEvidenceId: 'legacy-tax-evidence-001',
+      submittedAt: '2026-07-04T00:00:00.000Z',
+      sourceEvidenceSourceAttachmentId: 'payroll-tax-001',
+      sourceEvidenceChecksum: 'e'.repeat(43),
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(payrollTaxFilingsRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const targetIds: Readonly<Record<string, string>> = {
+      'payroll.period': '01J8ZQK7V0A2M4N6P8R0T2W4P1',
+      'payroll.calculation_run': '01J8ZQK7V0A2M4N6P8R0T2W4R1',
+      'approval.history': '01J8ZQK7V0A2M4N6P8R0T2W4H1',
+      'org.employee:legacy-tax-maker-001': 'employee-tax-maker',
+      'org.employee:legacy-tax-approver-001': 'employee-tax-approver',
+    };
+    const mappings = {
+      findOne: vi.fn((filter: { entityType: string; sourceRecordId: string }) => query(
+        filter.entityType === 'payroll.tax_filing' ? null : {
+          targetId: targetIds[`${filter.entityType}:${filter.sourceRecordId}`] ??
+            targetIds[filter.entityType],
+          targetVersion: 1,
+        },
+      )),
+      findOneAndUpdate: vi.fn().mockReturnValue(query({ targetId: 'tax-filing-001' })),
+    };
+    const associations = {
+      findOneAndUpdate: vi.fn().mockReturnValue(query({})),
+      bulkWrite: vi.fn().mockResolvedValue({}),
+    };
+    const attachments = {
+      findOne: vi.fn().mockReturnValue(query(null)),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const payrollTax = { importSubmittedFromMigration: vi.fn().mockResolvedValue({
+      id: 'tax-filing-001', periodId: targetIds['payroll.period'],
+      payrollRunId: targetIds['payroll.calculation_run'], status: 'submitted', version: 4,
+      contentHash: 'c'.repeat(43), employeeCount: 1,
+      totalTaxableEarningsMinor: 1_000_000, totalWithholdingTaxMinor: 10_500,
+      objectEvidenceId: 'migration-evidence-001',
+      taxSubmissionId: 'legacy-tax-submission-001',
+      taxSubmissionEvidenceId: 'legacy-tax-evidence-001',
+    }) };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      mappings as unknown as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+      undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined,
+      payrollTax as unknown as PayrollTaxFilingService,
+    );
+    const result = await trusted(context, () => service.apply(RUN_ID, {
+      sequence: 1, sourceRecordId: 'legacy-tax-filing-001', sourceVersion: '1',
+      entityType: 'payroll.tax_filing', payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: [
+        'legacy-period-001', 'legacy-run-001', 'legacy-tax-maker-001',
+        'legacy-tax-approver-001', 'legacy-tax-approval-001',
+      ],
+      attachments: [{ sourceAttachmentId: 'payroll-tax-001', checksum: 'e'.repeat(43) }],
+    }));
+
+    expect(result).toMatchObject({ status: 'applied', targetId: 'tax-filing-001' });
+    expect(payrollTax.importSubmittedFromMigration).toHaveBeenCalledWith(
+      expect.stringMatching(/^migration:/u),
+      expect.objectContaining({
+        periodId: targetIds['payroll.period'],
+        payrollRunId: targetIds['payroll.calculation_run'],
+        preparedByEmployeeId: 'employee-tax-maker',
+        approvedByEmployeeId: 'employee-tax-approver',
+        approvalHistoryId: targetIds['approval.history'],
+      }),
+    );
+    expect(JSON.stringify(items.create.mock.calls)).not.toMatch(/1000000|10500|taxable/u);
   });
 
   it('未解析关联和未决附件进入 Phase 6 硬门禁', async () => {

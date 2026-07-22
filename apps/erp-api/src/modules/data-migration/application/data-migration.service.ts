@@ -66,6 +66,10 @@ import {
   type ImportPayrollPeriodApprovalFromMigrationInput,
   type ImportPayrollPeriodLockFromMigrationInput,
 } from '../../payroll/application/payroll-approval.service.js';
+import {
+  PayrollTaxFilingService,
+  type ImportPayrollTaxFilingFromMigrationInput,
+} from '../../payroll/application/payroll-tax-filing.service.js';
 import type {
   CreateDepartmentDto,
   CreateEmployeeDto,
@@ -179,6 +183,8 @@ export class DataMigrationService {
     private readonly payrollRuns?: PayrollRunService,
     @Inject(PayrollApprovalService)
     private readonly payrollControls?: PayrollApprovalService,
+    @Inject(PayrollTaxFilingService)
+    private readonly payrollTax?: PayrollTaxFilingService,
   ) {}
 
   async start(input: CreateDataMigrationRunDto) {
@@ -547,6 +553,17 @@ export class DataMigrationService {
         evidence?.checksum !== payload.applicationEvidenceChecksum) {
         throw new Error('DATA_MIGRATION_APPLICATION_EVIDENCE_REQUIRED');
       }
+      await Promise.all(specs.map(async (spec) =>
+        this.requireMapping(run, spec.entityType, spec.sourceAssociationId)));
+      return;
+    } else if (input.entityType === 'payroll.tax_filing') {
+      const payload = payrollTaxFilingPayload(input.payload);
+      const specs = payrollTaxFilingAssociationSpecs(payload);
+      assertAssociations(
+        input.associationSourceIds,
+        specs.map((spec) => spec.sourceAssociationId),
+      );
+      assertSingleMigrationEvidence(input, payload);
       await Promise.all(specs.map(async (spec) =>
         this.requireMapping(run, spec.entityType, spec.sourceAssociationId)));
       return;
@@ -1296,6 +1313,36 @@ export class DataMigrationService {
       const result = await this.payrollControls.importLockFromMigration(key, command);
       return target(result);
     }
+    if (input.entityType === 'payroll.tax_filing') {
+      const payload = payrollTaxFilingPayload(input.payload);
+      if (this.payrollTax === undefined) throw new Error('迁移工资税务适配器未装配');
+      const [period, payrollRun, preparedBy, approvedBy, approval] = await Promise.all([
+        this.requireMapping(run, 'payroll.period', payload.periodSourceId),
+        this.requireMapping(run, 'payroll.calculation_run', payload.payrollRunSourceId),
+        this.requireMapping(run, 'org.employee', payload.preparedByEmployeeSourceId),
+        this.requireMapping(run, 'org.employee', payload.approvedByEmployeeSourceId),
+        this.requireMapping(run, 'approval.history', payload.approvalHistorySourceId),
+      ]);
+      const command: ImportPayrollTaxFilingFromMigrationInput = {
+        targetId: mapping?.targetId ?? null, periodId: period.targetId,
+        payrollRunId: payrollRun.targetId,
+        expectedPeriodVersion: payload.expectedPeriodVersion,
+        preparedByEmployeeId: preparedBy.targetId,
+        approvedByEmployeeId: approvedBy.targetId,
+        approvalHistoryId: approval.targetId,
+        approvalEvidenceChecksum: payload.approvalEvidenceChecksum,
+        expectedEmployeeCount: payload.expectedEmployeeCount,
+        expectedTotalTaxableEarningsMinor: payload.expectedTotalTaxableEarningsMinor,
+        expectedTotalWithholdingTaxMinor: payload.expectedTotalWithholdingTaxMinor,
+        taxSubmissionId: payload.taxSubmissionId,
+        taxSubmissionEvidenceId: payload.taxSubmissionEvidenceId,
+        submittedAt: payload.submittedAt,
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${run.id}/attachments/${payload.sourceEvidenceSourceAttachmentId}`,
+        evidenceChecksum: payload.sourceEvidenceChecksum,
+      };
+      return target(await this.payrollTax.importSubmittedFromMigration(key, command));
+    }
     const payload = approvalTemplatePayload(input.payload);
     if (this.approvals === undefined) throw new Error('迁移审批适配器未装配');
     const employeeId = async (sourceId: string): Promise<string> =>
@@ -1819,7 +1866,8 @@ type AssociationTargetType =
   | 'payroll.rule_pack'
   | 'payroll.compensation_profile'
   | 'payroll.period'
-  | 'payroll.period_approval';
+  | 'payroll.period_approval'
+  | 'payroll.calculation_run';
 interface AssociationEvidence {
   readonly relationship: AssociationRelationship;
   readonly sourceAssociationId: string;
@@ -3651,6 +3699,106 @@ function payrollPeriodLockAssociationSpecs(
   ];
 }
 
+interface PayrollTaxFilingMigrationPayload extends MigrationEvidencePayload {
+  readonly periodSourceId: string;
+  readonly payrollRunSourceId: string;
+  readonly expectedPeriodVersion: number;
+  readonly preparedByEmployeeSourceId: string;
+  readonly approvedByEmployeeSourceId: string;
+  readonly approvalHistorySourceId: string;
+  readonly approvalEvidenceChecksum: string;
+  readonly expectedEmployeeCount: number;
+  readonly expectedTotalTaxableEarningsMinor: number;
+  readonly expectedTotalWithholdingTaxMinor: number;
+  readonly taxSubmissionId: string;
+  readonly taxSubmissionEvidenceId: string;
+  readonly submittedAt: string;
+}
+
+function payrollTaxFilingPayload(
+  value: Readonly<Record<string, unknown>>,
+): PayrollTaxFilingMigrationPayload {
+  exactKeys(value, [
+    'approvalEvidenceChecksum', 'approvalHistorySourceId',
+    'approvedByEmployeeSourceId', 'expectedEmployeeCount', 'expectedPeriodVersion',
+    'expectedTotalTaxableEarningsMinor', 'expectedTotalWithholdingTaxMinor',
+    'payrollRunSourceId', 'periodSourceId', 'preparedByEmployeeSourceId',
+    'sourceEvidenceChecksum', 'sourceEvidenceSourceAttachmentId', 'submittedAt',
+    'taxSubmissionEvidenceId', 'taxSubmissionId',
+  ]);
+  if (
+    typeof value.periodSourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.periodSourceId) ||
+    typeof value.payrollRunSourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.payrollRunSourceId) ||
+    typeof value.preparedByEmployeeSourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.preparedByEmployeeSourceId) ||
+    typeof value.approvedByEmployeeSourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.approvedByEmployeeSourceId) ||
+    typeof value.approvalHistorySourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.approvalHistorySourceId) ||
+    typeof value.approvalEvidenceChecksum !== 'string' ||
+    !HASH_PATTERN.test(value.approvalEvidenceChecksum) ||
+    !migrationVersion(value.expectedPeriodVersion) || Number(value.expectedPeriodVersion) < 6 ||
+    !Number.isSafeInteger(value.expectedEmployeeCount) ||
+    Number(value.expectedEmployeeCount) < 1 || Number(value.expectedEmployeeCount) > 5_000 ||
+    !nonnegativeSafeInteger(value.expectedTotalTaxableEarningsMinor) ||
+    !Number.isSafeInteger(value.expectedTotalWithholdingTaxMinor) ||
+    typeof value.taxSubmissionId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.taxSubmissionId) ||
+    typeof value.taxSubmissionEvidenceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.taxSubmissionEvidenceId) ||
+    !isStrictUtcIso(value.submittedAt) || !migrationEvidence(value)
+  ) throw invalidPayload();
+  return {
+    periodSourceId: value.periodSourceId,
+    payrollRunSourceId: value.payrollRunSourceId,
+    expectedPeriodVersion: Number(value.expectedPeriodVersion),
+    preparedByEmployeeSourceId: value.preparedByEmployeeSourceId,
+    approvedByEmployeeSourceId: value.approvedByEmployeeSourceId,
+    approvalHistorySourceId: value.approvalHistorySourceId,
+    approvalEvidenceChecksum: value.approvalEvidenceChecksum,
+    expectedEmployeeCount: Number(value.expectedEmployeeCount),
+    expectedTotalTaxableEarningsMinor: Number(value.expectedTotalTaxableEarningsMinor),
+    expectedTotalWithholdingTaxMinor: Number(value.expectedTotalWithholdingTaxMinor),
+    taxSubmissionId: value.taxSubmissionId,
+    taxSubmissionEvidenceId: value.taxSubmissionEvidenceId,
+    submittedAt: value.submittedAt,
+    sourceEvidenceSourceAttachmentId: value.sourceEvidenceSourceAttachmentId,
+    sourceEvidenceChecksum: value.sourceEvidenceChecksum,
+  };
+}
+
+function payrollTaxFilingAssociationSpecs(
+  payload: PayrollTaxFilingMigrationPayload,
+): readonly (AssociationEvidence & { readonly entityType: AssociationTargetType })[] {
+  return [
+    {
+      relationship: 'payroll_period', sourceAssociationId: payload.periodSourceId,
+      entityType: 'payroll.period',
+    },
+    {
+      relationship: 'payroll_run', sourceAssociationId: payload.payrollRunSourceId,
+      entityType: 'payroll.calculation_run',
+    },
+    {
+      relationship: 'prepared_by',
+      sourceAssociationId: payload.preparedByEmployeeSourceId,
+      entityType: 'org.employee',
+    },
+    {
+      relationship: 'approved_by',
+      sourceAssociationId: payload.approvedByEmployeeSourceId,
+      entityType: 'org.employee',
+    },
+    {
+      relationship: 'approval_history',
+      sourceAssociationId: payload.approvalHistorySourceId,
+      entityType: 'approval.history',
+    },
+  ];
+}
+
 function migrationEvidence(value: Readonly<Record<string, unknown>>): value is
 Readonly<Record<string, unknown>> & MigrationEvidencePayload {
   return typeof value.sourceEvidenceSourceAttachmentId === 'string' &&
@@ -4028,6 +4176,8 @@ function associationEvidence(input: ApplyDataMigrationRecordDto): readonly Assoc
       );
     } else if (input.entityType === 'payroll.period_lock') {
       derived = payrollPeriodLockAssociationSpecs(payrollPeriodLockPayload(input.payload));
+    } else if (input.entityType === 'payroll.tax_filing') {
+      derived = payrollTaxFilingAssociationSpecs(payrollTaxFilingPayload(input.payload));
     } else if (input.entityType === 'attendance.monthly_snapshot') {
       const payload = attendanceMonthPayload(input.payload);
       derived = [
@@ -4166,7 +4316,7 @@ const ASSOCIATION_RELATIONSHIPS = [
   'candidate', 'application', 'interviewer', 'interview',
   'source_fact',
   'previous_snapshot',
-  'prepared_by', 'payroll_period', 'rule_pack',
+  'prepared_by', 'payroll_period', 'payroll_run', 'rule_pack',
   'compensation_profile', 'attendance_snapshot',
   'approval_control', 'locked_by',
   'declared_reference',

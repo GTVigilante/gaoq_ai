@@ -2,7 +2,7 @@
 
 ## 范围与当前能力
 
-本切片建立可重复、可恢复、可审计的迁移控制面。当前白名单覆盖组织、审批、招聘、考勤完整链路，并覆盖 `payroll_rule_packs`（法定规则版本）、`payroll_compensation_profiles`（员工薪酬档案）、`payroll_periods`（未计算周期基线）、`payroll_calculation_runs`（确定性重算运行）、`payroll_period_approvals`（历史批准控制）与 `payroll_period_locks`（历史锁定控制），共二十个独立 Scope；薪资支付/对账、税务证据与业务附件仍需按域追加，完成前 Issue #34 与 Phase 5 迁移门禁保持未完成。
+本切片建立可重复、可恢复、可审计的迁移控制面。当前白名单覆盖组织、审批、招聘、考勤完整链路，并覆盖 `payroll_rule_packs`（法定规则版本）、`payroll_compensation_profiles`（员工薪酬档案）、`payroll_periods`（未计算周期基线）、`payroll_calculation_runs`（确定性重算运行）、`payroll_period_approvals`（历史批准控制）、`payroll_period_locks`（历史锁定控制）与 `payroll_tax_filings`（已提交个税证据），共二十一个独立 Scope；薪资支付/对账与业务附件仍需按域追加，完成前 Issue #34 与 Phase 5 迁移门禁保持未完成。
 
 目标业务数据禁止由迁移模块直接写集合。组织与劳动关系实体调用 `OrgApplicationService`，审批模板、已终结审批历史与活动审批调用 `ApprovalApplicationService`，HC 与职位调用 `RecruitmentManagementService`，候选人与申请调用 `RecruitmentApplicationService`，面试与评价调用 `RecruitmentInterviewService`，Offer 与后续申请阶段调用 `RecruitmentOfferService`，继续执行领域校验、引用校验、加密、盲索引、幂等、Outbox 和版本并发控制。员工更新、状态变更与开放劳动关系在一个事务内同步；既有员工离职仍必须进入 Care，迁移不得绕过清算、身份吊销与生效日控制。历史劳动关系使用独立恢复入口，不触发正常入职、离职或身份副作用，也不生成新员工。审批迁移分别只发布 `approval_template.migrated`、`approval_history.migrated` 与 `approval_instance.migrated`；招聘迁移只发布各聚合的 `.migrated` 专用事件，包括申请、面试和 Offer。所有迁移事件均不得伪装成正常创建、排期、评价、提交、决策、发送、签署、发布或退役动作，也不创建通知、外部日历或 eSign 任务。迁移模块只直写自己拥有的运行、条目、来源映射与证据账本。
 
@@ -60,7 +60,8 @@
 - 重算通过后，目标输入与结果继续分别使用 Payroll AES-256-GCM 密钥域保存，运行级 WORM 与历史完成时间冻结；首个运行把版本 2 `collecting` 推到版本 3 `review`，后续运行只按连续版本留在 `review` 并替换活动运行，只发布 `payroll.run.migrated`。审批、强认证锁定、代发、对账与报税必须由后续独立 Scope 恢复，禁止本 Scope 合成。
 - `payroll_period_approvals` 只恢复已经终结为 approved 的历史工资审批。它必须引用 `review` 周期、`payroll_period_approval` 专用 `approval.history`、该历史的已登记 checksum 及审批员工映射；应用服务依次重放 `review → pending_approval → approved`，并继续强制制单人与审批人分离。周期以 `legacy_history` 判别引用，独立批准控制记录把审批历史、审批主体、完成时间、周期版本和迁移 WORM 冻结；不得把历史 ID 写成在线审批实例，也不得创建待办、通知或普通审批事件。草稿或运行中的工资审批不属于本 Scope，切换前必须完成、撤回，或在新系统按正式在线流程重新发起。
 - `payroll_period_locks` 必须在对应批准控制完成后执行。它引用批准控制映射、独立锁定员工及经 WORM 证明的 WebAuthn UV 历史控制，核验批准时间 ≤ 锁定时间，并复用领域状态机强制锁定人独立于制单人与审批人。目标使用 `migration_lock_evidence` 判别引用，单独冻结锁定主体、时间、操作周期、认证方法和迁移 WORM；不生成或伪造在线 WebAuthn challenge/credential 记录，也不发布普通锁定事件。
-- 六个 Payroll Scope 均不触发普通 attest、计算完成、审批、锁定、代发或税务动作，只分别发布 `.migrated` 事件。迁移账本、报告、事件与 MCP 不输出员工级金额、规则正文、来源引用、密文或 WORM 定位符；`payroll_calculation_runs`、`payroll_period_approvals` 与 `payroll_period_locks` 固定为 L4，`payroll_periods` 固定为 L3，MCP 不提供薪资迁移写工具。
+- `payroll_tax_filings` 只恢复已经提交成功的个税清单与回执。它必须引用已锁定周期、活动计算运行、独立制备/审批员工、`payroll_tax_filing_approval` approved 历史及其 checksum；制备人与审批人必须彼此独立，且两者都不得兼任工资制单、审批或锁定。目标从工资计算密文和组织身份凭证重新生成确定性内部清单并使用 Payroll AES-256-GCM 加密，逐项核对员工数、应税总额和税额；迁移 WORM 冻结来源清单、强认证批准和税局回执。只发布 `payroll.tax_filing.migrated`，不调用归档/税局网关，不伪造在线 WebAuthn 证据，也不接收身份证件、税务行正文或密钥。
+- 七个 Payroll Scope 均不触发普通 attest、计算完成、审批、锁定、代发或税务动作，只分别发布 `.migrated` 事件。迁移账本、报告、事件与 MCP 不输出员工级金额、规则正文、来源引用、密文或 WORM 定位符；`payroll_calculation_runs`、`payroll_period_approvals`、`payroll_period_locks` 与 `payroll_tax_filings` 固定为 L4，`payroll_periods` 固定为 L3，MCP 不提供薪资迁移写工具。
 
 `sourceFactHash` 的规范对象固定为 `sourceRecordId`、`sourceVersion`、`entityType`、`payloadHash`、按字典序排列的 `associationSourceIds`，以及按 `sourceAttachmentId` 排列且仅含 ID 与 checksum 的附件数组。滚动来源校验和初值为 `base64url(SHA-256(""))`，第 N 条为 `base64url(SHA-256(previous + "\\n" + sequence + ":" + sourceFactHash))`。来源导出程序必须使用相同算法，并固定 UTF-8、对象键字典序与数组规则。
 
