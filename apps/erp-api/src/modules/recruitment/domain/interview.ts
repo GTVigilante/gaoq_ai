@@ -50,6 +50,20 @@ export interface RecruitmentInterviewFeedbackResult {
   readonly feedback: RecruitmentInterviewFeedback;
 }
 
+export interface RecruitmentInterviewMigrationFeedback {
+  readonly id: string;
+  readonly interviewerId: string;
+  readonly recommendation: InterviewRecommendation;
+  readonly score: number;
+  readonly notes: string;
+  readonly submittedAt: string;
+}
+
+export interface RecruitmentInterviewMigrationResult {
+  readonly interview: RecruitmentInterview;
+  readonly feedback: readonly RecruitmentInterviewFeedback[];
+}
+
 export function createRecruitmentInterview(
   input: {
     readonly id: string;
@@ -106,6 +120,167 @@ export function createRecruitmentInterview(
     status: 'scheduled' as const, version: 1, completedAt: null, cancelledAt: null,
     createdBy: input.actorId, createdAt: occurredAt, updatedAt: occurredAt,
   });
+}
+
+/** 数据迁移专用：以内存状态机恢复面试和评价，不伪造在线排期或评价事件。 */
+export function restoreRecruitmentInterviewFromMigration(
+  input: {
+    readonly id: string;
+    readonly tenantId: string;
+    readonly applicationId: string;
+    readonly roundNumber: number;
+    readonly mode: RecruitmentInterviewMode;
+    readonly startsAt: string;
+    readonly endsAt: string;
+    readonly timezone: string;
+    readonly interviewerIds: readonly string[];
+    readonly location: string;
+    readonly createdBy: string;
+    readonly feedback: readonly RecruitmentInterviewMigrationFeedback[];
+    readonly expectedStatus: RecruitmentInterviewStatus;
+    readonly expectedVersion: number;
+    readonly completedAt: string | null;
+    readonly cancelledAt: string | null;
+    readonly createdAt: string;
+    readonly updatedAt: string;
+  },
+  now: Date,
+): RecruitmentInterviewMigrationResult {
+  const createdAt = strictInterviewMigrationIso(input.createdAt);
+  const startsAt = strictInterviewMigrationIso(input.startsAt);
+  const endsAt = strictInterviewMigrationIso(input.endsAt);
+  const updatedAt = strictInterviewMigrationIso(input.updatedAt);
+  const completedAt = input.completedAt === null
+    ? null
+    : strictInterviewMigrationIso(input.completedAt);
+  const cancelledAt = input.cancelledAt === null
+    ? null
+    : strictInterviewMigrationIso(input.cancelledAt);
+  const nowTime = now.getTime();
+  if (Date.parse(createdAt) > nowTime + 5 * 60 * 1_000 || createdAt > startsAt ||
+    Date.parse(endsAt) <= Date.parse(startsAt) ||
+    Date.parse(endsAt) - Date.parse(startsAt) > 12 * 60 * 60 * 1_000 ||
+    (input.expectedStatus === 'scheduled' && Date.parse(endsAt) <= nowTime)) {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_MIGRATION_INTERVIEW_TIMELINE_INVALID',
+      '面试迁移时间线无效或待排期面试已过期',
+    );
+  }
+  for (const [field, value] of Object.entries({
+    id: input.id,
+    tenantId: input.tenantId,
+    applicationId: input.applicationId,
+    createdBy: input.createdBy,
+  })) assertRecruitmentId(value, field);
+  if (!Number.isSafeInteger(input.roundNumber) || input.roundNumber < 1 || input.roundNumber > 100) {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_INTERVIEW_ROUND_INVALID', '面试轮次必须为 1..100 的整数',
+    );
+  }
+  if (!['phone', 'video', 'onsite'].includes(input.mode)) throw new RecruitmentDomainError(
+    'RECRUITMENT_INTERVIEW_MODE_INVALID', '面试方式无效',
+  );
+  const interviewerIds = [...new Set(input.interviewerIds)];
+  if (interviewerIds.length < 1 || interviewerIds.length > 20 ||
+    interviewerIds.length !== input.interviewerIds.length) throw new RecruitmentDomainError(
+    'RECRUITMENT_INTERVIEWERS_INVALID', '面试官必须唯一且人数为 1..20',
+  );
+  for (const interviewerId of interviewerIds) assertRecruitmentId(interviewerId, 'interviewerId');
+  if (!/^(?:UTC|[A-Za-z_]+\/[A-Za-z0-9_+.-]+)$/.test(input.timezone)) {
+    throw new RecruitmentDomainError('RECRUITMENT_TIMEZONE_INVALID', '时区必须使用 IANA 标识');
+  }
+  assertRecruitmentLabel(input.location, 'location', 2_048);
+  if (input.feedback.length > 20 ||
+    input.expectedVersion !== 1 + input.feedback.length +
+      (input.expectedStatus === 'scheduled' ? 0 : 1)) {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_MIGRATION_INTERVIEW_VERSION_INVALID',
+      '面试迁移评价数量、状态与版本不一致',
+    );
+  }
+  let interview: RecruitmentInterview = deepFreezeRecruitment({
+    id: input.id,
+    tenantId: input.tenantId,
+    applicationId: input.applicationId,
+    roundNumber: input.roundNumber,
+    mode: input.mode,
+    startsAt,
+    endsAt,
+    timezone: input.timezone,
+    interviewerIds,
+    location: input.location.trim(),
+    status: 'scheduled' as const,
+    version: 1,
+    completedAt: null,
+    cancelledAt: null,
+    createdBy: input.createdBy,
+    createdAt,
+    updatedAt: createdAt,
+  });
+  const restoredFeedback: RecruitmentInterviewFeedback[] = [];
+  const submitted = new Set<string>();
+  let previous = createdAt;
+  for (const source of input.feedback) {
+    const submittedAt = strictInterviewMigrationIso(source.submittedAt);
+    if (submittedAt < startsAt || submittedAt < previous ||
+      Date.parse(submittedAt) > nowTime + 5 * 60 * 1_000 ||
+      submitted.has(source.interviewerId)) {
+      throw new RecruitmentDomainError(
+        'RECRUITMENT_MIGRATION_INTERVIEW_FEEDBACK_INVALID',
+        '面试迁移评价必须唯一、按时间排序且不得位于未来',
+      );
+    }
+    const result = submitRecruitmentInterviewFeedback(interview, {
+      id: source.id,
+      tenantId: input.tenantId,
+      expectedVersion: interview.version,
+      interviewerId: source.interviewerId,
+      recommendation: source.recommendation,
+      score: source.score,
+      notes: source.notes,
+    }, new Date(submittedAt));
+    interview = result.interview;
+    restoredFeedback.push(result.feedback);
+    submitted.add(source.interviewerId);
+    previous = submittedAt;
+  }
+  if (input.expectedStatus === 'completed') {
+    if (completedAt === null || cancelledAt !== null || completedAt < endsAt ||
+      completedAt < previous || Date.parse(completedAt) > nowTime + 5 * 60 * 1_000) {
+      throw new RecruitmentDomainError(
+        'RECRUITMENT_MIGRATION_INTERVIEW_TIMELINE_INVALID', '面试完成时间线无效',
+      );
+    }
+    interview = completeRecruitmentInterview(interview, {
+      tenantId: input.tenantId,
+      expectedVersion: interview.version,
+      submittedInterviewerIds: [...submitted],
+    }, new Date(completedAt));
+  } else if (input.expectedStatus === 'cancelled') {
+    if (cancelledAt === null || completedAt !== null || cancelledAt < createdAt ||
+      cancelledAt < previous || Date.parse(cancelledAt) > nowTime + 5 * 60 * 1_000) {
+      throw new RecruitmentDomainError(
+        'RECRUITMENT_MIGRATION_INTERVIEW_TIMELINE_INVALID', '面试取消时间线无效',
+      );
+    }
+    interview = cancelRecruitmentInterview(interview, {
+      tenantId: input.tenantId,
+      expectedVersion: interview.version,
+    }, new Date(cancelledAt));
+  } else if (completedAt !== null || cancelledAt !== null) {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_MIGRATION_INTERVIEW_TIMELINE_INVALID', '待排期面试不得持有终态时间',
+    );
+  }
+  if (interview.status !== input.expectedStatus || interview.version !== input.expectedVersion ||
+    interview.updatedAt !== updatedAt || interview.completedAt !== completedAt ||
+    interview.cancelledAt !== cancelledAt) {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_MIGRATION_INTERVIEW_CONTROL_MISMATCH',
+      '面试迁移最终状态、版本或时间控制事实不一致',
+    );
+  }
+  return deepFreezeRecruitment({ interview, feedback: restoredFeedback });
 }
 
 export function submitRecruitmentInterviewFeedback(
@@ -201,4 +376,14 @@ function assertInterviewCommand(
   if (interview.version !== expectedVersion) throw new RecruitmentDomainError(
     'RECRUITMENT_VERSION_CONFLICT', '面试版本冲突',
   );
+}
+
+function strictInterviewMigrationIso(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value) {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_MIGRATION_INTERVIEW_TIMELINE_INVALID', '面试迁移时间必须为严格 UTC ISO',
+    );
+  }
+  return value;
 }

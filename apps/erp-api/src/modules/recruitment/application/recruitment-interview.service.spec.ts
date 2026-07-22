@@ -38,6 +38,7 @@ const interview = {
 };
 
 function fixture(options?: {
+  readonly actorType?: 'user' | 'service' | 'system_job';
   readonly employeeStatus?: 'active' | 'probation' | 'suspended' | 'terminated';
   readonly actorDepartments?: readonly string[];
   readonly scopes?: readonly string[];
@@ -52,7 +53,8 @@ function fixture(options?: {
   const trusted = {
     tenant: { tenantId: 'tenant-001', source: 'access_token' as const },
     actor: {
-      actorId: 'actor-001', tenantId: 'tenant-001', actorType: 'user' as const,
+      actorId: 'actor-001', tenantId: 'tenant-001',
+      actorType: options?.actorType ?? 'user' as const,
       roleCodes: [], scopes: options?.scopes ?? [],
       departmentIds: options?.actorDepartments ?? ['department-001'], traceId: 'trace-001',
     },
@@ -73,10 +75,13 @@ function fixture(options?: {
   const interviews = {
     findById: vi.fn().mockResolvedValue(interview),
     insert: vi.fn().mockResolvedValue(undefined),
+    insertMigrated: vi.fn().mockResolvedValue(undefined),
+    findMigrationEvidenceById: vi.fn().mockResolvedValue(null),
     replace: vi.fn().mockResolvedValue(undefined),
   };
   const feedback = {
     append: vi.fn().mockResolvedValue(undefined),
+    findByInterview: vi.fn().mockResolvedValue([]),
     findInterviewerIds: vi.fn().mockResolvedValue(
       options?.feedbackIds ?? ['employee-001', 'employee-002'],
     ),
@@ -138,6 +143,60 @@ describe('RecruitmentInterviewService', () => {
       APPLICATION_ID, 3, 'interview-schedule-key-002', scheduleInput,
     )).rejects.toMatchObject({ response: { code: 'RECRUITMENT_INTERVIEWER_INACTIVE' } });
     expect(store.interviews.insert).not.toHaveBeenCalled();
+  });
+
+  it('迁移面试只写最终密文聚合、评价与迁移事件', async () => {
+    const store = fixture({
+      actorType: 'service',
+      scopes: ['erp:migration:execute', 'erp:recruitment:migration:write'],
+    });
+    const result = await store.service.importInterviewFromMigration(
+      'interview-migration-key-001',
+      {
+        targetId: null,
+        applicationId: APPLICATION_ID,
+        roundNumber: 1,
+        mode: 'video',
+        startsAt: '2026-07-21T02:00:00.000Z',
+        endsAt: '2026-07-21T03:00:00.000Z',
+        timezone: 'Asia/Shanghai',
+        interviewerIds: ['employee-001', 'employee-002'],
+        location: 'https://meeting.example/migrated-secret',
+        createdByEmployeeId: 'employee-hr',
+        feedback: [
+          {
+            interviewerId: 'employee-001', recommendation: 'hire', score: 4,
+            notes: '技术能力符合要求', submittedAt: '2026-07-21T03:01:00.000Z',
+          },
+          {
+            interviewerId: 'employee-002', recommendation: 'strong_hire', score: 5,
+            notes: '业务理解深入', submittedAt: '2026-07-21T03:02:00.000Z',
+          },
+        ],
+        expectedStatus: 'completed', expectedVersion: 4,
+        completedAt: '2026-07-21T03:03:00.000Z', cancelledAt: null,
+        createdAt: '2026-07-20T02:00:00.000Z', updatedAt: '2026-07-21T03:03:00.000Z',
+        migrationEvidenceRef:
+          'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4Y6/attachments/interview-001',
+        evidenceChecksum: 'a'.repeat(43),
+      },
+    );
+    expect(store.interviews.insertMigrated).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'completed', version: 4 }),
+      expect.stringContaining('/attachments/interview-001'), 'a'.repeat(43), SESSION,
+    );
+    expect(store.feedback.append).toHaveBeenCalledTimes(2);
+    expect(store.outbox.append).toHaveBeenCalledTimes(1);
+    expect(store.outbox.append).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'recruitment.interview.migrated',
+    }), SESSION);
+    const migratedEvent = store.outbox.append.mock.calls[0]?.[0] as unknown as {
+      readonly payload: { readonly feedbackCount: number };
+    };
+    expect(migratedEvent.payload).toMatchObject({ feedbackCount: 2 });
+    expect(JSON.stringify(store.outbox.append.mock.calls)).not.toContain('migrated-secret');
+    expect(JSON.stringify(store.outbox.append.mock.calls)).not.toContain('技术能力符合要求');
+    expect(result.interview).toMatchObject({ status: 'completed', version: 4 });
   });
 
   it('评价提交先将可信 actor 映射为 employeeId，响应和事件不泄漏评价', async () => {

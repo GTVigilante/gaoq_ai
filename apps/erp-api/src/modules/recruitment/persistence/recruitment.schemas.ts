@@ -551,6 +551,15 @@ export class RecruitmentInterviewRecord {
   @Prop({ ...STRING_ID, immutable: true })
   createdBy!: string;
 
+  @Prop({
+    type: String, default: null, immutable: true, maxlength: 256,
+    match: MIGRATION_EVIDENCE_REF_PATTERN,
+  })
+  migrationEvidenceRef!: string | null;
+
+  @Prop({ type: String, default: null, immutable: true, match: HASH_PATTERN })
+  migrationEvidenceChecksum!: string | null;
+
   createdAt!: Date;
   updatedAt!: Date;
 }
@@ -572,6 +581,10 @@ RecruitmentInterviewRecordSchema.pre('validate', function () {
   if ((record.status === 'cancelled') !== (record.cancelledAt !== null)) {
     throw new Error('面试取消状态与取消时间不一致');
   }
+  if ((record.migrationEvidenceRef === null) !==
+    (record.migrationEvidenceChecksum === null)) {
+    throw new Error('面试迁移证据引用与校验和必须成对出现');
+  }
 });
 
 RecruitmentInterviewRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
@@ -580,6 +593,10 @@ RecruitmentInterviewRecordSchema.index(
   { unique: true },
 );
 RecruitmentInterviewRecordSchema.index({ tenantId: 1, interviewerIds: 1, startsAt: 1 });
+RecruitmentInterviewRecordSchema.index(
+  { tenantId: 1, migrationEvidenceRef: 1 },
+  { unique: true, partialFilterExpression: { migrationEvidenceRef: { $type: 'string' } } },
+);
 
 /** 面试官评价追加证据；原文不可覆盖且只保存密文。 */
 @Schema({ collection: 'recruitment_interview_feedback', timestamps: true, versionKey: false, id: false })

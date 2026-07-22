@@ -494,6 +494,47 @@ export class RecruitmentInterviewRepository extends TenantBoundRecruitmentReposi
   }
 
   async insert(interview: RecruitmentInterview, session: ClientSession): Promise<void> {
+    await this.insertWithMigrationEvidence(interview, null, null, session);
+  }
+
+  async insertMigrated(
+    interview: RecruitmentInterview,
+    migrationEvidenceRef: string,
+    migrationEvidenceChecksum: string,
+    session: ClientSession,
+  ): Promise<void> {
+    await this.insertWithMigrationEvidence(
+      interview, migrationEvidenceRef, migrationEvidenceChecksum, session,
+    );
+  }
+
+  async findMigrationEvidenceById(
+    id: string,
+    session?: ClientSession,
+  ): Promise<{
+    readonly migrationEvidenceRef: string;
+    readonly migrationEvidenceChecksum: string;
+  } | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), id })
+      .select('migrationEvidenceRef migrationEvidenceChecksum -_id');
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record?.migrationEvidenceRef === null || record?.migrationEvidenceRef === undefined ||
+      record.migrationEvidenceChecksum === null ||
+      record.migrationEvidenceChecksum === undefined
+      ? null
+      : {
+          migrationEvidenceRef: record.migrationEvidenceRef,
+          migrationEvidenceChecksum: record.migrationEvidenceChecksum,
+        };
+  }
+
+  private async insertWithMigrationEvidence(
+    interview: RecruitmentInterview,
+    migrationEvidenceRef: string | null,
+    migrationEvidenceChecksum: string | null,
+    session: ClientSession,
+  ): Promise<void> {
     this.assertTenant(interview.tenantId);
     const protectedData = this.crypto.protect({
       tenantId: interview.tenantId, resourceType: 'interview_location', resourceId: interview.id,
@@ -506,7 +547,10 @@ export class RecruitmentInterviewRepository extends TenantBoundRecruitmentReposi
       logisticsKeyId: protectedData.keyId, logisticsIv: protectedData.iv,
       logisticsCiphertext: protectedData.ciphertext, logisticsAuthTag: protectedData.authTag,
       status: interview.status, version: interview.version,
-      completedAt: null, cancelledAt: null, createdBy: interview.createdBy,
+      completedAt: interview.completedAt === null ? null : new Date(interview.completedAt),
+      cancelledAt: interview.cancelledAt === null ? null : new Date(interview.cancelledAt),
+      createdBy: interview.createdBy,
+      migrationEvidenceRef, migrationEvidenceChecksum,
       createdAt: new Date(interview.createdAt), updatedAt: new Date(interview.updatedAt),
     }], { session });
   }
@@ -567,6 +611,39 @@ export class RecruitmentInterviewFeedbackRepository extends TenantBoundRecruitme
     if (session !== undefined) query.session(session);
     const records = await query.lean().exec();
     return Object.freeze(records.map((record) => record.interviewerId));
+  }
+
+  async findByInterview(
+    interviewId: string,
+    session?: ClientSession,
+  ): Promise<readonly RecruitmentInterviewFeedback[]> {
+    const query = this.records.find({ tenantId: this.tenantId(), interviewId })
+      .sort({ submittedAt: 1, id: 1 });
+    if (session !== undefined) query.session(session);
+    const records = await query.lean().exec();
+    return Object.freeze(records.map((record) => {
+      const evaluation = this.crypto.unprotect({
+        tenantId: record.tenantId,
+        resourceType: 'interview_feedback',
+        resourceId: record.id,
+      }, {
+        keyId: record.evaluationKeyId,
+        iv: record.evaluationIv,
+        ciphertext: record.evaluationCiphertext,
+        authTag: record.evaluationAuthTag,
+      });
+      if (!isInterviewFeedbackEvaluation(evaluation)) throw integrityError();
+      return deepFreezeRecruitment({
+        id: record.id,
+        tenantId: record.tenantId,
+        interviewId: record.interviewId,
+        interviewerId: record.interviewerId,
+        recommendation: evaluation.recommendation,
+        score: evaluation.score,
+        notes: evaluation.notes,
+        submittedAt: record.submittedAt.toISOString(),
+      });
+    }));
   }
 }
 
@@ -761,6 +838,17 @@ function isOfferTerms(value: unknown): value is RecruitmentOfferTerms {
     typeof value.employmentType === 'string' &&
     typeof value.workLocation === 'string' &&
     typeof value.benefitsSummary === 'string';
+}
+
+function isInterviewFeedbackEvaluation(value: unknown): value is Pick<
+  RecruitmentInterviewFeedback,
+  'recommendation' | 'score' | 'notes'
+> {
+  if (!isRecord(value)) return false;
+  return ['strong_hire', 'hire', 'no_hire', 'strong_no_hire'].includes(
+    String(value.recommendation),
+  ) && Number.isSafeInteger(value.score) && Number(value.score) >= 1 &&
+    Number(value.score) <= 5 && typeof value.notes === 'string';
 }
 
 function sameStrings(left: readonly string[], right: readonly string[]): boolean {

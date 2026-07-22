@@ -15,14 +15,17 @@ import { EmployeeRepository } from '../../org/persistence/org.repositories.js';
 import {
   buildRecruitmentInterviewEvent,
   buildRecruitmentInterviewFeedbackEvent,
+  buildRecruitmentInterviewMigratedEvent,
   cancelRecruitmentInterview,
   completeRecruitmentInterview,
   createRecruitmentInterview,
   RecruitmentDomainError,
+  restoreRecruitmentInterviewFromMigration,
   submitRecruitmentInterviewFeedback,
   type InterviewRecommendation,
   type RecruitmentInterview,
   type RecruitmentInterviewMode,
+  type RecruitmentInterviewMigrationFeedback,
   type RecruitmentInterviewStatus,
 } from '../domain/index.js';
 import { RecruitmentOutboxWriter } from '../persistence/recruitment-outbox.writer.js';
@@ -56,6 +59,28 @@ export interface RecruitmentFeedbackReceipt extends Record<string, unknown> {
   readonly submittedAt: string;
 }
 
+export interface ImportRecruitmentInterviewFromMigrationInput {
+  readonly targetId: string | null;
+  readonly applicationId: string;
+  readonly roundNumber: number;
+  readonly mode: RecruitmentInterviewMode;
+  readonly startsAt: string;
+  readonly endsAt: string;
+  readonly timezone: string;
+  readonly interviewerIds: readonly string[];
+  readonly location: string;
+  readonly createdByEmployeeId: string;
+  readonly feedback: readonly Omit<RecruitmentInterviewMigrationFeedback, 'id'>[];
+  readonly expectedStatus: RecruitmentInterviewStatus;
+  readonly expectedVersion: number;
+  readonly completedAt: string | null;
+  readonly cancelledAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly migrationEvidenceRef: string;
+  readonly evidenceChecksum: string;
+}
+
 /** Integration Worker 专用投影；不得从 REST 或 MCP 直接返回。 */
 export interface RecruitmentCalendarProjection {
   readonly interviewId: string;
@@ -83,6 +108,86 @@ export class RecruitmentInterviewService {
     private readonly feedback: RecruitmentInterviewFeedbackRepository,
     private readonly outbox: RecruitmentOutboxWriter,
   ) {}
+
+  /** 数据迁移专用：L3 地点和评价仅在内存中回放并进入现有加密仓储。 */
+  async importInterviewFromMigration(
+    key: string,
+    input: ImportRecruitmentInterviewFromMigrationInput,
+  ): Promise<{ readonly interview: RecruitmentInterviewSummary }> {
+    this.assertMigrationWriter();
+    assertInterviewMigrationEvidence(input.migrationEvidenceRef, input.evidenceChecksum);
+    return this.run(async () => this.idempotency.execute(
+      'recruitment.interview.import_from_migration', key, input, async (session) => {
+        const application = await this.requireApplication(input.applicationId, session);
+        if (application.stage !== 'interview') throw new BadRequestException({
+          code: 'RECRUITMENT_MIGRATION_INTERVIEW_APPLICATION_INVALID',
+          message: '面试迁移必须引用处于面试基线的申请',
+        });
+        const employeeIds = [...new Set([
+          input.createdByEmployeeId,
+          ...input.interviewerIds,
+        ])];
+        const employeeRecords = await Promise.all(employeeIds.map(async (id) => ({
+          id,
+          employee: await this.employees.findById(id, session),
+        })));
+        if (employeeRecords.some((item) => item.employee === null) ||
+          (input.expectedStatus === 'scheduled' && employeeRecords
+            .filter((item) => input.interviewerIds.includes(item.id))
+            .some((item) => !['probation', 'active'].includes(item.employee?.status ?? '')))) {
+          throw new BadRequestException({
+            code: 'RECRUITMENT_MIGRATION_INTERVIEW_EMPLOYEE_INVALID',
+            message: '面试迁移引用的创建员工或面试官无效',
+          });
+        }
+        const existingFeedback = input.targetId === null
+          ? []
+          : await this.feedback.findByInterview(input.targetId, session);
+        const feedbackByInterviewer = new Map(
+          existingFeedback.map((item) => [item.interviewerId, item] as const),
+        );
+        const restored = restoreRecruitmentInterviewFromMigration({
+          ...input,
+          id: input.targetId ?? createEventId(new Date(input.createdAt)),
+          tenantId: this.context.getTenantRequired().tenantId,
+          createdBy: input.createdByEmployeeId,
+          feedback: input.feedback.map((item) => ({
+            ...item,
+            id: feedbackByInterviewer.get(item.interviewerId)?.id ??
+              createEventId(new Date(item.submittedAt)),
+          })),
+        }, new Date());
+        if (input.targetId !== null) {
+          const [existing, evidence] = await Promise.all([
+            this.interviews.findById(input.targetId, session),
+            this.interviews.findMigrationEvidenceById(input.targetId, session),
+          ]);
+          if (existing === null || evidence === null ||
+            !sameMigratedInterview(existing, restored.interview) ||
+            !sameMigratedFeedback(existingFeedback, restored.feedback) ||
+            evidence.migrationEvidenceRef !== input.migrationEvidenceRef ||
+            evidence.migrationEvidenceChecksum !== input.evidenceChecksum) {
+            throw new ConflictException({
+              code: 'RECRUITMENT_MIGRATION_INTERVIEW_IMMUTABLE',
+              message: '既有面试与迁移快照、评价或 WORM 证据不一致，禁止覆盖',
+            });
+          }
+          return { interview: interviewSummary(existing) };
+        }
+        await this.interviews.insertMigrated(
+          restored.interview,
+          input.migrationEvidenceRef,
+          input.evidenceChecksum,
+          session,
+        );
+        for (const item of restored.feedback) await this.feedback.append(item, session);
+        await this.outbox.append(
+          buildRecruitmentInterviewMigratedEvent(restored.interview), session,
+        );
+        return { interview: interviewSummary(restored.interview) };
+      },
+    ));
+  }
 
   async schedule(
     applicationId: string,
@@ -288,6 +393,18 @@ export class RecruitmentInterviewService {
     });
   }
 
+  private assertMigrationWriter(): void {
+    const actor = this.context.getActorRequired();
+    if (!['service', 'system_job'].includes(actor.actorType) ||
+      !actor.scopes.includes('erp:migration:execute') ||
+      !actor.scopes.includes('erp:recruitment:migration:write')) {
+      throw new ForbiddenException({
+        code: 'RECRUITMENT_MIGRATION_WRITER_DENIED',
+        message: '面试迁移必须由受信任服务身份执行',
+      });
+    }
+  }
+
   private async run<T>(operation: () => Promise<T>): Promise<T> {
     try {
       return await operation();
@@ -333,6 +450,45 @@ function feedbackReceipt(value: {
   });
 }
 
+function sameMigratedInterview(
+  left: RecruitmentInterview,
+  right: RecruitmentInterview,
+): boolean {
+  return left.id === right.id && left.tenantId === right.tenantId &&
+    left.applicationId === right.applicationId && left.roundNumber === right.roundNumber &&
+    left.mode === right.mode && left.startsAt === right.startsAt && left.endsAt === right.endsAt &&
+    left.timezone === right.timezone && left.location === right.location &&
+    left.interviewerIds.length === right.interviewerIds.length &&
+    left.interviewerIds.every((id, index) => id === right.interviewerIds[index]) &&
+    left.status === right.status && left.version === right.version &&
+    left.completedAt === right.completedAt && left.cancelledAt === right.cancelledAt &&
+    left.createdBy === right.createdBy && left.createdAt === right.createdAt &&
+    left.updatedAt === right.updatedAt;
+}
+
+function sameMigratedFeedback(
+  left: readonly RecruitmentInterviewMigrationFeedback[],
+  right: readonly RecruitmentInterviewMigrationFeedback[],
+): boolean {
+  const candidates = new Map(right.map((item) => [item.interviewerId, item] as const));
+  return left.length === right.length && left.every((item) => {
+    const candidate = candidates.get(item.interviewerId);
+    return candidate !== undefined && item.id === candidate.id &&
+      item.interviewerId === candidate.interviewerId &&
+      item.recommendation === candidate.recommendation && item.score === candidate.score &&
+      item.notes === candidate.notes && item.submittedAt === candidate.submittedAt;
+  });
+}
+
+function assertInterviewMigrationEvidence(reference: string, checksum: string): void {
+  if (!MIGRATION_EVIDENCE_REF_PATTERN.test(reference) || !HASH_PATTERN.test(checksum)) {
+    throw new BadRequestException({
+      code: 'RECRUITMENT_MIGRATION_INTERVIEW_EVIDENCE_INVALID',
+      message: '面试迁移必须精确引用迁移账本 WORM 证据与校验和',
+    });
+  }
+}
+
 function requiredDate(value: string): Date {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) throw new RecruitmentDomainError(
@@ -344,3 +500,7 @@ function requiredDate(value: string): Date {
 function isDuplicateKeyError(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 11_000;
 }
+
+const HASH_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const MIGRATION_EVIDENCE_REF_PATTERN =
+  /^erp:\/\/data-migrations\/runs\/[0-7][0-9A-HJKMNP-TV-Z]{25}\/attachments\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;

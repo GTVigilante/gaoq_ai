@@ -63,6 +63,10 @@ describe('数据迁移账本 Schema', () => {
       .toContain('employee');
     expect(DataMigrationAssociationRecordSchema.path('relationship').options.enum)
       .toContain('approved_by');
+    expect(DataMigrationAssociationRecordSchema.path('relationship').options.enum)
+      .toContain('application');
+    expect(DataMigrationAssociationRecordSchema.path('relationship').options.enum)
+      .toContain('interviewer');
   });
 
   it('附件 processing、verified、rejected 状态必须分别绑定租约或证据', async () => {

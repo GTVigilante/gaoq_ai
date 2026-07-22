@@ -6,6 +6,7 @@ import type { ApprovalApplicationService } from '../../approval/application/appr
 import type { OrgApplicationService } from '../../org/application/org-application.service.js';
 import type { RecruitmentManagementService } from '../../recruitment/application/recruitment-management.service.js';
 import type { RecruitmentApplicationService } from '../../recruitment/application/recruitment-application.service.js';
+import type { RecruitmentInterviewService } from '../../recruitment/application/recruitment-interview.service.js';
 import type {
   DataMigrationAssociationDocument,
   DataMigrationAttachmentDocument,
@@ -94,6 +95,10 @@ function recruitmentCandidatesRun() {
 
 function recruitmentApplicationsRun() {
   return { ...run(), scope: 'recruitment_applications' as const };
+}
+
+function recruitmentInterviewsRun() {
+  return { ...run(), scope: 'recruitment_interviews' as const };
 }
 
 function query<T>(value: T) { return { lean: () => ({ exec: () => Promise.resolve(value) }) }; }
@@ -1115,6 +1120,108 @@ describe('DataMigrationService', () => {
     expect(associations.findOneAndUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ relationship: 'candidate' }),
       expect.objectContaining({ $set: { targetId: 'candidate-001', status: 'resolved' } }),
+      expect.objectContaining({ upsert: true }),
+    );
+  });
+
+  it('面试迁移解析申请和员工映射，L3 原文只进入加密领域入口', async () => {
+    const context = new TenantContextService();
+    const payload = {
+      applicationSourceId: 'legacy-application-001', roundNumber: 1, mode: 'video',
+      startsAt: '2026-07-20T02:00:00.000Z', endsAt: '2026-07-20T03:00:00.000Z',
+      timezone: 'Asia/Shanghai',
+      interviewerEmployeeSourceIds: ['legacy-employee-001', 'legacy-employee-002'],
+      location: 'https://meeting.example/legacy-secret',
+      createdByEmployeeSourceId: 'legacy-employee-hr',
+      feedback: [
+        {
+          interviewerEmployeeSourceId: 'legacy-employee-001', recommendation: 'hire', score: 4,
+          notes: '技术能力符合要求', submittedAt: '2026-07-20T03:01:00.000Z',
+        },
+        {
+          interviewerEmployeeSourceId: 'legacy-employee-002', recommendation: 'strong_hire',
+          score: 5, notes: '综合能力优秀', submittedAt: '2026-07-20T03:02:00.000Z',
+        },
+      ],
+      expectedStatus: 'completed', expectedVersion: 4,
+      completedAt: '2026-07-20T03:03:00.000Z', cancelledAt: null,
+      createdAt: '2026-07-19T02:00:00.000Z', updatedAt: '2026-07-20T03:03:00.000Z',
+      interviewEvidenceSourceAttachmentId: 'interview-evidence-001',
+      interviewEvidenceChecksum: 'f'.repeat(43),
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(recruitmentInterviewsRun())),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const items = { findOne: vi.fn().mockReturnValue(query(null)), create: vi.fn() };
+    const targets: Readonly<Record<string, string>> = {
+      'legacy-application-001': 'application-001',
+      'legacy-employee-001': 'employee-001',
+      'legacy-employee-002': 'employee-002',
+      'legacy-employee-hr': 'employee-hr',
+    };
+    const mappings = {
+      findOne: vi.fn((filter: { entityType: string; sourceRecordId: string }) => query(
+        filter.entityType === 'recruitment.interview'
+          ? null
+          : { targetId: targets[filter.sourceRecordId], targetVersion: 1 },
+      )),
+      findOneAndUpdate: vi.fn().mockReturnValue(query({ targetId: 'interview-001' })),
+    };
+    const associations = { findOneAndUpdate: vi.fn().mockReturnValue(query({})) };
+    const attachments = {
+      findOne: vi.fn().mockReturnValue(query(null)),
+      updateOne: vi.fn().mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) }),
+    };
+    const recruitmentInterviews = {
+      importInterviewFromMigration: vi.fn().mockResolvedValue({ interview: {
+        id: 'interview-001', applicationId: 'application-001', roundNumber: 1,
+        mode: 'video', startsAt: payload.startsAt, endsAt: payload.endsAt,
+        timezone: payload.timezone, interviewerIds: ['employee-001', 'employee-002'],
+        status: 'completed', version: 4, completedAt: payload.completedAt, cancelledAt: null,
+      } }),
+    };
+    const service = new DataMigrationService(
+      context, {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      mappings as unknown as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+      undefined,
+      undefined,
+      undefined,
+      recruitmentInterviews as unknown as RecruitmentInterviewService,
+    );
+
+    const result = await trusted(context, () => service.apply(RUN_ID, {
+      sequence: 1, sourceRecordId: 'legacy-interview-001', sourceVersion: '1',
+      entityType: 'recruitment.interview', payload,
+      payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+      associationSourceIds: [
+        'legacy-application-001', 'legacy-employee-hr',
+        'legacy-employee-001', 'legacy-employee-002',
+      ],
+      attachments: [{ sourceAttachmentId: 'interview-evidence-001', checksum: 'f'.repeat(43) }],
+    }));
+
+    expect(result).toMatchObject({ status: 'applied', targetId: 'interview-001' });
+    expect(recruitmentInterviews.importInterviewFromMigration).toHaveBeenCalledWith(
+      expect.stringMatching(/^migration:/u),
+      expect.objectContaining({
+        applicationId: 'application-001',
+        interviewerIds: ['employee-001', 'employee-002'],
+        createdByEmployeeId: 'employee-hr',
+        location: 'https://meeting.example/legacy-secret',
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${RUN_ID}/attachments/interview-evidence-001`,
+      }),
+    );
+    const item = items.create.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
+    expect(JSON.stringify(item)).not.toMatch(/legacy-secret|技术能力符合要求/u);
+    expect(associations.findOneAndUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ relationship: 'application' }),
+      expect.objectContaining({ $set: { targetId: 'application-001', status: 'resolved' } }),
       expect.objectContaining({ upsert: true }),
     );
   });

@@ -4,6 +4,7 @@ import {
   cancelRecruitmentInterview,
   completeRecruitmentInterview,
   createRecruitmentInterview,
+  restoreRecruitmentInterviewFromMigration,
   submitRecruitmentInterviewFeedback,
 } from './interview.js';
 
@@ -59,5 +60,52 @@ describe('RecruitmentInterview', () => {
     expect(() => cancelRecruitmentInterview(completed, {
       tenantId: 'tenant-001', expectedVersion: 2,
     }, NOW)).toThrowError(/RECRUITMENT_INTERVIEW_CANCEL_INVALID|只有/u);
+  });
+
+  it('迁移以内存状态机恢复历史面试和不可变评价', () => {
+    const restored = restoreRecruitmentInterviewFromMigration({
+      id: 'interview-003', tenantId: 'tenant-001', applicationId: 'application-001',
+      roundNumber: 1, mode: 'onsite', startsAt: '2026-07-20T08:00:00.000Z',
+      endsAt: '2026-07-20T09:00:00.000Z', timezone: 'Asia/Shanghai',
+      interviewerIds: ['employee-001', 'employee-002'], location: '上海总部 8F',
+      createdBy: 'employee-hr',
+      feedback: [
+        {
+          id: 'feedback-003', interviewerId: 'employee-001', recommendation: 'hire',
+          score: 4, notes: '岗位经验匹配', submittedAt: '2026-07-20T09:01:00.000Z',
+        },
+        {
+          id: 'feedback-004', interviewerId: 'employee-002', recommendation: 'strong_hire',
+          score: 5, notes: '综合能力优秀', submittedAt: '2026-07-20T09:02:00.000Z',
+        },
+      ],
+      expectedStatus: 'completed', expectedVersion: 4,
+      completedAt: '2026-07-20T09:03:00.000Z', cancelledAt: null,
+      createdAt: '2026-07-19T08:00:00.000Z', updatedAt: '2026-07-20T09:03:00.000Z',
+    }, new Date('2026-07-22T00:00:00.000Z'));
+    expect(restored.interview).toMatchObject({ status: 'completed', version: 4 });
+    expect(restored.feedback).toHaveLength(2);
+    expect(restored.feedback[0]).toMatchObject({
+      interviewerId: 'employee-001', recommendation: 'hire', score: 4,
+    });
+  });
+
+  it('迁移拒绝跳过面试官评价或伪造控制版本', () => {
+    expect(() => restoreRecruitmentInterviewFromMigration({
+      id: 'interview-004', tenantId: 'tenant-001', applicationId: 'application-001',
+      roundNumber: 1, mode: 'video', startsAt: '2026-07-20T08:00:00.000Z',
+      endsAt: '2026-07-20T09:00:00.000Z', timezone: 'Asia/Shanghai',
+      interviewerIds: ['employee-001', 'employee-002'], location: '加密会议室',
+      createdBy: 'employee-hr',
+      feedback: [{
+        id: 'feedback-005', interviewerId: 'employee-001', recommendation: 'hire',
+        score: 4, notes: '只有一份评价', submittedAt: '2026-07-20T09:01:00.000Z',
+      }],
+      expectedStatus: 'completed', expectedVersion: 3,
+      completedAt: '2026-07-20T09:03:00.000Z', cancelledAt: null,
+      createdAt: '2026-07-19T08:00:00.000Z', updatedAt: '2026-07-20T09:03:00.000Z',
+    }, new Date('2026-07-22T00:00:00.000Z'))).toThrowError(
+      /RECRUITMENT_FEEDBACK_INCOMPLETE|所有面试官/u,
+    );
   });
 });

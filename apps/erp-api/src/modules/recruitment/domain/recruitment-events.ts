@@ -23,6 +23,7 @@ export type RecruitmentEventType =
   | 'recruitment.interview.feedback_submitted'
   | 'recruitment.interview.completed'
   | 'recruitment.interview.cancelled'
+  | 'recruitment.interview.migrated'
   | 'recruitment.offer.created'
   | 'recruitment.offer.submitted'
   | 'recruitment.offer.approved'
@@ -229,6 +230,26 @@ export function buildRecruitmentInterviewEvent(
       status: interview.status,
       startsAt: interview.startsAt,
       endsAt: interview.endsAt,
+    }),
+  });
+}
+
+/** 面试迁移事件只披露控制状态，不输出地点、会议链接或评价内容。 */
+export function buildRecruitmentInterviewMigratedEvent(
+  interview: RecruitmentInterview,
+): RecruitmentDomainEvent {
+  return Object.freeze({
+    type: 'recruitment.interview.migrated',
+    aggregateType: 'recruitment.interview',
+    tenantId: interview.tenantId,
+    aggregateId: interview.id,
+    version: interview.version,
+    occurredAt: interview.updatedAt,
+    payload: Object.freeze({
+      applicationId: interview.applicationId,
+      roundNumber: interview.roundNumber,
+      status: interview.status,
+      feedbackCount: interview.version - (interview.status === 'scheduled' ? 1 : 2),
     }),
   });
 }

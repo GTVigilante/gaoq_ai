@@ -37,6 +37,10 @@ import {
   type ImportRecruitmentCandidateFromMigrationInput,
   type ImportRecruitmentApplicationBaselineFromMigrationInput,
 } from '../../recruitment/application/recruitment-application.service.js';
+import {
+  RecruitmentInterviewService,
+  type ImportRecruitmentInterviewFromMigrationInput,
+} from '../../recruitment/application/recruitment-interview.service.js';
 import type {
   CreateDepartmentDto,
   CreateEmployeeDto,
@@ -138,6 +142,8 @@ export class DataMigrationService {
     private readonly recruitment?: RecruitmentManagementService,
     @Inject(RecruitmentApplicationService)
     private readonly recruitmentCandidates?: RecruitmentApplicationService,
+    @Inject(RecruitmentInterviewService)
+    private readonly recruitmentInterviews?: RecruitmentInterviewService,
   ) {}
 
   async start(input: CreateDataMigrationRunDto) {
@@ -509,6 +515,22 @@ export class DataMigrationService {
       await Promise.all(specs.map(async (spec) =>
         this.requireMapping(run, spec.entityType, spec.sourceAssociationId)));
       return;
+    } else if (input.entityType === 'recruitment.interview') {
+      const payload = recruitmentInterviewPayload(input.payload);
+      const specs = recruitmentInterviewAssociationSpecs(payload);
+      assertAssociations(
+        input.associationSourceIds,
+        [...new Set(specs.map((spec) => spec.sourceAssociationId))],
+      );
+      const evidence = input.attachments.find((attachment) =>
+        attachment.sourceAttachmentId === payload.interviewEvidenceSourceAttachmentId);
+      if (input.attachments.length !== 1 ||
+        evidence?.checksum !== payload.interviewEvidenceChecksum) {
+        throw new Error('DATA_MIGRATION_INTERVIEW_EVIDENCE_REQUIRED');
+      }
+      await Promise.all(uniqueAssociationTargets(specs).map(async (spec) =>
+        this.requireMapping(run, spec.entityType, spec.sourceAssociationId)));
+      return;
     } else {
       const payload = approvalTemplatePayload(input.payload);
       const specs = approvalTemplateAssociationSpecs(payload);
@@ -788,6 +810,55 @@ export class DataMigrationService {
         evidenceChecksum: payload.applicationEvidenceChecksum,
       });
       return target(result.application);
+    }
+    if (input.entityType === 'recruitment.interview') {
+      const payload = recruitmentInterviewPayload(input.payload);
+      if (this.recruitmentInterviews === undefined) {
+        throw new Error('迁移招聘面试适配器未装配');
+      }
+      const employeeMappings = new Map<string, Promise<string>>();
+      const resolveEmployee = (sourceId: string): Promise<string> => cachedTargetId(
+        employeeMappings,
+        'org.employee',
+        sourceId,
+        async () => (await this.requireMapping(run, 'org.employee', sourceId)).targetId,
+      );
+      const applicationId = (await this.requireMapping(
+        run, 'recruitment.application', payload.applicationSourceId,
+      )).targetId;
+      const interviewerIds = await Promise.all(
+        payload.interviewerEmployeeSourceIds.map(resolveEmployee),
+      );
+      const feedback = await Promise.all(payload.feedback.map(async (item) => ({
+        interviewerId: await resolveEmployee(item.interviewerEmployeeSourceId),
+        recommendation: item.recommendation,
+        score: item.score,
+        notes: item.notes,
+        submittedAt: item.submittedAt,
+      })));
+      const result = await this.recruitmentInterviews.importInterviewFromMigration(key, {
+        targetId: mapping?.targetId ?? null,
+        applicationId,
+        roundNumber: payload.roundNumber,
+        mode: payload.mode,
+        startsAt: payload.startsAt,
+        endsAt: payload.endsAt,
+        timezone: payload.timezone,
+        interviewerIds,
+        location: payload.location,
+        createdByEmployeeId: await resolveEmployee(payload.createdByEmployeeSourceId),
+        feedback,
+        expectedStatus: payload.expectedStatus,
+        expectedVersion: payload.expectedVersion,
+        completedAt: payload.completedAt,
+        cancelledAt: payload.cancelledAt,
+        createdAt: payload.createdAt,
+        updatedAt: payload.updatedAt,
+        migrationEvidenceRef:
+          `erp://data-migrations/runs/${run.id}/attachments/${payload.interviewEvidenceSourceAttachmentId}`,
+        evidenceChecksum: payload.interviewEvidenceChecksum,
+      });
+      return target(result.interview);
     }
     const payload = approvalTemplatePayload(input.payload);
     if (this.approvals === undefined) throw new Error('迁移审批适配器未装配');
@@ -1234,7 +1305,8 @@ type AssociationTargetType =
   | 'approval.history'
   | 'recruitment.requisition'
   | 'recruitment.position'
-  | 'recruitment.candidate';
+  | 'recruitment.candidate'
+  | 'recruitment.application';
 interface AssociationEvidence {
   readonly relationship: AssociationRelationship;
   readonly sourceAssociationId: string;
@@ -2087,6 +2159,139 @@ function recruitmentApplicationAssociationSpecs(
   ]);
 }
 
+type RecruitmentInterviewMigrationPayload = Omit<
+  ImportRecruitmentInterviewFromMigrationInput,
+  | 'targetId'
+  | 'applicationId'
+  | 'interviewerIds'
+  | 'createdByEmployeeId'
+  | 'feedback'
+  | 'migrationEvidenceRef'
+  | 'evidenceChecksum'
+> & {
+  readonly applicationSourceId: string;
+  readonly interviewerEmployeeSourceIds: readonly string[];
+  readonly createdByEmployeeSourceId: string;
+  readonly feedback: readonly {
+    readonly interviewerEmployeeSourceId: string;
+    readonly recommendation: ImportRecruitmentInterviewFromMigrationInput['feedback'][number]['recommendation'];
+    readonly score: number;
+    readonly notes: string;
+    readonly submittedAt: string;
+  }[];
+  readonly interviewEvidenceSourceAttachmentId: string;
+  readonly interviewEvidenceChecksum: string;
+};
+
+function recruitmentInterviewPayload(
+  value: Readonly<Record<string, unknown>>,
+): RecruitmentInterviewMigrationPayload {
+  exactKeys(value, [
+    'applicationSourceId', 'cancelledAt', 'completedAt', 'createdAt',
+    'createdByEmployeeSourceId', 'endsAt', 'expectedStatus', 'expectedVersion', 'feedback',
+    'interviewEvidenceChecksum', 'interviewEvidenceSourceAttachmentId',
+    'interviewerEmployeeSourceIds', 'location', 'mode', 'roundNumber', 'startsAt',
+    'timezone', 'updatedAt',
+  ]);
+  const interviewerEmployeeSourceIds = stringSourceIds(
+    value.interviewerEmployeeSourceIds, 1, 20,
+  );
+  if (typeof value.applicationSourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.applicationSourceId) ||
+    typeof value.createdByEmployeeSourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.createdByEmployeeSourceId) ||
+    typeof value.interviewEvidenceSourceAttachmentId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.interviewEvidenceSourceAttachmentId) ||
+    typeof value.interviewEvidenceChecksum !== 'string' ||
+    !HASH_PATTERN.test(value.interviewEvidenceChecksum) ||
+    !Number.isSafeInteger(value.roundNumber) || Number(value.roundNumber) < 1 ||
+    Number(value.roundNumber) > 100 ||
+    !['phone', 'video', 'onsite'].includes(String(value.mode)) ||
+    typeof value.timezone !== 'string' ||
+    !/^(?:UTC|[A-Za-z_]+\/[A-Za-z0-9_+.-]+)$/.test(value.timezone) ||
+    typeof value.location !== 'string' || value.location.trim().length < 1 ||
+    value.location.length > 2_048 ||
+    !['scheduled', 'completed', 'cancelled'].includes(String(value.expectedStatus)) ||
+    !Number.isSafeInteger(value.expectedVersion) || Number(value.expectedVersion) < 1 ||
+    !isStrictUtcIso(value.startsAt) || !isStrictUtcIso(value.endsAt) ||
+    !isStrictUtcIso(value.createdAt) || !isStrictUtcIso(value.updatedAt) ||
+    (value.completedAt !== null && !isStrictUtcIso(value.completedAt)) ||
+    (value.cancelledAt !== null && !isStrictUtcIso(value.cancelledAt)) ||
+    !Array.isArray(value.feedback) || value.feedback.length > 20) throw invalidPayload();
+  const feedback = value.feedback.map((item) => recruitmentInterviewFeedbackPayload(item));
+  if (new Set(interviewerEmployeeSourceIds).size !== interviewerEmployeeSourceIds.length ||
+    feedback.some((item) =>
+      !interviewerEmployeeSourceIds.includes(item.interviewerEmployeeSourceId)) ||
+    new Set(feedback.map((item) => item.interviewerEmployeeSourceId)).size !== feedback.length) {
+    throw invalidPayload();
+  }
+  return {
+    applicationSourceId: value.applicationSourceId,
+    roundNumber: Number(value.roundNumber),
+    mode: value.mode as RecruitmentInterviewMigrationPayload['mode'],
+    startsAt: value.startsAt,
+    endsAt: value.endsAt,
+    timezone: value.timezone,
+    interviewerEmployeeSourceIds,
+    location: value.location,
+    createdByEmployeeSourceId: value.createdByEmployeeSourceId,
+    feedback,
+    expectedStatus: value.expectedStatus as RecruitmentInterviewMigrationPayload['expectedStatus'],
+    expectedVersion: Number(value.expectedVersion),
+    completedAt: value.completedAt,
+    cancelledAt: value.cancelledAt,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    interviewEvidenceSourceAttachmentId: value.interviewEvidenceSourceAttachmentId,
+    interviewEvidenceChecksum: value.interviewEvidenceChecksum,
+  };
+}
+
+function recruitmentInterviewFeedbackPayload(
+  value: unknown,
+): RecruitmentInterviewMigrationPayload['feedback'][number] {
+  if (!isPlainMigrationObject(value)) throw invalidPayload();
+  exactKeys(value, [
+    'interviewerEmployeeSourceId', 'notes', 'recommendation', 'score', 'submittedAt',
+  ]);
+  if (typeof value.interviewerEmployeeSourceId !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.interviewerEmployeeSourceId) ||
+    !['strong_hire', 'hire', 'no_hire', 'strong_no_hire']
+      .includes(String(value.recommendation)) ||
+    !Number.isSafeInteger(value.score) || Number(value.score) < 1 || Number(value.score) > 5 ||
+    typeof value.notes !== 'string' || value.notes.trim().length < 1 ||
+    value.notes.length > 8_192 || !isStrictUtcIso(value.submittedAt)) throw invalidPayload();
+  return {
+    interviewerEmployeeSourceId: value.interviewerEmployeeSourceId,
+    recommendation: value.recommendation as RecruitmentInterviewMigrationPayload['feedback'][number]['recommendation'],
+    score: Number(value.score),
+    notes: value.notes,
+    submittedAt: value.submittedAt,
+  };
+}
+
+function recruitmentInterviewAssociationSpecs(
+  payload: RecruitmentInterviewMigrationPayload,
+): readonly (AssociationEvidence & { readonly entityType: AssociationTargetType })[] {
+  return Object.freeze([
+    {
+      relationship: 'application',
+      sourceAssociationId: payload.applicationSourceId,
+      entityType: 'recruitment.application',
+    },
+    {
+      relationship: 'created_by',
+      sourceAssociationId: payload.createdByEmployeeSourceId,
+      entityType: 'org.employee',
+    },
+    ...payload.interviewerEmployeeSourceIds.map((sourceAssociationId) => ({
+      relationship: 'interviewer' as const,
+      sourceAssociationId,
+      entityType: 'org.employee' as const,
+    })),
+  ]);
+}
+
 function assertGovernanceEvidence(
   input: ApplyDataMigrationRecordDto,
   payload: {
@@ -2349,6 +2554,10 @@ function associationEvidence(input: ApplyDataMigrationRecordDto): readonly Assoc
       derived = recruitmentApplicationAssociationSpecs(
         recruitmentApplicationPayload(input.payload),
       );
+    } else if (input.entityType === 'recruitment.interview') {
+      derived = recruitmentInterviewAssociationSpecs(
+        recruitmentInterviewPayload(input.payload),
+      );
     } else derived = [];
   } catch {
     derived = [];
@@ -2466,7 +2675,7 @@ const ASSOCIATION_RELATIONSHIPS = [
   'action_actor', 'principal_approver', 'transfer_from', 'transfer_to',
   'added_approver', 'expected_pending_approver',
   'requisition', 'approval_instance', 'approval_history',
-  'candidate',
+  'candidate', 'application', 'interviewer',
   'declared_reference',
 ] as const;
 const ASSOCIATION_RELATIONSHIP_SET: ReadonlySet<string> = new Set(ASSOCIATION_RELATIONSHIPS);

@@ -113,6 +113,22 @@ describe('RecruitmentCalendarOutboxRelayService', () => {
     expect(store.calendarBindingFind).not.toHaveBeenCalled();
   });
 
+  it('迁移面试事件明确确认且不触发日历副作用或死信重试', async () => {
+    const store = fixture({
+      event: {
+        ...event, aggregateVersion: 4,
+        eventType: 'cn.gaoq.erp.recruitment.interview.migrated.v1',
+      },
+    });
+    await expect(store.service.relayBatch('calendar-worker-001', 1)).resolves.toBe(1);
+    expect(store.deliveryUpdateOne).not.toHaveBeenCalled();
+    expect(store.platformBindingFind).not.toHaveBeenCalled();
+    expect(store.calendarBindingFind).not.toHaveBeenCalled();
+    expect(store.outboxUpdateOne.mock.calls[0]?.[1]).toMatchObject({
+      $set: { status: 'dispatched' },
+    });
+  });
+
   it('取消事件固定复用原排期目标，不受当前默认日历切换影响', async () => {
     const store = fixture({
       event: {

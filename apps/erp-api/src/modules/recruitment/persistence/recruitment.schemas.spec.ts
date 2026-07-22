@@ -222,6 +222,18 @@ describe('RecruitmentSchemas', () => {
       completedAt: null, cancelledAt: null, createdBy: 'actor-001',
     };
     await new InterviewModel(interview).validate();
+    await new InterviewModel({
+      ...interview,
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/interview-evidence-001',
+      migrationEvidenceChecksum: 'd'.repeat(43),
+    }).validate();
+    await expect(new InterviewModel({
+      ...interview,
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/interview-evidence-001',
+      migrationEvidenceChecksum: null,
+    }).validate()).rejects.toThrow('必须成对出现');
     await expect(new InterviewModel({
       ...interview, status: 'completed', completedAt: null,
     }).validate()).rejects.toThrow('完成状态与完成时间不一致');

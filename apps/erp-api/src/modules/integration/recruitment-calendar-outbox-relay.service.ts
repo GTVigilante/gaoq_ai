@@ -190,6 +190,7 @@ export class RecruitmentCalendarOutboxRelayService {
     if (eventType === 'cn.gaoq.erp.recruitment.interview.scheduled.v1') return 'upsert';
     if (eventType === 'cn.gaoq.erp.recruitment.interview.cancelled.v1') return 'cancel';
     if (eventType === 'cn.gaoq.erp.recruitment.interview.completed.v1') return null;
+    if (eventType === 'cn.gaoq.erp.recruitment.interview.migrated.v1') return null;
     throw new Error('RECRUITMENT_CALENDAR_EVENT_UNSUPPORTED');
   }
 
