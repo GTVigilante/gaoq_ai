@@ -10,6 +10,7 @@ Phase 6 只接受真实生产证据，不把 CI 自测、模拟数据或 AI 结�
 - [生产资金执行授权契约](./03-production-execution-authorization.md)
 - [Kubernetes 生产编排基线](./04-kubernetes-deployment-baseline.md)
 - [受保护生产部署工作流](./05-protected-production-deployment.md)
+- [Kubernetes 平台最小权限护栏](./06-kubernetes-platform-guardrails.md)
 
 ## 完成定义
 

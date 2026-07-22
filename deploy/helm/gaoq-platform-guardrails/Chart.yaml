@@ -1,0 +1,9 @@
+apiVersion: v2
+name: gaoq-platform-guardrails
+description: GaoQ-OS 生产部署命名空间、配额、RBAC 与准入策略基线
+type: application
+version: 0.1.0
+appVersion: 0.1.0
+kubeVersion: '>=1.30.0-0'
+annotations:
+  artifacthub.io/license: UNLICENSED

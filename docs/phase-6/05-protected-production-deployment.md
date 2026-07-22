@@ -23,6 +23,8 @@
 
 两个 Runner 必须是不同的短生命周期执行器，不能复用 kubeconfig、工作目录或缓存。Runner 镜像预装 Helm `v4.2.0+g0646808`、Kubeconform `v0.7.0`、受支持的精确 kubectl 版本，以及固定 commit `987aa4ee419358d6ae108f54f6c42f4e90f22b70` 的 Kubernetes 1.30 strict schema。工具链供应链证明进入企业 WORM。
 
+命名空间、OIDC Group RBAC、ResourceQuota、LimitRange 和 ValidatingAdmissionPolicy 必须按[Kubernetes 平台最小权限护栏](./06-kubernetes-platform-guardrails.md)由独立集群管理员预先安装并通过正反例；应用工作流没有修改这些集群边界的权限。
+
 ## 3. Environment Variables
 
 以下变量必须在两个 Environment 中独立配置且值完全一致；它们不包含密钥：
@@ -82,4 +84,4 @@ HELM_DRIVER=configmap helm upgrade --install <release> deploy/helm/gaoq-erp \
 
 ## 6. 当前阻断
 
-截至文档交付时，GitHub 仓库没有配置上述 Environment 或 self-hosted Runner，因此没有执行任何生产计划或部署。要解除阻断，仓库所有者和平台负责人必须提供并批准：集群、独立控制/业务命名空间、最小 RBAC、两类单次 Runner、完整变量、只读 values、离线 schema、Go/No-Go 原始证据和 Required Reviewers。缺少任一项时不得降低门禁或改用管理员 kubeconfig。
+截至文档交付时，GitHub 仓库没有配置上述 Environment 或 self-hosted Runner，因此没有执行任何生产计划或部署。要解除阻断，仓库所有者和平台负责人必须提供并批准：集群、独立控制/业务命名空间、最小 RBAC 与失败关闭准入、两类单次 Runner、完整变量、只读 values、离线 schema、Go/No-Go 原始证据和 Required Reviewers。缺少任一项时不得降低门禁或改用管理员 kubeconfig。

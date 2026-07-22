@@ -1,0 +1,9 @@
+平台护栏清单只允许由集群管理员在独立审批窗口安装。
+
+安装前必须验证：
+1. planGroup 与 applyGroup 来自短期 OIDC 身份，禁止长效 ServiceAccount token；
+2. 控制/业务命名空间完全独立且不承载无关应用；
+3. workloadNamePrefix 与 serviceAccountName 来自批准的应用 Chart 实际渲染结果；
+4. Apply 组在两个命名空间均无 get/list/watch secrets 权限；
+5. ValidatingAdmissionPolicy 已在目标 Kubernetes 版本的隔离集群通过 CREATE/UPDATE/DELETE 正反例；
+6. 本 Chart 不注册为 MCP Tool，不允许 AI 自主安装、升级或卸载。

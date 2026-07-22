@@ -1,0 +1,33 @@
+{{- if eq .Values.namespaces.control .Values.namespaces.target }}
+{{- fail "控制命名空间与业务命名空间必须分离" }}
+{{- end }}
+{{- if or (eq .Release.Namespace .Values.namespaces.control) (eq .Release.Namespace .Values.namespaces.target) }}
+{{- fail "平台护栏 release 必须使用独立且预先存在的平台管理命名空间" }}
+{{- end }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.namespaces.control }}
+  labels:
+    {{- include "gaoq-platform-guardrails.labels" . | nindent 4 }}
+    gaoq.io/deployment-boundary: helm-control
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: v1.30
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: v1.30
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: v1.30
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.namespaces.target }}
+  labels:
+    {{- include "gaoq-platform-guardrails.labels" . | nindent 4 }}
+    gaoq.io/deployment-boundary: erp-target
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: v1.30
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: v1.30
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: v1.30

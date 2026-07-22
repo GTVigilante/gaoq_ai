@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: gaoq-release-control-quota
+  namespace: {{ .Values.namespaces.control }}
+  labels:
+    {{- include "gaoq-platform-guardrails.labels" . | nindent 4 }}
+spec:
+  hard:
+    count/configmaps: {{ .Values.controlQuota.configMaps | quote }}
+    count/secrets: '0'
+    count/pods: '0'
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: gaoq-erp-target-quota
+  namespace: {{ .Values.namespaces.target }}
+  labels:
+    {{- include "gaoq-platform-guardrails.labels" . | nindent 4 }}
+spec:
+  hard:
+    count/pods: {{ .Values.targetQuota.pods | quote }}
+    count/services: {{ .Values.targetQuota.services | quote }}
+    count/configmaps: {{ .Values.targetQuota.configMaps | quote }}
+    count/secrets: {{ .Values.targetQuota.secrets | quote }}
+    requests.cpu: {{ .Values.targetQuota.requestsCpu | quote }}
+    requests.memory: {{ .Values.targetQuota.requestsMemory | quote }}
+    limits.cpu: {{ .Values.targetQuota.limitsCpu | quote }}
+    limits.memory: {{ .Values.targetQuota.limitsMemory | quote }}
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: gaoq-erp-container-limits
+  namespace: {{ .Values.namespaces.target }}
+  labels:
+    {{- include "gaoq-platform-guardrails.labels" . | nindent 4 }}
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: {{ .Values.targetLimitRange.defaultCpu | quote }}
+        memory: {{ .Values.targetLimitRange.defaultMemory | quote }}
+        ephemeral-storage: {{ .Values.targetLimitRange.defaultEphemeralStorage | quote }}
+      defaultRequest:
+        cpu: {{ .Values.targetLimitRange.defaultRequestCpu | quote }}
+        memory: {{ .Values.targetLimitRange.defaultRequestMemory | quote }}
+        ephemeral-storage: {{ .Values.targetLimitRange.defaultRequestEphemeralStorage | quote }}
+      max:
+        cpu: {{ .Values.targetLimitRange.maximumCpu | quote }}
+        memory: {{ .Values.targetLimitRange.maximumMemory | quote }}
+        ephemeral-storage: {{ .Values.targetLimitRange.maximumEphemeralStorage | quote }}
+      min:
+        cpu: {{ .Values.targetLimitRange.minimumCpu | quote }}
+        memory: {{ .Values.targetLimitRange.minimumMemory | quote }}
+        ephemeral-storage: {{ .Values.targetLimitRange.minimumEphemeralStorage | quote }}

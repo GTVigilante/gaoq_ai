@@ -21,7 +21,9 @@ const requiredDocuments = [
   'docs/phase-6/03-production-execution-authorization.md',
   'docs/phase-6/04-kubernetes-deployment-baseline.md',
   'docs/phase-6/05-protected-production-deployment.md',
+  'docs/phase-6/06-kubernetes-platform-guardrails.md',
   'deploy/helm/gaoq-erp/README.md',
+  'deploy/helm/gaoq-platform-guardrails/README.md',
 ];
 
 const forbiddenPrdPatterns = [

@@ -76,6 +76,13 @@ for (const marker of [
   'c31518ddd122663b3f3aa874cfe8178cb0988de944f29c74a0b9260920d115d3',
   '-strict -summary -kubernetes-version 1.30.0',
   '987aa4ee419358d6ae108f54f6c42f4e90f22b70/{{.NormalizedKubernetesVersion}}-standalone-strict/{{.ResourceKind}}.json',
+  'node scripts/validate-kubernetes-platform-guardrails.mjs',
+  'helm" lint deploy/helm/gaoq-platform-guardrails',
+  'helm" template guardrails deploy/helm/gaoq-platform-guardrails',
+  '--namespace gaoq-platform-system',
+  'gaoq-platform-guardrails-rendered.yaml',
+  '平台护栏不得把 release 存入控制命名空间',
+  '平台护栏 values schema 必须拒绝未知字段',
 ]) {
   if (!workflow.includes(marker)) throw new Error('PHASE5_SECURITY_GATE_INCOMPLETE');
 }

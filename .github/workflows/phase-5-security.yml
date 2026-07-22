@@ -95,6 +95,34 @@ jobs:
             -strict -summary -kubernetes-version 1.30.0 \
             -schema-location 'https://raw.githubusercontent.com/yannh/kubernetes-json-schema/987aa4ee419358d6ae108f54f6c42f4e90f22b70/{{.NormalizedKubernetesVersion}}-standalone-strict/{{.ResourceKind}}.json' \
             "$RUNNER_TEMP/gaoq-erp-rendered.yaml"
+          node scripts/validate-kubernetes-platform-guardrails.mjs
+          "$RUNNER_TEMP/helm-bin/linux-amd64/helm" lint deploy/helm/gaoq-platform-guardrails \
+            --strict --values deploy/helm/gaoq-platform-guardrails/ci-values.yaml
+          if "$RUNNER_TEMP/helm-bin/linux-amd64/helm" template guardrails-invalid \
+            deploy/helm/gaoq-platform-guardrails \
+            --namespace gaoq-erp-release-control \
+            --values deploy/helm/gaoq-platform-guardrails/ci-values.yaml > /dev/null 2>&1; then
+            echo "平台护栏不得把 release 存入控制命名空间" >&2
+            exit 1
+          fi
+          if "$RUNNER_TEMP/helm-bin/linux-amd64/helm" template guardrails-invalid \
+            deploy/helm/gaoq-platform-guardrails \
+            --namespace gaoq-platform-system \
+            --values deploy/helm/gaoq-platform-guardrails/ci-values.yaml \
+            --set forbidden=value > /dev/null 2>&1; then
+            echo "平台护栏 values schema 必须拒绝未知字段" >&2
+            exit 1
+          fi
+          "$RUNNER_TEMP/helm-bin/linux-amd64/helm" template guardrails deploy/helm/gaoq-platform-guardrails \
+            --namespace gaoq-platform-system \
+            --values deploy/helm/gaoq-platform-guardrails/ci-values.yaml \
+            > "$RUNNER_TEMP/gaoq-platform-guardrails-rendered.yaml"
+          node scripts/validate-kubernetes-platform-guardrails.mjs \
+            "$RUNNER_TEMP/gaoq-platform-guardrails-rendered.yaml"
+          "$RUNNER_TEMP/kubeconform-bin/kubeconform" \
+            -strict -summary -kubernetes-version 1.30.0 \
+            -schema-location 'https://raw.githubusercontent.com/yannh/kubernetes-json-schema/987aa4ee419358d6ae108f54f6c42f4e90f22b70/{{.NormalizedKubernetesVersion}}-standalone-strict/{{.ResourceKind}}.json' \
+            "$RUNNER_TEMP/gaoq-platform-guardrails-rendered.yaml"
 
   dependency-review:
     name: 依赖变更审查

@@ -1,0 +1,124 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "gaoq-platform-guardrails.policyName" . }}-namespace-reader
+  labels:
+    {{- include "gaoq-platform-guardrails.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ['']
+    resources: [namespaces]
+    resourceNames: [{{ .Values.namespaces.control | quote }}, {{ .Values.namespaces.target | quote }}]
+    verbs: [get]
+---
+{{- range $group := list .Values.identities.planGroup .Values.identities.applyGroup }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "gaoq-platform-guardrails.policyName" $ }}-namespace-reader-{{ sha256sum $group | trunc 8 }}
+  labels:
+    {{- include "gaoq-platform-guardrails.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "gaoq-platform-guardrails.policyName" $ }}-namespace-reader
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: {{ $group | quote }}
+---
+{{- end }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gaoq-deployment-plan-release-reader
+  namespace: {{ .Values.namespaces.control }}
+  labels:
+    {{- include "gaoq-platform-guardrails.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ['']
+    resources: [configmaps]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gaoq-deployment-plan-runtime-reader
+  namespace: {{ .Values.namespaces.target }}
+  labels:
+    {{- include "gaoq-platform-guardrails.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ['']
+    resources: [configmaps]
+    resourceNames:
+      - {{ .Values.runtimeReferences.apiConfigMap }}
+      - {{ .Values.runtimeReferences.workerConfigMap }}
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gaoq-deployment-apply-release-manager
+  namespace: {{ .Values.namespaces.control }}
+  labels:
+    {{- include "gaoq-platform-guardrails.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ['']
+    resources: [configmaps]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gaoq-deployment-apply-workload-manager
+  namespace: {{ .Values.namespaces.target }}
+  labels:
+    {{- include "gaoq-platform-guardrails.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ['']
+    resources: [pods]
+    verbs: [get, list, watch]
+  - apiGroups: ['']
+    resources: [configmaps]
+    resourceNames:
+      - {{ .Values.runtimeReferences.apiConfigMap }}
+      - {{ .Values.runtimeReferences.workerConfigMap }}
+    verbs: [get]
+  - apiGroups: ['']
+    resources: [serviceaccounts, services]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, networkpolicies]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+{{- range $name, $binding := dict
+  "plan-control" (dict "namespace" .Values.namespaces.control "role" "gaoq-deployment-plan-release-reader" "group" .Values.identities.planGroup)
+  "plan-target" (dict "namespace" .Values.namespaces.target "role" "gaoq-deployment-plan-runtime-reader" "group" .Values.identities.planGroup)
+  "apply-control" (dict "namespace" .Values.namespaces.control "role" "gaoq-deployment-apply-release-manager" "group" .Values.identities.applyGroup)
+  "apply-target" (dict "namespace" .Values.namespaces.target "role" "gaoq-deployment-apply-workload-manager" "group" .Values.identities.applyGroup)
+}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gaoq-deployment-{{ $name }}
+  namespace: {{ $binding.namespace }}
+  labels:
+    {{- include "gaoq-platform-guardrails.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $binding.role }}
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: {{ $binding.group | quote }}
+---
+{{- end }}
