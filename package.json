@@ -32,7 +32,12 @@
     "mcp:catalog:self-test": "node scripts/mcp/validate-phase-5-mcp-catalog.mjs --self-test",
     "mcp:integration:validate-evidence": "node scripts/mcp/validate-phase-5-mcp-integration-evidence.mjs",
     "mcp:integration:self-test": "node scripts/mcp/validate-phase-5-mcp-integration-evidence.mjs --self-test",
-    "check": "pnpm lint && pnpm typecheck && pnpm test && node scripts/validate-docs.mjs && pnpm security:validate && pnpm security:containers && pnpm security:dast:self-test && pnpm performance:self-test && pnpm resilience:self-test && pnpm release:go-no-go:self-test && pnpm mcp:catalog:self-test && pnpm mcp:integration:self-test"
+    "release:phase6:cutover:validate-evidence": "node scripts/release/validate-phase-6-cutover-evidence.mjs",
+    "release:phase6:cutover:self-test": "node scripts/release/validate-phase-6-cutover-evidence.mjs --self-test",
+    "release:phase6:hypercare:validate-evidence": "node scripts/release/validate-phase-6-hypercare-evidence.mjs",
+    "release:phase6:hypercare:self-test": "node scripts/release/validate-phase-6-hypercare-evidence.mjs --self-test",
+    "release:phase6:workflows:validate": "node scripts/validate-phase-6-workflows.mjs",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && node scripts/validate-docs.mjs && pnpm security:validate && pnpm security:containers && pnpm security:dast:self-test && pnpm performance:self-test && pnpm resilience:self-test && pnpm release:go-no-go:self-test && pnpm mcp:catalog:self-test && pnpm mcp:integration:self-test && pnpm release:phase6:cutover:self-test && pnpm release:phase6:hypercare:self-test && pnpm release:phase6:workflows:validate"
   },
   "pnpm": {
     "overrides": {

@@ -14,6 +14,10 @@ const requiredDocuments = [
   'docs/phase-0/04-mcp-service-standard.md',
   'docs/phase-0/05-security-quality-cutover.md',
   'docs/phase-0/06-github-governance.md',
+  'docs/phase-6/README.md',
+  'docs/phase-6/00-unified-cutover-contract.md',
+  'docs/phase-6/01-hypercare-archive-contract.md',
+  'docs/phase-6/02-production-execution-runbook.md',
 ];
 
 const forbiddenPrdPatterns = [
