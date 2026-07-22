@@ -59,7 +59,8 @@ describe('DataMigrationAttachmentService', () => {
       targetEvidenceId: null, rejectionCode: null,
     };
     const runs = { findOne: vi.fn().mockReturnValue(query({
-      id: RUN_ID, tenantId: 'tenant-001', sourceSystem: 'legacy-hr', status: 'running',
+      id: RUN_ID, tenantId: 'tenant-001', sourceSystem: 'legacy-hr',
+      scope: 'recruitment_offers', status: 'running',
     })) };
     const attachments = {
       findOneAndUpdate: vi.fn().mockReturnValueOnce(query(attachment)).mockReturnValueOnce(query(null)),
@@ -69,6 +70,7 @@ describe('DataMigrationAttachmentService', () => {
     const gateway = { transfer: vi.fn().mockResolvedValue({
       targetEvidenceId: 'worm/migration/file-001', malwareScanEvidenceId: 'scan-001',
       checksum: 'c'.repeat(43), immutable: true, malwareClean: true, retentionDays: 2_555,
+      classification: 'L4',
     }) };
     const audit = { recordSystem: vi.fn() };
     const service = assemble(context, runs, attachments, {}, gateway, audit);
@@ -91,6 +93,9 @@ describe('DataMigrationAttachmentService', () => {
     expect(audit.recordSystem).toHaveBeenCalledWith(
       'tenant-001', expect.objectContaining({ outcome: 'success', riskLevel: 'R2' }),
     );
+    expect(gateway.transfer).toHaveBeenCalledWith(expect.objectContaining({
+      classification: 'L4',
+    }));
   });
 
   it('网关返回永久失败时把附件标记为 rejected 且不继续重试', async () => {
@@ -102,7 +107,8 @@ describe('DataMigrationAttachmentService', () => {
       targetEvidenceId: null, rejectionCode: null,
     };
     const runs = { findOne: vi.fn().mockReturnValue(query({
-      id: RUN_ID, tenantId: 'tenant-001', sourceSystem: 'legacy-hr', status: 'running',
+      id: RUN_ID, tenantId: 'tenant-001', sourceSystem: 'legacy-hr',
+      scope: 'recruitment_offers', status: 'running',
     })) };
     const attachments = {
       findOneAndUpdate: vi.fn().mockReturnValueOnce(query(attachment)).mockReturnValueOnce(query(null)),
@@ -140,7 +146,8 @@ describe('DataMigrationAttachmentService', () => {
       targetEvidenceId: null, rejectionCode: null,
     };
     const runs = { findOne: vi.fn().mockReturnValue(query({
-      id: RUN_ID, tenantId: 'tenant-001', sourceSystem: 'legacy-hr', status: 'running',
+      id: RUN_ID, tenantId: 'tenant-001', sourceSystem: 'legacy-hr',
+      scope: 'recruitment_offers', status: 'running',
     })) };
     const attachments = {
       findOneAndUpdate: vi.fn().mockReturnValueOnce(query(attachment)),
@@ -172,7 +179,8 @@ describe('DataMigrationAttachmentService', () => {
   it('只有其他 Worker 持有有效 processing 租约时不重复入队', async () => {
     const context = new TenantContextService();
     const runs = { findOne: vi.fn().mockReturnValue(query({
-      id: RUN_ID, tenantId: 'tenant-001', sourceSystem: 'legacy-hr', status: 'running',
+      id: RUN_ID, tenantId: 'tenant-001', sourceSystem: 'legacy-hr',
+      scope: 'recruitment_offers', status: 'running',
     })) };
     const attachments = {
       findOneAndUpdate: vi.fn().mockReturnValue(query(null)),

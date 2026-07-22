@@ -20,6 +20,7 @@ const receiptSchema = z.object({
   immutable: z.literal(true),
   malwareClean: z.literal(true),
   retentionDays: z.number().int().min(2_555).max(36_500),
+  classification: z.enum(['L3', 'L4']),
 }).strict();
 
 /** 隔离附件网关 Adapter：ERP 永不接收附件正文或来源系统凭据。 */
@@ -34,6 +35,7 @@ export class HttpDataMigrationAttachmentGateway extends DataMigrationAttachmentG
     readonly sourceAttachmentId: string;
     readonly expectedChecksum: string;
     readonly retentionDays: number;
+    readonly classification: 'L3' | 'L4';
   }): Promise<DataMigrationAttachmentReceipt> {
     if (!HASH.test(input.expectedChecksum)) throw new Error('DATA_MIGRATION_ATTACHMENT_HASH_INVALID');
     const endpoint = this.config.get('DATA_MIGRATION_ATTACHMENT_GATEWAY_ENDPOINT', { infer: true });
@@ -52,6 +54,7 @@ export class HttpDataMigrationAttachmentGateway extends DataMigrationAttachmentG
         'idempotency-key': digest([
           input.tenantId, input.runId, input.sourceSystem,
           input.sourceAttachmentId, input.expectedChecksum,
+          input.classification,
         ]),
       },
       body: JSON.stringify({
@@ -61,13 +64,14 @@ export class HttpDataMigrationAttachmentGateway extends DataMigrationAttachmentG
         sourceSystem: input.sourceSystem,
         sourceAttachmentId: input.sourceAttachmentId,
         expectedChecksum: input.expectedChecksum,
-        classification: 'L3',
+        classification: input.classification,
         retentionDays: input.retentionDays,
       }),
     });
     const parsed = receiptSchema.safeParse(await readJson(response));
     if (!parsed.success || parsed.data.checksum !== input.expectedChecksum ||
-      parsed.data.retentionDays < input.retentionDays) {
+      parsed.data.retentionDays < input.retentionDays ||
+      parsed.data.classification !== input.classification) {
       throw new Error('DATA_MIGRATION_ATTACHMENT_RECEIPT_INVALID');
     }
     return Object.freeze(parsed.data);

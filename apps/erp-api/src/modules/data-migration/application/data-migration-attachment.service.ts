@@ -14,6 +14,7 @@ import {
   DATA_MIGRATION_ATTACHMENT_TRANSFER_JOB,
   type DataMigrationAttachmentJobData,
 } from '../data-migration-attachment.queue.js';
+import { DATA_MIGRATION_SCOPE_CLASSIFICATION } from '../data-migration-contract.js';
 import { DataMigrationAttachmentGateway } from '../integration/data-migration-attachment.ports.js';
 import {
   DataMigrationAttachmentRecord,
@@ -72,6 +73,7 @@ export class DataMigrationAttachmentService {
           tenantId: input.tenantId, runId: input.runId, sourceSystem: run.sourceSystem,
           sourceAttachmentId: attachment.sourceAttachmentId,
           expectedChecksum: attachment.checksum,
+          classification: DATA_MIGRATION_SCOPE_CLASSIFICATION[run.scope],
           retentionDays: this.config.get(
             'DATA_MIGRATION_ATTACHMENT_RETENTION_DAYS', { infer: true },
           ),
@@ -84,6 +86,7 @@ export class DataMigrationAttachmentService {
             targetEvidenceId: receipt.targetEvidenceId,
             malwareScanEvidenceId: receipt.malwareScanEvidenceId,
             checksum: receipt.checksum,
+            classification: receipt.classification,
           },
         });
         const updated = await this.attachments.updateOne(

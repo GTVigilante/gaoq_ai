@@ -5,6 +5,7 @@ export interface DataMigrationAttachmentReceipt {
   readonly immutable: true;
   readonly malwareClean: true;
   readonly retentionDays: number;
+  readonly classification: 'L3' | 'L4';
 }
 
 export abstract class DataMigrationAttachmentGateway {
@@ -16,5 +17,6 @@ export abstract class DataMigrationAttachmentGateway {
     readonly sourceAttachmentId: string;
     readonly expectedChecksum: string;
     readonly retentionDays: number;
+    readonly classification: 'L3' | 'L4';
   }): Promise<DataMigrationAttachmentReceipt>;
 }
