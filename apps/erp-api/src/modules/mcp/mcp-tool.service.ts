@@ -987,7 +987,7 @@ export class McpToolService {
           command.instanceId, command.expectedVersion, idempotencyKey,
         );
       case 'approval.decide':
-        return this.approvals.decideInstance(
+        return this.approvals.decideConfirmedInstance(
           command.instanceId,
           command.expectedVersion,
           command.principalApproverId,

@@ -40,20 +40,20 @@ function definition(): ApprovalTemplateDefinition {
   };
 }
 
-function template(code = 'EXPENSE') {
+function template(code = 'EXPENSE', riskLevel: 'R1' | 'R2' = 'R1') {
   const draft = createApprovalTemplateDraft({
     id: 'template-001', tenantId: 'tenant-001', code, name: '费用审批',
-    riskLevel: 'R1', definition: definition(), actorId: 'editor-001',
+    riskLevel, definition: definition(), actorId: 'editor-001',
   }, NOW);
   return publishApprovalTemplate(draft, {
     tenantId: 'tenant-001', expectedVersion: 1, approverId: 'publisher-001',
   }, NOW);
 }
 
-function draftInstance(templateCode = 'EXPENSE') {
+function draftInstance(templateCode = 'EXPENSE', riskLevel: 'R1' | 'R2' = 'R1') {
   return createApprovalInstanceDraft({
     id: 'instance-001', tenantId: 'tenant-001', title: '费用申请', initiatorId: 'actor-001',
-    template: template(templateCode), formData: { amount: 123_45, remark: '仅财务可见' },
+    template: template(templateCode, riskLevel), formData: { amount: 123_45, remark: '仅财务可见' },
   }, NOW);
 }
 
@@ -411,11 +411,41 @@ describe('ApprovalApplicationService', () => {
       resolvedNodes: [{ nodeId: 'manager', actorIds: ['manager-001'] }],
     }, NOW).instance;
     deps.instances.findById.mockResolvedValue(running);
-    await expect(service(deps).decideInstance(
+    await expect(service(deps).decideConfirmedInstance(
       'instance-001', 2, 'manager-001', 'approved', 'idempotency-key-003',
     )).rejects.toBeInstanceOf(ForbiddenException);
     expect(deps.instances.replace).not.toHaveBeenCalled();
     expect(deps.actions.append).not.toHaveBeenCalled();
+  });
+
+  it('普通 REST 语义对 R2 决策、转交和加签全部失败关闭', async () => {
+    const deps = dependencies();
+    const running = submitApprovalInstance(draftInstance('EXPENSE_R2', 'R2'), {
+      tenantId: 'tenant-001', expectedVersion: 1, actorId: 'actor-001',
+      resolvedNodes: [{ nodeId: 'manager', actorIds: ['manager-001'] }],
+    }, NOW).instance;
+    deps.instances.findById.mockResolvedValue(running);
+    const approvals = service(
+      deps,
+      trustedContext(['erp:approval:task:add_signer'], 'manager-001'),
+    );
+    await expect(approvals.decideInteractiveInstance(
+      'instance-001', 2, 'manager-001', 'approved', 'interactive-r2-decision',
+    )).rejects.toMatchObject({ response: { code: 'APPROVAL_R2_STRONG_AUTH_REQUIRED' } });
+    await expect(approvals.transferTask(
+      'instance-001', 2, 'manager-001', 'manager-002', 'interactive-r2-transfer',
+    )).rejects.toMatchObject({ response: { code: 'APPROVAL_R2_STRONG_AUTH_REQUIRED' } });
+    await expect(approvals.addSigner(
+      'instance-001', 2, 'manager-002', 'interactive-r2-add-signer',
+    )).rejects.toMatchObject({ response: { code: 'APPROVAL_R2_STRONG_AUTH_REQUIRED' } });
+    expect(deps.instances.replace).not.toHaveBeenCalled();
+    expect(deps.actions.append).not.toHaveBeenCalled();
+
+    await expect(approvals.decideConfirmedInstance(
+      'instance-001', 2, 'manager-001', 'approved', 'confirmed-r2-decision',
+    )).resolves.toMatchObject({ instance: { status: 'approved', version: 3 } });
+    expect(deps.instances.replace).toHaveBeenCalledOnce();
+    expect(deps.actions.append).toHaveBeenCalledOnce();
   });
 
   it('普通审批人读取时 L3/L4 字段脱敏，L1/L2 保留', async () => {

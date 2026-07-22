@@ -115,4 +115,23 @@ describe('ApprovalController', () => {
       read,
     )).toEqual(['erp:approval:instance:read']);
   });
+
+  it('普通决策端点只调用 R1 交互式应用服务边界', async () => {
+    const decideInteractiveInstance = vi.fn().mockResolvedValue({ instance: summary() });
+    const record = vi.fn().mockResolvedValue(undefined);
+    const controller = new ApprovalController(
+      { decideInteractiveInstance } as unknown as ApprovalApplicationService,
+      { record } as unknown as AuditService,
+    );
+    await controller.decideInstance(
+      INSTANCE_ID,
+      '"2"',
+      'decision-key-001',
+      { principalApproverId: 'manager-001', outcome: 'approved' },
+      { setHeader: vi.fn() } as unknown as Response,
+    );
+    expect(decideInteractiveInstance).toHaveBeenCalledWith(
+      INSTANCE_ID, 2, 'manager-001', 'approved', 'decision-key-001',
+    );
+  });
 });

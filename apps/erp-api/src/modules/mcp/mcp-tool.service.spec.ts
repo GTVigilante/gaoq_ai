@@ -61,7 +61,7 @@ function assemble() {
     getTimeline: vi.fn().mockResolvedValue([{ actionId: '01K00000000000000000000000', actionType: 'instance.submitted' }]),
     submitInstance: vi.fn(),
     withdrawInstance: vi.fn(),
-    decideInstance: vi.fn(),
+    decideConfirmedInstance: vi.fn(),
   };
   const confirmations = {
     prepare: vi.fn().mockResolvedValue({
@@ -322,6 +322,36 @@ describe('McpToolService', () => {
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result)).toContain('APPROVAL_R2_INDEPENDENCE_REQUIRED');
     expect(store.confirmations.prepare).not.toHaveBeenCalled();
+  });
+
+  it('R2 决策执行只调用已确认应用服务路径', async () => {
+    const store = assemble();
+    store.approvals.decideConfirmedInstance.mockResolvedValue({
+      instance: { id: '01J8ZQK7V0A2M4N6P8R0T2W4Y6', status: 'approved', version: 3 },
+    });
+    store.confirmations.claim.mockResolvedValue({
+      operationId: '01J8ZQK7V0A2M4N6P8R0T2W4Y7',
+      command: {
+        operation: 'approval.decide',
+        instanceId: '01J8ZQK7V0A2M4N6P8R0T2W4Y6',
+        expectedVersion: 2,
+        principalApproverId: 'approver-001',
+        outcome: 'approved',
+      },
+      replayResult: null,
+    });
+    await store.service.executeApprovalDecision(
+      '01J8ZQK7V0A2M4N6P8R0T2W4Y7',
+      `mcpc_${'a'.repeat(43)}`,
+      extra(['erp:approval:task:decide']),
+    );
+    expect(store.approvals.decideConfirmedInstance).toHaveBeenCalledWith(
+      '01J8ZQK7V0A2M4N6P8R0T2W4Y6',
+      2,
+      'approver-001',
+      'approved',
+      'mcp:01J8ZQK7V0A2M4N6P8R0T2W4Y7',
+    );
   });
 
   it('招聘只读工具复用脱敏应用投影且不返回 Offer 条款', async () => {

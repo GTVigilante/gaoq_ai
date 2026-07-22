@@ -2,9 +2,9 @@
 
 ## 交付范围
 
-本工作台提供企业 SSO 入口、审批发起、待办、详情与追加式动作时间线、R1 审批决策、版本化表单设计、独立发布复核、组织主数据浏览与创建、身份授权快照、Passkey 入口和当前会话吊销。PC 与 H5 均从待办卡片进入详情并在第三步前完成 R1 决策。
+本工作台提供企业 SSO 入口、审批发起、待办、详情与追加式动作时间线、R1 审批决策/转交/加签、版本化表单设计、独立发布复核、组织主数据浏览与创建、身份授权快照、Passkey 入口和当前会话吊销。PC 与 H5 均从待办卡片进入详情并在第三步前完成 R1 决策。
 
-移动审批发起、转交、加签、委托与真实设备无障碍 UAT 仍属于后续验收范围，不因 PC 发起页面交付而视为完成。
+移动审批发起/转交/加签、委托管理与真实设备无障碍 UAT 仍属于后续验收范围，不因 PC 页面交付而视为完成。
 
 ## 浏览器会话
 
@@ -20,6 +20,8 @@
 - PC 发起先创建草稿、再以草稿强版本和独立幂等键提交。创建成功但提交失败时必须保留草稿标识和原提交幂等键，只允许重试提交，禁止静默重复创建实例。
 - 审批决策和模板发布必须带强 `If-Match`，并发版本冲突不得自动覆盖。
 - R1 待办允许在 PC 工作台确认后提交；R2 待办在普通工作台中只读，必须转入绑定操作摘要、主体、租户和浏览器会话的 WebAuthn 受控确认流程。
+- R2 只读不是前端约定：普通 REST 决策、转交和加签在应用服务事务内读取不可变模板快照并返回 `APPROVAL_R2_STRONG_AUTH_REQUIRED`，不得产生动作、Outbox 或通知。只有已完成确认与强认证的 MCP 内部决策路径可以执行 R2。
+- R1 转交和加签必须同时具备细粒度 Scope、强 `If-Match` 和幂等键。PC 转交来源固定为当前可信主体；服务端仅允许主体本人或已验证的有效受托人操作，并复核目标为同租户有效 ERP 主体。加签只允许当前会签节点，或签和重复主体失败关闭。
 - 模板创建与发布分成独立面板；服务端继续强制创建人不能发布自己的草稿。
 - ERP 是组织与员工唯一主数据源。工作台不直接调用钉钉、飞书或 OP；下游分发由事务 Outbox、队列和平台适配器执行。
 
@@ -29,7 +31,8 @@
 | --- | --- | --- | --- | --- |
 | 已发布模板目录与审批发起 | `GET /api/approvals/templates/published`、实例创建/提交均复用 `ApprovalApplicationService` | 创建与提交分别通过事务 Outbox；外部平台只消费事件 | `erp://approval/templates/published` Resource 读取相同最小投影；既有 R1 Tool 仅提交已存在草稿 | `approval.template.catalog.read`、`approval.instance.create/submit` |
 | 审批待办、详情与时间线 | `ApprovalApplicationService` | 无副作用；时间线读取追加日志投影 | `approval_get_inbox`、`approval_get`、`approval_timeline_get` | REST 时间线和 MCP Tool 分别记录 R0 读取审计 |
-| R1 审批决策 | `ApprovalApplicationService` | 动作、Outbox、通知意图同事务 | 复用审批 R1 prepare/execute | `approval.instance.decide` |
+| R1 审批决策 | 交互式 R1 应用服务边界 | 动作、Outbox、通知意图同事务 | AI 决策统一按 R2 prepare/execute 与强认证处理 | `approval.instance.decide` |
+| R1 转交与加签 | 交互式风险边界、`transferTask`、`addSigner` | 动作、Outbox、原待办取消与新待办通知同事务 | 当前不注册独立 Tool；AI 可从时间线读取结果 | `approval.instance.transfer/add_signer` |
 | 模板草稿与发布 | `ApprovalApplicationService` | 发布事件进入 Outbox | 业务能力不由前端旁路 | `approval.template.create/publish` |
 | 组织浏览与创建 | `OrgApplicationService` | 组织版本事件进入 Outbox，下发钉钉/飞书/OP | 复用组织 R0/R1 工具 | `org.department.create`、`org.employee.create` |
 | 身份摘要与会话吊销 | 可信身份上下文与 `TokenGrantService` | 吊销不依赖外部平台成功 | OAuth/MCP 继续使用同一 Scope 模型 | `identity.profile.read`、`identity.session.revoke` |

@@ -353,18 +353,42 @@ export class ApprovalApplicationService {
     });
   }
 
-  async decideInstance(
+  /** 仅供已完成 MCP R1/R2 确认与强认证的内部执行路径调用。 */
+  async decideConfirmedInstance(
     id: string,
     expectedVersion: number,
     principalApproverId: string,
     outcome: 'approved' | 'rejected',
     key: string,
   ): Promise<{ readonly instance: ApprovalInstanceSummary }> {
+    return this.decide(id, expectedVersion, principalApproverId, outcome, key, true);
+  }
+
+  /** 普通 ERP 会话决策只允许 R1；R2 必须进入强认证确认执行路径。 */
+  async decideInteractiveInstance(
+    id: string,
+    expectedVersion: number,
+    principalApproverId: string,
+    outcome: 'approved' | 'rejected',
+    key: string,
+  ): Promise<{ readonly instance: ApprovalInstanceSummary }> {
+    return this.decide(id, expectedVersion, principalApproverId, outcome, key, false);
+  }
+
+  private async decide(
+    id: string,
+    expectedVersion: number,
+    principalApproverId: string,
+    outcome: 'approved' | 'rejected',
+    key: string,
+    confirmedR2: boolean,
+  ): Promise<{ readonly instance: ApprovalInstanceSummary }> {
     return this.transition(
       'approval.instance.decide', key,
-      { id, expectedVersion, principalApproverId, outcome },
+      { id, expectedVersion, principalApproverId, outcome, confirmedR2 },
       async (session) => {
         const current = await this.requireInstance(id, session);
+        this.assertInteractiveRiskBoundary(current, confirmedR2);
         const actorId = this.context.getActorRequired().actorId;
         const delegated = actorId !== principalApproverId;
         const delegationVerified = !delegated || await this.delegations.isActive(
@@ -394,6 +418,7 @@ export class ApprovalApplicationService {
       { id, expectedVersion, fromApproverId, toApproverId },
       async (session) => {
         const current = await this.requireInstance(id, session);
+        this.assertInteractiveRiskBoundary(current, false);
         const actorId = this.context.getActorRequired().actorId;
         await this.requireActiveActor(toApproverId, session);
         const delegated = actorId !== fromApproverId;
@@ -423,6 +448,7 @@ export class ApprovalApplicationService {
       async (session) => {
         const actor = this.context.getActorRequired();
         const current = await this.requireInstance(id, session);
+        this.assertInteractiveRiskBoundary(current, false);
         await this.requireActiveActor(approverId, session);
         return addApprovalSigner(current, {
           tenantId: this.context.getTenantRequired().tenantId,
@@ -500,6 +526,15 @@ export class ApprovalApplicationService {
       submittedAt: instance.submittedAt,
       completedAt: instance.completedAt,
     });
+  }
+
+  private assertInteractiveRiskBoundary(instance: ApprovalInstance, confirmedR2: boolean): void {
+    if (instance.templateSnapshot.riskLevel === 'R2' && !confirmedR2) {
+      throw new ForbiddenException({
+        code: 'APPROVAL_R2_STRONG_AUTH_REQUIRED',
+        message: 'R2 审批操作必须通过强认证确认流程',
+      });
+    }
   }
 
   /** 返回已授权实例的追加式动作时间线；投影不含表单正文和租户字段。 */

@@ -156,7 +156,7 @@ export class ApprovalController {
   ): Promise<{ readonly instance: ApprovalInstanceSummary }> {
     return this.instanceWrite(
       'approval.instance.decide', response,
-      this.approvals.decideInstance(
+      this.approvals.decideInteractiveInstance(
         this.requireUlid(id), this.requireVersion(ifMatch), body.principalApproverId,
         body.outcome, this.requireKey(key),
       ),

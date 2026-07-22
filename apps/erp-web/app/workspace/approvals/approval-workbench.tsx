@@ -36,6 +36,7 @@ import {
   type ApprovalView,
 } from '../../lib/approval-contract';
 import { ApprovalInitiation } from './approval-initiation';
+import { ApprovalTaskOperations } from './approval-task-operations';
 
 interface IdentityProfile {
   readonly actorId: string;
@@ -202,6 +203,17 @@ export function ApprovalWorkbench() {
             }))} />}
           </Card>
           {selected.status === 'running' ? <Flex justify="flex-end" gap={12}>
+            {profile === null ? null : <ApprovalTaskOperations
+              instance={selected}
+              actorId={profile.actorId}
+              scopes={profile.scopes}
+              onCompleted={async (instance) => {
+                setItems((current) => current.map((item) => item.id === instance.id ? instance : item));
+                setSelected(null);
+                setTimeline([]);
+                await load();
+              }}
+            />}
             <Button danger loading={writing} disabled={selected.riskLevel === 'R2'} onClick={() => {
               modal.confirm({ title: '确认拒绝此审批？', okText: '拒绝', okButtonProps: { danger: true }, onOk: async () => decide('rejected') });
             }}>拒绝</Button>
