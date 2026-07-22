@@ -52,7 +52,6 @@ jobs:
       READINESS_EXPECTED_WORKER_IMAGE: ${{ vars.READINESS_WORKER_IMAGE_DIGEST }}
       READINESS_EXPECTED_WEB_IMAGE: ${{ vars.READINESS_WEB_IMAGE_DIGEST }}
       READINESS_EXPECTED_DEPLOYMENT_MANIFEST: ${{ vars.READINESS_DEPLOYMENT_MANIFEST_SHA256 }}
-      READINESS_VERDICT_PATH: ${{ runner.temp }}/phase-5-readiness-verdicts.json
     steps:
       - name: 检出受信任代码
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -65,6 +64,8 @@ jobs:
           node-version: 22
 
       - name: 验证版本绑定并生成七类独立 verdict
+        env:
+          READINESS_VERDICT_PATH: ${{ runner.temp }}/phase-5-readiness-verdicts.json
         run: >-
           node scripts/release/validate-phase-5-readiness-evidence.mjs
           --enforce-environment

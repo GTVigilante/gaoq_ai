@@ -1,0 +1,12 @@
+self-hosted-runner:
+  labels:
+    - phase-5-go-no-go
+    - phase-5-migration-rehearsal
+    - phase-5-mcp-integration
+    - phase-5-performance
+    - phase-5-readiness
+    - phase-5-resilience
+    - phase-6-cutover
+    - phase-6-deployment-apply
+    - phase-6-deployment-plan
+    - phase-6-hypercare

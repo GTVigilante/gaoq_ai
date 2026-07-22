@@ -20,6 +20,7 @@ const requiredDocuments = [
   'docs/phase-6/02-production-execution-runbook.md',
   'docs/phase-6/03-production-execution-authorization.md',
   'docs/phase-6/04-kubernetes-deployment-baseline.md',
+  'docs/phase-6/05-protected-production-deployment.md',
   'deploy/helm/gaoq-erp/README.md',
 ];
 

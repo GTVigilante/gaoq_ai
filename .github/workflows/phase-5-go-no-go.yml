@@ -52,7 +52,6 @@ jobs:
       GO_NO_GO_EXPECTED_WORKER_IMAGE: ${{ vars.GO_NO_GO_WORKER_IMAGE_DIGEST }}
       GO_NO_GO_EXPECTED_WEB_IMAGE: ${{ vars.GO_NO_GO_WEB_IMAGE_DIGEST }}
       GO_NO_GO_EXPECTED_DEPLOYMENT_MANIFEST: ${{ vars.GO_NO_GO_DEPLOYMENT_MANIFEST_SHA256 }}
-      GO_NO_GO_VERDICT_PATH: ${{ runner.temp }}/phase-5-go-no-go-verdict.json
     steps:
       - name: 检出受信任代码
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -65,6 +64,8 @@ jobs:
           node-version: 22
 
       - name: 验证版本绑定与跨职能放行证据
+        env:
+          GO_NO_GO_VERDICT_PATH: ${{ runner.temp }}/phase-5-go-no-go-verdict.json
         run: >-
           node scripts/release/validate-phase-5-go-no-go-evidence.mjs
           --enforce-environment

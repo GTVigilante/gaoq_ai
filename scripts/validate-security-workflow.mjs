@@ -32,6 +32,10 @@ if (actionReferences.length < 9 || actionReferences.some(
 
 for (const marker of [
   'dependency-review:',
+  'github-actions-contract:',
+  'rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz',
+  '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8',
+  '"$RUNNER_TEMP/actionlint-bin/actionlint"',
   'sast:',
   'secret-scan:',
   'supply-chain:',

@@ -2,10 +2,12 @@ import { readFile } from 'node:fs/promises';
 
 const cutoverPath = new URL('../.github/workflows/phase-6-cutover.yml', import.meta.url);
 const hypercarePath = new URL('../.github/workflows/phase-6-hypercare.yml', import.meta.url);
+const deploymentPath = new URL('../.github/workflows/phase-6-deployment.yml', import.meta.url);
 const packagePath = new URL('../package.json', import.meta.url);
-const [cutover, hypercare, packageContent] = await Promise.all([
+const [cutover, hypercare, deployment, packageContent] = await Promise.all([
   readFile(cutoverPath, 'utf8'),
   readFile(hypercarePath, 'utf8'),
+  readFile(deploymentPath, 'utf8'),
   readFile(packagePath, 'utf8'),
 ]);
 const packageDocument = JSON.parse(packageContent);
@@ -44,6 +46,8 @@ validateWorkflow(hypercare, {
   ],
 });
 
+validateDeploymentWorkflow(deployment);
+
 const expectedScripts = {
   'release:phase6:cutover:validate-evidence':
     'node scripts/release/validate-phase-6-cutover-evidence.mjs',
@@ -53,6 +57,10 @@ const expectedScripts = {
     'node scripts/release/validate-phase-6-hypercare-evidence.mjs',
   'release:phase6:hypercare:self-test':
     'node scripts/release/validate-phase-6-hypercare-evidence.mjs --self-test',
+  'release:phase6:deployment:validate-plan':
+    'node scripts/release/validate-phase-6-deployment-plan.mjs',
+  'release:phase6:deployment:self-test':
+    'node scripts/release/validate-phase-6-deployment-plan.mjs --self-test',
   'release:phase6:workflows:validate': 'node scripts/validate-phase-6-workflows.mjs',
 };
 for (const [name, value] of Object.entries(expectedScripts)) {
@@ -61,6 +69,7 @@ for (const [name, value] of Object.entries(expectedScripts)) {
 for (const name of [
   'release:phase6:cutover:self-test',
   'release:phase6:hypercare:self-test',
+  'release:phase6:deployment:self-test',
   'release:phase6:workflows:validate',
 ]) {
   if (!packageDocument.scripts?.check?.includes(`pnpm ${name}`)) {
@@ -100,4 +109,59 @@ function validateWorkflow(workflow, contract) {
   ]) {
     if (workflow.includes(forbidden)) throw new Error(`${contract.code}_UNSAFE`);
   }
+}
+
+/** 校验生产部署只能由双环境、双 Runner 和人工批准执行。 */
+function validateDeploymentWorkflow(workflow) {
+  const actionReferences = [
+    ...workflow.matchAll(/^\s*uses:\s*([^\s#]+)(?:\s*#.*)?$/gmu),
+  ].map((match) => match[1]);
+  if (
+    actionReferences.length !== 6 || actionReferences.some(
+      (reference) => reference === undefined || !/@[a-f0-9]{40}$/u.test(reference),
+    )
+  ) throw new Error('PHASE6_DEPLOYMENT_WORKFLOW_ACTION_NOT_PINNED');
+
+  for (const marker of [
+    'workflow_dispatch:',
+    "test \"$GITHUB_REF\" = 'refs/heads/main'",
+    'group: phase-6-production-deployment',
+    '- phase-6-deployment-plan',
+    '- phase-6-deployment-apply',
+    'environment: phase-6-production-plan',
+    'environment: phase-6-production-deployment',
+    'PHASE6_DEPLOYMENT_VALUES_PATH: /var/lib/gaoq/deployment/production-values.yaml',
+    'PHASE6_DEPLOYMENT_GO_NO_GO_PATH: /var/lib/gaoq/go-no-go/phase-5-go-no-go.json',
+    "test \"$(node --version)\" = 'v22.23.1'",
+    'validate-phase-5-go-no-go-evidence.mjs',
+    'validate-phase-6-deployment-plan.mjs',
+    'validate-phase-6-deployment-plan.mjs --validate-environment',
+    'validate-kubernetes-deployment.mjs',
+    "test \"$(helm version --short)\" = 'v4.2.0+g0646808'",
+    "test \"$(kubeconform -v)\" = 'v0.7.0'",
+    'v1.30.0-standalone-strict/{{.ResourceKind}}.json',
+    'kubectl apply --server-side --dry-run=server',
+    'kubectl diff --server-side',
+    'rendered_sha256: ${{ steps.plan_hash.outputs.rendered_sha256 }}',
+    "test \"sha256:$rendered_hash\" = '${{ needs.plan.outputs.rendered_sha256 }}'",
+    'helm upgrade --install',
+    '--atomic --wait --timeout 15m --history-max 10',
+    'kubectl rollout status deployment',
+    'helm get manifest',
+    'phase-6-production-plan-${{ github.sha }}',
+    'phase-6-production-deployment-${{ github.sha }}',
+    'retention-days: 90',
+  ]) {
+    if (!workflow.includes(marker)) throw new Error('PHASE6_DEPLOYMENT_WORKFLOW_INCOMPLETE');
+  }
+
+  for (const forbidden of [
+    'pull_request:', 'push:', 'workflow_call:', '${{ inputs.', '${{ secrets.',
+    '--force', '--create-namespace', '--set ', '--set-string ', '--reuse-values',
+    'curl ', 'wget ', 'ssh ', 'terraform ', 'tofu ', 'aws ', 'aliyun ', 'gcloud ', 'az ',
+    'kubectl delete', 'helm uninstall', 'helm rollback',
+  ]) {
+    if (workflow.includes(forbidden)) throw new Error('PHASE6_DEPLOYMENT_WORKFLOW_UNSAFE');
+  }
+  if (/^\s*rm\s+/mu.test(workflow)) throw new Error('PHASE6_DEPLOYMENT_WORKFLOW_UNSAFE');
 }

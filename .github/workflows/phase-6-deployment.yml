@@ -1,0 +1,268 @@
+name: Phase 6 生产部署
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-6-production-deployment
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    name: 校验生产部署契约
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 只允许默认分支执行
+        shell: bash
+        run: test "$GITHUB_REF" = 'refs/heads/main'
+
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22.23.1
+
+      - name: 执行部署契约自测
+        run: |
+          node scripts/release/validate-phase-6-deployment-plan.mjs --self-test
+          node scripts/validate-phase-6-workflows.mjs
+
+  plan:
+    name: 生成生产部署计划
+    needs: contract
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - phase-6-deployment-plan
+    timeout-minutes: 30
+    environment: phase-6-production-plan
+    outputs:
+      rendered_sha256: ${{ steps.plan_hash.outputs.rendered_sha256 }}
+    env:
+      PHASE6_DEPLOYMENT_VALUES_PATH: /var/lib/gaoq/deployment/production-values.yaml
+      PHASE6_DEPLOYMENT_GO_NO_GO_PATH: /var/lib/gaoq/go-no-go/phase-5-go-no-go.json
+      PHASE6_DEPLOYMENT_RELEASE_NAME: ${{ vars.PHASE6_DEPLOYMENT_RELEASE_NAME }}
+      PHASE6_DEPLOYMENT_NAMESPACE: ${{ vars.PHASE6_DEPLOYMENT_NAMESPACE }}
+      PHASE6_DEPLOYMENT_KUBECTL_VERSION: ${{ vars.PHASE6_DEPLOYMENT_KUBECTL_VERSION }}
+      PHASE6_DEPLOYMENT_EXPECTED_COMMIT: ${{ github.sha }}
+      PHASE6_DEPLOYMENT_EXPECTED_API_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_API_IMAGE_DIGEST }}
+      PHASE6_DEPLOYMENT_EXPECTED_WORKER_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_WORKER_IMAGE_DIGEST }}
+      PHASE6_DEPLOYMENT_EXPECTED_WEB_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_WEB_IMAGE_DIGEST }}
+      PHASE6_DEPLOYMENT_EXPECTED_MANIFEST: ${{ vars.PHASE6_DEPLOYMENT_MANIFEST_SHA256 }}
+      PHASE6_DEPLOYMENT_EXPECTED_ROLLOUT_ID: ${{ vars.PHASE6_DEPLOYMENT_ROLLOUT_ID }}
+      PHASE6_DEPLOYMENT_API_CONFIG_MAP: ${{ vars.PHASE6_DEPLOYMENT_API_CONFIG_MAP }}
+      PHASE6_DEPLOYMENT_API_SECRET: ${{ vars.PHASE6_DEPLOYMENT_API_SECRET }}
+      PHASE6_DEPLOYMENT_WORKER_CONFIG_MAP: ${{ vars.PHASE6_DEPLOYMENT_WORKER_CONFIG_MAP }}
+      PHASE6_DEPLOYMENT_WORKER_SECRET: ${{ vars.PHASE6_DEPLOYMENT_WORKER_SECRET }}
+      GO_NO_GO_EXPECTED_ENVIRONMENT: ${{ vars.PHASE6_DEPLOYMENT_GO_NO_GO_ENVIRONMENT }}
+      GO_NO_GO_EXPECTED_REGION: ${{ vars.PHASE6_DEPLOYMENT_GO_NO_GO_REGION }}
+      GO_NO_GO_EXPECTED_COMMIT: ${{ github.sha }}
+      GO_NO_GO_EXPECTED_API_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_API_IMAGE_DIGEST }}
+      GO_NO_GO_EXPECTED_WORKER_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_WORKER_IMAGE_DIGEST }}
+      GO_NO_GO_EXPECTED_WEB_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_WEB_IMAGE_DIGEST }}
+      GO_NO_GO_EXPECTED_DEPLOYMENT_MANIFEST: ${{ vars.PHASE6_DEPLOYMENT_MANIFEST_SHA256 }}
+    steps:
+      - name: 检出受信任代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 验证隔离工具链与只读输入
+        shell: bash
+        run: |
+          test "$(node --version)" = 'v22.23.1'
+          test "$(helm version --short)" = 'v4.2.0+g0646808'
+          test "$(kubeconform -v)" = 'v0.7.0'
+          test -f "$PHASE6_DEPLOYMENT_VALUES_PATH"
+          test ! -L "$PHASE6_DEPLOYMENT_VALUES_PATH"
+          test "$(stat --format='%s' "$PHASE6_DEPLOYMENT_VALUES_PATH")" -le 1048576
+          file_mode=$(stat --format='%a' "$PHASE6_DEPLOYMENT_VALUES_PATH")
+          test $((8#$file_mode & 8#22)) -eq 0
+          node scripts/release/validate-phase-6-deployment-plan.mjs --validate-environment
+          kubectl version --client --output=json > "$RUNNER_TEMP/kubectl-version.json"
+          node --input-type=module --eval "import{readFileSync}from'node:fs';const v=JSON.parse(readFileSync(process.argv[1],'utf8')).clientVersion.gitVersion;if(v!==process.env.PHASE6_DEPLOYMENT_KUBECTL_VERSION)process.exit(1)" "$RUNNER_TEMP/kubectl-version.json"
+
+      - name: 重新验收有效 Go-No-Go 原始证据
+        run: >-
+          node scripts/release/validate-phase-5-go-no-go-evidence.mjs
+          --enforce-environment
+          "$PHASE6_DEPLOYMENT_GO_NO_GO_PATH"
+          > "$RUNNER_TEMP/go-no-go-verdict.json"
+
+      - name: 渲染、校验并执行服务端只读计划
+        shell: bash
+        run: |
+          helm lint deploy/helm/gaoq-erp --strict \
+            --values "$PHASE6_DEPLOYMENT_VALUES_PATH"
+          helm template "$PHASE6_DEPLOYMENT_RELEASE_NAME" deploy/helm/gaoq-erp \
+            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" \
+            --values "$PHASE6_DEPLOYMENT_VALUES_PATH" \
+            > "$RUNNER_TEMP/production-rendered.yaml"
+          node scripts/validate-kubernetes-deployment.mjs \
+            "$RUNNER_TEMP/production-rendered.yaml"
+          node scripts/release/validate-phase-6-deployment-plan.mjs \
+            --enforce-environment "$RUNNER_TEMP/production-rendered.yaml" \
+            > "$RUNNER_TEMP/deployment-plan-verdict.json"
+          kubeconform -strict -summary -kubernetes-version 1.30.0 \
+            -schema-location 'file:///var/lib/gaoq/kubernetes-schema/v1.30.0-standalone-strict/{{.ResourceKind}}.json' \
+            "$RUNNER_TEMP/production-rendered.yaml"
+          kubectl get namespace "$PHASE6_DEPLOYMENT_NAMESPACE" > /dev/null
+          kubectl get configmap "$PHASE6_DEPLOYMENT_API_CONFIG_MAP" \
+            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" > /dev/null
+          kubectl get configmap "$PHASE6_DEPLOYMENT_WORKER_CONFIG_MAP" \
+            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" > /dev/null
+          kubectl apply --server-side --dry-run=server \
+            --field-manager=gaoq-phase6-plan \
+            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" \
+            --filename "$RUNNER_TEMP/production-rendered.yaml" > /dev/null
+          set +e
+          kubectl diff --server-side --field-manager=gaoq-phase6-plan \
+            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" \
+            --filename "$RUNNER_TEMP/production-rendered.yaml" \
+            > "$RUNNER_TEMP/deployment.diff"
+          diff_status=$?
+          set -e
+          test "$diff_status" -le 1
+
+      - name: 固定计划摘要
+        id: plan_hash
+        shell: bash
+        run: |
+          rendered_hash=$(sha256sum "$RUNNER_TEMP/production-rendered.yaml" | cut --delimiter=' ' --fields=1)
+          printf 'rendered_sha256=sha256:%s\n' "$rendered_hash" >> "$GITHUB_OUTPUT"
+
+      - name: 保存待人工复核的计划
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: phase-6-production-plan-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/go-no-go-verdict.json
+            ${{ runner.temp }}/deployment-plan-verdict.json
+            ${{ runner.temp }}/production-rendered.yaml
+            ${{ runner.temp }}/deployment.diff
+          if-no-files-found: error
+          retention-days: 90
+
+  deploy:
+    name: 人工批准后原子部署
+    needs: plan
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - phase-6-deployment-apply
+    timeout-minutes: 45
+    environment: phase-6-production-deployment
+    env:
+      PHASE6_DEPLOYMENT_VALUES_PATH: /var/lib/gaoq/deployment/production-values.yaml
+      PHASE6_DEPLOYMENT_GO_NO_GO_PATH: /var/lib/gaoq/go-no-go/phase-5-go-no-go.json
+      PHASE6_DEPLOYMENT_RELEASE_NAME: ${{ vars.PHASE6_DEPLOYMENT_RELEASE_NAME }}
+      PHASE6_DEPLOYMENT_NAMESPACE: ${{ vars.PHASE6_DEPLOYMENT_NAMESPACE }}
+      PHASE6_DEPLOYMENT_KUBECTL_VERSION: ${{ vars.PHASE6_DEPLOYMENT_KUBECTL_VERSION }}
+      PHASE6_DEPLOYMENT_EXPECTED_COMMIT: ${{ github.sha }}
+      PHASE6_DEPLOYMENT_EXPECTED_API_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_API_IMAGE_DIGEST }}
+      PHASE6_DEPLOYMENT_EXPECTED_WORKER_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_WORKER_IMAGE_DIGEST }}
+      PHASE6_DEPLOYMENT_EXPECTED_WEB_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_WEB_IMAGE_DIGEST }}
+      PHASE6_DEPLOYMENT_EXPECTED_MANIFEST: ${{ vars.PHASE6_DEPLOYMENT_MANIFEST_SHA256 }}
+      PHASE6_DEPLOYMENT_EXPECTED_ROLLOUT_ID: ${{ vars.PHASE6_DEPLOYMENT_ROLLOUT_ID }}
+      PHASE6_DEPLOYMENT_API_CONFIG_MAP: ${{ vars.PHASE6_DEPLOYMENT_API_CONFIG_MAP }}
+      PHASE6_DEPLOYMENT_API_SECRET: ${{ vars.PHASE6_DEPLOYMENT_API_SECRET }}
+      PHASE6_DEPLOYMENT_WORKER_CONFIG_MAP: ${{ vars.PHASE6_DEPLOYMENT_WORKER_CONFIG_MAP }}
+      PHASE6_DEPLOYMENT_WORKER_SECRET: ${{ vars.PHASE6_DEPLOYMENT_WORKER_SECRET }}
+      GO_NO_GO_EXPECTED_ENVIRONMENT: ${{ vars.PHASE6_DEPLOYMENT_GO_NO_GO_ENVIRONMENT }}
+      GO_NO_GO_EXPECTED_REGION: ${{ vars.PHASE6_DEPLOYMENT_GO_NO_GO_REGION }}
+      GO_NO_GO_EXPECTED_COMMIT: ${{ github.sha }}
+      GO_NO_GO_EXPECTED_API_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_API_IMAGE_DIGEST }}
+      GO_NO_GO_EXPECTED_WORKER_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_WORKER_IMAGE_DIGEST }}
+      GO_NO_GO_EXPECTED_WEB_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_WEB_IMAGE_DIGEST }}
+      GO_NO_GO_EXPECTED_DEPLOYMENT_MANIFEST: ${{ vars.PHASE6_DEPLOYMENT_MANIFEST_SHA256 }}
+    steps:
+      - name: 检出受信任代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 再次验证工具链、Go-No-Go 与计划绑定
+        shell: bash
+        run: |
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "$(node --version)" = 'v22.23.1'
+          test "$(helm version --short)" = 'v4.2.0+g0646808'
+          test "$(kubeconform -v)" = 'v0.7.0'
+          test -f "$PHASE6_DEPLOYMENT_VALUES_PATH"
+          test ! -L "$PHASE6_DEPLOYMENT_VALUES_PATH"
+          test "$(stat --format='%s' "$PHASE6_DEPLOYMENT_VALUES_PATH")" -le 1048576
+          file_mode=$(stat --format='%a' "$PHASE6_DEPLOYMENT_VALUES_PATH")
+          test $((8#$file_mode & 8#22)) -eq 0
+          node scripts/release/validate-phase-6-deployment-plan.mjs --validate-environment
+          kubectl version --client --output=json > "$RUNNER_TEMP/kubectl-version.json"
+          node --input-type=module --eval "import{readFileSync}from'node:fs';const v=JSON.parse(readFileSync(process.argv[1],'utf8')).clientVersion.gitVersion;if(v!==process.env.PHASE6_DEPLOYMENT_KUBECTL_VERSION)process.exit(1)" "$RUNNER_TEMP/kubectl-version.json"
+          node scripts/release/validate-phase-5-go-no-go-evidence.mjs \
+            --enforce-environment "$PHASE6_DEPLOYMENT_GO_NO_GO_PATH" \
+            > "$RUNNER_TEMP/go-no-go-verdict.json"
+          helm template "$PHASE6_DEPLOYMENT_RELEASE_NAME" deploy/helm/gaoq-erp \
+            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" \
+            --values "$PHASE6_DEPLOYMENT_VALUES_PATH" \
+            > "$RUNNER_TEMP/production-rendered.yaml"
+          node scripts/validate-kubernetes-deployment.mjs \
+            "$RUNNER_TEMP/production-rendered.yaml"
+          node scripts/release/validate-phase-6-deployment-plan.mjs \
+            --enforce-environment "$RUNNER_TEMP/production-rendered.yaml" \
+            > "$RUNNER_TEMP/deployment-plan-verdict.json"
+          rendered_hash=$(sha256sum "$RUNNER_TEMP/production-rendered.yaml" | cut --delimiter=' ' --fields=1)
+          test "sha256:$rendered_hash" = '${{ needs.plan.outputs.rendered_sha256 }}'
+          kubectl get configmap "$PHASE6_DEPLOYMENT_API_CONFIG_MAP" \
+            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" > /dev/null
+          kubectl get configmap "$PHASE6_DEPLOYMENT_WORKER_CONFIG_MAP" \
+            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" > /dev/null
+          kubectl apply --server-side --dry-run=server \
+            --field-manager=gaoq-phase6-deploy \
+            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" \
+            --filename "$RUNNER_TEMP/production-rendered.yaml" > /dev/null
+
+      - name: 执行原子部署
+        shell: bash
+        run: |
+          helm upgrade --install "$PHASE6_DEPLOYMENT_RELEASE_NAME" deploy/helm/gaoq-erp \
+            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" \
+            --values "$PHASE6_DEPLOYMENT_VALUES_PATH" \
+            --atomic --wait --timeout 15m --history-max 10
+
+      - name: 只读验证实际发布状态
+        shell: bash
+        run: |
+          kubectl rollout status deployment \
+            --selector="app.kubernetes.io/instance=$PHASE6_DEPLOYMENT_RELEASE_NAME,app.kubernetes.io/part-of=gaoq-os" \
+            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" --timeout=10m
+          helm get manifest "$PHASE6_DEPLOYMENT_RELEASE_NAME" \
+            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" \
+            > "$RUNNER_TEMP/applied-manifest.yaml"
+          node scripts/validate-kubernetes-deployment.mjs \
+            "$RUNNER_TEMP/applied-manifest.yaml"
+          node scripts/release/validate-phase-6-deployment-plan.mjs \
+            --enforce-environment "$RUNNER_TEMP/applied-manifest.yaml" \
+            > "$RUNNER_TEMP/deployment-evidence.json"
+          helm status "$PHASE6_DEPLOYMENT_RELEASE_NAME" \
+            --namespace "$PHASE6_DEPLOYMENT_NAMESPACE" --output json \
+            > "$RUNNER_TEMP/helm-status.json"
+
+      - name: 保存生产部署证据
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: phase-6-production-deployment-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/go-no-go-verdict.json
+            ${{ runner.temp }}/deployment-plan-verdict.json
+            ${{ runner.temp }}/deployment-evidence.json
+            ${{ runner.temp }}/helm-status.json
+          if-no-files-found: error
+          retention-days: 90

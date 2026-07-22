@@ -5,8 +5,10 @@
 
 ## GitHub 受保护环境
 
-仓库需要两个 Required Reviewers 保护的 Environment：
+仓库需要以下 Required Reviewers 保护的 Environment：
 
+- `phase-6-production-plan`：只读生成 Kubernetes server-side dry-run 与 diff；
+- `phase-6-production-deployment`：由独立 Runner 执行获批的 Helm 原子发布；
 - `phase-6-cutover-acceptance`：只读挂载 `/var/lib/gaoq/phase-6/cutover.json`；
 - `phase-6-hypercare-acceptance`：只读挂载 `/var/lib/gaoq/phase-6/hypercare.json`。
 
@@ -15,12 +17,13 @@
 ## 执行次序
 
 1. 在默认分支完成 Phase 5 Go/No-Go，并冻结 commit、三份镜像摘要和部署清单。
-2. 现场团队执行三次全量演练及生产级回滚演练，将原始证据写入企业 WORM。
-3. 数据负责人导出脱敏的 `cutover.json`；在默认分支手工运行 `Phase 6 统一切换证据验收`。
-4. 现场变更负责人按[生产资金执行授权契约](./03-production-execution-authorization.md)启用独立授权域；每个真实银行或税务对象仍需单独短时授权。
-5. 工作流仅生成 `CUTOVER_COMPLETED` verdict。它不部署、不切流、不改变旧系统状态。
-6. 连续 28 天生成日报，稳定期结束后由法务、财务、数据负责人签署归档批准。
-7. 导出脱敏的 `hypercare.json`；手工运行 `Phase 6 稳定期与归档证据验收`。
+2. 按[受保护生产部署工作流](./05-protected-production-deployment.md)生成计划，经 Required Reviewers 批准后部署当前 release；此步骤不切流。
+3. 现场团队执行三次全量演练及生产级回滚演练，将原始证据写入企业 WORM。
+4. 数据负责人导出脱敏的 `cutover.json`；在默认分支手工运行 `Phase 6 统一切换证据验收`。
+5. 现场变更负责人按[生产资金执行授权契约](./03-production-execution-authorization.md)启用独立授权域；每个真实银行或税务对象仍需单独短时授权。
+6. 切换验收工作流仅生成 `CUTOVER_COMPLETED` verdict。它不部署、不切流、不改变旧系统状态。
+7. 连续 28 天生成日报，稳定期结束后由法务、财务、数据负责人签署归档批准。
+8. 导出脱敏的 `hypercare.json`；手工运行 `Phase 6 稳定期与归档证据验收`。
 
 本地契约自测：
 

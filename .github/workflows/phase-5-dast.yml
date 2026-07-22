@@ -24,7 +24,6 @@ jobs:
       DAST_PRODUCTION_EQUIVALENT: ${{ vars.DAST_PRODUCTION_EQUIVALENT }}
       DAST_PRODUCTION_TRAFFIC: ${{ vars.DAST_PRODUCTION_TRAFFIC }}
       DAST_ACTIVE_SCAN_APPROVED: ${{ vars.DAST_ACTIVE_SCAN_APPROVED }}
-      DAST_REPORT_DIR: ${{ runner.temp }}/phase-5-dast
     steps:
       - name: 检出代码
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -41,6 +40,8 @@ jobs:
 
       - name: 执行未认证与低权限主动扫描
         id: dast
+        env:
+          DAST_REPORT_DIR: ${{ runner.temp }}/phase-5-dast
         run: node scripts/security/run-phase-5-dast.mjs --run
 
       - name: 保存受控 DAST 原始报告

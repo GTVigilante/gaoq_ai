@@ -50,7 +50,6 @@ jobs:
       PHASE6_HYPERCARE_EXPECTED_COMMIT: ${{ github.sha }}
       PHASE6_HYPERCARE_EXPECTED_RELEASE: ${{ vars.PHASE6_HYPERCARE_RELEASE_CANDIDATE }}
       PHASE6_HYPERCARE_EXPECTED_CUTOVER_EVIDENCE: ${{ vars.PHASE6_HYPERCARE_CUTOVER_EVIDENCE_SHA256 }}
-      PHASE6_HYPERCARE_VERDICT_PATH: ${{ runner.temp }}/phase-6-hypercare-verdict.json
     steps:
       - name: 检出受信任代码
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -63,6 +62,8 @@ jobs:
           node-version: 22
 
       - name: 验证稳定期连续性与归档批准
+        env:
+          PHASE6_HYPERCARE_VERDICT_PATH: ${{ runner.temp }}/phase-6-hypercare-verdict.json
         run: >-
           node scripts/release/validate-phase-6-hypercare-evidence.mjs
           --enforce-environment

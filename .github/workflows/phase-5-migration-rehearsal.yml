@@ -54,7 +54,6 @@ jobs:
       MIGRATION_REHEARSAL_EXPECTED_DEPLOYMENT_MANIFEST: ${{ vars.MIGRATION_REHEARSAL_DEPLOYMENT_MANIFEST_SHA256 }}
       MIGRATION_REHEARSAL_EXPECTED_SOURCE_SNAPSHOT: ${{ vars.MIGRATION_REHEARSAL_SOURCE_SNAPSHOT_SHA256 }}
       MIGRATION_REHEARSAL_EXPECTED_PACKAGE_MANIFEST: ${{ vars.MIGRATION_REHEARSAL_PACKAGE_MANIFEST_SHA256 }}
-      MIGRATION_REHEARSAL_VERDICT_PATH: ${{ runner.temp }}/phase-5-migration-rehearsal-verdict.json
     steps:
       - name: 检出受信任代码
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -67,6 +66,8 @@ jobs:
           node-version: 22
 
       - name: 验证版本绑定与三轮全量迁移聚合证据
+        env:
+          MIGRATION_REHEARSAL_VERDICT_PATH: ${{ runner.temp }}/phase-5-migration-rehearsal-verdict.json
         run: >-
           node scripts/migration/validate-phase-5-migration-rehearsal-evidence.mjs
           --enforce-environment

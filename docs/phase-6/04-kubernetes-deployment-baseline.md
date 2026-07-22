@@ -46,7 +46,7 @@ Secret Manager 同步器或平台流水线必须满足：工作负载身份最�
 1. 完成镜像供应链、依赖、SAST、Secret、DAST、性能、迁移、韧性、权限、隐私、UAT 和 MCP 证据门禁。
 2. 在隔离环境用目标 values 执行 `helm lint`、`helm template`、仓库渲染检查和 Kubeconform；再由目标集群执行 server-side dry-run 与准入策略。
 3. 人工复核 NetworkPolicy CIDR、外部 ConfigMap/Secret 版本、证书、发布绑定和回滚点。
-4. 经 Go/No-Go 和变更审批后，在批准窗口人工执行 GitOps 同步或 Helm 发布；AI/MCP 只能读取脱敏状态。
+4. 经 Go/No-Go 和变更审批后，使用[受保护生产部署工作流](./05-protected-production-deployment.md)完成只读计划、双环境复验和 Helm 原子发布；AI/MCP 只能读取脱敏状态。
 5. 验证 rollout、探针、SLO、队列、审计锚点、外部连接和全域对账；异常立即按 Phase 6 契约回滚并保全证据。
 
 ## 6. 仓库验证

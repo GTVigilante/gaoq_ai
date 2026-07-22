@@ -50,7 +50,6 @@ jobs:
       MCP_INTEGRATION_EXPECTED_API_IMAGE: ${{ vars.MCP_INTEGRATION_API_IMAGE_DIGEST }}
       MCP_INTEGRATION_EXPECTED_WORKER_IMAGE: ${{ vars.MCP_INTEGRATION_WORKER_IMAGE_DIGEST }}
       MCP_INTEGRATION_EXPECTED_WEB_IMAGE: ${{ vars.MCP_INTEGRATION_WEB_IMAGE_DIGEST }}
-      MCP_INTEGRATION_VERDICT_PATH: ${{ runner.temp }}/phase-5-mcp-integration-verdict.json
     steps:
       - name: 检出受信任代码
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -66,6 +65,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - name: 安装冻结依赖并验证现场证据
+        env:
+          MCP_INTEGRATION_VERDICT_PATH: ${{ runner.temp }}/phase-5-mcp-integration-verdict.json
         run: |
           pnpm install --frozen-lockfile
           node scripts/mcp/validate-phase-5-mcp-integration-evidence.mjs \
