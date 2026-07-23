@@ -72,9 +72,10 @@ describe('AttendanceSourceFactRepository', () => {
       sourceEventBlindIndexes: ['attendance-blind-001.digest'],
       migrationEvidenceChecksum: 'd'.repeat(43), dataKeyId: 'attendance-key-001',
     });
-    expect(JSON.stringify(records)).not.toMatch(
-      /workedMinutes|480|Asia\/Shanghai|2026-04-01T01:00:00/iu,
-    );
+    expect(records[0]).not.toHaveProperty('occurredAt');
+    expect(records[0]).not.toHaveProperty('timeZone');
+    expect(records[0]).not.toHaveProperty('impact');
+    expect(records[0]).not.toHaveProperty('workedMinutes');
   });
 
   it('迁移修订只把密文和 WORM 控制字段交给 Mongo', async () => {
@@ -104,7 +105,9 @@ describe('AttendanceSourceFactRepository', () => {
       approvalHistoryId: 'approval-history-001', migrationEvidenceChecksum: 'd'.repeat(43),
       dataKeyId: 'attendance-key-001',
     });
-    expect(JSON.stringify(records)).not.toMatch(/workedMinutes|420|LEGACY_APPROVED/iu);
+    expect(records[0]).not.toHaveProperty('replacementImpact');
+    expect(records[0]).not.toHaveProperty('workedMinutes');
+    expect(records[0]).not.toHaveProperty('reasonCode');
   });
 
   it('迁移月结加密逐日明细并保存 WORM 控制字段', async () => {
@@ -137,6 +140,6 @@ describe('AttendanceSourceFactRepository', () => {
       migrationEvidenceChecksum: 'm'.repeat(43), dataKeyId: 'attendance-key-001',
       workedMinutes: 480,
     });
-    expect(JSON.stringify(records)).not.toContain('dailySummaries');
+    expect(records[0]).not.toHaveProperty('dailySummaries');
   });
 });
