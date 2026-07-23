@@ -11,6 +11,7 @@ const readinessWorkflowPath = new URL('../.github/workflows/phase-5-readiness.ym
 const goNoGoWorkflowPath = new URL('../.github/workflows/phase-5-go-no-go.yml', import.meta.url);
 const mcpIntegrationWorkflowPath = new URL('../.github/workflows/phase-5-mcp-integration.yml', import.meta.url);
 const packagePath = new URL('../package.json', import.meta.url);
+const webPackagePath = new URL('../apps/erp-web/package.json', import.meta.url);
 const bearerIgnorePath = new URL('../bearer.ignore', import.meta.url);
 const gitleaksConfigPath = new URL('../.gitleaks.toml', import.meta.url);
 const workflow = await readFile(workflowPath, 'utf8');
@@ -21,6 +22,7 @@ const readinessWorkflow = await readFile(readinessWorkflowPath, 'utf8');
 const goNoGoWorkflow = await readFile(goNoGoWorkflowPath, 'utf8');
 const mcpIntegrationWorkflow = await readFile(mcpIntegrationWorkflowPath, 'utf8');
 const packageDocument = JSON.parse(await readFile(packagePath, 'utf8'));
+const webPackageDocument = JSON.parse(await readFile(webPackagePath, 'utf8'));
 const bearerIgnore = JSON.parse(await readFile(bearerIgnorePath, 'utf8'));
 const gitleaksConfig = await readFile(gitleaksConfigPath, 'utf8');
 
@@ -330,5 +332,13 @@ const sharpOverride = packageDocument?.pnpm?.overrides?.sharp;
 if (typeof sharpOverride !== 'string' || sharpOverride !== '0.35.3') {
   throw new Error('PHASE5_SECURITY_SHARP_OVERRIDE_REQUIRED');
 }
+
+if (webPackageDocument.dependencies?.next !== '16.2.11') {
+  throw new Error('PHASE5_SECURITY_NEXT_PATCH_REQUIRED');
+}
+if (
+  packageDocument.pnpm?.overrides?.postcss !== '8.5.10' ||
+  packageDocument.pnpm?.overrides?.['@hono/node-server'] !== '2.0.10'
+) throw new Error('PHASE5_SECURITY_TRANSITIVE_PATCH_REQUIRED');
 
 process.stdout.write('Phase 5 安全工作流固定版本与强制门禁校验通过。\n');

@@ -41,3 +41,5 @@ MongoDB 时间点恢复、Redis/BullMQ 重建、对象/WORM 与 KMS 验证、旧
 当前 Bearer 仅保留四个精确指纹误报：SSO Client 已在网络调用前执行固定端点 allowlist；ISO 20022 生成器只处理 XML 文本节点，并执行 XML 1.0 字符范围和五实体编码，这两项复核到期日为 2026-10-20；另两项是部署清单验证器中的 Kubernetes Secret 对象引用名称，不包含 Secret 数据或认证材料，复核到期日为 2026-10-23。四项均有回归测试；新增或变更指纹必须重新 CR，禁止通配或整条规则跳过。
 
 Gitleaks 历史扫描只允许五项固定测试假值：两个 WebAuthn 证据 ULID、一个资金授权证据 ULID、一个幂等键和一个指标字段名。配置禁止按路径、Commit 或整条规则跳过；真实格式 Token 即使位于测试文件也必须阻断。
+
+依赖门禁固定 Next.js `16.2.11`，并通过根级 override 固定 PostCSS `8.5.10` 与 `@hono/node-server` `2.0.10`，对应修复 App Router/Server Actions High 风险、CSS stringify XSS、Windows 路径穿越和 WebSocket 握手内存泄漏。安全契约阻止降级，`pnpm audit` 必须保持无已知漏洞。
