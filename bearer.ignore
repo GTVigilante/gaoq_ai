@@ -22,5 +22,11 @@
     "comment": "误报：该值仅为生产部署清单自测中的 Kubernetes Secret 对象引用名称，不包含 Secret 数据、凭据或可认证材料；验证器同时拒绝渲染清单中的 Secret 对象。复核到期：2026-10-23。",
     "false_positive": true,
     "ignored_at": "2026-07-23T07:20:00Z"
+  },
+  "74ab5f22a836139b1aae3d64bb80ab50_0": {
+    "author": "GaoQ-OS 架构与安全 CR",
+    "comment": "误报：该值仅用于生产平台准入验证器的负向自测，主动注入敏感字段并断言验证失败；不会进入运行时配置、认证或外部请求。复核到期：2026-10-23。",
+    "false_positive": true,
+    "ignored_at": "2026-07-23T01:20:00Z"
   }
 }

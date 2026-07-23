@@ -293,6 +293,7 @@ const expectedBearerFingerprints = [
   'b951826b6dd26ef7f2d776a337264409_0',
   'ec33c579b4fa5753a2cfe6ac4bb73ffb_0',
   'ec33c579b4fa5753a2cfe6ac4bb73ffb_1',
+  '74ab5f22a836139b1aae3d64bb80ab50_0',
 ];
 const bearerEntries = Object.values(bearerIgnore);
 if (JSON.stringify(Object.keys(bearerIgnore).sort()) !==
