@@ -215,6 +215,7 @@ for (const marker of [
   '"01J8ZQK7V0A2M4N6P8R0T2W4Y8"',
   '"idempotency-key-001"',
   '"maximumApiP95Milliseconds"',
+  '"01J8ZQK7V0A2M4N6P8R0T2W4H1"',
 ]) {
   if (!gitleaksConfig.includes(marker)) throw new Error('PHASE5_SECURITY_GITLEAKS_ALLOWLIST_INVALID');
 }
