@@ -10,5 +10,17 @@
     "comment": "误报：该函数仅编码 ISO 20022 XML 文本节点，不生成 HTML；输入先按 XML 1.0 字符范围验证，再完整转义五个预定义实体，并由注入回归测试覆盖。复核到期：2026-10-20。",
     "false_positive": true,
     "ignored_at": "2026-07-22T01:25:00Z"
+  },
+  "ec33c579b4fa5753a2cfe6ac4bb73ffb_0": {
+    "author": "GaoQ-OS 架构与安全 CR",
+    "comment": "误报：该值仅为生产部署清单自测中的 Kubernetes Secret 对象引用名称，不包含 Secret 数据、凭据或可认证材料；验证器同时拒绝渲染清单中的 Secret 对象。复核到期：2026-10-23。",
+    "false_positive": true,
+    "ignored_at": "2026-07-23T07:20:00Z"
+  },
+  "ec33c579b4fa5753a2cfe6ac4bb73ffb_1": {
+    "author": "GaoQ-OS 架构与安全 CR",
+    "comment": "误报：该值仅为生产部署清单自测中的 Kubernetes Secret 对象引用名称，不包含 Secret 数据、凭据或可认证材料；验证器同时拒绝渲染清单中的 Secret 对象。复核到期：2026-10-23。",
+    "false_positive": true,
+    "ignored_at": "2026-07-23T07:20:00Z"
   }
 }
