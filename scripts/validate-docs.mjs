@@ -22,6 +22,7 @@ const requiredDocuments = [
   'docs/phase-6/04-kubernetes-deployment-baseline.md',
   'docs/phase-6/05-protected-production-deployment.md',
   'docs/phase-6/06-kubernetes-platform-guardrails.md',
+  'docs/phase-6/07-production-platform-intake.md',
   'deploy/helm/gaoq-erp/README.md',
   'deploy/helm/gaoq-platform-guardrails/README.md',
 ];

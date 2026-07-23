@@ -61,6 +61,12 @@ const expectedScripts = {
     'node scripts/release/validate-phase-6-deployment-plan.mjs',
   'release:phase6:deployment:self-test':
     'node scripts/release/validate-phase-6-deployment-plan.mjs --self-test',
+  'release:phase6:platform-intake:validate-evidence':
+    'node scripts/release/validate-phase-6-platform-intake.mjs',
+  'release:phase6:platform-intake:self-test':
+    'node scripts/release/validate-phase-6-platform-intake.mjs --self-test',
+  'release:phase6:platform-intake:print-contract':
+    'node scripts/release/validate-phase-6-platform-intake.mjs --print-contract',
   'release:phase6:workflows:validate': 'node scripts/validate-phase-6-workflows.mjs',
 };
 for (const [name, value] of Object.entries(expectedScripts)) {
@@ -70,6 +76,7 @@ for (const name of [
   'release:phase6:cutover:self-test',
   'release:phase6:hypercare:self-test',
   'release:phase6:deployment:self-test',
+  'release:phase6:platform-intake:self-test',
   'release:phase6:workflows:validate',
 ]) {
   if (!packageDocument.scripts?.check?.includes(`pnpm ${name}`)) {
@@ -132,6 +139,12 @@ function validateDeploymentWorkflow(workflow) {
     'environment: phase-6-production-deployment',
     'PHASE6_DEPLOYMENT_VALUES_PATH: /var/lib/gaoq/deployment/production-values.yaml',
     'PHASE6_DEPLOYMENT_GO_NO_GO_PATH: /var/lib/gaoq/go-no-go/phase-5-go-no-go.json',
+    'PHASE6_DEPLOYMENT_PLATFORM_INTAKE_PATH: /var/lib/gaoq/platform/phase-6-platform-intake.json',
+    'PHASE6_DEPLOYMENT_PLATFORM_INTAKE_SHA256: ${{ vars.PHASE6_DEPLOYMENT_PLATFORM_INTAKE_SHA256 }}',
+    'PHASE6_DEPLOYMENT_GUARDRAILS_MANIFEST_SHA256: ${{ vars.PHASE6_DEPLOYMENT_GUARDRAILS_MANIFEST_SHA256 }}',
+    'PHASE6_DEPLOYMENT_PLATFORM_NAMESPACE: ${{ vars.PHASE6_DEPLOYMENT_PLATFORM_NAMESPACE }}',
+    'PHASE6_DEPLOYMENT_PLAN_GROUP: ${{ vars.PHASE6_DEPLOYMENT_PLAN_GROUP }}',
+    'PHASE6_DEPLOYMENT_APPLY_GROUP: ${{ vars.PHASE6_DEPLOYMENT_APPLY_GROUP }}',
     'PHASE6_DEPLOYMENT_CONTROL_NAMESPACE: ${{ vars.PHASE6_DEPLOYMENT_CONTROL_NAMESPACE }}',
     'PHASE6_DEPLOYMENT_TARGET_NAMESPACE: ${{ vars.PHASE6_DEPLOYMENT_TARGET_NAMESPACE }}',
     'HELM_DRIVER: configmap',
@@ -139,6 +152,8 @@ function validateDeploymentWorkflow(workflow) {
     'validate-phase-5-go-no-go-evidence.mjs',
     'validate-phase-6-deployment-plan.mjs',
     'validate-phase-6-deployment-plan.mjs --validate-environment',
+    'validate-phase-6-platform-intake.mjs',
+    '--enforce-environment',
     'validate-kubernetes-deployment.mjs',
     "test \"$(helm version --short)\" = 'v4.2.0+g0646808'",
     "test \"$(kubeconform -v)\" = 'v0.7.0'",
@@ -150,13 +165,18 @@ function validateDeploymentWorkflow(workflow) {
     'kubectl auth can-i patch deployments',
     'kubectl auth can-i delete deployments',
     'rendered_sha256: ${{ steps.plan_hash.outputs.rendered_sha256 }}',
+    'go_no_go_sha256: ${{ steps.plan_hash.outputs.go_no_go_sha256 }}',
+    'platform_intake_sha256: ${{ steps.plan_hash.outputs.platform_intake_sha256 }}',
     "test \"sha256:$rendered_hash\" = '${{ needs.plan.outputs.rendered_sha256 }}'",
+    "test \"sha256:$go_no_go_hash\" = '${{ needs.plan.outputs.go_no_go_sha256 }}'",
+    "test \"sha256:$platform_intake_hash\" = '${{ needs.plan.outputs.platform_intake_sha256 }}'",
     'helm upgrade --install',
     '--atomic --wait --timeout 15m --history-max 10',
     'kubectl rollout status deployment',
     'helm get manifest',
     'phase-6-production-plan-${{ github.sha }}',
     'phase-6-production-deployment-${{ github.sha }}',
+    'platform-intake-verdict.json',
     'retention-days: 90',
   ]) {
     if (!workflow.includes(marker)) throw new Error('PHASE6_DEPLOYMENT_WORKFLOW_INCOMPLETE');

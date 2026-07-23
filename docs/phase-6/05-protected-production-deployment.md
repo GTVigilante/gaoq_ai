@@ -34,7 +34,12 @@
 | `PHASE6_DEPLOYMENT_RELEASE_NAME` | Kubernetes DNS label，Helm release 唯一名称 |
 | `PHASE6_DEPLOYMENT_CONTROL_NAMESPACE` | 只保存非敏感 Helm release ConfigMap 的独立控制命名空间 |
 | `PHASE6_DEPLOYMENT_TARGET_NAMESPACE` | 预创建且已启用 Restricted Pod Security 的 ERP 业务命名空间，必须与控制命名空间不同 |
+| `PHASE6_DEPLOYMENT_PLATFORM_NAMESPACE` | 平台护栏 release 所在的独立管理命名空间，Plan/Apply Runner 均无权访问 |
 | `PHASE6_DEPLOYMENT_KUBECTL_VERSION` | Runner 上精确 `gitVersion`，由平台兼容矩阵批准 |
+| `PHASE6_DEPLOYMENT_PLAN_GROUP` | 只读部署身份的企业 OIDC Group，必须与平台护栏一致 |
+| `PHASE6_DEPLOYMENT_APPLY_GROUP` | 执行部署身份的企业 OIDC Group，必须与 Plan Group 不同并与平台护栏一致 |
+| `PHASE6_DEPLOYMENT_PLATFORM_INTAKE_SHA256` | 当前[生产平台准入证据](./07-production-platform-intake.md)原始文件摘要 |
+| `PHASE6_DEPLOYMENT_GUARDRAILS_MANIFEST_SHA256` | 集群中已审批平台护栏清单的摘要，必须与平台准入证据一致 |
 | `PHASE6_DEPLOYMENT_API_IMAGE_DIGEST` | API 镜像 `sha256` 摘要 |
 | `PHASE6_DEPLOYMENT_WORKER_IMAGE_DIGEST` | Worker 独立镜像 `sha256` 摘要 |
 | `PHASE6_DEPLOYMENT_WEB_IMAGE_DIGEST` | Web 独立镜像 `sha256` 摘要 |
@@ -55,6 +60,7 @@
 
 - `/var/lib/gaoq/deployment/production-values.yaml`：最多 1 MiB、普通文件、不得为符号链接、组和其他用户不可写；只含非敏感名称/摘要/标签/CIDR，不含 Secret 值。
 - `/var/lib/gaoq/go-no-go/phase-5-go-no-go.json`：由证据域导出的原始 Go/No-Go 文件，继续受既有大小、权限、版本绑定和 24 小时新鲜度检查。
+- `/var/lib/gaoq/platform/phase-6-platform-intake.json`：平台、安全、数据、合规和变更负责人批准的非敏感平台准入原始证据；最大 512 KiB，绑定文件摘要、commit、部署包、Region、Kubernetes minor、命名空间和 OIDC Group。
 - `/var/lib/gaoq/kubernetes-schema/v1.30.0-standalone-strict/`：固定 commit 的离线 schema，运行时不从互联网取可变 schema。
 
 API/Worker Secret 由 Secret Manager 同步到目标命名空间。Kubernetes 的 `get secret` 会返回数据而不只是 metadata，因此两个 Runner 都不得拥有 `get/list/watch secrets`；Secret 同步状态由独立平台证明，缺失时 Pod 无法 Ready，Helm `--atomic --wait` 必须失败关闭。日志、Artifact 和渲染清单不得出现 Secret 内容。
@@ -65,14 +71,14 @@ Helm 默认 Secret 存储驱动会要求发布身份读取命名空间内的全�
 
 计划阶段必须全部成功：
 
-1. Go/No-Go 原始证据仍为 `GO`、不超过 24 小时，且 commit、三镜像摘要和部署包摘要完全一致。
+1. Go/No-Go 原始证据仍为 `GO`、不超过 24 小时，且 commit、三镜像摘要和部署包摘要完全一致；生产平台准入原始证据仍为 `READY`，并与当前集群、GitHub Environment/Runner、平台服务、审批和发布绑定一致。
 2. Helm strict lint、仓库静态/渲染安全检查和 Kubeconform strict schema 均通过。
 3. API、Worker、Web 三个 Deployment 的 release、commit、镜像摘要、部署包摘要和 rollout ID 完全一致。
 4. API/Worker 的四个 ConfigMap/Secret 引用与受保护变量一致；Web 不包含 Secret 或 `envFrom`。
 5. 控制/业务命名空间和两个非敏感 ConfigMap 存在，Secret 引用与平台证明一致；Plan Runner 明确没有业务 Deployment 写权限和 Secret 读取权限，本地 diff 退出码只能为“无变化”或“存在计划变化”。
 6. 渲染清单及其 `sha256`、脱敏 verdict 和 diff 保存 90 天，供 Required Reviewers 审阅。
 
-执行阶段再次完成上述版本和清单检查，并要求重新渲染的摘要与计划 job output 完全一致；在人工批准后先执行 server-side dry-run。之后只运行：
+执行阶段再次完成上述版本和清单检查，并要求重新渲染的摘要、Go/No-Go 原始文件摘要和生产平台准入原始文件摘要均与计划 job output 完全一致；在人工批准后先执行 server-side dry-run。之后只运行：
 
 ```bash
 HELM_DRIVER=configmap helm upgrade --install <release> deploy/helm/gaoq-erp \
@@ -84,4 +90,4 @@ HELM_DRIVER=configmap helm upgrade --install <release> deploy/helm/gaoq-erp \
 
 ## 6. 当前阻断
 
-截至文档交付时，GitHub 仓库没有配置上述 Environment 或 self-hosted Runner，因此没有执行任何生产计划或部署。要解除阻断，仓库所有者和平台负责人必须提供并批准：集群、独立控制/业务命名空间、最小 RBAC 与失败关闭准入、两类单次 Runner、完整变量、只读 values、离线 schema、Go/No-Go 原始证据和 Required Reviewers。缺少任一项时不得降低门禁或改用管理员 kubeconfig。
+截至文档交付时，GitHub 仓库没有配置上述 Environment 或 self-hosted Runner，因此没有执行任何生产计划或部署。要解除阻断，仓库所有者和平台负责人必须提供并批准：集群、独立控制/业务命名空间、最小 RBAC 与失败关闭准入、两类单次 Runner、完整变量、只读 values、离线 schema、Go/No-Go 原始证据、生产平台准入原始证据和 Required Reviewers。缺少任一项时不得降低门禁或改用管理员 kubeconfig。

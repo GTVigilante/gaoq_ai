@@ -33,6 +33,7 @@ jobs:
       - name: 执行部署契约自测
         run: |
           node scripts/release/validate-phase-6-deployment-plan.mjs --self-test
+          node scripts/release/validate-phase-6-platform-intake.mjs --self-test
           node scripts/validate-phase-6-workflows.mjs
 
   plan:
@@ -47,13 +48,21 @@ jobs:
     environment: phase-6-production-plan
     outputs:
       rendered_sha256: ${{ steps.plan_hash.outputs.rendered_sha256 }}
+      go_no_go_sha256: ${{ steps.plan_hash.outputs.go_no_go_sha256 }}
+      platform_intake_sha256: ${{ steps.plan_hash.outputs.platform_intake_sha256 }}
     env:
       PHASE6_DEPLOYMENT_VALUES_PATH: /var/lib/gaoq/deployment/production-values.yaml
       PHASE6_DEPLOYMENT_GO_NO_GO_PATH: /var/lib/gaoq/go-no-go/phase-5-go-no-go.json
+      PHASE6_DEPLOYMENT_PLATFORM_INTAKE_PATH: /var/lib/gaoq/platform/phase-6-platform-intake.json
+      PHASE6_DEPLOYMENT_PLATFORM_INTAKE_SHA256: ${{ vars.PHASE6_DEPLOYMENT_PLATFORM_INTAKE_SHA256 }}
+      PHASE6_DEPLOYMENT_GUARDRAILS_MANIFEST_SHA256: ${{ vars.PHASE6_DEPLOYMENT_GUARDRAILS_MANIFEST_SHA256 }}
       PHASE6_DEPLOYMENT_RELEASE_NAME: ${{ vars.PHASE6_DEPLOYMENT_RELEASE_NAME }}
       PHASE6_DEPLOYMENT_CONTROL_NAMESPACE: ${{ vars.PHASE6_DEPLOYMENT_CONTROL_NAMESPACE }}
       PHASE6_DEPLOYMENT_TARGET_NAMESPACE: ${{ vars.PHASE6_DEPLOYMENT_TARGET_NAMESPACE }}
+      PHASE6_DEPLOYMENT_PLATFORM_NAMESPACE: ${{ vars.PHASE6_DEPLOYMENT_PLATFORM_NAMESPACE }}
       PHASE6_DEPLOYMENT_KUBECTL_VERSION: ${{ vars.PHASE6_DEPLOYMENT_KUBECTL_VERSION }}
+      PHASE6_DEPLOYMENT_PLAN_GROUP: ${{ vars.PHASE6_DEPLOYMENT_PLAN_GROUP }}
+      PHASE6_DEPLOYMENT_APPLY_GROUP: ${{ vars.PHASE6_DEPLOYMENT_APPLY_GROUP }}
       HELM_DRIVER: configmap
       PHASE6_DEPLOYMENT_EXPECTED_COMMIT: ${{ github.sha }}
       PHASE6_DEPLOYMENT_EXPECTED_API_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_API_IMAGE_DIGEST }}
@@ -99,6 +108,13 @@ jobs:
           --enforce-environment
           "$PHASE6_DEPLOYMENT_GO_NO_GO_PATH"
           > "$RUNNER_TEMP/go-no-go-verdict.json"
+
+      - name: 重新验收生产平台准入证据
+        run: >-
+          node scripts/release/validate-phase-6-platform-intake.mjs
+          --enforce-environment
+          "$PHASE6_DEPLOYMENT_PLATFORM_INTAKE_PATH"
+          > "$RUNNER_TEMP/platform-intake-verdict.json"
 
       - name: 渲染、校验并生成只读计划
         shell: bash
@@ -150,6 +166,10 @@ jobs:
         run: |
           rendered_hash=$(sha256sum "$RUNNER_TEMP/production-rendered.yaml" | cut --delimiter=' ' --fields=1)
           printf 'rendered_sha256=sha256:%s\n' "$rendered_hash" >> "$GITHUB_OUTPUT"
+          go_no_go_hash=$(sha256sum "$PHASE6_DEPLOYMENT_GO_NO_GO_PATH" | cut --delimiter=' ' --fields=1)
+          printf 'go_no_go_sha256=sha256:%s\n' "$go_no_go_hash" >> "$GITHUB_OUTPUT"
+          platform_intake_hash=$(sha256sum "$PHASE6_DEPLOYMENT_PLATFORM_INTAKE_PATH" | cut --delimiter=' ' --fields=1)
+          printf 'platform_intake_sha256=sha256:%s\n' "$platform_intake_hash" >> "$GITHUB_OUTPUT"
 
       - name: 保存待人工复核的计划
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -157,6 +177,7 @@ jobs:
           name: phase-6-production-plan-${{ github.sha }}
           path: |
             ${{ runner.temp }}/go-no-go-verdict.json
+            ${{ runner.temp }}/platform-intake-verdict.json
             ${{ runner.temp }}/deployment-plan-verdict.json
             ${{ runner.temp }}/production-rendered.yaml
             ${{ runner.temp }}/deployment.diff
@@ -176,10 +197,16 @@ jobs:
     env:
       PHASE6_DEPLOYMENT_VALUES_PATH: /var/lib/gaoq/deployment/production-values.yaml
       PHASE6_DEPLOYMENT_GO_NO_GO_PATH: /var/lib/gaoq/go-no-go/phase-5-go-no-go.json
+      PHASE6_DEPLOYMENT_PLATFORM_INTAKE_PATH: /var/lib/gaoq/platform/phase-6-platform-intake.json
+      PHASE6_DEPLOYMENT_PLATFORM_INTAKE_SHA256: ${{ vars.PHASE6_DEPLOYMENT_PLATFORM_INTAKE_SHA256 }}
+      PHASE6_DEPLOYMENT_GUARDRAILS_MANIFEST_SHA256: ${{ vars.PHASE6_DEPLOYMENT_GUARDRAILS_MANIFEST_SHA256 }}
       PHASE6_DEPLOYMENT_RELEASE_NAME: ${{ vars.PHASE6_DEPLOYMENT_RELEASE_NAME }}
       PHASE6_DEPLOYMENT_CONTROL_NAMESPACE: ${{ vars.PHASE6_DEPLOYMENT_CONTROL_NAMESPACE }}
       PHASE6_DEPLOYMENT_TARGET_NAMESPACE: ${{ vars.PHASE6_DEPLOYMENT_TARGET_NAMESPACE }}
+      PHASE6_DEPLOYMENT_PLATFORM_NAMESPACE: ${{ vars.PHASE6_DEPLOYMENT_PLATFORM_NAMESPACE }}
       PHASE6_DEPLOYMENT_KUBECTL_VERSION: ${{ vars.PHASE6_DEPLOYMENT_KUBECTL_VERSION }}
+      PHASE6_DEPLOYMENT_PLAN_GROUP: ${{ vars.PHASE6_DEPLOYMENT_PLAN_GROUP }}
+      PHASE6_DEPLOYMENT_APPLY_GROUP: ${{ vars.PHASE6_DEPLOYMENT_APPLY_GROUP }}
       HELM_DRIVER: configmap
       PHASE6_DEPLOYMENT_EXPECTED_COMMIT: ${{ github.sha }}
       PHASE6_DEPLOYMENT_EXPECTED_API_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_API_IMAGE_DIGEST }}
@@ -222,6 +249,13 @@ jobs:
           node scripts/release/validate-phase-5-go-no-go-evidence.mjs \
             --enforce-environment "$PHASE6_DEPLOYMENT_GO_NO_GO_PATH" \
             > "$RUNNER_TEMP/go-no-go-verdict.json"
+          node scripts/release/validate-phase-6-platform-intake.mjs \
+            --enforce-environment "$PHASE6_DEPLOYMENT_PLATFORM_INTAKE_PATH" \
+            > "$RUNNER_TEMP/platform-intake-verdict.json"
+          go_no_go_hash=$(sha256sum "$PHASE6_DEPLOYMENT_GO_NO_GO_PATH" | cut --delimiter=' ' --fields=1)
+          test "sha256:$go_no_go_hash" = '${{ needs.plan.outputs.go_no_go_sha256 }}'
+          platform_intake_hash=$(sha256sum "$PHASE6_DEPLOYMENT_PLATFORM_INTAKE_PATH" | cut --delimiter=' ' --fields=1)
+          test "sha256:$platform_intake_hash" = '${{ needs.plan.outputs.platform_intake_sha256 }}'
           helm template "$PHASE6_DEPLOYMENT_RELEASE_NAME" deploy/helm/gaoq-erp \
             --namespace "$PHASE6_DEPLOYMENT_CONTROL_NAMESPACE" \
             --values "$PHASE6_DEPLOYMENT_VALUES_PATH" \
@@ -278,6 +312,7 @@ jobs:
           name: phase-6-production-deployment-${{ github.sha }}
           path: |
             ${{ runner.temp }}/go-no-go-verdict.json
+            ${{ runner.temp }}/platform-intake-verdict.json
             ${{ runner.temp }}/deployment-plan-verdict.json
             ${{ runner.temp }}/deployment-evidence.json
             ${{ runner.temp }}/helm-status.json
