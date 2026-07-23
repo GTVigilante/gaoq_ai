@@ -43,8 +43,10 @@ for (const marker of [
   'pnpm security:licenses',
   'Bearer/bearer/releases/download/v2.0.2',
   '865c80c5f80aaca1f83e98bca4decb0fd5b5d024e13f8ec48e94d69430d0d23b',
+  '"$RUNNER_TEMP/bearer" scan .',
   'gitleaks/gitleaks/releases/download/v8.30.1',
   '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb',
+  '"$RUNNER_TEMP/gitleaks" git',
   '--config .gitleaks.toml',
   '--severity critical,high',
   '--fail-on-severity critical,high',
@@ -287,6 +289,8 @@ if (workflow.includes('actions/dependency-review-action@')) {
 const expectedBearerFingerprints = [
   '1d546f90f6a5a07e971e29ff4aec6097_0',
   'b951826b6dd26ef7f2d776a337264409_0',
+  'ec33c579b4fa5753a2cfe6ac4bb73ffb_0',
+  'ec33c579b4fa5753a2cfe6ac4bb73ffb_1',
 ];
 const bearerEntries = Object.values(bearerIgnore);
 if (JSON.stringify(Object.keys(bearerIgnore).sort()) !==
@@ -314,6 +318,7 @@ for (const marker of [
   '"01J8ZQK7V0A2M4N6P8R0T2W4Y8"',
   '"idempotency-key-001"',
   '"maximumApiP95Milliseconds"',
+  '"01J8ZQK7V0A2M4N6P8R0T2W4H1"',
 ]) {
   if (!gitleaksConfig.includes(marker)) throw new Error('PHASE5_SECURITY_GITLEAKS_ALLOWLIST_INVALID');
 }

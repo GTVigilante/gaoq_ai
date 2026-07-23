@@ -40,7 +40,8 @@ jobs:
             --directory "$RUNNER_TEMP/actionlint-bin" actionlint
 
       - name: 校验全部工作流语法、表达式与 Shell
-        run: "$RUNNER_TEMP/actionlint-bin/actionlint"
+        run: |
+          "$RUNNER_TEMP/actionlint-bin/actionlint"
 
   kubernetes-deployment:
     name: Kubernetes 生产编排契约
@@ -177,7 +178,7 @@ jobs:
 
       - name: 阻断 High 与 Critical SAST 发现
         run: >-
-          $RUNNER_TEMP/bearer scan .
+          "$RUNNER_TEMP/bearer" scan .
           --severity critical,high
           --fail-on-severity critical,high
           --exit-code 1
@@ -210,7 +211,7 @@ jobs:
 
       - name: 扫描提交历史中的密钥
         run: >-
-          $RUNNER_TEMP/gitleaks git
+          "$RUNNER_TEMP/gitleaks" git
           --config .gitleaks.toml
           --redact
           --no-banner
