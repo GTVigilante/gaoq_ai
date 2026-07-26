@@ -2,28 +2,50 @@
 
 ## 系统现状与目标技术栈
 
-### 现有系统
-
-- 仓库当前为产品与架构规范仓库，Phase 0执行中，尚无应用脚手架。
-- 规范索引位于 `docs/phase-0/README.md`。
+- Phase 0–6 的规范、NestJS 模块化单体、Next.js App Router、MongoDB
+  Replica Set 契约、Redis/BullMQ Worker、迁移控制面、Helm/Kubernetes
+  编排和标准 MCP 服务代码已经交付。
+- 代码交付不等于生产完成。真实外部系统联调、三次全量迁移、性能、安全、
+  容灾、业务 UAT、Go/No-Go、统一切换和四周 Hypercare 仍以现场证据为准。
+- ERP 是组织与员工唯一主数据源；多租户从可信身份上下文强制；REST、事件、
+  MCP 和 Worker 必须复用应用服务。
+- 强制规范入口为 `docs/phase-0/README.md`；阶段交付与未验收边界分别见
+  `docs/phase-1/README.md` 至 `docs/phase-6/README.md`。
 
 ## 目录约定
 
-- `docs/phase-0/`：企业架构、领域数据、集成、MCP、安全质量与GitHub治理规范。
-- `apps/`、`packages/`：从Phase 1开始创建，遵循PRD目标目录和Phase 0边界。
-- `wordpress backup/`：历史备份，明确排除，不得纳入Git或应用构建。
+- `apps/erp-api/`：NestJS API、领域模块、集成适配器、Worker 与迁移代码。
+- `apps/erp-web/`：Next.js 管理工作台、移动工作台、OAuth 与 MCP 确认页面。
+- `packages/`：共享类型与安全工具。
+- `deploy/`：生产 Helm Chart、Kubernetes 平台护栏与可观测性基线。
+- `scripts/`：安全、迁移、MCP、容量、韧性、发布和现场证据验证器。
+- `docs/phase-0/`：企业架构、领域数据、集成、MCP、安全质量与 GitHub 治理规范。
+- `wordpress backup/`：历史备份，明确排除，不得纳入 Git、扫描或应用构建。
 
-## 代码规范
+## 代码与安全规范
 
-- 所有新增中文业务注释、文档注释和迁移说明必须使用中文。
+- 回复、代码注释、文档注释、迁移说明和 Git commit message 必须使用中文。
+- TypeScript 使用 ESM 与 async/await，禁止 `var`。
+- 禁止硬编码密码、密钥、Token、银行账号、电子签密钥和生产环境标识。
+- 禁止信任客户端租户标识；动态字段、排序和查询必须经过白名单映射。
+- MCP 禁止直接访问数据库、透传上游 Token 或注册 R3 操作。
 
 ## 验证命令
 
-- Phase 0：Markdown链接、术语和路线图一致性检查。
-- Phase 1起：Lint、TypeCheck、单元测试、集成测试、契约测试与安全扫描。
+```bash
+pnpm install --frozen-lockfile
+pnpm audit
+pnpm check
+pnpm build
+```
 
-## Kimi 调度备注
+`pnpm check` 覆盖 Lint、TypeCheck、单元/集成/协议测试、文档、安全、镜像、
+Kubernetes、MCP、迁移、容量、韧性、发布和 Phase 6 证据门禁自测。本地自测
+不能替代目标环境中的真实联调、生产等价演练或人工签署。
 
-- 派活时必须说明是否只读。
-- 大型盘点任务拆成小范围任务，例如先付款/垫款，再项目/立项。
-- Kimi 返回后先做 `[OK]` / `[CR]` 复核，再决定是否进入实现。
+## Codex / Kimi 协作
+
+- Codex 执行入口为 `.codex/AGENTS.md`，完整项目规范以 `AGENTS.md` 为准。
+- Kimi 派活必须说明只读或允许修改的边界；只读任务禁止写计划文件。
+- 大型盘点必须拆成小范围任务，并要求输出文件路径、调用方向和实现建议。
+- Kimi 返回后必须先做 `[OK]` / `[CR]` 复核，未经 CR 不得合并。

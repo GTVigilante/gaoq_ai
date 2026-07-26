@@ -2,16 +2,20 @@
 
 ## 角色分工
 
-- Codex 是首席架构师，负责架构设计、安全审计、跨模块推理、Kimi 任务拆解和 CR。
+- Codex 是协理架构师，负责架构设计、安全审计、跨模块推理、Kimi 任务拆解和 CR。
 - Kimi 是执行代理，负责只读盘点、文档整理、局部实现、Bug 修复和重复性代码梳理。
 - Kimi 返回后，Codex 必须用 `[OK]` 标通过项，用 `[CR]` 标问题项，并把高频问题沉淀回本文档。
 
 ## 当前系统现状与目标技术栈
 
-- 当前仓库处于 Phase 0，尚无可运行应用源码。
-- 强制规范入口：`docs/phase-0/README.md`。
-- 目标形态：NestJS 模块化单体 + Next.js App Router + MongoDB Replica Set + Redis/BullMQ。
-- ERP 是组织与员工唯一主数据源；多租户从底座强制；MCP 随业务模块同步交付。
+- Phase 0–6 的规范、应用代码、迁移工具、生产编排、发布证据门禁和标准 MCP
+  服务已经交付；真实联调、生产等价演练、UAT、切换与 Hypercare 尚待现场执行。
+- 强制规范入口：`docs/phase-0/README.md`；当前状态摘要：`CODEX.md`；Codex
+  执行入口：`.codex/AGENTS.md`。
+- 当前形态：NestJS 模块化单体 + Next.js App Router + MongoDB Replica Set +
+  Redis/BullMQ + Helm/Kubernetes。
+- ERP 是组织与员工唯一主数据源；多租户从可信身份上下文强制；MCP 随业务模块
+  同步交付。
 
 ## 通用编码要求
 
@@ -34,6 +38,10 @@
 
 ## 验证命令
 
+- 默认执行 `pnpm install --frozen-lockfile`、`pnpm audit`、`pnpm check` 和
+  `pnpm build`。
+- 目标环境、外部系统或生产权限缺失时，必须明确区分“本地验证通过”和
+  “外部验收未完成”，禁止用自测替代现场证据。
 - 如果本机缺少对应构建工具，必须在最终回复说明“未能验证”的原因。
 
 ## 工作标准（Codex CR 沉淀区）
@@ -51,12 +59,12 @@
 - [ ] MCP 业务能力必须复用应用服务；禁止直接访问数据库、透传上游Token或让AI执行R3操作。
 - [ ] 每个业务模块必须同步交付REST、事件、MCP契约和审计点，不得后期集中回填MCP。
 
-### 来自 CR #3
+### 来自 CR #3A
 
 - [ ] 文档中的 REST 路由、签名串、字段名、事件 type、MCP Tool/Resource/Prompt 必须与实现逐字一致，并由协议测试覆盖。
 - [ ] 阶段文档必须区分“代码已交付”“外部联调待验收”和“后续切片”，禁止把未实现的区间查询、事件或运维控制面写成已交付能力。
 
-### 来自 CR #3
+### 来自 CR #3B
 
 - [ ] 加密字段的 schema 必须按真实编码后长度校验 IV、AuthTag、摘要和密文上限，组合字段约束不得只依赖单字段正则。
 - [ ] 扩大共享 Secret Resolver 的引用范围时，各业务消费者仍须二次校验自身命名空间，禁止跨用途读取密钥。

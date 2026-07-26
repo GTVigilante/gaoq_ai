@@ -5,6 +5,9 @@ import { fileURLToPath } from 'node:url';
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const requiredDocuments = [
   'README.md',
+  'AGENTS.md',
+  'CODEX.md',
+  '.codex/AGENTS.md',
   'PRD-告趣ERP系统-v1.0.md',
   'docs/phase-0/README.md',
   'docs/phase-0/00-program-charter.md',
@@ -14,6 +17,11 @@ const requiredDocuments = [
   'docs/phase-0/04-mcp-service-standard.md',
   'docs/phase-0/05-security-quality-cutover.md',
   'docs/phase-0/06-github-governance.md',
+  'docs/phase-1/README.md',
+  'docs/phase-2/README.md',
+  'docs/phase-3/README.md',
+  'docs/phase-4/README.md',
+  'docs/phase-5/README.md',
   'docs/phase-6/README.md',
   'docs/phase-6/00-unified-cutover-contract.md',
   'docs/phase-6/01-hypercare-archive-contract.md',
@@ -34,6 +42,20 @@ const forbiddenPrdPatterns = [
   /X-Tenant-Id:\s*gaoq/u,
   /MCP Server（SSE模式）/u,
 ];
+
+const governanceDocuments = ['AGENTS.md', 'CODEX.md', '.codex/AGENTS.md'];
+const forbiddenGovernancePatterns = [
+  /Phase 0执行中/u,
+  /尚无应用脚手架/u,
+  /当前仓库处于 Phase 0/u,
+  /尚无可运行应用源码/u,
+];
+
+const requiredGovernanceMarkers = new Map([
+  ['AGENTS.md', ['Phase 0–6', '真实联调', '标准 MCP']],
+  ['CODEX.md', ['Phase 0–6', 'pnpm check', '生产完成', '.codex/AGENTS.md']],
+  ['.codex/AGENTS.md', ['../AGENTS.md', '../CODEX.md', 'wordpress backup/', 'R3']],
+]);
 
 /**
  * 判断Markdown链接是否为需要在仓库内校验的相对文件。
@@ -104,11 +126,29 @@ try {
   // 缺失文件已在上一阶段报告。
 }
 
+for (const relativePath of governanceDocuments) {
+  try {
+    const content = await readFile(resolve(repoRoot, relativePath), 'utf8');
+    for (const pattern of forbiddenGovernancePatterns) {
+      if (pattern.test(content)) {
+        errors.push(`${relativePath}: 仍包含过期系统状态 ${pattern}`);
+      }
+    }
+    for (const marker of requiredGovernanceMarkers.get(relativePath) ?? []) {
+      if (!content.includes(marker)) {
+        errors.push(`${relativePath}: 缺少治理状态标记 ${marker}`);
+      }
+    }
+  } catch {
+    // 缺失文件已在上一阶段报告。
+  }
+}
+
 if (errors.length > 0) {
   for (const error of errors) {
     process.stderr.write(`${error}\n`);
   }
   process.exitCode = 1;
 } else {
-  process.stdout.write('Phase 0 文档结构、相对链接和关键规范校验通过。\n');
+  process.stdout.write('项目文档结构、相对链接、治理状态和关键规范校验通过。\n');
 }
