@@ -39,6 +39,55 @@ describe('Attendance 领域', () => {
     expect(businessDateAt('2026-03-31T16:30:00.000Z', 'America/New_York')).toBe('2026-03-31');
   });
 
+  it('班次派生事实强制保存规则版本、来源 Provider 与输入事实谱系', () => {
+    expect(() => createAttendanceSourceFact({
+      id: 'derived-shift-invalid', tenantId: 'tenant-001', employeeId: 'employee-001',
+      providerCode: 'attendance_rules', factType: 'shift', shiftPlanId: 'shift-plan-001',
+      occurredAt: '2026-04-01T01:00:00.000Z', timeZone: 'Asia/Shanghai', impact,
+      sourceObservedAt: '2026-04-01T01:01:00.000Z',
+    }, now)).toThrow('缺少有效规则谱系');
+
+    const derived = createAttendanceSourceFact({
+      id: 'derived-shift-valid', tenantId: 'tenant-001', employeeId: 'employee-001',
+      providerCode: 'attendance_rules', factType: 'shift', shiftPlanId: 'shift-plan-001',
+      derivation: {
+        algorithmVersion: 'attendance-shift-v1', shiftPlanId: 'shift-plan-001',
+        rulesetVersion: 'attendance-cn-v2', outcome: 'complete',
+        punchProviderCode: 'feishu', punchInFactId: 'punch-in-001',
+        punchOutFactId: 'punch-out-001',
+      },
+      occurredAt: '2026-04-01T01:00:00.000Z', timeZone: 'Asia/Shanghai', impact,
+      sourceObservedAt: '2026-04-01T01:01:00.000Z',
+    }, now);
+    expect(derived.derivation).toMatchObject({
+      rulesetVersion: 'attendance-cn-v2',
+      punchProviderCode: 'feishu',
+    });
+  });
+
+  it('班次派生谱系变化必须改变月结快照哈希', () => {
+    const derived = (punchOutFactId: string) => createAttendanceSourceFact({
+      id: 'derived-shift-hash', tenantId: 'tenant-001', employeeId: 'employee-001',
+      providerCode: 'attendance_rules', factType: 'shift', shiftPlanId: 'shift-plan-hash',
+      derivation: {
+        algorithmVersion: 'attendance-shift-v1', shiftPlanId: 'shift-plan-hash',
+        rulesetVersion: 'attendance-cn-v2', outcome: 'complete',
+        punchProviderCode: 'feishu', punchInFactId: 'punch-in-hash',
+        punchOutFactId,
+      },
+      occurredAt: '2026-04-01T01:00:00.000Z', timeZone: 'Asia/Shanghai', impact,
+      sourceObservedAt: '2026-04-01T01:01:00.000Z',
+    }, now);
+    const close = (source: ReturnType<typeof derived>) => closeAttendanceMonth({
+      id: 'snapshot-lineage', tenantId: 'tenant-001', employeeId: 'employee-001',
+      month: '2026-04', snapshotVersion: 1, rulesetVersion: 'attendance-cn-v2',
+      sourceCutoffAt: '2026-04-02T00:00:00.000Z', facts: [source], corrections: [],
+      previousSnapshotId: null, supersessionEvidenceId: null,
+    }, now);
+    expect(close(derived('punch-out-a')).snapshotHash)
+      .not.toBe(close(derived('punch-out-b')).snapshotHash);
+  });
+
   it('审批修订替换源事实影响但不修改源事实，并生成确定性快照', () => {
     const source = fact();
     const correction = createAttendanceCorrection({

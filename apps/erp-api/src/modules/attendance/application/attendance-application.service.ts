@@ -923,7 +923,10 @@ function assertShiftPlanReadiness(
     const plan = planById.get(fact.shiftPlanId);
     if (plan === undefined || fact.factType !== 'shift' ||
       fact.providerCode !== 'attendance_rules' ||
-      fact.businessDate !== plan.businessDate) {
+      fact.businessDate !== plan.businessDate ||
+      fact.derivation?.algorithmVersion !== 'attendance-shift-v1' ||
+      fact.derivation.shiftPlanId !== plan.id ||
+      fact.derivation.rulesetVersion !== plan.rulesetVersion) {
       throw new ConflictException({
         code: 'ATTENDANCE_SHIFT_DERIVATION_INVALID',
         message: `班次派生事实 ${fact.id} 与计划绑定不一致`,
