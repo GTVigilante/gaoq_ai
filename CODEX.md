@@ -41,12 +41,13 @@
 pnpm install --frozen-lockfile
 pnpm audit
 pnpm check
-pnpm build
+NEXT_PUBLIC_ERP_API_ORIGIN=https://erp.example.invalid pnpm build
 ```
 
 `pnpm check` 覆盖 Lint、TypeCheck、单元/集成/协议测试、文档、安全、镜像、
 Kubernetes、MCP、迁移、容量、韧性、发布和 Phase 6 证据门禁自测。本地自测
-不能替代目标环境中的真实联调、生产等价演练或人工签署。
+不能替代目标环境中的真实联调、生产等价演练或人工签署。Web 生产构建必须显式
+提供公开 HTTPS API 根 Origin；`.invalid` 仅用于不发布产物的工程构建门禁。
 
 需要本地基础设施的真实 MCP 握手使用：
 
