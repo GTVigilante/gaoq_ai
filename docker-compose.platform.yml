@@ -1,0 +1,51 @@
+# 新架构本地基础设施。旧 docker-compose.yml 暂时保留，完成能力迁移后再退役。
+services:
+  payroll-mongo:
+    image: mongo:7.0
+    container_name: payroll-mongo
+    restart: unless-stopped
+    command: ["mongod", "--replSet", "payroll-rs0", "--bind_ip_all"]
+    ports:
+      - "${PAYROLL_MONGO_PORT:-27018}:27017"
+    volumes:
+      - payroll-mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand({ ping: 1 }).ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  payroll-mongo-init:
+    image: mongo:7.0
+    container_name: payroll-mongo-init
+    restart: "no"
+    depends_on:
+      payroll-mongo:
+        condition: service_healthy
+    volumes:
+      - ./docker/mongo-init.js:/scripts/mongo-init.js:ro
+    entrypoint:
+      - mongosh
+      - mongodb://payroll-mongo:27017
+      - --quiet
+      - /scripts/mongo-init.js
+
+  payroll-redis:
+    image: redis:7.2-alpine
+    container_name: payroll-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${PAYROLL_REDIS_PORT:-6381}:6379"
+    volumes:
+      - payroll-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  payroll-mongo-data:
+  payroll-redis-data:
