@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AppEnvironment } from '../../../config/environment.js';
 import type { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import {
+  createAttendanceSourceFact,
   restoreAttendanceCorrectionFromMigration,
   restoreAttendanceMonthFromMigration,
   restoreAttendanceSourceFactFromMigration,
@@ -15,11 +16,13 @@ import { AttendanceDataCryptoService } from './attendance-data-crypto.service.js
 import {
   AttendanceCorrectionRepository,
   AttendanceMonthlySnapshotRepository,
+  AttendanceShiftPlanRepository,
   AttendanceSourceFactRepository,
 } from './attendance.repositories.js';
 import type {
   AttendanceCorrectionDocument,
   AttendanceMonthlySnapshotDocument,
+  AttendanceShiftPlanDocument,
   AttendanceSourceFactDocument,
 } from './attendance.schemas.js';
 
@@ -49,6 +52,51 @@ function context(): TenantContextService {
 }
 
 describe('AttendanceSourceFactRepository', () => {
+  it('班次派生谱系随事实加密保存，不以 Mongo 明文字段暴露', async () => {
+    const create = vi.fn().mockResolvedValue(undefined);
+    const dataCrypto = crypto();
+    const repository = new AttendanceSourceFactRepository(
+      context(), { create } as unknown as Model<AttendanceSourceFactDocument>, dataCrypto,
+    );
+    const fact = createAttendanceSourceFact({
+      id: 'derived-shift-001', tenantId: 'tenant-001', employeeId: 'employee-001',
+      providerCode: 'attendance_rules', factType: 'shift', shiftPlanId: 'shift-plan-001',
+      derivation: {
+        algorithmVersion: 'attendance-shift-v1', shiftPlanId: 'shift-plan-001',
+        rulesetVersion: 'attendance-cn-v2', outcome: 'complete',
+        punchProviderCode: 'feishu', punchInFactId: 'punch-in-001',
+        punchOutFactId: 'punch-out-001',
+      },
+      occurredAt: '2026-04-01T01:00:00.000Z', timeZone: 'Asia/Shanghai',
+      impact: { workedMinutes: 480, leaveMinutes: 0, overtimeMinutes: 0, absentMinutes: 0 },
+      sourceObservedAt: '2026-04-01T01:01:00.000Z',
+    }, new Date('2026-04-02T00:00:00.000Z'));
+    await repository.insert(fact, ['attendance-blind-001.digest'], {} as never);
+    const records = create.mock.calls[0]?.[0] as unknown as readonly Record<string, unknown>[];
+    const record = records[0] as {
+      readonly dataKeyId: string;
+      readonly dataIv: string;
+      readonly dataCiphertext: string;
+      readonly dataAuthTag: string;
+    };
+    expect(record).not.toHaveProperty('derivation');
+    expect(dataCrypto.unprotect(
+      { tenantId: 'tenant-001', resourceType: 'source_fact', resourceId: fact.id },
+      {
+        keyId: record.dataKeyId,
+        iv: record.dataIv,
+        ciphertext: record.dataCiphertext,
+        authTag: record.dataAuthTag,
+      },
+    )).toMatchObject({
+      derivation: {
+        shiftPlanId: 'shift-plan-001',
+        rulesetVersion: 'attendance-cn-v2',
+        punchProviderCode: 'feishu',
+      },
+    });
+  });
+
   it('迁移源事实只把密文、盲索引和 WORM 控制字段交给 Mongo', async () => {
     const create = vi.fn().mockResolvedValue(undefined);
     const repository = new AttendanceSourceFactRepository(
@@ -141,5 +189,37 @@ describe('AttendanceSourceFactRepository', () => {
       workedMinutes: 480,
     });
     expect(records[0]).not.toHaveProperty('dailySummaries');
+  });
+});
+
+describe('AttendanceShiftPlanRepository', () => {
+  it('已完成检查点的幂等重放不更新 evaluatedAt', async () => {
+    const query = {
+      select: vi.fn().mockReturnThis(),
+      session: vi.fn().mockReturnThis(),
+      lean: vi.fn().mockReturnThis(),
+      exec: vi.fn().mockResolvedValue({ id: 'shift-plan-001' }),
+    };
+    const updateOne = vi.fn().mockResolvedValue({ matchedCount: 0 });
+    const findOne = vi.fn().mockReturnValue(query);
+    const repository = new AttendanceShiftPlanRepository(
+      context(),
+      { updateOne, findOne } as unknown as Model<AttendanceShiftPlanDocument>,
+      crypto(),
+    );
+    await repository.markEvaluated(
+      'shift-plan-001',
+      'derived-shift-001',
+      new Date('2026-04-02T00:00:00.000Z'),
+      {} as never,
+    );
+    expect(updateOne).toHaveBeenCalledTimes(1);
+    expect(updateOne.mock.calls[0]?.[0]).toMatchObject({
+      evaluationStatus: 'pending',
+    });
+    expect(findOne).toHaveBeenCalledWith(expect.objectContaining({
+      evaluationStatus: 'completed',
+      evaluatedSourceFactId: 'derived-shift-001',
+    }));
   });
 });
