@@ -55,6 +55,9 @@ spec:
           imagePullPolicy: {{ .Values.images.pullPolicy }}
           ports:
             - { name: http, containerPort: 3000, protocol: TCP }
+          envFrom:
+            - configMapRef: { name: {{ required "runtime.webConfigMapName 必填" .Values.runtime.webConfigMapName }} }
+            - secretRef: { name: {{ required "runtime.webSecretName 必填" .Values.runtime.webSecretName }} }
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

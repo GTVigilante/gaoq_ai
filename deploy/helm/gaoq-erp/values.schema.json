@@ -35,11 +35,12 @@
     },
     "images": {
       "type": "object",
-      "required": ["api", "worker", "web", "pullPolicy", "pullSecrets"],
+      "required": ["api", "worker", "web", "website", "pullPolicy", "pullSecrets"],
       "properties": {
         "api": { "$ref": "#/definitions/image" },
         "worker": { "$ref": "#/definitions/image" },
         "web": { "$ref": "#/definitions/image" },
+        "website": { "$ref": "#/definitions/image" },
         "pullPolicy": { "enum": ["IfNotPresent", "Never"] },
         "pullSecrets": {
           "type": "array",
@@ -52,12 +53,16 @@
     },
     "runtime": {
       "type": "object",
-      "required": ["apiConfigMapName", "apiSecretName", "workerConfigMapName", "workerSecretName"],
+      "required": ["apiConfigMapName", "apiSecretName", "workerConfigMapName", "workerSecretName", "webConfigMapName", "webSecretName", "websiteConfigMapName", "websiteSecretName"],
       "properties": {
         "apiConfigMapName": { "$ref": "#/definitions/dnsLabel" },
         "apiSecretName": { "$ref": "#/definitions/dnsLabel" },
         "workerConfigMapName": { "$ref": "#/definitions/dnsLabel" },
-        "workerSecretName": { "$ref": "#/definitions/dnsLabel" }
+        "workerSecretName": { "$ref": "#/definitions/dnsLabel" },
+        "webConfigMapName": { "$ref": "#/definitions/dnsLabel" },
+        "webSecretName": { "$ref": "#/definitions/dnsLabel" },
+        "websiteConfigMapName": { "$ref": "#/definitions/dnsLabel" },
+        "websiteSecretName": { "$ref": "#/definitions/dnsLabel" }
       },
       "additionalProperties": false
     },
@@ -71,55 +76,61 @@
     },
     "replicas": {
       "type": "object",
-      "required": ["api", "worker", "web"],
+      "required": ["api", "worker", "web", "website"],
       "properties": {
         "api": { "type": "integer", "minimum": 3, "maximum": 50 },
         "worker": { "type": "integer", "minimum": 2, "maximum": 50 },
-        "web": { "type": "integer", "minimum": 3, "maximum": 50 }
+        "web": { "type": "integer", "minimum": 3, "maximum": 50 },
+        "website": { "type": "integer", "minimum": 3, "maximum": 50 }
       },
       "additionalProperties": false
     },
     "resources": {
       "type": "object",
-      "required": ["api", "worker", "web"],
+      "required": ["api", "worker", "web", "website"],
       "properties": {
         "api": { "$ref": "#/definitions/componentResources" },
         "worker": { "$ref": "#/definitions/componentResources" },
-        "web": { "$ref": "#/definitions/componentResources" }
+        "web": { "$ref": "#/definitions/componentResources" },
+        "website": { "$ref": "#/definitions/componentResources" }
       },
       "additionalProperties": false
     },
     "autoscaling": {
       "type": "object",
-      "required": ["api", "web"],
+      "required": ["api", "web", "website"],
       "properties": {
         "api": { "$ref": "#/definitions/autoscaling" },
-        "web": { "$ref": "#/definitions/autoscaling" }
+        "web": { "$ref": "#/definitions/autoscaling" },
+        "website": { "$ref": "#/definitions/autoscaling" }
       },
       "additionalProperties": false
     },
     "podDisruptionBudget": {
       "type": "object",
-      "required": ["apiMinAvailable", "workerMinAvailable", "webMinAvailable"],
+      "required": ["apiMinAvailable", "workerMinAvailable", "webMinAvailable", "websiteMinAvailable"],
       "properties": {
         "apiMinAvailable": { "type": "integer", "minimum": 2, "maximum": 49 },
         "workerMinAvailable": { "type": "integer", "minimum": 1, "maximum": 49 },
-        "webMinAvailable": { "type": "integer", "minimum": 2, "maximum": 49 }
+        "webMinAvailable": { "type": "integer", "minimum": 2, "maximum": 49 },
+        "websiteMinAvailable": { "type": "integer", "minimum": 2, "maximum": 49 }
       },
       "additionalProperties": false
     },
     "ingress": {
       "type": "object",
-      "required": ["enabled", "className", "annotations", "apiHost", "webHost", "tlsSecretName", "apiPath", "webPath"],
+      "required": ["enabled", "className", "annotations", "apiHost", "webHost", "websiteHost", "tlsSecretName", "apiPath", "webPath", "websitePath"],
       "properties": {
         "enabled": { "type": "boolean" },
         "className": { "$ref": "#/definitions/optionalDnsLabel" },
         "annotations": { "$ref": "#/definitions/annotations" },
         "apiHost": { "$ref": "#/definitions/optionalHostname" },
         "webHost": { "$ref": "#/definitions/optionalHostname" },
+        "websiteHost": { "$ref": "#/definitions/optionalHostname" },
         "tlsSecretName": { "$ref": "#/definitions/optionalDnsLabel" },
         "apiPath": { "$ref": "#/definitions/httpPath" },
-        "webPath": { "$ref": "#/definitions/httpPath" }
+        "webPath": { "$ref": "#/definitions/httpPath" },
+        "websitePath": { "$ref": "#/definitions/httpPath" }
       },
       "additionalProperties": false
     },

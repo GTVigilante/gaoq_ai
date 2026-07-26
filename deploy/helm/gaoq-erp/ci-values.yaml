@@ -13,11 +13,18 @@ images:
   web:
     repository: registry.example.invalid/gaoq/erp-web
     digest: sha256:3333333333333333333333333333333333333333333333333333333333333333
+  website:
+    repository: registry.example.invalid/gaoq/website
+    digest: sha256:4444444444444444444444444444444444444444444444444444444444444444
 runtime:
   apiConfigMapName: gaoq-erp-api-runtime-config
   apiSecretName: gaoq-erp-api-runtime-secrets
   workerConfigMapName: gaoq-erp-worker-runtime-config
   workerSecretName: gaoq-erp-worker-runtime-secrets
+  webConfigMapName: gaoq-erp-web-runtime-config
+  webSecretName: gaoq-erp-web-runtime-secrets
+  websiteConfigMapName: gaoq-website-runtime-config
+  websiteSecretName: gaoq-website-runtime-secrets
 serviceAccount:
   name: gaoq-erp
 ingress:
@@ -25,6 +32,7 @@ ingress:
   className: internal-gateway
   apiHost: api.erp.example.invalid
   webHost: erp.example.invalid
+  websiteHost: www.example.invalid
   tlsSecretName: gaoq-erp-ingress-tls
 networkPolicy:
   ingressNamespaceLabels:

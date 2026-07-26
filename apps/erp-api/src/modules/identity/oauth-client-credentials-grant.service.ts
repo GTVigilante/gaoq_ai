@@ -1,7 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 
 import {
-  BadRequestException,
   Inject,
   Injectable,
   ServiceUnavailableException,
@@ -26,6 +25,7 @@ import {
   type OAuthJwtCredential,
   type OAuthServiceClient,
 } from './oauth-service-client-registry.js';
+import { requireAuthorizationResource } from './authorization-resources.js';
 
 const CLIENT_ASSERTION_TYPE = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
 const CLIENT_ID_PATTERN = /^[A-Za-z0-9._-]{8,128}$/;
@@ -66,9 +66,7 @@ export class OAuthClientCredentialsGrantService {
   ) {}
 
   async issue(input: OAuthClientCredentialsInput): Promise<OAuthClientCredentialsGrant> {
-    if (input.resource !== this.config.get('AUTH_RESOURCE', { infer: true })) {
-      throw new BadRequestException({ code: 'OAUTH_RESOURCE_INVALID', message: 'resource 非法' });
-    }
+    requireAuthorizationResource(this.config, input.resource);
     let authenticated: AuthenticatedClient;
     try {
       authenticated = input.authorization === undefined
@@ -91,6 +89,7 @@ export class OAuthClientCredentialsGrantService {
         roleCodes: authenticated.client.roleCodes,
         scopes,
         departmentIds: authenticated.client.departmentIds,
+        resource: input.resource,
       });
     } catch (error) {
       await this.recordFailure(authenticated.client, input.traceId, 'signing_failed');

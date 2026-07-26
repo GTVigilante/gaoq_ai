@@ -9,11 +9,20 @@
   容灾、业务 UAT、Go/No-Go、统一切换和四周 Hypercare 仍以现场证据为准。
 - ERP 是组织与员工唯一主数据源；多租户从可信身份上下文强制；REST、事件、
   MCP 和 Worker 必须复用应用服务。
+- 2026-07-27 已冻结独立专业算薪边界：ERP 负责统一身份与组织主数据，专业算薪
+  负责工资唯一事实源；`PAYROLL_SYSTEM_MODE=external` 关闭 ERP 旧工资/资金 REST。
 - 强制规范入口为 `docs/phase-0/README.md`；阶段交付与未验收边界分别见
   `docs/phase-1/README.md` 至 `docs/phase-6/README.md`。
 - 2026-07-27 已在本机专用 MongoDB Replica Set 与 Redis 上完成 API、Worker、
   Web、OAuth Client Credentials、官方 MCP SDK、CORS、队列和指标端点联调；
   该结果属于本地运行验证，不替代现场验收。
+- 2026-07-27 已交付 `/careers` 招聘门户、ERP 开放职位最小投影与候选人联系人
+  投递 BFF；生产服务身份、WAF 限流和简历原件扫描/对象存储仍待现场配置与验收。
+- 2026-07-27 已交付智能简历库：隔离网关脱敏读取契约、OpenAI 严格结构化输出、
+  受控分类标签、BullMQ Worker、人工确认与标签检索、ERP 管理页面及独立索引迁移；
+  真实附件网关、OpenAI Secret/数据保留控制、代表性简历评测与招聘 UAT 待现场验收。
+- 2026-07-27 已交付双语营销官网、ERP 工作台 CMS、受控内容发布协议与加密预约
+  线索入口；对象存储、通知、验证码、AI 网关和正式域名仍待现场配置与验收。
 - GitHub PR #103 的 Hosted Actions 当前在任何步骤执行前被账户付款或 Spending
   limit 拦截；这是外部门禁未执行，不得记为代码测试失败或门禁通过。
 
@@ -21,10 +30,12 @@
 
 - `apps/erp-api/`：NestJS API、领域模块、集成适配器、Worker 与迁移代码。
 - `apps/erp-web/`：Next.js 管理工作台、移动工作台、OAuth 与 MCP 确认页面。
+- `apps/website/`：Next.js 中英文官网、SEO、CMS 已发布内容读取与预约转化页面。
 - `packages/`：共享类型与安全工具。
 - `deploy/`：生产 Helm Chart、Kubernetes 平台护栏与可观测性基线。
 - `scripts/`：安全、迁移、MCP、容量、韧性、发布和现场证据验证器。
 - `docs/phase-0/`：企业架构、领域数据、集成、MCP、安全质量与 GitHub 治理规范。
+- `docs/marketing-cms.md`：双语官网、CMS、媒体、AI、线索与现场配置交付边界。
 - `wordpress backup/`：历史备份，明确排除，不得纳入 Git、扫描或应用构建。
 
 ## 代码与安全规范
@@ -58,9 +69,9 @@ pnpm --filter @gaoq/erp-api smoke:worker:live
 脚本仅在内存生成临时密钥，使用独立测试数据库与 Redis DB，结束时关闭其创建的
 API 或 Worker 子进程。
 
-## Codex / Kimi 协作
+## Codex 执行规范
 
 - Codex 执行入口为 `.codex/AGENTS.md`，完整项目规范以 `AGENTS.md` 为准。
-- Kimi 派活必须说明只读或允许修改的边界；只读任务禁止写计划文件。
-- 大型盘点必须拆成小范围任务，并要求输出文件路径、调用方向和实现建议。
-- Kimi 返回后必须先做 `[OK]` / `[CR]` 复核，未经 CR 不得合并。
+- Codex 默认直接执行，不要求调用指定外部代理；只读任务禁止写计划文件。
+- 大型盘点必须拆成小范围任务，并输出文件路径、调用方向和实现建议。
+- 所有实现结果必须经过复核和验证，未经检查不得合并。

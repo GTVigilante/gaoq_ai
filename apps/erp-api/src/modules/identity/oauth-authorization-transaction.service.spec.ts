@@ -75,6 +75,7 @@ function fixture() {
     get: (key: string) => {
       if (key === 'AUTH_RESOURCE') return RESOURCE;
       if (key === 'AUTH_ISSUER') return 'https://erp.example.com';
+      if (key === 'AUTH_ADDITIONAL_RESOURCES_JSON') return '[]';
       return clientConfig;
     },
   } as unknown as ConfigService<AppEnvironment, true>;

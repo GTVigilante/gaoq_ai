@@ -34,7 +34,9 @@ export type RecruitmentEventType =
   | 'recruitment.offer.declined'
   | 'recruitment.offer.expired'
   | 'recruitment.offer.signed'
-  | 'recruitment.offer.migrated';
+  | 'recruitment.offer.migrated'
+  | 'recruitment.resume_analysis.requested'
+  | 'recruitment.resume_analysis.reviewed';
 
 export interface RecruitmentDomainEvent {
   readonly type: RecruitmentEventType;
@@ -45,12 +47,43 @@ export interface RecruitmentDomainEvent {
     | 'recruitment.position'
     | 'recruitment.interview'
     | 'recruitment.interview_feedback'
-    | 'recruitment.offer';
+    | 'recruitment.offer'
+    | 'recruitment.resume_analysis';
   readonly tenantId: string;
   readonly aggregateId: string;
   readonly version: number;
   readonly occurredAt: string;
   readonly payload: Readonly<Record<string, string | number | null>>;
+}
+
+/** 简历分析事件只携带控制引用和计数，不输出正文、结构履历、标签或模型证据。 */
+export function buildRecruitmentResumeAnalysisEvent(
+  analysis: {
+    readonly id: string;
+    readonly tenantId: string;
+    readonly candidateId: string;
+    readonly resumeEvidenceId: string;
+    readonly status: string;
+    readonly version: number;
+    readonly updatedAt: Date;
+    readonly tags: readonly { readonly status: string }[];
+  },
+  action: 'requested' | 'reviewed',
+): RecruitmentDomainEvent {
+  return Object.freeze({
+    type: `recruitment.resume_analysis.${action}`,
+    aggregateType: 'recruitment.resume_analysis',
+    tenantId: analysis.tenantId,
+    aggregateId: analysis.id,
+    version: analysis.version,
+    occurredAt: analysis.updatedAt.toISOString(),
+    payload: Object.freeze({
+      candidateId: analysis.candidateId,
+      resumeEvidenceId: analysis.resumeEvidenceId,
+      status: analysis.status,
+      confirmedTagCount: analysis.tags.filter((tag) => tag.status === 'confirmed').length,
+    }),
+  });
 }
 
 /** 申请创建事件仅携带领域标识，不复制候选人身份字段。 */

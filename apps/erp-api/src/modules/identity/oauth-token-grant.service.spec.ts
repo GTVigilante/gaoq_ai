@@ -55,6 +55,8 @@ describe('OAuthTokenGrantService', () => {
       tenantId: 'tenant-001', actorId: 'actor-001', sessionId: 'session-001',
       actorType: 'user', clientId: 'mcp-client-001', roleCodes: ['employee'],
       scopes: ['erp:mcp:server:connect', 'erp:org:chart:read'], departmentIds: ['department-001'],
+      employeeId: 'employee-001',
+      resource: 'https://erp.example.com/mcp',
     });
     expect(store.recordTrustedUser).toHaveBeenCalledWith('tenant-001', expect.objectContaining({
       actorId: 'actor-001', traceId: 'trace-token-001', outcome: 'success',

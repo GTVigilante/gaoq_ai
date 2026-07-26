@@ -19,6 +19,7 @@ import {
   RecruitmentInterviewRepository,
   RecruitmentOfferEvidenceRepository,
   RecruitmentOfferRepository,
+  RecruitmentPositionRepository,
 } from './recruitment.repositories.js';
 import type {
   RecruitmentCandidateDocument,
@@ -26,6 +27,7 @@ import type {
   RecruitmentInterviewFeedbackDocument,
   RecruitmentOfferDocument,
   RecruitmentOfferEvidenceDocument,
+  RecruitmentPositionDocument,
 } from './recruitment.schemas.js';
 
 const candidate = createCandidate({
@@ -102,6 +104,48 @@ describe('RecruitmentCandidateRepository', () => {
     );
     await expect(reader.findById(candidate.id)).rejects.toThrow('RECRUITMENT_DATA_INTEGRITY_INVALID');
     expect(findOne).toHaveBeenCalledWith({ tenantId: 'tenant-001', id: candidate.id });
+  });
+});
+
+describe('RecruitmentPositionRepository', () => {
+  it('门户查询强制当前租户与开放状态并限制返回数量', async () => {
+    const records = [{
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4Y8',
+      tenantId: 'tenant-001',
+      requisitionId: '01J8ZQK7V0A2M4N6P8R0T2W4Y9',
+      title: '内容策略经理',
+      departmentId: 'department-001',
+      jobLevelId: 'job-level-001',
+      location: '上海',
+      headcount: 2,
+      status: 'open',
+      version: 2,
+      publishedAt: new Date('2026-07-24T08:00:00.000Z'),
+      closedAt: null,
+      createdAt: new Date('2026-07-23T08:00:00.000Z'),
+      updatedAt: new Date('2026-07-24T08:00:00.000Z'),
+    }];
+    const exec = vi.fn().mockResolvedValue(records);
+    const lean = vi.fn().mockReturnValue({ exec });
+    const limit = vi.fn().mockReturnValue({ lean });
+    const sort = vi.fn().mockReturnValue({ limit });
+    const find = vi.fn().mockReturnValue({ sort });
+    const repository = new RecruitmentPositionRepository(
+      context(),
+      { find } as unknown as Model<RecruitmentPositionDocument>,
+    );
+
+    const result = await repository.findOpen(50);
+
+    expect(find).toHaveBeenCalledWith({ tenantId: 'tenant-001', status: 'open' });
+    expect(sort).toHaveBeenCalledWith({ publishedAt: -1, id: 1 });
+    expect(limit).toHaveBeenCalledWith(50);
+    expect(result[0]).toMatchObject({
+      title: '内容策略经理',
+      status: 'open',
+      publishedAt: '2026-07-24T08:00:00.000Z',
+    });
+    await expect(repository.findOpen(201)).rejects.toThrow('招聘门户职位查询上限无效');
   });
 });
 

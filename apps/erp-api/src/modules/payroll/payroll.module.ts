@@ -54,6 +54,7 @@ import {
   PayrollCutoverReadinessRecord,
   PayrollCutoverReadinessRecordSchema,
 } from './persistence/payroll.schemas.js';
+import { LegacyPayrollBoundaryGuard } from './legacy-payroll-boundary.guard.js';
 
 @Module({
   imports: [
@@ -97,6 +98,7 @@ import {
     PayrollShadowService,
     PayrollDataCryptoService,
     PayrollOutboxWriter,
+    LegacyPayrollBoundaryGuard,
     HttpPayrollTaxImmutableArchive,
     HttpPayrollTaxGateway,
     { provide: PayrollTaxImmutableArchive, useExisting: HttpPayrollTaxImmutableArchive },
@@ -108,6 +110,7 @@ import {
     PayrollMasterDataService,
     PayrollTaxFilingService, PayrollReconciliationService,
     PayrollShadowService,
+    LegacyPayrollBoundaryGuard,
   ],
 })
 export class PayrollModule {}

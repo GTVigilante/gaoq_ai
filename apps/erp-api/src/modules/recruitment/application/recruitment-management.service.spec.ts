@@ -99,8 +99,11 @@ function fixture(options?: {
   };
   const departments = {
     findById: vi.fn().mockResolvedValue({
-      id: 'department-001', tenantId: 'tenant-001', status: 'active',
+      id: 'department-001', tenantId: 'tenant-001', name: '内容商业化中心', status: 'active',
     }),
+    findAll: vi.fn().mockResolvedValue([{
+      id: 'department-001', tenantId: 'tenant-001', name: '内容商业化中心', status: 'active',
+    }]),
   };
   const jobLevels = {
     findById: vi.fn().mockResolvedValue({ id: 'job-level-001', tenantId: 'tenant-001' }),
@@ -112,6 +115,12 @@ function fixture(options?: {
   };
   const positions = {
     findById: vi.fn().mockResolvedValue(draftPosition),
+    findOpen: vi.fn().mockResolvedValue([{
+      ...draftPosition,
+      status: 'open',
+      version: 2,
+      publishedAt: '2026-07-21T00:00:00.000Z',
+    }]),
     insert: vi.fn().mockResolvedValue(undefined),
     replace: vi.fn().mockResolvedValue(undefined),
   };
@@ -134,6 +143,39 @@ function fixture(options?: {
 }
 
 describe('RecruitmentManagementService', () => {
+  it('门户服务只返回开放职位的公开投影且不暴露内部引用', async () => {
+    const store = fixture({
+      actorType: 'service',
+      actorScopes: ['erp:recruitment:portal:read'],
+      actorDepartments: [],
+    });
+    const result = await store.service.listPortalPositions();
+    expect(result).toEqual([{
+      id: POSITION_ID,
+      title: '小红书经纪人',
+      department: '内容商业化中心',
+      location: '上海',
+      headcount: 2,
+      publishedAt: '2026-07-21T00:00:00.000Z',
+    }]);
+    expect(JSON.stringify(result)).not.toMatch(/tenant|requisition|jobLevel|department-001/u);
+  });
+
+  it('门户职位投影拒绝人员令牌和缺失专用 Scope 的服务令牌', async () => {
+    await expect(fixture({
+      actorType: 'user',
+      actorScopes: ['erp:recruitment:portal:read'],
+    }).service.listPortalPositions()).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_PORTAL_SERVICE_REQUIRED' },
+    });
+    await expect(fixture({
+      actorType: 'service',
+      actorScopes: ['erp:recruitment:management:read_all'],
+    }).service.listPortalPositions()).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_PORTAL_SERVICE_REQUIRED' },
+    });
+  });
+
   it('创建 HC 时验证 ERP 有效部门并与 Outbox 同事务', async () => {
     const store = fixture();
     const input = {

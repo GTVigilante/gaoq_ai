@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { BullModule } from '@nestjs/bullmq';
 import { MongooseModule } from '@nestjs/mongoose';
 
 import { IdempotencyModule } from '../../core/idempotency/idempotency.module.js';
@@ -14,6 +15,16 @@ import { RecruitmentManagementService } from './application/recruitment-manageme
 import { RecruitmentInterviewService } from './application/recruitment-interview.service.js';
 import { RecruitmentOfferService } from './application/recruitment-offer.service.js';
 import { RecruitmentOnboardingBridgeService } from './application/recruitment-onboarding-bridge.service.js';
+import { RecruitmentResumeService } from './application/recruitment-resume.service.js';
+import {
+  RecruitmentResumeAiAnalyzer,
+  RecruitmentResumeSourceGateway,
+} from './application/recruitment-resume.ports.js';
+import {
+  HttpRecruitmentResumeSourceGateway,
+  OpenAiRecruitmentResumeAnalyzer,
+} from './integration/recruitment-resume.adapters.js';
+import { RECRUITMENT_RESUME_QUEUE } from './recruitment-resume.queue.js';
 import {
   CandidateApplicationRepository,
   CandidateApplicationStageRepository,
@@ -48,6 +59,10 @@ import {
   RecruitmentRequisitionRecord,
   RecruitmentRequisitionRecordSchema,
 } from './persistence/recruitment.schemas.js';
+import {
+  RecruitmentResumeAnalysisRecord,
+  RecruitmentResumeAnalysisRecordSchema,
+} from './persistence/recruitment-resume.schemas.js';
 
 /** Phase 3 招聘模块；候选人密文、职位申请和状态事件共享租户与事务底座。 */
 @Module({
@@ -57,6 +72,7 @@ import {
     ApprovalCoreModule,
     TenantContextModule,
     OrgCoreModule,
+    BullModule.registerQueue({ name: RECRUITMENT_RESUME_QUEUE }),
     MongooseModule.forFeature([
       { name: RecruitmentCandidateRecord.name, schema: RecruitmentCandidateRecordSchema },
       { name: CandidateConsentEvidenceRecord.name, schema: CandidateConsentEvidenceRecordSchema },
@@ -73,6 +89,10 @@ import {
       {
         name: RecruitmentOfferEvidenceRecord.name,
         schema: RecruitmentOfferEvidenceRecordSchema,
+      },
+      {
+        name: RecruitmentResumeAnalysisRecord.name,
+        schema: RecruitmentResumeAnalysisRecordSchema,
       },
       { name: OutboxRecord.name, schema: OutboxRecordSchema },
     ]),
@@ -95,6 +115,17 @@ import {
     RecruitmentInterviewService,
     RecruitmentOfferService,
     RecruitmentOnboardingBridgeService,
+    RecruitmentResumeService,
+    HttpRecruitmentResumeSourceGateway,
+    OpenAiRecruitmentResumeAnalyzer,
+    {
+      provide: RecruitmentResumeSourceGateway,
+      useExisting: HttpRecruitmentResumeSourceGateway,
+    },
+    {
+      provide: RecruitmentResumeAiAnalyzer,
+      useExisting: OpenAiRecruitmentResumeAnalyzer,
+    },
   ],
   exports: [
     RecruitmentDataCryptoService,
@@ -111,6 +142,7 @@ import {
     RecruitmentInterviewService,
     RecruitmentOfferService,
     RecruitmentOnboardingBridgeService,
+    RecruitmentResumeService,
   ],
 })
 export class RecruitmentCoreModule {}

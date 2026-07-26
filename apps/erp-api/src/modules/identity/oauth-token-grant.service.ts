@@ -72,6 +72,8 @@ export class OAuthTokenGrantService {
         roleCodes: profile.roleCodes,
         scopes: authorization.scopes,
         departmentIds: profile.departmentIds,
+        employeeId: profile.employeeId,
+        resource: authorization.resource,
       });
     } catch (error) {
       await this.audit.recordTrustedUser(authorization.tenantId, {

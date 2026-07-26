@@ -158,6 +158,7 @@ import {
   AttendanceProviderStateRecord,
   AttendanceProviderStateRecordSchema,
 } from './attendance-provider.schemas.js';
+import { PayrollMasterDataSnapshotService } from './payroll-master-data-snapshot.service.js';
 
 /** 外部集成底座：Outbox 多渠道扇出、版本防乱序、重试与对账。 */
 @Module({
@@ -223,6 +224,7 @@ import {
     ]),
   ],
   providers: [
+    PayrollMasterDataSnapshotService,
     OrgOutboxRelayService,
     RecruitmentCalendarOutboxRelayService,
     RecruitmentCalendarDeliveryService,
@@ -327,6 +329,7 @@ import {
     },
   ],
   exports: [
+    PayrollMasterDataSnapshotService,
     MongooseModule,
     OrgOutboxRelayService,
     RecruitmentCalendarOutboxRelayService,

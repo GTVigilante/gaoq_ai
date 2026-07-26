@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AuditService } from '../../core/audit/audit.service.js';
 import { TenantContextService } from '../../core/tenant/tenant-context.service.js';
 import type { RecruitmentApplicationService } from '../recruitment/application/recruitment-application.service.js';
+import type { RecruitmentResumeService } from '../recruitment/application/recruitment-resume.service.js';
 import type { RecruitmentDataCryptoService } from '../recruitment/persistence/recruitment-data-crypto.service.js';
 import {
   RecruitmentChannelAdapter,
@@ -118,6 +119,11 @@ function fixture(hasEvidenceCheckpoint = false) {
       });
     }),
   };
+  const resumes = {
+    requestAnalysisFromTrustedEvidence: vi.fn().mockResolvedValue({
+      analysis: { id: ID, candidateId: CANDIDATE_ID, status: 'queued' },
+    }),
+  };
   const crypto = {
     unprotect: vi.fn().mockReturnValue({ raw: '只在 Worker 内存解密' }),
     channelFingerprints: vi.fn().mockReturnValue([FINGERPRINT]),
@@ -134,6 +140,7 @@ function fixture(hasEvidenceCheckpoint = false) {
     audit as unknown as AuditService,
     { enqueueDueBindings: vi.fn(), pullBinding: vi.fn() } as unknown as RecruitmentChannelPullService,
     recruitment as unknown as RecruitmentApplicationService,
+    resumes as unknown as RecruitmentResumeService,
     crypto as unknown as RecruitmentDataCryptoService,
     new RecruitmentChannelRegistry([adapter], [normalizer], [verifier]),
     { resolve: vi.fn().mockReturnValue('credential-not-logged') },
@@ -147,7 +154,7 @@ function fixture(hasEvidenceCheckpoint = false) {
     data: { tenantId: 'tenant-001', inboxId: ID },
   } as Job<RecruitmentChannelJobData>;
   return {
-    processor, job, inbox, mappings, audit, recruitment, crypto, adapter, normalizer, verifier,
+    processor, job, inbox, mappings, audit, recruitment, resumes, crypto, adapter, normalizer, verifier,
   };
 }
 
@@ -158,6 +165,11 @@ describe('RecruitmentChannelProcessor', () => {
     expect(store.verifier.verify).toHaveBeenCalledWith(expect.objectContaining({
       tenantId: 'tenant-001', inboxId: ID,
     }));
+    expect(store.resumes.requestAnalysisFromTrustedEvidence).toHaveBeenCalledWith(
+      expect.stringMatching(/^channel-/u),
+      CANDIDATE_ID,
+      'resume-snapshot-001',
+    );
     const checkpoint = store.inbox.updateOne.mock.calls.find(
       (call) => (call[1] as { $set?: { evidenceVerifiedAt?: Date } }).$set
         ?.evidenceVerifiedAt instanceof Date,

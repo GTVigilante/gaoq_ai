@@ -74,6 +74,7 @@ export class TokenGrantService {
       roleCodes: profile.roleCodes,
       scopes: profile.scopes,
       departmentIds: profile.departmentIds,
+      employeeId: profile.employeeId,
     });
     const refreshToken = await this.connection.transaction(async (mongoSession) => {
       await this.sessions.open(
@@ -111,6 +112,7 @@ export class TokenGrantService {
       roleCodes: resolved.profile.roleCodes,
       scopes: resolved.profile.scopes,
       departmentIds: resolved.profile.departmentIds,
+      employeeId: resolved.profile.employeeId,
     });
     const result = { ...resolved, signed } satisfies RefreshGrantContext;
     return {

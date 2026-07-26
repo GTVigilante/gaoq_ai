@@ -1,4 +1,13 @@
-import { BadRequestException, Body, Controller, Headers, Param, Post, Req } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Headers,
+  Param,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 
 import { AuditService } from '../../core/audit/audit.service.js';
 import type { ErpRequest } from '../../core/http/request-context.js';
@@ -26,8 +35,10 @@ import {
   PrepareTreasuryDisbursementDto,
   SubmitTreasuryDisbursementDto,
 } from './application/treasury.dto.js';
+import { LegacyPayrollBoundaryGuard } from '../payroll/legacy-payroll-boundary.guard.js';
 
 @Controller('treasury')
+@UseGuards(LegacyPayrollBoundaryGuard)
 export class TreasuryController {
   constructor(
     private readonly accounts: TreasuryBankAccountService,

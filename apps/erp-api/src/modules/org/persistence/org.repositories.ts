@@ -310,6 +310,13 @@ export class EmploymentRepository extends TenantBoundRepository {
     return record === null ? null : this.toDomain(record);
   }
 
+  /** 为受控下游快照按稳定主键顺序读取租户内全部劳动关系。 */
+  async findAll(session?: ClientSession): Promise<readonly Employment[]> {
+    const query = this.records.find({ tenantId: this.tenantId() }).sort({ id: 1 });
+    if (session !== undefined) query.session(session);
+    return (await query.lean().exec()).map((record) => this.toDomain(record));
+  }
+
   async findOpenByEmployeeId(
     employeeId: string,
     session?: ClientSession,

@@ -69,6 +69,15 @@ export interface RecruitmentPositionSummary extends Record<string, unknown> {
   readonly closedAt: string | null;
 }
 
+export interface RecruitmentPortalPositionSummary extends Record<string, unknown> {
+  readonly id: string;
+  readonly title: string;
+  readonly department: string;
+  readonly location: string;
+  readonly headcount: number;
+  readonly publishedAt: string;
+}
+
 export interface ImportRecruitmentRequisitionFromMigrationInput {
   readonly targetId: string | null;
   readonly departmentId: string;
@@ -403,6 +412,41 @@ export class RecruitmentManagementService {
     const position = await this.requirePosition(id);
     this.assertDepartmentRead(position.departmentId);
     return positionSummary(position);
+  }
+
+  /**
+   * 招聘门户专用最小投影；只允许独立门户服务身份读取已开放职位。
+   */
+  async listPortalPositions(): Promise<readonly RecruitmentPortalPositionSummary[]> {
+    const actor = this.context.getActorRequired();
+    if (
+      actor.actorType !== 'service' ||
+      !actor.scopes.includes('erp:recruitment:portal:read')
+    ) throw new ForbiddenException({
+      code: 'RECRUITMENT_PORTAL_SERVICE_REQUIRED',
+      message: '招聘门户职位只能由受信任门户服务读取',
+    });
+    const [positions, departments] = await Promise.all([
+      this.positions.findOpen(),
+      this.departments.findAll(),
+    ]);
+    const departmentNames = new Map(
+      departments
+        .filter((department) => department.status === 'active')
+        .map((department) => [department.id, department.name]),
+    );
+    return Object.freeze(positions.flatMap((position) => {
+      const department = departmentNames.get(position.departmentId);
+      if (position.publishedAt === null || department === undefined) return [];
+      return [Object.freeze({
+        id: position.id,
+        title: position.title,
+        department,
+        location: position.location,
+        headcount: position.headcount,
+        publishedAt: position.publishedAt,
+      })];
+    }));
   }
 
   private async linkApproval(

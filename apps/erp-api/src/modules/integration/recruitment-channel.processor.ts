@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { AuditService } from '../../core/audit/audit.service.js';
 import { TenantContextService } from '../../core/tenant/tenant-context.service.js';
 import { RecruitmentApplicationService } from '../recruitment/application/recruitment-application.service.js';
+import { RecruitmentResumeService } from '../recruitment/application/recruitment-resume.service.js';
 import { RecruitmentDataCryptoService } from '../recruitment/persistence/recruitment-data-crypto.service.js';
 import {
   RecruitmentChannelRegistry,
@@ -83,6 +84,7 @@ export class RecruitmentChannelProcessor extends WorkerHost {
     private readonly audit: AuditService,
     private readonly pull: RecruitmentChannelPullService,
     private readonly recruitment: RecruitmentApplicationService,
+    private readonly resumes: RecruitmentResumeService,
     private readonly crypto: RecruitmentDataCryptoService,
     private readonly registry: RecruitmentChannelRegistry,
     private readonly secrets: RecruitmentChannelSecretResolver,
@@ -232,6 +234,13 @@ export class RecruitmentChannelProcessor extends WorkerHost {
         },
         { consentEvidenceId: evidence.consentEvidenceId },
       );
+      if (evidence.resumeSnapshotId !== null) {
+        await this.resumes.requestAnalysisFromTrustedEvidence(
+          idempotencyKey(['resume-analysis', tenantId, claimed.id]),
+          result.application.candidateId,
+          evidence.resumeSnapshotId,
+        );
+      }
       await this.ensureMapping(
         tenantId, claimed.channelCode, 'candidate', result.application.candidateId,
         normalized.externalCandidateId,

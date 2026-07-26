@@ -140,16 +140,40 @@ draft → pending_approval → approved → clearing → ready → scheduled →
 | 安排面试 | `POST /recruitment/applications/:id/interviews` | `recruitment.interview.scheduled.v1` | 查询；安排待 L3 加密草稿引用 | R1 |
 | 提交面试评价 | `POST /recruitment/interviews/:id/feedback` | `recruitment.interview.feedback_submitted.v1` | 查询；评价写入不向 AI 开放 | R1 |
 | 形成/发送 Offer | Offer 资源端点 | `recruitment.offer.*.v1` | 脱敏查询 + `recruitment_offer_send_prepare/execute` | R2 |
+| 简历解析与标签复核 | `POST /recruitment/resume-library/candidates/:candidateId/analyses`、`GET /recruitment/resume-library/analyses`、`POST /recruitment/resume-library/analyses/:id/review` | `recruitment.resume_analysis.requested/reviewed.v1` | 不注册 MCP；模型仅在 Worker 内生成建议 | R1/R2 |
+
+### 5.1 招聘门户
+
+- Web 在 `/careers` 提供公开招聘门户，视觉沿用 GaoQ-OS 深蓝、青色品牌体系；CMS 仍只负责品牌内容，不得成为职位状态或候选人事实源。
+- 浏览器只调用同源 `/api/careers/*` BFF。BFF 使用独立 Client Credentials，并按请求分别申请 `erp:recruitment:portal:read` 或 `erp:recruitment:application:create` 最小 Scope；服务令牌和客户端 Secret 不得进入浏览器产物。
+- BFF 到 ERP 在集群内只允许 `http://<service>.<namespace>.svc.cluster.local:3001` 完整服务域名，或经受控 HTTPS API Origin；OAuth `resource` 仍须与 ERP 注册值逐字一致。NetworkPolicy 只放行 Web Pod 到 API Pod 的 3001 端口。
+- ERP `GET /recruitment/portal/positions` 只返回 `open` 职位的 `id/title/department/location/headcount/publishedAt` 公开投影，不返回租户、HC、职级或内部状态引用。
+- 门户投递复用 `POST /recruitment/applications`。BFF 固定 `sourceChannel=portal` 和授权版本、目的及期限；租户只来自服务令牌，浏览器不得上报租户、渠道或授权期限。
+- 候选人姓名、手机、邮箱继续由 Recruitment 独立密钥域加密并以盲索引去重；公开响应只返回申请标识。Web 必须执行同源校验、蜜罐与限流，生产入口仍需配置分布式 WAF/网关限流。
+- 当前门户建立候选人档案与职位申请；简历附件上传仍须经“病毒扫描 → 对象存储 → `candidate_resume` 附件登记”证据链交付，未完成该网关前不得把联系人投递描述为已上传简历原件。
 | 合同完成与入职转化 | Webhook/应用命令 | `esign.flow.completed.v1`、`onboarding.completed.v1` | 只读状态，不提供终态执行 Tool | R2/R3 |
 
-### 5.1 HC 审批模板与 Saga 契约
+### 5.2 智能简历库
+
+- ERP 管理端 `/workspace/recruitment` 展示候选人简历分析状态、去标识化结构履历、AI 建议标签及置信度；招聘人员可确认、驳回或从受控词表补充标签。只有 `confirmed` 标签进入正式人才检索，`suggested` 不驱动自动化。
+- 分析请求只接受候选人 ULID 与不可解释 `resumeEvidenceId`。租户来自已验证身份；应用服务还会校验候选人处于 `active`、授权未过期且未到保留期限。证据 ID 必须由隔离网关再次校验候选人归属，禁止客户端 URL、对象路径或下载 Token。
+- 招聘渠道 EvidenceVerifier 返回非空 `resumeSnapshotId` 后，渠道 Worker 自动以稳定幂等键创建分析任务；没有简历证据时不创建。门户或人工上传后续也必须复用同一受信任证据窄入口，不能由浏览器伪造“已扫描”状态。
+- `RECRUITMENT_RESUME_SOURCE_ENDPOINT` 对应的独立网关必须先完成归属校验、恶意文件扫描、文本提取与直接身份信息去除，并返回 `malwareScanStatus=clean`、`piiRedacted=true` 和内容 SHA-256 base64url 摘要。正文只存在于 Worker 当前内存，不写 Mongo、审计、Outbox、日志或幂等快照。
+- Worker 通过 OpenAI Responses API 调用部署指定模型，强制 `store:false` 与严格 JSON Schema；模型只能从 `RECRUITMENT_RESUME_TAG_TAXONOMY` 选择标签。生产启用前仍须完成数据处理协议、区域与保留策略评审；如组织已获批 Zero Data Retention，应在对应 API Project 启用。
+- 模型禁止推断或输出姓名、联系方式、年龄、性别、民族、婚育、宗教、健康、照片和证件信息；禁止输出录用/淘汰、适配度和候选人排序。AI 只生成职业结构摘要与分类建议，不能改变申请阶段或候选人状态。
+- REST 最小 Scope 分离为 `erp:recruitment:resume:analyze`、`erp:recruitment:resume:read` 与 `erp:recruitment:resume:review`。请求分析和标签复核分别强制 `Idempotency-Key`；复核还强制 `If-Match`。Worker 使用 `erp:recruitment:resume:process` 服务身份。
+- 集合 `recruitment_resume_analyses` 只保存候选人/证据引用、来源摘要、非 PII 结构结果、标签决策、模型标识、失败码和保留期；不保存简历正文或联系方式。索引通过 `phase-3-recruitment-resume-indexes-v1` 独立追加迁移交付。
+- 请求和复核事务分别发布 `cn.gaoq.erp.recruitment.resume_analysis.requested.v1` 与 `cn.gaoq.erp.recruitment.resume_analysis.reviewed.v1`；事件只含分析、候选人、简历证据引用、状态、版本和已确认标签计数，不含结构履历、标签明细、置信度或正文。AI 完成但尚未人工确认不发布跨域可消费事实。
+- 当前代码已交付 API、BullMQ Worker、OpenAI 适配器、管理页面、受控词表与迁移；真实简历隔离网关、OpenAI API Project/Secret、ZDR 或其他获批保留策略、代表性中文/英文简历评测和招聘 UAT 仍待现场配置与验收。`RECRUITMENT_RESUME_AI_PROVIDER=disabled` 时失败关闭。
+
+### 5.3 HC 审批模板与 Saga 契约
 
 - Approval 必须预先发布唯一编码 `recruitment_hc` 的 R2 模板；表单字段固定为 `requisition_id`、`department_id`、`position_title`、`headcount`、`justification`。发布前必须验证部门负责人、HRBP 和财务/编制负责人解析规则。
 - 提交链路使用一个客户端根幂等键派生审批创建、审批提交和招聘绑定三个幂等步骤。跨域调用不嵌套 Mongo 事务；任一步崩溃后以同一根键重试，必须回到同一审批实例。
 - Recruitment 只能通过 Approval 应用服务的专用 Scope 读取 `recruitment_hc` 状态摘要，不读表单原文；仅 `approved/rejected` 终态可以驱动 HC。
 - 一份 HC 对应一个业务职位，职位标题、部门和人数从 HC 锁定继承；多招聘渠道发布使用外部映射，不复制业务职位。
 
-### 5.2 Offer 审批、发送与证据契约
+### 5.4 Offer 审批、发送与证据契约
 
 - 管理端端点固定为 `POST /recruitment/applications/:applicationId/offers`、`GET /recruitment/offers/:id`、`POST /recruitment/offers/:id/submit`、`POST /recruitment/offers/:id/sync-approval` 和 `POST /recruitment/offers/:id/send`。所有写接口强制 `Idempotency-Key` 与强 `If-Match`；发送返回 202 和 `sending`，不接收客户端提交的投递证据。
 - Approval 必须预先发布唯一编码 `recruitment_offer` 的 R2 模板。字段固定为 `offer_id`、`application_id`、`department_id`、`currency`、`monthly_base_salary_minor`、`salary_months`、`annual_variable_target_minor`、`signing_bonus_minor`、`proposed_start_date`、`probation_months`、`employment_type`、`work_location`、`benefits_summary`。薪酬、地点和福利字段按 L4 配置；审批实例正文加密，Recruitment 只从专用状态接口读取终态摘要。
@@ -159,21 +183,21 @@ draft → pending_approval → approved → clearing → ready → scheduled →
 - 审批创建、审批提交和 Offer 绑定由客户端根幂等键派生三个不同幂等键；通用幂等层只保存请求 SHA-256 与脱敏响应，不保存 L4 请求正文。投递、候选人决定和 eSign 完成仅通过应用服务的专用内部 Scope 调用，不注册普通管理端 REST。
 - 投递与候选人决定写入 `recruitment_offer_evidence` 不可变账本。调用方只能提交 SHA-256 base64url 回执摘要、外部事实时间及必要内部引用；证据 ID 由 Recruitment 生成，客户端不得自报。每个 Offer 最多一条投递证据和一条候选人决定证据，摘要在租户内不可复用；候选人决定还必须匹配 Offer 的 `candidateId` 并引用门户认证证据。
 
-### 5.3 Recruitment MCP 首批能力
+### 5.5 Recruitment MCP 首批能力
 
 - Resource Templates：`erp://recruitment/applications/{id}` 与 `erp://recruitment/offers/{id}`。Tools：`recruitment_application_get`、`recruitment_requisition_get`、`recruitment_position_get`、`recruitment_interview_get`、`recruitment_offer_get`，全部为 R0 脱敏查询并复用 Recruitment 应用服务与部门数据范围。
 - 写工具只交付无 L3/L4 正文的 `recruitment_requisition_submit_prepare/execute`（R2）、`recruitment_position_transition_prepare/execute`（R1）和 `recruitment_offer_send_prepare/execute`（R2）。确认账本只固化业务 ULID、预期版本和目标状态；执行幂等键由 `operationId` 派生。
 - Offer 发送 execute 只形成 `sending` 意图，不形成 `sent` 事实；AI 不得调用投递回写、候选人接受/拒绝、eSign 完成或入职终态方法。
 - 候选人创建、面试安排/评价和 Offer 条款创建含 L3/L4 原文。在服务端加密草稿引用机制交付前不注册对应 MCP 写工具，禁止为追求能力数量把原文写入 `mcp_operation_confirmations.commandJson`。
 
-### 5.4 Onboarding MCP 首批能力
+### 5.6 Onboarding MCP 首批能力
 
 - Resource Template 固定为 `erp://onboarding/instances/{id}`，只读 Tool 固定为 `onboarding_get`；两者复用 Onboarding 应用服务、OAuth 身份、租户边界、部门数据范围和审计。
 - 输出仅含任务 `pending/completed` 状态、组织引用、拟入职业务日期、聚合状态、Employment 引用与版本；不得返回合同、身份材料、培训内容或各任务证据标识。
 - `onboarding_progress_guide` 明确提示 AI 不得索取证据原文、代报任务完成或执行劳动关系建档。完成建档属于 R3，永不注册 MCP Tool。
 - 在材料证据注册表、Identity/Knowledge 可信证明接口和相应消费者验收完成前，不注册入职任务写 Tool；不能让 AI 用任意字符串伪造证据引用。
 
-### 5.5 Knowledge 与 Care MCP
+### 5.7 Knowledge 与 Care MCP
 
 - Knowledge 只读 Resource/Tool 仅返回课程发布摘要和培训任务进度；不得返回内容引用、题库引用、答卷提交、评分证据或完成证据。评分、完成和 Onboarding 证明回填不注册 MCP。
 - H5 本人任务目录由服务端按可信主体映射有效员工授权快照与当前任职关系，不接受客户端 employeeId、onboardingInstanceId 或 tenantId；返回字段与 Knowledge MCP 同样执行内容、题库、答卷和证据脱敏。

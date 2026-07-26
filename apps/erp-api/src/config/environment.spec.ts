@@ -30,6 +30,9 @@ describe('validateEnvironment', () => {
     expect(environment.APPROVAL_DATA_ENCRYPTION_KEYS).toBeUndefined();
     expect(environment.RECRUITMENT_DATA_ENCRYPTION_KEYS).toBeUndefined();
     expect(environment.RECRUITMENT_BLIND_INDEX_KEYS).toBeUndefined();
+    expect(environment.RECRUITMENT_RESUME_AI_PROVIDER).toBe('disabled');
+    expect(environment.RECRUITMENT_RESUME_SOURCE_ENDPOINT).toBeUndefined();
+    expect(environment.OPENAI_RESUME_API_KEY).toBeUndefined();
     expect(environment.TREASURY_DATA_ENCRYPTION_KEYS).toBeUndefined();
     expect(environment.TREASURY_BLIND_INDEX_KEYS).toBeUndefined();
     expect(environment.TREASURY_WORM_ARCHIVE_ENDPOINT).toBeUndefined();
@@ -87,6 +90,43 @@ describe('validateEnvironment', () => {
       DATA_MIGRATION_ATTACHMENT_GATEWAY_ENDPOINT: 'https://erp.example.com/v1/transfer',
       DATA_MIGRATION_ATTACHMENT_GATEWAY_BEARER_TOKEN: token,
     })).toThrow('独立权限域标准 HTTPS');
+  });
+
+  it('简历 AI 只在隔离网关、模型与独立密钥成套时启用', () => {
+    const base = {
+      NODE_ENV: 'test',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0',
+      WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://erp.example.com',
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://erp.example.com/.well-known/jwks.json',
+      MCP_AUTHORIZATION_SERVER: 'https://erp.example.com',
+      MCP_ALLOWED_ORIGINS: 'https://client.example.com',
+    };
+    const configured = {
+      RECRUITMENT_RESUME_AI_PROVIDER: 'openai',
+      RECRUITMENT_RESUME_SOURCE_ENDPOINT: 'https://resume-files.example.net/v1/redacted-text',
+      RECRUITMENT_RESUME_SOURCE_BEARER_TOKEN: 'resume-source-token-at-least-32-characters',
+      OPENAI_RESUME_MODEL: 'gpt-5.6-luna',
+      OPENAI_RESUME_API_KEY: 'openai-project-key-at-least-32-characters',
+    };
+    expect(validateEnvironment({ ...base, ...configured })).toMatchObject(configured);
+    expect(() => validateEnvironment({
+      ...base,
+      ...configured,
+      OPENAI_RESUME_API_KEY: '',
+    })).toThrow('必须配置隔离网关、OpenAI 模型与独立 API Key');
+    expect(() => validateEnvironment({
+      ...base,
+      ...configured,
+      RECRUITMENT_RESUME_SOURCE_ENDPOINT: 'http://resume-files.example.net/v1/redacted-text',
+    })).toThrow('独立权限域标准 HTTPS');
+    expect(() => validateEnvironment({
+      ...base,
+      OPENAI_RESUME_MODEL: 'gpt-5.6-luna',
+    })).toThrow('关闭时禁止悬空注入');
   });
 
   it('OP 组织下发只接受独立权限域的标准 HTTPS 根地址', () => {

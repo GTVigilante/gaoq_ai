@@ -8,11 +8,58 @@ const environmentSchema = z.object({
   MONGODB_URI: z.string().url().startsWith('mongodb://'),
   REDIS_URL: z.string().url().startsWith('redis://'),
   WEB_ORIGIN: z.string().url(),
+  MARKETING_WEBSITE_ORIGIN: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().url().optional(),
+  ),
+  /** 官网匿名接口固定映射，禁止从客户端请求读取租户或站点标识。 */
+  MARKETING_PUBLIC_TENANT_ID: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/)
+    .default('tenant-marketing'),
+  MARKETING_PUBLIC_SITE_ID: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/)
+    .default('gaoq'),
+  /** 营销联系人 AES-256-GCM 与盲索引密钥必须来自不同 Secret。 */
+  MARKETING_LEAD_ENCRYPTION_KEY_BASE64: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().regex(/^[A-Za-z0-9_-]{43}$/).optional(),
+  ),
+  MARKETING_LEAD_BLIND_INDEX_KEY_BASE64: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().regex(/^[A-Za-z0-9_-]{43}$/).optional(),
+  ),
+  MARKETING_MEDIA_GATEWAY_ENDPOINT: z.preprocess(
+    (value) => value === '' ? undefined : value, z.string().url().optional(),
+  ),
+  MARKETING_MEDIA_GATEWAY_BEARER_TOKEN: z.preprocess(
+    (value) => value === '' ? undefined : value, z.string().min(32).max(512).optional(),
+  ),
+  MARKETING_AI_GATEWAY_ENDPOINT: z.preprocess(
+    (value) => value === '' ? undefined : value, z.string().url().optional(),
+  ),
+  MARKETING_AI_GATEWAY_BEARER_TOKEN: z.preprocess(
+    (value) => value === '' ? undefined : value, z.string().min(32).max(512).optional(),
+  ),
+  MARKETING_CAPTCHA_VERIFY_ENDPOINT: z.preprocess(
+    (value) => value === '' ? undefined : value, z.string().url().optional(),
+  ),
+  MARKETING_CAPTCHA_BEARER_TOKEN: z.preprocess(
+    (value) => value === '' ? undefined : value, z.string().min(32).max(512).optional(),
+  ),
+  MARKETING_NOTIFICATION_GATEWAY_ENDPOINT: z.preprocess(
+    (value) => value === '' ? undefined : value, z.string().url().optional(),
+  ),
+  MARKETING_NOTIFICATION_GATEWAY_BEARER_TOKEN: z.preprocess(
+    (value) => value === '' ? undefined : value, z.string().min(32).max(512).optional(),
+  ),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   AUTH_ISSUER: z.string().url(),
   AUTH_AUDIENCE: z.string().min(1),
   AUTH_RESOURCE: z.string().url(),
+  /** 额外受众资源，例如独立专业算薪 API；禁止与主资源重复。 */
+  AUTH_ADDITIONAL_RESOURCES_JSON: z.string().default('[]'),
   AUTH_JWKS_URI: z.string().url(),
+  /** 工资事实源固定为独立专业算薪系统；legacy 仅供非生产回溯测试。 */
+  PAYROLL_SYSTEM_MODE: z.enum(['external', 'legacy']).default('external'),
+  PAYROLL_WEB_ORIGIN: z.string().url().default('http://localhost:3100'),
   AUTH_SIGNING_PRIVATE_KEY_BASE64: z.preprocess(
     (value) => value === '' ? undefined : value,
     z.string().min(64).optional(),
@@ -40,6 +87,25 @@ const environmentSchema = z.object({
   RECRUITMENT_BLIND_INDEX_KEYS: z.preprocess(
     (value) => value === '' ? undefined : value,
     z.string().min(64).max(16_384).optional(),
+  ),
+  /** 简历对象只经隔离网关读取；网关完成归属校验、恶意文件扫描、提取与 PII 去除。 */
+  RECRUITMENT_RESUME_SOURCE_ENDPOINT: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().url().optional(),
+  ),
+  RECRUITMENT_RESUME_SOURCE_BEARER_TOKEN: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/).optional(),
+  ),
+  /** AI 默认失败关闭；启用时模型和 API Key 必须由部署环境成套注入。 */
+  RECRUITMENT_RESUME_AI_PROVIDER: z.enum(['disabled', 'openai']).default('disabled'),
+  OPENAI_RESUME_API_KEY: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(32).max(512).optional(),
+  ),
+  OPENAI_RESUME_MODEL: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(2).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]+$/).optional(),
   ),
   /** 考勤 L4 明细密钥环，与招聘、审批和盲索引密钥域隔离。 */
   ATTENDANCE_DATA_ENCRYPTION_KEYS: z.preprocess(
@@ -246,6 +312,13 @@ const environmentSchema = z.object({
   const issuer = new URL(environment.AUTH_ISSUER);
   const authorizationServer = new URL(environment.MCP_AUTHORIZATION_SERVER);
   const resource = new URL(environment.AUTH_RESOURCE);
+  if (environment.NODE_ENV === 'production' && environment.PAYROLL_SYSTEM_MODE !== 'external') {
+    context.addIssue({
+      code: 'custom',
+      path: ['PAYROLL_SYSTEM_MODE'],
+      message: '生产环境工资事实源必须使用独立专业算薪系统',
+    });
+  }
   const migrationAttachmentInfrastructure = [
     environment.DATA_MIGRATION_ATTACHMENT_GATEWAY_ENDPOINT,
     environment.DATA_MIGRATION_ATTACHMENT_GATEWAY_BEARER_TOKEN,
@@ -279,6 +352,57 @@ const environmentSchema = z.object({
       message: '数据迁移附件网关必须为独立权限域标准 HTTPS，禁止凭据、query、fragment 和非标准端口',
     });
   }
+  const resumeSourceInfrastructure = [
+    environment.RECRUITMENT_RESUME_SOURCE_ENDPOINT,
+    environment.RECRUITMENT_RESUME_SOURCE_BEARER_TOKEN,
+  ];
+  if (
+    resumeSourceInfrastructure.some((value) => value !== undefined) &&
+    resumeSourceInfrastructure.some((value) => value === undefined)
+  ) context.addIssue({
+    code: 'custom',
+    path: ['RECRUITMENT_RESUME_SOURCE_ENDPOINT'],
+    message: '简历隔离网关端点与凭据必须成套配置',
+  });
+  if (environment.RECRUITMENT_RESUME_SOURCE_ENDPOINT !== undefined) {
+    const endpoint = new URL(environment.RECRUITMENT_RESUME_SOURCE_ENDPOINT);
+    if (
+      endpoint.protocol !== 'https:' ||
+      endpoint.username !== '' ||
+      endpoint.password !== '' ||
+      endpoint.search !== '' ||
+      endpoint.hash !== '' ||
+      (endpoint.port !== '' && endpoint.port !== '443') ||
+      endpoint.origin === issuer.origin
+    ) context.addIssue({
+      code: 'custom',
+      path: ['RECRUITMENT_RESUME_SOURCE_ENDPOINT'],
+      message: '简历隔离网关必须为独立权限域标准 HTTPS，禁止凭据、query、fragment 和非标准端口',
+    });
+  }
+  const resumeAiInfrastructure = [
+    environment.OPENAI_RESUME_API_KEY,
+    environment.OPENAI_RESUME_MODEL,
+  ];
+  if (
+    environment.RECRUITMENT_RESUME_AI_PROVIDER === 'openai' &&
+    (
+      resumeAiInfrastructure.some((value) => value === undefined) ||
+      resumeSourceInfrastructure.some((value) => value === undefined)
+    )
+  ) context.addIssue({
+    code: 'custom',
+    path: ['RECRUITMENT_RESUME_AI_PROVIDER'],
+    message: '启用简历 AI 时必须配置隔离网关、OpenAI 模型与独立 API Key',
+  });
+  if (
+    environment.RECRUITMENT_RESUME_AI_PROVIDER === 'disabled' &&
+    resumeAiInfrastructure.some((value) => value !== undefined)
+  ) context.addIssue({
+    code: 'custom',
+    path: ['RECRUITMENT_RESUME_AI_PROVIDER'],
+    message: '简历 AI 关闭时禁止悬空注入模型或 API Key',
+  });
   if (environment.DATA_MIGRATION_ATTACHMENT_GATEWAY_BEARER_TOKEN !== undefined && [
     environment.TREASURY_WORM_ARCHIVE_BEARER_TOKEN,
     environment.TREASURY_BANK_SUBMISSION_BEARER_TOKEN,
@@ -759,6 +883,73 @@ const environmentSchema = z.object({
       message: '生产环境必须由 Secret Manager 注入指标抓取凭据',
     });
   }
+  if (
+    environment.NODE_ENV === 'production' &&
+    (
+      environment.MARKETING_LEAD_ENCRYPTION_KEY_BASE64 === undefined ||
+      environment.MARKETING_LEAD_BLIND_INDEX_KEY_BASE64 === undefined
+    )
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['MARKETING_LEAD_ENCRYPTION_KEY_BASE64'],
+      message: '生产环境必须注入营销线索加密与盲索引密钥',
+    });
+  }
+  if (
+    environment.MARKETING_LEAD_ENCRYPTION_KEY_BASE64 !== undefined &&
+    environment.MARKETING_LEAD_ENCRYPTION_KEY_BASE64 ===
+      environment.MARKETING_LEAD_BLIND_INDEX_KEY_BASE64
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['MARKETING_LEAD_BLIND_INDEX_KEY_BASE64'],
+      message: '营销线索加密密钥与盲索引密钥禁止复用',
+    });
+  }
+  for (const [endpointName, endpoint, tokenName, token] of [
+    ['MARKETING_MEDIA_GATEWAY_ENDPOINT', environment.MARKETING_MEDIA_GATEWAY_ENDPOINT,
+      'MARKETING_MEDIA_GATEWAY_BEARER_TOKEN', environment.MARKETING_MEDIA_GATEWAY_BEARER_TOKEN],
+    ['MARKETING_AI_GATEWAY_ENDPOINT', environment.MARKETING_AI_GATEWAY_ENDPOINT,
+      'MARKETING_AI_GATEWAY_BEARER_TOKEN', environment.MARKETING_AI_GATEWAY_BEARER_TOKEN],
+    ['MARKETING_CAPTCHA_VERIFY_ENDPOINT', environment.MARKETING_CAPTCHA_VERIFY_ENDPOINT,
+      'MARKETING_CAPTCHA_BEARER_TOKEN', environment.MARKETING_CAPTCHA_BEARER_TOKEN],
+    ['MARKETING_NOTIFICATION_GATEWAY_ENDPOINT', environment.MARKETING_NOTIFICATION_GATEWAY_ENDPOINT,
+      'MARKETING_NOTIFICATION_GATEWAY_BEARER_TOKEN',
+      environment.MARKETING_NOTIFICATION_GATEWAY_BEARER_TOKEN],
+  ] as const) {
+    if ((endpoint === undefined) !== (token === undefined)) {
+      context.addIssue({
+        code: 'custom',
+        path: [endpoint === undefined ? endpointName : tokenName],
+        message: '营销外部网关端点与凭据必须成对配置',
+      });
+    }
+    if (
+      environment.NODE_ENV === 'production' &&
+      endpoint !== undefined &&
+      new URL(endpoint).protocol !== 'https:'
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: [endpointName],
+        message: '生产环境营销外部网关必须使用 HTTPS',
+      });
+    }
+    if (endpoint !== undefined) {
+      const url = new URL(endpoint);
+      if (
+        url.username !== '' || url.password !== '' ||
+        url.search !== '' || url.hash !== ''
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: [endpointName],
+          message: '营销外部网关端点禁止内嵌凭据、query 或 fragment',
+        });
+      }
+    }
+  }
   if (environment.NODE_ENV === 'production') {
     const wormFields = [
       environment.AUDIT_WORM_ENDPOINT,
@@ -811,6 +1002,27 @@ export const validateEnvironment = (input: Record<string, unknown>): AppEnvironm
     throw new Error(`环境变量校验失败：${z.prettifyError(result.error)}`);
   }
 
+  try {
+    const additional = JSON.parse(result.data.AUTH_ADDITIONAL_RESOURCES_JSON) as unknown;
+    const parsed = z.array(z.object({
+      resource: z.string().url().max(2_048),
+      audience: z.string().min(1).max(256),
+    }).strict()).max(20).safeParse(additional);
+    if (!parsed.success) throw new Error(z.prettifyError(parsed.error));
+    const seen = new Set([result.data.AUTH_RESOURCE]);
+    for (const item of parsed.data) {
+      const url = new URL(item.resource);
+      if (
+        url.username !== '' || url.password !== '' || url.hash !== '' ||
+        seen.has(item.resource)
+      ) throw new Error('授权资源禁止凭据、fragment 或重复配置');
+      seen.add(item.resource);
+    }
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : '格式非法';
+    throw new Error(`环境变量校验失败：AUTH_ADDITIONAL_RESOURCES_JSON ${message}`, { cause: error });
+  }
+
   return result.data;
 };
 
@@ -826,6 +1038,7 @@ export const validateWorkerEnvironment = (input: Record<string, unknown>): AppEn
     AUTH_ISSUER: 'https://worker.invalid',
     AUTH_AUDIENCE: 'worker-unused',
     AUTH_RESOURCE: 'https://worker.invalid/mcp',
+    AUTH_ADDITIONAL_RESOURCES_JSON: '[]',
     AUTH_JWKS_URI: 'https://worker.invalid/.well-known/jwks.json',
     MCP_AUTHORIZATION_SERVER: 'https://worker.invalid',
     MCP_ALLOWED_ORIGINS: 'https://worker.invalid',

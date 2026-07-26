@@ -13,6 +13,7 @@ import {
 } from 'jose';
 
 import type { AppEnvironment } from '../../config/environment.js';
+import { requireAuthorizationResource } from './authorization-resources.js';
 
 export interface AccessTokenSigningInput {
   readonly tenantId: string;
@@ -23,6 +24,10 @@ export interface AccessTokenSigningInput {
   readonly roleCodes: readonly string[];
   readonly scopes: readonly string[];
   readonly departmentIds: readonly string[];
+  /** 人员主体绑定的 GaoQ employeeId；服务主体可省略。 */
+  readonly employeeId?: string | null;
+  /** 目标资源；未传时仅为兼容内部旧调用而使用主资源。 */
+  readonly resource?: string;
 }
 
 export interface SignedAccessToken {
@@ -51,14 +56,19 @@ export class SecretManagedRsaAccessTokenSigner extends AccessTokenSigner {
     const expiresIn = this.config.get('AUTH_ACCESS_TOKEN_TTL_SECONDS', { infer: true });
     const issuedAt = Math.floor(Date.now() / 1000);
     const keyId = this.getKeyId();
+    const authorizationResource = requireAuthorizationResource(
+      this.config,
+      input.resource ?? this.config.get('AUTH_RESOURCE', { infer: true }),
+    );
     const token = await new SignJWT({
-      resource: this.config.get('AUTH_RESOURCE', { infer: true }),
+      resource: authorizationResource.resource,
       tenant_id: input.tenantId,
       actor_id: input.actorId,
       actor_type: input.actorType,
       roles: [...input.roleCodes],
       scope: input.scopes.join(' '),
       department_ids: [...input.departmentIds],
+      employee_id: input.employeeId ?? null,
       sid: input.sessionId,
       client_id: input.clientId,
       azp: input.clientId,
@@ -66,7 +76,7 @@ export class SecretManagedRsaAccessTokenSigner extends AccessTokenSigner {
       .setProtectedHeader({ alg: 'RS256', typ: 'at+jwt', kid: keyId })
       .setIssuer(this.config.get('AUTH_ISSUER', { infer: true }))
       .setSubject(`${input.tenantId}:${input.actorId}`)
-      .setAudience(this.config.get('AUTH_AUDIENCE', { infer: true }))
+      .setAudience(authorizationResource.audience)
       .setJti(randomUUID())
       .setIssuedAt(issuedAt)
       .setExpirationTime(issuedAt + expiresIn)

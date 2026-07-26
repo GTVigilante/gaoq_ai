@@ -13,6 +13,7 @@
 | 04 | [MCP 服务规范](./04-mcp-service-standard.md) | 规定 AI 接入协议、鉴权、能力、风险控制与兼容测试 |
 | 05 | [安全、质量与切换规范](./05-security-quality-cutover.md) | 规定安全基线、测试门禁、灾备、迁移和统一大切换 |
 | 06 | [GitHub 治理规范](./06-github-governance.md) | 规定 Milestone、Issue、分支、PR、DoR 和 DoD |
+| 07 | [专业算薪系统边界](./07-payroll-system-boundary.md) | 规定 ERP 主数据、统一身份与独立工资事实源边界 |
 
 ## 强制性用语
 

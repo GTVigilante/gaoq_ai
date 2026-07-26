@@ -5,11 +5,13 @@ import {
   AuditOutlined,
   DashboardOutlined,
   FileTextOutlined,
+  GlobalOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   MobileOutlined,
   RobotOutlined,
   SafetyCertificateOutlined,
+  SolutionOutlined,
   TeamOutlined,
   UserOutlined,
 } from '@ant-design/icons';
@@ -25,6 +27,8 @@ const NAVIGATION: NonNullable<MenuProps['items']> = [
   { key: '/workspace', icon: <DashboardOutlined />, label: <Link href="/workspace">工作台</Link> },
   { key: '/workspace/approvals', icon: <AuditOutlined />, label: <Link href="/workspace/approvals">审批中心</Link> },
   { key: '/workspace/forms', icon: <FileTextOutlined />, label: <Link href="/workspace/forms">表单设计</Link> },
+  { key: '/workspace/marketing', icon: <GlobalOutlined />, label: <Link href="/workspace/marketing">官网 CMS</Link> },
+  { key: '/workspace/recruitment', icon: <SolutionOutlined />, label: <Link href="/workspace/recruitment">智能简历库</Link> },
   { key: '/workspace/org', icon: <ApartmentOutlined />, label: <Link href="/workspace/org">组织管理</Link> },
   { key: '/workspace/profile', icon: <UserOutlined />, label: <Link href="/workspace/profile">个人中心</Link> },
 ];

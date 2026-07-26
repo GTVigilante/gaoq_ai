@@ -16,6 +16,7 @@ import type { AppEnvironment } from '../../config/environment.js';
 import { REDIS_CLIENT } from '../../infrastructure/redis/redis.constants.js';
 import { OAuthClientRegistry } from './oauth-client-registry.js';
 import type { BrowserOAuthIdentity } from './token-grant.service.js';
+import { requireAuthorizationResource } from './authorization-resources.js';
 
 const AUTHORIZATION_REQUEST_TTL_SECONDS = 10 * 60;
 const AUTHORIZATION_CODE_TTL_SECONDS = 60;
@@ -253,9 +254,7 @@ export class OAuthAuthorizationTransactionService {
   }
 
   private assertProtocolInput(input: BeginOAuthAuthorizationInput): void {
-    if (input.resource !== this.config.get('AUTH_RESOURCE', { infer: true })) {
-      throw new BadRequestException({ code: 'OAUTH_RESOURCE_INVALID', message: 'resource 非法' });
-    }
+    requireAuthorizationResource(this.config, input.resource);
     if (!STATE_PATTERN.test(input.state)) {
       throw new BadRequestException({ code: 'OAUTH_STATE_INVALID', message: 'state 非法' });
     }

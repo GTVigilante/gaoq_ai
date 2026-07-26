@@ -41,6 +41,26 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
+  name: {{ include "gaoq-erp.fullname" . }}-website
+  namespace: {{ include "gaoq-erp.targetNamespace" . }}
+  labels:
+    {{- include "gaoq-erp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: website
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ include "gaoq-erp.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: website
+  ports:
+    - name: http
+      port: 3002
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
   name: {{ include "gaoq-erp.fullname" . }}-worker-metrics
   namespace: {{ include "gaoq-erp.targetNamespace" . }}
   labels:

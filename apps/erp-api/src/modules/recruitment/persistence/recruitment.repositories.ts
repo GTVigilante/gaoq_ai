@@ -291,6 +291,26 @@ export class RecruitmentPositionRepository extends TenantBoundRecruitmentReposit
     });
   }
 
+  /** 招聘门户只读取当前租户已开放职位，并以首次发布时间稳定倒序。 */
+  async findOpen(limit = 100): Promise<readonly RecruitmentPosition[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) {
+      throw new Error('招聘门户职位查询上限无效');
+    }
+    const records = await this.records
+      .find({ tenantId: this.tenantId(), status: 'open' })
+      .sort({ publishedAt: -1, id: 1 })
+      .limit(limit)
+      .lean()
+      .exec();
+    return records.map((record) => deepFreezeRecruitment({
+      id: record.id, tenantId: record.tenantId, requisitionId: record.requisitionId,
+      title: record.title, departmentId: record.departmentId, jobLevelId: record.jobLevelId,
+      location: record.location, headcount: record.headcount, status: record.status,
+      version: record.version, publishedAt: toIso(record.publishedAt), closedAt: toIso(record.closedAt),
+      createdAt: record.createdAt.toISOString(), updatedAt: record.updatedAt.toISOString(),
+    }));
+  }
+
   async insert(position: RecruitmentPosition, session: ClientSession): Promise<void> {
     this.assertTenant(position.tenantId);
     await this.records.create([positionRecord(position)], { session });

@@ -63,7 +63,7 @@ assertIncludes(JSON.stringify(schema), [
 for (const [component, markers] of Object.entries({
   api: ['runtime.apiConfigMapName', 'runtime.apiSecretName', '/api/health/ready'],
   worker: ['runtime.workerConfigMapName', 'runtime.workerSecretName', '/health/live'],
-  web: ['path: /', 'containerPort: 3000'],
+  web: ['runtime.webConfigMapName', 'runtime.webSecretName', 'path: /', 'containerPort: 3000'],
 })) {
   const deployment = contents.get(`templates/deployment-${component}.yaml`);
   assertIncludes(deployment, [
@@ -90,9 +90,15 @@ for (const [component, markers] of Object.entries({
 }
 
 const webDeployment = contents.get('templates/deployment-web.yaml');
-if (webDeployment.includes('secretRef:') || webDeployment.includes('envFrom:')) {
-  throw new Error('KUBERNETES_WEB_SECRET_ACCESS_FORBIDDEN');
-}
+assertIncludes(webDeployment, [
+  'envFrom:',
+  'runtime.webConfigMapName',
+  'runtime.webSecretName',
+], 'KUBERNETES_WEB_BFF_IDENTITY_MISSING');
+if (
+  webDeployment.includes('runtime.apiSecretName') ||
+  webDeployment.includes('runtime.workerSecretName')
+) throw new Error('KUBERNETES_WEB_BACKEND_SECRET_REUSE_FORBIDDEN');
 
 const serviceAccount = contents.get('templates/serviceaccount.yaml');
 assertIncludes(serviceAccount, [

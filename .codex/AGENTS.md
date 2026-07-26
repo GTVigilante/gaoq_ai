@@ -2,7 +2,7 @@
 
 进入本仓库执行任务前，必须依次读取：
 
-1. `../AGENTS.md`：Codex / Kimi 角色、安全红线、派活和 CR 沉淀规范。
+1. `../AGENTS.md`：Codex 执行职责、安全红线、任务边界和 CR 沉淀规范。
 2. `../CODEX.md`：当前系统状态、目录边界和完整验证命令。
 3. `../docs/phase-0/README.md`：企业架构、数据、集成、MCP、安全和发布强制基线。
 4. 对应的 `../docs/phase-N/README.md`：阶段已交付代码与外部待验收边界。

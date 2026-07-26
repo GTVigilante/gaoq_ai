@@ -1,4 +1,14 @@
-import { BadRequestException, Body, Controller, Get, Headers, Param, Post, Req } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Param,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 
 import { AuditService } from '../../core/audit/audit.service.js';
 import type { ErpRequest } from '../../core/http/request-context.js';
@@ -36,8 +46,10 @@ import {
   ImportShadowPayrollCycleDto,
   SignShadowPayrollCycleDto,
 } from './application/payroll.dto.js';
+import { LegacyPayrollBoundaryGuard } from './legacy-payroll-boundary.guard.js';
 
 @Controller('payroll')
+@UseGuards(LegacyPayrollBoundaryGuard)
 export class PayrollController {
   constructor(
     private readonly runs: PayrollRunService,
