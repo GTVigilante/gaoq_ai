@@ -34,6 +34,7 @@ export interface AttendanceShiftEvaluation {
   readonly shiftPlanId: string;
   readonly businessDate: string;
   readonly outcome: 'complete' | 'missing_punch';
+  readonly punchProviderCode: string | null;
   readonly punchInFactId: string | null;
   readonly punchOutFactId: string | null;
   readonly impact: AttendanceImpact;
@@ -97,8 +98,8 @@ export function assertShiftPlanCaptureWindowAvailable(
     }
     const existingWindow = captureWindow(plan);
     if (
-      candidateWindow.start < existingWindow.end &&
-      existingWindow.start < candidateWindow.end
+      candidateWindow.start <= existingWindow.end &&
+      existingWindow.start <= candidateWindow.end
     ) {
       fail(
         'ATTENDANCE_SHIFT_CAPTURE_WINDOW_OVERLAP',
@@ -118,10 +119,10 @@ export function evaluateAttendanceShift(
   now: Date,
 ): AttendanceShiftEvaluation {
   const end = parseInstant(plan.scheduledEndAt);
-  if (!Number.isFinite(now.getTime()) || now.getTime() < end.getTime()) {
-    fail('ATTENDANCE_SHIFT_NOT_ENDED', '班次结束前不得计算考勤结果');
-  }
   const window = captureWindow(plan);
+  if (!Number.isFinite(now.getTime()) || now.getTime() < window.end) {
+    fail('ATTENDANCE_SHIFT_CAPTURE_WINDOW_OPEN', '打卡捕获窗口关闭前不得计算考勤结果');
+  }
   const eligible = facts.filter((fact) => {
     if (fact.tenantId !== plan.tenantId || fact.employeeId !== plan.employeeId) {
       fail('ATTENDANCE_SHIFT_FACT_OUT_OF_SCOPE', '班次计算发现跨租户或跨员工打卡');
@@ -129,10 +130,21 @@ export function evaluateAttendanceShift(
     const occurredAt = parseInstant(fact.occurredAt).getTime();
     return occurredAt >= window.start && occurredAt <= window.end;
   });
-  const punchIns = eligible
+  const punchFacts = eligible.filter(
+    (fact) => fact.factType === 'punch_in' || fact.factType === 'punch_out',
+  );
+  const providerCodes = [...new Set(punchFacts.map((fact) => fact.providerCode))].sort();
+  if (providerCodes.length > 1) {
+    fail(
+      'ATTENDANCE_SHIFT_PUNCH_PROVIDER_AMBIGUOUS',
+      '同一班次捕获到多个打卡来源，必须人工确认后再计算',
+    );
+  }
+  const punchProviderCode = providerCodes[0] ?? null;
+  const punchIns = punchFacts
     .filter((fact) => fact.factType === 'punch_in')
     .sort(compareFacts);
-  const punchOuts = eligible
+  const punchOuts = punchFacts
     .filter((fact) => fact.factType === 'punch_out')
     .sort(compareFacts);
   const punchIn = punchIns[0] ?? null;
@@ -146,6 +158,7 @@ export function evaluateAttendanceShift(
       shiftPlanId: plan.id,
       businessDate: plan.businessDate,
       outcome: 'missing_punch',
+      punchProviderCode,
       punchInFactId: punchIn?.id ?? null,
       punchOutFactId: punchOut?.id ?? null,
       impact: Object.freeze({
@@ -170,6 +183,7 @@ export function evaluateAttendanceShift(
     shiftPlanId: plan.id,
     businessDate: plan.businessDate,
     outcome: 'complete',
+    punchProviderCode,
     punchInFactId: punchIn.id,
     punchOutFactId: punchOut.id,
     impact: Object.freeze({

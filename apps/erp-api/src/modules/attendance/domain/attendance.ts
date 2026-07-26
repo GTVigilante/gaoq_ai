@@ -21,6 +21,16 @@ export interface AttendanceImpact {
   readonly absentMinutes: number;
 }
 
+export interface AttendanceShiftDerivation {
+  readonly algorithmVersion: 'attendance-shift-v1';
+  readonly shiftPlanId: string;
+  readonly rulesetVersion: string;
+  readonly outcome: 'complete' | 'missing_punch';
+  readonly punchProviderCode: string | null;
+  readonly punchInFactId: string | null;
+  readonly punchOutFactId: string | null;
+}
+
 export interface AttendanceSourceFact {
   readonly id: string;
   readonly tenantId: string;
@@ -31,6 +41,7 @@ export interface AttendanceSourceFact {
   readonly timeZone: string;
   readonly businessDate: string;
   readonly shiftPlanId?: string | null;
+  readonly derivation?: AttendanceShiftDerivation | null | undefined;
   readonly impact: AttendanceImpact;
   readonly sourceObservedAt: string;
   readonly createdAt: string;
@@ -123,6 +134,9 @@ export function createAttendanceSourceFact(
         '只有 Attendance 规则引擎派生的 shift 事实可以绑定班次计划',
       );
     }
+    assertShiftDerivation(input.shiftPlanId, input.derivation);
+  } else if (input.derivation !== undefined && input.derivation !== null) {
+    fail('ATTENDANCE_SHIFT_DERIVATION_INVALID', '班次派生谱系必须绑定班次计划');
   }
   const sourceObservedAt = parseInstant(input.sourceObservedAt, 'ATTENDANCE_SOURCE_TIME_INVALID');
   const occurredAt = parseInstant(input.occurredAt, 'ATTENDANCE_OCCURRED_AT_INVALID');
@@ -134,6 +148,9 @@ export function createAttendanceSourceFact(
   if (!Number.isFinite(now.getTime())) fail('ATTENDANCE_NOW_INVALID', '当前时间非法');
   return Object.freeze({
     ...input,
+    derivation: input.derivation === undefined || input.derivation === null
+      ? input.derivation
+      : Object.freeze({ ...input.derivation }),
     impact: freezeImpact(input.impact),
     businessDate,
     createdAt: now.toISOString(),
@@ -294,6 +311,7 @@ export function closeAttendanceMonth(input: {
     day.inputs.push(hashCanonical([
       fact.id,
       fact.shiftPlanId ?? null,
+      fact.derivation ?? null,
       fact.factType,
       fact.occurredAt,
       fact.impact,
@@ -355,6 +373,33 @@ export function closeAttendanceMonth(input: {
     supersessionEvidenceId: input.supersessionEvidenceId,
     closedAt: now.toISOString(),
   });
+}
+
+function assertShiftDerivation(
+  shiftPlanId: string,
+  derivation: AttendanceShiftDerivation | null | undefined,
+): void {
+  if (derivation === undefined || derivation === null ||
+    derivation.algorithmVersion !== 'attendance-shift-v1' ||
+    derivation.shiftPlanId !== shiftPlanId ||
+    !RULESET_PATTERN.test(derivation.rulesetVersion)) {
+    fail('ATTENDANCE_SHIFT_DERIVATION_INVALID', '班次派生事实缺少有效规则谱系');
+  }
+  for (const id of [derivation.punchInFactId, derivation.punchOutFactId]) {
+    if (id !== null) assertId(id, 'ATTENDANCE_SHIFT_DERIVATION_INVALID');
+  }
+  if (derivation.punchProviderCode !== null) {
+    assertId(derivation.punchProviderCode, 'ATTENDANCE_SHIFT_DERIVATION_INVALID');
+  }
+  const hasPunch = derivation.punchInFactId !== null || derivation.punchOutFactId !== null;
+  if ((hasPunch && derivation.punchProviderCode === null) ||
+    (!hasPunch && derivation.punchProviderCode !== null) ||
+    (derivation.outcome === 'complete' &&
+      (derivation.punchProviderCode === null ||
+        derivation.punchInFactId === null ||
+        derivation.punchOutFactId === null))) {
+    fail('ATTENDANCE_SHIFT_DERIVATION_INVALID', '班次派生结果与打卡谱系不一致');
+  }
 }
 
 function normalizeSourceWatermarks(

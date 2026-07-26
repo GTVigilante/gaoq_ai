@@ -4,6 +4,7 @@ import {
   Controller,
   Get,
   Headers,
+  Logger,
   Param,
   Post,
   Res,
@@ -36,6 +37,8 @@ const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 @Controller('attendance')
 export class AttendanceController {
+  private readonly logger = new Logger(AttendanceController.name);
+
   constructor(
     private readonly attendance: AttendanceApplicationService,
     private readonly shifts: AttendanceShiftApplicationService,
@@ -49,7 +52,7 @@ export class AttendanceController {
     @Body() body: AssignAttendanceShiftPlanDto,
   ): Promise<{ readonly shiftPlan: AttendanceShiftPlanSummary }> {
     const result = await this.shifts.assign(this.key(key), body);
-    await this.audit.record({
+    await this.auditSafely({
       action: 'attendance.shift_plan.assign',
       resourceType: 'attendance_shift_plan',
       resourceId: result.shiftPlan.id,
@@ -72,7 +75,7 @@ export class AttendanceController {
     @Param('shiftPlanId') shiftPlanId: string,
   ): Promise<{ readonly evaluation: AttendanceShiftEvaluationSummary }> {
     const result = await this.shifts.evaluate(this.key(key), shiftPlanId);
-    await this.audit.record({
+    await this.auditSafely({
       action: 'attendance.shift.evaluate',
       resourceType: 'attendance_shift_plan',
       resourceId: result.evaluation.shiftPlanId,
@@ -93,7 +96,7 @@ export class AttendanceController {
     @Body() body: IngestAttendanceSourceFactDto,
   ): Promise<{ readonly fact: AttendanceFactSummary }> {
     const result = await this.attendance.ingest(this.key(key), body);
-    await this.audit.record({
+    await this.auditSafely({
       action: 'attendance.source_fact.ingest', resourceType: 'attendance_source_fact',
       resourceId: result.fact.id, riskLevel: 'R1', outcome: 'success', metadata: {
         employeeId: result.fact.employeeId, providerCode: result.fact.providerCode,
@@ -110,7 +113,7 @@ export class AttendanceController {
     @Body() body: RegisterAttendanceCorrectionDto,
   ): Promise<{ readonly correction: AttendanceCorrectionSummary }> {
     const result = await this.attendance.registerCorrection(this.key(key), body);
-    await this.audit.record({
+    await this.auditSafely({
       action: 'attendance.correction.register', resourceType: 'attendance_correction',
       resourceId: result.correction.id, riskLevel: 'R2', outcome: 'success', metadata: {
         employeeId: result.correction.employeeId,
@@ -129,7 +132,7 @@ export class AttendanceController {
     @Body() body: RequestAttendanceCorrectionDto,
   ): Promise<{ readonly request: AttendanceCorrectionRequestSummary }> {
     const result = await this.attendance.requestCorrection(this.key(key), body);
-    await this.audit.record({
+    await this.auditSafely({
       action: 'attendance.correction.request', resourceType: 'attendance_correction_request',
       resourceId: result.request.approvalInstanceId, riskLevel: 'R1', outcome: 'success',
       metadata: {
@@ -185,7 +188,7 @@ export class AttendanceController {
     month: AttendanceMonthSummary,
     riskLevel: 'R0' | 'R2',
   ): Promise<void> {
-    await this.audit.record({
+    await this.auditSafely({
       action, resourceType: 'attendance_monthly_snapshot', resourceId: month.id,
       riskLevel, outcome: 'success', metadata: {
         employeeId: month.employeeId, month: month.month,
@@ -193,4 +196,24 @@ export class AttendanceController {
       },
     });
   }
+
+  private async auditSafely(
+    input: Parameters<AuditService['record']>[0],
+  ): Promise<void> {
+    try {
+      await this.audit.record(input);
+    } catch (error) {
+      this.logger.error({
+        code: 'ATTENDANCE_AUDIT_WRITE_FAILED',
+        failureCode: auditFailureCode(error),
+      });
+    }
+  }
+}
+
+function auditFailureCode(error: unknown): string {
+  if (error instanceof Error && /^[A-Z0-9_]{3,128}$/.test(error.message)) {
+    return error.message;
+  }
+  return 'ATTENDANCE_AUDIT_UNAVAILABLE';
 }

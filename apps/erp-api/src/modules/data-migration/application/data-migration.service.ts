@@ -1332,6 +1332,11 @@ export class DataMigrationService {
           compensationProfileId: targetId(
             'payroll.compensation_profile', line.compensationProfileSourceId,
           ),
+          ...(line.additionalCompensationProfileSourceIds === undefined ? {} : {
+            additionalCompensationProfileIds:
+              line.additionalCompensationProfileSourceIds.map((sourceId) =>
+                targetId('payroll.compensation_profile', sourceId)),
+          }),
           attendanceSnapshotId: targetId(
             'attendance.monthly_snapshot', line.attendanceSnapshotSourceId,
           ),
@@ -3708,6 +3713,7 @@ function payrollPeriodPayload(
 interface PayrollCalculationRunMigrationLinePayload {
   readonly employeeSourceId: string;
   readonly compensationProfileSourceId: string;
+  readonly additionalCompensationProfileSourceIds?: readonly string[];
   readonly attendanceSnapshotSourceId: string;
   readonly expectedGrossMinor: number;
   readonly expectedWithholdingTaxMinor: number;
@@ -3752,14 +3758,30 @@ function payrollCalculationRunPayload(
     !isStrictUtcIso(value.completedAt) || !migrationEvidence(value)) throw invalidPayload();
   const lines = value.lines.map((item) => {
     if (!isPlainMigrationObject(item)) throw invalidPayload();
-    exactKeys(item, [
+    const baseKeys = [
       'attendanceSnapshotSourceId', 'compensationProfileSourceId', 'employeeSourceId',
       'expectedGrossMinor', 'expectedNetMinor', 'expectedWithholdingTaxMinor',
-    ]);
+    ];
+    const hasAdditionalProfiles = Object.hasOwn(
+      item,
+      'additionalCompensationProfileSourceIds',
+    );
+    exactKeys(item, hasAdditionalProfiles
+      ? [...baseKeys, 'additionalCompensationProfileSourceIds']
+      : baseKeys);
+    const additionalProfileIds = hasAdditionalProfiles
+      ? migrationStringArray(item.additionalCompensationProfileSourceIds)
+      : [];
     if (typeof item.employeeSourceId !== 'string' ||
       !SOURCE_ID_PATTERN.test(item.employeeSourceId) ||
       typeof item.compensationProfileSourceId !== 'string' ||
       !SOURCE_ID_PATTERN.test(item.compensationProfileSourceId) ||
+      (hasAdditionalProfiles &&
+        (additionalProfileIds.length < 1 || additionalProfileIds.length > 30)) ||
+      additionalProfileIds.some((sourceId) =>
+        typeof sourceId !== 'string' || !SOURCE_ID_PATTERN.test(sourceId)) ||
+      new Set([item.compensationProfileSourceId, ...additionalProfileIds]).size !==
+        additionalProfileIds.length + 1 ||
       typeof item.attendanceSnapshotSourceId !== 'string' ||
       !SOURCE_ID_PATTERN.test(item.attendanceSnapshotSourceId) ||
       !nonnegativeSafeInteger(item.expectedGrossMinor) ||
@@ -3768,6 +3790,9 @@ function payrollCalculationRunPayload(
     return {
       employeeSourceId: item.employeeSourceId,
       compensationProfileSourceId: item.compensationProfileSourceId,
+      ...(hasAdditionalProfiles ? {
+        additionalCompensationProfileSourceIds: additionalProfileIds,
+      } : {}),
       attendanceSnapshotSourceId: item.attendanceSnapshotSourceId,
       expectedGrossMinor: Number(item.expectedGrossMinor),
       expectedWithholdingTaxMinor: Number(item.expectedWithholdingTaxMinor),
@@ -3814,6 +3839,11 @@ function payrollCalculationRunAssociationSpecs(
         sourceAssociationId: line.compensationProfileSourceId,
         entityType: 'payroll.compensation_profile' as const,
       },
+      ...(line.additionalCompensationProfileSourceIds ?? []).map((sourceId) => ({
+        relationship: 'compensation_profile' as const,
+        sourceAssociationId: sourceId,
+        entityType: 'payroll.compensation_profile' as const,
+      })),
       {
         relationship: 'attendance_snapshot' as const,
         sourceAssociationId: line.attendanceSnapshotSourceId,
@@ -4854,6 +4884,13 @@ function associationEvidence(input: ApplyDataMigrationRecordDto): readonly Assoc
 
 function exactKeys(value: Readonly<Record<string, unknown>>, expected: readonly string[]): void {
   if (Object.keys(value).sort().join('|') !== [...expected].sort().join('|')) throw invalidPayload();
+}
+function migrationStringArray(value: unknown): readonly string[] {
+  if (!Array.isArray(value)) throw invalidPayload();
+  return value.map((item: unknown) => {
+    if (typeof item !== 'string') throw invalidPayload();
+    return item;
+  });
 }
 function invalidPayload(): Error { return new Error('DATA_MIGRATION_PAYLOAD_INVALID'); }
 function isStrictUtcIso(value: unknown): value is string {

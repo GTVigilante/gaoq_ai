@@ -1835,6 +1835,7 @@ describe('DataMigrationService', () => {
       lines: [{
         employeeSourceId: 'legacy-employee-001',
         compensationProfileSourceId: 'legacy-compensation-001',
+        additionalCompensationProfileSourceIds: ['legacy-compensation-002'],
         attendanceSnapshotSourceId: 'legacy-attendance-001',
         expectedGrossMinor: 1_000_000, expectedWithholdingTaxMinor: 20_000,
         expectedNetMinor: 980_000,
@@ -1857,6 +1858,7 @@ describe('DataMigrationService', () => {
       'payroll.compensation_profile': '01J8ZQK7V0A2M4N6P8R0T2W4C1',
       'attendance.monthly_snapshot': '01J8ZQK7V0A2M4N6P8R0T2W4A1',
     };
+    const secondCompensationProfileId = '01J8ZQK7V0A2M4N6P8R0T2W4C2';
     const mappings = {
       findOne: vi.fn((filter: { entityType: string }) => query(
         filter.entityType === 'payroll.calculation_run' ? null : {
@@ -1873,6 +1875,9 @@ describe('DataMigrationService', () => {
         { entityType: 'payroll.compensation_profile',
           sourceRecordId: 'legacy-compensation-001',
           targetId: targetIds['payroll.compensation_profile'] },
+        { entityType: 'payroll.compensation_profile',
+          sourceRecordId: 'legacy-compensation-002',
+          targetId: secondCompensationProfileId },
         { entityType: 'attendance.monthly_snapshot',
           sourceRecordId: 'legacy-attendance-001',
           targetId: targetIds['attendance.monthly_snapshot'] },
@@ -1908,7 +1913,7 @@ describe('DataMigrationService', () => {
       payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
       associationSourceIds: [
         'legacy-period-001', 'legacy-rule-001', 'legacy-employee-001',
-        'legacy-compensation-001', 'legacy-attendance-001',
+        'legacy-compensation-001', 'legacy-compensation-002', 'legacy-attendance-001',
       ],
       attachments: [{ sourceAttachmentId: 'payroll-run-001', checksum: 'r'.repeat(43) }],
     }));
@@ -1920,10 +1925,38 @@ describe('DataMigrationService', () => {
         lines: [expect.objectContaining({
           employeeId: 'employee-001',
           compensationProfileId: targetIds['payroll.compensation_profile'],
+          additionalCompensationProfileIds: [secondCompensationProfileId],
           attendanceSnapshotId: targetIds['attendance.monthly_snapshot'],
         })],
       }),
     );
+    const legacyPayload = {
+      ...payload,
+      lines: [{
+        employeeSourceId: 'legacy-employee-001',
+        compensationProfileSourceId: 'legacy-compensation-001',
+        attendanceSnapshotSourceId: 'legacy-attendance-001',
+        expectedGrossMinor: 1_000_000,
+        expectedWithholdingTaxMinor: 20_000,
+        expectedNetMinor: 980_000,
+      }],
+    };
+    await trusted(context, () => service.apply(RUN_ID, {
+      sequence: 1, sourceRecordId: 'legacy-run-002', sourceVersion: '1',
+      entityType: 'payroll.calculation_run', payload: legacyPayload,
+      payloadHash: dataMigrationChecksum.digest(
+        dataMigrationChecksum.canonicalJson(legacyPayload),
+      ),
+      associationSourceIds: [
+        'legacy-period-001', 'legacy-rule-001', 'legacy-employee-001',
+        'legacy-compensation-001', 'legacy-attendance-001',
+      ],
+      attachments: [{ sourceAttachmentId: 'payroll-run-001', checksum: 'r'.repeat(43) }],
+    }));
+    const legacyCommand = (
+      payrollRuns.importCalculationRunFromMigration.mock.calls[1]?.[1] as unknown
+    ) as { readonly lines: readonly Record<string, unknown>[] };
+    expect(legacyCommand.lines[0]).not.toHaveProperty('additionalCompensationProfileIds');
     const bulkOperations = associations.bulkWrite.mock.calls[0]?.[0] as unknown[];
     expect(bulkOperations[0]).toMatchObject({ updateOne: { upsert: true } });
     expect(associations.bulkWrite.mock.calls[0]?.[1]).toEqual({ ordered: true });

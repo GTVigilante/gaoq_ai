@@ -123,4 +123,49 @@ describe('累计预扣确定性计算内核', () => {
       ...base, postTaxDeductionMinor: 900_000,
     })).toThrow(/实发金额不能为负/u);
   });
+
+  it('月中分摊证据必须连续覆盖整月、落在档案有效期且匹配规则法域', () => {
+    const allocations = [
+      {
+        profileId: 'profile-001', profileVersion: 1, profileHash: 'a'.repeat(43),
+        jurisdictionCode: 'CN-SH', effectiveFrom: '2026-01-01',
+        effectiveTo: '2026-07-15', allocatedFrom: '2026-07-01',
+        allocatedTo: '2026-07-15', allocatedDays: 15, periodDays: 31,
+        allocationMethod: 'CALENDAR_DAY_HALF_UP' as const,
+      },
+      {
+        profileId: 'profile-002', profileVersion: 2, profileHash: 'b'.repeat(43),
+        jurisdictionCode: 'CN-BJ', effectiveFrom: '2026-07-16',
+        effectiveTo: null, allocatedFrom: '2026-07-16',
+        allocatedTo: '2026-07-31', allocatedDays: 16, periodDays: 31,
+        allocationMethod: 'CALENDAR_DAY_HALF_UP' as const,
+      },
+    ] as const;
+    expect(calculatePayroll({
+      ...base,
+      ruleJurisdictionCode: 'CN',
+      compensationAllocations: allocations,
+    }).inputHash).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(() => calculatePayroll({
+      ...base,
+      ruleJurisdictionCode: 'US',
+      compensationAllocations: allocations,
+    })).toThrow(/薪酬分摊证据非法/u);
+    expect(() => calculatePayroll({
+      ...base,
+      ruleJurisdictionCode: 'CN',
+      compensationAllocations: [
+        allocations[0],
+        { ...allocations[1], allocatedFrom: '2026-07-17', allocatedDays: 15 },
+      ],
+    })).toThrow(/薪酬分摊证据非法/u);
+    expect(() => calculatePayroll({
+      ...base,
+      ruleJurisdictionCode: 'CN',
+      compensationAllocations: [
+        { ...allocations[0], effectiveTo: '2026-07-14' },
+        allocations[1],
+      ],
+    })).toThrow(/薪酬分摊证据非法/u);
+  });
 });
