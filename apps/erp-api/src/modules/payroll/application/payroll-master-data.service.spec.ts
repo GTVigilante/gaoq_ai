@@ -68,6 +68,7 @@ describe('PayrollMasterDataService migration', () => {
     const store = assemble();
     const data = {
       currency: 'CNY' as const,
+      jurisdictionCode: 'CN-SH',
       taxableEarnings: [{ code: 'BASE', amountMinor: 1_000_000 }],
       nonTaxableEarnings: [], employeeSocialInsuranceMinor: 80_000,
       employeeHousingFundMinor: 70_000, specialAdditionalDeductionMinor: 20_000,

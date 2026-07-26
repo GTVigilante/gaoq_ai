@@ -348,6 +348,7 @@ export class PayrollController {
       action: 'payroll.compensation.attest', resourceType: 'payroll_compensation_profile',
       resourceId: result.id, riskLevel: 'R2', outcome: 'success', metadata: {
         employeeId: result.employeeId, version: result.version,
+        jurisdictionCode: result.jurisdictionCode,
         effectiveFrom: result.effectiveFrom, effectiveTo: result.effectiveTo ?? 'open',
       },
     });

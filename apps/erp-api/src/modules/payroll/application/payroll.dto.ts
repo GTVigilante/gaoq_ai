@@ -46,6 +46,7 @@ export class PayrollAttendanceAdjustmentDto {
 
 export class AttestCompensationProfileDto {
   @Matches(ID) employeeId!: string;
+  @Matches(ID) jurisdictionCode!: string;
   @Matches(DATE) effectiveFrom!: string;
   @IsOptional() @Matches(DATE) effectiveTo!: string | null;
   @Matches(ID) approvalEvidenceId!: string;

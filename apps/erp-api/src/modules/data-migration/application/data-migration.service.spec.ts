@@ -1705,7 +1705,8 @@ describe('DataMigrationService', () => {
       approvalHistorySourceId: 'legacy-approval-compensation-001',
       approvalEvidenceChecksum: 'a'.repeat(43),
       data: {
-        currency: 'CNY', taxableEarnings: [{ code: 'BASE', amountMinor: 1_000_000 }],
+        currency: 'CNY', jurisdictionCode: 'CN-SH',
+        taxableEarnings: [{ code: 'BASE', amountMinor: 1_000_000 }],
         nonTaxableEarnings: [], employeeSocialInsuranceMinor: 80_000,
         employeeHousingFundMinor: 70_000, specialAdditionalDeductionMinor: 20_000,
         otherPreTaxWithholdingMinor: 0, postTaxDeductionMinor: 0,

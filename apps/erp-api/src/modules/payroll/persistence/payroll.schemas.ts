@@ -96,6 +96,8 @@ export class PayrollCompensationProfileRecord extends ProtectedPayrollRecord {
   tenantId!: string;
   @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
   employeeId!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 64, match: ID_PATTERN })
+  jurisdictionCode!: string;
   @Prop({ type: Number, required: true, immutable: true, min: 1 }) version!: number;
   @Prop({ type: String, required: true, immutable: true, match: DATE_PATTERN }) effectiveFrom!: string;
   @Prop({ type: String, default: null, immutable: true, match: DATE_PATTERN })
@@ -360,6 +362,17 @@ export class PayrollInputSnapshotRecord extends ProtectedPayrollRecord {
   employeeId!: string;
   @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
   compensationProfileId!: string;
+  @Prop({
+    type: [{ type: String, match: ULID_PATTERN }],
+    required: true,
+    immutable: true,
+    validate: {
+      validator: (values: readonly string[]) =>
+        values.length >= 1 && values.length <= 31 && new Set(values).size === values.length,
+      message: '薪酬档案快照引用必须为 1 至 31 个不重复 ULID',
+    },
+  })
+  compensationProfileIds!: string[];
   @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
   attendanceSnapshotId!: string;
   @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })

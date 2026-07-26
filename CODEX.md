@@ -17,6 +17,10 @@
 - 2026-07-27 已补齐 Phase 4 Attendance 的 Employment 有效期、版本化日班次、
   跨日归属、Provider 提交水位/Inbox 对账与月结摘要哈希；真实 Provider 沙箱
   和生产 Replica Set 上的 v2 索引 apply 仍待现场证据。
+- 2026-07-27 已补齐 Phase 4 Payroll 月中薪酬与跨法域自然日 HALF_UP 分摊：
+  工资运行只接收精确档案引用，校验整月无缺口/无重叠，把档案版本、法域和分摊
+  边界冻结进 L4 输入快照；不同考勤费率缺少逐日归属时失败关闭。补发/冲销、
+  年度汇算及真实税务金样例仍未完成。
 - GitHub PR #103 的 Hosted Actions 当前在任何步骤执行前被账户付款或 Spending
   limit 拦截；这是外部门禁未执行，不得记为代码测试失败或门禁通过。
 

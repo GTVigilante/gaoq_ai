@@ -38,7 +38,8 @@ describe('Payroll 持久化契约', () => {
   it('薪酬档案不保存金额明文，并要求完整独立密文', async () => {
     const document = new ProfileModel({
       id: '01J8ZQK7V0A2M4N6P8R0T2W4Y6', tenantId: 'tenant-001',
-      employeeId: 'employee-001', version: 1, effectiveFrom: '2026-01-01',
+      employeeId: 'employee-001', jurisdictionCode: 'CN-SH',
+      version: 1, effectiveFrom: '2026-01-01',
       effectiveTo: null, approvalEvidenceId: 'approval-001', status: 'active',
       profileHash: 'a'.repeat(43), dataKeyId: 'payroll-key-001', dataIv: 'b'.repeat(16),
       dataCiphertext: 'c'.repeat(32), dataAuthTag: 'd'.repeat(22),

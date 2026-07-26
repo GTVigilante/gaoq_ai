@@ -21,6 +21,7 @@ import {
   calculatePayroll,
   createPayrollPeriod,
   payrollDigest,
+  proratePayrollCompensation,
   recordPayrollCalculation,
   startPayrollCollection,
   type PayrollCalculationInput,
@@ -61,6 +62,7 @@ const componentSchema = z.object({
 }).strict();
 const compensationProfileDataSchema = z.object({
   currency: z.literal('CNY'),
+  jurisdictionCode: z.string().regex(ID_PATTERN),
   taxableEarnings: z.array(componentSchema).max(128),
   nonTaxableEarnings: z.array(componentSchema).max(128),
   employeeSocialInsuranceMinor: z.number().int().safe().nonnegative(),
@@ -98,6 +100,8 @@ const payrollResultSchema = z.object({
 export interface PayrollRunLineInput {
   readonly employeeId: string;
   readonly compensationProfileId: string;
+  /** 月中变更时按生效顺序补充精确档案引用；不得由服务自行猜选。 */
+  readonly additionalCompensationProfileIds?: readonly string[];
   readonly attendanceSnapshotId: string;
 }
 
@@ -342,6 +346,9 @@ export class PayrollRunService {
         const inputSnapshotHash = payrollDigest(calculated.map((line) => ({
           employeeId: line.input.employeeId,
           compensationProfileId: line.reference.compensationProfileId,
+          ...(line.reference.additionalCompensationProfileIds === undefined ? {} : {
+            compensationProfileIds: compensationProfileIds(line.reference),
+          }),
           attendanceSnapshotId: line.reference.attendanceSnapshotId,
           attendanceSnapshotHash: line.attendanceSnapshotHash,
           inputHash: line.result.inputHash,
@@ -474,6 +481,9 @@ export class PayrollRunService {
       const inputSnapshotHash = payrollDigest(calculated.map((line) => ({
         employeeId: line.input.employeeId,
         compensationProfileId: line.reference.compensationProfileId,
+        ...(line.reference.additionalCompensationProfileIds === undefined ? {} : {
+          compensationProfileIds: [...compensationProfileIds(line.reference)],
+        }),
         attendanceSnapshotId: line.reference.attendanceSnapshotId,
         attendanceSnapshotHash: line.attendanceSnapshotHash,
         inputHash: line.result.inputHash,
@@ -501,6 +511,7 @@ export class PayrollRunService {
           id: snapshotId, tenantId: this.tenantId(), runId, periodId: current.id,
           employeeId: line.input.employeeId,
           compensationProfileId: line.reference.compensationProfileId,
+          compensationProfileIds: [...compensationProfileIds(line.reference)],
           attendanceSnapshotId: line.reference.attendanceSnapshotId,
           attendanceSnapshotHash: line.attendanceSnapshotHash,
           inputHash: line.result.inputHash, ...protectedRecord(inputCiphertext),
@@ -684,6 +695,7 @@ export class PayrollRunService {
           id, tenantId: this.tenantId(), runId, periodId: period.id,
           employeeId: line.input.employeeId,
           compensationProfileId: line.reference.compensationProfileId,
+          compensationProfileIds: [...compensationProfileIds(line.reference)],
           attendanceSnapshotId: line.reference.attendanceSnapshotId,
           attendanceSnapshotHash: line.attendanceSnapshotHash,
           inputHash: line.result.inputHash, ...protectedRecord(protectedData),
@@ -812,26 +824,50 @@ export class PayrollRunService {
     }> = [];
     for (const line of sorted) {
       this.assertLineReference(line);
-      const compensation = await this.compensationProfiles.findOne({
-        tenantId: this.tenantId(), id: line.compensationProfileId,
-        employeeId: line.employeeId, status: 'active',
-        effectiveFrom: { $lte: `${period.period}-01` },
-        $or: [{ effectiveTo: null }, { effectiveTo: { $gte: monthEnd(period.period) } }],
-      }).session(session).lean().exec();
-      if (compensation === null) throw new Error('PAYROLL_COMPENSATION_PROFILE_NOT_EFFECTIVE');
+      const requestedProfileIds = compensationProfileIds(line);
+      const compensations = requestedProfileIds.length === 1
+        ? [await this.compensationProfiles.findOne({
+          tenantId: this.tenantId(), id: required(requestedProfileIds[0]),
+          employeeId: line.employeeId, status: 'active',
+          effectiveFrom: { $lte: `${period.period}-01` },
+          $or: [{ effectiveTo: null }, { effectiveTo: { $gte: monthEnd(period.period) } }],
+        }).session(session).lean().exec()]
+        : await this.compensationProfiles.find({
+          tenantId: this.tenantId(), id: { $in: requestedProfileIds },
+          employeeId: line.employeeId, status: 'active',
+          effectiveFrom: { $lte: monthEnd(period.period) },
+          $or: [{ effectiveTo: null }, { effectiveTo: { $gte: `${period.period}-01` } }],
+        }).sort({ effectiveFrom: 1, version: 1 }).session(session).lean().exec();
+      if (compensations.some((item) => item === null) ||
+        compensations.length !== requestedProfileIds.length) {
+        throw new Error('PAYROLL_COMPENSATION_PROFILE_NOT_EFFECTIVE');
+      }
       const attendance = await this.attendanceSnapshots.findOne({
         tenantId: this.tenantId(), id: line.attendanceSnapshotId,
         employeeId: line.employeeId, month: period.period,
         status: 'active',
       }).session(session).lean().exec();
       if (attendance === null) throw new Error('PAYROLL_ATTENDANCE_SNAPSHOT_INVALID');
-      const profileData = compensationProfileDataSchema.parse(this.crypto.unprotect({
-        tenantId: this.tenantId(), resourceType: 'compensation_profile',
-        resourceId: compensation.id, version: compensation.version,
-      }, protectedValue(compensation)));
-      if (payrollDigest(profileData) !== compensation.profileHash) {
-        throw new Error('PAYROLL_COMPENSATION_PROFILE_INTEGRITY_FAILED');
-      }
+      const profileSegments = compensations.map((value) => {
+        const compensation = required(value);
+        const profileData = compensationProfileDataSchema.parse(this.crypto.unprotect({
+          tenantId: this.tenantId(), resourceType: 'compensation_profile',
+          resourceId: compensation.id, version: compensation.version,
+        }, protectedValue(compensation)));
+        if (payrollDigest(profileData) !== compensation.profileHash ||
+          profileData.jurisdictionCode !== compensation.jurisdictionCode) {
+          throw new Error('PAYROLL_COMPENSATION_PROFILE_INTEGRITY_FAILED');
+        }
+        return Object.freeze({
+          profileId: compensation.id, profileVersion: compensation.version,
+          profileHash: compensation.profileHash, effectiveFrom: compensation.effectiveFrom,
+          effectiveTo: compensation.effectiveTo, data: profileData,
+        });
+      });
+      const proratedProfile = profileSegments.length === 1
+        ? null
+        : proratePayrollCompensation(period.period, profileSegments);
+      const profileData = proratedProfile ?? required(profileSegments[0]).data;
       const cumulativeBefore = await this.resolveCumulativeBefore(
         period, line.employeeId, session, allowMigratedPrior,
       );
@@ -865,6 +901,9 @@ export class PayrollRunService {
           profileData.postTaxDeductionMinor, attendanceDeductionMinor,
         ),
         cumulativeBefore,
+        ...(proratedProfile === null ? {} : {
+          compensationAllocations: proratedProfile.allocations,
+        }),
       });
       output.push(Object.freeze({
         input: calculation, result: calculatePayroll(calculation), reference: line,
@@ -968,11 +1007,18 @@ export class PayrollRunService {
   }
 
   private assertLineReference(line: PayrollRunLineInput): void {
+    const keys = Object.keys(line).sort().join(',');
+    const profileIds = compensationProfileIds(line);
     if (
-      Object.keys(line).sort().join(',') !==
-        'attendanceSnapshotId,compensationProfileId,employeeId' ||
+      ![
+        'attendanceSnapshotId,compensationProfileId,employeeId',
+        'additionalCompensationProfileIds,attendanceSnapshotId,compensationProfileId,employeeId',
+      ].includes(keys) ||
       !ID_PATTERN.test(line.employeeId) || !ID_PATTERN.test(line.compensationProfileId) ||
-      !ID_PATTERN.test(line.attendanceSnapshotId)
+      !ID_PATTERN.test(line.attendanceSnapshotId) ||
+      profileIds.length < 1 || profileIds.length > 31 ||
+      profileIds.some((profileId) => !ID_PATTERN.test(profileId)) ||
+      new Set(profileIds).size !== profileIds.length
     ) throw new BadRequestException({
       code: 'PAYROLL_RUN_LINE_REFERENCE_INVALID', message: '工资员工行引用非法',
     });
@@ -1280,6 +1326,13 @@ function lineReference(
     employeeId: line.employeeId, compensationProfileId: line.compensationProfileId,
     attendanceSnapshotId: line.attendanceSnapshotId,
   };
+}
+
+function compensationProfileIds(line: PayrollRunLineInput): readonly string[] {
+  return Object.freeze([
+    line.compensationProfileId,
+    ...(line.additionalCompensationProfileIds ?? []),
+  ]);
 }
 
 function strictMigrationInstant(value: string): Date {
