@@ -272,6 +272,29 @@ const payrollPayslipSchema = z.object({
   netPayMinor: z.number().int().nonnegative(), inputHash: z.string().length(43),
   resultHash: z.string().length(43), publishedAt: z.string(),
 });
+const payrollAdjustmentControlSchema = z.object({
+  id: recruitmentIdSchema,
+  period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  adjustmentNumber: z.number().int().positive(),
+  type: z.enum(['supplement', 'reversal', 'tax_only']),
+  reasonCode: z.string().regex(/^[A-Z][A-Z0-9_]{1,63}$/),
+  status: z.enum([
+    'prepared', 'pending_approval', 'approved', 'locked', 'settled', 'cancelled',
+  ]),
+  version: z.number().int().positive(),
+  adjustmentHash: z.string().length(43),
+});
+const annualPayrollReconciliationControlSchema = z.object({
+  id: recruitmentIdSchema, taxYear: z.string().regex(/^\d{4}$/),
+  periodCount: z.number().int().min(1).max(12),
+  firstPeriod: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  lastPeriod: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  status: z.enum([
+    'awaiting_assessment', 'assessment_matched',
+    'requires_employee_settlement', 'frozen',
+  ]),
+  version: z.number().int().positive(), evidenceHash: z.string().length(43),
+});
 const payrollTaxFilingSchema = z.object({
   id: recruitmentIdSchema, periodId: recruitmentIdSchema,
   payrollRunId: recruitmentIdSchema,
@@ -861,6 +884,44 @@ export class McpRuntimeService {
     );
 
     server.registerResource(
+      'payroll-adjustment-status',
+      new ResourceTemplate('erp://payroll/adjustments/{id}', { list: undefined }),
+      {
+        title: '工资调整脱敏控制状态',
+        description: '只返回补发/冲销控制状态和摘要，不返回员工、金额或更正输入。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getPayrollAdjustmentStatus(requiredResourceId(id), extra);
+        if (result.isError === true) throw new Error('无权读取工资调整控制状态');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
+    server.registerResource(
+      'payroll-annual-reconciliation-status',
+      new ResourceTemplate('erp://payroll/annual-reconciliations/{id}', { list: undefined }),
+      {
+        title: '年度工资代扣脱敏控制状态',
+        description: '只返回税年、期间范围、状态和摘要，不返回员工、税额或税局证据。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getAnnualPayrollReconciliationStatus(
+          requiredResourceId(id), extra,
+        );
+        if (result.isError === true) throw new Error('无权读取年度工资代扣控制状态');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
+    server.registerResource(
       'op-operating-summary',
       new ResourceTemplate('erp://op/operating-summaries/{date}', { list: undefined }),
       {
@@ -1181,6 +1242,32 @@ export class McpRuntimeService {
       ({ readinessId }) => ({ messages: [{ role: 'user', content: {
         type: 'text',
         text: `请读取工资可切换资格 ${readinessId}，核对两个影子周期是否连续、证据摘要和状态是否完整。该资格只是 Phase 4 门禁证据，不代表总体 Go/No-Go 已通过；不得执行连接切换、真实代发或修改证据。`,
+      } }] }),
+    );
+
+    server.registerPrompt(
+      'payroll_adjustment_review_guide',
+      {
+        title: '工资补发冲销控制核对指南',
+        description: '指导 AI 只读解释工资调整类型、原因、状态和摘要，不读取员工金额或执行调整。',
+        argsSchema: { adjustmentId: recruitmentIdSchema },
+      },
+      ({ adjustmentId }) => ({ messages: [{ role: 'user', content: {
+        type: 'text',
+        text: `请读取工资调整 ${adjustmentId} 的脱敏控制状态，解释补发、冲销或税务调整类型、标准原因、版本和摘要是否完整。不得索取员工、工资金额、更正输入或密文；不得准备、批准、锁定、支付、扣回或税务重报。`,
+      } }] }),
+    );
+
+    server.registerPrompt(
+      'payroll_annual_reconciliation_review_guide',
+      {
+        title: '年度工资代扣控制核对指南',
+        description: '指导 AI 只读解释年度代扣核对状态，不读取员工税额或代替个人税务申报。',
+        argsSchema: { reconciliationId: recruitmentIdSchema },
+      },
+      ({ reconciliationId }) => ({ messages: [{ role: 'user', content: {
+        type: 'text',
+        text: `请读取年度工资代扣核对 ${reconciliationId} 的脱敏控制状态，解释税年、期间范围、状态和证据摘要。不得索取员工、工资、税额、税表或税局证据；不得代替个人综合所得申报、承诺退补税结果或执行任何收付。`,
       } }] }),
     );
 
@@ -1535,6 +1622,36 @@ export class McpRuntimeService {
         },
       },
       async ({ id }, extra) => this.tools.getPayrollCutoverReadiness(id, extra),
+    );
+
+    server.registerTool(
+      'payroll_adjustment_status_get',
+      {
+        title: '查询工资调整脱敏控制状态',
+        description: '只返回补发/冲销类型、原因码、状态和摘要；不返回员工、金额或更正输入。风险等级 R1。',
+        inputSchema: { id: recruitmentIdSchema },
+        outputSchema: z.object({ payrollAdjustment: payrollAdjustmentControlSchema }),
+        annotations: {
+          readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+        },
+      },
+      async ({ id }, extra) => this.tools.getPayrollAdjustmentStatus(id, extra),
+    );
+
+    server.registerTool(
+      'payroll_annual_reconciliation_status_get',
+      {
+        title: '查询年度工资代扣脱敏控制状态',
+        description: '只返回税年、期间范围、状态和摘要；不返回员工、税额、税表或税局证据。风险等级 R1。',
+        inputSchema: { id: recruitmentIdSchema },
+        outputSchema: z.object({
+          annualPayrollReconciliation: annualPayrollReconciliationControlSchema,
+        }),
+        annotations: {
+          readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+        },
+      },
+      async ({ id }, extra) => this.tools.getAnnualPayrollReconciliationStatus(id, extra),
     );
 
     server.registerTool(

@@ -198,6 +198,12 @@ interface CalculatedPayrollLine {
   readonly attendanceSnapshotHash: string;
 }
 
+export interface PayrollAdjustmentCalculationCandidate {
+  readonly input: PayrollCalculationInput;
+  readonly result: PayrollCalculationResult;
+  readonly attendanceSnapshotHash: string;
+}
+
 /** 工资周期与计算运行应用服务；仅系统任务可提交已冻结的规范输入。 */
 @Injectable()
 export class PayrollRunService {
@@ -550,6 +556,31 @@ export class PayrollRunService {
       return payrollPeriodSummary(next);
       },
     ));
+  }
+
+  /**
+   * 仅供 PayrollAdjustmentService 在同一事务中重算更正候选。
+   * 调用方仍须验证原周期已锁定、原结果摘要与调整审批链。
+   */
+  async calculateAdjustmentCandidate(
+    period: PayrollPeriodRecord,
+    rulePackId: string,
+    rulePackVersion: number,
+    line: PayrollRunLineInput,
+    session: ClientSession,
+  ): Promise<PayrollAdjustmentCalculationCandidate> {
+    const rulePack = await this.requireEffectiveRulePack(
+      period, rulePackId, rulePackVersion, session,
+    );
+    const calculated = await this.calculateLines(
+      period, [line], toRuleSnapshot(rulePack), session,
+    );
+    const candidate = required(calculated[0]);
+    return Object.freeze({
+      input: candidate.input,
+      result: candidate.result,
+      attendanceSnapshotHash: candidate.attendanceSnapshotHash,
+    });
   }
 
   async getPeriod(id: string): Promise<PayrollPeriodSummary> {

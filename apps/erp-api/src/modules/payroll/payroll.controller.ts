@@ -4,6 +4,14 @@ import { AuditService } from '../../core/audit/audit.service.js';
 import type { ErpRequest } from '../../core/http/request-context.js';
 import { RequiredScopes } from '../identity/auth.decorators.js';
 import { PayrollMasterDataService } from './application/payroll-master-data.service.js';
+import {
+  PayrollAdjustmentService,
+  type PayrollAdjustmentSummary,
+} from './application/payroll-adjustment.service.js';
+import {
+  PayrollAnnualReconciliationService,
+  type AnnualPayrollReconciliationSummary,
+} from './application/payroll-annual-reconciliation.service.js';
 import { PayrollApprovalService } from './application/payroll-approval.service.js';
 import { PayrollRunService, type PayrollPeriodSummary } from './application/payroll-run.service.js';
 import { PayrollPayslipService, type PayrollPayslipView } from './application/payroll-payslip.service.js';
@@ -30,6 +38,8 @@ import {
   LockPayrollPeriodDto,
   PayrollVersionCommandDto,
   PreparePayrollTaxFilingDto,
+  PreparePayrollAdjustmentDto,
+  PrepareAnnualPayrollReconciliationDto,
   StartPayrollCollectionDto,
   SubmitPayrollTaxFilingDto,
   ExplainShadowPayrollDifferenceDto,
@@ -41,6 +51,8 @@ import {
 export class PayrollController {
   constructor(
     private readonly runs: PayrollRunService,
+    private readonly adjustments: PayrollAdjustmentService,
+    private readonly annualReconciliations: PayrollAnnualReconciliationService,
     private readonly approvals: PayrollApprovalService,
     private readonly payslips: PayrollPayslipService,
     private readonly masterData: PayrollMasterDataService,
@@ -49,6 +61,102 @@ export class PayrollController {
     private readonly shadows: PayrollShadowService,
     private readonly audit: AuditService,
   ) {}
+
+  /** R2：受信任薪税服务核对年度工资、已提交清单与税局评估，不执行个人申报。 */
+  @Post('annual-reconciliations/prepare')
+  @RequiredScopes('erp:payroll:annual:prepare')
+  async prepareAnnualReconciliation(
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: PrepareAnnualPayrollReconciliationDto,
+  ): Promise<AnnualPayrollReconciliationSummary> {
+    const result = await this.annualReconciliations.prepare(this.key(key), {
+      employeeId: body.employeeId, taxYear: body.taxYear,
+      ...(body.officialAssessment === undefined ? {} : {
+        officialAssessment: {
+          assessmentId: body.officialAssessment.assessmentId,
+          assessmentEvidenceId: body.officialAssessment.assessmentEvidenceId,
+          assessedTaxMinor: body.officialAssessment.assessedTaxMinor,
+          sourceDigest: body.officialAssessment.sourceDigest,
+        },
+      }),
+    });
+    await this.audit.record({
+      action: 'payroll.annual_reconciliation.prepare',
+      resourceType: 'payroll_annual_reconciliation', resourceId: result.id,
+      riskLevel: 'R2', outcome: 'success', metadata: {
+        taxYear: result.taxYear, periodCount: result.periodCount,
+        status: result.status, evidenceHash: result.evidenceHash,
+      },
+    });
+    return result;
+  }
+
+  /** L4：年度员工薪税控制结果仅供受控角色读取，标准 MCP 不暴露。 */
+  @Get('annual-reconciliations/:id')
+  @RequiredScopes('erp:payroll:annual:read')
+  async getAnnualReconciliation(
+    @Param('id') id: string,
+  ): Promise<AnnualPayrollReconciliationSummary> {
+    const result = await this.annualReconciliations.get(id);
+    await this.audit.record({
+      action: 'payroll.annual_reconciliation.read',
+      resourceType: 'payroll_annual_reconciliation', resourceId: result.id,
+      riskLevel: 'R1', outcome: 'success', metadata: {
+        taxYear: result.taxYear, periodCount: result.periodCount,
+        status: result.status, evidenceHash: result.evidenceHash,
+      },
+    });
+    return result;
+  }
+
+  /** R2：受信任计算服务只按 ERP 引用准备锁定工资差额，不执行收付或税务重报。 */
+  @Post('adjustments/prepare')
+  @RequiredScopes('erp:payroll:adjustment:prepare')
+  async prepareAdjustment(
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: PreparePayrollAdjustmentDto,
+  ): Promise<PayrollAdjustmentSummary> {
+    const result = await this.adjustments.prepare(this.key(key), {
+      periodId: body.periodId,
+      originalCalculationLineId: body.originalCalculationLineId,
+      rulePackId: body.rulePackId, rulePackVersion: body.rulePackVersion,
+      reasonCode: body.reasonCode,
+      correctedLine: {
+        employeeId: body.correctedLine.employeeId,
+        compensationProfileId: body.correctedLine.compensationProfileId,
+        ...(body.correctedLine.additionalCompensationProfileIds === undefined ? {} : {
+          additionalCompensationProfileIds:
+            body.correctedLine.additionalCompensationProfileIds,
+        }),
+        attendanceSnapshotId: body.correctedLine.attendanceSnapshotId,
+      },
+    });
+    await this.audit.record({
+      action: 'payroll.adjustment.prepare',
+      resourceType: 'payroll_adjustment', resourceId: result.id,
+      riskLevel: 'R2', outcome: 'success', metadata: {
+        period: result.period, type: result.type, status: result.status,
+        adjustmentHash: result.adjustmentHash,
+      },
+    });
+    return result;
+  }
+
+  /** L4：仅受控薪酬角色读取差额；MCP 不注册员工级调整查询。 */
+  @Get('adjustments/:id')
+  @RequiredScopes('erp:payroll:adjustment:read')
+  async getAdjustment(@Param('id') id: string): Promise<PayrollAdjustmentSummary> {
+    const result = await this.adjustments.get(id);
+    await this.audit.record({
+      action: 'payroll.adjustment.read',
+      resourceType: 'payroll_adjustment', resourceId: result.id,
+      riskLevel: 'R1', outcome: 'success', metadata: {
+        period: result.period, type: result.type, status: result.status,
+        adjustmentHash: result.adjustmentHash,
+      },
+    });
+    return result;
+  }
 
   /** 影子周期脱敏控制摘要；不返回员工级差异、解释正文或 WORM 地址。 */
   @Get('shadow-cycles/:id')

@@ -31,6 +31,8 @@ export type PayrollCryptoResourceType =
   | 'compensation_profile'
   | 'input_snapshot'
   | 'calculation_line'
+  | 'payroll_adjustment'
+  | 'annual_reconciliation'
   | 'tax_filing'
   | 'shadow_cycle'
   | 'shadow_difference';

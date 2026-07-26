@@ -83,6 +83,38 @@ export class AttestPayrollRulePackDto {
   @Matches(ULID) approvalEvidenceId!: string;
 }
 
+export class PayrollAdjustmentLineDto {
+  @Matches(ID) employeeId!: string;
+  @Matches(ULID) compensationProfileId!: string;
+  @IsOptional() @IsArray() @ArrayMaxSize(30) @Matches(ULID, { each: true })
+  additionalCompensationProfileIds?: string[];
+  @Matches(ULID) attendanceSnapshotId!: string;
+}
+
+export class PreparePayrollAdjustmentDto {
+  @Matches(ULID) periodId!: string;
+  @Matches(ULID) originalCalculationLineId!: string;
+  @Matches(ULID) rulePackId!: string;
+  @IsInt() @Min(1) rulePackVersion!: number;
+  @Matches(/^[A-Z][A-Z0-9_]{1,63}$/) reasonCode!: string;
+  @ValidateNested() @Type(() => PayrollAdjustmentLineDto)
+  correctedLine!: PayrollAdjustmentLineDto;
+}
+
+export class OfficialAnnualTaxAssessmentDto {
+  @Matches(ID) assessmentId!: string;
+  @Matches(ID) assessmentEvidenceId!: string;
+  @IsInt() @Min(0) @Max(Number.MAX_SAFE_INTEGER) assessedTaxMinor!: number;
+  @Matches(/^[A-Za-z0-9_-]{43}$/) sourceDigest!: string;
+}
+
+export class PrepareAnnualPayrollReconciliationDto {
+  @Matches(ID) employeeId!: string;
+  @Matches(/^\d{4}$/) taxYear!: string;
+  @IsOptional() @ValidateNested() @Type(() => OfficialAnnualTaxAssessmentDto)
+  officialAssessment?: OfficialAnnualTaxAssessmentDto;
+}
+
 export class LegacyShadowPayrollLineDto {
   @Matches(ID) employeeId!: string;
   @Matches(ID) sourceLineId!: string;

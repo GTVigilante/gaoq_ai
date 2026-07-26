@@ -25,6 +25,8 @@
     "migrate:phase4:attendance-rule-indexes": "node dist/migrations/phase-4-attendance-rule-indexes.js",
     "migrate:phase4:attendance-provider-indexes": "node dist/migrations/phase-4-attendance-provider-indexes.js",
     "migrate:phase4:payroll-core-indexes": "node dist/migrations/phase-4-payroll-core-indexes.js",
+    "migrate:phase4:payroll-adjustment-indexes": "node dist/migrations/phase-4-payroll-adjustment-indexes.js",
+    "migrate:phase4:payroll-annual-indexes": "node dist/migrations/phase-4-payroll-annual-indexes.js",
     "migrate:phase4:payroll-tax-indexes": "node dist/migrations/phase-4-payroll-tax-indexes.js",
     "migrate:phase4:payroll-reconciliation-indexes": "node dist/migrations/phase-4-payroll-reconciliation-indexes.js",
     "migrate:phase4:payroll-shadow-indexes": "node dist/migrations/phase-4-payroll-shadow-indexes.js",

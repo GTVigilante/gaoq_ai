@@ -18,7 +18,8 @@ const RISK = Object.freeze({
     'approval_submit_prepare', 'approval_submit_execute', 'approval_withdraw_prepare',
     'approval_withdraw_execute', 'payroll_payslip_get_self', 'payroll_tax_filing_get',
     'payroll_reconciliation_get', 'payroll_shadow_cycle_get',
-    'payroll_cutover_readiness_get', 'management_dashboard_get',
+    'payroll_cutover_readiness_get', 'payroll_adjustment_status_get',
+    'payroll_annual_reconciliation_status_get', 'management_dashboard_get',
     'data_migration_report_get', 'attendance_correction_prepare',
     'attendance_correction_execute', 'recruitment_position_transition_prepare',
     'recruitment_position_transition_execute',
@@ -72,7 +73,7 @@ function buildCatalog(runtimeSource, toolServiceSource) {
   });
   const riskByName = new Map(Object.entries(RISK).flatMap(([risk, names]) =>
     names.map((name) => [name, risk])));
-  if (riskByName.size !== 41 || registrations.length !== 41) fail('PHASE5_MCP_TOOL_COUNT_INVALID');
+  if (riskByName.size !== 43 || registrations.length !== 43) fail('PHASE5_MCP_TOOL_COUNT_INVALID');
   const names = registrations.map((item) => item.name);
   if (new Set(names).size !== names.length || names.some((name) => !riskByName.has(name))) {
     fail('PHASE5_MCP_RISK_CATALOG_INCOMPLETE');
@@ -104,7 +105,7 @@ function buildCatalog(runtimeSource, toolServiceSource) {
     protocolVersion: '2025-11-25',
     transport: 'streamable-http',
     oauthProfile: 'oauth-2.1',
-    counts: { total: 41, R0: 18, R1: 15, R2: 8, R3: 0 },
+    counts: { total: 43, R0: 18, R1: 17, R2: 8, R3: 0 },
     tools,
   };
   return { ...core, catalogHash: digest(canonical(core)) };

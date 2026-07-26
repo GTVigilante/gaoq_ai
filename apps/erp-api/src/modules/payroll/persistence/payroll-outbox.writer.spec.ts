@@ -31,6 +31,41 @@ function setup() {
 }
 
 describe('Payroll Tax Outbox 白名单', () => {
+  it('工资调整事件只发布非人员级控制摘要', async () => {
+    const store = setup();
+    const event: PayrollEvent = {
+      ...base, type: 'payroll.adjustment.prepared', version: 1, data: {
+        period: '2026-07', type: 'supplement',
+        reasonCode: 'RETROACTIVE_SALARY_CHANGE',
+        status: 'prepared', adjustmentHash: 'a'.repeat(43),
+      },
+    };
+    await store.context.run({ tenant, actor }, () => store.writer.append(event, session));
+    const persisted = JSON.stringify(store.records.create.mock.calls);
+    expect(persisted).toContain('payroll.adjustment.prepared.v1');
+    expect(persisted).not.toMatch(/employeeId|netDelta|payableMinor|originalCalculationLineId/u);
+    await expect(store.context.run({ tenant, actor }, () => store.writer.append({
+      ...event, data: { ...event.data, employeeId: 'employee-001' },
+    }, session))).rejects.toThrow('PAYROLL_ADJUSTMENT_OUTBOX_DATA_INVALID');
+  });
+
+  it('年度工资代扣事件不发布员工、税额或税局证据标识', async () => {
+    const store = setup();
+    const event: PayrollEvent = {
+      ...base, type: 'payroll.annual_reconciliation.prepared', version: 1, data: {
+        taxYear: '2026', periodCount: 12,
+        status: 'assessment_matched', evidenceHash: 'e'.repeat(43),
+      },
+    };
+    await store.context.run({ tenant, actor }, () => store.writer.append(event, session));
+    const persisted = JSON.stringify(store.records.create.mock.calls);
+    expect(persisted).toContain('payroll.annual_reconciliation.prepared.v1');
+    expect(persisted).not.toMatch(/employee|assessedTax|withheld|assessmentEvidence/u);
+    await expect(store.context.run({ tenant, actor }, () => store.writer.append({
+      ...event, data: { ...event.data, employeeId: 'employee-001' },
+    }, session))).rejects.toThrow('PAYROLL_ANNUAL_OUTBOX_DATA_INVALID');
+  });
+
   it('仅发布制备、批准、提交和迁移所需的最小控制字段', async () => {
     const store = setup();
     const events: readonly PayrollEvent[] = [

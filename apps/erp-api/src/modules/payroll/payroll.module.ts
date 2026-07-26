@@ -10,6 +10,8 @@ import { AttendanceMonthlySnapshotRecord, AttendanceMonthlySnapshotRecordSchema 
 import { OrgModule } from '../org/org.module.js';
 import { OutboxRecord, OutboxRecordSchema } from '../org/persistence/outbox.schema.js';
 import { PayrollMasterDataService } from './application/payroll-master-data.service.js';
+import { PayrollAdjustmentService } from './application/payroll-adjustment.service.js';
+import { PayrollAnnualReconciliationService } from './application/payroll-annual-reconciliation.service.js';
 import { PayrollApprovalService } from './application/payroll-approval.service.js';
 import { PayrollRunService } from './application/payroll-run.service.js';
 import { PayrollPayslipService } from './application/payroll-payslip.service.js';
@@ -25,6 +27,10 @@ import { PayrollOutboxWriter } from './persistence/payroll-outbox.writer.js';
 import {
   PayrollCalculationLineRecord,
   PayrollCalculationLineRecordSchema,
+  PayrollAdjustmentRecord,
+  PayrollAdjustmentRecordSchema,
+  PayrollAnnualReconciliationRecord,
+  PayrollAnnualReconciliationRecordSchema,
   PayrollCalculationRunRecord,
   PayrollCalculationRunRecordSchema,
   PayrollCompensationProfileRecord,
@@ -75,6 +81,11 @@ import {
       { name: PayrollCalculationRunRecord.name, schema: PayrollCalculationRunRecordSchema },
       { name: PayrollInputSnapshotRecord.name, schema: PayrollInputSnapshotRecordSchema },
       { name: PayrollCalculationLineRecord.name, schema: PayrollCalculationLineRecordSchema },
+      { name: PayrollAdjustmentRecord.name, schema: PayrollAdjustmentRecordSchema },
+      {
+        name: PayrollAnnualReconciliationRecord.name,
+        schema: PayrollAnnualReconciliationRecordSchema,
+      },
       { name: PayrollTaxFilingRecord.name, schema: PayrollTaxFilingRecordSchema },
       { name: PayrollReconciliationRecord.name, schema: PayrollReconciliationRecordSchema },
       { name: PayrollShadowCycleRecord.name, schema: PayrollShadowCycleRecordSchema },
@@ -89,6 +100,8 @@ import {
   controllers: [PayrollController],
   providers: [
     PayrollRunService,
+    PayrollAdjustmentService,
+    PayrollAnnualReconciliationService,
     PayrollPayslipService,
     PayrollApprovalService,
     PayrollMasterDataService,
@@ -104,6 +117,8 @@ import {
   ],
   exports: [
     PayrollRunService, PayrollPayslipService,
+    PayrollAdjustmentService,
+    PayrollAnnualReconciliationService,
     PayrollApprovalService,
     PayrollMasterDataService,
     PayrollTaxFilingService, PayrollReconciliationService,

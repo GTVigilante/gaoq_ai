@@ -20,6 +20,8 @@ export interface PayrollEvent {
     | 'payroll.rule_pack.attested'
     | 'payroll.rule_pack.migrated'
     | 'payroll.compensation_profile.migrated'
+    | 'payroll.adjustment.prepared'
+    | 'payroll.annual_reconciliation.prepared'
     | 'payroll.approval.requested'
     | 'payroll.approval.applied'
     | 'payroll.period.locked'
@@ -55,6 +57,8 @@ export class PayrollOutboxWriter {
       throw new Error('Payroll Outbox 拒绝跨租户事件');
     }
     this.assertTaxEvent(event);
+    this.assertAdjustmentEvent(event);
+    this.assertAnnualReconciliationEvent(event);
     this.assertReconciliationEvent(event);
     this.assertShadowEvent(event);
     const eventId = createEventId(new Date(event.occurredAt));
@@ -73,6 +77,36 @@ export class PayrollOutboxWriter {
       eventType, envelope: { ...envelope }, status: 'pending', attempts: 0,
       nextAttemptAt: new Date(event.occurredAt),
     }], { session });
+  }
+
+  private assertAnnualReconciliationEvent(event: PayrollEvent): void {
+    if (event.type !== 'payroll.annual_reconciliation.prepared') return;
+    const data = event.data;
+    if (
+      Object.keys(data).sort().join(',') !==
+        'evidenceHash,periodCount,status,taxYear' ||
+      typeof data['taxYear'] !== 'string' || !/^\d{4}$/.test(data['taxYear']) ||
+      !positive(data['periodCount']) || Number(data['periodCount']) > 12 ||
+      !hash(data['evidenceHash']) ||
+      ![
+        'awaiting_assessment', 'assessment_matched',
+        'requires_employee_settlement', 'frozen',
+      ].includes(String(data['status']))
+    ) throw new Error('PAYROLL_ANNUAL_OUTBOX_DATA_INVALID');
+  }
+
+  private assertAdjustmentEvent(event: PayrollEvent): void {
+    if (event.type !== 'payroll.adjustment.prepared') return;
+    const data = event.data;
+    if (
+      Object.keys(data).sort().join(',') !==
+        'adjustmentHash,period,reasonCode,status,type' ||
+      !month(data['period']) || !hash(data['adjustmentHash']) ||
+      typeof data['reasonCode'] !== 'string' ||
+      !/^[A-Z][A-Z0-9_]{1,63}$/.test(data['reasonCode']) ||
+      !['supplement', 'reversal', 'tax_only'].includes(String(data['type'])) ||
+      data['status'] !== 'prepared'
+    ) throw new Error('PAYROLL_ADJUSTMENT_OUTBOX_DATA_INVALID');
   }
 
   private assertTaxEvent(event: PayrollEvent): void {

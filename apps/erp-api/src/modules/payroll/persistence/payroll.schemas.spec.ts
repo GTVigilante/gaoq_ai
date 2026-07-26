@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   PayrollCompensationProfileRecordSchema,
+  PayrollAdjustmentRecordSchema,
+  PayrollAnnualReconciliationRecordSchema,
   PayrollCalculationRunRecordSchema,
   PayrollPeriodApprovalEvidenceRecordSchema,
   PayrollPeriodLockEvidenceRecordSchema,
@@ -15,6 +17,8 @@ import {
   PayrollShadowSignoffRecordSchema,
   PayrollCutoverReadinessRecordSchema,
   type PayrollCompensationProfileRecord,
+  type PayrollAdjustmentRecord,
+  type PayrollAnnualReconciliationRecord,
   type PayrollReconciliationRecord,
   type PayrollTaxFilingRecord,
   type PayrollShadowCycleRecord,
@@ -23,6 +27,12 @@ import {
 const mongoose = new Mongoose();
 const ProfileModel = mongoose.model<PayrollCompensationProfileRecord>(
   'SpecPayrollCompensationProfile', PayrollCompensationProfileRecordSchema,
+);
+const AdjustmentModel = mongoose.model<PayrollAdjustmentRecord>(
+  'SpecPayrollAdjustment', PayrollAdjustmentRecordSchema,
+);
+const AnnualReconciliationModel = mongoose.model<PayrollAnnualReconciliationRecord>(
+  'SpecPayrollAnnualReconciliation', PayrollAnnualReconciliationRecordSchema,
 );
 const TaxFilingModel = mongoose.model<PayrollTaxFilingRecord>(
   'SpecPayrollTaxFiling', PayrollTaxFilingRecordSchema,
@@ -35,6 +45,57 @@ const ShadowCycleModel = mongoose.model<PayrollShadowCycleRecord>(
 );
 
 describe('Payroll 持久化契约', () => {
+  it('工资调整密文与收付方向不可矛盾', async () => {
+    const base = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4A3', tenantId: 'tenant-001',
+      periodId: '01J8ZQK7V0A2M4N6P8R0T2W4P1', period: '2026-07',
+      originalRunId: '01J8ZQK7V0A2M4N6P8R0T2W4R1',
+      originalCalculationLineId: '01J8ZQK7V0A2M4N6P8R0T2W4N1',
+      employeeId: 'employee-001', adjustmentNumber: 1,
+      type: 'supplement', reasonCode: 'RETROACTIVE_SALARY_CHANGE',
+      originalResultHash: 'o'.repeat(43), correctedInputHash: 'i'.repeat(43),
+      correctedResultHash: 'r'.repeat(43), adjustmentHash: 'a'.repeat(43),
+      grossDeltaMinor: 100_000, taxDeltaMinor: 3_000, netDeltaMinor: 97_000,
+      payableMinor: 97_000, receivableMinor: 0, preparedBy: 'payroll-engine',
+      status: 'prepared', version: 1,
+      dataKeyId: 'payroll-key-001', dataIv: 'b'.repeat(16),
+      dataCiphertext: 'c'.repeat(32), dataAuthTag: 'd'.repeat(22),
+    };
+    await expect(new AdjustmentModel(base).validate()).resolves.toBeUndefined();
+    await expect(new AdjustmentModel({
+      ...base, type: 'reversal', payableMinor: 0, receivableMinor: 97_000,
+    }).validate()).rejects.toThrow('工资调整类型与收付方向不一致');
+    expect(JSON.stringify(new AdjustmentModel(base).toObject()))
+      .not.toMatch(/"correctedInput":|"taxableEarnings":|"attendanceSnapshot":/u);
+    expect(PayrollAdjustmentRecordSchema.indexes()).toContainEqual([
+      { tenantId: 1, originalCalculationLineId: 1, adjustmentNumber: 1 },
+      expect.objectContaining({ unique: true }),
+    ]);
+  });
+
+  it('年度工资代扣只明文保存控制状态且税局评估证据必须成套', async () => {
+    const base = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4Y1', tenantId: 'tenant-001',
+      employeeId: 'employee-001', taxYear: '2026', periodCount: 12,
+      firstPeriod: '2026-01', lastPeriod: '2026-12',
+      officialAssessmentId: null, officialAssessmentEvidenceId: null,
+      officialAssessmentSourceDigest: null, status: 'awaiting_assessment',
+      evidenceHash: 'e'.repeat(43), preparedBy: 'annual-tax-service', version: 1,
+      dataKeyId: 'payroll-key-001', dataIv: 'b'.repeat(16),
+      dataCiphertext: 'c'.repeat(32), dataAuthTag: 'd'.repeat(22),
+    };
+    await expect(new AnnualReconciliationModel(base).validate()).resolves.toBeUndefined();
+    await expect(new AnnualReconciliationModel({
+      ...base, officialAssessmentId: 'assessment-2026',
+    }).validate()).rejects.toThrow('年度税局评估引用、证据与摘要必须成套出现');
+    expect(JSON.stringify(new AnnualReconciliationModel(base).toObject()))
+      .not.toMatch(/totalPayrollWithheld|assessedTaxMinor|filingEvidenceIds/u);
+    expect(PayrollAnnualReconciliationRecordSchema.indexes()).toContainEqual([
+      { tenantId: 1, employeeId: 1, taxYear: 1, version: 1 },
+      expect.objectContaining({ unique: true }),
+    ]);
+  });
+
   it('薪酬档案不保存金额明文，并要求完整独立密文', async () => {
     const document = new ProfileModel({
       id: '01J8ZQK7V0A2M4N6P8R0T2W4Y6', tenantId: 'tenant-001',

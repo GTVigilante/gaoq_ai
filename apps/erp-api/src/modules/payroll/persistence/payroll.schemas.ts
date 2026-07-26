@@ -406,6 +406,166 @@ export const PayrollCalculationLineRecordSchema = SchemaFactory.createForClass(
 PayrollCalculationLineRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 PayrollCalculationLineRecordSchema.index({ tenantId: 1, runId: 1, employeeId: 1 }, { unique: true });
 
+/** 锁定工资的追加式更正差额；更正输入、结果与逐项差额仅保存于 Payroll 密文。 */
+@Schema({ collection: 'payroll_adjustments', timestamps: true, versionKey: false, id: false })
+export class PayrollAdjustmentRecord extends ProtectedPayrollRecord {
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) id!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  tenantId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) periodId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: MONTH_PATTERN }) period!: string;
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
+  originalRunId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
+  originalCalculationLineId!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  employeeId!: string;
+  @Prop({ type: Number, required: true, immutable: true, min: 1 }) adjustmentNumber!: number;
+  @Prop({
+    type: String, required: true, immutable: true,
+    enum: ['supplement', 'reversal', 'tax_only'],
+  })
+  type!: 'supplement' | 'reversal' | 'tax_only';
+  @Prop({ type: String, required: true, immutable: true, match: /^[A-Z][A-Z0-9_]{1,63}$/ })
+  reasonCode!: string;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  originalResultHash!: string;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  correctedInputHash!: string;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  correctedResultHash!: string;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  adjustmentHash!: string;
+  @Prop({ type: Number, required: true, immutable: true }) grossDeltaMinor!: number;
+  @Prop({ type: Number, required: true, immutable: true }) taxDeltaMinor!: number;
+  @Prop({ type: Number, required: true, immutable: true }) netDeltaMinor!: number;
+  @Prop({ type: Number, required: true, immutable: true, min: 0 }) payableMinor!: number;
+  @Prop({ type: Number, required: true, immutable: true, min: 0 }) receivableMinor!: number;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  preparedBy!: string;
+  @Prop({
+    type: String, required: true,
+    enum: ['prepared', 'pending_approval', 'approved', 'locked', 'settled', 'cancelled'],
+  })
+  status!:
+    | 'prepared'
+    | 'pending_approval'
+    | 'approved'
+    | 'locked'
+    | 'settled'
+    | 'cancelled';
+  @Prop({ type: Number, required: true, min: 1 }) version!: number;
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+export type PayrollAdjustmentDocument = HydratedDocument<PayrollAdjustmentRecord>;
+export const PayrollAdjustmentRecordSchema = SchemaFactory.createForClass(
+  PayrollAdjustmentRecord,
+);
+PayrollAdjustmentRecordSchema.pre('validate', function () {
+  const record = this as PayrollAdjustmentRecord;
+  const signed = [record.grossDeltaMinor, record.taxDeltaMinor, record.netDeltaMinor];
+  const nonnegative = [record.payableMinor, record.receivableMinor];
+  if (signed.some((value) => !Number.isSafeInteger(value)) ||
+    nonnegative.some((value) => !Number.isSafeInteger(value) || value < 0)) {
+    throw new Error('工资调整金额必须为安全整数分');
+  }
+  if (
+    (record.type === 'supplement' &&
+      (record.netDeltaMinor <= 0 || record.payableMinor !== record.netDeltaMinor ||
+        record.receivableMinor !== 0)) ||
+    (record.type === 'reversal' &&
+      (record.netDeltaMinor >= 0 || record.payableMinor !== 0 ||
+        record.receivableMinor !== -record.netDeltaMinor)) ||
+    (record.type === 'tax_only' &&
+      (record.netDeltaMinor !== 0 || record.payableMinor !== 0 || record.receivableMinor !== 0))
+  ) throw new Error('工资调整类型与收付方向不一致');
+});
+PayrollAdjustmentRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
+PayrollAdjustmentRecordSchema.index(
+  { tenantId: 1, originalCalculationLineId: 1, adjustmentNumber: 1 },
+  { unique: true },
+);
+PayrollAdjustmentRecordSchema.index({ tenantId: 1, period: 1, status: 1 });
+
+/** 员工年度工资代扣、已提交清单与税局评估的追加式核对证据。 */
+@Schema({
+  collection: 'payroll_annual_reconciliations',
+  timestamps: true,
+  versionKey: false,
+  id: false,
+})
+export class PayrollAnnualReconciliationRecord extends ProtectedPayrollRecord {
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) id!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  tenantId!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  employeeId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: /^\d{4}$/ }) taxYear!: string;
+  @Prop({ type: Number, required: true, immutable: true, min: 1, max: 12 })
+  periodCount!: number;
+  @Prop({ type: String, required: true, immutable: true, match: MONTH_PATTERN })
+  firstPeriod!: string;
+  @Prop({ type: String, required: true, immutable: true, match: MONTH_PATTERN })
+  lastPeriod!: string;
+  @Prop({ type: String, default: null, immutable: true, maxlength: 128, match: ID_PATTERN })
+  officialAssessmentId!: string | null;
+  @Prop({ type: String, default: null, immutable: true, maxlength: 128, match: ID_PATTERN })
+  officialAssessmentEvidenceId!: string | null;
+  @Prop({ type: String, default: null, immutable: true, match: HASH_PATTERN })
+  officialAssessmentSourceDigest!: string | null;
+  @Prop({
+    type: String, required: true, immutable: true,
+    enum: ['awaiting_assessment', 'assessment_matched', 'requires_employee_settlement', 'frozen'],
+  })
+  status!:
+    | 'awaiting_assessment'
+    | 'assessment_matched'
+    | 'requires_employee_settlement'
+    | 'frozen';
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  evidenceHash!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  preparedBy!: string;
+  @Prop({ type: Number, required: true, immutable: true, min: 1 }) version!: number;
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+export type PayrollAnnualReconciliationDocument =
+  HydratedDocument<PayrollAnnualReconciliationRecord>;
+export const PayrollAnnualReconciliationRecordSchema = SchemaFactory.createForClass(
+  PayrollAnnualReconciliationRecord,
+);
+PayrollAnnualReconciliationRecordSchema.pre('validate', function () {
+  const record = this as PayrollAnnualReconciliationRecord;
+  const assessmentFields = [
+    record.officialAssessmentId,
+    record.officialAssessmentEvidenceId,
+    record.officialAssessmentSourceDigest,
+  ];
+  if (!assessmentFields.every((value) => value === null) &&
+    !assessmentFields.every((value) => typeof value === 'string')) {
+    throw new Error('年度税局评估引用、证据与摘要必须成套出现');
+  }
+  const hasAssessment = assessmentFields.every((value) => typeof value === 'string');
+  if (
+    (record.status === 'awaiting_assessment' && hasAssessment) ||
+    (['assessment_matched', 'requires_employee_settlement'].includes(record.status) &&
+      !hasAssessment)
+  ) throw new Error('年度工资代扣状态与税局评估证据不一致');
+  if (record.firstPeriod.slice(0, 4) !== record.taxYear ||
+    record.lastPeriod.slice(0, 4) !== record.taxYear ||
+    record.firstPeriod > record.lastPeriod) {
+    throw new Error('年度工资代扣期间边界非法');
+  }
+});
+PayrollAnnualReconciliationRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
+PayrollAnnualReconciliationRecordSchema.index(
+  { tenantId: 1, employeeId: 1, taxYear: 1, version: 1 },
+  { unique: true },
+);
+PayrollAnnualReconciliationRecordSchema.index({ tenantId: 1, taxYear: 1, status: 1 });
+
 /** 个税内部清单及税局回执控制记录；员工税务行只存在于 Payroll 密文和 WORM。 */
 @Schema({ collection: 'payroll_tax_filings', timestamps: true, versionKey: false, id: false })
 export class PayrollTaxFilingRecord extends ProtectedPayrollRecord {
