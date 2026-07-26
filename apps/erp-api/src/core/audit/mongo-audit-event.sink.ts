@@ -69,7 +69,6 @@ export class MongoAuditEventSink extends AuditEventSink {
                   tenantId: normalized.tenantId,
                   anchoredSequence: 0,
                   lastAnchoredAt: null,
-                  chainUpdatedAt,
                 },
                 $set: {
                   sequence,

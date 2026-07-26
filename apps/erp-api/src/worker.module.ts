@@ -4,10 +4,11 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import type { Connection } from 'mongoose';
 
-import { validateEnvironment, type AppEnvironment } from './config/environment.js';
+import { validateWorkerEnvironment, type AppEnvironment } from './config/environment.js';
 import { AuditWorkerModule } from './core/audit/audit-worker.module.js';
 import { ObservabilityModule } from './core/observability/observability.module.js';
 import { WorkerMetricsServer } from './core/observability/worker-metrics.server.js';
+import { RedisModule } from './infrastructure/redis/redis.module.js';
 import { toBullMqConnection } from './infrastructure/redis/redis-options.js';
 import { IntegrationWorkerModule } from './modules/integration/integration-worker.module.js';
 import { ApprovalNotificationWorkerModule } from './modules/approval/notification/approval-notification-worker.module.js';
@@ -20,7 +21,7 @@ const mongoLogger = new Logger('WorkerMongoDB');
 /** 独立后台 Worker 根模块，不监听 HTTP 端口。 */
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true, cache: true, validate: validateEnvironment }),
+    ConfigModule.forRoot({ isGlobal: true, cache: true, validate: validateWorkerEnvironment }),
     MongooseModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService<AppEnvironment, true>) => ({
@@ -42,6 +43,7 @@ const mongoLogger = new Logger('WorkerMongoDB');
         connection: toBullMqConnection(config.get('REDIS_URL', { infer: true })),
       }),
     }),
+    RedisModule,
     IntegrationWorkerModule,
     ApprovalNotificationWorkerModule,
     CareWorkerModule,

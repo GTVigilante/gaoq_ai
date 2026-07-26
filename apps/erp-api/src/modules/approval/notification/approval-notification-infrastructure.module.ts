@@ -1,8 +1,8 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 
-import { IdentityModule } from '../../identity/identity.module.js';
-import { IntegrationModule } from '../../integration/integration.module.js';
+import { IdentityPersistenceModule } from '../../identity/identity-persistence.module.js';
+import { IntegrationCoreModule } from '../../integration/integration-core.module.js';
 import {
   ApprovalNotificationAdapter,
   ApprovalNotificationAdapterRegistry,
@@ -20,8 +20,8 @@ import { FeishuApprovalNotificationAdapter } from './feishu-approval-notificatio
 /** 审批通知 Worker 基础设施，API 业务事务不导入任何外部平台发送能力。 */
 @Module({
   imports: [
-    IdentityModule,
-    IntegrationModule,
+    IdentityPersistenceModule,
+    IntegrationCoreModule,
     MongooseModule.forFeature([
       { name: ApprovalNotificationRecord.name, schema: ApprovalNotificationRecordSchema },
     ]),

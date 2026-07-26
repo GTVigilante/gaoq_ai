@@ -13,6 +13,8 @@
     "dev:worker": "nest start --watch --entryFile worker-main",
     "start": "node dist/main.js",
     "start:worker": "node dist/worker-main.js",
+    "smoke:mcp:live": "node scripts/mcp-live-smoke.mjs",
+    "smoke:worker:live": "node scripts/worker-live-smoke.mjs",
     "migrate:phase1:indexes": "node dist/migrations/phase-1-indexes.js",
     "migrate:phase2:indexes": "node dist/migrations/phase-2-indexes.js",
     "migrate:phase3:indexes": "node dist/migrations/phase-3-indexes.js",

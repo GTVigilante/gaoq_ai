@@ -18,9 +18,15 @@ describe('移动平台容器策略', () => {
   });
 
   it('生产响应头关闭高风险浏览器能力且启用 HSTS', () => {
-    const headers = mobileContainerHeaders('https://open.dingtalk.com', true);
+    const headers = mobileContainerHeaders(
+      'https://open.dingtalk.com',
+      true,
+      'https://erp.example.com',
+    );
     expect(headers.find((header) => header.key === 'Content-Security-Policy')?.value)
       .toContain("frame-ancestors 'self' https://open.dingtalk.com");
+    expect(headers.find((header) => header.key === 'Content-Security-Policy')?.value)
+      .toContain("connect-src 'self' https://erp.example.com");
     expect(headers).toContainEqual({
       key: 'Permissions-Policy',
       value: 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()',

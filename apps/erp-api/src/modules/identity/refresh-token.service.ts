@@ -91,7 +91,7 @@ export class RefreshTokenService {
         expiresAt: { $gt: consumedAt },
       },
       { $set: { consumedAt } },
-      { new: true, session: mongoSession },
+      { returnDocument: 'after', session: mongoSession },
     );
     if (current === null) {
       return this.handleInvalidOrReplay(tokenHash, mongoSession);

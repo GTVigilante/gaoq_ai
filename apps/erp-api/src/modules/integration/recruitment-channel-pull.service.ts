@@ -67,7 +67,7 @@ export class RecruitmentChannelPullService {
       const binding = await this.bindings.findOneAndUpdate(
         { status: 'active', nextPollAt: { $lte: now } },
         { $set: { nextPollAt: reservedUntil } },
-        { new: true, sort: { nextPollAt: 1, id: 1 }, runValidators: true },
+        { returnDocument: 'after', sort: { nextPollAt: 1, id: 1 }, runValidators: true },
       ).lean().exec();
       if (binding === null) break;
       await this.queue.add(

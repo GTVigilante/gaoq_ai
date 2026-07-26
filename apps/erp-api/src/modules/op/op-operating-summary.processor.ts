@@ -52,7 +52,7 @@ export class OpOperatingSummaryProcessor extends WorkerHost {
     }, {
       $set: { status: 'processing', processingStartedAt: new Date(), failureCode: null },
       $inc: { attempts: 1 },
-    }, { new: true, runValidators: true }).lean().exec();
+    }, { returnDocument: 'after', runValidators: true }).lean().exec();
     if (claimed === null) return 0;
     try {
       const raw = this.crypto.unprotect(claimed.tenantId, claimed.id, claimed);

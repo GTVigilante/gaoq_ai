@@ -74,6 +74,13 @@ describe('MongoAuditEventSink', () => {
     const updateCall = store.headUpdateOne.mock.calls[0] as unknown as [unknown, unknown, unknown];
     expect(updateCall[0]).toEqual({ tenantId: 'tenant-001' });
     expect(updateCall[1]).toMatchObject({ $set: { sequence: 1 } });
+    const update = updateCall[1] as {
+      readonly $set: Readonly<Record<string, unknown>>;
+      readonly $setOnInsert: Readonly<Record<string, unknown>>;
+    };
+    expect(Object.keys(update.$set).filter(
+      (field) => Object.hasOwn(update.$setOnInsert, field),
+    )).toEqual([]);
     expect(updateCall[2]).toMatchObject({ upsert: true, runValidators: true });
     expect(store.endSession).toHaveBeenCalledOnce();
     expect(store.metrics.recordAuditAppend).toHaveBeenCalledWith('success', expect.any(Number));

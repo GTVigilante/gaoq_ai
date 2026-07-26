@@ -11,6 +11,11 @@
   MCP 和 Worker 必须复用应用服务。
 - 强制规范入口为 `docs/phase-0/README.md`；阶段交付与未验收边界分别见
   `docs/phase-1/README.md` 至 `docs/phase-6/README.md`。
+- 2026-07-27 已在本机专用 MongoDB Replica Set 与 Redis 上完成 API、Worker、
+  Web、OAuth Client Credentials、官方 MCP SDK、CORS、队列和指标端点联调；
+  该结果属于本地运行验证，不替代现场验收。
+- GitHub PR #103 的 Hosted Actions 当前在任何步骤执行前被账户付款或 Spending
+  limit 拦截；这是外部门禁未执行，不得记为代码测试失败或门禁通过。
 
 ## 目录约定
 
@@ -42,6 +47,16 @@ pnpm build
 `pnpm check` 覆盖 Lint、TypeCheck、单元/集成/协议测试、文档、安全、镜像、
 Kubernetes、MCP、迁移、容量、韧性、发布和 Phase 6 证据门禁自测。本地自测
 不能替代目标环境中的真实联调、生产等价演练或人工签署。
+
+需要本地基础设施的真实 MCP 握手使用：
+
+```bash
+pnpm --filter @gaoq/erp-api smoke:mcp:live
+pnpm --filter @gaoq/erp-api smoke:worker:live
+```
+
+脚本仅在内存生成临时密钥，使用独立测试数据库与 Redis DB，结束时关闭其创建的
+API 或 Worker 子进程。
 
 ## Codex / Kimi 协作
 

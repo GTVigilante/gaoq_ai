@@ -1,7 +1,7 @@
-export interface MobileContainerHeader {
-  readonly key: string;
-  readonly value: string;
-}
+import {
+  applicationSecurityHeaders,
+  type ApplicationSecurityHeader,
+} from './application-security-policy';
 
 /** 平台容器只接受部署时登记的精确 HTTPS Origin；通配符、路径、凭据和动态参数均拒绝。 */
 export function parseMobileFrameAncestors(value: string | undefined): string {
@@ -30,23 +30,11 @@ export function parseMobileFrameAncestors(value: string | undefined): string {
 export function mobileContainerHeaders(
   frameAncestors: string | undefined,
   production: boolean,
-): readonly MobileContainerHeader[] {
-  const headers: MobileContainerHeader[] = [
-    {
-      key: 'Content-Security-Policy',
-      value: `base-uri 'self'; object-src 'none'; frame-ancestors ${parseMobileFrameAncestors(frameAncestors)}`,
-    },
-    { key: 'Referrer-Policy', value: 'no-referrer' },
-    { key: 'X-Content-Type-Options', value: 'nosniff' },
-    { key: 'Cross-Origin-Resource-Policy', value: 'same-origin' },
-    {
-      key: 'Permissions-Policy',
-      value: 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()',
-    },
-  ];
-  if (production) headers.push({
-    key: 'Strict-Transport-Security',
-    value: 'max-age=31536000; includeSubDomains',
-  });
-  return Object.freeze(headers.map((header) => Object.freeze(header)));
+  apiOrigin?: string,
+): readonly ApplicationSecurityHeader[] {
+  return applicationSecurityHeaders(
+    apiOrigin,
+    production,
+    parseMobileFrameAncestors(frameAncestors),
+  );
 }

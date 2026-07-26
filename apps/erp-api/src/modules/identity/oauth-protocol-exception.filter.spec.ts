@@ -1,4 +1,4 @@
-import { BadRequestException, type ArgumentsHost } from '@nestjs/common';
+import { BadRequestException, Logger, type ArgumentsHost } from '@nestjs/common';
 import type { Response } from 'express';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -29,10 +29,16 @@ describe('OAuthProtocolExceptionFilter', () => {
 
   it('未知异常不泄露细节并返回 server_error', () => {
     const store = fixture();
+    const log = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
 
     new OAuthProtocolExceptionFilter().catch(new Error('secret detail'), store.host);
 
     expect(store.status).toHaveBeenCalledWith(500);
     expect(store.json).toHaveBeenCalledWith({ error: 'server_error' });
+    expect(log).toHaveBeenCalledWith(
+      'OAuth 协议端点发生未处理异常 failure=Error',
+    );
+    expect(JSON.stringify(log.mock.calls)).not.toContain('secret detail');
+    log.mockRestore();
   });
 });

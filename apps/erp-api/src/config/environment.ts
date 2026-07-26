@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 const environmentSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  RUNTIME_ROLE: z.enum(['api', 'worker']).default('api'),
   PORT: z.coerce.number().int().min(1).max(65_535).default(3001),
   WORKER_METRICS_PORT: z.coerce.number().int().min(1).max(65_535).default(9464),
   MONGODB_URI: z.string().url().startsWith('mongodb://'),
@@ -317,6 +318,7 @@ const environmentSchema = z.object({
   }
   if (
     environment.NODE_ENV === 'production' &&
+    environment.RUNTIME_ROLE === 'api' &&
     (environment.AUTH_SIGNING_PRIVATE_KEY_BASE64 === undefined ||
       environment.AUTH_SIGNING_KEY_ID === undefined)
   ) {
@@ -811,3 +813,22 @@ export const validateEnvironment = (input: Record<string, unknown>): AppEnvironm
 
   return result.data;
 };
+
+/**
+ * Worker 不承载浏览器、OAuth 或 MCP 协议端点；使用不可路由占位 URI 完成共享配置解析，
+ * 并通过 RUNTIME_ROLE 关闭仅属于 API 进程的签名私钥要求。
+ */
+export const validateWorkerEnvironment = (input: Record<string, unknown>): AppEnvironment =>
+  validateEnvironment({
+    ...input,
+    RUNTIME_ROLE: 'worker',
+    WEB_ORIGIN: 'https://worker.invalid',
+    AUTH_ISSUER: 'https://worker.invalid',
+    AUTH_AUDIENCE: 'worker-unused',
+    AUTH_RESOURCE: 'https://worker.invalid/mcp',
+    AUTH_JWKS_URI: 'https://worker.invalid/.well-known/jwks.json',
+    MCP_AUTHORIZATION_SERVER: 'https://worker.invalid',
+    MCP_ALLOWED_ORIGINS: 'https://worker.invalid',
+    MCP_OAUTH_CLIENTS_JSON: '[]',
+    MCP_SERVICE_CLIENTS_JSON: '[]',
+  });

@@ -36,6 +36,10 @@ export class ApiExceptionFilter implements ExceptionFilter {
       timestamp: new Date().toISOString(),
     };
 
+    if (status === 401 && request.path !== '/mcp') {
+      response.setHeader('WWW-Authenticate', 'Bearer');
+    }
+
     if ((status === 401 || status === 403) && request.path === '/mcp') {
       const metadataUrl = new URL(
         '/.well-known/oauth-protected-resource',

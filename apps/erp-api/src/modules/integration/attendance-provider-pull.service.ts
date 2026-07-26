@@ -93,7 +93,7 @@ export class AttendanceProviderPullService {
         nextPollAt: { $lte: new Date() },
       },
       { $set: { nextPollAt: leaseUntil } },
-      { new: true, runValidators: true },
+      { returnDocument: 'after', runValidators: true },
     ).lean().exec();
     if (state === null) return 0;
     try {

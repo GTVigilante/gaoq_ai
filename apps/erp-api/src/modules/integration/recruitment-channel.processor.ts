@@ -156,7 +156,7 @@ export class RecruitmentChannelProcessor extends WorkerHost {
         $set: { status: 'processing', processingStartedAt: new Date(), failureCode: null },
         $inc: { attempts: 1 },
       },
-      { new: true, runValidators: true },
+      { returnDocument: 'after', runValidators: true },
     ).lean().exec();
     if (claimed === null) return 0;
     try {

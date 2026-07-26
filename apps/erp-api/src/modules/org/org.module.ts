@@ -1,79 +1,12 @@
 import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
 
-import { IdempotencyModule } from '../../core/idempotency/idempotency.module.js';
-import { IdentityModule } from '../identity/identity.module.js';
-import { OrgApplicationService } from './application/org-application.service.js';
+import { OrgCoreModule } from './org-core.module.js';
 import { OrgController } from './org.controller.js';
 
-import {
-  OrgDepartmentRecord,
-  OrgDepartmentRecordSchema,
-  OrgEmployeeRecord,
-  OrgEmployeeRecordSchema,
-  OrgJobLevelRecord,
-  OrgJobLevelRecordSchema,
-  OrgPositionRecord,
-  OrgPositionRecordSchema,
-  OrgPersonRecord,
-  OrgPersonRecordSchema,
-  OrgEmploymentRecord,
-  OrgEmploymentRecordSchema,
-  OrgEmployeeNumberSequenceRecord,
-  OrgEmployeeNumberSequenceRecordSchema,
-} from './persistence/org.schemas.js';
-import {
-  DepartmentRepository,
-  EmployeeRepository,
-  JobLevelRepository,
-  PositionRepository,
-  PersonRepository,
-  EmploymentRepository,
-  EmployeeNumberSequenceRepository,
-} from './persistence/org.repositories.js';
-import { OutboxRecord, OutboxRecordSchema } from './persistence/outbox.schema.js';
-import { OrgOutboxWriter } from './persistence/outbox.writer.js';
-
+/** 组织 REST 外壳；领域服务与仓储由 OrgCoreModule 统一提供。 */
 @Module({
-  imports: [
-    IdempotencyModule,
-    IdentityModule,
-    MongooseModule.forFeature([
-      { name: OrgDepartmentRecord.name, schema: OrgDepartmentRecordSchema },
-      { name: OrgEmployeeRecord.name, schema: OrgEmployeeRecordSchema },
-      { name: OrgPositionRecord.name, schema: OrgPositionRecordSchema },
-      { name: OrgJobLevelRecord.name, schema: OrgJobLevelRecordSchema },
-      { name: OrgPersonRecord.name, schema: OrgPersonRecordSchema },
-      { name: OrgEmploymentRecord.name, schema: OrgEmploymentRecordSchema },
-      {
-        name: OrgEmployeeNumberSequenceRecord.name,
-        schema: OrgEmployeeNumberSequenceRecordSchema,
-      },
-      { name: OutboxRecord.name, schema: OutboxRecordSchema },
-    ]),
-  ],
-  providers: [
-    OrgApplicationService,
-    DepartmentRepository,
-    EmployeeRepository,
-    PositionRepository,
-    JobLevelRepository,
-    OrgOutboxWriter,
-    PersonRepository,
-    EmploymentRepository,
-    EmployeeNumberSequenceRepository,
-  ],
+  imports: [OrgCoreModule],
   controllers: [OrgController],
-  exports: [
-    OrgApplicationService,
-    DepartmentRepository,
-    EmployeeRepository,
-    PositionRepository,
-    JobLevelRepository,
-    OrgOutboxWriter,
-    PersonRepository,
-    EmploymentRepository,
-    EmployeeNumberSequenceRepository,
-  ],
+  exports: [OrgCoreModule],
 })
 export class OrgModule {}

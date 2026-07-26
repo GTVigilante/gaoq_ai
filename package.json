@@ -18,6 +18,7 @@
     "test:coverage": "pnpm -r --if-present test:coverage",
     "security:licenses": "pnpm licenses list --prod --json | node scripts/validate-dependency-licenses.mjs",
     "security:containers": "node scripts/validate-container-images.mjs",
+    "deployment:local-runtime:validate": "node scripts/validate-mongo-init.mjs && node scripts/validate-worker-runtime.mjs",
     "deployment:kubernetes:validate": "node scripts/validate-kubernetes-deployment.mjs",
     "deployment:kubernetes:guardrails:validate": "node scripts/validate-kubernetes-platform-guardrails.mjs",
     "security:validate": "node scripts/validate-security-workflow.mjs",
@@ -50,12 +51,13 @@
     "release:phase6:platform-intake:self-test": "node scripts/release/validate-phase-6-platform-intake.mjs --self-test",
     "release:phase6:platform-intake:print-contract": "node scripts/release/validate-phase-6-platform-intake.mjs --print-contract",
     "release:phase6:workflows:validate": "node scripts/validate-phase-6-workflows.mjs",
-    "check": "pnpm lint && pnpm typecheck && pnpm test && node scripts/validate-docs.mjs && pnpm security:validate && pnpm security:containers && pnpm deployment:kubernetes:validate && pnpm deployment:kubernetes:guardrails:validate && pnpm security:dast:self-test && pnpm performance:self-test && pnpm migration:rehearsal:self-test && pnpm resilience:self-test && pnpm release:readiness:self-test && pnpm release:go-no-go:self-test && pnpm mcp:catalog:self-test && pnpm mcp:integration:self-test && pnpm release:phase6:cutover:self-test && pnpm release:phase6:hypercare:self-test && pnpm release:phase6:deployment:self-test && pnpm release:phase6:platform-intake:self-test && pnpm release:phase6:workflows:validate"
+    "check": "pnpm lint && pnpm typecheck && pnpm test && node scripts/validate-docs.mjs && pnpm security:validate && pnpm security:containers && pnpm deployment:local-runtime:validate && pnpm deployment:kubernetes:validate && pnpm deployment:kubernetes:guardrails:validate && pnpm security:dast:self-test && pnpm performance:self-test && pnpm migration:rehearsal:self-test && pnpm resilience:self-test && pnpm release:readiness:self-test && pnpm release:go-no-go:self-test && pnpm mcp:catalog:self-test && pnpm mcp:integration:self-test && pnpm release:phase6:cutover:self-test && pnpm release:phase6:hypercare:self-test && pnpm release:phase6:deployment:self-test && pnpm release:phase6:platform-intake:self-test && pnpm release:phase6:workflows:validate"
   },
   "pnpm": {
     "overrides": {
       "@hono/node-server": "2.0.10",
-      "postcss": "8.5.10",
+      "brace-expansion": "5.0.8",
+      "postcss": "8.5.18",
       "sharp": "0.35.3"
     }
   },

@@ -78,7 +78,7 @@ describe('RefreshTokenService', () => {
     });
     const rotationUpdate = rotationCall?.[1] as { readonly $set: { readonly consumedAt: unknown } };
     expect(rotationUpdate.$set.consumedAt).toBeInstanceOf(Date);
-    expect(rotationCall?.[2]).toEqual({ new: true, session: mongoSession });
+    expect(rotationCall?.[2]).toEqual({ returnDocument: 'after', session: mongoSession });
     const created = fixture.create.mock.calls[0]?.[0] as Array<Record<string, unknown>>;
     expect(created[0]).toMatchObject({ familyId: 'family-001', generation: 1 });
     expect(created[0]?.['tokenHash']).not.toBe(result.refreshToken);

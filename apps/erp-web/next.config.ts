@@ -1,5 +1,6 @@
 import type { NextConfig } from 'next';
 
+import { applicationSecurityHeaders } from './app/lib/application-security-policy';
 import { mobileContainerHeaders } from './app/lib/mobile-container-policy';
 
 const nextConfig: NextConfig = {
@@ -7,13 +8,24 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   reactStrictMode: true,
   headers() {
-    return Promise.resolve([{
-      source: '/mobile/:path*',
-      headers: [...mobileContainerHeaders(
-        process.env.ERP_MOBILE_FRAME_ANCESTORS,
-        process.env.NODE_ENV === 'production',
-      )],
-    }]);
+    const production = process.env.NODE_ENV === 'production';
+    const apiOrigin = process.env.NEXT_PUBLIC_ERP_API_ORIGIN;
+    return Promise.resolve([
+      {
+        source: '/:path*',
+        headers: [...applicationSecurityHeaders(apiOrigin, production)],
+      },
+      {
+        source: '/mobile/:path*',
+        headers: [
+          ...mobileContainerHeaders(
+            process.env.ERP_MOBILE_FRAME_ANCESTORS,
+            production,
+            apiOrigin,
+          ),
+        ],
+      },
+    ]);
   },
 };
 

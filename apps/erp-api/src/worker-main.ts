@@ -11,6 +11,7 @@ async function bootstrap(): Promise<void> {
   const application = await NestFactory.createApplicationContext(WorkerModule, {
     bufferLogs: true,
   });
+  application.flushLogs();
   application.enableShutdownHooks();
   logger.log('组织集成 Worker 已启动');
 }

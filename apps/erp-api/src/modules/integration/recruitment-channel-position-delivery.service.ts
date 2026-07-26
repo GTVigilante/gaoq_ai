@@ -93,7 +93,7 @@ export class RecruitmentChannelPositionDeliveryService {
         ],
       },
       { $set: { status: 'processing', lockedAt: now, lockedBy: this.workerId }, $inc: { attempts: 1 } },
-      { new: true, sort: { createdAt: 1 }, runValidators: true },
+      { returnDocument: 'after', sort: { createdAt: 1 }, runValidators: true },
     ).lean().exec();
   }
 
