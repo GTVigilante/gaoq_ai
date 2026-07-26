@@ -164,6 +164,7 @@ export class AttendanceShiftApplicationService {
         });
         const existing = await this.facts.findByShiftPlanId(plan.id, session);
         if (existing !== null) {
+          assertExistingEvaluation(plan, existing);
           await this.plans.markEvaluated(plan.id, existing.id, new Date(), session);
           return { evaluation: evaluationSummary(plan, existing) };
         }
@@ -192,6 +193,15 @@ export class AttendanceShiftApplicationService {
           providerCode: 'attendance_rules',
           factType: 'shift',
           shiftPlanId: plan.id,
+          derivation: {
+            algorithmVersion: 'attendance-shift-v1',
+            shiftPlanId: plan.id,
+            rulesetVersion: plan.rulesetVersion,
+            outcome: evaluation.outcome,
+            punchProviderCode: evaluation.punchProviderCode,
+            punchInFactId: evaluation.punchInFactId,
+            punchOutFactId: evaluation.punchOutFactId,
+          },
           occurredAt: plan.scheduledStartAt,
           timeZone: plan.timeZone,
           impact: evaluation.impact,
@@ -267,6 +277,25 @@ function evaluationSummary(
     businessDate: plan.businessDate,
     status: 'completed' as const,
   });
+}
+
+function assertExistingEvaluation(
+  plan: AttendanceShiftPlan,
+  fact: AttendanceSourceFact,
+): void {
+  if (
+    fact.factType !== 'shift' ||
+    fact.providerCode !== 'attendance_rules' ||
+    fact.shiftPlanId !== plan.id ||
+    fact.derivation?.algorithmVersion !== 'attendance-shift-v1' ||
+    fact.derivation.shiftPlanId !== plan.id ||
+    fact.derivation.rulesetVersion !== plan.rulesetVersion
+  ) {
+    throw new ConflictException({
+      code: 'ATTENDANCE_SHIFT_DERIVATION_INVALID',
+      message: '现有班次派生事实缺少可复算谱系',
+    });
+  }
 }
 
 function samePlan(left: AttendanceShiftPlan, right: AttendanceShiftPlan): boolean {

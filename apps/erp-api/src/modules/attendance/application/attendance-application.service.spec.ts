@@ -436,6 +436,15 @@ describe('AttendanceApplicationService', () => {
       id: 'derived-shift-001',
       providerCode: 'attendance_rules',
       shiftPlanId: plan.id,
+      derivation: {
+        algorithmVersion: 'attendance-shift-v1',
+        shiftPlanId: plan.id,
+        rulesetVersion: plan.rulesetVersion,
+        outcome: 'complete',
+        punchProviderCode: 'feishu',
+        punchInFactId: 'punch-in-cross-day',
+        punchOutFactId: 'punch-out-cross-day',
+      },
       businessDate: plan.businessDate,
       occurredAt: plan.scheduledStartAt,
       impact: {

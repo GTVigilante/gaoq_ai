@@ -177,6 +177,15 @@ describe('AttendanceShiftApplicationService', () => {
         factType: 'shift',
         shiftPlanId: shiftPlan().id,
         businessDate: '2026-04-30',
+        derivation: {
+          algorithmVersion: 'attendance-shift-v1',
+          shiftPlanId: shiftPlan().id,
+          rulesetVersion: 'attendance-cn-v2',
+          outcome: 'complete',
+          punchProviderCode: 'feishu',
+          punchInFactId: 'punch-in-001',
+          punchOutFactId: 'punch-out-001',
+        },
         impact: {
           workedMinutes: 900,
           leaveMinutes: 0,
@@ -200,5 +209,21 @@ describe('AttendanceShiftApplicationService', () => {
       shiftPlanId: shiftPlan().id,
       status: 'completed',
     });
+  });
+
+  it('幂等重放拒绝缺少规则谱系的既有派生事实', async () => {
+    const store = assemble();
+    store.facts.findByShiftPlanId.mockResolvedValue({
+      ...punch('legacy-derived-shift', 'punch_in', '2026-04-30T14:00:00.000Z'),
+      providerCode: 'attendance_rules',
+      factType: 'shift',
+      shiftPlanId: shiftPlan().id,
+    });
+    await expect(trustedRun(
+      store.context,
+      ['erp:attendance:shift:evaluate'],
+      () => store.service.evaluate('shift-evaluate-key-invalid-lineage', shiftPlan().id),
+    )).rejects.toThrow('现有班次派生事实缺少可复算谱系');
+    expect(store.plans.markEvaluated).not.toHaveBeenCalled();
   });
 });

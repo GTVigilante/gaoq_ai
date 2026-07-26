@@ -30,8 +30,18 @@ const impactSchema = z.object({
   overtimeMinutes: z.number().int().nonnegative(),
   absentMinutes: z.number().int().nonnegative(),
 }).strict();
+const shiftDerivationSchema = z.object({
+  algorithmVersion: z.literal('attendance-shift-v1'),
+  shiftPlanId: z.string(),
+  rulesetVersion: z.string(),
+  outcome: z.enum(['complete', 'missing_punch']),
+  punchProviderCode: z.string().nullable(),
+  punchInFactId: z.string().nullable(),
+  punchOutFactId: z.string().nullable(),
+}).strict();
 const factPayloadSchema = z.object({
   occurredAt: z.string(), timeZone: z.string(), impact: impactSchema,
+  derivation: shiftDerivationSchema.nullable().optional(),
 }).strict();
 const correctionPayloadSchema = z.object({
   replacementImpact: impactSchema,
@@ -181,7 +191,12 @@ export class AttendanceSourceFactRepository extends TenantRepository {
     this.assertTenant(fact.tenantId);
     const protectedData = this.crypto.protect(
       { tenantId: fact.tenantId, resourceType: 'source_fact', resourceId: fact.id },
-      { occurredAt: fact.occurredAt, timeZone: fact.timeZone, impact: fact.impact },
+      {
+        occurredAt: fact.occurredAt,
+        timeZone: fact.timeZone,
+        impact: fact.impact,
+        derivation: fact.derivation ?? null,
+      },
     );
     await this.records.create([{
       id: fact.id, tenantId: fact.tenantId, employeeId: fact.employeeId,
@@ -204,6 +219,9 @@ export class AttendanceSourceFactRepository extends TenantRepository {
       occurredAt: payload.occurredAt, timeZone: payload.timeZone,
       businessDate: record.businessDate, impact: Object.freeze(payload.impact),
       shiftPlanId: record.shiftPlanId,
+      derivation: payload.derivation === undefined || payload.derivation === null
+        ? payload.derivation
+        : Object.freeze(payload.derivation),
       sourceObservedAt: record.sourceObservedAt.toISOString(), createdAt: record.createdAt.toISOString(),
     });
   }
@@ -318,10 +336,7 @@ export class AttendanceShiftPlanRepository extends TenantRepository {
       {
         tenantId: this.tenantId(),
         id: planId,
-        $or: [
-          { evaluationStatus: 'pending' },
-          { evaluationStatus: 'completed', evaluatedSourceFactId: sourceFactId },
-        ],
+        evaluationStatus: 'pending',
       },
       { $set: {
         evaluationStatus: 'completed',
@@ -330,9 +345,14 @@ export class AttendanceShiftPlanRepository extends TenantRepository {
       } },
       { session, runValidators: true, timestamps: false },
     );
-    if (result.matchedCount !== 1) {
-      throw new Error('ATTENDANCE_SHIFT_EVALUATION_CHECKPOINT_CONFLICT');
-    }
+    if (result.matchedCount === 1) return;
+    const existing = await this.records.findOne({
+      tenantId: this.tenantId(),
+      id: planId,
+      evaluationStatus: 'completed',
+      evaluatedSourceFactId: sourceFactId,
+    }).select('id').session(session).lean().exec();
+    if (existing === null) throw new Error('ATTENDANCE_SHIFT_EVALUATION_CHECKPOINT_CONFLICT');
   }
 
   private toDomain(record: AttendanceShiftPlanRecord): AttendanceShiftPlan {
