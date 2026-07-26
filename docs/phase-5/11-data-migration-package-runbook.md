@@ -34,7 +34,7 @@
 
 `attendance_monthly_snapshots` 必须按员工、月份、版本升序排列。来源只提交规则版本、严格 UTC 截止/关账时间、四项分钟控制总量、事实/修订计数、前序与重开审批来源引用及独立 WORM；不得提交目标逐日明细或目标哈希。目标端重新查询截止时间内的事实和修订、重算并核对控制总量，v2+ 精确校验直接前序和 `attendance_month_reopen` approved 历史后才激活新版本。
 
-`payroll_rule_packs` 只提交固定税率结构、法规来源摘要/引用、版本、生效区间、`payroll_rule_pack` approved 历史及 WORM；目标重新执行确定性计算内核的规则校验。`payroll_compensation_profiles` 包含 `jurisdictionCode`、L4 金额与扣缴策略，来源包必须独立加密；目标保存 AES-256-GCM 密文、法域控制字段和控制摘要，并核验员工映射、`payroll_compensation` approved 历史、连续版本、不重叠区间和唯一 WORM。月中变更必须由相邻版本完整覆盖，禁止迁移器自行补齐缺口。
+`payroll_rule_packs` 只提交固定税率结构、法规来源摘要/引用、版本、生效区间、`payroll_rule_pack` approved 历史及 WORM；目标重新执行确定性计算内核的规则校验。`payroll_compensation_profiles` 包含 `jurisdictionCode`、L4 金额与扣缴策略，来源包必须独立加密；目标保存 AES-256-GCM 密文、法域控制字段和控制摘要，并核验员工映射、`payroll_compensation` approved 历史、连续版本、不重叠区间和唯一 WORM。月中变更必须由相邻版本完整覆盖，计算运行员工行按“首段来源 ID + 有序附加来源 ID”提交并逐一建立映射，禁止迁移器自行补齐缺口或调整顺序。
 
 `payroll_periods` 只提交月份、`draft|collecting`、制单员工来源引用、创建/更新时间和唯一 WORM。不得提交目标 actorId、运行摘要、审批、锁定、支付或对账状态。`payroll_calculation_runs` 必须按税年、月份、运行序号升序，且 `expectedPeriodVersion = runNumber + 1`；每条记录引用一个已迁移周期、一个生效规则包，以及每位员工对应的已迁移员工、薪酬档案和 active 考勤月结。运行 1 把周期从 collecting 推到 review；运行 2+ 只有在前次迁移运行的 WORM、活动引用和控制摘要全部一致时才允许 review 重算。来源提交员工行应发/税额/实发及期间控制汇总，目标重新计算并逐项核对；前月尚未迁移锁定时，只能继承运行 WORM 与周期摘要一致的目标重算结果。该包包含 L4 工资控制金额，必须在隔离区静态加密；不得包含目标哈希、计算步骤、累计税状态、银行卡、身份证件或密钥。单条最多 5,000 名员工、20,000 个去重来源关联，并受 API 8 MiB 请求上限约束；容量演练必须覆盖最大实际工资人数。
 

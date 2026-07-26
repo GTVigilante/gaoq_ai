@@ -51,6 +51,8 @@ export interface PayrollCalculationInput {
   readonly currency: 'CNY';
   readonly engineVersion: string;
   readonly rulePack: PayrollRulePackSnapshot;
+  /** 新运行必须冻结规则法域；旧加密快照兼容读取时可缺省。 */
+  readonly ruleJurisdictionCode?: string;
   readonly taxableEarnings: readonly PayrollAmountComponent[];
   readonly nonTaxableEarnings: readonly PayrollAmountComponent[];
   readonly employeeSocialInsuranceMinor: number;
@@ -156,6 +158,9 @@ export function calculatePayroll(input: PayrollCalculationInput): PayrollCalcula
   const normalizedInput = Object.freeze({
     tenantId: input.tenantId, employeeId: input.employeeId, period: input.period,
     currency: input.currency, engineVersion: input.engineVersion,
+    ...(input.ruleJurisdictionCode === undefined ? {} : {
+      ruleJurisdictionCode: input.ruleJurisdictionCode,
+    }),
     rulePack: Object.freeze({
       ...input.rulePack,
       taxBrackets: Object.freeze(input.rulePack.taxBrackets.map((item) => Object.freeze({ ...item }))),
@@ -210,6 +215,10 @@ function validateInput(input: PayrollCalculationInput): void {
   }
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(input.period)) {
     invalid('PAYROLL_PERIOD_INVALID', '工资期间必须为 YYYY-MM');
+  }
+  if (input.ruleJurisdictionCode !== undefined &&
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(input.ruleJurisdictionCode)) {
+    invalid('PAYROLL_RULE_JURISDICTION_INVALID', '工资规则法域非法');
   }
   if (!Number.isSafeInteger(input.rulePack.version) || input.rulePack.version < 1) {
     invalid('PAYROLL_RULE_VERSION_INVALID', '规则版本非法');
@@ -267,12 +276,26 @@ function validateInput(input: PayrollCalculationInput): void {
 
 function validateCompensationAllocations(input: PayrollCalculationInput): void {
   if (input.compensationAllocations === undefined) return;
+  if (input.ruleJurisdictionCode === undefined) {
+    invalid('PAYROLL_RULE_JURISDICTION_REQUIRED', '月中分摊必须冻结工资规则法域');
+  }
   if (input.compensationAllocations.length < 1 || input.compensationAllocations.length > 31) {
     invalid('PAYROLL_COMPENSATION_ALLOCATION_INVALID', '薪酬分摊证据数量非法');
   }
   const profileIds = new Set<string>();
-  let allocatedDays = 0;
+  const periodDays = daysInPeriod(input.period);
+  const periodEnd = `${input.period}-${String(periodDays).padStart(2, '0')}`;
+  let expectedFrom = `${input.period}-01`;
   for (const allocation of input.compensationAllocations) {
+    const effectiveFrom = calendarOrdinal(allocation.effectiveFrom);
+    const effectiveTo = allocation.effectiveTo === null
+      ? null
+      : calendarOrdinal(allocation.effectiveTo);
+    const allocatedFrom = calendarOrdinal(allocation.allocatedFrom);
+    const allocatedTo = calendarOrdinal(allocation.allocatedTo);
+    const actualAllocatedDays = allocatedFrom === null || allocatedTo === null
+      ? 0
+      : Math.round((allocatedTo - allocatedFrom) / 86_400_000) + 1;
     if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(allocation.profileId) ||
       !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(allocation.jurisdictionCode) ||
       !/^[A-Za-z0-9_-]{43}$/.test(allocation.profileHash) ||
@@ -281,26 +304,60 @@ function validateCompensationAllocations(input: PayrollCalculationInput): void {
       !Number.isSafeInteger(allocation.periodDays) || allocation.periodDays < 28 ||
       allocation.periodDays > 31 ||
       allocation.allocationMethod !== 'CALENDAR_DAY_HALF_UP' ||
-      !/^\d{4}-\d{2}-\d{2}$/.test(allocation.effectiveFrom) ||
-      (allocation.effectiveTo !== null && !/^\d{4}-\d{2}-\d{2}$/.test(allocation.effectiveTo)) ||
-      !/^\d{4}-\d{2}-\d{2}$/.test(allocation.allocatedFrom) ||
-      !/^\d{4}-\d{2}-\d{2}$/.test(allocation.allocatedTo) ||
-      allocation.allocatedFrom > allocation.allocatedTo ||
-      allocation.periodDays !== daysInPeriod(input.period) ||
+      effectiveFrom === null || allocatedFrom === null || allocatedTo === null ||
+      allocatedFrom > allocatedTo ||
+      (effectiveTo !== null && effectiveFrom > effectiveTo) ||
+      allocation.allocatedFrom !== expectedFrom ||
+      allocation.allocatedTo > periodEnd ||
+      effectiveFrom > allocatedFrom ||
+      (effectiveTo !== null && effectiveTo < allocatedTo) ||
+      allocation.allocatedDays !== actualAllocatedDays ||
+      allocation.periodDays !== periodDays ||
+      !payrollRuleCoversJurisdiction(
+        input.ruleJurisdictionCode,
+        allocation.jurisdictionCode,
+      ) ||
       profileIds.has(allocation.profileId)) {
       invalid('PAYROLL_COMPENSATION_ALLOCATION_INVALID', '薪酬分摊证据非法');
     }
     profileIds.add(allocation.profileId);
-    allocatedDays += allocation.allocatedDays;
+    expectedFrom = formatCalendarDate(allocatedTo + 86_400_000);
   }
-  if (allocatedDays !== daysInPeriod(input.period)) {
-    invalid('PAYROLL_COMPENSATION_ALLOCATION_INVALID', '薪酬分摊天数未覆盖工资期间');
+  if (expectedFrom !== formatCalendarDate(
+    requiredCalendarOrdinal(periodEnd) + 86_400_000,
+  )) {
+    invalid('PAYROLL_COMPENSATION_ALLOCATION_INVALID', '薪酬分摊区间未覆盖工资期间');
   }
+}
+
+/** 法域代码以短横线表达父子层级；例如 CN 规则可覆盖 CN-SH。 */
+export function payrollRuleCoversJurisdiction(
+  ruleJurisdictionCode: string,
+  compensationJurisdictionCode: string,
+): boolean {
+  return compensationJurisdictionCode === ruleJurisdictionCode ||
+    compensationJurisdictionCode.startsWith(`${ruleJurisdictionCode}-`);
 }
 
 function daysInPeriod(period: string): number {
   const [yearText, monthText] = period.split('-');
   return new Date(Date.UTC(Number(yearText), Number(monthText), 0)).getUTCDate();
+}
+
+function calendarOrdinal(value: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const parsed = Date.parse(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed) && formatCalendarDate(parsed) === value ? parsed : null;
+}
+
+function requiredCalendarOrdinal(value: string): number {
+  const parsed = calendarOrdinal(value);
+  if (parsed === null) invalid('PAYROLL_COMPENSATION_ALLOCATION_INVALID', '工资期间日期非法');
+  return parsed;
+}
+
+function formatCalendarDate(value: number): string {
+  return new Date(value).toISOString().slice(0, 10);
 }
 
 function normalizedComponents(

@@ -21,6 +21,7 @@ import {
   calculatePayroll,
   createPayrollPeriod,
   payrollDigest,
+  payrollRuleCoversJurisdiction,
   proratePayrollCompensation,
   recordPayrollCalculation,
   startPayrollCollection,
@@ -339,7 +340,12 @@ export class PayrollRunService {
           code: 'PAYROLL_MIGRATION_RUN_TIME_INVALID', message: '计算完成时间早于工资周期基线',
         });
         const calculated = await this.calculateLines(
-          current, input.lines.map(lineReference), toRuleSnapshot(rulePack), session, true,
+          current,
+          input.lines.map(lineReference),
+          toRuleSnapshot(rulePack),
+          rulePack.jurisdictionCode,
+          session,
+          true,
         );
         assertMigrationRunControls(input, calculated);
         const runId = createEventId(completedAt);
@@ -477,7 +483,13 @@ export class PayrollRunService {
       }).sort({ runNumber: -1 }).session(session).lean().exec();
       const runId = createEventId();
       const runNumber = (priorRun?.runNumber ?? 0) + 1;
-      const calculated = await this.calculateLines(current, input.lines, ruleSnapshot, session);
+      const calculated = await this.calculateLines(
+        current,
+        input.lines,
+        ruleSnapshot,
+        rulePack.jurisdictionCode,
+        session,
+      );
       const inputSnapshotHash = payrollDigest(calculated.map((line) => ({
         employeeId: line.input.employeeId,
         compensationProfileId: line.reference.compensationProfileId,
@@ -765,6 +777,10 @@ export class PayrollRunService {
       if (snapshot.employeeId !== expectedLine.employeeId ||
         resultLine.employeeId !== expectedLine.employeeId ||
         snapshot.compensationProfileId !== expectedLine.compensationProfileId ||
+        !sameStringArray(
+          snapshotCompensationProfileIds(snapshot),
+          compensationProfileIds(expectedLine),
+        ) ||
         snapshot.attendanceSnapshotId !== expectedLine.attendanceSnapshotId) {
         throw migratedRunImmutable();
       }
@@ -794,6 +810,9 @@ export class PayrollRunService {
     const inputSnapshotHash = payrollDigest(snapshots.map((snapshot) => ({
       employeeId: snapshot.employeeId,
       compensationProfileId: snapshot.compensationProfileId,
+      ...(snapshotCompensationProfileIds(snapshot).length > 1
+        ? { compensationProfileIds: snapshotCompensationProfileIds(snapshot) }
+        : {}),
       attendanceSnapshotId: snapshot.attendanceSnapshotId,
       attendanceSnapshotHash: snapshot.attendanceSnapshotHash,
       inputHash: snapshot.inputHash,
@@ -812,6 +831,7 @@ export class PayrollRunService {
     period: PayrollPeriodRecord,
     lines: readonly PayrollRunLineInput[],
     rulePack: PayrollRulePackSnapshot,
+    ruleJurisdictionCode: string,
     session: ClientSession,
     allowMigratedPrior = false,
   ): Promise<readonly CalculatedPayrollLine[]> {
@@ -842,14 +862,22 @@ export class PayrollRunService {
         compensations.length !== requestedProfileIds.length) {
         throw new Error('PAYROLL_COMPENSATION_PROFILE_NOT_EFFECTIVE');
       }
+      const orderedCompensations = compensations.map((item) => required(item));
+      if (requestedProfileIds.some(
+        (profileId, index) => orderedCompensations[index]?.id !== profileId,
+      )) {
+        throw new PayrollCalculationError(
+          'PAYROLL_COMPENSATION_PROFILE_ORDER_INVALID',
+          '薪酬档案引用必须按生效顺序排列且首段作为主引用',
+        );
+      }
       const attendance = await this.attendanceSnapshots.findOne({
         tenantId: this.tenantId(), id: line.attendanceSnapshotId,
         employeeId: line.employeeId, month: period.period,
         status: 'active',
       }).session(session).lean().exec();
       if (attendance === null) throw new Error('PAYROLL_ATTENDANCE_SNAPSHOT_INVALID');
-      const profileSegments = compensations.map((value) => {
-        const compensation = required(value);
+      const profileSegments = orderedCompensations.map((compensation) => {
         const profileData = compensationProfileDataSchema.parse(this.crypto.unprotect({
           tenantId: this.tenantId(), resourceType: 'compensation_profile',
           resourceId: compensation.id, version: compensation.version,
@@ -864,6 +892,16 @@ export class PayrollRunService {
           effectiveTo: compensation.effectiveTo, data: profileData,
         });
       });
+      if (profileSegments.some((segment) =>
+        !payrollRuleCoversJurisdiction(
+          ruleJurisdictionCode,
+          segment.data.jurisdictionCode,
+        ))) {
+        throw new PayrollCalculationError(
+          'PAYROLL_RULE_JURISDICTION_MISMATCH',
+          '工资规则法域不能覆盖薪酬档案法域',
+        );
+      }
       const proratedProfile = profileSegments.length === 1
         ? null
         : proratePayrollCompensation(period.period, profileSegments);
@@ -887,7 +925,8 @@ export class PayrollRunService {
       );
       const calculation: PayrollCalculationInput = Object.freeze({
         tenantId: this.tenantId(), employeeId: line.employeeId, period: period.period,
-        currency: profileData.currency, engineVersion: PAYROLL_ENGINE_VERSION, rulePack,
+        currency: profileData.currency, engineVersion: PAYROLL_ENGINE_VERSION,
+        rulePack, ruleJurisdictionCode,
         taxableEarnings: Object.freeze([
           ...profileData.taxableEarnings,
           ...(overtimePayMinor === 0 ? [] : [{ code: 'ATTENDANCE_OVERTIME', amountMinor: overtimePayMinor }]),
@@ -1016,6 +1055,9 @@ export class PayrollRunService {
       ].includes(keys) ||
       !ID_PATTERN.test(line.employeeId) || !ID_PATTERN.test(line.compensationProfileId) ||
       !ID_PATTERN.test(line.attendanceSnapshotId) ||
+      (line.additionalCompensationProfileIds !== undefined &&
+        (line.additionalCompensationProfileIds.length < 1 ||
+          line.additionalCompensationProfileIds.length > 30)) ||
       profileIds.length < 1 || profileIds.length > 31 ||
       profileIds.some((profileId) => !ID_PATTERN.test(profileId)) ||
       new Set(profileIds).size !== profileIds.length
@@ -1324,6 +1366,9 @@ function lineReference(
 ): PayrollRunLineInput {
   return {
     employeeId: line.employeeId, compensationProfileId: line.compensationProfileId,
+    ...(line.additionalCompensationProfileIds === undefined ? {} : {
+      additionalCompensationProfileIds: [...line.additionalCompensationProfileIds],
+    }),
     attendanceSnapshotId: line.attendanceSnapshotId,
   };
 }
@@ -1333,6 +1378,28 @@ function compensationProfileIds(line: PayrollRunLineInput): readonly string[] {
     line.compensationProfileId,
     ...(line.additionalCompensationProfileIds ?? []),
   ]);
+}
+
+function sameStringArray(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  return left.length === right.length &&
+    left.every((value, index) => value === right[index]);
+}
+
+function snapshotCompensationProfileIds(
+  snapshot: {
+    readonly compensationProfileId: string;
+    readonly compensationProfileIds?: readonly string[];
+  },
+): readonly string[] {
+  const values: unknown = snapshot.compensationProfileIds;
+  if (!Array.isArray(values)) return [snapshot.compensationProfileId];
+  return values.map((value: unknown) => {
+    if (typeof value !== 'string') throw migratedRunImmutable();
+    return value;
+  });
 }
 
 function strictMigrationInstant(value: string): Date {

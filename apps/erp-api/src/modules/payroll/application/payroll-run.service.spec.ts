@@ -191,7 +191,7 @@ describe('PayrollRunService 迁移重算控制', () => {
       }])), updateOne: vi.fn().mockResolvedValue({ modifiedCount: 1 }),
     };
     const rulePacks = { findOne: vi.fn().mockReturnValue(query({
-      ...ruleSnapshot, tenantId: 'tenant-001', status: 'published',
+      ...ruleSnapshot, tenantId: 'tenant-001', jurisdictionCode: 'CN', status: 'published',
       effectiveFrom: '2026-01-01', effectiveTo: '2026-12-31',
       rulesHash: payrollDigest(ruleSnapshot),
     })) };
@@ -438,5 +438,16 @@ describe('PayrollRunService 月中薪酬运行', () => {
         compensationProfileIds: [firstProfileId, secondProfileId],
       }),
     ], { session });
+
+    await expect(context.run({
+      tenant, actor: actor(['erp:payroll:run:execute'], 'system_job'),
+    }, () => service.executeRun('payroll-run-proration-order-invalid', {
+      periodId, expectedVersion: 2, rulePackId, rulePackVersion: 1,
+      lines: [{
+        employeeId: 'employee-001', compensationProfileId: secondProfileId,
+        additionalCompensationProfileIds: [firstProfileId],
+        attendanceSnapshotId: attendanceId,
+      }],
+    }))).rejects.toThrow('薪酬档案引用必须按生效顺序排列');
   });
 });
