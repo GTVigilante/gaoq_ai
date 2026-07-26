@@ -12,7 +12,10 @@ export function parseApplicationApiOrigin(
   value: string | undefined,
   production: boolean,
 ): string {
-  if (value === undefined || value.trim().length === 0) return LOCAL_API_ORIGIN;
+  if (value === undefined || value.trim().length === 0) {
+    if (production) throw new Error('APPLICATION_API_ORIGIN_REQUIRED');
+    return LOCAL_API_ORIGIN;
+  }
   const candidate = value.trim();
   let url: URL;
   try {
