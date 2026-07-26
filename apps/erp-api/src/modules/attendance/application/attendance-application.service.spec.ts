@@ -36,6 +36,19 @@ function sourceFact(): AttendanceSourceFact {
   });
 }
 
+function crossDayShiftPlan() {
+  return Object.freeze({
+    id: 'shift-plan-001', tenantId: tenant.tenantId, employeeId: 'employee-001',
+    providerCode: 'workforce_scheduler', planCode: 'NIGHT-A',
+    businessDate: '2026-04-30', rulesetVersion: 'attendance-cn-v2',
+    timeZone: 'Asia/Shanghai', scheduledStartAt: '2026-04-30T14:00:00.000Z',
+    scheduledEndAt: '2026-05-01T06:00:00.000Z', breakMinutes: 60,
+    graceMinutes: 10, earlyArrivalWindowMinutes: 120, lateDepartureWindowMinutes: 120,
+    sourceObservedAt: '2026-04-29T00:00:00.000Z',
+    createdAt: '2026-04-29T00:00:00.000Z',
+  });
+}
+
 function assemble() {
   const context = new TenantContextService();
   const idempotency = { execute: vi.fn(async (
@@ -46,6 +59,18 @@ function assemble() {
   ) => handler(session)) };
   const profiles = { resolveActive: vi.fn().mockResolvedValue({ employeeId: 'employee-001' }) };
   const employees = { findById: vi.fn().mockResolvedValue({ id: 'employee-001' }) };
+  const employments = {
+    findOverlappingByEmployeeIds: vi.fn().mockResolvedValue([{
+      id: 'employment-001', tenantId: tenant.tenantId, personId: 'person-001',
+      employeeId: 'employee-001', onboardingInstanceId: 'onboarding-001',
+      onboardingCompletionEvidenceId: 'onboarding-evidence-001', offerId: 'offer-001',
+      signedEvidenceId: 'signed-evidence-001', terminationCareCaseId: null,
+      terminationExecutionEvidenceId: null, terminationEvidenceId: null,
+      status: 'active', effectiveFrom: '2026-01-01', effectiveTo: null,
+      version: 1, createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }]),
+  };
   const approvals = {
     getAttendanceCorrectionDecision: vi.fn(), getAttendanceMonthReopenDecision: vi.fn(),
     verifyAttendanceCorrectionMigrationReference: vi.fn(),
@@ -72,14 +97,17 @@ function assemble() {
     findMigrationEvidenceById: vi.fn().mockResolvedValue(null),
     activate: vi.fn().mockResolvedValue(undefined), activateMigrated: vi.fn().mockResolvedValue(undefined),
   };
+  const shiftPlans = { findForMonth: vi.fn().mockResolvedValue([]) };
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
+  const sourceReadiness = { reconcile: vi.fn().mockResolvedValue([]) };
   const service = new AttendanceApplicationService(
-    idempotency as never, context, profiles as never, employees as never, approvals as never,
-    crypto as never, facts as never, corrections as never, snapshots as never, outbox as never,
+    idempotency as never, context, profiles as never, employees as never, employments as never,
+    approvals as never, crypto as never, facts as never, corrections as never, snapshots as never,
+    shiftPlans as never, sourceReadiness as never, outbox as never,
   );
   return {
-    service, context, profiles, employees, approvals, crypto,
-    facts, corrections, snapshots, outbox,
+    service, context, profiles, employees, employments, approvals, crypto,
+    facts, corrections, snapshots, shiftPlans, sourceReadiness, outbox,
   };
 }
 
@@ -368,6 +396,99 @@ describe('AttendanceApplicationService', () => {
       employeeId: 'employee-001', month: '2026-04', rulesetVersion: 'attendance-cn-v1',
       sourceCutoffAt: '2026-05-01T00:00:00.000Z',
     }))).rejects.toThrow('已关账月份重开必须提供审批引用');
+    expect(store.snapshots.activate).not.toHaveBeenCalled();
+  });
+
+  it('首次关账同时核对劳动关系与 Provider 水位并将摘要写入快照', async () => {
+    const store = assemble();
+    store.sourceReadiness.reconcile.mockResolvedValue([{
+      providerCode: 'feishu', throughDate: '2026-04-30',
+      lastPolledAt: '2026-05-01T00:00:00.000Z', completedInboxCount: 42,
+    }]);
+    const result = await store.context.run({
+      tenant, actor: actor(['erp:attendance:month:close'], 'system_job'),
+    }, () => store.service.closeMonth('close-key-ready-001', {
+      employeeId: 'employee-001', month: '2026-04', rulesetVersion: 'attendance-cn-v1',
+      sourceCutoffAt: '2026-05-01T00:00:00.000Z',
+    }));
+    expect(store.employments.findOverlappingByEmployeeIds).toHaveBeenCalledWith(
+      ['employee-001'], '2026-04-01', '2026-04-30', session,
+    );
+    expect(store.sourceReadiness.reconcile).toHaveBeenCalledWith(
+      'employee-001', '2026-04', new Date('2026-05-01T00:00:00.000Z'), session,
+      '2026-04-30',
+    );
+    const activated = store.snapshots.activate.mock.calls[0]?.[0] as unknown as {
+      readonly sourceProviderCount: number;
+      readonly sourceWatermarkDigest: string;
+    };
+    expect(activated.sourceProviderCount).toBe(1);
+    expect(activated.sourceWatermarkDigest).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(result.month.sourceProviderCount).toBe(1);
+  });
+
+  it('跨日班次必须先形成同规则版本的派生事实，并要求来源补拉至结束业务日', async () => {
+    const store = assemble();
+    const plan = crossDayShiftPlan();
+    store.shiftPlans.findForMonth.mockResolvedValue([plan]);
+    store.facts.findForMonth.mockResolvedValue([{
+      ...sourceFact(),
+      id: 'derived-shift-001',
+      providerCode: 'attendance_rules',
+      shiftPlanId: plan.id,
+      businessDate: plan.businessDate,
+      occurredAt: plan.scheduledStartAt,
+      impact: {
+        workedMinutes: 900,
+        leaveMinutes: 0,
+        overtimeMinutes: 0,
+        absentMinutes: 0,
+      },
+    }]);
+    store.sourceReadiness.reconcile.mockResolvedValue([{
+      providerCode: 'feishu',
+      throughDate: '2026-05-01',
+      lastPolledAt: '2026-05-01T08:00:00.000Z',
+      completedInboxCount: 42,
+    }]);
+    await store.context.run({
+      tenant, actor: actor(['erp:attendance:month:close'], 'system_job'),
+    }, () => store.service.closeMonth('close-key-cross-day-001', {
+      employeeId: 'employee-001', month: '2026-04', rulesetVersion: 'attendance-cn-v2',
+      sourceCutoffAt: '2026-05-01T09:00:00.000Z',
+    }));
+    expect(store.sourceReadiness.reconcile).toHaveBeenCalledWith(
+      'employee-001',
+      '2026-04',
+      new Date('2026-05-01T09:00:00.000Z'),
+      session,
+      '2026-05-01',
+    );
+
+    const incomplete = assemble();
+    incomplete.shiftPlans.findForMonth.mockResolvedValue([plan]);
+    await expect(incomplete.context.run({
+      tenant, actor: actor(['erp:attendance:month:close'], 'system_job'),
+    }, () => incomplete.service.closeMonth('close-key-cross-day-002', {
+      employeeId: 'employee-001', month: '2026-04', rulesetVersion: 'attendance-cn-v2',
+      sourceCutoffAt: '2026-05-01T09:00:00.000Z',
+    }))).rejects.toThrow('尚未完成规则计算');
+    expect(incomplete.sourceReadiness.reconcile).not.toHaveBeenCalled();
+  });
+
+  it('事实不在劳动关系有效区间时拒绝关账', async () => {
+    const store = assemble();
+    store.employments.findOverlappingByEmployeeIds.mockResolvedValue([{
+      employeeId: 'employee-001',
+      effectiveFrom: '2026-04-02',
+      effectiveTo: null,
+    }]);
+    await expect(store.context.run({
+      tenant, actor: actor(['erp:attendance:month:close'], 'system_job'),
+    }, () => store.service.closeMonth('close-key-employment-001', {
+      employeeId: 'employee-001', month: '2026-04', rulesetVersion: 'attendance-cn-v1',
+      sourceCutoffAt: '2026-05-01T00:00:00.000Z',
+    }))).rejects.toThrow('不在员工劳动关系有效区间内');
     expect(store.snapshots.activate).not.toHaveBeenCalled();
   });
 

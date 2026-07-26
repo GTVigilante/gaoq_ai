@@ -40,3 +40,20 @@ export class CloseAttendanceMonthDto {
   @IsISO8601({ strict: true, strictSeparator: true }) sourceCutoffAt!: string;
   @IsOptional() @Matches(ULID) supersessionApprovalInstanceId?: string;
 }
+
+export class AssignAttendanceShiftPlanDto {
+  @Matches(ID) employeeId!: string;
+  @Matches(/^[a-z][a-z0-9_]{1,31}$/) providerCode!: string;
+  @Matches(/^[\x20-\x7e]{1,256}$/) externalPlanId!: string;
+  @Matches(ID) planCode!: string;
+  @Matches(/^\d{4}-\d{2}-\d{2}$/) businessDate!: string;
+  @Matches(/^[A-Za-z0-9._:-]{1,64}$/) rulesetVersion!: string;
+  @IsString() @MinLength(1) @MaxLength(64) timeZone!: string;
+  @IsISO8601({ strict: true, strictSeparator: true }) scheduledStartAt!: string;
+  @IsISO8601({ strict: true, strictSeparator: true }) scheduledEndAt!: string;
+  @IsInt() @Min(0) @Max(2_159) breakMinutes!: number;
+  @IsInt() @Min(0) @Max(120) graceMinutes!: number;
+  @IsInt() @Min(0) @Max(360) earlyArrivalWindowMinutes!: number;
+  @IsInt() @Min(0) @Max(360) lateDepartureWindowMinutes!: number;
+  @IsISO8601({ strict: true, strictSeparator: true }) sourceObservedAt!: string;
+}

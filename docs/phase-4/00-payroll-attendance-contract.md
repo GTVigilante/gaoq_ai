@@ -5,7 +5,8 @@
 | 聚合/记录 | 权威模块 | 不变量 |
 | --- | --- | --- |
 | `AttendanceSourceEvent` | Attendance | 供应商原始事实加密、追加写；租户/平台/外部事件盲指纹唯一 |
-| `AttendanceDay` | Attendance | 由原始事实和有效修订投影；业务日期绑定 Employment 工作地 IANA 时区 |
+| `AttendanceShiftPlan` | Attendance | 日班次计划追加写；规则版本、捕获窗口和开始业务日归属固定，外部计划盲指纹唯一 |
+| `AttendanceDay` | Attendance | 由班次规则派生事实和有效修订投影；业务日期绑定班次开始时刻的 IANA 时区 |
 | `AttendanceCorrection` | Attendance + Approval | 必须保存前后摘要、原因、申请人、审批实例与决定；不得改原始事实 |
 | `AttendanceMonthlySnapshot` | Attendance | 员工/月/版本唯一；固化来源水位线、规则版本、日摘要、总计和 SHA-256 |
 | `CompensationProfileVersion` | Payroll | 员工薪酬结构 L4 加密；生效区间不得重叠；审批后不可改 |
@@ -32,7 +33,7 @@ collecting → reconciling → review → closing → closed
 ```
 
 - `closed` 快照不可修改。迟到数据或批准修订必须创建更高版本快照，并显式使旧快照 `superseded`。
-- 关闭前必须完成来源水位线追平、重复/缺失/跨天异常处理和 Employment 有效性核对。
+- 关闭前必须完成来源水位线追平、重复/缺失/跨天异常处理和 Employment 有效性核对。跨日班次的水位必须覆盖结束业务日。
 
 工资周期：
 
@@ -70,6 +71,7 @@ draft → collecting → calculating → review → pending_approval → approve
 - Adapter 只提供水位线补拉、Webhook 验签、原始事件标准化和对账摘要；不直接写月结或薪资集合。
 - Webhook 先验签并加密入 Inbox；外部事件 ID 使用渠道隔离盲指纹去重。补拉游标加密，任务按租户/绑定隔离并支持失败显式重放。
 - 统一时间模型保存供应商原始时刻、UTC 时刻、IANA 时区、业务日期和跨天归属规则；不得从服务器默认时区推导考勤日。
+- Provider 的单条上下班卡分钟影响固定为零。受信任排班服务先追加版本化日班次，规则引擎按不重叠捕获窗口生成唯一 `attendance_rules/shift` 派生事实；早到晚退不自动形成加班，缺卡先形成整班缺勤，再走审批修订。
 - 请假、加班和出差审批事实只从 ERP Approval 或经绑定验证的外部审批映射进入，不接受客户端自报“已批准”。
 
 ### 5.2 银行、税务与对象存储
@@ -83,9 +85,11 @@ draft → collecting → calculating → review → pending_approval → approve
 
 | 用例 | REST | 事件 | MCP | 风险 |
 | --- | --- | --- | --- | --- |
+| 追加版本化日班次 | `POST /attendance/shift-plans` | `cn.gaoq.erp.attendance.shift_plan.assigned.v1` | 不开放；仅受信任排班服务 | R1 |
+| 计算班次事实 | `POST /attendance/shift-plans/{shiftPlanId}/evaluate` | `cn.gaoq.erp.attendance.shift.evaluated.v1` | 不开放；仅系统任务 | R1 |
 | 查询本人考勤月结 | `GET /attendance/months/{month}/me` | 无 | Resource + `attendance_month_get` | R0 |
-| 提交考勤修订请求 | `POST /attendance/correction-requests` | `attendance.correction.requested.v1` | `attendance_correction_prepare/execute`，只形成请求 | R1 |
-| 关闭考勤月份 | 内部月结命令 | `attendance.month.closed.v1` | 不开放 | R2 |
+| 提交考勤修订请求 | `POST /attendance/correction-requests` | `cn.gaoq.erp.attendance.correction.requested.v1` | `attendance_correction_prepare/execute`，只形成请求 | R1 |
+| 关闭考勤月份 | `POST /attendance/months/close` | `cn.gaoq.erp.attendance.month.closed.v1` | 不开放 | R2 |
 | 查询本人薪资单 | `GET /payroll/payslips/{period}/me` | 无 | Resource + `payroll_payslip_get`，默认脱敏 | R0 |
 | 计算/重算工资 | 内部 Worker 命令 | `payroll.run.completed/failed.v1` | 不开放 | R2 |
 | 审批与锁定工资 | Approval + 内部命令 | `payroll.period.approved/locked.v1` | 只读状态，不开放执行 | R2/R3 |

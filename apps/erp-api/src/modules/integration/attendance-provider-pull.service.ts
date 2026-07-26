@@ -140,6 +140,7 @@ export class AttendanceProviderPullService {
         },
         { $set: {
           ...protectedCursor, lastPolledAt: new Date(),
+          ...(hasMoreMappings ? {} : { committedThroughDate: toDate }),
           nextPollAt: new Date(Date.now() + (hasMoreMappings ? 1_000 : POLL_EVERY_MS)),
           lastFailureCode: null,
         } },

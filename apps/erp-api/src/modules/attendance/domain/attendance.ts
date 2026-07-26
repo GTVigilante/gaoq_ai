@@ -30,6 +30,7 @@ export interface AttendanceSourceFact {
   readonly occurredAt: string;
   readonly timeZone: string;
   readonly businessDate: string;
+  readonly shiftPlanId?: string | null;
   readonly impact: AttendanceImpact;
   readonly sourceObservedAt: string;
   readonly createdAt: string;
@@ -58,6 +59,13 @@ export interface AttendanceDailySummary extends AttendanceImpact {
   readonly digest: string;
 }
 
+export interface AttendanceSourceWatermark {
+  readonly providerCode: string;
+  readonly throughDate: string;
+  readonly lastPolledAt: string;
+  readonly completedInboxCount: number;
+}
+
 export interface AttendanceMonthlySnapshot extends AttendanceImpact {
   readonly id: string;
   readonly tenantId: string;
@@ -66,6 +74,8 @@ export interface AttendanceMonthlySnapshot extends AttendanceImpact {
   readonly snapshotVersion: number;
   readonly rulesetVersion: string;
   readonly sourceCutoffAt: string;
+  readonly sourceProviderCount: number;
+  readonly sourceWatermarkDigest: string;
   readonly sourceFactCount: number;
   readonly correctionCount: number;
   readonly dailySummaries: readonly AttendanceDailySummary[];
@@ -105,6 +115,15 @@ export function createAttendanceSourceFact(
   assertId(input.employeeId, 'ATTENDANCE_EMPLOYEE_INVALID');
   assertId(input.providerCode, 'ATTENDANCE_PROVIDER_INVALID');
   assertFactType(input.factType);
+  if (input.shiftPlanId !== undefined && input.shiftPlanId !== null) {
+    assertId(input.shiftPlanId, 'ATTENDANCE_SHIFT_PLAN_REFERENCE_INVALID');
+    if (input.factType !== 'shift' || input.providerCode !== 'attendance_rules') {
+      fail(
+        'ATTENDANCE_SHIFT_DERIVATION_INVALID',
+        '只有 Attendance 规则引擎派生的 shift 事实可以绑定班次计划',
+      );
+    }
+  }
   const sourceObservedAt = parseInstant(input.sourceObservedAt, 'ATTENDANCE_SOURCE_TIME_INVALID');
   const occurredAt = parseInstant(input.occurredAt, 'ATTENDANCE_OCCURRED_AT_INVALID');
   if (sourceObservedAt.getTime() < occurredAt.getTime()) {
@@ -208,6 +227,7 @@ export function closeAttendanceMonth(input: {
   readonly snapshotVersion: number;
   readonly rulesetVersion: string;
   readonly sourceCutoffAt: string;
+  readonly sourceWatermarks?: readonly AttendanceSourceWatermark[];
   readonly facts: readonly AttendanceSourceFact[];
   readonly corrections: readonly AttendanceCorrection[];
   readonly previousSnapshotId: string | null;
@@ -253,6 +273,8 @@ export function closeAttendanceMonth(input: {
     }
     correctionByFact.set(correction.sourceFactId, correction);
   }
+  const sourceWatermarks = normalizeSourceWatermarks(input.sourceWatermarks ?? [], cutoff);
+  const sourceWatermarkDigest = hashCanonical(sourceWatermarks);
 
   const days = new Map<string, {
     impact: AttendanceImpact;
@@ -271,6 +293,7 @@ export function closeAttendanceMonth(input: {
     day.corrections += correction === undefined ? 0 : 1;
     day.inputs.push(hashCanonical([
       fact.id,
+      fact.shiftPlanId ?? null,
       fact.factType,
       fact.occurredAt,
       fact.impact,
@@ -306,6 +329,7 @@ export function closeAttendanceMonth(input: {
     snapshotVersion: input.snapshotVersion,
     rulesetVersion: input.rulesetVersion,
     sourceCutoffAt: cutoff.toISOString(),
+    sourceWatermarks,
     totals,
     dailySummaries,
     previousSnapshotId: input.previousSnapshotId,
@@ -319,6 +343,8 @@ export function closeAttendanceMonth(input: {
     snapshotVersion: input.snapshotVersion,
     rulesetVersion: input.rulesetVersion,
     sourceCutoffAt: cutoff.toISOString(),
+    sourceProviderCount: sourceWatermarks.length,
+    sourceWatermarkDigest,
     ...totals,
     sourceFactCount: input.facts.length,
     correctionCount: input.corrections.length,
@@ -329,6 +355,42 @@ export function closeAttendanceMonth(input: {
     supersessionEvidenceId: input.supersessionEvidenceId,
     closedAt: now.toISOString(),
   });
+}
+
+function normalizeSourceWatermarks(
+  values: readonly AttendanceSourceWatermark[],
+  cutoff: Date,
+): readonly AttendanceSourceWatermark[] {
+  const providers = new Set<string>();
+  return Object.freeze([...values]
+    .sort((left, right) => left.providerCode.localeCompare(right.providerCode))
+    .map((value) => {
+      assertId(value.providerCode, 'ATTENDANCE_SOURCE_PROVIDER_INVALID');
+      if (providers.has(value.providerCode)) {
+        fail('ATTENDANCE_SOURCE_WATERMARK_DUPLICATE', '同一来源存在多个关账水位');
+      }
+      providers.add(value.providerCode);
+      if (!DATE_PATTERN.test(value.throughDate)) {
+        fail('ATTENDANCE_SOURCE_WATERMARK_INVALID', '来源水位日期非法');
+      }
+      const lastPolledAt = parseInstant(
+        value.lastPolledAt,
+        'ATTENDANCE_SOURCE_WATERMARK_INVALID',
+      );
+      if (lastPolledAt.getTime() > cutoff.getTime()) {
+        fail('ATTENDANCE_SOURCE_WATERMARK_AFTER_CUTOFF', '来源水位晚于关账截止时间');
+      }
+      if (!Number.isSafeInteger(value.completedInboxCount) ||
+        value.completedInboxCount < 0) {
+        fail('ATTENDANCE_SOURCE_WATERMARK_INVALID', '来源已处理记录数非法');
+      }
+      return Object.freeze({
+        providerCode: value.providerCode,
+        throughDate: value.throughDate,
+        lastPolledAt: lastPolledAt.toISOString(),
+        completedInboxCount: value.completedInboxCount,
+      });
+    }));
 }
 
 /** 数据迁移专用：使用现有算法重算快照，并保留严格历史关账时间。 */

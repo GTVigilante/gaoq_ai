@@ -20,6 +20,12 @@ import {
   type AttendanceMonthSummary,
 } from './application/attendance-application.service.js';
 import {
+  AttendanceShiftApplicationService,
+  type AttendanceShiftEvaluationSummary,
+  type AttendanceShiftPlanSummary,
+} from './application/attendance-shift-application.service.js';
+import {
+  AssignAttendanceShiftPlanDto,
   CloseAttendanceMonthDto,
   IngestAttendanceSourceFactDto,
   RegisterAttendanceCorrectionDto,
@@ -32,8 +38,53 @@ const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 export class AttendanceController {
   constructor(
     private readonly attendance: AttendanceApplicationService,
+    private readonly shifts: AttendanceShiftApplicationService,
     private readonly audit: AuditService,
   ) {}
+
+  @Post('shift-plans')
+  @RequiredScopes('erp:attendance:shift_plan:write')
+  async assignShiftPlan(
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: AssignAttendanceShiftPlanDto,
+  ): Promise<{ readonly shiftPlan: AttendanceShiftPlanSummary }> {
+    const result = await this.shifts.assign(this.key(key), body);
+    await this.audit.record({
+      action: 'attendance.shift_plan.assign',
+      resourceType: 'attendance_shift_plan',
+      resourceId: result.shiftPlan.id,
+      riskLevel: 'R1',
+      outcome: 'success',
+      metadata: {
+        employeeId: result.shiftPlan.employeeId,
+        businessDate: result.shiftPlan.businessDate,
+        planCode: result.shiftPlan.planCode,
+        rulesetVersion: result.shiftPlan.rulesetVersion,
+      },
+    });
+    return result;
+  }
+
+  @Post('shift-plans/:shiftPlanId/evaluate')
+  @RequiredScopes('erp:attendance:shift:evaluate')
+  async evaluateShift(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('shiftPlanId') shiftPlanId: string,
+  ): Promise<{ readonly evaluation: AttendanceShiftEvaluationSummary }> {
+    const result = await this.shifts.evaluate(this.key(key), shiftPlanId);
+    await this.audit.record({
+      action: 'attendance.shift.evaluate',
+      resourceType: 'attendance_shift_plan',
+      resourceId: result.evaluation.shiftPlanId,
+      riskLevel: 'R1',
+      outcome: 'success',
+      metadata: {
+        sourceFactId: result.evaluation.sourceFactId,
+        businessDate: result.evaluation.businessDate,
+      },
+    });
+    return result;
+  }
 
   @Post('source-facts')
   @RequiredScopes('erp:attendance:source:ingest')

@@ -35,7 +35,7 @@ Provider 的拉取响应不提供可验证的业务数字签名，因此这里�
 - `tenantId` 只来自队列记录对应的受信任系统上下文；队列载荷会以固定 Schema 校验，但不作为授权来源。
 - 员工映射必须由平台开户事务创建，禁止按手机号、邮箱、姓名或工号模糊关联。
 - Provider 原始位置、Wi-Fi、设备、照片、备注等字段只存在加密 Inbox，Normalizer 不复制到 Attendance 源事实、Outbox、日志或 MCP。
-- 单条 `punch_in/punch_out` 的分钟影响固定为零。工时、迟到、早退、跨天和缺勤必须由后续版本化规则集结合班次计算，禁止在 Provider Adapter 中写死薪资口径。
+- 单条 `punch_in/punch_out` 的分钟影响固定为零。工时、迟到、早退、跨天和缺勤由 `01-attendance-implementation.md` 的版本化班次规则计算，禁止在 Provider Adapter 中写死薪资口径。
 - Registry 要求钉钉和飞书的 Adapter、Normalizer、EvidenceVerifier 三者同时存在；缺一即应用启动失败。
 - MCP 不暴露 Provider 补拉、游标、员工映射或 Inbox 工具；AI 只能使用 Attendance 应用服务提供的本人汇总与标准修订申请。
 

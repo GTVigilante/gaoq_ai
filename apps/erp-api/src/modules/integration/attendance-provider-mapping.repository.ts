@@ -36,6 +36,7 @@ export class AttendanceProviderMappingRepository {
         id: createEventId(), tenantId, providerCode, timeZone: 'Asia/Shanghai',
         status: 'disabled', cursorKeyId: null, cursorIv: null,
         cursorCiphertext: null, cursorAuthTag: null, lastPolledAt: null,
+        committedThroughDate: null,
         nextPollAt: new Date(), lastFailureCode: null,
       } },
       { upsert: true, session, runValidators: true },

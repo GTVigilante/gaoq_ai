@@ -5,8 +5,8 @@ Phase 4 在 ERP 组织与劳动关系主数据之上，建立可重放的考勤�
 实现顺序：
 
 1. [领域、金额、安全、集成与 MCP 强制契约](./00-payroll-attendance-contract.md)
-2. [考勤原始事实、人工修订审批和不可变月结快照](./01-attendance-implementation.md)
-3. [Attendance 索引迁移 Runbook](./02-attendance-index-migration-runbook.md)
+2. [考勤原始事实、版本化班次、人工修订审批和不可变月结快照](./01-attendance-implementation.md)
+3. [Attendance v1/v2 索引迁移 Runbook](./02-attendance-index-migration-runbook.md)
 4. [钉钉/飞书考勤 Provider 加密补拉与标准化](./03-attendance-provider-integration.md)
 5. [Attendance Provider 独立索引迁移 Runbook](./04-attendance-provider-index-migration-runbook.md)
 6. [薪酬结构、法定规则、权威输入快照与确定性运行](./05-payroll-core-implementation.md)

@@ -219,7 +219,9 @@ const careCaseSchema = z.object({
 const attendanceMonthSchema = z.object({
   id: z.string(), employeeId: z.string(), month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
   snapshotVersion: z.number().int().positive(), rulesetVersion: z.string(),
-  sourceCutoffAt: z.string(), workedMinutes: z.number().int().nonnegative(),
+  sourceCutoffAt: z.string(), sourceProviderCount: z.number().int().nonnegative(),
+  sourceWatermarkDigest: z.string().length(43),
+  workedMinutes: z.number().int().nonnegative(),
   leaveMinutes: z.number().int().nonnegative(), overtimeMinutes: z.number().int().nonnegative(),
   absentMinutes: z.number().int().nonnegative(), sourceFactCount: z.number().int().nonnegative(),
   correctionCount: z.number().int().nonnegative(), snapshotHash: z.string().length(43),
