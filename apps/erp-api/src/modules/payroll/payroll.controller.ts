@@ -32,10 +32,12 @@ import {
 import {
   AttestCompensationProfileDto,
   AttestPayrollRulePackDto,
+  ApplyPayrollAdjustmentApprovalDto,
   ApprovePayrollTaxFilingDto,
   ApplyPayrollApprovalDto,
   CreatePayrollPeriodDto,
   LockPayrollPeriodDto,
+  LockPayrollAdjustmentDto,
   PayrollVersionCommandDto,
   PreparePayrollTaxFilingDto,
   PreparePayrollAdjustmentDto,
@@ -137,6 +139,84 @@ export class PayrollController {
       riskLevel: 'R2', outcome: 'success', metadata: {
         period: result.period, type: result.type, status: result.status,
         adjustmentHash: result.adjustmentHash,
+      },
+    });
+    return result;
+  }
+
+  /** R2：已验证薪酬人员将确定性差额送入专用审批，MCP 不注册此动作。 */
+  @Post('adjustments/:id/approval')
+  @RequiredScopes('erp:payroll:adjustment:approval:request')
+  async requestAdjustmentApproval(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Body() body: PayrollVersionCommandDto,
+  ): Promise<PayrollAdjustmentSummary> {
+    const result = await this.adjustments.requestApproval(
+      this.key(key), id, body.expectedVersion,
+    );
+    await this.audit.record({
+      action: 'payroll.adjustment.approval.request',
+      resourceType: 'payroll_adjustment',
+      resourceId: result.id,
+      riskLevel: 'R2',
+      outcome: 'success',
+      metadata: adjustmentAuditMetadata(result),
+    });
+    return result;
+  }
+
+  /** 受信任同步服务只接受 Approval 专用模板终态，不接受客户端批准声明。 */
+  @Post('adjustments/:id/approval-result')
+  @RequiredScopes('erp:payroll:adjustment:approval:sync')
+  async applyAdjustmentApproval(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Body() body: ApplyPayrollAdjustmentApprovalDto,
+  ): Promise<PayrollAdjustmentSummary> {
+    const result = await this.adjustments.applyApproval(
+      this.key(key), id, body.expectedVersion, body.approvalInstanceId,
+    );
+    await this.audit.record({
+      action: 'payroll.adjustment.approval.apply',
+      resourceType: 'payroll_adjustment',
+      resourceId: result.id,
+      riskLevel: 'R2',
+      outcome: 'success',
+      metadata: adjustmentAuditMetadata(result),
+    });
+    return result;
+  }
+
+  /** R3：独立人员以 WebAuthn UV 锁定已批准调整，MCP 永不注册此动作。 */
+  @Post('adjustments/:id/lock')
+  @RequiredScopes('erp:payroll:adjustment:lock')
+  async lockAdjustment(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Body() body: LockPayrollAdjustmentDto,
+    @Req() request: ErpRequest,
+  ): Promise<PayrollAdjustmentSummary> {
+    if (request.verifiedAccessToken === undefined) throw new BadRequestException({
+      code: 'PAYROLL_ADJUSTMENT_LOCK_TOKEN_REQUIRED',
+      message: '工资调整锁定必须使用已验证人员访问令牌',
+    });
+    const result = await this.adjustments.lock(
+      this.key(key),
+      id,
+      body.expectedVersion,
+      body.strongAuthEvidenceId,
+      request.verifiedAccessToken,
+    );
+    await this.audit.record({
+      action: 'payroll.adjustment.lock',
+      resourceType: 'payroll_adjustment',
+      resourceId: result.id,
+      riskLevel: 'R3',
+      outcome: 'success',
+      metadata: {
+        ...adjustmentAuditMetadata(result),
+        strongAuthMethod: 'webauthn_uv',
       },
     });
     return result;
@@ -545,4 +625,16 @@ export class PayrollController {
       },
     });
   }
+}
+
+function adjustmentAuditMetadata(
+  adjustment: PayrollAdjustmentSummary,
+): Readonly<Record<string, string | number>> {
+  return Object.freeze({
+    period: adjustment.period,
+    type: adjustment.type,
+    status: adjustment.status,
+    version: adjustment.version,
+    adjustmentHash: adjustment.adjustmentHash,
+  });
 }

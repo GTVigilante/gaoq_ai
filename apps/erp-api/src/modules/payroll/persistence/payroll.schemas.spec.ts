@@ -65,6 +65,28 @@ describe('Payroll 持久化契约', () => {
     await expect(new AdjustmentModel({
       ...base, type: 'reversal', payableMinor: 0, receivableMinor: 97_000,
     }).validate()).rejects.toThrow('工资调整类型与收付方向不一致');
+    await expect(new AdjustmentModel({
+      ...base,
+      status: 'locked',
+      requestedBy: 'payroll-requester',
+      approvalInstanceId: '01J8ZQK7V0A2M4N6P8R0T2W4A1',
+      approvalDecidedBy: 'finance-approver',
+      approvalEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4A1',
+      lockedBy: null,
+      strongAuthEvidenceId: null,
+      version: 4,
+    }).validate()).rejects.toThrow('工资调整审批、锁定证据与状态不一致');
+    await expect(new AdjustmentModel({
+      ...base,
+      status: 'locked',
+      requestedBy: 'payroll-requester',
+      approvalInstanceId: '01J8ZQK7V0A2M4N6P8R0T2W4A1',
+      approvalDecidedBy: 'finance-approver',
+      approvalEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4A1',
+      lockedBy: 'treasury-locker',
+      strongAuthEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4E1',
+      version: 4,
+    }).validate()).resolves.toBeUndefined();
     expect(JSON.stringify(new AdjustmentModel(base).toObject()))
       .not.toMatch(/"correctedInput":|"taxableEarnings":|"attendanceSnapshot":/u);
     expect(PayrollAdjustmentRecordSchema.indexes()).toContainEqual([

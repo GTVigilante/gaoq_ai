@@ -33,19 +33,49 @@ function setup() {
 describe('Payroll Tax Outbox 白名单', () => {
   it('工资调整事件只发布非人员级控制摘要', async () => {
     const store = setup();
-    const event: PayrollEvent = {
+    const prepared: PayrollEvent = {
       ...base, type: 'payroll.adjustment.prepared', version: 1, data: {
         period: '2026-07', type: 'supplement',
         reasonCode: 'RETROACTIVE_SALARY_CHANGE',
         status: 'prepared', adjustmentHash: 'a'.repeat(43),
       },
     };
-    await store.context.run({ tenant, actor }, () => store.writer.append(event, session));
+    const events: readonly PayrollEvent[] = [
+      prepared,
+      {
+        ...prepared,
+        type: 'payroll.adjustment.approval_requested',
+        version: 2,
+        data: { ...prepared.data, status: 'pending_approval' },
+      },
+      {
+        ...prepared,
+        type: 'payroll.adjustment.approval_applied',
+        version: 3,
+        data: { ...prepared.data, outcome: 'approved', status: 'approved' },
+      },
+      {
+        ...prepared,
+        type: 'payroll.adjustment.locked',
+        version: 4,
+        data: {
+          ...prepared.data,
+          status: 'locked',
+          strongAuthMethod: 'webauthn_uv',
+        },
+      },
+    ];
+    await store.context.run({ tenant, actor }, async () => {
+      for (const event of events) await store.writer.append(event, session);
+    });
     const persisted = JSON.stringify(store.records.create.mock.calls);
     expect(persisted).toContain('payroll.adjustment.prepared.v1');
-    expect(persisted).not.toMatch(/employeeId|netDelta|payableMinor|originalCalculationLineId/u);
+    expect(persisted).toContain('payroll.adjustment.locked.v1');
+    expect(persisted).not.toMatch(
+      /employeeId|netDelta|payableMinor|originalCalculationLineId|requestedBy|approvedBy|lockedBy/u,
+    );
     await expect(store.context.run({ tenant, actor }, () => store.writer.append({
-      ...event, data: { ...event.data, employeeId: 'employee-001' },
+      ...prepared, data: { ...prepared.data, employeeId: 'employee-001' },
     }, session))).rejects.toThrow('PAYROLL_ADJUSTMENT_OUTBOX_DATA_INVALID');
   });
 

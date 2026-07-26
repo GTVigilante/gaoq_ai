@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import {
   BadRequestException,
   ConflictException,
@@ -7,15 +9,22 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { createEventId } from '@gaoq/shared-utils';
-import type { Model } from 'mongoose';
+import type { ClientSession, Model } from 'mongoose';
 import { z } from 'zod';
 
 import { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
+import { ApprovalApplicationService } from '../../approval/application/approval-application.service.js';
+import type { VerifiedAccessToken } from '../../identity/auth.types.js';
+import { WebAuthnService } from '../../identity/strong-auth/webauthn.service.js';
 import {
+  applyPayrollAdjustmentApproval,
   createPayrollAdjustment,
+  lockPayrollAdjustment,
   payrollDigest,
   PayrollAdjustmentError,
+  requestPayrollAdjustmentApproval,
+  type PayrollAdjustmentControl,
   type PayrollCalculationResult,
 } from '../domain/index.js';
 import { PayrollDataCryptoService } from '../persistence/payroll-data-crypto.service.js';
@@ -112,6 +121,7 @@ export interface PayrollAdjustmentSummary extends Record<string, unknown> {
   readonly netDeltaMinor: number;
   readonly payableMinor: number;
   readonly receivableMinor: number;
+  readonly approvalInstanceId: string | null;
 }
 
 export interface PayrollAdjustmentControlSummary extends Record<string, unknown> {
@@ -131,6 +141,8 @@ export class PayrollAdjustmentService {
   constructor(
     private readonly idempotency: IdempotencyService,
     private readonly context: TenantContextService,
+    private readonly approvals: ApprovalApplicationService,
+    private readonly strongAuth: WebAuthnService,
     private readonly runs: PayrollRunService,
     private readonly crypto: PayrollDataCryptoService,
     private readonly outbox: PayrollOutboxWriter,
@@ -226,6 +238,9 @@ export class PayrollAdjustmentService {
           payableMinor: adjustment.payableMinor,
           receivableMinor: adjustment.receivableMinor,
           preparedBy: this.context.getActorRequired().actorId,
+          requestedBy: null, approvalInstanceId: null,
+          approvalDecidedBy: null, approvalEvidenceId: null,
+          lockedBy: null, strongAuthEvidenceId: null,
           status: 'prepared' as const, version: 1,
           dataKeyId: protectedData.keyId, dataIv: protectedData.iv,
           dataCiphertext: protectedData.ciphertext, dataAuthTag: protectedData.authTag,
@@ -242,6 +257,184 @@ export class PayrollAdjustmentService {
           },
         }, session);
         return summary(record);
+      },
+    ));
+  }
+
+  /** R2：人工薪酬人员将已准备差额绑定到专用审批模板，不接收任何调整金额。 */
+  async requestApproval(
+    key: string,
+    id: string,
+    expectedVersion: number,
+  ): Promise<PayrollAdjustmentSummary> {
+    this.assertScope('erp:payroll:adjustment:approval:request');
+    this.assertScope('erp:approval:instance:submit');
+    const actor = this.context.getActorRequired();
+    if (actor.actorType !== 'user') throw new ForbiddenException({
+      code: 'PAYROLL_ADJUSTMENT_APPROVAL_HUMAN_REQUIRED',
+      message: '工资调整送审只能由已验证人员执行',
+    });
+    const current = await this.requireAdjustment(id);
+    assertApprovalRequestState(controlFromRecord(current), expectedVersion, actor.actorId);
+    const created = await this.approvals.createInstance(deriveKey(key, 'create'), {
+      templateCode: 'payroll_adjustment_approval',
+      title: `工资调整审批：${current.period} #${current.adjustmentNumber}`,
+      formData: {
+        adjustment_id: current.id,
+        adjustment_hash: current.adjustmentHash,
+        period: current.period,
+        adjustment_type: current.type,
+        reason_code: current.reasonCode,
+      },
+    });
+    const submitted = await this.approvals.submitInstance(
+      created.instance.id,
+      created.instance.version,
+      deriveKey(key, 'submit'),
+    );
+    if (submitted.instance.status !== 'running' && submitted.instance.status !== 'approved') {
+      throw new ConflictException({
+        code: 'PAYROLL_ADJUSTMENT_APPROVAL_SUBMIT_INVALID',
+        message: '工资调整审批未进入可处理状态',
+      });
+    }
+    return this.run(() => this.idempotency.execute(
+      'payroll.adjustment.approval.request',
+      deriveKey(key, 'bind'),
+      { id, expectedVersion, approvalInstanceId: submitted.instance.id },
+      async (session) => {
+        const fresh = await this.requireAdjustment(id, session);
+        const next = requestPayrollAdjustmentApproval(controlFromRecord(fresh), {
+          tenantId: this.tenantId(),
+          expectedVersion,
+          requestedBy: actor.actorId,
+          approvalInstanceId: submitted.instance.id,
+        });
+        await this.replaceControl(fresh, next, session);
+        await this.outbox.append({
+          type: 'payroll.adjustment.approval_requested',
+          tenantId: this.tenantId(),
+          aggregateId: id,
+          version: next.version,
+          occurredAt: new Date().toISOString(),
+          data: adjustmentEventData(fresh, next.status),
+        }, session);
+        return summary({ ...fresh, ...next });
+      },
+    ));
+  }
+
+  /** 只同步 Approval 专用模板形成的可信终态，拒绝任意客户端批准声明。 */
+  async applyApproval(
+    key: string,
+    id: string,
+    expectedVersion: number,
+    approvalInstanceId: string,
+  ): Promise<PayrollAdjustmentSummary> {
+    this.assertScope('erp:payroll:adjustment:approval:sync');
+    const actor = this.context.getActorRequired();
+    if (actor.actorType !== 'service' && actor.actorType !== 'system_job') {
+      throw new ForbiddenException({
+        code: 'PAYROLL_ADJUSTMENT_APPROVAL_SERVICE_REQUIRED',
+        message: '工资调整审批同步只允许受信任服务执行',
+      });
+    }
+    const decision = await this.approvals.getPayrollAdjustmentDecision(approvalInstanceId);
+    return this.run(() => this.idempotency.execute(
+      'payroll.adjustment.approval.apply',
+      key,
+      { id, expectedVersion, approvalInstanceId, decision: decision.formDataHash },
+      async (session) => {
+        const current = await this.requireAdjustment(id, session);
+        if (
+          decision.adjustmentId !== current.id ||
+          decision.adjustmentHash !== current.adjustmentHash ||
+          decision.period !== current.period ||
+          decision.adjustmentType !== current.type ||
+          decision.reasonCode !== current.reasonCode
+        ) throw new ConflictException({
+          code: 'PAYROLL_ADJUSTMENT_APPROVAL_BINDING_MISMATCH',
+          message: '审批实例与工资调整控制摘要不匹配',
+        });
+        const next = applyPayrollAdjustmentApproval(controlFromRecord(current), {
+          tenantId: this.tenantId(),
+          expectedVersion,
+          approvalInstanceId: decision.id,
+          outcome: decision.outcome,
+          decidedBy: decision.decidedBy,
+          approvalEvidenceId: decision.id,
+          trustedApproval: true,
+        });
+        await this.replaceControl(current, next, session);
+        await this.outbox.append({
+          type: 'payroll.adjustment.approval_applied',
+          tenantId: this.tenantId(),
+          aggregateId: id,
+          version: next.version,
+          occurredAt: new Date(decision.completedAt).toISOString(),
+          data: {
+            ...adjustmentEventData(current, next.status),
+            outcome: decision.outcome,
+          },
+        }, session);
+        return summary({ ...current, ...next });
+      },
+    ));
+  }
+
+  /** R3：独立人员以绑定调整 ID 的近期 WebAuthn UV 锁定，MCP 永不注册此动作。 */
+  async lock(
+    key: string,
+    id: string,
+    expectedVersion: number,
+    evidenceId: string,
+    token: VerifiedAccessToken,
+  ): Promise<PayrollAdjustmentSummary> {
+    this.assertScope('erp:payroll:adjustment:lock');
+    const actor = this.context.getActorRequired();
+    if (
+      actor.actorType !== 'user' || token.actorType !== 'user' ||
+      token.tenantId !== this.tenantId() || token.actorId !== actor.actorId
+    ) throw new ForbiddenException({
+      code: 'PAYROLL_ADJUSTMENT_LOCK_IDENTITY_INVALID',
+      message: '工资调整锁定身份上下文非法',
+    });
+    if (!ULID.test(id) || !ULID.test(evidenceId)) throw new BadRequestException({
+      code: 'PAYROLL_ADJUSTMENT_LOCK_EVIDENCE_INVALID',
+      message: '工资调整或强认证证据标识非法',
+    });
+    const evidence = await this.strongAuth.requireVerifiedEvidence({
+      evidenceId,
+      tenantId: token.tenantId,
+      actorId: token.actorId,
+      sessionId: token.sessionId,
+      operationId: id,
+    });
+    return this.run(() => this.idempotency.execute(
+      'payroll.adjustment.lock',
+      key,
+      { id, expectedVersion, evidenceId: evidence.evidenceId },
+      async (session) => {
+        const current = await this.requireAdjustment(id, session);
+        const next = lockPayrollAdjustment(controlFromRecord(current), {
+          tenantId: this.tenantId(),
+          expectedVersion,
+          lockedBy: actor.actorId,
+          strongAuthEvidenceId: evidence.evidenceId,
+        });
+        await this.replaceControl(current, next, session);
+        await this.outbox.append({
+          type: 'payroll.adjustment.locked',
+          tenantId: this.tenantId(),
+          aggregateId: id,
+          version: next.version,
+          occurredAt: new Date().toISOString(),
+          data: {
+            ...adjustmentEventData(current, next.status),
+            strongAuthMethod: evidence.method,
+          },
+        }, session);
+        return summary({ ...current, ...next });
       },
     ));
   }
@@ -298,6 +491,54 @@ export class PayrollAdjustmentService {
     });
   }
 
+  private async requireAdjustment(
+    id: string,
+    session?: ClientSession,
+  ): Promise<PayrollAdjustmentRecord> {
+    if (!ULID.test(id)) throw new BadRequestException({
+      code: 'PAYROLL_ADJUSTMENT_ID_INVALID', message: '工资调整标识非法',
+    });
+    const query = this.adjustments.findOne({ tenantId: this.tenantId(), id });
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    if (record === null) throw new NotFoundException({
+      code: 'PAYROLL_ADJUSTMENT_NOT_FOUND', message: '工资调整不存在',
+    });
+    return record;
+  }
+
+  private async replaceControl(
+    current: PayrollAdjustmentRecord,
+    next: PayrollAdjustmentControl,
+    session: ClientSession,
+  ): Promise<void> {
+    const result = await this.adjustments.updateOne(
+      {
+        tenantId: this.tenantId(),
+        id: current.id,
+        version: current.version,
+        status: current.status,
+      },
+      {
+        $set: {
+          status: next.status,
+          requestedBy: next.requestedBy,
+          approvalInstanceId: next.approvalInstanceId,
+          approvalDecidedBy: next.approvalDecidedBy,
+          approvalEvidenceId: next.approvalEvidenceId,
+          lockedBy: next.lockedBy,
+          strongAuthEvidenceId: next.strongAuthEvidenceId,
+          version: next.version,
+        },
+      },
+      { session, runValidators: true },
+    );
+    if (result.modifiedCount !== 1) throw new ConflictException({
+      code: 'PAYROLL_ADJUSTMENT_WRITE_CONFLICT',
+      message: '工资调整发生并发写入冲突',
+    });
+  }
+
   private assertPrepareActor(): void {
     this.assertScope('erp:payroll:adjustment:prepare');
     const actor = this.context.getActorRequired();
@@ -322,7 +563,16 @@ export class PayrollAdjustmentService {
       return await operation();
     } catch (error) {
       if (error instanceof PayrollAdjustmentError) {
-        if (error.code.includes('UNCHANGED') || error.code.includes('ZERO')) {
+        if (error.code.includes('INDEPENDENCE') || error.code.includes('TENANT')) {
+          throw new ForbiddenException({ code: error.code, message: error.message });
+        }
+        if (
+          error.code.includes('UNCHANGED') ||
+          error.code.includes('ZERO') ||
+          error.code.includes('VERSION') ||
+          error.code.includes('TRANSITION') ||
+          error.code.includes('UNTRUSTED')
+        ) {
           throw new ConflictException({ code: error.code, message: error.message });
         }
         throw new BadRequestException({ code: error.code, message: error.message });
@@ -377,7 +627,63 @@ function summary(record: PayrollAdjustmentRecord): PayrollAdjustmentSummary {
     grossDeltaMinor: record.grossDeltaMinor, taxDeltaMinor: record.taxDeltaMinor,
     netDeltaMinor: record.netDeltaMinor, payableMinor: record.payableMinor,
     receivableMinor: record.receivableMinor,
+    approvalInstanceId: record.approvalInstanceId ?? null,
   });
+}
+
+function assertApprovalRequestState(
+  control: PayrollAdjustmentControl,
+  expectedVersion: number,
+  requestedBy: string,
+): void {
+  if (control.tenantId.length === 0) throw new BadRequestException({
+    code: 'PAYROLL_ADJUSTMENT_TENANT_INVALID', message: '工资调整租户非法',
+  });
+  if (!Number.isSafeInteger(expectedVersion) || expectedVersion !== control.version ||
+    control.status !== 'prepared') throw new ConflictException({
+    code: 'PAYROLL_ADJUSTMENT_APPROVAL_REQUEST_STATE_CHANGED',
+    message: '工资调整版本或准备状态已变化',
+  });
+  if (!ID.test(requestedBy) || requestedBy === control.preparedBy) throw new ForbiddenException({
+    code: 'PAYROLL_ADJUSTMENT_REQUESTER_INDEPENDENCE_REQUIRED',
+    message: '调整送审人与重算服务必须分离',
+  });
+}
+
+function controlFromRecord(record: PayrollAdjustmentRecord): PayrollAdjustmentControl {
+  return Object.freeze({
+    id: record.id,
+    tenantId: record.tenantId,
+    status: record.status,
+    preparedBy: record.preparedBy,
+    requestedBy: record.requestedBy ?? null,
+    approvalInstanceId: record.approvalInstanceId ?? null,
+    approvalDecidedBy: record.approvalDecidedBy ?? null,
+    approvalEvidenceId: record.approvalEvidenceId ?? null,
+    lockedBy: record.lockedBy ?? null,
+    strongAuthEvidenceId: record.strongAuthEvidenceId ?? null,
+    version: record.version,
+  });
+}
+
+function adjustmentEventData(
+  record: PayrollAdjustmentRecord,
+  status: PayrollAdjustmentSummary['status'],
+): Readonly<Record<string, string>> {
+  return Object.freeze({
+    period: record.period,
+    type: record.type,
+    reasonCode: record.reasonCode,
+    status,
+    adjustmentHash: record.adjustmentHash,
+  });
+}
+
+function deriveKey(root: string, stage: string): string {
+  const digest = createHash('sha256')
+    .update(JSON.stringify([root, stage]), 'utf8')
+    .digest('base64url');
+  return `payroll-adjustment:${digest}`;
 }
 
 function protectedValue(record: {

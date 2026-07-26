@@ -162,6 +162,19 @@ export interface PayrollPeriodApprovalDecision {
   readonly formDataHash: string;
 }
 
+export interface PayrollAdjustmentApprovalDecision {
+  readonly id: string;
+  readonly outcome: 'approved' | 'rejected';
+  readonly decidedBy: string;
+  readonly completedAt: string;
+  readonly adjustmentId: string;
+  readonly adjustmentHash: string;
+  readonly period: string;
+  readonly adjustmentType: 'supplement' | 'reversal' | 'tax_only';
+  readonly reasonCode: string;
+  readonly formDataHash: string;
+}
+
 export interface OpApprovalSubmissionInput {
   readonly instanceId: string;
   readonly templateCode: string;
@@ -1175,6 +1188,68 @@ export class ApprovalApplicationService {
         instance.formData, 'input_snapshot_hash', HASH_PATTERN,
       ),
       resultHash: requiredPayrollFormString(instance.formData, 'result_hash', HASH_PATTERN),
+      formDataHash: instance.formDataHash,
+    });
+  }
+
+  /** Payroll 调整只读取专用审批的可信终态和固定控制摘要，不暴露员工或金额。 */
+  async getPayrollAdjustmentDecision(id: string): Promise<PayrollAdjustmentApprovalDecision> {
+    const actor = this.context.getActorRequired();
+    if (!actor.scopes.includes('erp:payroll:adjustment:approval:sync')) {
+      throw new ForbiddenException({
+        code: 'APPROVAL_PAYROLL_ADJUSTMENT_STATUS_DENIED',
+        message: '无权同步工资调整审批状态',
+      });
+    }
+    const instance = await this.requireInstance(id);
+    if (instance.templateSnapshot.templateCode !== 'payroll_adjustment_approval') {
+      throw new ForbiddenException({
+        code: 'APPROVAL_PAYROLL_ADJUSTMENT_TEMPLATE_DENIED',
+        message: '工资调整审批模板与执行动作不匹配',
+      });
+    }
+    if (
+      (instance.status !== 'approved' && instance.status !== 'rejected') ||
+      instance.completedAt === null
+    ) throw new ConflictException({
+      code: 'APPROVAL_PAYROLL_ADJUSTMENT_INCOMPLETE',
+      message: '工资调整审批尚未形成可信终态',
+    });
+    const outcome = instance.status;
+    const finalDecision = instance.resolvedNodes
+      .flatMap((node) => node.decisions)
+      .filter((decision) => decision.outcome === outcome)
+      .sort((left, right) => left.decidedAt < right.decidedAt ? -1 : 1)
+      .at(-1);
+    if (finalDecision === undefined || finalDecision.decidedAt !== instance.completedAt) {
+      throw new ConflictException({
+        code: 'APPROVAL_PAYROLL_ADJUSTMENT_DECISION_INVALID',
+        message: '工资调整审批终态证据不完整',
+      });
+    }
+    const adjustmentType = requiredPayrollFormString(
+      instance.formData,
+      'adjustment_type',
+      /^(supplement|reversal|tax_only)$/,
+    ) as PayrollAdjustmentApprovalDecision['adjustmentType'];
+    return Object.freeze({
+      id: instance.id,
+      outcome,
+      decidedBy: finalDecision.decidedBy,
+      completedAt: instance.completedAt,
+      adjustmentId: requiredPayrollFormString(
+        instance.formData, 'adjustment_id', ULID_PATTERN,
+      ),
+      adjustmentHash: requiredPayrollFormString(
+        instance.formData, 'adjustment_hash', HASH_PATTERN,
+      ),
+      period: requiredPayrollFormString(
+        instance.formData, 'period', /^\d{4}-(0[1-9]|1[0-2])$/,
+      ),
+      adjustmentType,
+      reasonCode: requiredPayrollFormString(
+        instance.formData, 'reason_code', /^[A-Z][A-Z0-9_]{1,63}$/,
+      ),
       formDataHash: instance.formDataHash,
     });
   }

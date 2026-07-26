@@ -87,8 +87,11 @@ function assemble() {
     }),
   };
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
+  const approvals = {};
+  const strongAuth = {};
   const service = new PayrollAdjustmentService(
-    idempotency as never, context, runs as never, crypto as never, outbox as never,
+    idempotency as never, context, approvals as never, strongAuth as never,
+    runs as never, crypto as never, outbox as never,
     periods as never, calculationLines as never, adjustments as never,
   );
   return { context, service, runs, crypto, outbox, adjustments };

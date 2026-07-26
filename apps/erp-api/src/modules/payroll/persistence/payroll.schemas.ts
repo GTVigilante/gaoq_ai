@@ -443,6 +443,18 @@ export class PayrollAdjustmentRecord extends ProtectedPayrollRecord {
   @Prop({ type: Number, required: true, immutable: true, min: 0 }) receivableMinor!: number;
   @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
   preparedBy!: string;
+  @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
+  requestedBy!: string | null;
+  @Prop({ type: String, default: null, match: ULID_PATTERN })
+  approvalInstanceId!: string | null;
+  @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
+  approvalDecidedBy!: string | null;
+  @Prop({ type: String, default: null, match: ULID_PATTERN })
+  approvalEvidenceId!: string | null;
+  @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
+  lockedBy!: string | null;
+  @Prop({ type: String, default: null, match: ULID_PATTERN })
+  strongAuthEvidenceId!: string | null;
   @Prop({
     type: String, required: true,
     enum: ['prepared', 'pending_approval', 'approved', 'locked', 'settled', 'cancelled'],
@@ -480,6 +492,25 @@ PayrollAdjustmentRecordSchema.pre('validate', function () {
     (record.type === 'tax_only' &&
       (record.netDeltaMinor !== 0 || record.payableMinor !== 0 || record.receivableMinor !== 0))
   ) throw new Error('工资调整类型与收付方向不一致');
+  const approvalRequested = record.requestedBy !== null && record.approvalInstanceId !== null;
+  const approvalDecided =
+    approvalRequested &&
+    record.approvalDecidedBy !== null &&
+    record.approvalEvidenceId !== null;
+  const locked = approvalDecided &&
+    record.lockedBy !== null &&
+    record.strongAuthEvidenceId !== null;
+  if (
+    (record.requestedBy === null) !== (record.approvalInstanceId === null) ||
+    (record.approvalDecidedBy === null) !== (record.approvalEvidenceId === null) ||
+    (record.lockedBy === null) !== (record.strongAuthEvidenceId === null) ||
+    (record.status === 'prepared' && (approvalRequested || approvalDecided || locked)) ||
+    (record.status === 'pending_approval' && (!approvalRequested || approvalDecided || locked)) ||
+    (record.status === 'approved' && (!approvalDecided || locked)) ||
+    (record.status === 'locked' && !locked) ||
+    (record.status === 'settled' && !locked) ||
+    (record.status === 'cancelled' && !approvalDecided)
+  ) throw new Error('工资调整审批、锁定证据与状态不一致');
 });
 PayrollAdjustmentRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 PayrollAdjustmentRecordSchema.index(

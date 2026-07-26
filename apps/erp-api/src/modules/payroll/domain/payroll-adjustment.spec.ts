@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  applyPayrollAdjustmentApproval,
   calculatePayroll,
   createPayrollAdjustment,
+  lockPayrollAdjustment,
+  requestPayrollAdjustmentApproval,
+  type PayrollAdjustmentControl,
   type PayrollCalculationInput,
 } from './index.js';
 
@@ -76,6 +80,81 @@ describe('锁定工资补发与冲销差额', () => {
       }),
     })).toThrowError(expect.objectContaining({
       code: 'PAYROLL_ADJUSTMENT_ORIGINAL_INTEGRITY_FAILED',
+    }));
+  });
+});
+
+const preparedControl: PayrollAdjustmentControl = Object.freeze({
+  id: '01J8ZQK7V0A2M4N6P8R0T2W4D1',
+  tenantId: 'tenant-001',
+  status: 'prepared',
+  preparedBy: 'adjustment-engine',
+  requestedBy: null,
+  approvalInstanceId: null,
+  approvalDecidedBy: null,
+  approvalEvidenceId: null,
+  lockedBy: null,
+  strongAuthEvidenceId: null,
+  version: 1,
+});
+
+describe('工资调整审批与强认证锁定', () => {
+  it('按送审、可信批准和独立 WebAuthn 锁定推进版本', () => {
+    const pending = requestPayrollAdjustmentApproval(preparedControl, {
+      tenantId: 'tenant-001',
+      expectedVersion: 1,
+      requestedBy: 'payroll-requester',
+      approvalInstanceId: '01J8ZQK7V0A2M4N6P8R0T2W4A1',
+    });
+    const approved = applyPayrollAdjustmentApproval(pending, {
+      tenantId: 'tenant-001',
+      expectedVersion: 2,
+      approvalInstanceId: pending.approvalInstanceId!,
+      outcome: 'approved',
+      decidedBy: 'finance-approver',
+      approvalEvidenceId: pending.approvalInstanceId!,
+      trustedApproval: true,
+    });
+    const locked = lockPayrollAdjustment(approved, {
+      tenantId: 'tenant-001',
+      expectedVersion: 3,
+      lockedBy: 'treasury-locker',
+      strongAuthEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4E1',
+    });
+    expect(locked).toMatchObject({
+      status: 'locked',
+      version: 4,
+      requestedBy: 'payroll-requester',
+      approvalDecidedBy: 'finance-approver',
+      lockedBy: 'treasury-locker',
+    });
+  });
+
+  it('拒绝伪造审批、职责冲突和跳过状态', () => {
+    const pending = requestPayrollAdjustmentApproval(preparedControl, {
+      tenantId: 'tenant-001',
+      expectedVersion: 1,
+      requestedBy: 'payroll-requester',
+      approvalInstanceId: '01J8ZQK7V0A2M4N6P8R0T2W4A1',
+    });
+    expect(() => applyPayrollAdjustmentApproval(pending, {
+      tenantId: 'tenant-001',
+      expectedVersion: 2,
+      approvalInstanceId: pending.approvalInstanceId!,
+      outcome: 'approved',
+      decidedBy: 'payroll-requester',
+      approvalEvidenceId: pending.approvalInstanceId!,
+      trustedApproval: true,
+    })).toThrowError(expect.objectContaining({
+      code: 'PAYROLL_ADJUSTMENT_APPROVER_INDEPENDENCE_REQUIRED',
+    }));
+    expect(() => lockPayrollAdjustment(preparedControl, {
+      tenantId: 'tenant-001',
+      expectedVersion: 1,
+      lockedBy: 'treasury-locker',
+      strongAuthEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4E1',
+    })).toThrowError(expect.objectContaining({
+      code: 'PAYROLL_ADJUSTMENT_TRANSITION_INVALID',
     }));
   });
 });

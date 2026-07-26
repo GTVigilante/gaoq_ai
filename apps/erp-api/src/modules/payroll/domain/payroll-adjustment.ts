@@ -10,6 +10,27 @@ const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const REASON = /^[A-Z][A-Z0-9_]{1,63}$/;
 
 export type PayrollAdjustmentType = 'supplement' | 'reversal' | 'tax_only';
+export type PayrollAdjustmentStatus =
+  | 'prepared'
+  | 'pending_approval'
+  | 'approved'
+  | 'locked'
+  | 'settled'
+  | 'cancelled';
+
+export interface PayrollAdjustmentControl {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly status: PayrollAdjustmentStatus;
+  readonly preparedBy: string;
+  readonly requestedBy: string | null;
+  readonly approvalInstanceId: string | null;
+  readonly approvalDecidedBy: string | null;
+  readonly approvalEvidenceId: string | null;
+  readonly lockedBy: string | null;
+  readonly strongAuthEvidenceId: string | null;
+  readonly version: number;
+}
 
 export interface PayrollAdjustmentInput {
   readonly tenantId: string;
@@ -66,6 +87,92 @@ export class PayrollAdjustmentError extends Error {
     super(message);
     this.name = 'PayrollAdjustmentError';
   }
+}
+
+/**
+ * 将确定性工资差额绑定到专用审批实例。
+ * 请求人必须是独立人工主体，审批正文只引用调整标识与摘要。
+ */
+export function requestPayrollAdjustmentApproval(
+  control: PayrollAdjustmentControl,
+  command: {
+    readonly tenantId: string;
+    readonly expectedVersion: number;
+    readonly requestedBy: string;
+    readonly approvalInstanceId: string;
+  },
+): PayrollAdjustmentControl {
+  assertControlCommand(control, command);
+  requireControlStatus(control, ['prepared']);
+  assertId(command.requestedBy, 'requestedBy');
+  assertId(command.approvalInstanceId, 'approvalInstanceId');
+  if (command.requestedBy === control.preparedBy) {
+    invalid('PAYROLL_ADJUSTMENT_REQUESTER_INDEPENDENCE_REQUIRED', '调整送审人与重算服务必须分离');
+  }
+  return nextControl(control, {
+    status: 'pending_approval',
+    requestedBy: command.requestedBy,
+    approvalInstanceId: command.approvalInstanceId,
+  });
+}
+
+/** 只接受专用 Approval 模板形成的可信终态，并强制送审人与审批人分离。 */
+export function applyPayrollAdjustmentApproval(
+  control: PayrollAdjustmentControl,
+  command: {
+    readonly tenantId: string;
+    readonly expectedVersion: number;
+    readonly approvalInstanceId: string;
+    readonly outcome: 'approved' | 'rejected';
+    readonly decidedBy: string;
+    readonly approvalEvidenceId: string;
+    readonly trustedApproval: boolean;
+  },
+): PayrollAdjustmentControl {
+  assertControlCommand(control, command);
+  requireControlStatus(control, ['pending_approval']);
+  assertId(command.approvalInstanceId, 'approvalInstanceId');
+  assertId(command.decidedBy, 'decidedBy');
+  assertId(command.approvalEvidenceId, 'approvalEvidenceId');
+  if (!command.trustedApproval || command.approvalInstanceId !== control.approvalInstanceId) {
+    invalid('PAYROLL_ADJUSTMENT_APPROVAL_UNTRUSTED', '工资调整审批事实不可信或引用不匹配');
+  }
+  if (command.decidedBy === control.preparedBy || command.decidedBy === control.requestedBy) {
+    invalid('PAYROLL_ADJUSTMENT_APPROVER_INDEPENDENCE_REQUIRED', '调整审批人必须独立于重算与送审人员');
+  }
+  return nextControl(control, {
+    status: command.outcome === 'approved' ? 'approved' : 'cancelled',
+    approvalDecidedBy: command.decidedBy,
+    approvalEvidenceId: command.approvalEvidenceId,
+  });
+}
+
+/** R3 锁定必须引用近期 WebAuthn UV，锁定人独立于重算、送审和审批控制链。 */
+export function lockPayrollAdjustment(
+  control: PayrollAdjustmentControl,
+  command: {
+    readonly tenantId: string;
+    readonly expectedVersion: number;
+    readonly lockedBy: string;
+    readonly strongAuthEvidenceId: string;
+  },
+): PayrollAdjustmentControl {
+  assertControlCommand(control, command);
+  requireControlStatus(control, ['approved']);
+  assertId(command.lockedBy, 'lockedBy');
+  assertId(command.strongAuthEvidenceId, 'strongAuthEvidenceId');
+  if (
+    command.lockedBy === control.preparedBy ||
+    command.lockedBy === control.requestedBy ||
+    command.lockedBy === control.approvalDecidedBy
+  ) {
+    invalid('PAYROLL_ADJUSTMENT_LOCKER_INDEPENDENCE_REQUIRED', '调整锁定人必须独立于前序控制人员');
+  }
+  return nextControl(control, {
+    status: 'locked',
+    lockedBy: command.lockedBy,
+    strongAuthEvidenceId: command.strongAuthEvidenceId,
+  });
 }
 
 /**
@@ -164,6 +271,45 @@ function assertInput(input: PayrollAdjustmentInput): void {
     !['locked', 'disbursing', 'reconciling', 'reconciled'].includes(input.originalPeriodStatus)) {
     invalid('PAYROLL_ADJUSTMENT_REFERENCE_INVALID', '工资调整引用、原因或原周期状态非法');
   }
+}
+
+function assertControlCommand(
+  control: PayrollAdjustmentControl,
+  command: { readonly tenantId: string; readonly expectedVersion: number },
+): void {
+  if (command.tenantId !== control.tenantId) {
+    invalid('PAYROLL_ADJUSTMENT_TENANT_MISMATCH', '工资调整租户不匹配');
+  }
+  if (!Number.isSafeInteger(command.expectedVersion) || command.expectedVersion !== control.version) {
+    invalid('PAYROLL_ADJUSTMENT_VERSION_CONFLICT', '工资调整版本冲突');
+  }
+}
+
+function requireControlStatus(
+  control: PayrollAdjustmentControl,
+  allowed: readonly PayrollAdjustmentStatus[],
+): void {
+  if (!allowed.includes(control.status)) {
+    invalid('PAYROLL_ADJUSTMENT_TRANSITION_INVALID', '工资调整状态迁移无效');
+  }
+}
+
+function nextControl(
+  control: PayrollAdjustmentControl,
+  changes: Partial<PayrollAdjustmentControl>,
+): PayrollAdjustmentControl {
+  return Object.freeze({
+    ...control,
+    ...changes,
+    id: control.id,
+    tenantId: control.tenantId,
+    preparedBy: control.preparedBy,
+    version: control.version + 1,
+  });
+}
+
+function assertId(value: string, field: string): void {
+  if (!ID.test(value)) invalid('PAYROLL_ADJUSTMENT_CONTROL_ID_INVALID', `${field} 标识非法`);
 }
 
 function assertResultIntegrity(

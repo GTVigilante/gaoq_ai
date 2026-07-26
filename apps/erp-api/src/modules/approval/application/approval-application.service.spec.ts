@@ -788,6 +788,44 @@ describe('ApprovalApplicationService', () => {
     });
   });
 
+  it('工资调整审批终态只输出固定控制摘要，不输出员工或金额', async () => {
+    const deps = dependencies();
+    const completedAt = '2026-07-31T11:00:00.000Z';
+    const approved = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4A4', status: 'approved', completedAt,
+      formDataHash: 'd'.repeat(43),
+      templateSnapshot: { templateCode: 'payroll_adjustment_approval' },
+      formData: {
+        adjustment_id: '01J8ZQK7V0A2M4N6P8R0T2W4D1',
+        adjustment_hash: 'a'.repeat(43),
+        period: '2026-07',
+        adjustment_type: 'supplement',
+        reason_code: 'RETROACTIVE_SALARY_CHANGE',
+      },
+      resolvedNodes: [{ decisions: [{
+        decidedBy: 'finance-002', principalApproverId: 'finance-002',
+        outcome: 'approved', decidedAt: completedAt, delegated: false,
+      }] }],
+    } as unknown as ApprovalInstance;
+    deps.instances.findById.mockResolvedValue(approved);
+    const result = await service(
+      deps, trustedContext(['erp:payroll:adjustment:approval:sync']),
+    ).getPayrollAdjustmentDecision(approved.id);
+    expect(result).toEqual({
+      id: approved.id,
+      outcome: 'approved',
+      decidedBy: 'finance-002',
+      completedAt,
+      adjustmentId: '01J8ZQK7V0A2M4N6P8R0T2W4D1',
+      adjustmentHash: 'a'.repeat(43),
+      period: '2026-07',
+      adjustmentType: 'supplement',
+      reasonCode: 'RETROACTIVE_SALARY_CHANGE',
+      formDataHash: 'd'.repeat(43),
+    });
+    expect(JSON.stringify(result)).not.toMatch(/employee|amount|payable|receivable/u);
+  });
+
   it('创建实例只返回脱敏摘要，聚合与事件共用幂等事务', async () => {
     const deps = dependencies();
     const result = await service(deps).createInstance('idempotency-key-001', {

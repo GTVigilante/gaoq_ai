@@ -21,6 +21,9 @@ export interface PayrollEvent {
     | 'payroll.rule_pack.migrated'
     | 'payroll.compensation_profile.migrated'
     | 'payroll.adjustment.prepared'
+    | 'payroll.adjustment.approval_requested'
+    | 'payroll.adjustment.approval_applied'
+    | 'payroll.adjustment.locked'
     | 'payroll.annual_reconciliation.prepared'
     | 'payroll.approval.requested'
     | 'payroll.approval.applied'
@@ -96,16 +99,46 @@ export class PayrollOutboxWriter {
   }
 
   private assertAdjustmentEvent(event: PayrollEvent): void {
-    if (event.type !== 'payroll.adjustment.prepared') return;
+    if (!event.type.startsWith('payroll.adjustment.')) return;
+    if (![
+      'payroll.adjustment.prepared',
+      'payroll.adjustment.approval_requested',
+      'payroll.adjustment.approval_applied',
+      'payroll.adjustment.locked',
+    ].includes(event.type)) throw new Error('PAYROLL_ADJUSTMENT_OUTBOX_DATA_INVALID');
     const data = event.data;
-    if (
-      Object.keys(data).sort().join(',') !==
-        'adjustmentHash,period,reasonCode,status,type' ||
+    const base =
       !month(data['period']) || !hash(data['adjustmentHash']) ||
       typeof data['reasonCode'] !== 'string' ||
       !/^[A-Z][A-Z0-9_]{1,63}$/.test(data['reasonCode']) ||
-      !['supplement', 'reversal', 'tax_only'].includes(String(data['type'])) ||
-      data['status'] !== 'prepared'
+      !['supplement', 'reversal', 'tax_only'].includes(String(data['type']));
+    const keys = Object.keys(data).sort().join(',');
+    if (event.type === 'payroll.adjustment.approval_applied') {
+      if (
+        base ||
+        keys !== 'adjustmentHash,outcome,period,reasonCode,status,type' ||
+        !['approved', 'rejected'].includes(String(data['outcome'])) ||
+        !['approved', 'cancelled'].includes(String(data['status'])) ||
+        (data['outcome'] === 'approved') !== (data['status'] === 'approved')
+      ) throw new Error('PAYROLL_ADJUSTMENT_OUTBOX_DATA_INVALID');
+      return;
+    }
+    if (event.type === 'payroll.adjustment.locked') {
+      if (
+        base ||
+        keys !== 'adjustmentHash,period,reasonCode,status,strongAuthMethod,type' ||
+        data['status'] !== 'locked' ||
+        data['strongAuthMethod'] !== 'webauthn_uv'
+      ) throw new Error('PAYROLL_ADJUSTMENT_OUTBOX_DATA_INVALID');
+      return;
+    }
+    const expectedStatus = event.type === 'payroll.adjustment.prepared'
+      ? 'prepared'
+      : 'pending_approval';
+    if (
+      base ||
+      keys !== 'adjustmentHash,period,reasonCode,status,type' ||
+      data['status'] !== expectedStatus
     ) throw new Error('PAYROLL_ADJUSTMENT_OUTBOX_DATA_INVALID');
   }
 

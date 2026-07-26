@@ -28,6 +28,10 @@ CloudEvent `cn.gaoq.erp.payroll.adjustment.prepared.v1` 只携带期间、类型
 
 MCP 契约逐字固定为 Tool `payroll_adjustment_status_get`、Resource Template `erp://payroll/adjustments/{id}`、Prompt `payroll_adjustment_review_guide`，三者都复用 `PayrollAdjustmentService.getControlStatus`。
 
-## 未完成边界
+## 后续控制链
 
-当前状态固定为 `prepared`。独立审批、WebAuthn 锁定、补发 `supplement` 子批次、冲销应收/后续抵扣、税务更正申报和结算回写必须在后续切片完成；在这些控制链交付前，不得把准备记录记为已补发或已追回。
+专用 Approval 送审、可信终态同步和独立 WebAuthn UV 锁定已经由
+[工资调整审批与 WebAuthn 锁定](./24-payroll-adjustment-approval-locking.md) 交付。
+补发 `supplement` 子批次、冲销应收/后续抵扣、税务更正申报和结算回写仍须在
+后续切片完成；在这些收付与申报控制链交付前，不得把 locked 记录记为已补发、
+已追回或已更正申报。
