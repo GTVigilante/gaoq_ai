@@ -71,8 +71,8 @@
   新增 Phase 3 Issue 已归入唯一 Milestone。GitHub Project 仍由 Issue #41 跟踪，
   因当前令牌缺少最小 `project` 权限而保持阻塞；详见
   `docs/implementation-completion-audit.md`。
-- 2026-07-27 ERP API 全量覆盖率基线为语句 80.64%、分支 72.58%、函数
-  83.76%、行 83.18%，分支尚未达到全仓四维 80% 强制门槛。租户上下文、审计链锚定、身份授权、
+- 2026-07-27 ERP API 全量覆盖率基线为语句 80.73%、分支 72.76%、函数
+  83.82%、行 83.26%，分支尚未达到全仓四维 80% 强制门槛。租户上下文、审计链锚定、身份授权、
   审批数据加密、审批仓储、审批应用状态机、MCP 确认、MCP 运行时、薪酬影子周期、薪酬运行、
   薪酬审批、Treasury Outbox、Care 纪念日应用、Care 离职应用、数据迁移控制面、Knowledge 考试运行 Relay、
   Knowledge 搜索索引 Relay、考勤应用、招聘 Offer、Care 仓储、组织仓储、招聘仓储、
