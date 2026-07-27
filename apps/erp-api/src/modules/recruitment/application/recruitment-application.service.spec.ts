@@ -15,6 +15,7 @@ import {
 import type {
   Candidate,
   CandidateApplication,
+  RecruitmentPosition,
 } from '../domain/index.js';
 import { RecruitmentApplicationService } from './recruitment-application.service.js';
 
@@ -406,13 +407,13 @@ describe('RecruitmentApplicationService', () => {
     const references: readonly {
       readonly name: string;
       readonly candidate: Candidate | null;
-      readonly currentPosition: typeof position | null;
+      readonly currentPosition: RecruitmentPosition | null;
     }[] = [
       { name: 'candidate-missing', candidate: null, currentPosition: position },
       { name: 'position-missing', candidate: migratedCandidate, currentPosition: null },
       {
         name: 'candidate-inactive',
-        candidate: { ...migratedCandidate, status: 'withdrawn' },
+        candidate: { ...migratedCandidate, status: 'consent_withdrawn' },
         currentPosition: position,
       },
       {
@@ -449,14 +450,14 @@ describe('RecruitmentApplicationService', () => {
     });
     store.candidates.findById.mockResolvedValue({
       ...migratedCandidate,
-      status: 'withdrawn',
+      status: 'consent_withdrawn',
       consent: { ...migratedCandidate.consent, expiresAt: '2025-07-20T00:00:00.000Z' },
     });
     store.positions.findById.mockResolvedValue({ ...position, status: 'closed' });
     const terminal = {
       ...applicationMigrationBase,
       actions: [
-        applicationMigrationBase.actions[0],
+        applicationMigrationBase.actions[0]!,
         {
           targetStage: 'rejected' as const,
           reasonCode: 'LEGACY_REJECTED',
