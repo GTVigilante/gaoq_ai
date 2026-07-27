@@ -400,10 +400,15 @@ export class PayrollReconciliationService {
         tenantId: this.tenantId(), expectedVersion: current.version,
         reconciliationEvidenceId: evidenceId, trustedReconciliation: true,
       }, now);
+    const mutablePeriod = toMutablePayrollPeriodRecord(current);
     const updated = await this.periods.updateOne({
       tenantId: this.tenantId(), id: initial.id,
       status: initial.status, version: initial.version,
-    }, { $set: toMutablePayrollPeriodRecord(current) }, {
+    }, {
+      $set: emitLifecycleEvents
+        ? mutablePeriod
+        : { ...mutablePeriod, updatedAt: new Date(current.updatedAt) },
+    }, {
       session, runValidators: true,
       ...(emitLifecycleEvents ? {} : { timestamps: false }),
     });
