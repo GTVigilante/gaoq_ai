@@ -339,6 +339,16 @@ export function createExamAttempt(
   const questionMode = input.questionMode ?? 'objective';
   const gradingPolicyVersion = input.gradingPolicyVersion ?? 'objective-auto-v1';
   const passingRule = input.passingRule ?? 'score_threshold';
+  const manualReviewRequired = questionMode === 'subjective' || questionMode === 'mixed';
+  if (manualReviewRequired && input.manualReviewEvidenceId === undefined) {
+    invalid(
+      'KNOWLEDGE_MANUAL_REVIEW_EVIDENCE_REQUIRED',
+      '主观题或混合题必须绑定人工复核证据',
+    );
+  }
+  if (input.manualReviewEvidenceId !== undefined) {
+    assertId(input.manualReviewEvidenceId, 'manualReviewEvidenceId');
+  }
   const thresholdPassed = input.scoreBps >= input.passingScoreBps;
   if (
     passingRule === 'score_threshold' &&
