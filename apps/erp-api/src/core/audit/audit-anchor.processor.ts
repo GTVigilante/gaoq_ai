@@ -12,7 +12,9 @@ export class AuditAnchorProcessor extends WorkerHost {
   }
 
   override async process(job: Job<Record<string, never>, number, typeof AUDIT_ANCHOR_JOB>): Promise<number> {
-    if (job.name !== AUDIT_ANCHOR_JOB) throw new Error('未知审计维护任务');
+    if (job.name !== AUDIT_ANCHOR_JOB) {
+      throw new Error('AUDIT_MAINTENANCE_JOB_INVALID');
+    }
     return this.anchors.anchorPendingTenants(100);
   }
 }

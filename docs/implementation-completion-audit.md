@@ -1,7 +1,7 @@
 # 仓库实施完成度审计
 
 - 审计日期：2026-07-28
-- 审计对象：Phase 0–6、开放 Issue、当前堆叠 Draft PR 与 GitHub 治理配置
+- 审计对象：Phase 0–6、开放 Issue、Draft PR #122 与 GitHub 治理配置
 - 结论：应用、契约、迁移控制面、生产门禁、Helm/Kubernetes 编排和标准 MCP
   已形成仓库实施基线；真实外部联调、目标环境演练、UAT、切换与 Hypercare
   尚未完成。Phase 0 的 GitHub Project 因最小权限未授权而未配置，其余关键
@@ -50,8 +50,8 @@
 
 - GitHub 是唯一代码协作、Issue、PR 与 CI 入口；不使用 NAS、自建 Runner、虚拟机
   或本地内网作为 CI 替代品。
-- 当前实现由以 Draft PR #122 为根的堆叠 PR 承载，最新 Knowledge 切片为
-  Draft PR #129；合入前仍需按顺序评审、可运行 CI 与所有适用 DoD。
+- 当前实现由 Draft PR #122 承载；原堆叠 PR #129 已被提交 `29c5fd5` 完整
+  吸收并关闭。合入前仍需完成评审、可运行 CI 与所有适用 DoD。
 - GitHub Hosted Actions 当前在任何 Job 步骤开始前被账号付款或 Spending limit
   拦截。该状态既不是代码测试失败，也不是 CI 通过；相同 commit 不重复空跑。
 - Issue #41 需要用户明确授权 `read:project,project` 后才能创建 Project。未获授权
@@ -62,16 +62,16 @@
 ## 5. 覆盖率边界
 
 2026-07-28 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，331 个测试文件、3,091 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，332 个测试文件、3,097 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-86.05%（24,764/28,776）、分支 82.44%（16,334/19,812）、函数
-86.98%（4,503/5,177）、行 87.86%（22,658/25,788）。全仓四维已达到 Phase 0
-规定的 80% 门槛，分支高于最低命中数 484 个。全量命令通过
+86.11%（24,781/28,776）、分支 82.46%（16,338/19,812）、函数
+87.05%（4,507/5,177）、行 87.91%（22,672/25,789）。全仓四维已达到 Phase 0
+规定的 80% 门槛，分支高于最低命中数 488 个。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
 
-租户上下文、审计链锚定、审计链验证、组织主数据应用、组织主数据入口、身份授权、审批数据加密、审批仓储、
+租户上下文、审计链锚定、审计链锚定 Worker、审计链验证、组织主数据应用、组织主数据入口、身份授权、审批数据加密、审批仓储、
 审批应用状态机、审批入口控制器、审批模板领域、
 MCP 确认服务、MCP HTTP 入口、MCP 运行时、MCP Tool 应用层、OP 审批桥入站申请、OP 审批结果回传、
 OP Webhook 双入口、
@@ -81,6 +81,7 @@ OP Webhook 双入口、
 独立不可回退门禁：
 `pnpm quality:tenant-context-coverage`、
 `pnpm quality:audit-anchor-coverage`、
+`pnpm quality:audit-anchor-worker-coverage`、
 `pnpm quality:audit-chain-verification-coverage`、
 `pnpm quality:org-application-coverage`、
 `pnpm quality:org-controller-coverage`、
@@ -149,8 +150,9 @@ OP Webhook 双入口、
 `pnpm quality:oauth-controller-coverage`、
 `pnpm quality:strong-auth-coverage`、
 `pnpm quality:onboarding-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。七十一条链路当前覆盖率分别为
+`pnpm quality:production-execution-authorization-coverage`。七十二条链路当前覆盖率分别为
 100%/100%/100%/100%、100%/100%/100%/100%、
+100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
 100%/100%/100%/100%、
@@ -215,9 +217,14 @@ OP Webhook 双入口、
 96.09%/91.51%/100%/99.45%、
 100%/100%/100%/100%、
 100%/98.23%/100%/100% 和
-100%/100%/100%/100%（语句/分支/函数/行）；七十一项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明七十一条关键链路达标，
+100%/100%/100%/100%（语句/分支/函数/行）；七十二项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明七十二条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
+
+审计链锚定 Worker 已覆盖 6 项固定任务名、批量上限、未知任务失败关闭、
+WORM 停用不调度、六小时幂等调度、固定重试/退避/保留策略及失败传播测试；
+Processor 与 Scheduler 合计覆盖率达到四维 100%，独立四维 90% 门禁已接入
+`pnpm check`。
 
 OAuth 授权控制器已覆盖 45 项预注册回调、PKCE、授权决策、授权码、
 `client_credentials`、协议错误与限流测试。Basic 和 `private_key_jwt` 的

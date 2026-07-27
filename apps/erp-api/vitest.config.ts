@@ -430,6 +430,18 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/core/audit/audit-anchor.processor.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/core/audit/audit-anchor.scheduler.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/core/audit/audit-chain-verification.service.ts': {
           branches: 90,
           functions: 90,
