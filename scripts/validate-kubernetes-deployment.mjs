@@ -68,9 +68,10 @@ for (const [component, markers] of Object.entries({
   website: [
     'runtime.websiteConfigMapName',
     'runtime.websiteSecretName',
-    '/zh-CN',
+    'ERP_API_INTERNAL_ORIGIN',
+    'MARKETING_REVALIDATE_SECRET',
+    'path: /zh-CN',
     'containerPort: 3002',
-    'gaoq.io/website-public-config:',
   ],
 })) {
   const deployment = contents.get(`templates/deployment-${component}.yaml`);
@@ -110,10 +111,12 @@ if (
 
 const websiteDeployment = contents.get('templates/deployment-website.yaml');
 if (
+  websiteDeployment.includes('envFrom:') ||
+  websiteDeployment.includes('NEXT_PUBLIC_') ||
   websiteDeployment.includes('runtime.apiSecretName') ||
   websiteDeployment.includes('runtime.workerSecretName') ||
   websiteDeployment.includes('runtime.webSecretName')
-) throw new Error('KUBERNETES_WEBSITE_SECRET_REUSE_FORBIDDEN');
+) throw new Error('KUBERNETES_WEBSITE_RUNTIME_BOUNDARY_INVALID');
 
 const serviceAccount = contents.get('templates/serviceaccount.yaml');
 assertIncludes(serviceAccount, [
@@ -150,6 +153,7 @@ assertIncludes(contents.get('templates/ingress.yaml'), [
   'tlsSecretName',
   'ingressClassName:',
   'pathType: Prefix',
+  'websiteHost',
 ], 'KUBERNETES_INGRESS_INCOMPLETE');
 assertIncludes(contents.get('templates/networkpolicy.yaml'), [
   'default-deny',

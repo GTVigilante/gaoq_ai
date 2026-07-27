@@ -59,6 +59,58 @@ describe('validateEnvironment', () => {
     expect(environment.MCP_OAUTH_CLIENTS_JSON).toBe('[]');
   });
 
+  it('营销官网 Origin 必须精确隔离，生产验证码配置失败关闭', () => {
+    const base = {
+      NODE_ENV: 'test',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0',
+      WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://erp.example.com',
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://erp.example.com/.well-known/jwks.json',
+      MCP_AUTHORIZATION_SERVER: 'https://erp.example.com',
+      MCP_ALLOWED_ORIGINS: 'https://client.example.com',
+    };
+    expect(validateEnvironment({
+      ...base,
+      MARKETING_WEBSITE_ORIGIN: 'https://www.example.com',
+    })).toMatchObject({
+      MARKETING_WEBSITE_ORIGIN: 'https://www.example.com',
+    });
+    expect(() => validateEnvironment({
+      ...base,
+      MARKETING_WEBSITE_ORIGIN: 'https://www.example.com/path',
+    })).toThrow('营销官网必须为独立精确 Origin');
+    expect(() => validateEnvironment({
+      ...base,
+      MARKETING_WEBSITE_ORIGIN: 'https://erp.example.com',
+    })).toThrow('营销官网必须为独立精确 Origin');
+    expect(() => validateEnvironment({
+      ...base,
+      NODE_ENV: 'production',
+    })).toThrow('生产环境必须配置营销官网精确 HTTPS Origin');
+    expect(() => validateEnvironment({
+      ...base,
+      NODE_ENV: 'production',
+      MARKETING_WEBSITE_ORIGIN: 'https://www.example.com',
+    })).toThrow('生产环境营销官网必须配置验证码校验端点与独立凭据');
+    for (const origin of [
+      'https://localhost',
+      'https://tenant.localhost',
+      'https://localhost.',
+    ]) {
+      expect(() => validateEnvironment({
+        ...base,
+        NODE_ENV: 'production',
+        MARKETING_WEBSITE_ORIGIN: origin,
+        MARKETING_CAPTCHA_VERIFY_ENDPOINT: 'https://captcha.example.net/verify',
+        MARKETING_CAPTCHA_BEARER_TOKEN:
+          'captcha-gateway-token-at-least-32-characters',
+      })).toThrow('营销官网必须为独立精确 Origin');
+    }
+  });
+
   it('迁移附件网关端点与凭据必须成套且使用独立标准 HTTPS', () => {
     const base = {
       NODE_ENV: 'test',

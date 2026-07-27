@@ -5,6 +5,8 @@ import type { Locale } from '../lib/content';
 
 const API_ORIGIN = process.env.NEXT_PUBLIC_ERP_API_ORIGIN ?? 'http://localhost:3001';
 const CAPTCHA_WIDGET_URL = process.env.NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL;
+const CAPTCHA_WIDGET_ORIGIN =
+  process.env.NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_ORIGIN;
 
 /** 双边预约表单；租户与站点始终由服务端固定映射。 */
 export function LeadForm({ locale, audience }: {
@@ -17,12 +19,13 @@ export function LeadForm({ locale, audience }: {
   const zh = locale === 'zh-CN';
 
   useEffect(() => {
-    if (CAPTCHA_WIDGET_URL === undefined) return;
-    const expectedOrigin = new URL(CAPTCHA_WIDGET_URL).origin;
+    if (
+      CAPTCHA_WIDGET_URL === undefined ||
+      CAPTCHA_WIDGET_ORIGIN === undefined
+    ) return;
     const listener = (event: MessageEvent<unknown>) => {
       if (
-        event.origin !== expectedOrigin ||
-        event.source !== captchaFrame.current?.contentWindow ||
+        event.origin !== CAPTCHA_WIDGET_ORIGIN ||
         typeof event.data !== 'object' ||
         event.data === null ||
         !('captchaToken' in event.data) ||
@@ -42,6 +45,10 @@ export function LeadForm({ locale, audience }: {
     const form = new FormData(event.currentTarget);
     const response = await fetch(`${API_ORIGIN}/api/marketing/public/leads`, {
       method: 'POST',
+      mode: 'cors',
+      credentials: 'omit',
+      cache: 'no-store',
+      referrerPolicy: 'strict-origin-when-cross-origin',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         audience,
@@ -79,7 +86,7 @@ export function LeadForm({ locale, audience }: {
         <input type="checkbox" name="privacyAccepted" required />
         {zh ? '我同意按照隐私政策处理本次咨询信息' : 'I agree to the processing described in the privacy policy'}
       </label>
-      {CAPTCHA_WIDGET_URL === undefined ? (
+      {CAPTCHA_WIDGET_URL === undefined || CAPTCHA_WIDGET_ORIGIN === undefined ? (
         <p className="form-wide form-error">
           {zh ? '预约验证组件尚未配置。' : 'The enquiry verification widget is not configured.'}
         </p>
@@ -90,6 +97,7 @@ export function LeadForm({ locale, audience }: {
           src={CAPTCHA_WIDGET_URL}
           title={zh ? '人机验证' : 'Human verification'}
           sandbox="allow-scripts allow-same-origin allow-forms"
+          referrerPolicy="no-referrer"
         />
       )}
       <button type="submit" disabled={state === 'sending' || captchaToken === ''}>

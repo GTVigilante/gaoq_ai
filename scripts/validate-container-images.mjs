@@ -5,6 +5,9 @@ const dockerignore = await readFile(new URL('../.dockerignore', import.meta.url)
 const workflow = await readFile(
   new URL('../.github/workflows/phase-5-security.yml', import.meta.url), 'utf8',
 );
+const qualityWorkflow = await readFile(
+  new URL('../.github/workflows/phase-1-ci.yml', import.meta.url), 'utf8',
+);
 const dependabot = await readFile(new URL('../.github/dependabot.yml', import.meta.url), 'utf8');
 
 for (const marker of [
@@ -13,11 +16,12 @@ for (const marker of [
   'FROM runtime-base AS erp-api',
   'FROM runtime-base AS erp-worker',
   'FROM runtime-base AS erp-web',
-  'FROM runtime-base AS website',
+  'FROM runtime-base AS erp-website',
   'USER 65532:65532',
   'org.opencontainers.image.revision',
   'NEXT_PUBLIC_ERP_API_ORIGIN',
   'NEXT_PUBLIC_WEBSITE_ORIGIN',
+  'NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_ORIGIN',
   'NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL',
   'ERP_MOBILE_FRAME_ANCESTORS',
   'COPY packages/platform-contracts/package.json packages/platform-contracts/package.json',
@@ -42,8 +46,9 @@ for (const marker of [
   'target: erp-api',
   'target: erp-worker',
   'target: erp-web',
-  'target: website',
+  'target: erp-website',
   '--build-arg NEXT_PUBLIC_WEBSITE_ORIGIN=https://www.example.invalid',
+  '--build-arg NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_ORIGIN=https://captcha.example.invalid',
   '--build-arg NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL=https://captcha.example.invalid/widget',
   '--build-arg ERP_MOBILE_FRAME_ANCESTORS=https://container.example.invalid',
   "test \"$configured_user\" = '65532:65532'",
@@ -55,6 +60,17 @@ for (const marker of [
 
 if (!/- package-ecosystem: docker\n\s+directory: \/$/mu.test(dependabot)) {
   throw new Error('PHASE5_CONTAINER_UPDATE_POLICY_MISSING');
+}
+
+for (const marker of [
+  'NEXT_PUBLIC_WEBSITE_ORIGIN: https://www.example.invalid',
+  'NEXT_PUBLIC_ERP_API_ORIGIN: https://erp.example.invalid',
+  'NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_ORIGIN: https://captcha.example.invalid',
+  'NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL: https://captcha.example.invalid/widget',
+]) {
+  if (!qualityWorkflow.includes(marker)) {
+    throw new Error('WEBSITE_QUALITY_BUILD_ENV_INCOMPLETE');
+  }
 }
 
 process.stdout.write('Phase 5 生产镜像与镜像安全门禁校验通过。\n');
