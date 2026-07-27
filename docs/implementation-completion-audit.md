@@ -23,7 +23,7 @@
 
 | Phase | 仓库实施证据 | 尚缺外部证据 | 结论 |
 |---|---|---|---|
-| 0 | `docs/phase-0/`、Issue 模板、7 个 Milestone、标签及 Draft PR 流程 | Issue #41 的 GitHub Project 需要 `project` 权限；全仓覆盖率以 114 个分支余量达到 80%，其余关键链路 90% 证据尚未全部建立 | 未满足退出条件 |
+| 0 | `docs/phase-0/`、Issue 模板、7 个 Milestone、标签及 Draft PR 流程 | Issue #41 的 GitHub Project 需要 `project` 权限；全仓覆盖率以 187 个分支余量达到 80%，其余关键链路 90% 证据尚未全部建立 | 未满足退出条件 |
 | 1 | `apps/erp-api/src/modules/auth/`、`org/`、`security/`、`integration/`，`deploy/helm/`，Phase 1 工作流 | 境内云 VPC、WAF/KMS、真实 SSO/组织下发、监控告警、备份恢复与 RPO/RTO 演练 | 实施已交付，外部验收待完成 |
 | 2 | `apps/erp-api/src/modules/approval/`、审批前端、通知、迁移与 MCP 能力 | 氚云模板/历史/在途审批真实盘点迁移、三次演练和业务签署 | 实施已交付，外部验收待完成 |
 | 3 | 招聘、eSign、Onboarding、Knowledge、Care、Talent Lifecycle 360 及对应 REST/事件/MCP | 真实渠道、e签宝、对象/WORM、OpenAI/搜索/评分/通知、CRM/校友平台与跨角色 UAT | 实施已交付，外部验收待完成 |
@@ -61,11 +61,11 @@
 ## 5. 覆盖率边界
 
 2026-07-28 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，323 个测试文件、2,546 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，323 个测试文件、2,606 项测试全部
 通过；覆盖率为语句
-86.01%（23,612/27,452）、分支 80.58%（15,590/19,345）、函数
-88.12%（4,328/4,911）、行 87.86%（21,633/24,621）。全仓四维已达到 Phase 0
-规定的 80% 门槛，分支高于最低值 114 个；必须保留专项 90% 门禁并继续增加
+86.24%（23,693/27,472）、分支 80.97%（15,675/19,359）、函数
+88.27%（4,336/4,912）、行 88.07%（21,703/24,641）。全仓四维已达到 Phase 0
+规定的 80% 门槛，分支高于最低值 187 个；必须保留专项 90% 门禁并继续增加
 安全余量，禁止通过排除生产文件、降低阈值或只报告局部高覆盖率维持达标。
 
 租户上下文、审计链锚定、审计链验证、组织主数据应用、组织主数据入口、身份授权、审批数据加密、审批仓储、
@@ -131,7 +131,7 @@ MCP 确认、MCP 运行时、
 `pnpm quality:oauth-controller-coverage`、
 `pnpm quality:strong-auth-coverage`、
 `pnpm quality:onboarding-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。五十六条链路当前覆盖率分别为
+`pnpm quality:production-execution-authorization-coverage`。五十七条链路当前覆盖率分别为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -183,8 +183,8 @@ MCP 确认、MCP 运行时、
 96.09%/91.51%/100%/99.45%、
 100%/100%/100%/100%、
 100%/98.23%/100%/100% 和
-100%/100%/100%/100%（语句/分支/函数/行）；五十六项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明五十六条关键链路达标，
+100%/100%/100%/100%（语句/分支/函数/行）；五十七项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明五十七条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 OAuth 授权控制器已覆盖 45 项预注册回调、PKCE、授权决策、授权码、
