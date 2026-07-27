@@ -183,11 +183,15 @@ function validateSource(source, enforceEnvironment) {
     'packageManifestHash', 'harnessSha256',
   ], 'PHASE5_MIGRATION_REHEARSAL_SOURCE_INVALID');
   pattern(source.commitSha, COMMIT, 'PHASE5_MIGRATION_REHEARSAL_COMMIT_INVALID');
-  object(source.images, ['api', 'worker', 'web'], 'PHASE5_MIGRATION_REHEARSAL_IMAGES_INVALID');
+  object(
+    source.images,
+    ['api', 'worker', 'web', 'website'],
+    'PHASE5_MIGRATION_REHEARSAL_IMAGES_INVALID',
+  );
   for (const value of Object.values(source.images)) {
     pattern(value, SHA256, 'PHASE5_MIGRATION_REHEARSAL_IMAGES_INVALID');
   }
-  if (new Set(Object.values(source.images)).size !== 3) {
+  if (new Set(Object.values(source.images)).size !== 4) {
     fail('PHASE5_MIGRATION_REHEARSAL_IMAGES_INVALID');
   }
   for (const field of [
@@ -208,6 +212,7 @@ function validateExpectedSource(source) {
     api: process.env.MIGRATION_REHEARSAL_EXPECTED_API_IMAGE,
     worker: process.env.MIGRATION_REHEARSAL_EXPECTED_WORKER_IMAGE,
     web: process.env.MIGRATION_REHEARSAL_EXPECTED_WEB_IMAGE,
+    website: process.env.MIGRATION_REHEARSAL_EXPECTED_WEBSITE_IMAGE,
     deploymentManifestHash: process.env.MIGRATION_REHEARSAL_EXPECTED_DEPLOYMENT_MANIFEST,
     sourceSnapshotHash: process.env.MIGRATION_REHEARSAL_EXPECTED_SOURCE_SNAPSHOT,
     packageManifestHash: process.env.MIGRATION_REHEARSAL_EXPECTED_PACKAGE_MANIFEST,
@@ -218,11 +223,11 @@ function validateExpectedSource(source) {
     'PHASE5_MIGRATION_REHEARSAL_EXPECTED_SOURCE_REQUIRED',
   );
   for (const field of [
-    'api', 'worker', 'web', 'deploymentManifestHash', 'sourceSnapshotHash',
+    'api', 'worker', 'web', 'website', 'deploymentManifestHash', 'sourceSnapshotHash',
     'packageManifestHash',
   ]) pattern(expected[field], SHA256, 'PHASE5_MIGRATION_REHEARSAL_EXPECTED_SOURCE_REQUIRED');
   equal(source.commitSha, expected.commitSha, 'PHASE5_MIGRATION_REHEARSAL_COMMIT_MISMATCH');
-  for (const image of ['api', 'worker', 'web']) {
+  for (const image of ['api', 'worker', 'web', 'website']) {
     equal(source.images[image], expected[image], 'PHASE5_MIGRATION_REHEARSAL_IMAGE_MISMATCH');
   }
   equal(
@@ -486,7 +491,12 @@ function fixture() {
     environment,
     source: {
       commitSha: 'a'.repeat(40),
-      images: { api: digest('api'), worker: digest('worker'), web: digest('web') },
+      images: {
+        api: digest('api'),
+        worker: digest('worker'),
+        web: digest('web'),
+        website: digest('website'),
+      },
       deploymentManifestHash: digest('deployment-manifest'),
       sourceSnapshotHash: digest('source-snapshot'),
       packageManifestHash: digest('package-manifest'),
@@ -583,6 +593,7 @@ function withExpectedEnvironment(document, action) {
     MIGRATION_REHEARSAL_EXPECTED_API_IMAGE: document.source.images.api,
     MIGRATION_REHEARSAL_EXPECTED_WORKER_IMAGE: document.source.images.worker,
     MIGRATION_REHEARSAL_EXPECTED_WEB_IMAGE: document.source.images.web,
+    MIGRATION_REHEARSAL_EXPECTED_WEBSITE_IMAGE: document.source.images.website,
     MIGRATION_REHEARSAL_EXPECTED_DEPLOYMENT_MANIFEST:
       document.source.deploymentManifestHash,
     MIGRATION_REHEARSAL_EXPECTED_SOURCE_SNAPSHOT: document.source.sourceSnapshotHash,

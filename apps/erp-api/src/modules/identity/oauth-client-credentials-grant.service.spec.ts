@@ -15,6 +15,7 @@ import { OAuthServiceClientRegistry } from './oauth-service-client-registry.js';
 
 const ISSUER = 'https://erp.example.com';
 const RESOURCE = 'https://erp.example.com/mcp';
+const PAYROLL_RESOURCE = 'https://payroll.example.com/api';
 const SECRET = 'A'.repeat(43);
 const TRACE_ID = 'trace-service-001';
 
@@ -22,6 +23,9 @@ const config = (clients: unknown): ConfigService<AppEnvironment, true> => ({
   get: (key: keyof AppEnvironment) => {
     if (key === 'MCP_SERVICE_CLIENTS_JSON') return JSON.stringify(clients);
     if (key === 'AUTH_RESOURCE') return RESOURCE;
+    if (key === 'AUTH_ADDITIONAL_RESOURCES_JSON') {
+      return JSON.stringify([{ resource: PAYROLL_RESOURCE, audience: 'gaoq-payroll' }]);
+    }
     if (key === 'AUTH_ISSUER') return ISSUER;
     return undefined;
   },
@@ -30,6 +34,7 @@ const config = (clients: unknown): ConfigService<AppEnvironment, true> => ({
 const commonClient = {
   clientId: 'service-client-001', clientName: '自动代理', tenantId: 'tenant-001',
   actorId: 'mcp-agent-001', allowedScopes: ['erp:mcp:server:connect', 'erp:org:chart:read'],
+  allowedResources: [RESOURCE],
   roleCodes: ['service-reader'], departmentIds: ['department-001'], status: 'active',
 } as const;
 
@@ -125,6 +130,32 @@ describe('OAuthClientCredentialsGrantService', () => {
     await expect(store.service.issue({
       authorization, clientAssertion: 'jwt', resource: RESOURCE, traceId: TRACE_ID,
     })).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('认证后拒绝未授权资源，并为显式授权资源传递正确 resource', async () => {
+    const authorization = `Basic ${Buffer.from(`service-client-001:${SECRET}`).toString('base64')}`;
+    const denied = createService([basicClient()]);
+    await expect(denied.service.issue({
+      authorization,
+      resource: PAYROLL_RESOURCE,
+      scopes: ['erp:org:chart:read'],
+      traceId: TRACE_ID,
+    })).rejects.toThrow('resource 超出客户端授权范围');
+    expect(denied.signer.sign).not.toHaveBeenCalled();
+
+    const allowed = createService([{
+      ...basicClient(),
+      allowedResources: [RESOURCE, PAYROLL_RESOURCE],
+    }]);
+    await expect(allowed.service.issue({
+      authorization,
+      resource: PAYROLL_RESOURCE,
+      scopes: ['erp:org:chart:read'],
+      traceId: TRACE_ID,
+    })).resolves.toMatchObject({ accessToken: 'signed' });
+    expect(allowed.signer.sign).toHaveBeenCalledWith(
+      expect.objectContaining({ resource: PAYROLL_RESOURCE }),
+    );
   });
 
   it('验证无 kid 的 private_key_jwt、接受 issuer audience 并阻断断言重放', async () => {

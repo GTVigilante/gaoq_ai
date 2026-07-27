@@ -137,10 +137,14 @@ function validateSource(source, enforceEnvironment) {
     'commitSha', 'images', 'rehearsalPlanVersion', 'harnessSha256', 'deploymentManifestHash',
   ], 'PHASE5_RESILIENCE_SOURCE_INVALID');
   pattern(source.commitSha, COMMIT, 'PHASE5_RESILIENCE_COMMIT_INVALID');
-  object(source.images, ['api', 'worker', 'web'], 'PHASE5_RESILIENCE_IMAGES_INVALID');
+  object(
+    source.images,
+    ['api', 'worker', 'web', 'website'],
+    'PHASE5_RESILIENCE_IMAGES_INVALID',
+  );
   const imageDigests = Object.values(source.images);
   for (const image of imageDigests) pattern(image, SHA256, 'PHASE5_RESILIENCE_IMAGE_INVALID');
-  if (new Set(imageDigests).size !== 3) fail('PHASE5_RESILIENCE_IMAGES_NOT_INDEPENDENT');
+  if (new Set(imageDigests).size !== 4) fail('PHASE5_RESILIENCE_IMAGES_NOT_INDEPENDENT');
   equal(
     source.rehearsalPlanVersion,
     'phase-5-resilience-v1',
@@ -162,16 +166,18 @@ function validateExpectedSource(source) {
     api: process.env.RESILIENCE_EXPECTED_API_IMAGE,
     worker: process.env.RESILIENCE_EXPECTED_WORKER_IMAGE,
     web: process.env.RESILIENCE_EXPECTED_WEB_IMAGE,
+    website: process.env.RESILIENCE_EXPECTED_WEBSITE_IMAGE,
     deploymentManifestHash: process.env.RESILIENCE_EXPECTED_DEPLOYMENT_MANIFEST,
   };
   pattern(expected.commitSha, COMMIT, 'PHASE5_RESILIENCE_EXPECTED_SOURCE_REQUIRED');
-  for (const field of ['api', 'worker', 'web', 'deploymentManifestHash']) {
+  for (const field of ['api', 'worker', 'web', 'website', 'deploymentManifestHash']) {
     pattern(expected[field], SHA256, 'PHASE5_RESILIENCE_EXPECTED_SOURCE_REQUIRED');
   }
   equal(source.commitSha, expected.commitSha, 'PHASE5_RESILIENCE_COMMIT_MISMATCH');
   equal(source.images.api, expected.api, 'PHASE5_RESILIENCE_IMAGE_MISMATCH');
   equal(source.images.worker, expected.worker, 'PHASE5_RESILIENCE_IMAGE_MISMATCH');
   equal(source.images.web, expected.web, 'PHASE5_RESILIENCE_IMAGE_MISMATCH');
+  equal(source.images.website, expected.website, 'PHASE5_RESILIENCE_IMAGE_MISMATCH');
   equal(
     source.deploymentManifestHash,
     expected.deploymentManifestHash,
@@ -314,9 +320,15 @@ function validateRecoveryComponents(components) {
 
   object(components.services, [
     'apiHealthyReplicas', 'workerHealthyReplicas', 'webHealthyReplicas',
+    'websiteHealthyReplicas',
     'smokeTestsPassed', 'smokeTestsFailed', 'evidenceHash',
   ], 'PHASE5_RESILIENCE_SERVICES_INVALID');
-  for (const field of ['apiHealthyReplicas', 'workerHealthyReplicas', 'webHealthyReplicas']) {
+  for (const field of [
+    'apiHealthyReplicas',
+    'workerHealthyReplicas',
+    'webHealthyReplicas',
+    'websiteHealthyReplicas',
+  ]) {
     integer(components.services[field], 2, 1_000, 'PHASE5_RESILIENCE_SERVICES_INVALID');
   }
   integer(
@@ -618,6 +630,7 @@ function runSelfTest() {
   process.env.RESILIENCE_EXPECTED_API_IMAGE = environmentBound.source.images.api;
   process.env.RESILIENCE_EXPECTED_WORKER_IMAGE = environmentBound.source.images.worker;
   process.env.RESILIENCE_EXPECTED_WEB_IMAGE = environmentBound.source.images.web;
+  process.env.RESILIENCE_EXPECTED_WEBSITE_IMAGE = environmentBound.source.images.website;
   process.env.RESILIENCE_EXPECTED_DEPLOYMENT_MANIFEST =
     environmentBound.source.deploymentManifestHash;
   validateEvidence(environmentBound, true);
@@ -714,7 +727,12 @@ function fixture() {
     },
     source: {
       commitSha: 'a'.repeat(40),
-      images: { api: hash('api'), worker: hash('worker'), web: hash('web') },
+      images: {
+        api: hash('api'),
+        worker: hash('worker'),
+        web: hash('web'),
+        website: hash('website'),
+      },
       rehearsalPlanVersion: 'phase-5-resilience-v1',
       harnessSha256: HARNESS_DIGEST,
       deploymentManifestHash: hash('deployment-manifest'),
@@ -772,6 +790,7 @@ function fixture() {
           apiHealthyReplicas: 2,
           workerHealthyReplicas: 2,
           webHealthyReplicas: 2,
+          websiteHealthyReplicas: 2,
           smokeTestsPassed: 40,
           smokeTestsFailed: 0,
           evidenceHash: hash('services'),

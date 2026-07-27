@@ -35,6 +35,7 @@
     "migrate:phase5:analytics-indexes": "node dist/migrations/phase-5-analytics-indexes.js",
     "migrate:phase5:data-migration-indexes": "node dist/migrations/phase-5-data-migration-indexes.js",
     "migrate:phase5:approval-history-indexes": "node dist/migrations/phase-5-approval-history-indexes.js",
+    "migrate:phase5:marketing-cms-indexes": "node dist/migrations/phase-5-marketing-cms-indexes.js",
     "migrate:phase5:payroll-migration-indexes": "node dist/migrations/phase-5-payroll-migration-indexes.js",
     "migrate:phase5:payroll-control-indexes": "node dist/migrations/phase-5-payroll-control-indexes.js",
     "migrate:phase5:payroll-tax-migration-indexes": "node dist/migrations/phase-5-payroll-tax-migration-indexes.js",

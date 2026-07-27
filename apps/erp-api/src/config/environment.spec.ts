@@ -129,6 +129,41 @@ describe('validateEnvironment', () => {
     })).toThrow('关闭时禁止悬空注入');
   });
 
+  it('营销官网生产 CORS 只接受精确 HTTPS 根 Origin', () => {
+    const base = {
+      NODE_ENV: 'test',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0',
+      WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://erp.example.com',
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://erp.example.com/.well-known/jwks.json',
+      MCP_AUTHORIZATION_SERVER: 'https://erp.example.com',
+      MCP_ALLOWED_ORIGINS: 'https://client.example.com',
+    };
+    expect(validateEnvironment({
+      ...base,
+      MARKETING_WEBSITE_ORIGIN: 'https://www.example.com',
+    })).toMatchObject({
+      MARKETING_WEBSITE_ORIGIN: 'https://www.example.com',
+    });
+    for (const origin of [
+      'http://www.example.com',
+      'https://www.example.com/path',
+      'https://user@www.example.com',
+      'https://www.example.com?tenant=x',
+      'https://www.example.com:80',
+      'https://localhost',
+    ]) {
+      expect(() => validateEnvironment({
+        ...base,
+        NODE_ENV: 'production',
+        MARKETING_WEBSITE_ORIGIN: origin,
+      })).toThrow('营销官网 Origin');
+    }
+  });
+
   it('OP 组织下发只接受独立权限域的标准 HTTPS 根地址', () => {
     const base = {
       NODE_ENV: 'test',

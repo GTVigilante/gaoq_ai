@@ -1,16 +1,17 @@
 import type { CloudEvent, Money } from '@gaoq/shared-types';
+import { z } from 'zod';
 
 /** 平台契约版本。 */
 export const PLATFORM_CONTRACT_VERSION = '1.0.0' as const;
 
-/** ERP 发往算薪系统的组织主数据事件类型。 */
+/** ERP 发往专业算薪系统的组织主数据事件类型。 */
 export const ERP_PAYROLL_MASTER_DATA_EVENT_TYPES = [
   'cn.gaoq.erp.department.upserted.v1',
   'cn.gaoq.erp.employee.upserted.v1',
   'cn.gaoq.erp.employment.changed.v1',
 ] as const;
 
-/** 算薪系统发往 ERP 的脱敏控制面事件类型。 */
+/** 专业算薪系统发往 ERP 的脱敏控制面事件类型。 */
 export const PAYROLL_ERP_SUMMARY_EVENT_TYPES = [
   'cn.gaoq.payroll.run.status_changed.v1',
   'cn.gaoq.payroll.payslip.published.v1',
@@ -139,6 +140,10 @@ type TypedCloudEvent<TType extends string, TData> =
     readonly datacontenttype: 'application/json';
     readonly schemaVersion: '1';
     readonly data: TData;
+    readonly time: string;
+    readonly datacontenttype: 'application/json';
+    readonly subject: string;
+    readonly schemaVersion: '1';
   };
 
 export type DepartmentUpsertedEvent = TypedCloudEvent<
@@ -181,6 +186,16 @@ export type PayrollToErpEvent =
   | PayrollReconciliationCompletedEvent;
 export type PayrollContractEvent = ErpToPayrollEvent | PayrollToErpEvent;
 
+const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const EVENT_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u;
+const SOURCE = /^\/{1,2}[A-Za-z0-9][A-Za-z0-9._~:/-]{0,254}$/u;
+const SUBJECT = /^tenant\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\/[A-Za-z0-9._:/-]{1,255}$/u;
+const UTC_DATETIME =
+  /^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,9})?Z$/u;
+const DATE = /^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$/u;
+const PERIOD = /^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])$/u;
+const DIGEST = /^sha256:[a-f0-9]{64}$/u;
+const NON_NEGATIVE_MINOR = /^(?:0|[1-9]\d{0,29})$/u;
 const FORBIDDEN_SUMMARY_KEY =
   /employeeId|employeeNo|displayName|bank|account|card|idCard|taxId|payslip|salaryDetail|items/i;
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;

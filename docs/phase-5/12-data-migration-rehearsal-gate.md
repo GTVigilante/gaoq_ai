@@ -41,7 +41,7 @@ pnpm --filter @gaoq/erp-api migration:package -- compare \
 
 每个 Scope 的比较摘要必须按控制面唯一事实源中的固定顺序写入 `gaoq.phase5.migration-rehearsal.v1` 聚合证据。聚合证据精确覆盖全部二十六个 Scope、三轮七十八个不重复 runId/封印、每轮不超过八小时的窗口、同一来源快照与来源包清单，以及中断续传、附件网关短暂不可用、重复输入三类故障演练。任何 Scope 缺失、次序变化、运行/封印/比较摘要复用、Critical/High 差异、审计失败或生产副作用均失败关闭。
 
-聚合证据同时绑定发布 commit、API/Worker/Web 镜像摘要、部署清单、生产等价隔离环境与区域，并要求架构、安全、数据和业务负责人使用不同证据 ID 签署。校验器输出的 suite 固定为 `gaoq.phase5.migration-rehearsal.verdict`，供 Go/No-Go 的 migration 门禁消费：
+聚合证据同时绑定发布 commit、API/Worker/ERP Web/Website 四类镜像摘要、部署清单、生产等价隔离环境与区域，并要求架构、安全、数据和业务负责人使用不同证据 ID 签署。校验器输出的 suite 固定为 `gaoq.phase5.migration-rehearsal.verdict`，供 Go/No-Go 的 migration 门禁消费：
 
 ```bash
 pnpm --silent migration:rehearsal:print-contract > /secure/migration/contract.json
@@ -49,7 +49,7 @@ pnpm migration:rehearsal:validate-evidence -- \
   /secure/migration/phase-5-rehearsal.json
 ```
 
-`.github/workflows/phase-5-migration-rehearsal.yml` 只允许在 `main` 手工启动，绑定 Required Reviewers 保护的 `phase-5-migration-rehearsal` Environment，并使用带同名标签的隔离单次 self-hosted Runner。只读现场摘要固定为 `/var/lib/gaoq/migration/phase-5-rehearsal.json`，不得为符号链接、不得允许组或其他用户写入，最大 1 MiB。Environment 固定环境、区域、三类镜像、部署清单、来源快照和来源包清单摘要；GitHub 只上传脱敏 verdict，原始 NDJSON、业务数据、附件和签署材料留在企业 WORM。
+`.github/workflows/phase-5-migration-rehearsal.yml` 只允许在 `main` 手工启动，绑定 Required Reviewers 保护的 `phase-5-migration-rehearsal` Environment，并使用带同名标签的隔离单次 self-hosted Runner。只读现场摘要固定为 `/var/lib/gaoq/migration/phase-5-rehearsal.json`，不得为符号链接、不得允许组或其他用户写入，最大 1 MiB。Environment 固定环境、区域、四类镜像、部署清单、来源快照和来源包清单摘要；GitHub 只上传脱敏 verdict，原始 NDJSON、业务数据、附件和签署材料留在企业 WORM。
 
 ## 人工与外部门禁
 

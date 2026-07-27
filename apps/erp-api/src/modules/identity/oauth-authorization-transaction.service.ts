@@ -108,6 +108,7 @@ export class OAuthAuthorizationTransactionService {
     const client = this.clients.resolveActive(input.clientId);
     if (client === undefined) throw this.invalidClient();
     this.clients.assertRedirect(client, input.redirectUri);
+    this.clients.assertResource(client, input.resource);
     const scopes = this.clients.filterAllowedScopes(client, input.scopes);
     const payload = storedRequestSchema.parse({ ...input, scopes: [...scopes] });
     for (let attempt = 0; attempt < MAX_RANDOM_ATTEMPTS; attempt += 1) {

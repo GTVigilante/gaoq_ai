@@ -7,7 +7,7 @@
 
 从生产开放后的首个完整自然日开始，连续 28 天按 `Asia/Shanghai` 生成不可变日报。每日必须包含：
 
-- API、Worker、Web、MongoDB、Redis/BullMQ 的核心 SLO 与告警审查；
+- API、Worker、ERP Web、Website、MongoDB、Redis/BullMQ 的核心 SLO 与告警审查；
 - 组织、审批、电子签、薪酬、队列、外部回调和 MCP 七域对账；
 - Sev1/Sev2、跨租户拒绝、权限失败、数据丢失、重复业务效果和未解释金额差异；
 - 每个有差异事项的处置记录、根因、责任人证据和复盘引用。

@@ -1,5 +1,4 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
-
 import {
   containsForbiddenPayrollSummaryField,
   ERP_PAYROLL_MASTER_DATA_EVENT_TYPES,
@@ -233,6 +232,18 @@ describe('工资平台共享契约', () => {
       ...validCostEvent,
       idempotencyKey: 'other-tenant:event-001:1',
     })).toBe(false);
+    let deep: Record<string, unknown> = { value: 'safe' };
+    for (let index = 0; index < 8; index += 1) deep = { nested: deep };
+    expect(containsForbiddenPayrollSummaryField(deep)).toBe(true);
+  });
+
+  it('导出可共享的严格 JSON Schema Draft-07', () => {
+    expect(PAYROLL_PLATFORM_EVENTS_JSON_SCHEMA.$schema)
+      .toBe('http://json-schema.org/draft-07/schema#');
+    expect(JSON.stringify(PAYROLL_PLATFORM_EVENTS_JSON_SCHEMA))
+      .toContain('cn.gaoq.payroll.cost_summary.published.v1');
+    expect(JSON.stringify(PAYROLL_PLATFORM_EVENTS_JSON_SCHEMA))
+      .toContain('additionalProperties');
   });
 
   it('拒绝错误状态、期间、日期、负计数和不一致终态', () => {
@@ -321,3 +332,18 @@ describe('工资平台共享契约', () => {
     })).toBeNull();
   });
 });
+
+function envelope(subjectSuffix: string) {
+  return {
+    specversion: '1.0' as const,
+    id: 'event-001',
+    source: '/payroll/events',
+    time: '2026-07-27T00:00:00.000Z',
+    datacontenttype: 'application/json' as const,
+    tenantId: 'tenant-001',
+    traceId: 'trace-001',
+    idempotencyKey: `tenant-001:${subjectSuffix}:v1`,
+    subject: `tenant/tenant-001/${subjectSuffix}`,
+    schemaVersion: '1' as const,
+  };
+}

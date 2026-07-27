@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import type { AppEnvironment } from '../../config/environment.js';
 import { ERP_AUTHORIZATION_SCOPE_PATTERN } from './authorization-scope.js';
+import { requireAuthorizationResource } from './authorization-resources.js';
 
 const CLIENT_ID_PATTERN = /^[A-Za-z0-9._-]{8,128}$/;
 const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
@@ -52,6 +53,7 @@ const serviceClientSchema = z.object({
   tenantId: z.string().regex(ID_PATTERN),
   actorId: z.string().regex(ID_PATTERN),
   allowedScopes: z.array(z.string().min(1).max(128).regex(ERP_AUTHORIZATION_SCOPE_PATTERN)).min(1).max(100),
+  allowedResources: z.array(z.string().url().min(1).max(2_048)).min(1).max(20),
   roleCodes: z.array(z.string().regex(ID_PATTERN)).max(100),
   departmentIds: z.array(z.string().regex(ID_PATTERN)).max(500),
   status: z.enum(['active', 'disabled']),
@@ -86,7 +88,10 @@ const deepFreeze = <T>(value: T): T => {
 const hasDuplicates = (items: readonly string[]): boolean => new Set(items).size !== items.length;
 
 /** 启动时解析无人值守客户端配置；错误信息不得回显凭据摘要或公钥。 */
-const parseRegistry = (raw: string): ReadonlyMap<string, OAuthServiceClient> => {
+const parseRegistry = (
+  raw: string,
+  config: ConfigService<AppEnvironment, true>,
+): ReadonlyMap<string, OAuthServiceClient> => {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw.trim() === '' ? '[]' : raw);
@@ -107,9 +112,16 @@ const parseRegistry = (raw: string): ReadonlyMap<string, OAuthServiceClient> => 
     }
     if (
       hasDuplicates(client.allowedScopes) || hasDuplicates(client.roleCodes) ||
-      hasDuplicates(client.departmentIds)
+      hasDuplicates(client.departmentIds) || hasDuplicates(client.allowedResources)
     ) {
       throw new Error('MCP_SERVICE_CLIENTS_JSON 配置无效：授权数组不得包含重复项');
+    }
+    try {
+      for (const resource of client.allowedResources) {
+        requireAuthorizationResource(config, resource);
+      }
+    } catch {
+      throw new Error('MCP_SERVICE_CLIENTS_JSON 配置无效：allowedResources 包含未注册资源');
     }
     for (const credential of client.authentication.credentials) {
       if (new Date(credential.notBefore).getTime() >= new Date(credential.expiresAt).getTime()) {
@@ -137,7 +149,10 @@ export class OAuthServiceClientRegistry {
   private readonly clients: ReadonlyMap<string, OAuthServiceClient>;
 
   constructor(config: ConfigService<AppEnvironment, true>) {
-    this.clients = parseRegistry(config.get('MCP_SERVICE_CLIENTS_JSON', { infer: true }) ?? '[]');
+    this.clients = parseRegistry(
+      config.get('MCP_SERVICE_CLIENTS_JSON', { infer: true }) ?? '[]',
+      config,
+    );
   }
 
   resolveActive(clientId: string): OAuthServiceClient | undefined {
@@ -170,6 +185,16 @@ export class OAuthServiceClientRegistry {
       throw new ForbiddenException({ code: 'OAUTH_SCOPE_DENIED', message: 'scope 超出客户端授权范围' });
     }
     return deepFreeze([...requested]);
+  }
+
+  /** 服务客户端只能为显式登记的资源签发令牌。 */
+  assertResource(client: OAuthServiceClient, resource: string): void {
+    if (!client.allowedResources.includes(resource)) {
+      throw new ForbiddenException({
+        code: 'OAUTH_RESOURCE_DENIED',
+        message: 'resource 超出客户端授权范围',
+      });
+    }
   }
 
   isActiveTokenIdentity(input: {

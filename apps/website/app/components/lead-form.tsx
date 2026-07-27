@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { Locale } from '../lib/content';
 
 const API_ORIGIN = process.env.NEXT_PUBLIC_ERP_API_ORIGIN ?? 'http://localhost:3001';
@@ -13,6 +13,7 @@ export function LeadForm({ locale, audience }: {
 }) {
   const [state, setState] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
   const [captchaToken, setCaptchaToken] = useState('');
+  const captchaFrame = useRef<HTMLIFrameElement>(null);
   const zh = locale === 'zh-CN';
 
   useEffect(() => {
@@ -21,10 +22,13 @@ export function LeadForm({ locale, audience }: {
     const listener = (event: MessageEvent<unknown>) => {
       if (
         event.origin !== expectedOrigin ||
+        event.source !== captchaFrame.current?.contentWindow ||
         typeof event.data !== 'object' ||
         event.data === null ||
         !('captchaToken' in event.data) ||
-        typeof event.data.captchaToken !== 'string'
+        typeof event.data.captchaToken !== 'string' ||
+        event.data.captchaToken.length < 16 ||
+        event.data.captchaToken.length > 4_096
       ) return;
       setCaptchaToken(event.data.captchaToken);
     };
@@ -49,7 +53,12 @@ export function LeadForm({ locale, audience }: {
         captchaToken,
       }),
     }).catch(() => null);
-    setState(response?.ok === true ? 'success' : 'error');
+    if (response?.ok === true) {
+      setState('success');
+      return;
+    }
+    setCaptchaToken('');
+    setState('error');
   }
 
   if (state === 'success') return (
@@ -76,6 +85,7 @@ export function LeadForm({ locale, audience }: {
         </p>
       ) : (
         <iframe
+          ref={captchaFrame}
           className="captcha-frame"
           src={CAPTCHA_WIDGET_URL}
           title={zh ? '人机验证' : 'Human verification'}

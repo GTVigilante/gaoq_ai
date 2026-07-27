@@ -13,15 +13,20 @@ for (const marker of [
   'FROM runtime-base AS erp-api',
   'FROM runtime-base AS erp-worker',
   'FROM runtime-base AS erp-web',
+  'FROM runtime-base AS website',
   'USER 65532:65532',
   'org.opencontainers.image.revision',
   'NEXT_PUBLIC_ERP_API_ORIGIN',
+  'NEXT_PUBLIC_WEBSITE_ORIGIN',
+  'NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL',
   'ERP_MOBILE_FRAME_ANCESTORS',
+  'COPY packages/platform-contracts/package.json packages/platform-contracts/package.json',
+  'pnpm --filter @gaoq/platform-contracts build',
 ]) {
   if (!dockerfile.includes(marker)) throw new Error('PHASE5_CONTAINER_BASELINE_INCOMPLETE');
 }
 
-if ((dockerfile.match(/^HEALTHCHECK /gmu) ?? []).length !== 3 ||
+if ((dockerfile.match(/^HEALTHCHECK /gmu) ?? []).length !== 4 ||
   /^USER\s+(?:0|root)(?::|\s|$)/mu.test(dockerfile)) {
   throw new Error('PHASE5_CONTAINER_RUNTIME_POLICY_INVALID');
 }
@@ -37,6 +42,9 @@ for (const marker of [
   'target: erp-api',
   'target: erp-worker',
   'target: erp-web',
+  'target: website',
+  '--build-arg NEXT_PUBLIC_WEBSITE_ORIGIN=https://www.example.invalid',
+  '--build-arg NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL=https://captcha.example.invalid/widget',
   '--build-arg ERP_MOBILE_FRAME_ANCESTORS=https://container.example.invalid',
   "test \"$configured_user\" = '65532:65532'",
   'artifact-name: gaoq-os-${{ matrix.image }}-sbom',

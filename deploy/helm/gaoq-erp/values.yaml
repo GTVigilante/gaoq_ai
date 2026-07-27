@@ -5,6 +5,7 @@ targetNamespace: ''
 release:
   commitSha: ''
   deploymentManifestHash: ''
+  websitePublicConfigHash: ''
   rolloutId: ''
 
 images:

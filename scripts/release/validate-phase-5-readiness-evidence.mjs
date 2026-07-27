@@ -184,11 +184,11 @@ function validateSource(source, enforceEnvironment) {
     'commitSha', 'images', 'deploymentManifestHash', 'harnessSha256',
   ], 'PHASE5_READINESS_SOURCE_INVALID');
   pattern(source.commitSha, COMMIT, 'PHASE5_READINESS_COMMIT_INVALID');
-  object(source.images, ['api', 'worker', 'web'], 'PHASE5_READINESS_IMAGES_INVALID');
+  object(source.images, ['api', 'worker', 'web', 'website'], 'PHASE5_READINESS_IMAGES_INVALID');
   for (const value of Object.values(source.images)) {
     pattern(value, SHA256, 'PHASE5_READINESS_IMAGES_INVALID');
   }
-  if (new Set(Object.values(source.images)).size !== 3) {
+  if (new Set(Object.values(source.images)).size !== 4) {
     fail('PHASE5_READINESS_IMAGES_INVALID');
   }
   pattern(
@@ -203,14 +203,15 @@ function validateSource(source, enforceEnvironment) {
       api: process.env.READINESS_EXPECTED_API_IMAGE,
       worker: process.env.READINESS_EXPECTED_WORKER_IMAGE,
       web: process.env.READINESS_EXPECTED_WEB_IMAGE,
+      website: process.env.READINESS_EXPECTED_WEBSITE_IMAGE,
       manifest: process.env.READINESS_EXPECTED_DEPLOYMENT_MANIFEST,
     };
     pattern(expected.commitSha, COMMIT, 'PHASE5_READINESS_EXPECTED_SOURCE_REQUIRED');
-    for (const field of ['api', 'worker', 'web', 'manifest']) {
+    for (const field of ['api', 'worker', 'web', 'website', 'manifest']) {
       pattern(expected[field], SHA256, 'PHASE5_READINESS_EXPECTED_SOURCE_REQUIRED');
     }
     equal(source.commitSha, expected.commitSha, 'PHASE5_READINESS_COMMIT_MISMATCH');
-    for (const image of ['api', 'worker', 'web']) {
+    for (const image of ['api', 'worker', 'web', 'website']) {
       equal(source.images[image], expected[image], 'PHASE5_READINESS_IMAGE_MISMATCH');
     }
     equal(
@@ -267,11 +268,15 @@ function validateSupplyChain(section) {
   for (const field of [
     'criticalVulnerabilities', 'highVulnerabilities', 'unexpiredSecurityExceptions',
   ]) equal(section[field], 0, 'PHASE5_READINESS_SUPPLY_CHAIN_FAILED');
-  object(section.sbomHashes, ['api', 'worker', 'web'], 'PHASE5_READINESS_SBOM_INVALID');
+  object(
+    section.sbomHashes,
+    ['api', 'worker', 'web', 'website'],
+    'PHASE5_READINESS_SBOM_INVALID',
+  );
   for (const value of Object.values(section.sbomHashes)) {
     pattern(value, SHA256, 'PHASE5_READINESS_SBOM_INVALID');
   }
-  if (new Set(Object.values(section.sbomHashes)).size !== 3) {
+  if (new Set(Object.values(section.sbomHashes)).size !== 4) {
     fail('PHASE5_READINESS_SBOM_INVALID');
   }
 }
@@ -280,8 +285,12 @@ function validateProductionImages(section, expectedImages) {
   object(section, [
     'control', 'images', 'admissionPolicyEnforced',
   ], 'PHASE5_READINESS_PRODUCTION_IMAGES_INVALID');
-  object(section.images, ['api', 'worker', 'web'], 'PHASE5_READINESS_PRODUCTION_IMAGES_INVALID');
-  for (const name of ['api', 'worker', 'web']) {
+  object(
+    section.images,
+    ['api', 'worker', 'web', 'website'],
+    'PHASE5_READINESS_PRODUCTION_IMAGES_INVALID',
+  );
+  for (const name of ['api', 'worker', 'web', 'website']) {
     const image = section.images[name];
     object(image, [
       'digest', 'signatureVerified', 'slsaProvenanceVerified', 'sbomHash', 'nonRoot',
@@ -442,7 +451,12 @@ function runSelfTest() {
 }
 
 function fixture() {
-  const images = { api: digest('api'), worker: digest('worker'), web: digest('web') };
+  const images = {
+    api: digest('api'),
+    worker: digest('worker'),
+    web: digest('web'),
+    website: digest('website'),
+  };
   let nextId = 10;
   const evidenceId = () => ulid(nextId++);
   const control = (gate) => ({
@@ -480,7 +494,12 @@ function fixture() {
       sastPassed: true, scaPassed: true, secretScanPassed: true, licensePassed: true,
       dependencyAuditPassed: true, criticalVulnerabilities: 0, highVulnerabilities: 0,
       unexpiredSecurityExceptions: 0,
-      sbomHashes: { api: digest('sbom-api'), worker: digest('sbom-worker'), web: digest('sbom-web') },
+      sbomHashes: {
+        api: digest('sbom-api'),
+        worker: digest('sbom-worker'),
+        web: digest('sbom-web'),
+        website: digest('sbom-website'),
+      },
     },
     productionImages: {
       control: control('production-images'),
@@ -532,6 +551,7 @@ function withExpectedEnvironment(document, action) {
     READINESS_EXPECTED_API_IMAGE: document.source.images.api,
     READINESS_EXPECTED_WORKER_IMAGE: document.source.images.worker,
     READINESS_EXPECTED_WEB_IMAGE: document.source.images.web,
+    READINESS_EXPECTED_WEBSITE_IMAGE: document.source.images.website,
     READINESS_EXPECTED_DEPLOYMENT_MANIFEST: document.source.deploymentManifestHash,
   };
   const previous = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]));

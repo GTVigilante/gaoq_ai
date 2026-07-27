@@ -33,6 +33,17 @@ COPY apps/erp-web apps/erp-web
 RUN node -e "const endpoint = new URL(process.env.NEXT_PUBLIC_ERP_API_ORIGIN); if (endpoint.protocol !== 'https:' || endpoint.pathname !== '/' || endpoint.search || endpoint.hash || endpoint.username || endpoint.password) process.exit(1)" && \
     pnpm --filter @gaoq/erp-web build
 
+FROM dependencies AS website-build
+ARG NEXT_PUBLIC_WEBSITE_ORIGIN
+ARG NEXT_PUBLIC_ERP_API_ORIGIN
+ARG NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL
+ENV NEXT_PUBLIC_WEBSITE_ORIGIN=${NEXT_PUBLIC_WEBSITE_ORIGIN}
+ENV NEXT_PUBLIC_ERP_API_ORIGIN=${NEXT_PUBLIC_ERP_API_ORIGIN}
+ENV NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL=${NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL}
+ENV ERP_API_INTERNAL_ORIGIN=${NEXT_PUBLIC_ERP_API_ORIGIN}
+COPY apps/website apps/website
+RUN pnpm --filter @gaoq/website build
+
 FROM ${NODE_RUNTIME_IMAGE} AS runtime-base
 ARG IMAGE_REVISION=unknown
 WORKDIR /app
@@ -72,3 +83,14 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
   CMD ["/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:3000/').then((response)=>{if(!response.ok)process.exit(1)}).catch(()=>process.exit(1))"]
 ENTRYPOINT ["/nodejs/bin/node"]
 CMD ["apps/erp-web/server.js"]
+
+FROM runtime-base AS website
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3002
+COPY --from=website-build --chown=65532:65532 /workspace/apps/website/.next/standalone/ ./
+COPY --from=website-build --chown=65532:65532 /workspace/apps/website/.next/static/ ./apps/website/.next/static/
+EXPOSE 3002
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
+  CMD ["/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:3002/zh-CN').then((response)=>{if(!response.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+ENTRYPOINT ["/nodejs/bin/node"]
+CMD ["apps/website/server.js"]

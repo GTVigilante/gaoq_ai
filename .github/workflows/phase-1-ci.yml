@@ -66,4 +66,6 @@ jobs:
         run: pnpm check
 
       - name: 构建工作区
+        env:
+          NEXT_PUBLIC_ERP_API_ORIGIN: https://erp.example.invalid
         run: pnpm build

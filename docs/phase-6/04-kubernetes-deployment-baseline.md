@@ -2,7 +2,7 @@
 
 ## 1. 适用范围与结论
 
-仓库已提供云中立 Helm Chart，覆盖 GaoQ-OS ERP 的 API、异步 Worker、Next.js Web、ClusterIP Service、TLS Ingress、HPA、PDB、拓扑分散、Restricted Pod 安全上下文和默认拒绝 NetworkPolicy。它是生产部署契约，不是云账号基础设施，也不会自动执行发布。
+仓库已提供云中立 Helm Chart，覆盖 GaoQ-OS ERP 的 API、异步 Worker、ERP Web、公共 Website、ClusterIP Service、TLS Ingress、HPA、PDB、拓扑分散、Restricted Pod 安全上下文和默认拒绝 NetworkPolicy。它是生产部署契约，不是云账号基础设施，也不会自动执行发布。
 
 云厂商、Region、账号、VPC、集群、域名、证书、KMS、WORM、托管数据库规格和出站网关尚未获得授权前，不应猜测或提交任何厂商专用 IaC。对应变量由平台、安全、数据和合规负责人在受保护环境中冻结。
 
@@ -23,21 +23,22 @@
 |---|---:|---|---|---|
 | API | 3 | ClusterIP `3001`，由 TLS Ingress 代理 | 独立 API ConfigMap/Secret | DNS、MongoDB、Redis、HTTPS egress gateway、入口网关、监控 |
 | Worker | 2 | 仅监控 ClusterIP `9464` | 独立 Worker ConfigMap/Secret | DNS、MongoDB、Redis、HTTPS egress gateway、监控 |
-| Web | 3 | ClusterIP `3000`，由 TLS Ingress 代理 | 不挂载后端 Secret | DNS、API、入口网关 |
+| ERP Web | 3 | ClusterIP `3000`，由 TLS Ingress 代理 | 独立 Web ConfigMap/Secret；Secret 仅用于招聘门户 BFF 的最小 OAuth 凭据 | DNS、API、入口网关 |
+| Website | 2 | ClusterIP `3002`，由 TLS Ingress 代理 | 独立 Website ConfigMap/Secret；Secret 仅用于服务端缓存失效 | DNS、API、验证码服务、入口网关 |
 
-所有容器固定 UID/GID `65532`，根文件系统只读，禁止提权并删除全部 Linux capabilities；ServiceAccount 不挂载 token。部署按可用区分散，API/Web 滚动升级不可中断现有副本，PDB 和 HPA 防止维护或扩缩容破坏最低服务能力。
+所有容器固定 UID/GID `65532`，根文件系统只读，禁止提权并删除全部 Linux capabilities；ServiceAccount 不挂载 token。部署按可用区分散，API/ERP Web/Website 滚动升级不可中断现有副本，PDB 和 HPA 防止维护或扩缩容破坏最低服务能力。
 
-NetworkPolicy 从默认拒绝开始，再逐条开放精确组件与端口：入口网关到 API/Web、监控到 API/Worker、所有组件到 DNS、Web 到 API、后端到三类独立私网 CIDR。公网 `0.0.0.0/0` 永久禁止；外部 SaaS、ERP 主数据、钉钉、飞书、电子签、银行、税务和 WORM 都必须由 HTTPS egress gateway 代理。
+NetworkPolicy 从默认拒绝开始，再逐条开放精确组件与端口：入口网关到 API/ERP Web/Website、监控到 API/Worker、所有组件到 DNS、两个 Web 应用到 API、后端到三类独立私网 CIDR。公网 `0.0.0.0/0` 永久禁止；外部 SaaS、ERP 主数据、钉钉、飞书、电子签、银行、税务和 WORM 都必须由 HTTPS egress gateway 代理。
 
 ## 4. Secret 与配置责任
 
-Chart 不创建 Secret。平台负责人必须在发布前创建四个独立对象引用：API ConfigMap、API Secret、Worker ConfigMap、Worker Secret。API 与 Worker 可包含不同最小字段集和不同轮换周期；Web 的公共 API Origin 与 frame ancestors 在镜像构建时固定，不继承服务器凭据。
+Chart 不创建 Secret。平台负责人必须在发布前创建八个独立对象引用：API、Worker、ERP Web、Website 各自的 ConfigMap 与 Secret。四个 Secret 使用不同身份和轮换周期，禁止跨组件复用；ERP Web 的招聘门户 BFF 只读取最小 OAuth 凭据，Website 只读取缓存失效密钥。浏览器公开 Origin、frame ancestors 和验证码地址在镜像构建时固定，并以 `release.websitePublicConfigHash` 绑定，禁止把服务端凭据写入 `NEXT_PUBLIC_*`。
 
 Secret Manager 同步器或平台流水线必须满足：工作负载身份最小权限、只读挂载/注入、版本可追溯、轮换有重启策略、回滚不会恢复已吊销凭据。银行、税务、电子签、WORM、OAuth 与审计 HMAC/签名密钥必须分域分 key，禁止复用。
 
 ## 5. 发布绑定与执行顺序
 
-三个镜像都以 `repository@sha256:digest` 部署。`release.commitSha`、三个镜像摘要、`release.deploymentManifestHash` 和 `release.rolloutId` 必须与 Phase 5/6 证据以及资金执行授权完全一致。
+四个镜像都以 `repository@sha256:digest` 部署。`release.commitSha`、四个镜像摘要、`release.deploymentManifestHash`、`release.websitePublicConfigHash` 和 `release.rolloutId` 必须与 Phase 5/6 证据以及资金执行授权完全一致。
 
 `deploymentManifestHash` 指发布平台生成的“部署包清单”摘要：其输入包含 Chart 版本、受控 values 摘要、镜像摘要、外部配置版本和平台策略版本，但排除该摘要字段本身，避免自引用。发布平台生成后将它写入 values 和工作负载 annotation，现场验证器再比对证据。
 

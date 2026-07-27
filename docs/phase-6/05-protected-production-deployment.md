@@ -42,17 +42,23 @@
 | `PHASE6_DEPLOYMENT_GUARDRAILS_MANIFEST_SHA256` | 集群中已审批平台护栏清单的摘要，必须与平台准入证据一致 |
 | `PHASE6_DEPLOYMENT_API_IMAGE_DIGEST` | API 镜像 `sha256` 摘要 |
 | `PHASE6_DEPLOYMENT_WORKER_IMAGE_DIGEST` | Worker 独立镜像 `sha256` 摘要 |
-| `PHASE6_DEPLOYMENT_WEB_IMAGE_DIGEST` | Web 独立镜像 `sha256` 摘要 |
+| `PHASE6_DEPLOYMENT_WEB_IMAGE_DIGEST` | ERP Web 独立镜像 `sha256` 摘要 |
+| `PHASE6_DEPLOYMENT_WEBSITE_IMAGE_DIGEST` | 公共 Website 独立镜像 `sha256` 摘要 |
 | `PHASE6_DEPLOYMENT_MANIFEST_SHA256` | 非自引用部署包清单摘要 |
+| `PHASE6_DEPLOYMENT_WEBSITE_PUBLIC_CONFIG_SHA256` | Website 构建期公开 HTTPS 配置的确定性摘要 |
 | `PHASE6_DEPLOYMENT_ROLLOUT_ID` | 批准窗口的唯一 rollout 标识 |
 | `PHASE6_DEPLOYMENT_API_CONFIG_MAP` | API 外部 ConfigMap 名称 |
 | `PHASE6_DEPLOYMENT_API_SECRET` | API 外部 Secret 名称，只做清单强绑定，不由 Runner 读取 |
 | `PHASE6_DEPLOYMENT_WORKER_CONFIG_MAP` | Worker 外部 ConfigMap 名称 |
 | `PHASE6_DEPLOYMENT_WORKER_SECRET` | Worker 外部 Secret 名称，只做清单强绑定，不由 Runner 读取 |
+| `PHASE6_DEPLOYMENT_WEB_CONFIG_MAP` | ERP Web 外部 ConfigMap 名称 |
+| `PHASE6_DEPLOYMENT_WEB_SECRET` | ERP Web 最小 BFF Secret 名称，只做清单强绑定，不由 Runner 读取 |
+| `PHASE6_DEPLOYMENT_WEBSITE_CONFIG_MAP` | Website 外部 ConfigMap 名称 |
+| `PHASE6_DEPLOYMENT_WEBSITE_SECRET` | Website 缓存失效 Secret 名称，只做清单强绑定，不由 Runner 读取 |
 | `PHASE6_DEPLOYMENT_GO_NO_GO_ENVIRONMENT` | Go/No-Go 生产等价环境名称 |
 | `PHASE6_DEPLOYMENT_GO_NO_GO_REGION` | Go/No-Go 证据 Region |
 
-工作流从 `github.sha` 取得 commit，不允许人工输入。三镜像摘要和部署包摘要同时用于 Go/No-Go 原始证据复验与渲染清单复验，任一 Environment 漂移都会导致计划摘要不一致并停止部署。
+工作流从 `github.sha` 取得 commit，不允许人工输入。四镜像摘要、Website 公开配置摘要和部署包摘要同时用于 Go/No-Go 原始证据复验与渲染清单复验，任一 Environment 漂移都会导致计划摘要不一致并停止部署。
 
 ## 4. Runner 只读挂载
 
@@ -63,19 +69,19 @@
 - `/var/lib/gaoq/platform/phase-6-platform-intake.json`：平台、安全、数据、合规和变更负责人批准的非敏感平台准入原始证据；最大 512 KiB，绑定文件摘要、commit、部署包、Region、Kubernetes minor、命名空间和 OIDC Group。
 - `/var/lib/gaoq/kubernetes-schema/v1.30.0-standalone-strict/`：固定 commit 的离线 schema，运行时不从互联网取可变 schema。
 
-API/Worker Secret 由 Secret Manager 同步到目标命名空间。Kubernetes 的 `get secret` 会返回数据而不只是 metadata，因此两个 Runner 都不得拥有 `get/list/watch secrets`；Secret 同步状态由独立平台证明，缺失时 Pod 无法 Ready，Helm `--atomic --wait` 必须失败关闭。日志、Artifact 和渲染清单不得出现 Secret 内容。
+API/Worker/ERP Web/Website Secret 由 Secret Manager 按独立身份同步到目标命名空间。Kubernetes 的 `get secret` 会返回数据而不只是 metadata，因此两个 Runner 都不得拥有 `get/list/watch secrets`；Secret 同步状态由独立平台证明，缺失时 Pod 无法 Ready，Helm `--atomic --wait` 必须失败关闭。日志、Artifact 和渲染清单不得出现 Secret 内容。
 
-Helm 默认 Secret 存储驱动会要求发布身份读取命名空间内的全部 release Secret。工作流因此固定 `HELM_DRIVER=configmap`，release 元数据只保存在专用控制命名空间；Chart 的 `targetNamespace` 则把 21 个业务资源显式部署到独立 ERP 命名空间。values 和 manifest 不含 Secret 数据，两个命名空间不得承载无关系统。
+Helm 默认 Secret 存储驱动会要求发布身份读取命名空间内的全部 release Secret。工作流因此固定 `HELM_DRIVER=configmap`，release 元数据只保存在专用控制命名空间；Chart 的 `targetNamespace` 则把 26 个业务资源显式部署到独立 ERP 命名空间。values 和 manifest 不含 Secret 数据，两个命名空间不得承载无关系统。
 
 ## 5. 计划与执行门禁
 
 计划阶段必须全部成功：
 
-1. Go/No-Go 原始证据仍为 `GO`、不超过 24 小时，且 commit、三镜像摘要和部署包摘要完全一致；生产平台准入原始证据仍为 `READY`，并与当前集群、GitHub Environment/Runner、平台服务、审批和发布绑定一致。
+1. Go/No-Go 原始证据仍为 `GO`、不超过 24 小时，且 commit、四镜像摘要和部署包摘要完全一致；生产平台准入原始证据仍为 `READY`，并与当前集群、GitHub Environment/Runner、平台服务、审批和发布绑定一致。
 2. Helm strict lint、仓库静态/渲染安全检查和 Kubeconform strict schema 均通过。
-3. API、Worker、Web 三个 Deployment 的 release、commit、镜像摘要、部署包摘要和 rollout ID 完全一致。
-4. API/Worker 的四个 ConfigMap/Secret 引用与受保护变量一致；Web 不包含 Secret 或 `envFrom`。
-5. 控制/业务命名空间和两个非敏感 ConfigMap 存在，Secret 引用与平台证明一致；Plan Runner 明确没有业务 Deployment 写权限和 Secret 读取权限，本地 diff 退出码只能为“无变化”或“存在计划变化”。
+3. API、Worker、ERP Web、Website 四个 Deployment 的 release、commit、镜像摘要、部署包摘要和 rollout ID 完全一致；Website 还必须绑定公开配置摘要。
+4. 四个组件的八个 ConfigMap/Secret 引用与受保护变量一致，且不得跨组件复用。
+5. 控制/业务命名空间和四个非敏感 ConfigMap 存在，Secret 引用与平台证明一致；Plan Runner 明确没有业务 Deployment 写权限和 Secret 读取权限，本地 diff 退出码只能为“无变化”或“存在计划变化”。
 6. 渲染清单及其 `sha256`、脱敏 verdict 和 diff 保存 90 天，供 Required Reviewers 审阅。
 
 执行阶段再次完成上述版本和清单检查，并要求重新渲染的摘要、Go/No-Go 原始文件摘要和生产平台准入原始文件摘要均与计划 job output 完全一致；在人工批准后先执行 server-side dry-run。之后只运行：

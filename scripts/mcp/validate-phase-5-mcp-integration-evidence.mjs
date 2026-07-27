@@ -21,6 +21,7 @@ if (process.argv[2] === '--self-test') {
   process.env.MCP_INTEGRATION_EXPECTED_API_IMAGE = bound.source.images.api;
   process.env.MCP_INTEGRATION_EXPECTED_WORKER_IMAGE = bound.source.images.worker;
   process.env.MCP_INTEGRATION_EXPECTED_WEB_IMAGE = bound.source.images.web;
+  process.env.MCP_INTEGRATION_EXPECTED_WEBSITE_IMAGE = bound.source.images.website;
   validate(bound, true);
   const stale = fixture(); stale.source.catalogHash = digest('old');
   expectFailure(() => validate(stale), 'PHASE5_MCP_INTEGRATION_CATALOG_MISMATCH');
@@ -56,7 +57,7 @@ function validate(document, enforce = false) {
   pattern(document.runId, ULID, 'PHASE5_MCP_INTEGRATION_RUN_ID_INVALID');
   exact(document.source, ['commitSha', 'images', 'protocolVersion', 'catalogHash']);
   pattern(document.source.commitSha, COMMIT, 'PHASE5_MCP_INTEGRATION_COMMIT_INVALID');
-  exact(document.source.images, ['api', 'worker', 'web']);
+  exact(document.source.images, ['api', 'worker', 'web', 'website']);
   for (const hash of Object.values(document.source.images)) pattern(hash, SHA256,
     'PHASE5_MCP_INTEGRATION_IMAGE_INVALID');
   equal(document.source.protocolVersion, '2025-11-25', 'PHASE5_MCP_INTEGRATION_PROTOCOL_INVALID');
@@ -99,17 +100,18 @@ function validateExpected(document) {
     api: process.env.MCP_INTEGRATION_EXPECTED_API_IMAGE,
     worker: process.env.MCP_INTEGRATION_EXPECTED_WORKER_IMAGE,
     web: process.env.MCP_INTEGRATION_EXPECTED_WEB_IMAGE,
+    website: process.env.MCP_INTEGRATION_EXPECTED_WEBSITE_IMAGE,
   };
   if (expected.environment === undefined || !/^[a-z][a-z0-9-]{2,31}$/u.test(expected.environment)) {
     fail('PHASE5_MCP_INTEGRATION_EXPECTED_SOURCE_REQUIRED');
   }
   pattern(expected.commit, COMMIT, 'PHASE5_MCP_INTEGRATION_EXPECTED_SOURCE_REQUIRED');
-  for (const field of ['api', 'worker', 'web']) {
+  for (const field of ['api', 'worker', 'web', 'website']) {
     pattern(expected[field], SHA256, 'PHASE5_MCP_INTEGRATION_EXPECTED_SOURCE_REQUIRED');
   }
   equal(document.environment.name, expected.environment, 'PHASE5_MCP_INTEGRATION_ENV_MISMATCH');
   equal(document.source.commitSha, expected.commit, 'PHASE5_MCP_INTEGRATION_COMMIT_MISMATCH');
-  for (const image of ['api', 'worker', 'web']) {
+  for (const image of ['api', 'worker', 'web', 'website']) {
     equal(document.source.images[image], expected[image], 'PHASE5_MCP_INTEGRATION_IMAGE_MISMATCH');
   }
 }
@@ -203,7 +205,12 @@ function fixture() {
   const hash = (label) => digest(label);
   return { formatVersion: 1, suite: 'gaoq.phase5.integration-mcp.v1',
     runId: '01J8ZQK7V0A2M4N6P8R0T2W6E1', source: { commitSha: 'a'.repeat(40),
-      images: { api: hash('api'), worker: hash('worker'), web: hash('web') },
+      images: {
+        api: hash('api'),
+        worker: hash('worker'),
+        web: hash('web'),
+        website: hash('website'),
+      },
       protocolVersion: '2025-11-25', catalogHash: catalog.catalogHash },
     environment: { name: 'mcp-uat', productionEquivalent: true, productionTraffic: false,
       productionData: false, startedAt: '2026-07-22T00:00:00.000Z',

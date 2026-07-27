@@ -120,11 +120,11 @@ function validateEvidence(document, enforceEnvironment = false) {
     'PHASE5_PERFORMANCE_DEPLOYMENT_MANIFEST_INVALID',
   );
 
-  object(document.images, ['api', 'worker', 'web']);
+  object(document.images, ['api', 'worker', 'web', 'website']);
   for (const value of Object.values(document.images)) {
     pattern(value, SHA256, 'PHASE5_PERFORMANCE_IMAGE_DIGEST_INVALID');
   }
-  if (new Set(Object.values(document.images)).size !== 3) {
+  if (new Set(Object.values(document.images)).size !== 4) {
     fail('PHASE5_PERFORMANCE_IMAGES_NOT_INDEPENDENT');
   }
   if (enforceEnvironment) validateExpectedEnvironment(document);
@@ -293,7 +293,12 @@ function fixture(sequence) {
       commitSha: 'a'.repeat(40), k6Version: '2.0.0', k6BinarySha256: K6_BINARY_SHA256,
       harnessSha256: HARNESS_SHA256, deploymentManifestHash: digest('deployment-manifest'),
     },
-    images: { api: digest('api'), worker: digest('worker'), web: digest('web') },
+    images: {
+      api: digest('api'),
+      worker: digest('worker'),
+      web: digest('web'),
+      website: digest('website'),
+    },
     dataset: { fingerprint: digest('dataset'), employeeCount: 1_000 },
     api: {
       maxVus: 1_000, durationSeconds: 1_800, requestCount: 1_000_000, errorRate: 0.0001,
@@ -327,12 +332,13 @@ function validateExpectedEnvironment(document) {
     api: process.env.PERFORMANCE_EXPECTED_API_IMAGE,
     worker: process.env.PERFORMANCE_EXPECTED_WORKER_IMAGE,
     web: process.env.PERFORMANCE_EXPECTED_WEB_IMAGE,
+    website: process.env.PERFORMANCE_EXPECTED_WEBSITE_IMAGE,
     deploymentManifestHash: process.env.PERFORMANCE_EXPECTED_DEPLOYMENT_MANIFEST,
   };
   pattern(expected.environment, ENVIRONMENT_NAME, 'PHASE5_PERFORMANCE_EXPECTED_ENV_REQUIRED');
   pattern(expected.region, REGION, 'PHASE5_PERFORMANCE_EXPECTED_ENV_REQUIRED');
   pattern(expected.commitSha, COMMIT, 'PHASE5_PERFORMANCE_EXPECTED_SOURCE_REQUIRED');
-  for (const field of ['api', 'worker', 'web', 'deploymentManifestHash']) {
+  for (const field of ['api', 'worker', 'web', 'website', 'deploymentManifestHash']) {
     pattern(expected[field], SHA256, 'PHASE5_PERFORMANCE_EXPECTED_SOURCE_REQUIRED');
   }
   equal(
@@ -345,6 +351,7 @@ function validateExpectedEnvironment(document) {
   equal(document.images.api, expected.api, 'PHASE5_PERFORMANCE_IMAGE_MISMATCH');
   equal(document.images.worker, expected.worker, 'PHASE5_PERFORMANCE_IMAGE_MISMATCH');
   equal(document.images.web, expected.web, 'PHASE5_PERFORMANCE_IMAGE_MISMATCH');
+  equal(document.images.website, expected.website, 'PHASE5_PERFORMANCE_IMAGE_MISMATCH');
   equal(
     document.source.deploymentManifestHash,
     expected.deploymentManifestHash,
@@ -360,6 +367,7 @@ function withExpectedEnvironment(document, action) {
     PERFORMANCE_EXPECTED_API_IMAGE: document.images.api,
     PERFORMANCE_EXPECTED_WORKER_IMAGE: document.images.worker,
     PERFORMANCE_EXPECTED_WEB_IMAGE: document.images.web,
+    PERFORMANCE_EXPECTED_WEBSITE_IMAGE: document.images.website,
     PERFORMANCE_EXPECTED_DEPLOYMENT_MANIFEST: document.source.deploymentManifestHash,
   };
   const previous = Object.fromEntries(

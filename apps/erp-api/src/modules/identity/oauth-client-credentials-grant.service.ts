@@ -77,6 +77,7 @@ export class OAuthClientCredentialsGrantService {
       throw error;
     }
 
+    this.clients.assertResource(authenticated.client, input.resource);
     const scopes = this.clients.filterAllowedScopes(authenticated.client, input.scopes);
     let signed;
     try {
