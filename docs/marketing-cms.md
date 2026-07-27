@@ -22,11 +22,17 @@
   `dispatched → delivered|dead|cancelled` 终态。排期撤回或人工提前发布时，同一
   事务把原定时副作用置为 `cancelled`，禁止遗留永久扫描任务。
 - 通知网关请求必须携带
-  `marketing:{tenantId}:{leadId}:{channel}:v1` 稳定幂等键；Worker 成功后崩溃重试
-  不得重复发送。定时发布同时保留到期数据库扫描，队列和 Worker 重启后可以重建
-  延迟任务；扫描只从 `dispatched` 数据库 Outbox 重建，不从客户端或队列内容
-  推导租户。队列任务必须与 eventId、租户、聚合版本和渠道逐项匹配后才允许访问
-  联系人或执行发布。
+  `marketing-side-effect:{eventId}` 稳定幂等键；同一副作用重试不得重复发送，不同
+  副作用事件不得被网关错误合并。网关已经成功但本地送达终态暂时写入失败时，
+  Worker 只重试同一幂等事件，禁止反向登记通知失败或死信。定时发布同时保留
+  到期数据库扫描，队列和 Worker 重启后可以重建延迟任务；扫描只从
+  `dispatched` 数据库 Outbox 重建，不从客户端或队列内容推导租户。队列任务必须
+  与 eventId、租户、聚合版本和渠道逐项匹配后才允许访问联系人或执行发布。
+- Outbox 抢占与释放同时绑定 eventId、Worker、状态和原尝试次数；丢失租约必须
+  失败关闭，禁止覆盖其他 Worker 的终态。运行时再次校验 eventId、租户、聚合、
+  版本、尝试次数、到期时间、种类和渠道，受损记录不得进入外部队列。错误与存储
+  异常只保留稳定受控编码，不把数据库或上游明细写入 BullMQ 失败记录；受损记录
+  属于确定性错误并立即隔离为 `dead`，禁止无意义重试。
 
 ## 权限与协议
 
@@ -130,10 +136,16 @@ AI 审核、排期或已发送通知回写为业务失败，告警也不得包�
 
 仓库门禁 `pnpm quality:marketing-cms-service-coverage` 覆盖业务服务，
 `pnpm quality:marketing-entry-idempotency-coverage` 覆盖营销后台与公开入口、
-隔离网关和通用幂等核心；两条门禁均逐文件强制语句、分支、函数、行不低于 90%。
+隔离网关和通用幂等核心；`pnpm quality:marketing-side-effect-delivery-coverage`
+覆盖 Outbox Relay、通知 Worker、排期发布 Worker 和送达终态服务。三条门禁均
+逐文件强制语句、分支、函数、行不低于 90%。
 
 生产告警必须覆盖 `MARKETING_SIDE_EFFECT_DEAD_LETTERED`、
 `MARKETING_NOTIFICATION_DEAD_LETTERED`、
 `MARKETING_SCHEDULED_PUBLISH_DEAD_LETTERED` 和
-`MARKETING_NOTIFICATION_ROUTE_REJECTED`；告警标签只能包含 eventId、类型、
-渠道、尝试次数与受控错误码，禁止联系人、正文、Bearer Token 或任意上游响应。
+`MARKETING_NOTIFICATION_ROUTE_REJECTED`、
+`MARKETING_NOTIFICATION_DELIVERY_STATE_UNAVAILABLE`；告警标签只能包含
+eventId、类型、渠道、尝试次数与受控错误码，禁止联系人、正文、Bearer Token
+或任意上游响应。`MARKETING_OUTBOX_CLAIM_LOST` 与
+`MARKETING_OUTBOX_RELEASE_LEASE_LOST` 必须触发 Worker 失败和运维事件，禁止
+静默继续扫描。

@@ -2,6 +2,7 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
+import { isValidEventId } from '@gaoq/shared-utils';
 import type { Job } from 'bullmq';
 import type { Model } from 'mongoose';
 import type { AppEnvironment } from '../../config/environment.js';
@@ -34,18 +35,20 @@ export class MarketingNotificationProcessor extends WorkerHost {
     let dispatchable: boolean;
     try {
       dispatchable = await this.delivery.assertDispatchable(identity);
-    } catch {
+    } catch (caught) {
+      const code = routeFailureCode(caught);
       this.logger.error({
-        code: 'MARKETING_NOTIFICATION_ROUTE_REJECTED',
-        eventId: identity.eventId,
+        code: code === 'MARKETING_SIDE_EFFECT_ROUTE_MISMATCH'
+          ? 'MARKETING_NOTIFICATION_ROUTE_REJECTED'
+          : 'MARKETING_NOTIFICATION_DELIVERY_STATE_UNAVAILABLE',
+        eventId: safeEventId(identity.eventId),
         attempt,
       });
-      throw new Error('MARKETING_SIDE_EFFECT_ROUTE_MISMATCH');
+      throw new Error(code, { cause: caught });
     }
     if (!dispatchable) return;
     try {
       await this.notify(job.data);
-      await this.delivery.markDelivered(identity, attempt);
     } catch (caught) {
       const finalAttempt = attempt >= configuredAttempts(job);
       const code = failureCode(caught);
@@ -53,7 +56,7 @@ export class MarketingNotificationProcessor extends WorkerHost {
       if (finalAttempt) {
         this.logger.error({
           code: 'MARKETING_NOTIFICATION_DEAD_LETTERED',
-          eventId: identity.eventId,
+          eventId: safeEventId(identity.eventId),
           channel: identity.channel,
           attempts: attempt,
           failureCode: code,
@@ -61,6 +64,7 @@ export class MarketingNotificationProcessor extends WorkerHost {
       }
       throw new Error(code, { cause: caught });
     }
+    await this.delivery.markDelivered(identity, attempt);
   }
 
   private async notify(data: MarketingNotificationJob): Promise<void> {
@@ -80,8 +84,7 @@ export class MarketingNotificationProcessor extends WorkerHost {
       headers: {
         authorization: `Bearer ${token}`,
         'content-type': 'application/json',
-        'idempotency-key':
-          `marketing:${data.tenantId}:${data.leadId}:${data.channel}:v1`,
+        'idempotency-key': `marketing-side-effect:${data.sideEffectEventId}`,
       },
       body: JSON.stringify({
         channel: data.channel, leadId: lead.id, audience: lead.audience,
@@ -113,3 +116,25 @@ const failureCode = (caught: unknown): string =>
   caught instanceof Error && /^[A-Z0-9_]{3,128}$/u.test(caught.message)
     ? caught.message
     : 'MARKETING_NOTIFICATION_PROCESSING_FAILED';
+
+const routeFailureCode = (caught: unknown): string => {
+  if (
+    caught instanceof Error &&
+    (
+      caught.message === 'MARKETING_SIDE_EFFECT_ROUTE_MISMATCH' ||
+      caught.message === 'MARKETING_SIDE_EFFECT_IDENTITY_INVALID'
+    )
+  ) {
+    return 'MARKETING_SIDE_EFFECT_ROUTE_MISMATCH';
+  }
+  if (
+    caught instanceof Error &&
+    caught.message === 'MARKETING_SIDE_EFFECT_STORE_UNAVAILABLE'
+  ) {
+    return caught.message;
+  }
+  return 'MARKETING_NOTIFICATION_DELIVERY_STATE_UNAVAILABLE';
+};
+
+const safeEventId = (eventId: string): string =>
+  isValidEventId(eventId) ? eventId : 'invalid';

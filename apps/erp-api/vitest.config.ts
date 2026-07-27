@@ -496,6 +496,30 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/marketing-cms/marketing-side-effect-delivery.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/marketing-cms/marketing-outbox-relay.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/marketing-cms/marketing-notification.processor.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/marketing-cms/marketing-publish.processor.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/core/idempotency/idempotency.service.ts': {
           branches: 90,
           functions: 90,
