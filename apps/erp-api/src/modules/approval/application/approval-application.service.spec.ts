@@ -16,12 +16,13 @@ import {
   type ApprovalTemplateDefinition,
   type ApprovalInstance,
 } from '../domain/index.js';
-import type {
-  ApprovalActionRepository,
-  ApprovalDelegationRepository,
-  ApprovalInstanceRepository,
-  ApprovalLegacyHistoryRepository,
-  ApprovalTemplateRepository,
+import {
+  ApprovalWriteConflictError,
+  type ApprovalActionRepository,
+  type ApprovalDelegationRepository,
+  type ApprovalInstanceRepository,
+  type ApprovalLegacyHistoryRepository,
+  type ApprovalTemplateRepository,
 } from '../persistence/approval.repositories.js';
 import type { ApprovalOutboxWriter } from '../persistence/approval-outbox.writer.js';
 import type { ApprovalActorResolverService } from './approval-actor-resolver.service.js';
@@ -1080,6 +1081,397 @@ describe('ApprovalApplicationService', () => {
     ]);
     expect(result[0]).not.toHaveProperty('formData');
     expect(deps.instances.findInbox).toHaveBeenCalledWith('manager-001');
+  });
+
+  it('迁移引用校验对缺失、类型错配和未通过历史全部失败关闭', async () => {
+    const attendanceDeps = dependencies();
+    const attendance = service(
+      attendanceDeps,
+      opWorkerContext(['erp:migration:execute', 'erp:attendance:migration:write']),
+    );
+    for (const record of [
+      null,
+      { templateCode: 'other', outcome: 'approved' },
+      { templateCode: 'attendance_correction', outcome: 'rejected' },
+    ]) {
+      attendanceDeps.legacyHistories.findById.mockResolvedValueOnce(record);
+      await expect(attendance.verifyAttendanceCorrectionMigrationReference(
+        'history-invalid',
+        SESSION,
+      )).rejects.toMatchObject({
+        response: { code: 'APPROVAL_MIGRATION_ATTENDANCE_CORRECTION_REFERENCE_INVALID' },
+      });
+    }
+    for (const record of [
+      null,
+      { templateCode: 'other', outcome: 'approved' },
+      { templateCode: 'attendance_month_reopen', outcome: 'rejected' },
+    ]) {
+      attendanceDeps.legacyHistories.findById.mockResolvedValueOnce(record);
+      await expect(attendance.verifyAttendanceMonthReopenMigrationReference(
+        'history-invalid',
+        SESSION,
+      )).rejects.toMatchObject({
+        response: { code: 'APPROVAL_MIGRATION_ATTENDANCE_REOPEN_REFERENCE_INVALID' },
+      });
+    }
+
+    const payrollDeps = dependencies();
+    const payroll = service(
+      payrollDeps,
+      opWorkerContext(['erp:migration:execute', 'erp:payroll:migration:write']),
+    );
+    for (const record of [
+      null,
+      { templateCode: 'other', outcome: 'approved' },
+      { templateCode: 'payroll_compensation', outcome: 'rejected' },
+    ]) {
+      payrollDeps.legacyHistories.findById.mockResolvedValueOnce(record);
+      await expect(payroll.verifyPayrollMigrationReference(
+        'history-invalid',
+        'payroll_compensation',
+        SESSION,
+      )).rejects.toMatchObject({
+        response: { code: 'APPROVAL_MIGRATION_PAYROLL_REFERENCE_INVALID' },
+      });
+    }
+
+    const treasuryDeps = dependencies();
+    const treasury = service(
+      treasuryDeps,
+      opWorkerContext(['erp:migration:execute', 'erp:treasury:migration:write']),
+    );
+    for (const record of [
+      null,
+      { templateCode: 'other', outcome: 'approved' },
+      { templateCode: 'treasury_bank_account_attestation', outcome: 'rejected' },
+    ]) {
+      treasuryDeps.legacyHistories.findById.mockResolvedValueOnce(record);
+      await expect(treasury.verifyTreasuryMigrationReference(
+        'history-invalid',
+        'treasury_bank_account_attestation',
+        SESSION,
+      )).rejects.toMatchObject({
+        response: { code: 'APPROVAL_MIGRATION_TREASURY_REFERENCE_INVALID' },
+      });
+    }
+  });
+
+  it('招聘迁移引用拒绝缺失、非运行实例和缺失终结历史', async () => {
+    const deps = dependencies();
+    deps.instances.findById
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(draftInstance('recruitment_hc'));
+    deps.legacyHistories.findById.mockResolvedValue(null);
+    const approvals = service(
+      deps,
+      opWorkerContext(['erp:migration:execute', 'erp:recruitment:migration:write']),
+    );
+    await expect(approvals.verifyRecruitmentMigrationReference(
+      'approval_instance',
+      'missing',
+      SESSION,
+    )).rejects.toMatchObject({
+      response: { code: 'APPROVAL_MIGRATION_RECRUITMENT_REFERENCE_INVALID' },
+    });
+    await expect(approvals.verifyRecruitmentMigrationReference(
+      'approval_instance',
+      'draft',
+      SESSION,
+    )).rejects.toMatchObject({
+      response: { code: 'APPROVAL_MIGRATION_RECRUITMENT_REFERENCE_INVALID' },
+    });
+    await expect(approvals.verifyRecruitmentMigrationReference(
+      'legacy_history',
+      'missing',
+      SESSION,
+    )).rejects.toMatchObject({
+      response: { code: 'APPROVAL_MIGRATION_RECRUITMENT_REFERENCE_INVALID' },
+    });
+  });
+
+  it('所有迁移只读校验均拒绝普通用户主体', async () => {
+    const calls = [
+      () => service(dependencies()).verifyRecruitmentMigrationReference(
+        'legacy_history',
+        'history-001',
+        SESSION,
+      ),
+      () => service(dependencies()).verifyAttendanceCorrectionMigrationReference(
+        'history-001',
+        SESSION,
+      ),
+      () => service(dependencies()).verifyPayrollMigrationReference(
+        'history-001',
+        'payroll_compensation',
+        SESSION,
+      ),
+      () => service(dependencies()).verifyTreasuryMigrationReference(
+        'history-001',
+        'treasury_bank_account_attestation',
+        SESSION,
+      ),
+    ];
+    for (const call of calls) await expect(call()).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('创建审批与 OP 接入对缺失模板、身份和非法实例标识失败关闭', async () => {
+    const createDeps = dependencies();
+    createDeps.templates.findPublishedByCode.mockResolvedValue(null);
+    await expect(service(createDeps).createInstance('create-missing-template', {
+      templateCode: 'MISSING',
+      title: '缺失模板',
+      formData: { amount: 100 },
+    })).rejects.toMatchObject({
+      response: { code: 'APPROVAL_TEMPLATE_NOT_FOUND' },
+    });
+
+    const baseInput = {
+      instanceId: '01K00000000000000000000009',
+      templateCode: 'EXPENSE',
+      title: 'OP 费用申请',
+      formData: { amount: 100 },
+      initiatorEmployeeId: 'employee-op-001',
+      sourceDocumentType: 'expense_claim',
+      sourceDocumentId: 'expense-009',
+    };
+    await expect(service(dependencies(), opWorkerContext()).createAndSubmitFromOp(
+      'op-invalid-id',
+      { ...baseInput, instanceId: 'invalid' },
+    )).rejects.toMatchObject({
+      response: { code: 'APPROVAL_OP_INSTANCE_ID_INVALID' },
+    });
+
+    const missingActor = dependencies();
+    missingActor.profiles.findActorIdByEmployee.mockResolvedValue(null as never);
+    await expect(service(missingActor, opWorkerContext()).createAndSubmitFromOp(
+      'op-missing-actor',
+      baseInput,
+    )).rejects.toMatchObject({
+      response: { code: 'APPROVAL_OP_INITIATOR_NOT_FOUND' },
+    });
+
+    const inactive = dependencies();
+    inactive.profiles.resolveActive.mockResolvedValue(null as never);
+    await expect(service(inactive, opWorkerContext()).createAndSubmitFromOp(
+      'op-inactive-actor',
+      baseInput,
+    )).rejects.toMatchObject({
+      response: { code: 'APPROVAL_OP_INITIATOR_INACTIVE' },
+    });
+
+    const missingTemplate = dependencies();
+    missingTemplate.templates.findPublishedByCode.mockResolvedValue(null);
+    await expect(service(missingTemplate, opWorkerContext()).createAndSubmitFromOp(
+      'op-missing-template',
+      baseInput,
+    )).rejects.toMatchObject({
+      response: { code: 'APPROVAL_TEMPLATE_NOT_FOUND' },
+    });
+  });
+
+  it('资源缺失、停用主体和权限不足均返回稳定错误码', async () => {
+    const missingTemplate = dependencies();
+    missingTemplate.templates.findById.mockResolvedValue(null);
+    await expect(service(missingTemplate).publishTemplate(
+      'missing',
+      1,
+      'publish-missing',
+    )).rejects.toMatchObject({
+      response: { code: 'APPROVAL_TEMPLATE_NOT_FOUND' },
+    });
+
+    const missingInstance = dependencies();
+    missingInstance.instances.findById.mockResolvedValue(null);
+    await expect(service(missingInstance).submitInstance(
+      'missing',
+      1,
+      'submit-missing',
+    )).rejects.toMatchObject({
+      response: { code: 'APPROVAL_INSTANCE_NOT_FOUND' },
+    });
+
+    const inactive = dependencies();
+    inactive.profiles.resolveActive.mockResolvedValue(null as never);
+    await expect(service(inactive).createInstance('create-inactive', {
+      templateCode: 'EXPENSE',
+      title: '停用主体',
+      formData: { amount: 100 },
+    })).rejects.toMatchObject({
+      response: { code: 'APPROVAL_ACTOR_INACTIVE' },
+    });
+    await expect(service(dependencies()).listMyDelegations())
+      .rejects.toMatchObject({ response: { code: 'APPROVAL_SCOPE_DENIED' } });
+  });
+
+  it('仓储版本冲突、唯一冲突和领域版本冲突映射为稳定冲突响应', async () => {
+    const versionConflict = dependencies();
+    versionConflict.templates.insert.mockRejectedValue(new ApprovalWriteConflictError());
+    await expect(service(versionConflict).createTemplate('template-version-conflict', {
+      code: 'EXPENSE',
+      name: '费用审批',
+      riskLevel: 'R1',
+      definition: definition(),
+    })).rejects.toMatchObject({
+      response: { code: 'APPROVAL_VERSION_CONFLICT' },
+    });
+
+    const uniqueConflict = dependencies();
+    uniqueConflict.templates.insert.mockRejectedValue({ code: 11000 });
+    await expect(service(uniqueConflict).createTemplate('template-unique-conflict', {
+      code: 'EXPENSE',
+      name: '费用审批',
+      riskLevel: 'R1',
+      definition: definition(),
+    })).rejects.toMatchObject({
+      response: { code: 'APPROVAL_UNIQUE_CONFLICT' },
+    });
+
+    await expect(service(dependencies()).publishTemplate(
+      'template-001',
+      999,
+      'template-domain-version-conflict',
+    )).rejects.toMatchObject({
+      response: { code: 'APPROVAL_VERSION_CONFLICT' },
+    });
+  });
+
+  it('模板和旧历史迁移对同证据幂等返回，对内容变化拒绝覆盖', async () => {
+    const templateInput = {
+      code: 'LEGACY_EXPENSE',
+      name: '历史费用审批',
+      riskLevel: 'R2' as const,
+      revision: 1,
+      status: 'published' as const,
+      definition: definition(),
+      createdByEmployeeId: 'employee-editor',
+      updatedByEmployeeId: 'employee-approver',
+      approvedByEmployeeId: 'employee-approver',
+      publishedAt: '2020-01-02T00:00:00.000Z',
+      retiredAt: null,
+      createdAt: '2020-01-01T00:00:00.000Z',
+      updatedAt: '2020-01-02T00:00:00.000Z',
+    };
+    const templateDeps = dependencies();
+    const templateService = service(
+      templateDeps,
+      opWorkerContext(['erp:migration:execute', 'erp:approval:migration:write']),
+    );
+    const firstTemplate = await templateService.importTemplateFromMigration(
+      'migration-template-first',
+      templateInput,
+    );
+    templateDeps.templates.findByCodeAndRevision.mockResolvedValue(firstTemplate.template);
+    await expect(templateService.importTemplateFromMigration(
+      'migration-template-replay',
+      templateInput,
+    )).resolves.toEqual(firstTemplate);
+    await expect(templateService.importTemplateFromMigration(
+      'migration-template-conflict',
+      { ...templateInput, name: '篡改名称' },
+    )).rejects.toMatchObject({
+      response: { code: 'APPROVAL_MIGRATION_TEMPLATE_IMMUTABLE' },
+    });
+
+    const historyInput = {
+      templateId: 'template-001',
+      templateCode: 'EXPENSE',
+      templateRevision: 1,
+      initiatorEmployeeId: 'employee-initiator',
+      outcome: 'approved' as const,
+      completedAt: '2020-01-02T00:00:00.000Z',
+      archivedAt: null,
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/history-idempotent',
+      evidenceChecksum: 'z'.repeat(43),
+    };
+    const historyDeps = dependencies();
+    historyDeps.templates.findByCodeAndRevision.mockResolvedValue(template());
+    const historyService = service(
+      historyDeps,
+      opWorkerContext(['erp:migration:execute', 'erp:approval:migration:write']),
+    );
+    const firstHistory = await historyService.importLegacyHistoryFromMigration(
+      'migration-history-first',
+      historyInput,
+    );
+    historyDeps.legacyHistories.findByEvidenceRef.mockResolvedValue(firstHistory.history);
+    await expect(historyService.importLegacyHistoryFromMigration(
+      'migration-history-replay',
+      historyInput,
+    )).resolves.toEqual(firstHistory);
+    await expect(historyService.importLegacyHistoryFromMigration(
+      'migration-history-conflict',
+      { ...historyInput, outcome: 'rejected' },
+    )).rejects.toMatchObject({
+      response: { code: 'APPROVAL_MIGRATION_HISTORY_IMMUTABLE' },
+    });
+  });
+
+  it('Offer、Care、考勤和工资集成对 Scope、模板与终态错配失败关闭', async () => {
+    const offerDeps = dependencies();
+    offerDeps.instances.findById.mockResolvedValue(draftInstance());
+    await expect(service(
+      offerDeps,
+      trustedContext(['erp:recruitment:offer:sync_approval']),
+    ).getInstanceStatusForRecruitmentOffer('instance-001')).rejects.toMatchObject({
+      response: { code: 'APPROVAL_OFFER_INTEGRATION_TEMPLATE_DENIED' },
+    });
+
+    const careDeps = dependencies();
+    careDeps.instances.findById.mockResolvedValue(draftInstance());
+    await expect(service(
+      careDeps,
+      trustedContext(['erp:care:approval:sync']),
+    ).getInstanceStatusForCare('instance-001')).rejects.toMatchObject({
+      response: { code: 'APPROVAL_CARE_INTEGRATION_TEMPLATE_DENIED' },
+    });
+
+    await expect(service(dependencies()).getPayrollPeriodDecision('instance-001'))
+      .rejects.toMatchObject({
+        response: { code: 'APPROVAL_PAYROLL_INTEGRATION_STATUS_DENIED' },
+      });
+    const payrollTemplateDeps = dependencies();
+    payrollTemplateDeps.instances.findById.mockResolvedValue(draftInstance());
+    await expect(service(
+      payrollTemplateDeps,
+      trustedContext(['erp:payroll:approval:sync']),
+    ).getPayrollPeriodDecision('instance-001')).rejects.toMatchObject({
+      response: { code: 'APPROVAL_PAYROLL_INTEGRATION_TEMPLATE_DENIED' },
+    });
+    const payrollStateDeps = dependencies();
+    payrollStateDeps.instances.findById.mockResolvedValue(
+      draftInstance('payroll_period_approval'),
+    );
+    await expect(service(
+      payrollStateDeps,
+      trustedContext(['erp:payroll:approval:sync']),
+    ).getPayrollPeriodDecision('instance-001')).rejects.toMatchObject({
+      response: { code: 'APPROVAL_PAYROLL_DECISION_INCOMPLETE' },
+    });
+
+    await expect(service(dependencies()).getAttendanceCorrectionDecision('instance-001'))
+      .rejects.toMatchObject({
+        response: { code: 'APPROVAL_ATTENDANCE_INTEGRATION_STATUS_DENIED' },
+      });
+    const attendanceTemplateDeps = dependencies();
+    attendanceTemplateDeps.instances.findById.mockResolvedValue(draftInstance());
+    await expect(service(
+      attendanceTemplateDeps,
+      trustedContext(['erp:attendance:approval:sync']),
+    ).getAttendanceCorrectionDecision('instance-001')).rejects.toMatchObject({
+      response: { code: 'APPROVAL_ATTENDANCE_INTEGRATION_TEMPLATE_DENIED' },
+    });
+    const attendanceStateDeps = dependencies();
+    attendanceStateDeps.instances.findById.mockResolvedValue(
+      draftInstance('attendance_correction'),
+    );
+    await expect(service(
+      attendanceStateDeps,
+      trustedContext(['erp:attendance:approval:sync']),
+    ).getAttendanceCorrectionDecision('instance-001')).rejects.toMatchObject({
+      response: { code: 'APPROVAL_ATTENDANCE_DECISION_INCOMPLETE' },
+    });
   });
 
   it('普通审批人读取时 L3/L4 字段脱敏，L1/L2 保留', async () => {
