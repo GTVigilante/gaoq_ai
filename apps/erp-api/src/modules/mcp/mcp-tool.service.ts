@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type {
   CallToolResult,
@@ -63,6 +63,8 @@ type McpExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 /** MCP 工具应用层；只复用业务应用服务，不直接访问数据库或上游 Token。 */
 @Injectable()
 export class McpToolService {
+  private readonly logger = new Logger(McpToolService.name);
+
   constructor(
     private readonly tenantContext: TenantContextService,
     private readonly audit: AuditService,
@@ -525,11 +527,15 @@ export class McpToolService {
         }
         const exportView = await this.analyticsExports.request(operationId, claimed.command.asOf);
         const result: Record<string, unknown> = { export: exportView };
+        const response = exportResourceResult(result);
         await this.confirmations.complete(operationId, result);
-        await this.auditTool(identity, 'management_dashboard_export_execute', 'R2', 'success', {
-          operationId, replayed: false, asOf: claimed.command.asOf,
-        });
-        return exportResourceResult(result);
+        await this.auditAfterCommit(
+          identity,
+          'management_dashboard_export_execute',
+          'R2',
+          { operationId, replayed: false, asOf: claimed.command.asOf },
+        );
+        return response;
       } catch (error) {
         await this.confirmations.release(operationId);
         await this.auditTool(identity, 'management_dashboard_export_execute', 'R2', 'failure', {
@@ -622,11 +628,15 @@ export class McpToolService {
           },
           reasonCode: claimed.command.reasonCode,
         });
+        const response = structuredResult(result);
         await this.confirmations.complete(operationId, result);
-        await this.auditTool(identity, 'attendance_correction_execute', 'R1', 'success', {
-          operationId, replayed: false,
-        });
-        return structuredResult(result);
+        await this.auditAfterCommit(
+          identity,
+          'attendance_correction_execute',
+          'R1',
+          { operationId, replayed: false },
+        );
+        return response;
       } catch (error) {
         await this.confirmations.release(operationId);
         await this.auditTool(identity, 'attendance_correction_execute', 'R1', 'failure', {
@@ -1099,15 +1109,15 @@ export class McpToolService {
           throw new Error('MCP_APPROVAL_COMMAND_TYPE_MISMATCH');
         }
         const result = await this.dispatchApprovalCommand(claimed.command, operationId);
+        const response = structuredResult(result);
         await this.confirmations.complete(operationId, result);
-        await this.auditTool(
+        await this.auditAfterCommit(
           identity,
           `${operation.replace('.', '_')}_execute`,
           riskLevel,
-          'success',
           { operationId, replayed: false },
         );
-        return structuredResult(result);
+        return response;
       } catch (error) {
         await this.confirmations.release(operationId);
         await this.auditTool(
@@ -1231,12 +1241,13 @@ export class McpToolService {
           throw new Error('MCP_RECRUITMENT_COMMAND_TYPE_MISMATCH');
         }
         const result = await this.dispatchRecruitmentCommand(claimed.command, operationId);
+        const response = structuredResult(result);
         await this.confirmations.complete(operationId, result);
-        await this.auditTool(
-          identity, `${operation.replaceAll('.', '_')}_execute`, riskLevel, 'success',
+        await this.auditAfterCommit(
+          identity, `${operation.replaceAll('.', '_')}_execute`, riskLevel,
           { operationId, replayed: false },
         );
-        return structuredResult(result);
+        return response;
       } catch (error) {
         await this.confirmations.release(operationId);
         await this.auditTool(
@@ -1282,6 +1293,24 @@ export class McpToolService {
       outcome,
       metadata: { clientId: identity.clientId, protocol: '2025-11-25', ...metadata },
     });
+  }
+
+  /** 业务与确认账本均已提交后，审计故障只形成稳定告警，不得释放已完成操作。 */
+  private async auditAfterCommit(
+    identity: McpIdentity,
+    tool: string,
+    riskLevel: 'R1' | 'R2',
+    metadata: Readonly<Record<string, string | number | boolean>>,
+  ): Promise<void> {
+    try {
+      await this.auditTool(identity, tool, riskLevel, 'success', metadata);
+    } catch {
+      this.logger.error({
+        code: 'MCP_TOOL_AUDIT_AFTER_COMMIT_FAILED',
+        tool,
+        riskLevel,
+      });
+    }
   }
 
   private run<T>(identity: McpIdentity, operation: () => Promise<T>): Promise<T> {

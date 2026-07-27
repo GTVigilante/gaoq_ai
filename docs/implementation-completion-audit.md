@@ -62,16 +62,16 @@
 ## 5. 覆盖率边界
 
 2026-07-28 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，323 个测试文件、2,784 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，323 个测试文件、2,791 项测试全部
 通过；覆盖率为语句
-87.34%（24,064/27,552）、分支 82.23%（15,985/19,439）、函数
-89.29%（4,398/4,925）、行 89.06%（22,016/24,719）。全仓四维已达到 Phase 0
-规定的 80% 门槛，分支高于最低值 433 个；必须保留专项 90% 门禁并继续增加
+87.73%（24,180/27,560）、分支 82.46%（16,030/19,439）、函数
+89.82%（4,425/4,926）、行 89.48%（22,126/24,727）。全仓四维已达到 Phase 0
+规定的 80% 门槛，分支高于最低值 478 个；必须保留专项 90% 门禁并继续增加
 安全余量，禁止通过排除生产文件、降低阈值或只报告局部高覆盖率维持达标。
 
 租户上下文、审计链锚定、审计链验证、组织主数据应用、组织主数据入口、身份授权、审批数据加密、审批仓储、
 审批应用状态机、审批入口控制器、审批模板领域、
-MCP 确认、MCP 运行时、
+MCP 确认、MCP 运行时、MCP Tool 应用层、
 薪酬影子周期、薪酬运行、薪酬审批、薪酬主数据、薪酬四方对账、薪酬税务申报、薪酬 L4 数据加密、资金支付、Treasury 银行回盘、Treasury L4 数据加密、Treasury Outbox、Care 纪念日应用、Care 离职应用、校友授权清理协调、
 数据迁移控制面、数据迁移打包 CLI、Knowledge 考试运行 Relay、Knowledge 搜索索引 Relay、Knowledge REST 入口控制器、Knowledge 应用服务、Knowledge 考试应用与入口、Knowledge 领域模型、Knowledge 持久化 Schema、Knowledge 考试重放 CLI、考勤应用、考勤仓储、考勤供应商拉取、考勤供应商入站处理、电子签回调处理、
 招聘渠道拉取、招聘渠道入站处理、招聘渠道职位扇出、招聘渠道阶段扇出、招聘申请、招聘面试、招聘简历、招聘渠道职位投递、招聘渠道阶段回传、招聘管理、人才全周期应用、人才全周期仓储、招聘 Offer、Care 仓储、组织仓储、招聘仓储、知识库仓储、营销 CMS、OAuth 授权控制器、WebAuthn 强认证、入职应用与入口控制器和生产执行授权服务已建立
@@ -84,7 +84,8 @@ MCP 确认、MCP 运行时、
 `pnpm quality:authorization-coverage`、
 `pnpm quality:approval-crypto-coverage`、
 `pnpm quality:mcp-confirmation-coverage`、
-`pnpm quality:mcp-runtime-coverage` 和
+`pnpm quality:mcp-runtime-coverage`、
+`pnpm quality:mcp-tool-coverage` 和
 `pnpm quality:payroll-shadow-coverage`、
 `pnpm quality:payroll-run-coverage`、
 `pnpm quality:payroll-approval-coverage`、
@@ -139,7 +140,7 @@ MCP 确认、MCP 运行时、
 `pnpm quality:oauth-controller-coverage`、
 `pnpm quality:strong-auth-coverage`、
 `pnpm quality:onboarding-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。六十四条链路当前覆盖率分别为
+`pnpm quality:production-execution-authorization-coverage`。六十五条链路当前覆盖率分别为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -151,6 +152,7 @@ MCP 确认、MCP 运行时、
 97.55%/96.32%/100%/97.60%、
 100%/97.74%/100%/100%、
 97.97%/95.67%/97.32%/98.88%、
+100%/100%/100%/100%、
 99.00%/97.24%/97.29%/98.84%、92.18%/90.20%/96.10%/93.18%、
 100%/100%/100%/100%、
 100%/100%/100%/100%、
@@ -198,8 +200,8 @@ MCP 确认、MCP 运行时、
 96.09%/91.51%/100%/99.45%、
 100%/100%/100%/100%、
 100%/98.23%/100%/100% 和
-100%/100%/100%/100%（语句/分支/函数/行）；六十四项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明六十四条关键链路达标，
+100%/100%/100%/100%（语句/分支/函数/行）；六十五项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明六十五条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 OAuth 授权控制器已覆盖 45 项预注册回调、PKCE、授权决策、授权码、
@@ -393,6 +395,12 @@ Care 离职应用已补齐 36 项可信组织主数据、审批恢复、清算�
 受控 Resource 入口，并验证 Origin 白名单、参数失败关闭、最小 fallback 和
 无权读取语义；覆盖率达到 97.97%/95.67%/97.32%/98.88%
 （语句/分支/函数/行），独立四维 90% 门禁已接入 `pnpm check`。
+
+MCP Tool 应用层已覆盖 43 项可信身份、Scope、只读投影、R1/R2 准备与执行、
+确认重放、命令错配、非法 Resource Link、服务端幂等键和提交后审计隔离测试。
+返回值在确认账本完成前校验并序列化，账本完成后的审计故障只形成稳定告警，
+不释放已完成操作。覆盖率达到四维 100%，独立四维 90% 门禁已接入
+`pnpm check`。
 
 Treasury Outbox 已覆盖 13 项可信租户、精确事件字段、状态、强认证方法、
 文件摘要、回盘与对账最小载荷测试；覆盖率达到 98.48%/98.67%/100%/98.46%

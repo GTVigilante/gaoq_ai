@@ -1,7 +1,7 @@
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type { ServerNotification, ServerRequest } from '@modelcontextprotocol/sdk/types.js';
-import { UnauthorizedException } from '@nestjs/common';
+import { Logger, UnauthorizedException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AuditService } from '../../core/audit/audit.service.js';
@@ -36,7 +36,10 @@ import type { McpConfirmationService } from './mcp-confirmation.service.js';
 
 type McpExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 
-function extra(scopes: readonly string[]): McpExtra {
+function extra(
+  scopes: readonly string[],
+  actorType: 'user' | 'service' | 'mcp_client' | 'system_job' = 'user',
+): McpExtra {
   const authInfo: AuthInfo = {
     token: 'opaque-redacted',
     clientId: 'ai-client-001',
@@ -46,7 +49,7 @@ function extra(scopes: readonly string[]): McpExtra {
     extra: {
       tenantId: 'tenant-001',
       actorId: 'employee-001',
-      actorType: 'user',
+      actorType,
       roleCodes: ['employee'],
       departmentIds: ['department-001'],
       traceId: 'trace-001',
@@ -150,7 +153,7 @@ function assemble() {
   return {
     context, audit, organization, approvals, recruitmentApplications,
     recruitmentInterviews, recruitmentManagement, recruitmentOffers, confirmations, service,
-    onboarding, knowledge, care, careOccasions, careAlumniCleanup,
+    onboarding, knowledge, knowledgeExamRuns, care, careOccasions, careAlumniCleanup,
     attendance, payroll, payslips,
     taxFilings, reconciliations, shadows,
     opSummaries, opApprovalBridges, managementDashboard, analyticsExports, dataMigrations,
@@ -758,6 +761,12 @@ describe('McpToolService', () => {
     );
     expect(denied.isError).toBe(true);
     expect(store.shadows.getCycle).not.toHaveBeenCalled();
+    const deniedReadiness = await store.service.getPayrollCutoverReadiness(
+      readinessId,
+      extra(['erp:mcp:server:connect']),
+    );
+    expect(deniedReadiness.isError).toBe(true);
+    expect(store.shadows.getReadiness).not.toHaveBeenCalled();
     const scopes = extra(['erp:mcp:server:connect', 'erp:payroll:shadow:read']);
     const cycle = await store.service.getPayrollShadowCycle(cycleId, scopes);
     const readiness = await store.service.getPayrollCutoverReadiness(readinessId, scopes);
@@ -1051,5 +1060,745 @@ describe('McpToolService', () => {
       },
     });
     expect(JSON.stringify(result)).not.toMatch(/tenant-001|contact|requestSummary/u);
+  });
+
+  it('招聘、考试、考勤与导出只读 Tool 均复用对应应用服务', async () => {
+    const store = assemble();
+    store.recruitmentApplications.getApplication.mockResolvedValue({
+      id: 'application-001', stage: 'interview', version: 2,
+    });
+    store.recruitmentManagement.getRequisition.mockResolvedValue({
+      id: 'requisition-001', status: 'approved', version: 3,
+    });
+    store.recruitmentManagement.getPosition.mockResolvedValue({
+      id: 'position-001', status: 'open', version: 4,
+    });
+    store.recruitmentInterviews.get.mockResolvedValue({
+      id: 'interview-001', status: 'scheduled', version: 1,
+    });
+    store.knowledgeExamRuns.get.mockResolvedValue({
+      id: 'exam-run-001', status: 'in_progress', attemptNumber: 1,
+    });
+    store.attendance.getMyMonth.mockResolvedValue({
+      month: '2026-07', status: 'open', workedMinutes: 9_600,
+    });
+    store.analyticsExports.get.mockResolvedValue({
+      id: 'export-001', status: 'ready',
+      resourceUri: 'erp://analytics/exports/export-001',
+    });
+
+    const application = await store.service.getRecruitmentApplication(
+      'application-001',
+      extra(['erp:recruitment:application:read']),
+    );
+    const requisition = await store.service.getRecruitmentRequisition(
+      'requisition-001',
+      extra(['erp:recruitment:management:read']),
+    );
+    const position = await store.service.getRecruitmentPosition(
+      'position-001',
+      extra(['erp:recruitment:management:read']),
+    );
+    const interview = await store.service.getRecruitmentInterview(
+      'interview-001',
+      extra(['erp:recruitment:interview:read']),
+    );
+    const examRun = await store.service.getKnowledgeExamRun(
+      'exam-run-001',
+      extra(['erp:knowledge:exam:read']),
+    );
+    const deniedAttendance = await store.service.getMyAttendanceMonth(
+      '2026-07',
+      extra([]),
+    );
+    const attendanceMonth = await store.service.getMyAttendanceMonth(
+      '2026-07',
+      extra(['erp:attendance:month:read_self']),
+    );
+    const deniedExport = await store.service.getAnalyticsExport(
+      'export-001',
+      extra([]),
+    );
+    const exportResult = await store.service.getAnalyticsExport(
+      'export-001',
+      extra(['erp:analytics:management:export']),
+    );
+
+    expect(application.structuredContent).toMatchObject({
+      application: { stage: 'interview' },
+    });
+    expect(requisition.structuredContent).toMatchObject({
+      requisition: { status: 'approved' },
+    });
+    expect(position.structuredContent).toMatchObject({
+      position: { status: 'open' },
+    });
+    expect(interview.structuredContent).toMatchObject({
+      interview: { status: 'scheduled' },
+    });
+    expect(examRun.structuredContent).toMatchObject({
+      examRun: { status: 'in_progress' },
+    });
+    expect(deniedAttendance.isError).toBe(true);
+    expect(attendanceMonth.structuredContent).toMatchObject({
+      attendanceMonth: { month: '2026-07' },
+    });
+    expect(deniedExport.isError).toBe(true);
+    expect(exportResult.structuredContent).toMatchObject({
+      export: { status: 'ready' },
+    });
+  });
+
+  it('审批详情与时间线缺少读取 Scope 时失败关闭，服务身份使用可信上下文', async () => {
+    const store = assemble();
+    const deniedInstance = await store.service.getApprovalInstance(
+      'instance-001',
+      extra([]),
+    );
+    const deniedTimeline = await store.service.getApprovalTimeline(
+      'instance-001',
+      extra([]),
+    );
+    expect(deniedInstance.isError).toBe(true);
+    expect(deniedTimeline.isError).toBe(true);
+    expect(store.approvals.getInstance).not.toHaveBeenCalled();
+    expect(store.approvals.getTimeline).not.toHaveBeenCalled();
+
+    await store.service.getMyPermissions(
+      extra(['erp:mcp:server:connect'], 'system_job'),
+    );
+    expect(store.audit.record).toHaveBeenLastCalledWith(expect.objectContaining({
+      action: 'mcp.tool.get_my_permissions',
+      outcome: 'success',
+    }));
+  });
+
+  it('招聘准备 Tool 对 Scope、权威状态、版本和目标状态失败关闭', async () => {
+    const store = assemble();
+    const denied = await store.service.prepareRecruitmentRequisitionSubmit(
+      'requisition-001',
+      2,
+      'requisition-prepare-denied',
+      extra(['erp:recruitment:management:read']),
+    );
+    expect(denied.isError).toBe(true);
+    expect(store.recruitmentManagement.getRequisition).not.toHaveBeenCalled();
+
+    store.recruitmentManagement.getRequisition
+      .mockResolvedValueOnce({ id: 'requisition-001', status: 'approved', version: 2 })
+      .mockResolvedValueOnce({ id: 'requisition-001', status: 'draft', version: 2 });
+    const changed = await store.service.prepareRecruitmentRequisitionSubmit(
+      'requisition-001',
+      2,
+      'requisition-prepare-changed',
+      extra([
+        'erp:recruitment:management:read',
+        'erp:recruitment:requisition:submit',
+      ]),
+    );
+    expect(changed.isError).toBe(true);
+    expect(JSON.stringify(changed)).toContain('RECRUITMENT_PREPARE_STATE_CHANGED');
+    const prepared = await store.service.prepareRecruitmentRequisitionSubmit(
+      'requisition-001',
+      2,
+      'requisition-prepare-ok',
+      extra([
+        'erp:recruitment:management:read',
+        'erp:recruitment:requisition:submit',
+      ]),
+    );
+    expect(prepared.structuredContent).toBeDefined();
+    expect(store.confirmations.prepare).toHaveBeenLastCalledWith(
+      expect.objectContaining({ tenantId: 'tenant-001' }),
+      'requisition-prepare-ok',
+      {
+        operation: 'recruitment.requisition.submit',
+        requisitionId: 'requisition-001',
+        expectedVersion: 2,
+      },
+      'R2',
+    );
+
+    const deniedTransition = await store.service.prepareRecruitmentPositionTransition({
+      positionId: 'position-001',
+      expectedVersion: 3,
+      targetStatus: 'open',
+      prepareKey: 'position-prepare-denied',
+    }, extra(['erp:recruitment:management:read']));
+    expect(deniedTransition.isError).toBe(true);
+    store.recruitmentManagement.getPosition
+      .mockResolvedValueOnce({ id: 'position-001', status: 'draft', version: 3 })
+      .mockResolvedValueOnce({ id: 'position-001', status: 'paused', version: 3 });
+    const invalidTransition = await store.service.prepareRecruitmentPositionTransition({
+      positionId: 'position-001',
+      expectedVersion: 3,
+      targetStatus: 'closed',
+      prepareKey: 'position-prepare-changed',
+    }, extra([
+      'erp:recruitment:management:read',
+      'erp:recruitment:position:transition',
+    ]));
+    expect(invalidTransition.isError).toBe(true);
+    const validTransition = await store.service.prepareRecruitmentPositionTransition({
+      positionId: 'position-001',
+      expectedVersion: 3,
+      targetStatus: 'open',
+      prepareKey: 'position-prepare-ok',
+    }, extra([
+      'erp:recruitment:management:read',
+      'erp:recruitment:position:transition',
+    ]));
+    expect(validTransition.structuredContent).toBeDefined();
+    expect(store.confirmations.prepare).toHaveBeenLastCalledWith(
+      expect.objectContaining({ actorId: 'employee-001' }),
+      'position-prepare-ok',
+      {
+        operation: 'recruitment.position.transition',
+        positionId: 'position-001',
+        expectedVersion: 3,
+        targetStatus: 'open',
+      },
+      'R1',
+    );
+
+    const deniedOffer = await store.service.prepareRecruitmentOfferSend(
+      'offer-001',
+      4,
+      'offer-prepare-denied',
+      extra(['erp:recruitment:offer:read']),
+    );
+    expect(deniedOffer.isError).toBe(true);
+    store.recruitmentOffers.get
+      .mockResolvedValueOnce({ id: 'offer-001', status: 'draft', version: 4 })
+      .mockResolvedValueOnce({ id: 'offer-001', status: 'approved', version: 4 });
+    const changedOffer = await store.service.prepareRecruitmentOfferSend(
+      'offer-001',
+      4,
+      'offer-prepare-changed',
+      extra(['erp:recruitment:offer:read', 'erp:recruitment:offer:send']),
+    );
+    expect(changedOffer.isError).toBe(true);
+    const preparedOffer = await store.service.prepareRecruitmentOfferSend(
+      'offer-001',
+      4,
+      'offer-prepare-ok',
+      extra(['erp:recruitment:offer:read', 'erp:recruitment:offer:send']),
+    );
+    expect(preparedOffer.structuredContent).toBeDefined();
+  });
+
+  it('招聘提交与职位变更执行只分派确认账本中的固化命令', async () => {
+    const store = assemble();
+    store.recruitmentManagement.submitRequisition.mockResolvedValue({
+      requisition: { id: 'requisition-001', status: 'pending_approval', version: 3 },
+    });
+    store.confirmations.claim.mockResolvedValueOnce({
+      operationId: 'operation-requisition-001',
+      replayResult: null,
+      command: {
+        operation: 'recruitment.requisition.submit',
+        requisitionId: 'requisition-001',
+        expectedVersion: 2,
+      },
+    });
+    await store.service.executeRecruitmentRequisitionSubmit(
+      'operation-requisition-001',
+      `mcpc_${'d'.repeat(43)}`,
+      extra(['erp:recruitment:requisition:submit']),
+    );
+    expect(store.recruitmentManagement.submitRequisition).toHaveBeenCalledWith(
+      'requisition-001',
+      2,
+      'mcp:operation-requisition-001',
+    );
+
+    store.recruitmentManagement.transitionPosition.mockResolvedValue({
+      position: { id: 'position-001', status: 'closed', version: 5 },
+    });
+    store.confirmations.claim.mockResolvedValueOnce({
+      operationId: 'operation-position-001',
+      replayResult: null,
+      command: {
+        operation: 'recruitment.position.transition',
+        positionId: 'position-001',
+        expectedVersion: 4,
+        targetStatus: 'closed',
+      },
+    });
+    await store.service.executeRecruitmentPositionTransition(
+      'operation-position-001',
+      `mcpc_${'e'.repeat(43)}`,
+      extra(['erp:recruitment:position:transition']),
+    );
+    expect(store.recruitmentManagement.transitionPosition).toHaveBeenCalledWith(
+      'position-001',
+      4,
+      'mcp:operation-position-001',
+      'closed',
+    );
+
+    const denied = await store.service.executeRecruitmentOfferSend(
+      'operation-offer-denied',
+      `mcpc_${'s'.repeat(43)}`,
+      extra([]),
+    );
+    expect(denied.isError).toBe(true);
+
+    store.confirmations.claim.mockResolvedValueOnce({
+      operationId: 'operation-offer-replay',
+      command: {
+        operation: 'recruitment.offer.request_send',
+        offerId: 'offer-001',
+        expectedVersion: 2,
+      },
+      replayResult: {
+        offer: { id: 'offer-001', status: 'sending', version: 3 },
+      },
+    });
+    const replayed = await store.service.executeRecruitmentOfferSend(
+      'operation-offer-replay',
+      `mcpc_${'t'.repeat(43)}`,
+      extra(['erp:recruitment:offer:send']),
+    );
+    expect(replayed.structuredContent).toMatchObject({
+      offer: { status: 'sending' },
+    });
+
+    store.confirmations.claim.mockResolvedValueOnce({
+      operationId: 'operation-offer-mismatch',
+      command: {
+        operation: 'recruitment.position.transition',
+        positionId: 'position-001',
+        expectedVersion: 4,
+        targetStatus: 'closed',
+      },
+      replayResult: null,
+    });
+    await expect(store.service.executeRecruitmentOfferSend(
+      'operation-offer-mismatch',
+      `mcpc_${'u'.repeat(43)}`,
+      extra(['erp:recruitment:offer:send']),
+    )).rejects.toThrow('MCP_RECRUITMENT_COMMAND_TYPE_MISMATCH');
+    expect(store.confirmations.release).toHaveBeenCalledWith(
+      'operation-offer-mismatch',
+    );
+  });
+
+  it('审批撤回准备与执行覆盖 Scope、状态、重放和命令错配边界', async () => {
+    const store = assemble();
+    const deniedPrepare = await store.service.prepareApprovalWithdraw(
+      'instance-001',
+      2,
+      'withdraw-prepare-denied',
+      extra(['erp:approval:instance:read']),
+    );
+    expect(deniedPrepare.isError).toBe(true);
+
+    store.approvals.getInstance
+      .mockResolvedValueOnce({
+        id: 'instance-001', initiatorId: 'employee-002',
+        status: 'approved', version: 2,
+      })
+      .mockResolvedValueOnce({
+        id: 'instance-001', initiatorId: 'employee-002',
+        status: 'running', version: 2,
+      });
+    const changed = await store.service.prepareApprovalWithdraw(
+      'instance-001',
+      2,
+      'withdraw-prepare-changed',
+      extra(['erp:approval:instance:read', 'erp:approval:instance:submit']),
+    );
+    expect(changed.isError).toBe(true);
+    const prepared = await store.service.prepareApprovalWithdraw(
+      'instance-001',
+      2,
+      'withdraw-prepare-ok',
+      extra(['erp:approval:instance:read', 'erp:approval:instance:submit']),
+    );
+    expect(prepared.structuredContent).toBeDefined();
+
+    const deniedExecute = await store.service.executeApprovalWithdraw(
+      'operation-withdraw-denied',
+      `mcpc_${'f'.repeat(43)}`,
+      extra([]),
+    );
+    expect(deniedExecute.isError).toBe(true);
+
+    store.confirmations.claim.mockResolvedValueOnce({
+      operationId: 'operation-withdraw-replay',
+      command: {
+        operation: 'approval.withdraw',
+        instanceId: 'instance-001',
+        expectedVersion: 2,
+      },
+      replayResult: {
+        instance: { id: 'instance-001', status: 'withdrawn', version: 3 },
+      },
+    });
+    const replayed = await store.service.executeApprovalWithdraw(
+      'operation-withdraw-replay',
+      `mcpc_${'g'.repeat(43)}`,
+      extra(['erp:approval:instance:submit']),
+    );
+    expect(replayed.structuredContent).toMatchObject({
+      instance: { status: 'withdrawn' },
+    });
+    expect(store.approvals.withdrawInstance).not.toHaveBeenCalled();
+
+    store.confirmations.claim.mockResolvedValueOnce({
+      operationId: 'operation-withdraw-mismatch',
+      command: {
+        operation: 'approval.submit',
+        instanceId: 'instance-001',
+        expectedVersion: 2,
+      },
+      replayResult: null,
+    });
+    await expect(store.service.executeApprovalWithdraw(
+      'operation-withdraw-mismatch',
+      `mcpc_${'h'.repeat(43)}`,
+      extra(['erp:approval:instance:submit']),
+    )).rejects.toThrow('MCP_APPROVAL_COMMAND_TYPE_MISMATCH');
+    expect(store.confirmations.release).toHaveBeenCalledWith(
+      'operation-withdraw-mismatch',
+    );
+
+    store.approvals.withdrawInstance.mockResolvedValue({
+      instance: { id: 'instance-001', status: 'withdrawn', version: 3 },
+    });
+    store.confirmations.claim.mockResolvedValueOnce({
+      operationId: 'operation-withdraw-ok',
+      command: {
+        operation: 'approval.withdraw',
+        instanceId: 'instance-001',
+        expectedVersion: 2,
+      },
+      replayResult: null,
+    });
+    const executed = await store.service.executeApprovalWithdraw(
+      'operation-withdraw-ok',
+      `mcpc_${'i'.repeat(43)}`,
+      extra(['erp:approval:instance:submit']),
+    );
+    expect(executed.structuredContent).toMatchObject({
+      instance: { status: 'withdrawn' },
+    });
+    expect(store.approvals.withdrawInstance).toHaveBeenCalledWith(
+      'instance-001',
+      2,
+      'mcp:operation-withdraw-ok',
+    );
+  });
+
+  it('分析与考勤确认执行拒绝缺失 Scope、错误命令和非法资源链接', async () => {
+    const store = assemble();
+    const deniedExportPrepare = await store.service.prepareManagementDashboardExport(
+      '2026-07-28',
+      'export-prepare-denied',
+      extra(['erp:analytics:management:read']),
+    );
+    expect(deniedExportPrepare.isError).toBe(true);
+    const deniedExportExecute = await store.service.executeManagementDashboardExport(
+      'operation-export-denied',
+      `mcpc_${'j'.repeat(43)}`,
+      extra(['erp:analytics:management:read']),
+    );
+    expect(deniedExportExecute.isError).toBe(true);
+
+    store.confirmations.claim.mockResolvedValueOnce({
+      operationId: 'operation-export-replay',
+      command: {
+        operation: 'analytics.management_dashboard.export',
+        asOf: '2026-07-28',
+        format: 'json',
+        expectedVersion: 1,
+      },
+      replayResult: {
+        export: {
+          id: 'export-replay',
+          status: 'ready',
+          resourceUri: 'erp://analytics/exports/export-replay',
+        },
+      },
+    });
+    const replayedExport = await store.service.executeManagementDashboardExport(
+      'operation-export-replay',
+      `mcpc_${'k'.repeat(43)}`,
+      extra([
+        'erp:analytics:management:read',
+        'erp:analytics:management:export',
+      ]),
+    );
+    expect(replayedExport.content).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'resource_link',
+        uri: 'erp://analytics/exports/export-replay',
+      }),
+    ]));
+
+    store.confirmations.claim.mockResolvedValueOnce({
+      operationId: 'operation-export-invalid',
+      command: {
+        operation: 'analytics.management_dashboard.export',
+        asOf: '2026-07-28',
+        format: 'json',
+        expectedVersion: 1,
+      },
+      replayResult: null,
+    });
+    store.analyticsExports.request.mockResolvedValueOnce({
+      id: 'export-invalid',
+      status: 'queued',
+      resourceUri: 'https://untrusted.example/export-invalid',
+    });
+    await expect(store.service.executeManagementDashboardExport(
+      'operation-export-invalid',
+      `mcpc_${'l'.repeat(43)}`,
+      extra([
+        'erp:analytics:management:read',
+        'erp:analytics:management:export',
+      ]),
+    )).rejects.toThrow('MCP_ANALYTICS_EXPORT_RESOURCE_INVALID');
+    expect(store.confirmations.complete).not.toHaveBeenCalled();
+    expect(store.confirmations.release).toHaveBeenCalledWith(
+      'operation-export-invalid',
+    );
+
+    store.confirmations.claim.mockResolvedValueOnce({
+      operationId: 'operation-export-empty',
+      command: {
+        operation: 'analytics.management_dashboard.export',
+        asOf: '2026-07-28',
+        format: 'json',
+        expectedVersion: 1,
+      },
+      replayResult: null,
+    });
+    store.analyticsExports.request.mockResolvedValueOnce(null);
+    await expect(store.service.executeManagementDashboardExport(
+      'operation-export-empty',
+      `mcpc_${'x'.repeat(43)}`,
+      extra([
+        'erp:analytics:management:read',
+        'erp:analytics:management:export',
+      ]),
+    )).rejects.toThrow('MCP_ANALYTICS_EXPORT_RESOURCE_INVALID');
+    expect(store.confirmations.release).toHaveBeenCalledWith(
+      'operation-export-empty',
+    );
+
+    store.confirmations.claim.mockResolvedValueOnce({
+      operationId: 'operation-export-mismatch',
+      command: {
+        operation: 'attendance.correction.request',
+        sourceFactId: 'fact-001',
+        expectedVersion: 1,
+        workedMinutes: 480,
+        leaveMinutes: 0,
+        overtimeMinutes: 0,
+        absentMinutes: 0,
+        reasonCode: 'MISSED_PUNCH',
+      },
+      replayResult: null,
+    });
+    await expect(store.service.executeManagementDashboardExport(
+      'operation-export-mismatch',
+      `mcpc_${'v'.repeat(43)}`,
+      extra([
+        'erp:analytics:management:read',
+        'erp:analytics:management:export',
+      ]),
+    )).rejects.toThrow('MCP_ANALYTICS_COMMAND_TYPE_MISMATCH');
+    expect(store.confirmations.release).toHaveBeenCalledWith(
+      'operation-export-mismatch',
+    );
+
+    const deniedAttendancePrepare =
+      await store.service.prepareAttendanceCorrectionRequest({
+        sourceFactId: 'fact-001',
+        workedMinutes: 480,
+        leaveMinutes: 0,
+        overtimeMinutes: 0,
+        absentMinutes: 0,
+        reasonCode: 'MISSED_PUNCH',
+        prepareKey: 'attendance-prepare-denied',
+      }, extra(['erp:attendance:correction:request']));
+    expect(deniedAttendancePrepare.isError).toBe(true);
+    const deniedAttendanceExecute =
+      await store.service.executeAttendanceCorrectionRequest(
+        'operation-attendance-denied',
+        `mcpc_${'m'.repeat(43)}`,
+        extra(['erp:attendance:correction:request']),
+      );
+    expect(deniedAttendanceExecute.isError).toBe(true);
+
+    store.confirmations.claim.mockResolvedValueOnce({
+      operationId: 'operation-attendance-replay',
+      command: {
+        operation: 'attendance.correction.request',
+        sourceFactId: 'fact-001',
+        expectedVersion: 1,
+        workedMinutes: 480,
+        leaveMinutes: 0,
+        overtimeMinutes: 0,
+        absentMinutes: 0,
+        reasonCode: 'MISSED_PUNCH',
+      },
+      replayResult: {
+        request: {
+          approvalInstanceId: 'approval-replay',
+          approvalStatus: 'running',
+        },
+      },
+    });
+    const replayedAttendance =
+      await store.service.executeAttendanceCorrectionRequest(
+        'operation-attendance-replay',
+        `mcpc_${'w'.repeat(43)}`,
+        extra([
+          'erp:attendance:correction:request',
+          'erp:approval:instance:submit',
+        ]),
+      );
+    expect(replayedAttendance.structuredContent).toMatchObject({
+      request: { approvalStatus: 'running' },
+    });
+
+    store.confirmations.claim.mockResolvedValueOnce({
+      operationId: 'operation-attendance-mismatch',
+      command: {
+        operation: 'approval.submit',
+        instanceId: 'instance-001',
+        expectedVersion: 1,
+      },
+      replayResult: null,
+    });
+    await expect(store.service.executeAttendanceCorrectionRequest(
+      'operation-attendance-mismatch',
+      `mcpc_${'n'.repeat(43)}`,
+      extra([
+        'erp:attendance:correction:request',
+        'erp:approval:instance:submit',
+      ]),
+    )).rejects.toThrow('MCP_ATTENDANCE_COMMAND_TYPE_MISMATCH');
+    expect(store.confirmations.release).toHaveBeenCalledWith(
+      'operation-attendance-mismatch',
+    );
+  });
+
+  it('确认账本完成后的审计故障只告警，不释放或反向暴露成功终态', async () => {
+    const error = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    const analytics = assemble();
+    analytics.confirmations.claim.mockResolvedValueOnce({
+      operationId: 'operation-export-audit',
+      command: {
+        operation: 'analytics.management_dashboard.export',
+        asOf: '2026-07-28',
+        format: 'json',
+        expectedVersion: 1,
+      },
+      replayResult: null,
+    });
+    analytics.analyticsExports.request.mockResolvedValueOnce({
+      id: 'export-audit',
+      status: 'queued',
+      resourceUri: 'erp://analytics/exports/export-audit',
+    });
+    analytics.audit.record.mockRejectedValueOnce(new Error('AUDIT_UNAVAILABLE'));
+    await expect(analytics.service.executeManagementDashboardExport(
+      'operation-export-audit',
+      `mcpc_${'o'.repeat(43)}`,
+      extra([
+        'erp:analytics:management:read',
+        'erp:analytics:management:export',
+      ]),
+    )).resolves.toMatchObject({
+      structuredContent: { export: { status: 'queued' } },
+    });
+    expect(analytics.confirmations.release).not.toHaveBeenCalled();
+
+    const attendance = assemble();
+    attendance.confirmations.claim.mockResolvedValueOnce({
+      operationId: 'operation-attendance-audit',
+      command: {
+        operation: 'attendance.correction.request',
+        sourceFactId: 'fact-001',
+        expectedVersion: 1,
+        workedMinutes: 480,
+        leaveMinutes: 0,
+        overtimeMinutes: 0,
+        absentMinutes: 0,
+        reasonCode: 'MISSED_PUNCH',
+      },
+      replayResult: null,
+    });
+    attendance.attendance.requestCorrection.mockResolvedValueOnce({
+      request: { approvalInstanceId: 'approval-001', approvalStatus: 'running' },
+    });
+    attendance.audit.record.mockRejectedValueOnce(new Error('AUDIT_UNAVAILABLE'));
+    await expect(attendance.service.executeAttendanceCorrectionRequest(
+      'operation-attendance-audit',
+      `mcpc_${'p'.repeat(43)}`,
+      extra([
+        'erp:attendance:correction:request',
+        'erp:approval:instance:submit',
+      ]),
+    )).resolves.toMatchObject({
+      structuredContent: { request: { approvalStatus: 'running' } },
+    });
+    expect(attendance.confirmations.release).not.toHaveBeenCalled();
+
+    const approval = assemble();
+    approval.confirmations.claim.mockResolvedValueOnce({
+      operationId: 'operation-approval-audit',
+      command: {
+        operation: 'approval.submit',
+        instanceId: 'instance-001',
+        expectedVersion: 1,
+      },
+      replayResult: null,
+    });
+    approval.approvals.submitInstance.mockResolvedValueOnce({
+      instance: { id: 'instance-001', status: 'running', version: 2 },
+    });
+    approval.audit.record.mockRejectedValueOnce(new Error('AUDIT_UNAVAILABLE'));
+    await expect(approval.service.executeApprovalSubmit(
+      'operation-approval-audit',
+      `mcpc_${'q'.repeat(43)}`,
+      extra(['erp:approval:instance:submit']),
+    )).resolves.toMatchObject({
+      structuredContent: { instance: { status: 'running' } },
+    });
+    expect(approval.confirmations.release).not.toHaveBeenCalled();
+
+    const recruitment = assemble();
+    recruitment.confirmations.claim.mockResolvedValueOnce({
+      operationId: 'operation-recruitment-audit',
+      command: {
+        operation: 'recruitment.offer.request_send',
+        offerId: 'offer-001',
+        expectedVersion: 2,
+      },
+      replayResult: null,
+    });
+    recruitment.recruitmentOffers.requestSend.mockResolvedValueOnce({
+      offer: { id: 'offer-001', status: 'sending', version: 3 },
+    });
+    recruitment.audit.record.mockRejectedValueOnce(new Error('AUDIT_UNAVAILABLE'));
+    await expect(recruitment.service.executeRecruitmentOfferSend(
+      'operation-recruitment-audit',
+      `mcpc_${'r'.repeat(43)}`,
+      extra(['erp:recruitment:offer:send']),
+    )).resolves.toMatchObject({
+      structuredContent: { offer: { status: 'sending' } },
+    });
+    expect(recruitment.confirmations.release).not.toHaveBeenCalled();
+
+    expect(error).toHaveBeenCalledTimes(4);
+    expect(error).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'MCP_TOOL_AUDIT_AFTER_COMMIT_FAILED',
+    }));
   });
 });
