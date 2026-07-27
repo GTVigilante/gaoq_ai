@@ -3,7 +3,7 @@ import { collectDefaultMetrics, Counter, Gauge, Histogram, Registry } from 'prom
 
 type AuditOutcome = 'success' | 'failure';
 type VerificationOutcome = 'success' | 'failure';
-type ApprovalNotificationOutcome = 'sent' | 'retry' | 'dead';
+type ApprovalNotificationOutcome = 'sent' | 'retry' | 'dead' | 'state_unavailable';
 type McpConfirmationStage = 'prepare' | 'confirm' | 'execute';
 type KnowledgeSearchIndexOutcome = 'success' | 'retry' | 'dead';
 type KnowledgeExamRunOutcome = 'success' | 'pending' | 'retry' | 'dead' | 'deferred';

@@ -4,10 +4,12 @@
 
 | 平台 | 能力 | 当前实现 | 生产门禁 |
 | --- | --- | --- | --- |
-| 飞书 | 应用机器人单聊 | `POST /open-apis/im/v1/messages`，`receive_id_type=user_id`，通知 ULID 作为 `uuid` | 真实租户权限、可用范围、限流、401、回执和 uuid 去重验证 |
-| 钉钉 | 企业机器人单聊 | `POST /v1.0/robot/oToMessages/batchSend`，应用 clientId 作为 `robotCode` | 真实租户接口版本、机器人权限、限流、401、回执与重复投递验证 |
+| 飞书 | 应用机器人单聊 | `POST /open-apis/im/v1/messages`，`receive_id_type=user_id`，通知 ULID 作为 `uuid`；过期租约可使用同一通知身份安全重领 | 真实租户权限、可用范围、限流、401、回执和 uuid 去重验证 |
+| 钉钉 | 企业机器人单聊 | `POST /v1.0/robot/oToMessages/batchSend`，应用 clientId 作为 `robotCode`；过期执行租约和不可判定响应隔离为 `APPROVAL_NOTIFICATION_DELIVERY_INDETERMINATE`，不自动重发 | 真实租户接口版本、机器人权限、限流、401、回执、平台侧对账；人工 `approved_exception` 重试前必须批准重复通知风险 |
 
 平台合同必须以联调日期当日官方文档和 API Explorer 为准。任何字段或端点变化须先更新适配器契约测试和本文档，再升级生产。
+在钉钉提供并完成稳定请求幂等契约验收前，不得把直连发送描述为 exactly-once；
+人工例外只允许在平台查询确认未送达或业务批准重复风险后执行。
 
 ## MCP 客户端
 

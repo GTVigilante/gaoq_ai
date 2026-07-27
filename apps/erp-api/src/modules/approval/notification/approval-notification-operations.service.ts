@@ -97,7 +97,18 @@ export class ApprovalNotificationOperationsService {
       { notificationId, reason },
       async (session) => {
         const updated = await this.records.findOneAndUpdate(
-          { tenantId, notificationId, status: 'dead' },
+          {
+            tenantId,
+            notificationId,
+            status: 'dead',
+            ...(reason === 'approved_exception'
+              ? { lastErrorCode: 'APPROVAL_NOTIFICATION_DELIVERY_INDETERMINATE' }
+              : {
+                  lastErrorCode: {
+                    $ne: 'APPROVAL_NOTIFICATION_DELIVERY_INDETERMINATE',
+                  },
+                }),
+          },
           {
             $set: {
               status: 'pending', attempts: 0, nextAttemptAt: new Date(),

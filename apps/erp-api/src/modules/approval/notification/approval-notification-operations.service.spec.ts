@@ -92,7 +92,12 @@ describe('ApprovalNotificationOperationsService', () => {
       Record<string, unknown>,
     ];
     expect(call[0]).toEqual({
-      tenantId: 'tenant-001', notificationId: RECORD.notificationId, status: 'dead',
+      tenantId: 'tenant-001',
+      notificationId: RECORD.notificationId,
+      status: 'dead',
+      lastErrorCode: {
+        $ne: 'APPROVAL_NOTIFICATION_DELIVERY_INDETERMINATE',
+      },
     });
     expect(call[1].$set).toMatchObject({ status: 'pending', attempts: 0, lastErrorCode: null });
     expect(call[1].$inc).toEqual({ operatorRetryCount: 1 });
@@ -101,6 +106,81 @@ describe('ApprovalNotificationOperationsService', () => {
       notificationId: RECORD.notificationId,
       status: 'pending',
       reason: 'provider_recovered',
+    });
+  });
+
+  it('结果不确定死信只接受明确批准例外，普通修复原因不能触发重发', async () => {
+    const approvedQuery = listQuery({ ...RECORD, status: 'pending' });
+    const approvedUpdate = vi.fn().mockReturnValue(approvedQuery);
+    const approved = new ApprovalNotificationOperationsService(
+      { findOneAndUpdate: approvedUpdate } as unknown as Model<ApprovalNotificationDocument>,
+      context(),
+      idempotency(),
+    );
+    await approved.retry(
+      RECORD.notificationId,
+      'approved_exception',
+      'idempotency-key-001',
+    );
+    expect(approvedUpdate.mock.calls[0]?.[0]).toEqual({
+      tenantId: 'tenant-001',
+      notificationId: RECORD.notificationId,
+      status: 'dead',
+      lastErrorCode: 'APPROVAL_NOTIFICATION_DELIVERY_INDETERMINATE',
+    });
+
+    const deniedUpdate = vi.fn().mockReturnValue(listQuery(null));
+    const denied = new ApprovalNotificationOperationsService(
+      { findOneAndUpdate: deniedUpdate } as unknown as Model<ApprovalNotificationDocument>,
+      context(),
+      idempotency(),
+    );
+    await expect(
+      denied.retry(
+        RECORD.notificationId,
+        'provider_recovered',
+        'idempotency-key-002',
+      ),
+    ).rejects.toMatchObject({
+      response: {
+        code: 'APPROVAL_NOTIFICATION_NOT_RETRYABLE',
+      },
+    });
+  });
+
+  it('死信列表支持游标分页，空过滤不会构造多余字段', async () => {
+    const records = [
+      RECORD,
+      { ...RECORD, notificationId: '01J8ZQK7V0A2M4N6P8R0T2W4Y5' },
+    ];
+    const pageQuery = listQuery(records);
+    const find = vi.fn().mockReturnValue(pageQuery);
+    const service = new ApprovalNotificationOperationsService(
+      { find } as unknown as Model<ApprovalNotificationDocument>,
+      context(),
+      idempotency(),
+    );
+    const result = await service.listDead({
+      beforeNotificationId: '01J8ZQK7V0A2M4N6P8R0T2W4Y7',
+      limit: 1,
+    });
+    expect(find.mock.calls[0]?.[0]).toEqual({
+      tenantId: 'tenant-001',
+      status: 'dead',
+      notificationId: { $lt: '01J8ZQK7V0A2M4N6P8R0T2W4Y7' },
+    });
+    expect(pageQuery.limit).toHaveBeenCalledWith(2);
+    expect(result.items).toHaveLength(1);
+    expect(result.nextCursor).toBe(RECORD.notificationId);
+
+    const lastPage = new ApprovalNotificationOperationsService(
+      { find: vi.fn().mockReturnValue(listQuery([])) } as unknown as Model<ApprovalNotificationDocument>,
+      context(),
+      idempotency(),
+    );
+    await expect(lastPage.listDead({ limit: 50 })).resolves.toEqual({
+      items: [],
+      nextCursor: null,
     });
   });
 
@@ -123,5 +203,22 @@ describe('ApprovalNotificationOperationsService', () => {
     expect(result.counts.dingtalk.pending).toBe(3);
     expect(result.counts.feishu.dead).toBe(3);
     expect(result.oldestPendingAt).toBe('2026-07-21T00:00:00.000Z');
+  });
+
+  it('没有积压时对账返回 null 时间且仍固定全部状态桶', async () => {
+    const countDocuments = vi.fn().mockResolvedValue(0);
+    const findOne = vi.fn().mockReturnValue(listQuery(null));
+    const service = new ApprovalNotificationOperationsService(
+      { countDocuments, findOne } as unknown as Model<ApprovalNotificationDocument>,
+      context(),
+      idempotency(),
+    );
+    await expect(service.reconciliation()).resolves.toEqual({
+      counts: {
+        dingtalk: { pending: 0, processing: 0, sent: 0, dead: 0 },
+        feishu: { pending: 0, processing: 0, sent: 0, dead: 0 },
+      },
+      oldestPendingAt: null,
+    });
   });
 });

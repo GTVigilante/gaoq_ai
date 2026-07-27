@@ -520,6 +520,48 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/approval/notification/approval-notification-delivery.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/approval/notification/approval-notification-operations.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/approval/notification/approval-notification.adapter.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/approval/notification/dingtalk-approval-notification.adapter.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/approval/notification/feishu-approval-notification.adapter.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/approval/notification/approval-notification.processor.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/approval/notification/approval-notification.scheduler.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/core/idempotency/idempotency.service.ts': {
           branches: 90,
           functions: 90,
