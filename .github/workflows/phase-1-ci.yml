@@ -67,10 +67,8 @@ jobs:
 
       - name: 构建工作区
         env:
-          NEXT_PUBLIC_ERP_API_ORIGIN: https://erp.example.invalid
-        run: pnpm build
-        env:
           NEXT_PUBLIC_WEBSITE_ORIGIN: https://www.example.invalid
           NEXT_PUBLIC_ERP_API_ORIGIN: https://erp.example.invalid
           NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_ORIGIN: https://captcha.example.invalid
           NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL: https://captcha.example.invalid/widget
+        run: pnpm build

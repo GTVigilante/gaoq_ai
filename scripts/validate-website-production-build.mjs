@@ -1,4 +1,4 @@
-import { access } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 
 const repositoryRoot = new URL('../', import.meta.url);
@@ -16,6 +16,37 @@ const validPublicEnvironment = Object.freeze({
   NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL:
     'https://captcha.example.invalid/widget',
 });
+
+const phaseOneWorkflow = await readFile(
+  new URL('../.github/workflows/phase-1-ci.yml', import.meta.url),
+  'utf8',
+);
+const buildStepMarker = '      - name: 构建工作区\n';
+const buildStepStart = phaseOneWorkflow.indexOf(buildStepMarker);
+const nextStepStart = phaseOneWorkflow.indexOf(
+  '\n      - name: ',
+  buildStepStart + buildStepMarker.length,
+);
+const buildStep = buildStepStart === -1
+  ? ''
+  : phaseOneWorkflow.slice(
+      buildStepStart,
+      nextStepStart === -1 ? undefined : nextStepStart,
+    );
+if (
+  [...buildStep.matchAll(/^ {8}env:\s*$/gmu)].length !== 1 ||
+  !buildStep.includes('        run: pnpm build')
+) {
+  throw new Error('WEBSITE_PHASE1_BUILD_STEP_INVALID');
+}
+for (const name of publicEnvironmentNames) {
+  const declarations = [
+    ...buildStep.matchAll(new RegExp(`^\\s{10}${name}:`, 'gmu')),
+  ];
+  if (declarations.length !== 1) {
+    throw new Error('WEBSITE_PHASE1_BUILD_ENV_INVALID');
+  }
+}
 
 const baseEnvironment = { ...process.env, NODE_ENV: 'production' };
 for (const name of publicEnvironmentNames) delete baseEnvironment[name];
