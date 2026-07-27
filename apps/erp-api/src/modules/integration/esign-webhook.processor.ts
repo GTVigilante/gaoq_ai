@@ -1,11 +1,15 @@
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
+import { Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ULID_PATTERN } from '@gaoq/shared-utils';
 import type { Job, Queue } from 'bullmq';
 import type { Model } from 'mongoose';
 import { z } from 'zod';
 
-import { AuditService } from '../../core/audit/audit.service.js';
+import {
+  AuditService,
+  type SystemAuditRecordInput,
+} from '../../core/audit/audit.service.js';
 import { TenantContextService } from '../../core/tenant/tenant-context.service.js';
 import { ESignEvidenceService } from './esign-evidence.service.js';
 import { ESignReconciliationService } from './esign-reconciliation.service.js';
@@ -45,10 +49,13 @@ const evidenceJobSchema = z.object({
   flowId: z.string().regex(ULID_PATTERN), tenantId: tenantIdSchema,
 }).strict();
 const reconciliationJobSchema = z.object({}).strict();
+const PROCESSING_LEASE_MS = 15 * 60 * 1_000;
 
 /** eSign 回调 Worker；仅投影供应商状态，不在未归档签署文件时标记 Offer 已签。 */
 @Processor(ESIGN_WEBHOOK_QUEUE, { concurrency: 4, limiter: { max: 20, duration: 1_000 } })
 export class ESignWebhookProcessor extends WorkerHost {
+  private readonly logger = new Logger(ESignWebhookProcessor.name);
+
   constructor(
     @InjectModel(ESignWebhookInboxRecord.name)
     private readonly inbox: Model<ESignWebhookInboxDocument>,
@@ -88,10 +95,14 @@ export class ESignWebhookProcessor extends WorkerHost {
     }
     if (job.name !== ESIGN_PROCESS_WEBHOOK_JOB) throw new Error('ESIGN_WEBHOOK_JOB_UNKNOWN');
     const webhookData: ESignWebhookJobData = webhookJobSchema.parse(job.data);
+    const staleAt = new Date(Date.now() - PROCESSING_LEASE_MS);
     const claimed = await this.inbox.findOneAndUpdate(
       {
         tenantId: webhookData.tenantId, id: webhookData.inboxId,
-        status: { $in: ['pending', 'processing', 'failed'] },
+        $or: [
+          { status: { $in: ['pending', 'failed'] } },
+          { status: 'processing', processingStartedAt: { $lte: staleAt } },
+        ],
       },
       {
         $set: { status: 'processing', processingStartedAt: new Date(), failureCode: null },
@@ -102,10 +113,13 @@ export class ESignWebhookProcessor extends WorkerHost {
     if (claimed === null) return 0;
     try {
       if (!KNOWN_ACTIONS.has(claimed.action)) {
-        await this.audit.recordSystem(claimed.tenantId, {
+        await this.auditSystemAfterBusiness(claimed.tenantId, {
           action: 'integration.esign.webhook.ignore', resourceType: 'esign_webhook_inbox',
           resourceId: claimed.id, riskLevel: 'R1', outcome: 'success', traceId: claimed.id,
           metadata: { providerAction: claimed.action, reasonCode: 'ESIGN_ACTION_UNKNOWN' },
+        }, {
+          code: 'ESIGN_WEBHOOK_IGNORE_AUDIT_FAILED',
+          tenantId: claimed.tenantId, inboxId: claimed.id,
         });
         await this.finishInbox(claimed.tenantId, claimed.id, 'ignored', 'ESIGN_ACTION_UNKNOWN');
         return 1;
@@ -149,7 +163,7 @@ export class ESignWebhookProcessor extends WorkerHost {
         );
         if (updated.modifiedCount !== 1) throw new Error('ESIGN_FLOW_VERSION_CONFLICT');
       }
-      await this.audit.recordSystem(claimed.tenantId, {
+      await this.auditSystemAfterBusiness(claimed.tenantId, {
         action: 'integration.esign.webhook.apply', resourceType: 'esign_flow',
         resourceId: flow.id, riskLevel: 'R2',
         outcome: projection.reviewRequired ? 'failure' : 'success', traceId: claimed.id,
@@ -158,6 +172,9 @@ export class ESignWebhookProcessor extends WorkerHost {
           providerStatus: projection.providerStatus ?? -1,
           reviewRequired: projection.reviewRequired,
         },
+      }, {
+        code: 'ESIGN_WEBHOOK_APPLY_AUDIT_AFTER_COMMIT_FAILED',
+        tenantId: claimed.tenantId, inboxId: claimed.id, flowId: flow.id,
       });
       if (projection.status === 'provider_completed') {
         await this.enqueueEvidence(flow.id, flow.tenantId);
@@ -199,6 +216,18 @@ export class ESignWebhookProcessor extends WorkerHost {
       { runValidators: true },
     );
     if (updated.modifiedCount !== 1) throw new Error('ESIGN_WEBHOOK_INBOX_LEASE_LOST');
+  }
+
+  private async auditSystemAfterBusiness(
+    tenantId: string,
+    input: SystemAuditRecordInput,
+    context: Readonly<Record<string, string>>,
+  ): Promise<void> {
+    try {
+      await this.audit.recordSystem(tenantId, input);
+    } catch {
+      this.logger.error(context);
+    }
   }
 }
 
