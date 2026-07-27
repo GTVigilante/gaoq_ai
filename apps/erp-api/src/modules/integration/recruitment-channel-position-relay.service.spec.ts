@@ -84,4 +84,26 @@ describe('RecruitmentChannelPositionRelayService', () => {
       lastErrorCode: 'RECRUITMENT_CHANNEL_POSITION_EVENT_INVALID',
     });
   });
+
+  it('释放失败事件时若租约已转移则失败关闭', async () => {
+    const event = {
+      eventId: '01J8ZQK7V0A2M4N6P8R0T2W4C6', tenantId: 'tenant-001',
+      aggregateId: '01J8ZQK7V0A2M4N6P8R0T2W4C7', aggregateVersion: 2,
+      eventType: 'cn.gaoq.erp.recruitment.position.status_changed.v1',
+      envelope: { data: { status: 'unknown' } }, attempts: 0,
+    };
+    const outbox = {
+      findOneAndUpdate: vi.fn().mockReturnValue(query(event)),
+      updateOne: vi.fn().mockResolvedValue({ matchedCount: 0 }),
+    };
+    const service = new RecruitmentChannelPositionRelayService(
+      { startSession: vi.fn() } as unknown as Connection,
+      outbox as unknown as Model<OutboxDocument>,
+      { find: vi.fn() } as unknown as Model<RecruitmentChannelBindingDocument>,
+      { updateOne: vi.fn() } as unknown as Model<RecruitmentChannelPositionDeliveryDocument>,
+    );
+    await expect(service.relayBatch('worker-001', 1)).rejects.toThrow(
+      'RECRUITMENT_CHANNEL_POSITION_RELEASE_LEASE_LOST',
+    );
+  });
 });
