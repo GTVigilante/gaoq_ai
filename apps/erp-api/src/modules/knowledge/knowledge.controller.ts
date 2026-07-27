@@ -5,6 +5,7 @@ import {
   Get,
   Headers,
   HttpCode,
+  Logger,
   Param,
   Post,
   Query,
@@ -13,6 +14,7 @@ import {
 import type { Response } from 'express';
 
 import { AuditService } from '../../core/audit/audit.service.js';
+import type { AuditRecordInput } from '../../core/audit/audit.types.js';
 import { RequiredScopes } from '../identity/auth.decorators.js';
 import {
   KnowledgeApplicationService,
@@ -34,6 +36,8 @@ const IF_MATCH = /^"([1-9][0-9]*)"$/;
 
 @Controller('knowledge')
 export class KnowledgeController {
+  private readonly logger = new Logger(KnowledgeController.name);
+
   constructor(
     private readonly knowledge: KnowledgeApplicationService,
     private readonly audit: AuditService,
@@ -48,9 +52,13 @@ export class KnowledgeController {
   ): Promise<{ readonly course: CourseSummary }> {
     const result = await this.knowledge.createCourse(this.key(key), body);
     this.etag(response, result.course.version);
-    await this.auditResult('knowledge.course.create', 'knowledge_course', result.course.id, 'R2', {
-      status: result.course.status, version: result.course.version,
-    });
+    await this.auditAfterCommit(
+      'knowledge.course.create',
+      'knowledge_course',
+      result.course.id,
+      'R2',
+      { status: result.course.status, version: result.course.version },
+    );
     return result;
   }
 
@@ -67,9 +75,13 @@ export class KnowledgeController {
       this.id(id), this.version(ifMatch), this.key(key),
     );
     this.etag(response, result.course.version);
-    await this.auditResult('knowledge.course.publish', 'knowledge_course', result.course.id, 'R2', {
-      status: result.course.status, version: result.course.version,
-    });
+    await this.auditAfterCommit(
+      'knowledge.course.publish',
+      'knowledge_course',
+      result.course.id,
+      'R2',
+      { status: result.course.status, version: result.course.version },
+    );
     return result;
   }
 
@@ -88,10 +100,13 @@ export class KnowledgeController {
       this.key(key),
     );
     this.etag(response, result.course.version);
-    await this.auditResult('knowledge.course.retire', 'knowledge_course', result.course.id, 'R2', {
-      status: result.course.status,
-      version: result.course.version,
-    });
+    await this.auditAfterCommit(
+      'knowledge.course.retire',
+      'knowledge_course',
+      result.course.id,
+      'R2',
+      { status: result.course.status, version: result.course.version },
+    );
     return result;
   }
 
@@ -238,10 +253,17 @@ export class KnowledgeController {
     assignment: TrainingAssignmentSummary,
     riskLevel: 'R1' | 'R2',
   ): Promise<void> {
-    await this.auditResult(action, 'knowledge_training_assignment', assignment.id, riskLevel, {
-      status: assignment.status, version: assignment.version,
-      onboardingInstanceId: assignment.onboardingInstanceId,
-    });
+    await this.auditAfterCommit(
+      action,
+      'knowledge_training_assignment',
+      assignment.id,
+      riskLevel,
+      {
+        status: assignment.status,
+        version: assignment.version,
+        onboardingInstanceId: assignment.onboardingInstanceId,
+      },
+    );
   }
 
   private async auditResult(
@@ -252,5 +274,34 @@ export class KnowledgeController {
     metadata: Readonly<Record<string, string | number | boolean>>,
   ): Promise<void> {
     await this.audit.record({ action, resourceType, resourceId, riskLevel, outcome: 'success', metadata });
+  }
+
+  /** 业务事务已提交后的审计故障只记录独立告警，不能把成功终态伪装成业务失败。 */
+  private async auditAfterCommit(
+    action: string,
+    resourceType: string,
+    resourceId: string,
+    riskLevel: 'R1' | 'R2',
+    metadata: Readonly<Record<string, string | number | boolean>>,
+  ): Promise<void> {
+    const input: AuditRecordInput = {
+      action,
+      resourceType,
+      resourceId,
+      riskLevel,
+      outcome: 'success',
+      metadata,
+    };
+    try {
+      await this.audit.record(input);
+    } catch {
+      this.logger.error({
+        code: 'KNOWLEDGE_AUDIT_AFTER_COMMIT_FAILED',
+        action,
+        resourceType,
+        resourceId,
+        riskLevel,
+      });
+    }
   }
 }

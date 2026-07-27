@@ -180,7 +180,7 @@ function fixture(options?: {
   };
   return {
     service, context, trusted, courses, assignments, attempts, evidence,
-    outbox, searchIndexTasks, verifier, searcher, onboarding, profiles,
+    outbox, searchIndexTasks, verifier, searcher, onboarding, profiles, idempotency,
     employments, employees,
     get assignment() { return assignment; },
     get attempt() { return attempt; },
@@ -322,6 +322,8 @@ describe('KnowledgeApplicationService', () => {
       store.service.publishCourse('course-001', 1, 'knowledge-publish-001'),
     );
     expect(store.verifier.verify).toHaveBeenCalledWith(draft);
+    expect(store.courses.findById).toHaveBeenCalledOnce();
+    expect(store.courses.findById).toHaveBeenCalledWith('course-001', SESSION);
     expect(result.course.status).toBe('published');
     expect(result.course).not.toHaveProperty('questionBankRef');
     expect(result.course).not.toHaveProperty('contentRef');
@@ -331,6 +333,61 @@ describe('KnowledgeApplicationService', () => {
       'upsert',
       SESSION,
     );
+  });
+
+  it('课程发布幂等重放不再依赖内容校验器或数据库写入', async () => {
+    const store = fixture();
+    const replay = {
+      course: {
+        id: 'course-001',
+        courseCode: 'SECURITY',
+        revision: 1,
+        title: '安全培训',
+        examRequired: true,
+        passingScoreBps: 8_000,
+        questionMode: 'objective' as const,
+        timeLimitMinutes: 60,
+        maxAttempts: 3,
+        gradingPolicyVersion: 'objective-auto-v1',
+        passingRule: 'score_threshold' as const,
+        gradingSlaMinutes: 5,
+        manualReviewSlaMinutes: 1_440,
+        manualReviewRequired: false,
+        status: 'published' as const,
+        version: 2,
+      },
+    };
+    store.idempotency.execute.mockResolvedValueOnce(replay);
+    store.verifier.verify.mockRejectedValueOnce(new Error('校验器不可用'));
+
+    await expect(store.context.run(store.trusted, () =>
+      store.service.publishCourse('course-001', 1, 'knowledge-publish-replay'),
+    )).resolves.toEqual(replay);
+
+    expect(store.verifier.verify).not.toHaveBeenCalled();
+    expect(store.courses.findById).not.toHaveBeenCalled();
+    expect(store.courses.replace).not.toHaveBeenCalled();
+    expect(store.outbox.append).not.toHaveBeenCalled();
+    expect(store.searchIndexTasks.append).not.toHaveBeenCalled();
+  });
+
+  it('课程发布校验失败时不形成课程终态、事件或索引任务', async () => {
+    const draft = createCourseVersion({
+      id: 'course-001', tenantId: 'tenant-001', courseCode: 'SECURITY', revision: 1,
+      title: '安全培训', contentRef: 'content-001', questionBankRef: 'bank-001',
+      questionBankDigest: 'a'.repeat(43), passingScoreBps: 8_000,
+    }, NOW);
+    const store = fixture({ course: draft });
+    store.verifier.verify.mockRejectedValueOnce(new Error('校验器不可用'));
+
+    await expect(store.context.run(store.trusted, () =>
+      store.service.publishCourse('course-001', 1, 'knowledge-publish-failed'),
+    )).rejects.toThrow('校验器不可用');
+
+    expect(store.courses.findById).toHaveBeenCalledWith('course-001', SESSION);
+    expect(store.courses.replace).not.toHaveBeenCalled();
+    expect(store.outbox.append).not.toHaveBeenCalled();
+    expect(store.searchIndexTasks.append).not.toHaveBeenCalled();
   });
 
   it('课程下架在同一事务写删除任务且不直接调用搜索网关', async () => {
