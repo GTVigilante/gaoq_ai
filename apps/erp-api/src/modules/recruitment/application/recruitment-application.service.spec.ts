@@ -4,13 +4,18 @@ import { describe, expect, it, vi } from 'vitest';
 import type { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
 import type { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import type { RecruitmentOutboxWriter } from '../persistence/recruitment-outbox.writer.js';
-import type {
-  CandidateApplicationRepository,
-  CandidateApplicationStageRepository,
-  CandidateConsentEvidenceRepository,
-  RecruitmentCandidateRepository,
-  RecruitmentPositionRepository,
+import {
+  RecruitmentWriteConflictError,
+  type CandidateApplicationRepository,
+  type CandidateApplicationStageRepository,
+  type CandidateConsentEvidenceRepository,
+  type RecruitmentCandidateRepository,
+  type RecruitmentPositionRepository,
 } from '../persistence/recruitment.repositories.js';
+import type {
+  Candidate,
+  CandidateApplication,
+} from '../domain/index.js';
 import { RecruitmentApplicationService } from './recruitment-application.service.js';
 
 const POSITION_ID = '01J8ZQK7V0A2M4N6P8R0T2W4Y8';
@@ -165,6 +170,106 @@ describe('RecruitmentApplicationService', () => {
     expect(JSON.stringify(result)).not.toMatch(/张三|13800138000|candidate@example/iu);
   });
 
+  it('候选人迁移拒绝不完整服务权限和无效 WORM 证据', async () => {
+    for (const actorScopes of [
+      ['erp:migration:execute'],
+      ['erp:recruitment:migration:write'],
+    ]) {
+      const denied = fixture({ actorType: 'service', actorScopes });
+      await expect(denied.service.importCandidateFromMigration(
+        `candidate-scope-${actorScopes[0]}`, candidateMigrationBase,
+      )).rejects.toMatchObject({
+        response: { code: 'RECRUITMENT_MIGRATION_WRITER_DENIED' },
+      });
+      expect(denied.execute).not.toHaveBeenCalled();
+    }
+
+    const writer = fixture({
+      actorType: 'service',
+      actorScopes: ['erp:migration:execute', 'erp:recruitment:migration:write'],
+    });
+    await expect(writer.service.importCandidateFromMigration('candidate-evidence-ref', {
+      ...candidateMigrationBase,
+      migrationEvidenceRef: 'https://untrusted.example/evidence',
+    })).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_MIGRATION_CANDIDATE_EVIDENCE_INVALID' },
+    });
+    await expect(writer.service.importCandidateFromMigration('candidate-evidence-checksum', {
+      ...candidateMigrationBase,
+      evidenceChecksum: 'not-a-checksum',
+    })).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_MIGRATION_CANDIDATE_EVIDENCE_INVALID' },
+    });
+    expect(writer.execute).not.toHaveBeenCalled();
+  });
+
+  it('候选人迁移目标只允许与既有主档及 WORM 证据完全一致的幂等重放', async () => {
+    const input = { ...candidateMigrationBase, targetId: migratedCandidate.id };
+    const replay = fixture({
+      actorType: 'system_job',
+      actorScopes: ['erp:migration:execute', 'erp:recruitment:migration:write'],
+    });
+    replay.consents.findMigrationEvidenceById.mockResolvedValue({
+      migrationEvidenceRef: input.migrationEvidenceRef,
+      evidenceChecksum: input.evidenceChecksum,
+    });
+    await expect(replay.service.importCandidateFromMigration(
+      'candidate-replay-equal', input,
+    )).resolves.toMatchObject({
+      candidate: { id: migratedCandidate.id, consentEvidenceId: CONSENT_ID, version: 1 },
+    });
+    expect(replay.candidates.insert).not.toHaveBeenCalled();
+    expect(replay.consents.appendMigrated).not.toHaveBeenCalled();
+    expect(replay.outbox.append).not.toHaveBeenCalled();
+
+    const cases: readonly {
+      readonly name: string;
+      readonly candidate: Candidate | null;
+      readonly evidence: { readonly migrationEvidenceRef: string; readonly evidenceChecksum: string } | null;
+    }[] = [
+      { name: 'missing-target', candidate: null, evidence: null },
+      { name: 'missing-evidence', candidate: migratedCandidate, evidence: null },
+      {
+        name: 'candidate-mismatch',
+        candidate: { ...migratedCandidate, updatedAt: '2026-07-20T00:00:01.000Z' },
+        evidence: {
+          migrationEvidenceRef: input.migrationEvidenceRef,
+          evidenceChecksum: input.evidenceChecksum,
+        },
+      },
+      {
+        name: 'reference-mismatch',
+        candidate: migratedCandidate,
+        evidence: {
+          migrationEvidenceRef: `${input.migrationEvidenceRef}-other`,
+          evidenceChecksum: input.evidenceChecksum,
+        },
+      },
+      {
+        name: 'checksum-mismatch',
+        candidate: migratedCandidate,
+        evidence: {
+          migrationEvidenceRef: input.migrationEvidenceRef,
+          evidenceChecksum: 'c'.repeat(43),
+        },
+      },
+    ];
+    for (const item of cases) {
+      const store = fixture({
+        actorType: 'service',
+        actorScopes: ['erp:migration:execute', 'erp:recruitment:migration:write'],
+      });
+      store.candidates.findById.mockResolvedValue(item.candidate);
+      store.consents.findMigrationEvidenceById.mockResolvedValue(item.evidence);
+      await expect(store.service.importCandidateFromMigration(
+        `candidate-replay-${item.name}`, input,
+      )).rejects.toMatchObject({
+        response: { code: 'RECRUITMENT_MIGRATION_CANDIDATE_IMMUTABLE' },
+      });
+      expect(store.candidates.insert).not.toHaveBeenCalled();
+    }
+  });
+
   it('新候选人、授权证据、申请和 Outbox 在同一幂等事务中写入', async () => {
     const store = fixture();
     const result = await store.service.createApplication('create-key-001', createInput);
@@ -226,6 +331,157 @@ describe('RecruitmentApplicationService', () => {
     }), session);
     expect(result.application).toMatchObject({ stage: 'interview', version: 3 });
     expect(JSON.stringify(result)).not.toMatch(/张三|13800138000|candidate@example/iu);
+  });
+
+  it('申请迁移拒绝无效证据以及失效的活动申请引用', async () => {
+    const writer = () => fixture({
+      actorType: 'system_job',
+      actorScopes: ['erp:migration:execute', 'erp:recruitment:migration:write'],
+    });
+    const invalidEvidence = writer();
+    await expect(invalidEvidence.service.importApplicationBaselineFromMigration(
+      'application-invalid-evidence',
+      { ...applicationMigrationBase, evidenceChecksum: 'bad' },
+    )).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_MIGRATION_APPLICATION_EVIDENCE_INVALID' },
+    });
+    expect(invalidEvidence.execute).not.toHaveBeenCalled();
+
+    const references: readonly {
+      readonly name: string;
+      readonly candidate: Candidate | null;
+      readonly currentPosition: typeof position | null;
+    }[] = [
+      { name: 'candidate-missing', candidate: null, currentPosition: position },
+      { name: 'position-missing', candidate: migratedCandidate, currentPosition: null },
+      {
+        name: 'candidate-inactive',
+        candidate: { ...migratedCandidate, status: 'withdrawn' },
+        currentPosition: position,
+      },
+      {
+        name: 'consent-expired',
+        candidate: {
+          ...migratedCandidate,
+          consent: { ...migratedCandidate.consent, expiresAt: '2025-07-20T00:00:00.000Z' },
+        },
+        currentPosition: position,
+      },
+      {
+        name: 'position-closed',
+        candidate: migratedCandidate,
+        currentPosition: { ...position, status: 'closed' },
+      },
+    ];
+    for (const item of references) {
+      const store = writer();
+      store.candidates.findById.mockResolvedValue(item.candidate);
+      store.positions.findById.mockResolvedValue(item.currentPosition);
+      await expect(store.service.importApplicationBaselineFromMigration(
+        `application-reference-${item.name}`, applicationMigrationBase,
+      )).rejects.toMatchObject({
+        response: { code: 'RECRUITMENT_MIGRATION_APPLICATION_REFERENCE_INVALID' },
+      });
+      expect(store.applications.insertMigrated).not.toHaveBeenCalled();
+    }
+  });
+
+  it('终态申请迁移可保留历史失效引用，活动态仍坚持有效授权', async () => {
+    const store = fixture({
+      actorType: 'service',
+      actorScopes: ['erp:migration:execute', 'erp:recruitment:migration:write'],
+    });
+    store.candidates.findById.mockResolvedValue({
+      ...migratedCandidate,
+      status: 'withdrawn',
+      consent: { ...migratedCandidate.consent, expiresAt: '2025-07-20T00:00:00.000Z' },
+    });
+    store.positions.findById.mockResolvedValue({ ...position, status: 'closed' });
+    const terminal = {
+      ...applicationMigrationBase,
+      actions: [
+        applicationMigrationBase.actions[0],
+        {
+          targetStage: 'rejected' as const,
+          reasonCode: 'LEGACY_REJECTED',
+          occurredAt: '2026-07-20T02:00:00.000Z',
+        },
+      ],
+      expectedStage: 'rejected' as const,
+      endedAt: '2026-07-20T02:00:00.000Z',
+    };
+    await expect(store.service.importApplicationBaselineFromMigration(
+      'application-terminal-history', terminal,
+    )).resolves.toMatchObject({ application: { stage: 'rejected', version: 3 } });
+    expect(store.applications.insertMigrated).toHaveBeenCalledOnce();
+  });
+
+  it('申请迁移目标只允许与既有基线及 WORM 证据完全一致的幂等重放', async () => {
+    const input = { ...applicationMigrationBase, targetId: APPLICATION_ID };
+    const writer = () => fixture({
+      actorType: 'system_job',
+      actorScopes: ['erp:migration:execute', 'erp:recruitment:migration:write'],
+    });
+    const replay = writer();
+    replay.applications.findById.mockResolvedValue(migratedApplication);
+    replay.applications.findMigrationEvidenceById.mockResolvedValue({
+      migrationEvidenceRef: input.migrationEvidenceRef,
+      migrationEvidenceChecksum: input.evidenceChecksum,
+    });
+    await expect(replay.service.importApplicationBaselineFromMigration(
+      'application-replay-equal', input,
+    )).resolves.toMatchObject({
+      application: { id: APPLICATION_ID, stage: 'interview', version: 3 },
+    });
+    expect(replay.applications.insertMigrated).not.toHaveBeenCalled();
+    expect(replay.outbox.append).not.toHaveBeenCalled();
+
+    const cases: readonly {
+      readonly name: string;
+      readonly current: CandidateApplication | null;
+      readonly evidence: {
+        readonly migrationEvidenceRef: string;
+        readonly migrationEvidenceChecksum: string;
+      } | null;
+    }[] = [
+      { name: 'missing-target', current: null, evidence: null },
+      { name: 'missing-evidence', current: migratedApplication, evidence: null },
+      {
+        name: 'baseline-mismatch',
+        current: { ...migratedApplication, updatedAt: '2026-07-20T02:00:01.000Z' },
+        evidence: {
+          migrationEvidenceRef: input.migrationEvidenceRef,
+          migrationEvidenceChecksum: input.evidenceChecksum,
+        },
+      },
+      {
+        name: 'reference-mismatch',
+        current: migratedApplication,
+        evidence: {
+          migrationEvidenceRef: `${input.migrationEvidenceRef}-other`,
+          migrationEvidenceChecksum: input.evidenceChecksum,
+        },
+      },
+      {
+        name: 'checksum-mismatch',
+        current: migratedApplication,
+        evidence: {
+          migrationEvidenceRef: input.migrationEvidenceRef,
+          migrationEvidenceChecksum: 'c'.repeat(43),
+        },
+      },
+    ];
+    for (const item of cases) {
+      const store = writer();
+      store.applications.findById.mockResolvedValue(item.current);
+      store.applications.findMigrationEvidenceById.mockResolvedValue(item.evidence);
+      await expect(store.service.importApplicationBaselineFromMigration(
+        `application-replay-${item.name}`, input,
+      )).rejects.toMatchObject({
+        response: { code: 'RECRUITMENT_MIGRATION_APPLICATION_IMMUTABLE' },
+      });
+      expect(store.applications.insertMigrated).not.toHaveBeenCalled();
+    }
   });
 
   it('重复候选人追加新授权并更新主档，不创建第二候选人', async () => {
@@ -342,6 +598,38 @@ describe('RecruitmentApplicationService', () => {
       type: 'recruitment.application.stage_changed', version: 2,
     }), session);
     expect(result.application).toMatchObject({ stage: 'screening', version: 2 });
+  });
+
+  it('阶段推进按职位部门强制写范围，write_all 才能跨部门', async () => {
+    const denied = fixture({ actorDepartments: ['department-002'] });
+    await expect(denied.service.transitionApplication(
+      APPLICATION_ID, 1, 'transition-department-denied', { targetStage: 'screening' },
+    )).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_APPLICATION_WRITE_DENIED' },
+    });
+    expect(denied.positions.findById).toHaveBeenCalledWith(POSITION_ID, session);
+    expect(denied.applications.replace).not.toHaveBeenCalled();
+    expect(denied.stages.append).not.toHaveBeenCalled();
+    expect(denied.outbox.append).not.toHaveBeenCalled();
+
+    const allowed = fixture({
+      actorDepartments: ['department-002'],
+      actorScopes: ['erp:recruitment:management:write_all'],
+    });
+    await expect(allowed.service.transitionApplication(
+      APPLICATION_ID, 1, 'transition-write-all', { targetStage: 'screening' },
+    )).resolves.toMatchObject({ application: { stage: 'screening' } });
+  });
+
+  it('阶段推进在职位引用丢失时失败关闭且不写聚合', async () => {
+    const store = fixture();
+    store.positions.findById.mockResolvedValueOnce(null);
+    await expect(store.service.transitionApplication(
+      APPLICATION_ID, 1, 'transition-position-missing', { targetStage: 'screening' },
+    )).rejects.toThrow('RECRUITMENT_POSITION_REFERENCE_INVALID');
+    expect(store.applications.replace).not.toHaveBeenCalled();
+    expect(store.stages.append).not.toHaveBeenCalled();
+    expect(store.outbox.append).not.toHaveBeenCalled();
   });
 
   it('通用接口拒绝客户端自报 Offer 或雇佣证据', async () => {
