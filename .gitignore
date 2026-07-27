@@ -5,6 +5,7 @@ node_modules/
 dist/
 coverage/
 coverage-gates/
+coverage-analysis/
 .env
 .env.*
 !.env.example
