@@ -5,18 +5,22 @@ import { Injectable } from '@nestjs/common';
 import type { Queue } from 'bullmq';
 
 import { TenantContextService } from '../../core/tenant/tenant-context.service.js';
-import type { CareCaseSummary } from './application/care-application.service.js';
+import type {
+  AlumniConsentSummary,
+  CareCaseSummary,
+} from './application/care-application.service.js';
 import {
   CARE_EXECUTE_CASE_JOB,
   CARE_EXECUTION_QUEUE,
-  type CareExecutionJobData,
+  type CareJobData,
 } from './care-execution.queue.js';
+import { buildCareConsentExpiryJob } from './care-consent-expiry-job.js';
 
 @Injectable()
 export class CareExecutionQueueService {
   constructor(
     private readonly context: TenantContextService,
-    @InjectQueue(CARE_EXECUTION_QUEUE) private readonly queue: Queue<CareExecutionJobData>,
+    @InjectQueue(CARE_EXECUTION_QUEUE) private readonly queue: Queue<CareJobData>,
   ) {}
 
   async schedule(careCase: CareCaseSummary): Promise<void> {
@@ -35,5 +39,14 @@ export class CareExecutionQueueService {
         removeOnComplete: 1_000, removeOnFail: 10_000,
       },
     );
+  }
+
+  async scheduleAlumniConsentExpiry(consent: AlumniConsentSummary): Promise<void> {
+    if (consent.status !== 'active') return;
+    const tenantId = this.context.getTenantRequired().tenantId;
+    const job = buildCareConsentExpiryJob({
+      tenantId, consentId: consent.id, expiresAt: consent.expiresAt,
+    });
+    await this.queue.add(job.name, job.data, job.opts);
   }
 }

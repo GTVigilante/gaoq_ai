@@ -67,7 +67,7 @@ draft → pending_approval → approved → clearing → ready → scheduled →
 - 最后工作日使用严格 `YYYY-MM-DD`；`accessDisableAt` 使用规范 UTC 时刻，并必须映射到租户 IANA 时区内的同一最后工作日。未到该时刻不得提前执行。
 - 交接接受、资产清退、财务清算、数据保留确认分别使用独立可信 Scope 和不可替换证据；证据及校友授权必须由生产 Adapter 校验，Adapter 未装配或无法确认时失败关闭。全部清算完成后才能排期。人工 REST 和 MCP 均不暴露 R3 执行能力。
 - 执行采用 `scheduled → executing → Org terminate → completed` 可恢复 Saga。队列任务按租户与案件唯一，重试读取最新版本；Org 以案件、执行证据和业务日期三元组校验重放。
-- 校友联系必须有明确目的、渠道、授权版本、授予时间和不超过五年的到期时间；撤回后立即停止非必要联系，不得复用员工在职授权。
+- 校友联系必须有明确目的、渠道、授权版本、授予时间和不超过五年的到期时间；撤回后立即停止非必要联系，不得复用员工在职授权。授权创建后按可信租户和授权标识生成稳定的 BullMQ 延迟任务，到期由只持有 `erp:care:alumni:consent:expire` 的 Worker 转为 `expired` 并发布 `care.alumni_consent.expired`；任务数据、事件和审计均不得包含自然人标识或授权证据标识。延迟任务失败按同一 JobId 重试；运行时 Worker 禁止跨租户全库扫描，存量任务只能由受控迁移命令在 dry-run 审核后显式重建。
 
 ### 2.2 人才全周期与服务追踪
 
@@ -212,7 +212,7 @@ draft → pending_approval → approved → clearing → ready → scheduled →
 
 - Knowledge 只读 Resource/Tool 仅返回课程发布摘要和培训任务进度；不得返回内容引用、题库引用、答卷提交、评分证据或完成证据。评分、完成和 Onboarding 证明回填不注册 MCP。
 - H5 本人任务目录由服务端按可信主体映射有效员工授权快照与当前任职关系，不接受客户端 employeeId、onboardingInstanceId 或 tenantId；返回字段与 Knowledge MCP 同样执行内容、题库、答卷和证据脱敏。
-- Care Resource Template 固定为 `erp://care/cases/{id}`，Tool 固定为 `care_case_get`。输出仅含员工/劳动关系引用、最后工作日、计划失效时刻、清算任务状态和版本；离职原因、审批实例与所有证据引用均不进入 MCP。
+- Care Resource Template 固定为 `erp://care/cases/{id}`，Tool 固定为 `care_case_get`。输出仅含员工/劳动关系引用、最后工作日、计划失效时刻、清算任务状态和版本；离职原因、审批实例与所有证据引用均不进入 MCP。校友授权到期执行属于 Worker 内部能力，不注册 REST 或 MCP Tool。
 - `care_offboarding_progress_guide` 必须明确禁止 AI 审批、代报清算证据、关闭劳动关系或停用身份；Care 不注册写 Tool。
 
 ### 5.8 Talent Lifecycle 360

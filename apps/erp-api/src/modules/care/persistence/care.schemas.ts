@@ -102,11 +102,28 @@ export class CareAlumniConsentRecord {
   @Prop({ type: Date, required: true, immutable: true }) grantedAt!: Date;
   @Prop({ type: Date, required: true, immutable: true }) expiresAt!: Date;
   @Prop({ type: Date, default: null }) withdrawnAt!: Date | null;
-  @Prop({ type: String, enum: ['active', 'withdrawn'], required: true }) status!: 'active' | 'withdrawn';
+  @Prop({ type: Date, default: null }) expiredAt!: Date | null;
+  @Prop({ type: String, enum: ['active', 'withdrawn', 'expired'], required: true })
+  status!: 'active' | 'withdrawn' | 'expired';
   @Prop({ type: Number, required: true, validate: { validator: positive } }) version!: number;
 }
 export type CareAlumniConsentDocument = HydratedDocument<CareAlumniConsentRecord>;
 export const CareAlumniConsentRecordSchema = SchemaFactory.createForClass(CareAlumniConsentRecord);
+CareAlumniConsentRecordSchema.pre('validate', function validateConsentState() {
+  if (!(this.grantedAt instanceof Date) || !(this.expiresAt instanceof Date)) return;
+  if (this.expiresAt.getTime() <= this.grantedAt.getTime()) {
+    this.invalidate('expiresAt', '校友授权到期时间必须晚于授予时间');
+  }
+  const active = this.status === 'active' && this.withdrawnAt === null && this.expiredAt === null;
+  const withdrawn = this.status === 'withdrawn' &&
+    this.withdrawnAt instanceof Date && this.expiredAt === null;
+  const expired = this.status === 'expired' &&
+    this.withdrawnAt === null && this.expiredAt instanceof Date &&
+    this.expiredAt.getTime() >= this.expiresAt.getTime();
+  if (!active && !withdrawn && !expired) {
+    this.invalidate('status', '校友授权状态与终止时间不一致');
+  }
+});
 CareAlumniConsentRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 CareAlumniConsentRecordSchema.index({ tenantId: 1, consentEvidenceId: 1 }, { unique: true });
 CareAlumniConsentRecordSchema.index(

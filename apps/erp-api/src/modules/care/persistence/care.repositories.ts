@@ -130,7 +130,8 @@ export class CareAlumniConsentRepository extends TenantRepository {
       channels: Object.freeze([...value.channels]), consentVersion: value.consentVersion,
       consentEvidenceId: value.consentEvidenceId,
       grantedAt: value.grantedAt.toISOString(), expiresAt: value.expiresAt.toISOString(),
-      withdrawnAt: value.withdrawnAt?.toISOString() ?? null, status: value.status,
+      withdrawnAt: value.withdrawnAt?.toISOString() ?? null,
+      expiredAt: value.expiredAt?.toISOString() ?? null, status: value.status,
       version: value.version,
     });
   }
@@ -148,7 +149,8 @@ export class CareAlumniConsentRepository extends TenantRepository {
       channels: Object.freeze([...value.channels]), consentVersion: value.consentVersion,
       consentEvidenceId: value.consentEvidenceId,
       grantedAt: value.grantedAt.toISOString(), expiresAt: value.expiresAt.toISOString(),
-      withdrawnAt: value.withdrawnAt?.toISOString() ?? null, status: value.status,
+      withdrawnAt: value.withdrawnAt?.toISOString() ?? null,
+      expiredAt: value.expiredAt?.toISOString() ?? null, status: value.status,
       version: value.version,
     }));
   }
@@ -157,7 +159,7 @@ export class CareAlumniConsentRepository extends TenantRepository {
     this.assertTenant(consent.tenantId);
     await this.records.create([{
       ...consent, channels: [...consent.channels], grantedAt: new Date(consent.grantedAt),
-      expiresAt: new Date(consent.expiresAt), withdrawnAt: null,
+      expiresAt: new Date(consent.expiresAt), withdrawnAt: null, expiredAt: null,
     }], { session });
   }
 
@@ -168,6 +170,7 @@ export class CareAlumniConsentRepository extends TenantRepository {
       { $set: {
         status: consent.status,
         withdrawnAt: consent.withdrawnAt === null ? null : new Date(consent.withdrawnAt),
+        expiredAt: consent.expiredAt === null ? null : new Date(consent.expiredAt),
         version: consent.version,
       } },
       { session, timestamps: false, runValidators: true },

@@ -1,5 +1,5 @@
 import type { ClientSession } from 'mongoose';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
@@ -13,6 +13,7 @@ import {
   recordCareTaskEvidence,
   scheduleCareExecution,
   submitCareCaseForApproval,
+  type AlumniConsent,
   type CareCase,
 } from '../domain/index.js';
 import type { CareOutboxWriter } from '../persistence/care-outbox.writer.js';
@@ -26,6 +27,8 @@ import type { CareExecutionQueueService } from '../care-execution-queue.service.
 
 const SESSION = {} as ClientSession;
 const NOW = new Date('2026-07-01T00:00:00.000Z');
+
+afterEach(() => vi.useRealTimers());
 
 function pendingCase(): CareCase {
   const value = createOffboardingCase({
@@ -73,6 +76,7 @@ function completedCase(): CareCase {
 function fixture(initial = scheduledCase()) {
   const context = new TenantContextService();
   let careCase = initial;
+  let alumniConsent: AlumniConsent | null = null;
   let replaceCalls = 0;
   const cases = {
     findById: vi.fn().mockImplementation((id: string) =>
@@ -86,7 +90,18 @@ function fixture(initial = scheduledCase()) {
     }),
   };
   const evidence = { append: vi.fn().mockResolvedValue(undefined) };
-  const alumni = { findById: vi.fn(), insert: vi.fn(), replace: vi.fn() };
+  const alumni = {
+    findById: vi.fn().mockImplementation((id: string) =>
+      Promise.resolve(alumniConsent?.id === id ? alumniConsent : null)),
+    insert: vi.fn().mockImplementation((value: AlumniConsent) => {
+      alumniConsent = value;
+      return Promise.resolve();
+    }),
+    replace: vi.fn().mockImplementation((value: AlumniConsent) => {
+      alumniConsent = value;
+      return Promise.resolve();
+    }),
+  };
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
   const approvals = {
     createInstance: vi.fn(), submitInstance: vi.fn(), getInstanceStatusForCare: vi.fn(),
@@ -104,7 +119,10 @@ function fixture(initial = scheduledCase()) {
       terminationEvidenceId: 'termination-001',
     }),
   };
-  const executionQueue = { schedule: vi.fn().mockResolvedValue(undefined) };
+  const executionQueue = {
+    schedule: vi.fn().mockResolvedValue(undefined),
+    scheduleAlumniConsentExpiry: vi.fn().mockResolvedValue(undefined),
+  };
   const taskEvidenceVerifier = { verify: vi.fn().mockResolvedValue({ verified: true }) };
   const consentVerifier = { verify: vi.fn().mockResolvedValue({ verified: true }) };
   const idempotency = { execute: vi.fn().mockImplementation(
@@ -198,6 +216,7 @@ describe('CareApplicationService', () => {
     expect(JSON.stringify(result)).not.toMatch(/personId|consentEvidenceId/iu);
     const event = store.outbox.append.mock.calls[0]?.[0] as { payload?: unknown } | undefined;
     expect(JSON.stringify(event?.payload)).not.toMatch(/personId|consentEvidenceId/iu);
+    expect(store.executionQueue.scheduleAlumniConsentExpiry).toHaveBeenCalledWith(result.consent);
   });
 
   it('校友授权幂等快照重放不再读取已变化的离职状态', async () => {
@@ -223,6 +242,46 @@ describe('CareApplicationService', () => {
     expect(store.cases.findById).not.toHaveBeenCalled();
     expect(store.organization.getEmploymentForCare).not.toHaveBeenCalled();
     expect(store.consentVerifier.verify).not.toHaveBeenCalled();
+    expect(store.executionQueue.scheduleAlumniConsentExpiry).toHaveBeenCalledOnce();
+  });
+
+  it('Worker 到期后终止授权并发布不含自然人标识的事件', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-20T11:00:00.000Z'));
+    const store = fixture(completedCase());
+    const attestContext = {
+      ...store.trusted,
+      actor: {
+        ...store.trusted.actor,
+        scopes: ['erp:care:alumni:consent:attest', 'erp:care:employment:read'],
+      },
+    };
+    const created = await store.context.run(attestContext, () =>
+      store.service.createAlumniConsent('care-001', 'care-consent-expiry-001', {
+        purpose: 'alumni_network', channels: ['email'], consentVersion: 'v1',
+        consentEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4C4',
+        grantedAt: '2026-07-20T11:00:00.000Z', expiresAt: '2027-07-20T11:00:00.000Z',
+      }),
+    );
+    vi.setSystemTime(new Date('2027-07-20T11:00:00.000Z'));
+    const expiryContext = {
+      ...store.trusted,
+      actor: {
+        ...store.trusted.actor,
+        actorId: 'system:care-consent-expiry', actorType: 'system_job' as const,
+        scopes: ['erp:care:alumni:consent:expire'],
+      },
+    };
+    const result = await store.context.run(expiryContext, () =>
+      store.service.expireAlumniConsent(created.consent.id),
+    );
+    expect(result.consent).toMatchObject({ status: 'expired', version: 2 });
+    const event = store.outbox.append.mock.calls.at(-1)?.[0] as {
+      readonly type?: string;
+      readonly payload?: unknown;
+    } | undefined;
+    expect(event?.type).toBe('care.alumni_consent.expired');
+    expect(JSON.stringify(event)).not.toMatch(/personId|consentEvidenceId/iu);
   });
 
   it('已绑定或已批准的审批步骤可用当前版本和不同根键恢复', async () => {

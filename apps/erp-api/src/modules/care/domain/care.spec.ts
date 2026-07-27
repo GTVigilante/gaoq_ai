@@ -7,6 +7,7 @@ import {
   completeCareExecution,
   createAlumniConsent,
   createOffboardingCase,
+  expireAlumniConsent,
   recordCareTaskEvidence,
   scheduleCareExecution,
   submitCareCaseForApproval,
@@ -124,5 +125,17 @@ describe('Care 离职与校友授权领域', () => {
     expect(withdrawAlumniConsent(consent, {
       tenantId: 'tenant-001', expectedVersion: 1,
     }, NOW)).toMatchObject({ status: 'withdrawn', version: 2 });
+    expect(() => expireAlumniConsent(consent, {
+      tenantId: 'tenant-001', expectedVersion: 1,
+    }, NOW)).toThrowError(expect.objectContaining({ code: 'CARE_CONSENT_EXPIRY_TOO_EARLY' }));
+    const expired = expireAlumniConsent(consent, {
+      tenantId: 'tenant-001', expectedVersion: 1,
+    }, new Date('2027-07-21T00:00:00.000Z'));
+    expect(expired).toMatchObject({
+      status: 'expired', expiredAt: '2027-07-21T00:00:00.000Z', version: 2,
+    });
+    expect(expireAlumniConsent(expired, {
+      tenantId: 'tenant-001', expectedVersion: 2,
+    }, new Date('2027-07-21T00:00:01.000Z'))).toBe(expired);
   });
 });

@@ -18,7 +18,10 @@ export interface CareDomainEvent {
 }
 
 export interface AlumniConsentDomainEvent {
-  readonly type: 'care.alumni_consent.granted' | 'care.alumni_consent.withdrawn';
+  readonly type:
+    | 'care.alumni_consent.granted'
+    | 'care.alumni_consent.withdrawn'
+    | 'care.alumni_consent.expired';
   readonly tenantId: string;
   readonly aggregateId: string;
   readonly version: number;
@@ -49,7 +52,7 @@ export function alumniConsentEvent(
 ): AlumniConsentDomainEvent {
   return Object.freeze({
     type, tenantId: consent.tenantId, aggregateId: consent.id, version: consent.version,
-    occurredAt: consent.withdrawnAt ?? consent.grantedAt,
+    occurredAt: consent.expiredAt ?? consent.withdrawnAt ?? consent.grantedAt,
     payload: Object.freeze({
       careCaseId: consent.careCaseId, purpose: consent.purpose,
       channels: consent.channels, status: consent.status, expiresAt: consent.expiresAt,

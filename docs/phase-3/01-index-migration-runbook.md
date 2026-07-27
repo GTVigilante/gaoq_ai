@@ -40,6 +40,18 @@
    ```
 
 9. 验证同一劳动关系不能存在两个进行中离职案件、同一清算任务证据不可替换、Care 终止引用唯一，且 Worker 重试不会重复关闭劳动关系。
+
+   Care 索引迁移后先只读校验存量活动校友授权，再显式重建稳定到期任务：
+
+   ```bash
+   pnpm --filter @gaoq/erp-api migrate:phase3:care-consent-expiry-jobs -- --dry-run
+   pnpm --filter @gaoq/erp-api migrate:phase3:care-consent-expiry-jobs -- --apply
+   ```
+
+   `--dry-run` 只读取 `active` 授权的租户、授权标识与到期时间并输出总数；`--apply`
+   还要求 `REDIS_URL`，按 500 条批量写入稳定 JobId，不输出业务标识或连接信息。
+   非法历史标识、Mongo/Redis 不可用或任一批写入失败时必须失败关闭并重跑；已存在
+   JobId 由 BullMQ 幂等去重。到期业务状态仍只能由 Worker 写入，迁移工具不得直改授权。
 10. 对招聘渠道追加清单执行 dry-run 和变更审核：
 
    ```bash
