@@ -484,6 +484,24 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/marketing-cms/marketing-cms.controller.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/marketing-cms/marketing-gateways.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/core/idempotency/idempotency.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/approval/persistence/approval.repositories.ts': {
           branches: 90,
           functions: 90,

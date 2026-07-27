@@ -45,6 +45,23 @@
 - `GET /api/marketing/public/:locale/contents/:type/:slug`
 - `POST /api/marketing/public/leads`
 
+全部后台写接口和匿名线索提交都必须携带符合
+`^[A-Za-z0-9._:-]{8,128}$` 的 `Idempotency-Key`。带版本的内容、线索与媒体写入
+同时必须携带强 `If-Match: "<version>"`，成功响应返回新的强 `ETag`。官网预约
+表单按不含验证码的业务载荷生成一次客户端键；网络失败或验证码刷新后，只要业务
+载荷未改变就复用该键，禁止重试产生重复线索或重复通知。
+
+线索使用“可信固定租户 + 幂等键”的 SHA-256 稳定标识，并在同一事务中先裁决
+同键请求；同键同业务载荷返回原线索，同键异载荷返回
+`IDEMPOTENCY_KEY_REUSED`。Mongo 唯一键竞争在事务外重读裁决，禁止把并发重试
+误报为失败。联系人不进入幂等快照、日志或审计。
+
+媒体上传采用“安全持久快照 + 短时结果”幂等协议：账本只保存媒体标识、对象引用
+和版本，签名上传 URL 与到期时间不落账本；重放时用原安全快照向隔离网关重新签发
+短时 URL，并校验对象引用不得变化。媒体与 AI 网关接收原
+`Idempotency-Key`，HTTP、网络、JSON 或响应契约异常统一映射为受控不可用错误，
+不得泄露上游响应或凭据。
+
 发布事件固定为 `cn.gaoq.erp.marketing.content.published.v1`，数据只包含站点、内容
 标识、类型、语言、slug 与 revision，不包含正文、联系人或凭据。
 
@@ -104,8 +121,16 @@ pnpm --filter @gaoq/erp-api migrate:phase5:marketing-cms-indexes
 ```
 
 人工重放使用 `POST /api/marketing-cms/side-effects/:eventId/replay`；只能处理
-`dead` 记录，必须记录独立 R2 审计。业务已提交后的审计故障只记录专用告警，
-不得把线索、排期或已发送通知回写为业务失败。
+`dead` 记录，必须提供 `Idempotency-Key` 并记录独立 R2 审计。所有营销写入在
+事务提交后统一执行审计；审计故障只记录稳定
+`MARKETING_AUDIT_AFTER_COMMIT_FAILED` 告警，不得把已提交内容、线索、媒体、
+AI 审核、排期或已发送通知回写为业务失败，告警也不得包含正文、联系方式、提示词
+或签名 URL。后台草稿、修订、线索、媒体和副作用状态读取采用失败关闭审计；审计
+不可用时不向调用方返回业务数据。
+
+仓库门禁 `pnpm quality:marketing-cms-service-coverage` 覆盖业务服务，
+`pnpm quality:marketing-entry-idempotency-coverage` 覆盖营销后台与公开入口、
+隔离网关和通用幂等核心；两条门禁均逐文件强制语句、分支、函数、行不低于 90%。
 
 生产告警必须覆盖 `MARKETING_SIDE_EFFECT_DEAD_LETTERED`、
 `MARKETING_NOTIFICATION_DEAD_LETTERED`、

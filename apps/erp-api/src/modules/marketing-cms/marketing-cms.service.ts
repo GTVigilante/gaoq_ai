@@ -7,7 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { createEventId } from '@gaoq/shared-utils';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { ClientSession, Connection, Model } from 'mongoose';
 import type { AppEnvironment } from '../../config/environment.js';
 import { IdempotencyService } from '../../core/idempotency/idempotency.service.js';
@@ -39,6 +39,8 @@ const TRANSITIONS: Readonly<Record<MarketingStatus, readonly MarketingStatus[]>>
   draft: ['in_review'], in_review: ['draft', 'approved'], approved: ['draft', 'published', 'scheduled'],
   scheduled: ['draft', 'published'], published: ['archived'], archived: ['draft'],
 };
+const IDEMPOTENCY_KEY = /^[A-Za-z0-9._:-]{8,128}$/u;
+const DUPLICATE_KEY_CODE = 11000;
 
 @Injectable()
 export class MarketingCmsService {
@@ -241,81 +243,108 @@ export class MarketingCmsService {
     return { items: items.map((item) => view(item, true)) };
   }
 
-  async submitLead(raw: unknown): Promise<{
+  async submitLead(idempotencyKey: string, raw: unknown): Promise<{
     readonly leadId: string;
     readonly duplicate: boolean;
   }> {
+    assertIdempotencyKey(idempotencyKey);
     const input = parseLead(raw);
     const tenantId = this.publicTenantId();
-    return this.connection.transaction(async (session) => {
-      const id = randomUUID();
-      const dedupeDigest = this.leadCrypto.blindIndex(tenantId, input.contact);
-      const duplicate = await this.leads.findOne({
-        tenantId, dedupeDigest,
-        createdAt: { $gte: new Date(Date.now() - 30 * 86_400_000) },
-        status: { $ne: 'closed' },
-      }).select('id').session(session).lean().exec();
-      if (duplicate !== null) return { leadId: duplicate.id, duplicate: true };
-      const protectedContact = this.leadCrypto.protect(tenantId, id, input.contact);
-      await this.leads.create([{
-        id, tenantId, siteId: this.publicSiteId(), audience: input.audience,
-        name: input.name, requestSummary: input.requestSummary, attribution: input.attribution,
-        contactIv: protectedContact.iv, contactCiphertext: protectedContact.ciphertext,
-        contactAuthTag: protectedContact.authTag, dedupeDigest,
-        consentedAt: new Date(), status: 'new',
-      }], { session });
-      const now = new Date();
-      await this.sideEffects.create((['email', 'feishu'] as const).map((channel) => ({
-        eventId: createEventId(),
-        tenantId,
-        kind: 'lead_notification',
-        aggregateId: id,
-        aggregateVersion: 1,
-        channel,
-        dueAt: now,
-        status: 'pending',
-        attempts: 0,
-        nextAttemptAt: now,
-        lockedAt: null,
-        lockedBy: null,
-        dispatchedAt: null,
-        deliveryAttempts: 0,
-        completedAt: null,
-        lastErrorCode: null,
-      })), { session });
-      return { leadId: id, duplicate: false };
-    });
-  }
-
-  async replaySideEffect(eventId: string): Promise<Record<string, unknown>> {
-    const tenantId = this.context.getTenantRequired().tenantId;
-    const record = await this.sideEffects.findOneAndUpdate(
-      { tenantId, eventId, status: 'dead' },
-      {
-        $set: {
+    const id = stableId('lead', tenantId, idempotencyKey);
+    const dedupeDigest = this.leadCrypto.blindIndex(tenantId, input.contact);
+    try {
+      return await this.connection.transaction(async (session) => {
+        const sameKey = await this.leads.findOne({ tenantId, id })
+          .select('id audience name requestSummary attribution dedupeDigest')
+          .session(session).lean().exec();
+        if (sameKey !== null) {
+          assertSameLeadSubmission(sameKey, input, dedupeDigest);
+          return { leadId: sameKey.id, duplicate: true };
+        }
+        const duplicate = await this.leads.findOne({
+          tenantId, dedupeDigest,
+          createdAt: { $gte: new Date(Date.now() - 30 * 86_400_000) },
+          status: { $ne: 'closed' },
+        }).select('id').session(session).lean().exec();
+        if (duplicate !== null) return { leadId: duplicate.id, duplicate: true };
+        const protectedContact = this.leadCrypto.protect(tenantId, id, input.contact);
+        await this.leads.create([{
+          id, tenantId, siteId: this.publicSiteId(), audience: input.audience,
+          name: input.name, requestSummary: input.requestSummary, attribution: input.attribution,
+          contactIv: protectedContact.iv, contactCiphertext: protectedContact.ciphertext,
+          contactAuthTag: protectedContact.authTag, dedupeDigest,
+          consentedAt: new Date(), status: 'new',
+        }], { session });
+        const now = new Date();
+        await this.sideEffects.create((['email', 'feishu'] as const).map((channel) => ({
+          eventId: createEventId(),
+          tenantId,
+          kind: 'lead_notification',
+          aggregateId: id,
+          aggregateVersion: 1,
+          channel,
+          dueAt: now,
           status: 'pending',
           attempts: 0,
-          nextAttemptAt: new Date(),
+          nextAttemptAt: now,
           lockedAt: null,
           lockedBy: null,
           dispatchedAt: null,
           deliveryAttempts: 0,
           completedAt: null,
           lastErrorCode: null,
-        },
+        })), { session });
+        return { leadId: id, duplicate: false };
+      });
+    } catch (error) {
+      if (!isDuplicateKeyError(error)) throw error;
+      const sameKey = await this.leads.findOne({ tenantId, id })
+        .select('id audience name requestSummary attribution dedupeDigest').lean().exec();
+      if (sameKey === null) throw error;
+      assertSameLeadSubmission(sameKey, input, dedupeDigest);
+      return { leadId: sameKey.id, duplicate: true };
+    }
+  }
+
+  async replaySideEffect(
+    idempotencyKey: string,
+    eventId: string,
+  ): Promise<Record<string, unknown>> {
+    return this.idempotency.execute(
+      'marketing.side_effect.replay',
+      idempotencyKey,
+      { eventId },
+      async (session) => {
+        const tenantId = this.context.getTenantRequired().tenantId;
+        const record = await this.sideEffects.findOneAndUpdate(
+          { tenantId, eventId, status: 'dead' },
+          {
+            $set: {
+              status: 'pending',
+              attempts: 0,
+              nextAttemptAt: new Date(),
+              lockedAt: null,
+              lockedBy: null,
+              dispatchedAt: null,
+              deliveryAttempts: 0,
+              completedAt: null,
+              lastErrorCode: null,
+            },
+          },
+          { returnDocument: 'after', lean: true, session },
+        ).exec();
+        if (record === null) throw new ConflictException({
+          code: 'MARKETING_SIDE_EFFECT_NOT_REPLAYABLE',
+          message: '副作用记录不存在、跨租户或不处于死信状态',
+        });
+        return {
+          eventId: record.eventId,
+          kind: record.kind,
+          status: record.status,
+          attempts: record.attempts,
+        };
       },
-      { returnDocument: 'after', lean: true },
-    ).exec();
-    if (record === null) throw new ConflictException({
-      code: 'MARKETING_SIDE_EFFECT_NOT_REPLAYABLE',
-      message: '副作用记录不存在、跨租户或不处于死信状态',
-    });
-    return {
-      eventId: record.eventId,
-      kind: record.kind,
-      status: record.status,
-      attempts: record.attempts,
-    };
+    );
   }
 
   async getSideEffectStatus(eventId: string): Promise<Record<string, unknown>> {
@@ -422,6 +451,7 @@ export class MarketingCmsService {
   }
 
   async updateLeadStatus(
+    idempotencyKey: string,
     id: string,
     status: string,
     expectedVersion: number,
@@ -430,88 +460,163 @@ export class MarketingCmsService {
     if (!allowed.includes(status)) throw new BadRequestException({
       code: 'MARKETING_LEAD_STATUS_INVALID', message: '线索状态无效',
     });
-    const tenantId = this.context.getTenantRequired().tenantId;
-    const record = await this.leads.findOneAndUpdate(
-      { tenantId, id, version: expectedVersion },
-      { $set: { status }, $inc: { version: 1 } },
-      { returnDocument: 'after', lean: true },
-    ).exec();
-    if (record === null) throw versionConflict();
-    return { id: record.id, status: record.status, version: record.version };
+    return this.idempotency.execute(
+      'marketing.lead.status.update',
+      idempotencyKey,
+      { id, status, expectedVersion },
+      async (session) => {
+        const tenantId = this.context.getTenantRequired().tenantId;
+        const record = await this.leads.findOneAndUpdate(
+          { tenantId, id, version: expectedVersion },
+          { $set: { status }, $inc: { version: 1 } },
+          { returnDocument: 'after', lean: true, session },
+        ).exec();
+        if (record === null) throw versionConflict();
+        return { id: record.id, status: record.status, version: record.version };
+      },
+    );
   }
 
-  async assignLead(id: string, assigneeId: string, expectedVersion: number) {
+  async assignLead(
+    idempotencyKey: string,
+    id: string,
+    assigneeId: string,
+    expectedVersion: number,
+  ) {
     if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(assigneeId)) throw new BadRequestException({
       code: 'MARKETING_LEAD_ASSIGNEE_INVALID', message: '负责人标识无效',
     });
-    const tenantId = this.context.getTenantRequired().tenantId;
-    const record = await this.leads.findOneAndUpdate(
-      { tenantId, id, version: expectedVersion },
-      { $set: { assigneeId }, $inc: { version: 1 } },
-      { returnDocument: 'after', lean: true },
-    ).exec();
-    if (record === null) throw versionConflict();
-    return { id: record.id, assigneeId: record.assigneeId, version: record.version };
+    return this.idempotency.execute(
+      'marketing.lead.assignee.update',
+      idempotencyKey,
+      { id, assigneeId, expectedVersion },
+      async (session) => {
+        const tenantId = this.context.getTenantRequired().tenantId;
+        const record = await this.leads.findOneAndUpdate(
+          { tenantId, id, version: expectedVersion },
+          { $set: { assigneeId }, $inc: { version: 1 } },
+          { returnDocument: 'after', lean: true, session },
+        ).exec();
+        if (record === null) throw versionConflict();
+        return { id: record.id, assigneeId: record.assigneeId, version: record.version };
+      },
+    );
   }
 
-  async addLeadNote(id: string, body: string, expectedVersion: number) {
+  async addLeadNote(
+    idempotencyKey: string,
+    id: string,
+    body: string,
+    expectedVersion: number,
+  ) {
     if (body.trim().length < 1 || body.length > 2000) throw new BadRequestException({
       code: 'MARKETING_LEAD_NOTE_INVALID', message: '跟进备注不符合要求',
     });
-    const tenantId = this.context.getTenantRequired().tenantId;
-    const note = {
-      actorId: this.context.getActorRequired().actorId,
-      body: body.trim(),
-      createdAt: new Date().toISOString(),
-    };
-    const record = await this.leads.findOneAndUpdate(
-      { tenantId, id, version: expectedVersion },
-      { $push: { notes: { $each: [note], $slice: -100 } }, $inc: { version: 1 } },
-      { returnDocument: 'after', lean: true },
-    ).exec();
-    if (record === null) throw versionConflict();
-    return { id: record.id, note, version: record.version };
+    return this.idempotency.execute(
+      'marketing.lead.note.add',
+      idempotencyKey,
+      { id, body: body.trim(), expectedVersion },
+      async (session) => {
+        const tenantId = this.context.getTenantRequired().tenantId;
+        const note = {
+          actorId: this.context.getActorRequired().actorId,
+          body: body.trim(),
+          createdAt: new Date().toISOString(),
+        };
+        const record = await this.leads.findOneAndUpdate(
+          { tenantId, id, version: expectedVersion },
+          { $push: { notes: { $each: [note], $slice: -100 } }, $inc: { version: 1 } },
+          { returnDocument: 'after', lean: true, session },
+        ).exec();
+        if (record === null) throw versionConflict();
+        return { id: record.id, note, version: record.version };
+      },
+    );
   }
 
-  async createMediaUpload(raw: unknown): Promise<Record<string, unknown>> {
+  async createMediaUpload(
+    idempotencyKey: string,
+    raw: unknown,
+  ): Promise<Record<string, unknown>> {
     const input = parseMediaInput(raw);
     const trusted = this.context.getRequired();
-    const id = randomUUID();
-    const ticket = await this.mediaGateway.createUpload({
+    const id = stableId('media', trusted.tenant.tenantId, idempotencyKey);
+    const gatewayInput = {
       tenantId: trusted.tenant.tenantId, siteId: input.siteId, mediaId: id,
       fileName: input.fileName, mimeType: input.mimeType, sizeBytes: input.sizeBytes,
-    });
-    await this.media.create({
-      id, tenantId: trusted.tenant.tenantId, siteId: input.siteId,
-      fileName: input.fileName, mimeType: input.mimeType, sizeBytes: input.sizeBytes,
-      objectRef: ticket.objectRef, status: 'uploading', checksum: null,
-      scanEvidenceId: null, variants: {}, altText: input.altText,
-      copyrightSource: input.copyrightSource, version: 1,
-    });
-    return { id, uploadUrl: ticket.uploadUrl, expiresAt: ticket.expiresAt, version: 1 };
+    };
+    return this.idempotency.executeWithEphemeralResult(
+      'marketing.media.upload.create',
+      idempotencyKey,
+      { input },
+      async (session) => {
+        const ticket = await this.mediaGateway.createUpload(gatewayInput, idempotencyKey);
+        await this.media.create([{
+          id, tenantId: trusted.tenant.tenantId, siteId: input.siteId,
+          fileName: input.fileName, mimeType: input.mimeType, sizeBytes: input.sizeBytes,
+          objectRef: ticket.objectRef, status: 'uploading', checksum: null,
+          scanEvidenceId: null, variants: {}, altText: input.altText,
+          copyrightSource: input.copyrightSource, version: 1,
+        }], { session });
+        return {
+          stored: { id, objectRef: ticket.objectRef, version: 1 },
+          result: {
+            id, uploadUrl: ticket.uploadUrl, expiresAt: ticket.expiresAt, version: 1,
+          },
+        };
+      },
+      async (stored) => {
+        const ticket = await this.mediaGateway.createUpload(gatewayInput, idempotencyKey);
+        if (ticket.objectRef !== stored.objectRef) throw new ConflictException({
+          code: 'CMS_MEDIA_OBJECT_MISMATCH',
+          message: '媒体对象回执不匹配',
+        });
+        return {
+          id: stored.id,
+          uploadUrl: ticket.uploadUrl,
+          expiresAt: ticket.expiresAt,
+          version: stored.version,
+        };
+      },
+    );
   }
 
-  async verifyMedia(id: string, expectedVersion: number): Promise<Record<string, unknown>> {
-    const tenantId = this.context.getTenantRequired().tenantId;
-    const record = await this.media.findOne({ tenantId, id }).lean().exec();
-    if (record === null) throw new NotFoundException({ code: 'CMS_MEDIA_NOT_FOUND', message: '媒体不存在' });
-    if (record.version !== expectedVersion || record.status !== 'uploading') throw versionConflict();
-    const receipt = await this.mediaGateway.verifyUpload({
-      tenantId, mediaId: id, objectRef: record.objectRef,
-    });
-    if (receipt.objectRef !== record.objectRef) throw new ConflictException({
-      code: 'CMS_MEDIA_OBJECT_MISMATCH', message: '媒体对象回执不匹配',
-    });
-    const next = await this.media.findOneAndUpdate(
-      { tenantId, id, version: expectedVersion, status: 'uploading' },
-      { $set: {
-        status: 'ready', checksum: receipt.checksum,
-        scanEvidenceId: receipt.scanEvidenceId, variants: receipt.variants,
-      }, $inc: { version: 1 } },
-      { returnDocument: 'after', lean: true },
-    ).exec();
-    if (next === null) throw versionConflict();
-    return mediaView(next);
+  async verifyMedia(
+    idempotencyKey: string,
+    id: string,
+    expectedVersion: number,
+  ): Promise<Record<string, unknown>> {
+    return this.idempotency.execute(
+      'marketing.media.upload.verify',
+      idempotencyKey,
+      { id, expectedVersion },
+      async (session) => {
+        const tenantId = this.context.getTenantRequired().tenantId;
+        const record = await this.media.findOne({ tenantId, id }).session(session).lean().exec();
+        if (record === null) throw new NotFoundException({
+          code: 'CMS_MEDIA_NOT_FOUND', message: '媒体不存在',
+        });
+        if (record.version !== expectedVersion || record.status !== 'uploading') {
+          throw versionConflict();
+        }
+        const receipt = await this.mediaGateway.verifyUpload({
+          tenantId, mediaId: id, objectRef: record.objectRef,
+        }, idempotencyKey);
+        if (receipt.objectRef !== record.objectRef) throw new ConflictException({
+          code: 'CMS_MEDIA_OBJECT_MISMATCH', message: '媒体对象回执不匹配',
+        });
+        const next = await this.media.findOneAndUpdate(
+          { tenantId, id, version: expectedVersion, status: 'uploading' },
+          { $set: {
+            status: 'ready', checksum: receipt.checksum,
+            scanEvidenceId: receipt.scanEvidenceId, variants: receipt.variants,
+          }, $inc: { version: 1 } },
+          { returnDocument: 'after', lean: true, session },
+        ).exec();
+        if (next === null) throw versionConflict();
+        return mediaView(next);
+      },
+    );
   }
 
   async listMedia(): Promise<{ readonly items: readonly Record<string, unknown>[] }> {
@@ -520,41 +625,60 @@ export class MarketingCmsService {
     return { items: items.map(mediaView) };
   }
 
-  async generateAiDraft(contentId: string, raw: unknown): Promise<Record<string, unknown>> {
+  async generateAiDraft(
+    idempotencyKey: string,
+    contentId: string,
+    raw: unknown,
+  ): Promise<Record<string, unknown>> {
     const input = parseAiInput(raw);
-    const content = await this.owned(contentId);
-    const trusted = this.context.getRequired();
-    const result = await this.aiGateway.generate({
-      action: input.action, targetLocale: input.targetLocale,
-      content: view(content, true), instruction: input.instruction,
-    });
-    const id = randomUUID();
-    await this.generations.create({
-      id, tenantId: trusted.tenant.tenantId, actorId: trusted.actor.actorId,
-      contentId, action: input.action, modelId: result.modelId,
-      promptVersion: result.promptVersion, output: result.output, status: 'pending_review',
-    });
-    return { id, status: 'pending_review', ...result };
+    return this.idempotency.execute(
+      'marketing.ai.draft.generate',
+      idempotencyKey,
+      { contentId, input },
+      async (session) => {
+        const content = await this.owned(contentId, session);
+        const trusted = this.context.getRequired();
+        const result = await this.aiGateway.generate({
+          action: input.action, targetLocale: input.targetLocale,
+          content: view(content, true), instruction: input.instruction,
+        }, idempotencyKey);
+        const id = randomUUID();
+        await this.generations.create([{
+          id, tenantId: trusted.tenant.tenantId, actorId: trusted.actor.actorId,
+          contentId, action: input.action, modelId: result.modelId,
+          promptVersion: result.promptVersion, output: result.output, status: 'pending_review',
+        }], { session });
+        return { id, status: 'pending_review', ...result };
+      },
+    );
   }
 
   async reviewAiDraft(
+    idempotencyKey: string,
     id: string,
     decision: 'accepted' | 'rejected',
   ): Promise<Record<string, unknown>> {
-    const tenantId = this.context.getTenantRequired().tenantId;
-    const record = await this.generations.findOneAndUpdate(
-      { tenantId, id, status: 'pending_review' },
-      { $set: { status: decision } },
-      { returnDocument: 'after', lean: true },
-    ).exec();
-    if (record === null) throw new ConflictException({
-      code: 'CMS_AI_REVIEW_CONFLICT', message: 'AI 草稿不存在或已完成审核',
-    });
-    return {
-      id: record.id, contentId: record.contentId, action: record.action,
-      status: record.status, modelId: record.modelId,
-      promptVersion: record.promptVersion, output: record.output,
-    };
+    return this.idempotency.execute(
+      'marketing.ai.draft.review',
+      idempotencyKey,
+      { id, decision },
+      async (session) => {
+        const tenantId = this.context.getTenantRequired().tenantId;
+        const record = await this.generations.findOneAndUpdate(
+          { tenantId, id, status: 'pending_review' },
+          { $set: { status: decision } },
+          { returnDocument: 'after', lean: true, session },
+        ).exec();
+        if (record === null) throw new ConflictException({
+          code: 'CMS_AI_REVIEW_CONFLICT', message: 'AI 草稿不存在或已完成审核',
+        });
+        return {
+          id: record.id, contentId: record.contentId, action: record.action,
+          status: record.status, modelId: record.modelId,
+          promptVersion: record.promptVersion, output: record.output,
+        };
+      },
+    );
   }
 
   private async cancelScheduledSideEffect(
@@ -814,4 +938,70 @@ function collectMediaIds(value: unknown, result = new Set<string>(), depth = 0):
 
 function versionConflict(): ConflictException {
   return new ConflictException({ code: 'CMS_VERSION_CONFLICT', message: '内容版本已更新，请刷新后重试' });
+}
+
+function assertIdempotencyKey(value: string): void {
+  if (!IDEMPOTENCY_KEY.test(value)) {
+    throw new BadRequestException({
+      code: 'IDEMPOTENCY_KEY_REQUIRED',
+      message: '写接口必须提供 8..128 位合法 Idempotency-Key',
+    });
+  }
+}
+
+function stableId(prefix: string, tenantId: string, idempotencyKey: string): string {
+  const digest = createHash('sha256')
+    .update(`${prefix}\0${tenantId}\0${idempotencyKey}`, 'utf8')
+    .digest('hex');
+  return `${prefix}-${digest}`;
+}
+
+function isDuplicateKeyError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const code = (error as { readonly code?: unknown }).code;
+  return code === DUPLICATE_KEY_CODE ||
+    (error instanceof Error && error.message.includes('E11000'));
+}
+
+function assertSameLeadSubmission(
+  existing: {
+    readonly audience?: unknown;
+    readonly name?: unknown;
+    readonly requestSummary?: unknown;
+    readonly attribution?: unknown;
+    readonly dedupeDigest?: unknown;
+  },
+  input: ReturnType<typeof parseLead>,
+  dedupeDigest: string,
+): void {
+  const attribution = existing.attribution;
+  const sameAttribution =
+    typeof attribution === 'object' &&
+    attribution !== null &&
+    !Array.isArray(attribution) &&
+    sameStringRecord(attribution as Readonly<Record<string, unknown>>, input.attribution);
+  if (
+    existing.audience !== input.audience ||
+    existing.name !== input.name ||
+    existing.requestSummary !== input.requestSummary ||
+    existing.dedupeDigest !== dedupeDigest ||
+    !sameAttribution
+  ) {
+    throw new ConflictException({
+      code: 'IDEMPOTENCY_KEY_REUSED',
+      message: '幂等键已被不同预约请求占用',
+    });
+  }
+}
+
+function sameStringRecord(
+  left: Readonly<Record<string, unknown>>,
+  right: Readonly<Record<string, string>>,
+): boolean {
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return leftKeys.length === rightKeys.length &&
+    leftKeys.every((key, index) =>
+      key === rightKeys[index] && typeof left[key] === 'string' && left[key] === right[key],
+    );
 }

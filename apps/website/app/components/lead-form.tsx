@@ -16,6 +16,10 @@ export function LeadForm({ locale, audience }: {
   const [state, setState] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
   const [captchaToken, setCaptchaToken] = useState('');
   const captchaFrame = useRef<HTMLIFrameElement>(null);
+  const pendingSubmission = useRef<{
+    readonly fingerprint: string;
+    readonly idempotencyKey: string;
+  } | null>(null);
   const zh = locale === 'zh-CN';
 
   useEffect(() => {
@@ -43,20 +47,33 @@ export function LeadForm({ locale, audience }: {
     event.preventDefault();
     setState('sending');
     const form = new FormData(event.currentTarget);
+    const lead = {
+      audience,
+      name: form.get('name'),
+      contact: form.get('contact'),
+      requestSummary: form.get('requestSummary'),
+      privacyAccepted: form.get('privacyAccepted') === 'on',
+      website: form.get('website'),
+    };
+    const fingerprint = JSON.stringify(lead);
+    if (pendingSubmission.current?.fingerprint !== fingerprint) {
+      pendingSubmission.current = {
+        fingerprint,
+        idempotencyKey: `lead.${crypto.randomUUID()}`,
+      };
+    }
     const response = await fetch(`${API_ORIGIN}/api/marketing/public/leads`, {
       method: 'POST',
       mode: 'cors',
       credentials: 'omit',
       cache: 'no-store',
       referrerPolicy: 'strict-origin-when-cross-origin',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': pendingSubmission.current.idempotencyKey,
+      },
       body: JSON.stringify({
-        audience,
-        name: form.get('name'),
-        contact: form.get('contact'),
-        requestSummary: form.get('requestSummary'),
-        privacyAccepted: form.get('privacyAccepted') === 'on',
-        website: form.get('website'),
+        ...lead,
         captchaToken,
       }),
     }).catch(() => null);

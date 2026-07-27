@@ -62,12 +62,12 @@
 ## 5. 覆盖率边界
 
 2026-07-28 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，331 个测试文件、3,084 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，332 个测试文件、3,163 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-86.05%（24,755/28,767）、分支 82.43%（16,325/19,803）、函数
-86.97%（4,502/5,176）、行 87.85%（22,647/25,778）。全仓四维已达到 Phase 0
-规定的 80% 门槛，分支高于最低命中数 482 个。全量命令通过
+86.62%（25,015/28,877）、分支 82.80%（16,437/19,850）、函数
+87.81%（4,564/5,197）、行 88.42%（22,892/25,890）。全仓四维已达到 Phase 0
+规定的 80% 门槛，分支高于最低命中数 557 个。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
 
@@ -77,7 +77,7 @@ MCP 确认服务、MCP HTTP 入口、MCP 运行时、MCP Tool 应用层、OP 审
 OP Webhook 双入口、
 薪酬影子周期、薪酬运行、薪酬审批、薪酬主数据、专业算薪主数据快照、薪酬四方对账、薪酬税务申报、薪酬 L4 数据加密、资金支付、Treasury 银行回盘、Treasury L4 数据加密、Treasury Outbox、Phase 4 REST 入口、Care 纪念日应用、Care 离职应用、校友授权清理协调、
 数据迁移控制面、数据迁移打包 CLI、Knowledge 考试运行 Relay、Knowledge 搜索索引 Relay、Knowledge REST 入口控制器、Knowledge 应用服务、Knowledge 考试应用与入口、Knowledge 领域模型、Knowledge 持久化 Schema、Knowledge 考试重放 CLI、考勤应用、考勤仓储、考勤供应商拉取、考勤供应商入站处理、电子签回调处理、
-招聘渠道拉取、招聘渠道入站处理、招聘渠道职位扇出、招聘渠道阶段扇出、招聘申请、招聘面试、招聘简历、招聘渠道职位投递、招聘渠道阶段回传、招聘管理、人才全周期应用、人才全周期仓储、招聘 Offer、Care 仓储、组织仓储、招聘仓储、知识库仓储、营销 CMS、OAuth 授权控制器、WebAuthn 强认证、入职应用与入口控制器和生产执行授权服务已建立
+招聘渠道拉取、招聘渠道入站处理、招聘渠道职位扇出、招聘渠道阶段扇出、招聘申请、招聘面试、招聘简历、招聘渠道职位投递、招聘渠道阶段回传、招聘管理、人才全周期应用、人才全周期仓储、招聘 Offer、Care 仓储、组织仓储、招聘仓储、知识库仓储、营销 CMS、营销入口与幂等核心、OAuth 授权控制器、WebAuthn 强认证、入职应用与入口控制器和生产执行授权服务已建立
 独立不可回退门禁：
 `pnpm quality:tenant-context-coverage`、
 `pnpm quality:audit-anchor-coverage`、
@@ -142,6 +142,7 @@ OP Webhook 双入口、
 `pnpm quality:recruitment-repositories-coverage`、
 `pnpm quality:knowledge-repositories-coverage`、
 `pnpm quality:marketing-cms-service-coverage`、
+`pnpm quality:marketing-entry-idempotency-coverage`、
 `pnpm quality:approval-repositories-coverage` 和
 `pnpm quality:approval-application-coverage`、
 `pnpm quality:approval-controller-coverage`、
@@ -149,7 +150,7 @@ OP Webhook 双入口、
 `pnpm quality:oauth-controller-coverage`、
 `pnpm quality:strong-auth-coverage`、
 `pnpm quality:onboarding-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。七十一条链路当前覆盖率分别为
+`pnpm quality:production-execution-authorization-coverage`。七十二条链路当前覆盖率分别为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -211,12 +212,13 @@ OP Webhook 双入口、
 95.97%/94.01%/100%/96.83%、
 100%/91.66%/100%/100%、100%/100%/100%/100%、
 97.44%/91.32%/100%/99.53%、100%/99.43%/100%/100%、
-100%/97.27%/100%/100%、
+100%/97.62%/100%/100%、
+99.70%/96.85%/100%/99.68%、
 96.09%/91.51%/100%/99.45%、
 100%/100%/100%/100%、
 100%/98.23%/100%/100% 和
-100%/100%/100%/100%（语句/分支/函数/行）；七十一项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明七十一条关键链路达标，
+100%/100%/100%/100%（语句/分支/函数/行）；七十二项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明七十二条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 OAuth 授权控制器已覆盖 45 项预注册回调、PKCE、授权决策、授权码、

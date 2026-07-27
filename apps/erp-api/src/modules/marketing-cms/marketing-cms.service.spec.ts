@@ -68,7 +68,7 @@ describe('MarketingCmsService 事务副作用', () => {
     };
     const service = createService({ connection, leads, sideEffects });
 
-    await expect(service.submitLead({
+    await expect(service.submitLead('lead-submit-key-001', {
       audience: 'brand',
       name: '测试联系人',
       contact: 'contact@example.com',
@@ -214,7 +214,10 @@ describe('MarketingCmsService 事务副作用', () => {
       }),
     };
     const service = createService({ sideEffects });
-    await expect(service.replaySideEffect('01J8ZQK7V0A2M4N6P8R0T2W4Y0'))
+    await expect(service.replaySideEffect(
+      'side-effect-replay-key-001',
+      '01J8ZQK7V0A2M4N6P8R0T2W4Y0',
+    ))
       .rejects.toMatchObject({
         response: { code: 'MARKETING_SIDE_EFFECT_NOT_REPLAYABLE' },
       });
@@ -720,16 +723,112 @@ describe('MarketingCmsService 线索安全与可靠性', () => {
 
   it('30 天内未关闭的相同联系人幂等返回且不重复保存 PII', async () => {
     const leads = {
-      findOne: vi.fn().mockReturnValue(chain({ id: 'lead-existing' })),
+      findOne: vi.fn()
+        .mockReturnValueOnce(chain(null))
+        .mockReturnValueOnce(chain({ id: 'lead-existing' })),
       create: vi.fn(),
     };
     const sideEffects = { create: vi.fn() };
     const service = createService({ leads, sideEffects });
 
-    await expect(service.submitLead(validLead))
+    await expect(service.submitLead('lead-submit-key-002', validLead))
       .resolves.toEqual({ leadId: 'lead-existing', duplicate: true });
     expect(leads.create).not.toHaveBeenCalled();
     expect(sideEffects.create).not.toHaveBeenCalled();
+  });
+
+  it('相同预约幂等键和相同业务请求直接返回稳定线索标识', async () => {
+    const existing = {
+      id: 'lead-stable-001',
+      audience: 'brand',
+      name: '测试联系人',
+      requestSummary: '需要完整营销咨询与交付方案',
+      attribution: { utmSource: 'search', utmCampaign: 'summer' },
+      dedupeDigest: 'd'.repeat(43),
+    };
+    const leads = {
+      findOne: vi.fn().mockReturnValue(chain(existing)),
+      create: vi.fn(),
+    };
+    const service = createService({ leads });
+
+    await expect(service.submitLead('lead-submit-key-005', validLead))
+      .resolves.toEqual({ leadId: 'lead-stable-001', duplicate: true });
+
+    expect(leads.findOne).toHaveBeenCalledOnce();
+    expect(leads.create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { audience: 'creator' },
+    { name: '其他联系人' },
+    { requestSummary: '不同的业务请求摘要' },
+    { dedupeDigest: 'x'.repeat(43) },
+    { attribution: null },
+    { attribution: [] },
+    { attribution: { utmSource: 'other', utmCampaign: 'summer' } },
+    { attribution: { utmSource: 1, utmCampaign: 'summer' } },
+    { attribution: { utmSource: 'search' } },
+  ])('相同预约幂等键被不同业务请求复用时冲突 %#', async (override) => {
+    const existing = {
+      id: 'lead-stable-001',
+      audience: 'brand',
+      name: '测试联系人',
+      requestSummary: '需要完整营销咨询与交付方案',
+      attribution: { utmSource: 'search', utmCampaign: 'summer' },
+      dedupeDigest: 'd'.repeat(43),
+      ...override,
+    };
+    const service = createService({
+      leads: { findOne: vi.fn().mockReturnValue(chain(existing)) },
+    });
+
+    await expect(service.submitLead('lead-submit-key-006', validLead))
+      .rejects.toMatchObject({ response: { code: 'IDEMPOTENCY_KEY_REUSED' } });
+  });
+
+  it('并发预约唯一键冲突后重读裁决同请求重放', async () => {
+    const existing = {
+      id: 'lead-stable-002',
+      audience: 'brand',
+      name: '测试联系人',
+      requestSummary: '需要完整营销咨询与交付方案',
+      attribution: { utmSource: 'search', utmCampaign: 'summer' },
+      dedupeDigest: 'd'.repeat(43),
+    };
+    const connection = {
+      transaction: vi.fn().mockRejectedValue({ code: 11000 }),
+    };
+    const service = createService({
+      connection,
+      leads: { findOne: vi.fn().mockReturnValue(chain(existing)) },
+    });
+
+    await expect(service.submitLead('lead-submit-key-007', validLead))
+      .resolves.toEqual({ leadId: 'lead-stable-002', duplicate: true });
+  });
+
+  it('预约唯一键冲突重读缺失时保留原错误，非唯一键错误不误判', async () => {
+    const duplicate = new Error('E11000 duplicate key');
+    const duplicateService = createService({
+      connection: { transaction: vi.fn().mockRejectedValue(duplicate) },
+      leads: { findOne: vi.fn().mockReturnValue(chain(null)) },
+    });
+    await expect(duplicateService.submitLead('lead-submit-key-008', validLead))
+      .rejects.toBe(duplicate);
+
+    const primitiveService = createService({
+      connection: { transaction: vi.fn().mockRejectedValue('transaction failed') },
+    });
+    await expect(primitiveService.submitLead('lead-submit-key-009', validLead))
+      .rejects.toBe('transaction failed');
+  });
+
+  it('公开预约服务自身拒绝非法幂等键', async () => {
+    const service = createService({});
+
+    await expect(service.submitLead('bad key', validLead))
+      .rejects.toMatchObject({ response: { code: 'IDEMPOTENCY_KEY_REQUIRED' } });
   });
 
   it('线索输入每项约束均失败关闭', async () => {
@@ -754,7 +853,7 @@ describe('MarketingCmsService 线索安全与可靠性', () => {
     const service = createService({});
 
     for (const value of invalidValues) {
-      await expect(service.submitLead(value))
+      await expect(service.submitLead('lead-submit-key-003', value))
         .rejects.toMatchObject({ response: { code: 'MARKETING_LEAD_INVALID' } });
     }
   });
@@ -769,7 +868,7 @@ describe('MarketingCmsService 线索安全与可靠性', () => {
       sideEffects: { create: vi.fn().mockResolvedValue(undefined) },
     });
 
-    await service.submitLead({
+    await service.submitLead('lead-submit-key-004', {
       ...validLead,
       utmSource: 1,
       utmCampaign: 'x'.repeat(129),
@@ -792,7 +891,10 @@ describe('MarketingCmsService 线索安全与可靠性', () => {
     const findOneAndUpdate = vi.fn().mockReturnValue(chain(record));
     const service = createService({ sideEffects: { findOneAndUpdate } });
 
-    await expect(service.replaySideEffect('event-001')).resolves.toEqual({
+    await expect(service.replaySideEffect(
+      'side-effect-replay-key-002',
+      'event-001',
+    )).resolves.toEqual({
       eventId: 'event-001',
       kind: 'lead_notification',
       status: 'pending',
@@ -814,6 +916,7 @@ describe('MarketingCmsService 线索安全与可靠性', () => {
     expect(findOneAndUpdate.mock.calls[0]?.[2]).toEqual({
       returnDocument: 'after',
       lean: true,
+      session: SESSION,
     });
   });
 
@@ -911,11 +1014,11 @@ describe('MarketingCmsService 线索安全与可靠性', () => {
       .mockReturnValueOnce(chain(null));
     const service = createService({ leads: { findOneAndUpdate } });
 
-    await expect(service.updateLeadStatus('lead-001', 'qualified', 1))
+    await expect(service.updateLeadStatus('lead-status-key-001', 'lead-001', 'qualified', 1))
       .resolves.toEqual(success);
-    await expect(service.updateLeadStatus('lead-001', 'invalid', 1))
+    await expect(service.updateLeadStatus('lead-status-key-002', 'lead-001', 'invalid', 1))
       .rejects.toMatchObject({ response: { code: 'MARKETING_LEAD_STATUS_INVALID' } });
-    await expect(service.updateLeadStatus('lead-001', 'closed', 1))
+    await expect(service.updateLeadStatus('lead-status-key-003', 'lead-001', 'closed', 1))
       .rejects.toMatchObject({ response: { code: 'CMS_VERSION_CONFLICT' } });
   });
 
@@ -926,12 +1029,14 @@ describe('MarketingCmsService 线索安全与可靠性', () => {
       .mockReturnValueOnce(chain(null));
     const service = createService({ leads: { findOneAndUpdate } });
 
-    await expect(service.assignLead('lead-001', 'actor:002', 1)).resolves.toEqual(success);
+    await expect(service.assignLead(
+      'lead-assignee-key-001', 'lead-001', 'actor:002', 1,
+    )).resolves.toEqual(success);
     for (const value of ['', 'bad id', 'a'.repeat(129)]) {
-      await expect(service.assignLead('lead-001', value, 1))
+      await expect(service.assignLead('lead-assignee-key-002', 'lead-001', value, 1))
         .rejects.toMatchObject({ response: { code: 'MARKETING_LEAD_ASSIGNEE_INVALID' } });
     }
-    await expect(service.assignLead('lead-001', 'actor-003', 1))
+    await expect(service.assignLead('lead-assignee-key-003', 'lead-001', 'actor-003', 1))
       .rejects.toMatchObject({ response: { code: 'CMS_VERSION_CONFLICT' } });
   });
 
@@ -941,7 +1046,9 @@ describe('MarketingCmsService 线索安全与可靠性', () => {
       .mockReturnValueOnce(chain(null));
     const service = createService({ leads: { findOneAndUpdate } });
 
-    const result = await service.addLeadNote('lead-001', '  已电话联系  ', 1);
+    const result = await service.addLeadNote(
+      'lead-note-key-001', 'lead-001', '  已电话联系  ', 1,
+    );
     expect(result).toMatchObject({
       id: 'lead-001',
       note: { actorId: 'actor-001', body: '已电话联系' },
@@ -959,13 +1066,13 @@ describe('MarketingCmsService 线索安全与可靠性', () => {
         },
         $inc: { version: 1 },
       },
-      { returnDocument: 'after', lean: true },
+      { returnDocument: 'after', lean: true, session: SESSION },
     );
     for (const value of [' ', 'a'.repeat(2001)]) {
-      await expect(service.addLeadNote('lead-001', value, 1))
+      await expect(service.addLeadNote('lead-note-key-002', 'lead-001', value, 1))
         .rejects.toMatchObject({ response: { code: 'MARKETING_LEAD_NOTE_INVALID' } });
     }
-    await expect(service.addLeadNote('lead-001', '再次联系', 1))
+    await expect(service.addLeadNote('lead-note-key-003', 'lead-001', '再次联系', 1))
       .rejects.toMatchObject({ response: { code: 'CMS_VERSION_CONFLICT' } });
   });
 });
@@ -991,21 +1098,101 @@ describe('MarketingCmsService 媒体与 AI 人工复核', () => {
     const media = { create: vi.fn().mockResolvedValue(undefined) };
     const service = createService({ mediaGateway, media });
 
-    await expect(service.createMediaUpload(validMedia)).resolves.toMatchObject({
+    await expect(service.createMediaUpload(
+      'media-upload-key-001', validMedia,
+    )).resolves.toMatchObject({
       uploadUrl: 'https://upload.invalid/object-001',
       expiresAt: NOW,
       version: 1,
     });
-    expect(mediaGateway.createUpload).toHaveBeenCalledWith(expect.objectContaining({
-      tenantId: 'tenant-001',
-      siteId: 'gaoq',
-      fileName: 'hero.png',
+    expect(mediaGateway.createUpload).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: 'tenant-001',
+        siteId: 'gaoq',
+        fileName: 'hero.png',
+      }),
+      'media-upload-key-001',
+    );
+    expect(media.create).toHaveBeenCalledWith(
+      [expect.objectContaining({
+        tenantId: 'tenant-001',
+        objectRef: 'object-001',
+        status: 'uploading',
+      })],
+      { session: SESSION },
+    );
+  });
+
+  it('媒体上传幂等重放以安全快照重新签发短时 URL', async () => {
+    const replay = vi.fn(async (
+      _operation: string,
+      _key: string,
+      _request: unknown,
+      _handler: unknown,
+      restore: (
+        stored: Readonly<Record<string, unknown>>,
+      ) => Promise<Record<string, unknown>>,
+    ) => restore({
+      id: 'media-stable-001',
+      objectRef: 'object-ref-001',
+      version: 1,
     }));
-    expect(media.create).toHaveBeenCalledWith(expect.objectContaining({
-      tenantId: 'tenant-001',
-      objectRef: 'object-001',
-      status: 'uploading',
-    }));
+    const mediaGateway = {
+      createUpload: vi.fn().mockResolvedValue({
+        objectRef: 'object-ref-001',
+        uploadUrl: 'https://upload.invalid/refreshed',
+        expiresAt: NOW,
+      }),
+    };
+    const service = createService({
+      idempotency: { executeWithEphemeralResult: replay },
+      mediaGateway,
+    });
+
+    await expect(service.createMediaUpload('media-upload-key-004', validMedia))
+      .resolves.toEqual({
+        id: 'media-stable-001',
+        uploadUrl: 'https://upload.invalid/refreshed',
+        expiresAt: NOW,
+        version: 1,
+      });
+    const gatewayInput = mediaGateway.createUpload.mock.calls[0]?.[0] as unknown as {
+      readonly mediaId?: unknown;
+    };
+    expect(typeof gatewayInput.mediaId).toBe('string');
+    expect(String(gatewayInput.mediaId)).toMatch(/^media-/u);
+    expect(mediaGateway.createUpload.mock.calls[0]?.[1]).toBe('media-upload-key-004');
+  });
+
+  it('媒体上传幂等重放拒绝网关替换对象引用', async () => {
+    const idempotency = {
+      executeWithEphemeralResult: vi.fn(async (
+        _operation: string,
+        _key: string,
+        _request: unknown,
+        _handler: unknown,
+        replay: (
+          stored: Readonly<Record<string, unknown>>,
+        ) => Promise<Record<string, unknown>>,
+      ) => replay({
+        id: 'media-stable-001',
+        objectRef: 'object-ref-001',
+        version: 1,
+      })),
+    };
+    const service = createService({
+      idempotency,
+      mediaGateway: {
+        createUpload: vi.fn().mockResolvedValue({
+          objectRef: 'object-ref-replaced',
+          uploadUrl: 'https://upload.invalid/replaced',
+          expiresAt: NOW,
+        }),
+      },
+    });
+
+    await expect(service.createMediaUpload('media-upload-key-005', validMedia))
+      .rejects.toMatchObject({ response: { code: 'CMS_MEDIA_OBJECT_MISMATCH' } });
   });
 
   it('媒体元数据每项约束均失败关闭', async () => {
@@ -1034,7 +1221,7 @@ describe('MarketingCmsService 媒体与 AI 人工复核', () => {
     const service = createService({});
 
     for (const value of invalidValues) {
-      await expect(service.createMediaUpload(value))
+      await expect(service.createMediaUpload('media-upload-key-002', value))
         .rejects.toMatchObject({ response: { code: 'CMS_MEDIA_INVALID' } });
     }
   });
@@ -1078,7 +1265,8 @@ describe('MarketingCmsService 媒体与 AI 人工复核', () => {
     };
     const service = createService({ media, mediaGateway });
 
-    await expect(service.verifyMedia('media-001', 1)).resolves.toMatchObject({
+    await expect(service.verifyMedia('media-verify-key-001', 'media-001', 1))
+      .resolves.toMatchObject({
       id: 'media-001',
       status: 'ready',
       scanEvidenceId: 'scan-001',
@@ -1090,7 +1278,7 @@ describe('MarketingCmsService 媒体与 AI 人工复核', () => {
     const missingService = createService({
       media: { findOne: vi.fn().mockReturnValue(chain(null)) },
     });
-    await expect(missingService.verifyMedia('missing', 1))
+    await expect(missingService.verifyMedia('media-verify-key-002', 'missing', 1))
       .rejects.toMatchObject({ response: { code: 'CMS_MEDIA_NOT_FOUND' } });
 
     const wrongState = {
@@ -1103,7 +1291,7 @@ describe('MarketingCmsService 媒体与 AI 人工复核', () => {
     const stateService = createService({
       media: { findOne: vi.fn().mockReturnValue(chain(wrongState)) },
     });
-    await expect(stateService.verifyMedia('media-001', 1))
+    await expect(stateService.verifyMedia('media-verify-key-003', 'media-001', 1))
       .rejects.toMatchObject({ response: { code: 'CMS_VERSION_CONFLICT' } });
 
     const uploading = { ...wrongState, status: 'uploading', version: 1 };
@@ -1113,7 +1301,7 @@ describe('MarketingCmsService 媒体与 AI 人工复核', () => {
         verifyUpload: vi.fn().mockResolvedValue({ objectRef: 'object-other' }),
       },
     });
-    await expect(mismatchService.verifyMedia('media-001', 1))
+    await expect(mismatchService.verifyMedia('media-verify-key-004', 'media-001', 1))
       .rejects.toMatchObject({ response: { code: 'CMS_MEDIA_OBJECT_MISMATCH' } });
 
     const conflictService = createService({
@@ -1130,7 +1318,7 @@ describe('MarketingCmsService 媒体与 AI 人工复核', () => {
         }),
       },
     });
-    await expect(conflictService.verifyMedia('media-001', 1))
+    await expect(conflictService.verifyMedia('media-verify-key-005', 'media-001', 1))
       .rejects.toMatchObject({ response: { code: 'CMS_VERSION_CONFLICT' } });
   });
 
@@ -1176,7 +1364,7 @@ describe('MarketingCmsService 媒体与 AI 人工复核', () => {
       generations,
     });
 
-    await expect(service.generateAiDraft('content-001', {
+    await expect(service.generateAiDraft('ai-generate-key-001', 'content-001', {
       action: 'rewrite',
       targetLocale: 'zh-CN',
       instruction: '更简洁',
@@ -1185,17 +1373,23 @@ describe('MarketingCmsService 媒体与 AI 人工复核', () => {
       modelId: 'model-001',
       promptVersion: 'prompt-v1',
     });
-    expect(aiGateway.generate).toHaveBeenCalledWith(expect.objectContaining({
-      action: 'rewrite',
-      targetLocale: 'zh-CN',
-      instruction: '更简洁',
-    }));
-    expect(generations.create).toHaveBeenCalledWith(expect.objectContaining({
-      tenantId: 'tenant-001',
-      actorId: 'actor-001',
-      contentId: 'content-001',
-      status: 'pending_review',
-    }));
+    expect(aiGateway.generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'rewrite',
+        targetLocale: 'zh-CN',
+        instruction: '更简洁',
+      }),
+      'ai-generate-key-001',
+    );
+    expect(generations.create).toHaveBeenCalledWith(
+      [expect.objectContaining({
+        tenantId: 'tenant-001',
+        actorId: 'actor-001',
+        contentId: 'content-001',
+        status: 'pending_review',
+      })],
+      { session: SESSION },
+    );
   });
 
   it('AI 请求每项约束均失败关闭', async () => {
@@ -1211,7 +1405,7 @@ describe('MarketingCmsService 媒体与 AI 人工复核', () => {
     const service = createService({});
 
     for (const value of invalidValues) {
-      await expect(service.generateAiDraft('content-001', value))
+      await expect(service.generateAiDraft('ai-generate-key-002', 'content-001', value))
         .rejects.toMatchObject({ response: { code: 'CMS_AI_REQUEST_INVALID' } });
     }
   });
@@ -1231,8 +1425,10 @@ describe('MarketingCmsService 媒体与 AI 人工复核', () => {
       .mockReturnValueOnce(chain(null));
     const service = createService({ generations: { findOneAndUpdate } });
 
-    await expect(service.reviewAiDraft('generation-001', 'accepted')).resolves.toEqual(accepted);
-    await expect(service.reviewAiDraft('generation-001', 'rejected'))
+    await expect(service.reviewAiDraft(
+      'ai-review-key-001', 'generation-001', 'accepted',
+    )).resolves.toEqual(accepted);
+    await expect(service.reviewAiDraft('ai-review-key-002', 'generation-001', 'rejected'))
       .rejects.toMatchObject({ response: { code: 'CMS_AI_REVIEW_CONFLICT' } });
   });
 });
@@ -1253,6 +1449,14 @@ function createService(overrides: Record<string, unknown>): MarketingCmsService 
       _input: unknown,
       work: (session: typeof SESSION) => Promise<unknown>,
     ) => work(SESSION)),
+    executeWithEphemeralResult: vi.fn(async (
+      _operation: string,
+      _key: string,
+      _input: unknown,
+      work: (
+        session: typeof SESSION,
+      ) => Promise<{ readonly stored: unknown; readonly result: unknown }>,
+    ) => (await work(SESSION)).result),
   };
   const config = {
     get: (name: string) => name === 'MARKETING_PUBLIC_TENANT_ID'
@@ -1269,7 +1473,7 @@ function createService(overrides: Record<string, unknown>): MarketingCmsService 
     (overrides.generations ?? {}) as never,
     (overrides.outbox ?? {}) as never,
     context as never,
-    idempotency as never,
+    (overrides.idempotency ?? idempotency) as never,
     config as never,
     (overrides.leadCrypto ?? {
       blindIndex: vi.fn().mockReturnValue('d'.repeat(43)),

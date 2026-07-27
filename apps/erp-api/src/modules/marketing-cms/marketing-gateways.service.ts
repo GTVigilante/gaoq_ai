@@ -33,32 +33,47 @@ export type MarketingAiResult = z.infer<typeof aiResponse>;
 export class MarketingMediaGateway {
   constructor(private readonly config: ConfigService<AppEnvironment, true>) {}
 
-  createUpload(input: Readonly<Record<string, unknown>>): Promise<MarketingUploadTicket> {
-    return this.call('/v1/uploads', input, uploadResponse);
+  createUpload(
+    input: Readonly<Record<string, unknown>>,
+    idempotencyKey: string,
+  ): Promise<MarketingUploadTicket> {
+    return this.call('/v1/uploads', input, idempotencyKey, uploadResponse);
   }
 
-  verifyUpload(input: Readonly<Record<string, unknown>>): Promise<MarketingScanReceipt> {
-    return this.call('/v1/uploads/verify', input, scanResponse);
+  verifyUpload(
+    input: Readonly<Record<string, unknown>>,
+    idempotencyKey: string,
+  ): Promise<MarketingScanReceipt> {
+    return this.call('/v1/uploads/verify', input, idempotencyKey, scanResponse);
   }
 
   private async call<T>(
     path: string,
     input: Readonly<Record<string, unknown>>,
+    idempotencyKey: string,
     schema: z.ZodType<T>,
   ): Promise<T> {
     const endpoint = this.config.get('MARKETING_MEDIA_GATEWAY_ENDPOINT', { infer: true });
     const token = this.config.get('MARKETING_MEDIA_GATEWAY_BEARER_TOKEN', { infer: true });
     if (endpoint === undefined || token === undefined) throw unavailable('媒体');
-    const response = await fetch(new URL(path, endpoint), {
-      method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify(input),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) throw unavailable('媒体');
-    const parsed = schema.safeParse(await response.json());
-    if (!parsed.success) throw unavailable('媒体');
-    return parsed.data;
+    try {
+      const response = await fetch(new URL(path, endpoint), {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+          'idempotency-key': idempotencyKey,
+        },
+        body: JSON.stringify(input),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) throw unavailable('媒体');
+      const parsed = schema.safeParse(await response.json());
+      if (!parsed.success) throw unavailable('媒体');
+      return parsed.data;
+    } catch {
+      throw unavailable('媒体');
+    }
   }
 }
 
@@ -67,20 +82,31 @@ export class MarketingMediaGateway {
 export class MarketingAiGateway {
   constructor(private readonly config: ConfigService<AppEnvironment, true>) {}
 
-  async generate(input: Readonly<Record<string, unknown>>): Promise<MarketingAiResult> {
+  async generate(
+    input: Readonly<Record<string, unknown>>,
+    idempotencyKey: string,
+  ): Promise<MarketingAiResult> {
     const endpoint = this.config.get('MARKETING_AI_GATEWAY_ENDPOINT', { infer: true });
     const token = this.config.get('MARKETING_AI_GATEWAY_BEARER_TOKEN', { infer: true });
     if (endpoint === undefined || token === undefined) throw unavailable('AI');
-    const response = await fetch(new URL('/v1/generate', endpoint), {
-      method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify(input),
-      signal: AbortSignal.timeout(30_000),
-    });
-    if (!response.ok) throw unavailable('AI');
-    const parsed = aiResponse.safeParse(await response.json());
-    if (!parsed.success) throw unavailable('AI');
-    return parsed.data;
+    try {
+      const response = await fetch(new URL('/v1/generate', endpoint), {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+          'idempotency-key': idempotencyKey,
+        },
+        body: JSON.stringify(input),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!response.ok) throw unavailable('AI');
+      const parsed = aiResponse.safeParse(await response.json());
+      if (!parsed.success) throw unavailable('AI');
+      return parsed.data;
+    } catch {
+      throw unavailable('AI');
+    }
   }
 }
 
