@@ -18,6 +18,12 @@
   `com.gaoq.*` 名称只通过显式迁移入口兼容一个发布迭代，主验证器永久拒绝。
 - 组织增量采用 Outbox CloudEvents；首次同步和事件版本缺口使用受服务身份保护的
   游标快照修复。
+- 快照只允许携带 `erp:payroll:master-data:read` 的可信 `service|system_job`
+  身份读取。`snapshotId/snapshotDigest` 必须绑定可信租户、契约版本和稳定排序
+  后的脱敏投影；游标只接受规范 Base64URL、精确 `digest/offset` 字段及 200 条
+  页边界。跨租户重放、主数据变化、未知字段、非规范编码和伪造偏移均失败关闭。
+- 每页读取写 R1 审计，只记录快照摘要、偏移和三类实体计数，不记录姓名或人员
+  正文；审计不可用时不得返回批量快照。
 
 ## OAuth 注册
 
@@ -53,6 +59,8 @@
 - `PAYROLL_SYSTEM_MODE=external` 时 ERP 旧 Payroll/Treasury REST 入口返回 410，
   禁止继续形成工资或资金事实。
 - ERP 门户只进行统一登录和受控跳转；工资明细不复制到 ERP。
+- 专业算薪批量主数据快照是专用服务到服务 REST，不注册 MCP Resource/Tool；
+  AI 不得借 MCP 绕过批量导出限制。
 - 真实发薪切换仍必须完成两个完整影子周期、零未解释差异、回滚演练和财务签署。
 
 ## 当前代码切换
