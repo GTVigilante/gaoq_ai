@@ -68,7 +68,7 @@ const createService = (actorType: 'user' | 'service' = 'service') =>
 describe('算薪组织主数据快照', () => {
   it('只返回脱敏组织字段和 GaoQ employeeId', async () => {
     const page = await createService().page();
-    expect(page.contractVersion).toBe('0.1.0');
+    expect(page.contractVersion).toBe('1.0.0');
     expect(page.employees[0]?.employeeId).toBe('employee-001');
     expect(JSON.stringify(page)).not.toMatch(/bank|idCard|taxId|mobile/i);
     expect(page.snapshotDigest).toMatch(/^[a-f0-9]{64}$/);

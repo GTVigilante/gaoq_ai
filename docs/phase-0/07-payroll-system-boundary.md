@@ -11,10 +11,11 @@
 
 - GaoQ OAuth 为算薪 API 注册独立 resource/audience，算薪通过 GaoQ JWKS 验签。
 - 跨系统员工主键固定为 `tenantId + employeeId`。
-- `@gaoq/platform-contracts` 定义可信身份、整数分金额、CloudEvents、组织投影和
-  脱敏工资摘要；`0.2.0` 起使用逐事件严格 Zod Schema，并导出
-  `PAYROLL_PLATFORM_EVENTS_JSON_SCHEMA` Draft-07；生产通过内部 npm Registry
-  锁定精确版本。
+- `@gaoq/platform-contracts@1.0.0` 定义可信身份、整数分金额、CloudEvents、
+  组织投影、脱敏工资摘要、逐事件运行时校验器和 JSON Schema；生产通过内部
+  npm Registry 锁定精确版本。
+- 共享事件名严格采用 `cn.gaoq.<域>.<实体>.<动作>.v<主版本>`。旧
+  `com.gaoq.*` 名称只通过显式迁移入口兼容一个发布迭代，主验证器永久拒绝。
 - 组织增量采用 Outbox CloudEvents；首次同步和事件版本缺口使用受服务身份保护的
   游标快照修复。
 
@@ -60,4 +61,6 @@
   形成工资事实。
 - 专业算薪系统已实现权威快照同步、事件 Inbox、字段加密、确定性整数分计算、
   提交审批、职责分离锁定和本人工资条访问。
+- ERP 与专业算薪的七类共享事件现按完整信封、精确字段集、状态、日期、范围、
+  摘要和敏感字段递归拒绝规则校验；机器可读契约由共享包统一导出。
 - 生产事实源切换仍受上述两个影子周期门禁约束；代码就绪不等同于批准真实发薪。

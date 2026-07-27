@@ -46,9 +46,9 @@
     "migrate:phase5:treasury-batch-migration-indexes": "node dist/migrations/phase-5-treasury-batch-migration-indexes.js",
     "migrate:phase5:treasury-return-migration-indexes": "node dist/migrations/phase-5-treasury-return-migration-indexes.js",
     "migration:package": "node dist/cli/data-migration-package.js",
-    "typecheck": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && tsc --noEmit",
-    "test": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && vitest run",
-    "test:coverage": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && vitest run --coverage"
+    "typecheck": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && pnpm --filter @gaoq/platform-contracts build && tsc --noEmit",
+    "test": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && pnpm --filter @gaoq/platform-contracts build && vitest run",
+    "test:coverage": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && pnpm --filter @gaoq/platform-contracts build && vitest run --coverage"
   },
   "dependencies": {
     "@gaoq/shared-types": "workspace:*",

@@ -99,7 +99,7 @@ export class PayrollMasterDataSnapshotService {
     const selected = entries.slice(offset, offset + PAGE_SIZE);
     const nextOffset = offset + selected.length;
     return Object.freeze({
-      contractVersion: '0.1.0',
+      contractVersion: '1.0.0',
       snapshotId: snapshotDigest,
       generatedAt: new Date().toISOString(),
       nextCursor: nextOffset < entries.length

@@ -6,7 +6,7 @@ import type {
 
 /** 主数据快照游标分页响应。 */
 export interface PayrollMasterDataSnapshotPage {
-  readonly contractVersion: '0.1.0';
+  readonly contractVersion: '1.0.0';
   readonly snapshotId: string;
   readonly generatedAt: string;
   readonly nextCursor: string | null;
