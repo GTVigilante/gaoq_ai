@@ -103,6 +103,17 @@ describe('Payroll 锁定代发源端口', () => {
     await expect(store.context.run({ tenant, actor }, () =>
       store.service.getLockedDisbursementSourceForMigration('period-001', 6)))
       .rejects.toMatchObject({ response: { code: 'PAYROLL_DISBURSEMENT_MIGRATION_READER_DENIED' } });
+
+    await expect(store.context.run({
+      tenant,
+      actor: {
+        ...migrationReader,
+        scopes: ['erp:treasury:migration:write'],
+      },
+    }, () => store.service.getLockedDisbursementSourceForMigration('period-001', 6)))
+      .rejects.toMatchObject({
+        response: { code: 'PAYROLL_DISBURSEMENT_MIGRATION_READER_DENIED' },
+      });
   });
 
   it('聚合摘要错位时拒绝向资金模块提供员工实发数据', async () => {
@@ -111,5 +122,78 @@ describe('Payroll 锁定代发源端口', () => {
       store.service.getLockedDisbursementSource('period-001', 6))).rejects.toMatchObject({
       response: { code: 'PAYROLL_DISBURSEMENT_SOURCE_INTEGRITY_FAILED' },
     });
+  });
+
+  it('代发来源引用要求白名单标识和正整数版本', async () => {
+    const store = assemble();
+    const invalid = [
+      ['bad id', 6],
+      ['period-001', 1.5],
+      ['period-001', 0],
+    ] as const;
+
+    for (const [periodId, version] of invalid) {
+      await expect(store.context.run({ tenant, actor }, () =>
+        store.service.getLockedDisbursementSource(periodId, version)))
+        .rejects.toMatchObject({
+          response: { code: 'PAYROLL_DISBURSEMENT_SOURCE_REFERENCE_INVALID' },
+        });
+    }
+    expect(store.periods.findOne).not.toHaveBeenCalled();
+  });
+
+  it('空员工集、重复员工和逐行摘要篡改均失败关闭', async () => {
+    const empty = assemble();
+    empty.period.employeeCount = 0;
+    empty.calculationLines.find.mockReturnValue(sortedQuery([]));
+    await expect(empty.context.run({ tenant, actor }, () =>
+      empty.service.getLockedDisbursementSource('period-001', 6)))
+      .rejects.toMatchObject({
+        response: { code: 'PAYROLL_DISBURSEMENT_SOURCE_INTEGRITY_FAILED' },
+      });
+
+    const duplicate = assemble();
+    duplicate.period.employeeCount = 2;
+    duplicate.calculationLines.find.mockReturnValue(sortedQuery([
+      {
+        id: 'line-001',
+        employeeId: 'employee-001',
+        resultHash: result.resultHash,
+        dataKeyId: 'key',
+        dataIv: 'iv',
+        dataCiphertext: 'cipher',
+        dataAuthTag: 'tag',
+      },
+      {
+        id: 'line-002',
+        employeeId: 'employee-001',
+        resultHash: result.resultHash,
+        dataKeyId: 'key',
+        dataIv: 'iv',
+        dataCiphertext: 'cipher',
+        dataAuthTag: 'tag',
+      },
+    ]));
+    await expect(duplicate.context.run({ tenant, actor }, () =>
+      duplicate.service.getLockedDisbursementSource('period-001', 6)))
+      .rejects.toMatchObject({
+        response: { code: 'PAYROLL_DISBURSEMENT_SOURCE_INTEGRITY_FAILED' },
+      });
+
+    const tampered = assemble();
+    tampered.calculationLines.find.mockReturnValue(sortedQuery([{
+      id: 'line-001',
+      employeeId: 'employee-001',
+      resultHash: 'x'.repeat(43),
+      dataKeyId: 'key',
+      dataIv: 'iv',
+      dataCiphertext: 'cipher',
+      dataAuthTag: 'tag',
+    }]));
+    await expect(tampered.context.run({ tenant, actor }, () =>
+      tampered.service.getLockedDisbursementSource('period-001', 6)))
+      .rejects.toMatchObject({
+        response: { code: 'PAYROLL_DISBURSEMENT_SOURCE_INTEGRITY_FAILED' },
+      });
   });
 });
