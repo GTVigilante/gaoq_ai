@@ -119,6 +119,12 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/core/production-execution/production-execution-authorization.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/org/application/org-application.service.ts': {
           branches: 90,
           functions: 90,
