@@ -94,8 +94,8 @@ export class RecruitmentChannelPullService {
       tenantId: trusted.tenant.tenantId, id: bindingId, status: 'active',
     }).lean().exec();
     if (binding === null) throw new Error('RECRUITMENT_CHANNEL_BINDING_NOT_FOUND');
-    const credential = this.secrets.resolve(binding.credentialSecretRef);
     try {
+      const credential = this.secrets.resolve(binding.credentialSecretRef);
       const cursor = this.readCursor(binding);
       const result = await this.registry.adapter(binding.channelCode).pullApplications(
         credential,
@@ -115,7 +115,7 @@ export class RecruitmentChannelPullService {
       if (updated.matchedCount !== 1) throw new Error('RECRUITMENT_CHANNEL_BINDING_LEASE_LOST');
       return result.deliveries.length;
     } catch (error) {
-      await this.bindings.updateOne(
+      const failed = await this.bindings.updateOne(
         { tenantId: binding.tenantId, id: binding.id, status: 'active' },
         { $set: {
           nextPollAt: new Date(Date.now() + FAILURE_RETRY_MS),
@@ -123,6 +123,9 @@ export class RecruitmentChannelPullService {
         } },
         { runValidators: true },
       );
+      if (failed.matchedCount !== 1) {
+        throw new Error('RECRUITMENT_CHANNEL_BINDING_FAILURE_LEASE_LOST', { cause: error });
+      }
       throw error;
     }
   }
@@ -193,10 +196,21 @@ export class RecruitmentChannelPullService {
   }
 
   private readCursor(binding: RecruitmentChannelBindingRecord): string | null {
+    const cursorFields = [
+      binding.cursorKeyId,
+      binding.cursorIv,
+      binding.cursorCiphertext,
+      binding.cursorAuthTag,
+    ];
+    if (cursorFields.every((value) => value === null)) return null;
     if (
-      binding.cursorKeyId === null || binding.cursorIv === null ||
-      binding.cursorCiphertext === null || binding.cursorAuthTag === null
-    ) return null;
+      binding.cursorKeyId === null ||
+      binding.cursorIv === null ||
+      binding.cursorCiphertext === null ||
+      binding.cursorAuthTag === null
+    ) {
+      throw new Error('RECRUITMENT_CHANNEL_CURSOR_INVALID');
+    }
     const value = this.crypto.unprotect({
       tenantId: binding.tenantId, resourceType: 'channel_cursor', resourceId: binding.id,
     }, {
