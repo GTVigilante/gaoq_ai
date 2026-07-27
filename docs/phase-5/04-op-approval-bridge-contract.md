@@ -37,6 +37,12 @@
 
 Worker 使用 `system_job` 身份及唯一 Scope `erp:approval:op:ingest`：先以 Inbox ULID 预占来源单据唯一桥接，再按 ERP 员工主数据解析发起主体，最后以同一确定性 ULID 原子创建并提交审批，同时写审批动作、通知和 Outbox。该顺序阻止相同来源单据的并发不同 eventId 创建重复审批，并支持崩溃后按原 eventId 恢复。不存在或停用员工、未发布模板、非法表单均拒绝。外部 eventId、来源单据和审批实例均有租户前缀唯一约束。
 
+Worker 必须先持久化 Inbox 的 `completed|failed` 终态，再写本切片的系统审计。
+终态提交后的审计故障只记录稳定错误码和结果类型，不得把已完成 Inbox 回写为
+失败、重复创建审批、覆盖原始业务异常或把审计异常交给队列重试。审批应用返回的
+4xx 错误码只有符合 `^[A-Z0-9_]{3,128}$` 时才能进入 Inbox 与审计元数据；其他
+响应统一收敛为 `OP_APPROVAL_HTTP_REJECTED`。
+
 结果 relay 只消费 CanonicalApproval 的终态 Outbox：
 
 - `cn.gaoq.erp.approval_instance.decided.v1`，仅 `approved/rejected`；
@@ -74,4 +80,7 @@ timestamp\nnonce\nPUT\npath\nexternalTenantId\nidempotencyKey\nSHA256_BASE64URL(
 - 正常队列下审批创建提交 p95 < 5s；终态结果首次回推 p95 < 10s。
 - 告警：验签失败突增、Redis 防重放不可用、Inbox 最老积压 > 5 分钟、Outbox/投递最老积压 > 5 分钟、dead/manual_review > 0、审计后提交失败。
 - 验收必须覆盖跨租户隔离、客户端伪造 tenantId、签名/时间戳/nonce、同事件异载荷、Worker 崩溃恢复、模板停用、员工停用、审批终态重复事件、OP 超时/限流/4xx/5xx/超大响应、人工重试幂等和 MCP 无正文泄漏。
+- 仓库门禁 `pnpm quality:op-approval-request-coverage` 必须覆盖任务参数、载荷摘要与
+  时间、路由、来源唯一桥接、租约、永久/瞬时失败分类和成功/失败审计故障，目标
+  文件的语句、分支、函数和行覆盖率均不得低于 90%。
 - 上线前完成追加式索引 dry-run、OP 沙箱双向联调、Secret Manager 注入、容量评估、备份恢复抽查、断连追赶演练和审计抽查。未满足时不得宣称生产验收完成。

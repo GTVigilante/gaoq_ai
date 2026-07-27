@@ -1,12 +1,15 @@
 import { createHash } from 'node:crypto';
 
-import { HttpException, Injectable } from '@nestjs/common';
+import { HttpException, Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ULID_PATTERN } from '@gaoq/shared-utils';
 import type { Model } from 'mongoose';
 import { z } from 'zod';
 
-import { AuditService } from '../../core/audit/audit.service.js';
+import {
+  AuditService,
+  type SystemAuditRecordInput,
+} from '../../core/audit/audit.service.js';
 import { TenantContextService } from '../../core/tenant/tenant-context.service.js';
 import { ApprovalApplicationService } from '../approval/application/approval-application.service.js';
 import {
@@ -32,6 +35,8 @@ const jobSchema = z.object({
 /** 解密 OP 请求并复用 ApprovalApplicationService 原子创建、提交 CanonicalApproval。 */
 @Injectable()
 export class OpApprovalRequestService {
+  private readonly logger = new Logger(OpApprovalRequestService.name);
+
   constructor(
     @InjectModel(OpApprovalRequestInboxRecord.name)
     private readonly inbox: Model<OpApprovalRequestInboxDocument>,
@@ -97,7 +102,7 @@ export class OpApprovalRequestService {
       ));
       await this.ensureBridge(claimed, route.templateCode, envelope.data, result.instance);
       await this.finish(claimed.tenantId, claimed.id, 'completed', null);
-      await this.audit.recordSystem(claimed.tenantId, {
+      await this.auditAfterCommit(claimed.tenantId, {
         action: 'op.approval.create_submit', resourceType: 'approval_instance',
         resourceId: result.instance.id, riskLevel: 'R2', outcome: 'success', traceId: claimed.id,
         metadata: {
@@ -109,7 +114,7 @@ export class OpApprovalRequestService {
     } catch (error) {
       const code = failureCode(error);
       await this.finish(claimed.tenantId, claimed.id, 'failed', code);
-      await this.audit.recordSystem(claimed.tenantId, {
+      await this.auditAfterCommit(claimed.tenantId, {
         action: 'op.approval.create_submit', resourceType: 'op_approval_request',
         resourceId: claimed.id, riskLevel: 'R2', outcome: 'failure', traceId: claimed.id,
         metadata: { failureCode: code },
@@ -206,7 +211,23 @@ export class OpApprovalRequestService {
     return `opapp:${createHash('sha256')
       .update(JSON.stringify([tenantId, clientId, externalEventId]), 'utf8').digest('base64url')}`;
   }
+
+  private async auditAfterCommit(
+    tenantId: string,
+    input: SystemAuditRecordInput,
+  ): Promise<void> {
+    try {
+      await this.audit.recordSystem(tenantId, input);
+    } catch {
+      this.logger.error({
+        code: 'OP_APPROVAL_REQUEST_AUDIT_AFTER_COMMIT_FAILED',
+        outcome: input.outcome,
+      });
+    }
+  }
 }
+
+const FAILURE_CODE_PATTERN = /^[A-Z0-9_]{3,128}$/;
 
 function isPermanent(error: unknown): boolean {
   return error instanceof z.ZodError || error instanceof SyntaxError ||
@@ -223,12 +244,14 @@ function failureCode(error: unknown): string {
   if (error instanceof HttpException) {
     const response = error.getResponse();
     if (typeof response === 'object' && response !== null &&
-      typeof (response as { code?: unknown }).code === 'string') {
+      typeof (response as { code?: unknown }).code === 'string' &&
+      FAILURE_CODE_PATTERN.test((response as { code: string }).code)) {
       return (response as { code: string }).code;
     }
+    return 'OP_APPROVAL_HTTP_REJECTED';
   }
   if (isDuplicateKeyError(error)) return 'OP_APPROVAL_UNIQUE_CONFLICT';
-  if (error instanceof Error && /^[A-Z0-9_]{3,128}$/.test(error.message)) return error.message;
+  if (error instanceof Error && FAILURE_CODE_PATTERN.test(error.message)) return error.message;
   return 'OP_APPROVAL_PROCESSING_FAILED';
 }
 
