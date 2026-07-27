@@ -62,12 +62,12 @@
 ## 5. 覆盖率边界
 
 2026-07-28 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，333 个测试文件、3,236 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，333 个测试文件、3,261 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-86.80%（25,123/28,943）、分支 83.15%（16,591/19,953）、函数
-87.97%（4,579/5,205）、行 88.57%（22,990/25,955）。全仓四维已达到 Phase 0
-规定的 80% 门槛，分支高于最低命中数 628 个。全量命令通过
+86.97%（25,252/29,034）、分支 83.47%（16,699/20,005）、函数
+88.01%（4,591/5,216）、行 88.69%（23,099/26,042）。全仓四维已达到 Phase 0
+规定的 80% 门槛，分支高于最低命中数 695 个。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
 
@@ -145,6 +145,7 @@ OP Webhook 双入口、
 `pnpm quality:marketing-entry-idempotency-coverage`、
 `pnpm quality:marketing-side-effect-delivery-coverage`、
 `pnpm quality:approval-notification-delivery-coverage`、
+`pnpm quality:org-delivery-reliability-coverage`、
 `pnpm quality:approval-repositories-coverage` 和
 `pnpm quality:approval-application-coverage`、
 `pnpm quality:approval-controller-coverage`、
@@ -152,7 +153,7 @@ OP Webhook 双入口、
 `pnpm quality:oauth-controller-coverage`、
 `pnpm quality:strong-auth-coverage`、
 `pnpm quality:onboarding-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。七十四条链路当前覆盖率分别为
+`pnpm quality:production-execution-authorization-coverage`。七十五条链路当前覆盖率分别为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -221,8 +222,9 @@ OP Webhook 双入口、
 96.09%/91.51%/100%/99.45%、
 100%/100%/100%/100%、
 100%/98.23%/100%/100% 和
-100%/100%/100%/100%（语句/分支/函数/行）；七十四项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明七十四条关键链路达标，
+100%/100%/100%/100%、98.02%/97.43%/95.83%/98.13%
+（语句/分支/函数/行）；七十五项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明七十五条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 营销副作用可靠投递已覆盖 68 项路由身份、运行时受损记录、Outbox 抢占与释放、
@@ -241,6 +243,16 @@ ULID 作为 `uuid` 安全恢复，钉钉对过期租约及不可判定响应失�
 100%/98.30%/100%/100%（语句/分支/函数/行），独立四维 90% 门禁与
 `state_unavailable`、死信告警已接入 `pnpm check` 和 Prometheus 规则。审批
 MCP 继续复用应用服务并保持标准只读能力，不向 AI 暴露通知重试写操作。
+
+组织主数据外部投递可靠性已覆盖 55 项投递状态机、运行时受损记录、版本租约、
+双平台协议、HTTP 安全边界、结果不确定隔离、人工恢复、队列载荷和每日只读对账
+测试。过期 `processing` 不再直接重放：版本已提交时只补写成功，未提交时进入
+`manual_review`；平台已受理后的本地提交故障只记录 `state_unavailable`，不得由
+通用失败逻辑释放租约或反向登记失败。投递、恢复和对账终态均校验原租约，
+`matchedCount != 1` 时失败关闭。四个目标文件合计覆盖率达到
+98.02%/97.43%/95.83%/98.13%（语句/分支/函数/行），独立四维 90% 门禁与
+Prometheus 告警已接入 `pnpm check`。MCP 继续只开放复用组织应用服务的
+`get_org_chart`，不向 AI 暴露平台写入、投递重试或对账控制面。
 
 OAuth 授权控制器已覆盖 45 项预注册回调、PKCE、授权决策、授权码、
 `client_credentials`、协议错误与限流测试。Basic 和 `private_key_jwt` 的

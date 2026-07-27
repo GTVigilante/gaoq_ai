@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import type { Job } from 'bullmq';
+import { z } from 'zod';
 
 import { OrgDeliveryService } from './org-delivery.service.js';
 import { OrgEmployeeProvisioningService } from './org-employee-provisioning.service.js';
@@ -13,6 +14,8 @@ import { OrgOutboxRelayService } from './org-outbox-relay.service.js';
 import { RecruitmentCalendarOutboxRelayService } from './recruitment-calendar-outbox-relay.service.js';
 import { RecruitmentCalendarDeliveryService } from './recruitment-calendar-delivery.service.js';
 import { OrgReconciliationService } from './org-reconciliation.service.js';
+
+const orgIntegrationJobSchema = z.object({}).strict();
 
 /** 组织集成 Worker：relay 与各渠道投递相互独立，服务内部租约负责崩溃恢复。 */
 @Processor(ORG_INTEGRATION_QUEUE, { concurrency: 6, limiter: { max: 30, duration: 1_000 } })
@@ -33,6 +36,7 @@ export class OrgIntegrationProcessor extends WorkerHost {
   override async process(
     job: Job<Record<string, never>, unknown, OrgIntegrationJobName>,
   ): Promise<number> {
+    orgIntegrationJobSchema.parse(job.data);
     switch (job.name) {
       case 'relay':
         return this.relay.relayBatch(this.workerId, 50);
@@ -53,7 +57,7 @@ export class OrgIntegrationProcessor extends WorkerHost {
       case 'reconcile':
         return this.reconciliation.runDaily();
       default:
-        throw new Error('未知组织集成任务');
+        throw new Error('ORG_INTEGRATION_JOB_UNKNOWN');
     }
   }
 }

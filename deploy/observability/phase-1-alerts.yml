@@ -136,3 +136,29 @@ groups:
         annotations:
           summary: 审批通知进入死信或结果不确定状态
           runbook: docs/phase-2/03-observability-slo-runbook.md
+
+      - alert: GaoqOrgDeliveryStateUnavailable
+        expr: |
+          increase(
+            gaoq_org_delivery_total{outcome="state_unavailable"}[5m]
+          ) > 0
+        for: 0m
+        labels:
+          severity: critical
+          service: org-integration
+        annotations:
+          summary: 组织主数据平台写入后本地终态不可确认
+          runbook: docs/phase-1/03-observability-slo-runbook.md
+
+      - alert: GaoqOrgDeliveryManualReview
+        expr: |
+          increase(
+            gaoq_org_delivery_total{outcome=~"manual_review|dead"}[15m]
+          ) > 0
+        for: 0m
+        labels:
+          severity: warning
+          service: org-integration
+        annotations:
+          summary: 组织主数据投递进入人工核验或死信
+          runbook: docs/phase-1/03-observability-slo-runbook.md

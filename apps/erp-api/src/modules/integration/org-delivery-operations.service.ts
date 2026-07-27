@@ -98,6 +98,9 @@ export class OrgDeliveryOperationsService {
             eventId,
             channel,
             status: { $in: ['manual_review', 'dead'] },
+            ...(reason === 'approved_exception'
+              ? {}
+              : { lastErrorCode: { $ne: 'ORG_DELIVERY_RESULT_INDETERMINATE' } }),
           },
           {
             $set: {

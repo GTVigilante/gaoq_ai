@@ -562,6 +562,30 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/integration/org-delivery.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/integration/org-delivery-operations.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/integration/org-reconciliation.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/integration/org-integration.processor.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/core/idempotency/idempotency.service.ts': {
           branches: 90,
           functions: 90,

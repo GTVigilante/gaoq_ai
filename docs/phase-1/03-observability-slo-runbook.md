@@ -20,6 +20,8 @@
 | 锚点新鲜度 | `gaoq_audit_worm_last_success_timestamp_seconds` | 任一环境不得超过 24 小时无成功锚点 |
 | 队列积压/死信 | `gaoq_queue_jobs` | waiting+delayed 持续 `< 100`；failed 必须为 `0` |
 | 队列采集 | `gaoq_queue_metrics_poll_failures_total` | 失败数必须为 `0` |
+| 组织外部投递 | `gaoq_org_delivery_total` | `state_unavailable` 必须为 `0`；`manual_review`/`dead` 必须当班清零 |
+| 组织投递耗时 | `gaoq_org_delivery_duration_seconds` | P95 `< 5s`，持续超限检查平台限流与网络 |
 
 Prometheus 规则位于 `deploy/observability/phase-1-alerts.yml`。生产导入前必须用目标 Prometheus 版本的 `promtool check rules` 校验，并把 `critical` 路由到安全值班与平台值班双通道。
 
@@ -58,3 +60,6 @@ node scripts/load/phase-1-http-load.mjs
 - WORM 失败：确认外部端点、凭据、保留策略与幂等回执；在 24 小时窗口内恢复并重新运行待锚定任务。
 - HTTP 错误率/延迟超限：按控制器和方法聚合定位；不得临时加入租户标签排查，使用 trace 日志做租户级诊断。
 - 指标端点鉴权失败：检查 Secret Manager 版本与 Prometheus 抓取配置，禁止把 token 写入 URL、日志或告警注释。
+- 组织投递 `state_unavailable`：立即冻结同聚合后续版本，按
+  [`04-org-delivery-reliability-runbook.md`](./04-org-delivery-reliability-runbook.md)
+  保全现场、平台只读核验和 R2 恢复；禁止直接重放过期 `processing`。
