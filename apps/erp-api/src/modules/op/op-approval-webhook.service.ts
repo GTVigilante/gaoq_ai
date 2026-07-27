@@ -5,6 +5,7 @@ import {
   ConflictException,
   Inject,
   Injectable,
+  Logger,
   PayloadTooLargeException,
   ServiceUnavailableException,
   UnauthorizedException,
@@ -52,6 +53,8 @@ const INBOX_RETENTION_MS = 90 * 24 * 60 * 60 * 1_000;
 /** OP 审批请求入站：验签后由受控路由选模板，原始表单加密入箱并异步处理。 */
 @Injectable()
 export class OpApprovalWebhookService {
+  private readonly logger = new Logger(OpApprovalWebhookService.name);
+
   constructor(
     @InjectModel(OpClientBindingRecord.name)
     private readonly bindings: Model<OpClientBindingDocument>,
@@ -90,14 +93,14 @@ export class OpApprovalWebhookService {
     try {
       this.verifySignature(headers, rawBody, this.secrets.resolve(binding.credentialSecretRef));
     } catch (error) {
-      await this.auditVerification(binding.tenantId, clientId, trace(rawBody), 'failure');
+      await this.auditVerificationSafe(binding.tenantId, clientId, trace(rawBody), 'failure');
       throw error;
     }
     let envelope;
     try {
       envelope = opApprovalRequestEnvelopeSchema.parse(JSON.parse(rawBody.toString('utf8')) as unknown);
     } catch {
-      await this.auditVerification(binding.tenantId, clientId, trace(rawBody), 'failure');
+      await this.auditVerificationSafe(binding.tenantId, clientId, trace(rawBody), 'failure');
       throw new BadRequestException({
         code: 'OP_APPROVAL_BODY_INVALID', message: 'OP 审批请求不符合固定契约',
       });
@@ -105,7 +108,7 @@ export class OpApprovalWebhookService {
     const providerOccurredAt = new Date(envelope.occurredAt);
     if (providerOccurredAt.getTime() > receivedAt.getTime() + CLOCK_SKEW_MS ||
       providerOccurredAt.getTime() < receivedAt.getTime() - MAX_EVENT_AGE_MS) {
-      await this.auditVerification(binding.tenantId, clientId, externalEventId, 'failure');
+      await this.auditVerificationSafe(binding.tenantId, clientId, externalEventId, 'failure');
       throw denied();
     }
     const route = await this.routes.exists({
@@ -113,7 +116,7 @@ export class OpApprovalWebhookService {
       sourceDocumentType: envelope.data.sourceDocumentType, status: 'active',
     });
     if (route === null) {
-      await this.auditVerification(binding.tenantId, clientId, externalEventId, 'failure');
+      await this.auditVerificationSafe(binding.tenantId, clientId, externalEventId, 'failure');
       throw new BadRequestException({
         code: 'OP_APPROVAL_ROUTE_NOT_FOUND', message: 'OP 来源单据未配置审批路由',
       });
@@ -124,13 +127,13 @@ export class OpApprovalWebhookService {
     }).lean().exec();
     if (existing !== null) {
       if (existing.payloadHash !== payloadHash) {
-        await this.auditVerification(binding.tenantId, clientId, externalEventId, 'failure');
+        await this.auditVerificationSafe(binding.tenantId, clientId, externalEventId, 'failure');
         throw new ConflictException({
           code: 'OP_APPROVAL_EVENT_CONFLICT', message: '同一 OP 审批事件对应不同载荷',
         });
       }
       await this.enqueue(existing.id, existing.tenantId, payloadHash);
-      await this.auditVerification(binding.tenantId, clientId, existing.id, 'success');
+      await this.auditVerificationSafe(binding.tenantId, clientId, existing.id, 'success');
       return Object.freeze({ inboxId: existing.id, duplicate: true });
     }
     const nonceHash = createHash('sha256').update(clientId).update('\0').update(nonce)
@@ -138,7 +141,7 @@ export class OpApprovalWebhookService {
     try {
       await this.reserveNonce(clientId, nonceHash, payloadHash);
     } catch (error) {
-      await this.auditVerification(binding.tenantId, clientId, externalEventId, 'failure');
+      await this.auditVerificationSafe(binding.tenantId, clientId, externalEventId, 'failure');
       throw error;
     }
     const inboxId = createEventId(receivedAt);
@@ -157,17 +160,17 @@ export class OpApprovalWebhookService {
         tenantId: binding.tenantId, clientId, externalEventId,
       }).lean().exec();
       if (raced === null || raced.payloadHash !== payloadHash) {
-        await this.auditVerification(binding.tenantId, clientId, externalEventId, 'failure');
+        await this.auditVerificationSafe(binding.tenantId, clientId, externalEventId, 'failure');
         throw new ConflictException({
           code: 'OP_APPROVAL_REPLAY_DETECTED', message: 'OP 审批请求重放已被拒绝',
         });
       }
       await this.enqueue(raced.id, raced.tenantId, payloadHash);
-      await this.auditVerification(binding.tenantId, clientId, raced.id, 'success');
+      await this.auditVerificationSafe(binding.tenantId, clientId, raced.id, 'success');
       return Object.freeze({ inboxId: raced.id, duplicate: true });
     }
     await this.enqueue(inboxId, binding.tenantId, payloadHash);
-    await this.auditVerification(binding.tenantId, clientId, inboxId, 'success');
+    await this.auditVerificationSafe(binding.tenantId, clientId, inboxId, 'success');
     return Object.freeze({ inboxId, duplicate: false });
   }
 
@@ -225,6 +228,22 @@ export class OpApprovalWebhookService {
       action: 'integration.op.approval.verify', resourceType: 'op_approval_request',
       riskLevel: 'R2', outcome, metadata: { clientId, protocol: 'hmac-sha256-v1' },
     });
+  }
+
+  private async auditVerificationSafe(
+    tenantId: string,
+    clientId: string,
+    traceId: string,
+    outcome: 'success' | 'failure',
+  ): Promise<void> {
+    try {
+      await this.auditVerification(tenantId, clientId, traceId, outcome);
+    } catch {
+      this.logger.error({
+        code: 'OP_APPROVAL_WEBHOOK_AUDIT_AFTER_DECISION_FAILED',
+        outcome,
+      });
+    }
   }
 }
 

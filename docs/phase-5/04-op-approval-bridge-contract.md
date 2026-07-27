@@ -93,4 +93,11 @@ timestamp\nnonce\nPUT\npath\nexternalTenantId\nidempotencyKey\nSHA256_BASE64URL(
   绑定、非终态跳过、桥接版本单调推进、投递内容幂等校验、事务与租约竞争、退避/
   死信、HMAC 最小载荷、响应回显、错误分类与成功/失败审计故障；Relay 与 Delivery
   两个目标文件的语句、分支、函数和行覆盖率均不得低于 90%。
+- 仓库门禁 `pnpm quality:op-webhook-ingress-coverage` 同时覆盖审批请求与经营
+  摘要两个公网 Controller、入口服务和独立 AES-256-GCM 服务，必须验证 query
+  禁止、六认证头、HMAC 原始字节、时间窗、clientId 租户绑定、路由、防重放、
+  Inbox 竞态、密钥轮换/AAD/篡改及审计异常；六个目标文件四维均不得低于 90%。
+- 租户解析后的验证失败审计和成功入箱审计若自身故障，只允许记录不含签名、
+  nonce 或正文的 `OP_APPROVAL_WEBHOOK_AUDIT_AFTER_DECISION_FAILED` 稳定告警；
+  不得覆盖原始拒绝，也不得把已接受的 202 反向暴露为失败。
 - 上线前完成追加式索引 dry-run、OP 沙箱双向联调、Secret Manager 注入、容量评估、备份恢复抽查、断连追赶演练和审计抽查。未满足时不得宣称生产验收完成。

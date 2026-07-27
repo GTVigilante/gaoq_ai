@@ -5,6 +5,7 @@ import {
   ConflictException,
   Inject,
   Injectable,
+  Logger,
   PayloadTooLargeException,
   ServiceUnavailableException,
   UnauthorizedException,
@@ -74,6 +75,8 @@ export class OpWebhookSecretResolver {
 /** OP 入站边界：验签、租户解析、防重放、加密入箱与异步排队。 */
 @Injectable()
 export class OpWebhookService {
+  private readonly logger = new Logger(OpWebhookService.name);
+
   constructor(
     @InjectModel(OpClientBindingRecord.name)
     private readonly bindings: Model<OpClientBindingDocument>,
@@ -112,34 +115,39 @@ export class OpWebhookService {
     try {
       this.verifySignature(headers, rawBody, this.secrets.resolve(binding.credentialSecretRef));
     } catch (error) {
-      await this.auditVerification(binding.tenantId, clientId, payloadTrace(rawBody), 'failure');
+      await this.auditVerificationSafe(binding.tenantId, clientId, payloadTrace(rawBody), 'failure');
       throw error;
     }
     let envelope;
     try {
       envelope = opOperatingSummaryEnvelopeSchema.parse(JSON.parse(rawBody.toString('utf8')) as unknown);
     } catch {
-      await this.auditVerification(binding.tenantId, clientId, payloadTrace(rawBody), 'failure');
+      await this.auditVerificationSafe(binding.tenantId, clientId, payloadTrace(rawBody), 'failure');
       throw new BadRequestException({
         code: 'OP_WEBHOOK_BODY_INVALID', message: 'OP 回调正文不符合经营摘要契约',
       });
     }
     const providerOccurredAt = new Date(envelope.occurredAt);
     if (providerOccurredAt.getTime() > receivedAt.getTime() + CLOCK_SKEW_MS ||
-      providerOccurredAt.getTime() < receivedAt.getTime() - MAX_EVENT_AGE_MS) throw denied();
+      providerOccurredAt.getTime() < receivedAt.getTime() - MAX_EVENT_AGE_MS) {
+      await this.auditVerificationSafe(
+        binding.tenantId, clientId, externalEventId, 'failure',
+      );
+      throw denied();
+    }
     const payloadHash = hashOpPayload(rawBody);
     const existing = await this.inbox.findOne({
       tenantId: binding.tenantId, clientId, externalEventId,
     }).lean().exec();
     if (existing !== null) {
       if (existing.payloadHash !== payloadHash) {
-        await this.auditVerification(binding.tenantId, clientId, existing.id, 'failure');
+        await this.auditVerificationSafe(binding.tenantId, clientId, existing.id, 'failure');
         throw new ConflictException({
           code: 'OP_EVENT_PAYLOAD_CONFLICT', message: '同一 OP 事件标识对应不同载荷',
         });
       }
       await this.enqueue(existing.id, binding.tenantId, payloadHash);
-      await this.auditVerification(binding.tenantId, clientId, existing.id, 'success');
+      await this.auditVerificationSafe(binding.tenantId, clientId, existing.id, 'success');
       return Object.freeze({ inboxId: existing.id, duplicate: true });
     }
     const nonceHash = createHash('sha256').update(clientId).update('\0').update(nonce)
@@ -147,7 +155,7 @@ export class OpWebhookService {
     try {
       await this.reserveNonce(clientId, nonceHash, payloadHash);
     } catch (error) {
-      await this.auditVerification(binding.tenantId, clientId, payloadTrace(rawBody), 'failure');
+      await this.auditVerificationSafe(binding.tenantId, clientId, payloadTrace(rawBody), 'failure');
       throw error;
     }
     const inboxId = createEventId(receivedAt);
@@ -165,15 +173,20 @@ export class OpWebhookService {
       const raced = await this.inbox.findOne({
         tenantId: binding.tenantId, clientId, externalEventId,
       }).lean().exec();
-      if (raced === null || raced.payloadHash !== payloadHash) throw new ConflictException({
-        code: 'OP_WEBHOOK_REPLAY_DETECTED', message: 'OP 回调重放已被拒绝',
-      });
+      if (raced === null || raced.payloadHash !== payloadHash) {
+        await this.auditVerificationSafe(
+          binding.tenantId, clientId, externalEventId, 'failure',
+        );
+        throw new ConflictException({
+          code: 'OP_WEBHOOK_REPLAY_DETECTED', message: 'OP 回调重放已被拒绝',
+        });
+      }
       await this.enqueue(raced.id, raced.tenantId, payloadHash);
-      await this.auditVerification(binding.tenantId, clientId, raced.id, 'success');
+      await this.auditVerificationSafe(binding.tenantId, clientId, raced.id, 'success');
       return Object.freeze({ inboxId: raced.id, duplicate: true });
     }
     await this.enqueue(inboxId, binding.tenantId, payloadHash);
-    await this.auditVerification(binding.tenantId, clientId, inboxId, 'success');
+    await this.auditVerificationSafe(binding.tenantId, clientId, inboxId, 'success');
     return Object.freeze({ inboxId, duplicate: false });
   }
 
@@ -231,6 +244,22 @@ export class OpWebhookService {
       riskLevel: 'R1', outcome,
       metadata: { clientId, protocol: 'hmac-sha256-v1' },
     });
+  }
+
+  private async auditVerificationSafe(
+    tenantId: string,
+    clientId: string,
+    traceId: string,
+    outcome: 'success' | 'failure',
+  ): Promise<void> {
+    try {
+      await this.auditVerification(tenantId, clientId, traceId, outcome);
+    } catch {
+      this.logger.error({
+        code: 'OP_WEBHOOK_AUDIT_AFTER_DECISION_FAILED',
+        outcome,
+      });
+    }
   }
 }
 
