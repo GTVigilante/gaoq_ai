@@ -3850,4 +3850,778 @@ describe('DataMigrationService', () => {
         occurredAt: '2026-01-02' }] },
     ]);
   });
+
+  it('活动审批负载拒绝非法表单引用、重复节点和动作参与人', async () => {
+    const store = positionService();
+    const submitted = {
+      type: 'submitted',
+      actorEmployeeSourceId: 'employee-initiator',
+      occurredAt: '2026-01-01T01:00:00.000Z',
+    };
+    const active = {
+      templateSourceId: 'template-001',
+      templateCode: 'LEAVE',
+      templateRevision: 1,
+      title: '请假审批',
+      initiatorEmployeeSourceId: 'employee-initiator',
+      formData: {
+        employee_ref: 'employee-form',
+        department_ref: 'department-form',
+      },
+      formReferenceFields: [
+        { fieldKey: 'employee_ref', entityType: 'org.employee' },
+        { fieldKey: 'department_ref', entityType: 'org.department' },
+      ],
+      resolvedNodes: [{
+        nodeId: 'manager',
+        actorEmployeeSourceIds: ['employee-manager'],
+      }],
+      actions: [submitted],
+      expectedStatus: 'running',
+      expectedVersion: 2,
+      expectedCurrentNodeId: 'manager',
+      expectedPendingApproverEmployeeSourceIds: ['employee-manager'],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      submittedAt: '2026-01-01T01:00:00.000Z',
+      updatedAt: '2026-01-01T01:00:00.000Z',
+      activityEvidenceSourceAttachmentId: 'active-evidence-001',
+      activityEvidenceChecksum: 'a'.repeat(43),
+    };
+    await expectInvalidPayloads(store, 'approval.instance', active, [
+      { templateSourceId: 'invalid id' },
+      { initiatorEmployeeSourceId: null },
+      { activityEvidenceSourceAttachmentId: 'invalid id' },
+      { activityEvidenceChecksum: 'short' },
+      { templateCode: 'invalid code' },
+      { templateRevision: 0 },
+      { title: ' ' },
+      { expectedStatus: 'completed' },
+      { expectedVersion: 0 },
+      { expectedCurrentNodeId: 'invalid node' },
+      { createdAt: '2026-01-01' },
+      { updatedAt: '2026-01-01' },
+      { submittedAt: '2026-01-01' },
+      { formData: { invalid_key: { nested: true } } },
+      { formReferenceFields: null },
+      { formReferenceFields: [null] },
+      { formReferenceFields: [{ fieldKey: 'missing', entityType: 'org.employee' }] },
+      { formReferenceFields: [
+        { fieldKey: 'employee_ref', entityType: 'org.employee' },
+        { fieldKey: 'employee_ref', entityType: 'org.employee' },
+      ] },
+      { resolvedNodes: null },
+      { resolvedNodes: [null] },
+      { resolvedNodes: [{ nodeId: 'invalid node', actorEmployeeSourceIds: [] }] },
+      { resolvedNodes: [
+        { nodeId: 'manager', actorEmployeeSourceIds: [] },
+        { nodeId: 'manager', actorEmployeeSourceIds: [] },
+      ] },
+      { expectedPendingApproverEmployeeSourceIds: ['invalid id'] },
+      { actions: null },
+      { actions: [null] },
+      { actions: [{ ...submitted, actorEmployeeSourceId: 'invalid id' }] },
+      { actions: [{ ...submitted, occurredAt: '2026-01-01' }] },
+      { actions: [{ ...submitted, type: 'unknown' }] },
+      { actions: [{
+        type: 'decided',
+        actorEmployeeSourceId: 'employee-manager',
+        principalApproverEmployeeSourceId: 'invalid id',
+        outcome: 'approved',
+        occurredAt: '2026-01-01T02:00:00.000Z',
+      }] },
+      { actions: [{
+        type: 'decided',
+        actorEmployeeSourceId: 'employee-manager',
+        principalApproverEmployeeSourceId: 'employee-manager',
+        outcome: 'pending',
+        occurredAt: '2026-01-01T02:00:00.000Z',
+      }] },
+      { actions: [{
+        type: 'approver_transferred',
+        actorEmployeeSourceId: 'employee-manager',
+        fromApproverEmployeeSourceId: 'invalid id',
+        toApproverEmployeeSourceId: 'employee-manager-2',
+        occurredAt: '2026-01-01T02:00:00.000Z',
+      }] },
+      { actions: [{
+        type: 'approver_transferred',
+        actorEmployeeSourceId: 'employee-manager',
+        fromApproverEmployeeSourceId: 'employee-manager',
+        toApproverEmployeeSourceId: 'invalid id',
+        occurredAt: '2026-01-01T02:00:00.000Z',
+      }] },
+      { actions: [{
+        type: 'approver_added',
+        actorEmployeeSourceId: 'employee-manager',
+        approverEmployeeSourceId: 'invalid id',
+        occurredAt: '2026-01-01T02:00:00.000Z',
+      }] },
+    ]);
+  });
+
+  it('招聘职位负载拒绝非法引用、状态、时间和治理证据', async () => {
+    const store = positionService();
+    const recruitmentPosition = {
+      requisitionSourceId: 'requisition-001',
+      departmentSourceId: 'department-001',
+      jobLevelSourceId: 'job-level-001',
+      title: '产品经理',
+      location: '上海',
+      headcount: 1,
+      status: 'open',
+      version: 1,
+      publishedAt: '2026-01-01T00:00:00.000Z',
+      closedAt: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      governanceEvidenceSourceAttachmentId: 'position-evidence-001',
+      governanceEvidenceChecksum: 'p'.repeat(43),
+    };
+    await expectInvalidPayloads(store, 'recruitment.position', recruitmentPosition, [
+      { requisitionSourceId: 'invalid id' },
+      { departmentSourceId: null },
+      { jobLevelSourceId: 'invalid id' },
+      { governanceEvidenceSourceAttachmentId: null },
+      { title: ' ' },
+      { location: ' ' },
+      { headcount: 0 },
+      { headcount: 10_001 },
+      { status: 'published' },
+      { version: 0 },
+      { createdAt: '2026-01-01' },
+      { updatedAt: '2026-01-01' },
+      { publishedAt: '2026-01-01' },
+      { closedAt: '2026-01-01' },
+      { governanceEvidenceChecksum: 'short' },
+    ]);
+  });
+
+  it('招聘面试负载拒绝重复面试官、越界反馈和非法时间状态', async () => {
+    const store = positionService();
+    const feedback = {
+      interviewerEmployeeSourceId: 'employee-interviewer',
+      recommendation: 'hire',
+      score: 4,
+      notes: '符合岗位要求',
+      submittedAt: '2026-01-01T03:00:00.000Z',
+    };
+    const interview = {
+      applicationSourceId: 'application-001',
+      roundNumber: 1,
+      mode: 'video',
+      startsAt: '2026-01-01T01:00:00.000Z',
+      endsAt: '2026-01-01T02:00:00.000Z',
+      timezone: 'Asia/Shanghai',
+      interviewerEmployeeSourceIds: ['employee-interviewer'],
+      location: '会议室 A',
+      createdByEmployeeSourceId: 'employee-creator',
+      feedback: [feedback],
+      expectedStatus: 'completed',
+      expectedVersion: 2,
+      completedAt: '2026-01-01T03:00:00.000Z',
+      cancelledAt: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T03:00:00.000Z',
+      interviewEvidenceSourceAttachmentId: 'interview-evidence-001',
+      interviewEvidenceChecksum: 'i'.repeat(43),
+    };
+    await expectInvalidPayloads(store, 'recruitment.interview', interview, [
+      { applicationSourceId: 'invalid id' },
+      { createdByEmployeeSourceId: null },
+      { interviewEvidenceSourceAttachmentId: 'invalid id' },
+      { interviewEvidenceChecksum: 'short' },
+      { roundNumber: 0 },
+      { roundNumber: 101 },
+      { mode: 'chat' },
+      { timezone: 'invalid timezone' },
+      { location: ' ' },
+      { expectedStatus: 'running' },
+      { expectedVersion: 0 },
+      { startsAt: '2026-01-01' },
+      { endsAt: '2026-01-01' },
+      { createdAt: '2026-01-01' },
+      { updatedAt: '2026-01-01' },
+      { completedAt: '2026-01-01' },
+      { cancelledAt: '2026-01-01' },
+      { interviewerEmployeeSourceIds: [] },
+      { interviewerEmployeeSourceIds: ['employee-interviewer', 'employee-interviewer'] },
+      { feedback: null },
+      { feedback: [null] },
+      { feedback: [{ ...feedback, interviewerEmployeeSourceId: 'invalid id' }] },
+      { feedback: [{ ...feedback, recommendation: 'maybe' }] },
+      { feedback: [{ ...feedback, score: 0 }] },
+      { feedback: [{ ...feedback, score: 6 }] },
+      { feedback: [{ ...feedback, notes: ' ' }] },
+      { feedback: [{ ...feedback, submittedAt: '2026-01-01' }] },
+      { feedback: [{ ...feedback, interviewerEmployeeSourceId: 'employee-other' }] },
+      { feedback: [feedback, feedback] },
+    ]);
+  });
+
+  it('招聘 Offer 负载拒绝条款、证明、审批引用和申请动作漂移', async () => {
+    const store = positionService();
+    const terms = {
+      currency: 'CNY',
+      monthlyBaseSalaryMinor: 100_000,
+      salaryMonths: 13,
+      annualVariableTargetMinor: 10_000,
+      signingBonusMinor: 0,
+      proposedStartDate: '2026-02-01',
+      probationMonths: 3,
+      employmentType: 'full_time',
+      workLocation: '上海',
+      benefitsSummary: '标准福利',
+    };
+    const action = {
+      targetStage: 'offer_approval',
+      reasonCode: null,
+      occurredAt: '2026-01-01T01:00:00.000Z',
+    };
+    const offer = {
+      applicationSourceId: 'application-001',
+      completedInterviewSourceId: 'interview-001',
+      createdByEmployeeSourceId: 'employee-creator',
+      terms,
+      expiresAt: '2026-02-01T00:00:00.000Z',
+      retentionExpiresAt: '2028-02-01T00:00:00.000Z',
+      status: 'approved',
+      approvalReferenceType: 'approval.history',
+      approvalReferenceSourceId: 'approval-history-001',
+      sendRequested: false,
+      sentProof: null,
+      decisionProof: null,
+      signedProof: null,
+      version: 2,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T01:00:00.000Z',
+      applicationBaselineVersion: 1,
+      applicationBaselineUpdatedAt: '2026-01-01T00:00:00.000Z',
+      applicationActions: [action],
+      expectedApplicationStage: 'offer_approval',
+      expectedApplicationVersion: 2,
+      applicationEndedAt: null,
+      applicationUpdatedAt: '2026-01-01T01:00:00.000Z',
+      offerEvidenceSourceAttachmentId: 'offer-evidence-001',
+      offerEvidenceChecksum: 'o'.repeat(43),
+    };
+    await expectInvalidPayloads(store, 'recruitment.offer', offer, [
+      { applicationSourceId: 'invalid id' },
+      { completedInterviewSourceId: null },
+      { createdByEmployeeSourceId: 'invalid id' },
+      { offerEvidenceSourceAttachmentId: null },
+      { approvalReferenceSourceId: 'invalid id' },
+      { status: 'unknown' },
+      { sendRequested: null },
+      { version: 0 },
+      { applicationBaselineVersion: 0 },
+      { expectedApplicationVersion: 0 },
+      { expectedApplicationStage: 'screening' },
+      { expiresAt: '2026-02-01' },
+      { retentionExpiresAt: '2028-02-01' },
+      { createdAt: '2026-01-01' },
+      { updatedAt: '2026-01-01' },
+      { applicationBaselineUpdatedAt: '2026-01-01' },
+      { applicationUpdatedAt: '2026-01-01' },
+      { applicationEndedAt: '2026-01-01' },
+      { offerEvidenceChecksum: 'short' },
+      { applicationActions: null },
+      { applicationActions: Array.from({ length: 6 }, () => action) },
+      { terms: null },
+      { approvalReferenceType: 'approval.instance' },
+      { approvalReferenceSourceId: null },
+      { terms: { ...terms, currency: 'USD' } },
+      { terms: { ...terms, monthlyBaseSalaryMinor: 0 } },
+      { terms: { ...terms, annualVariableTargetMinor: -1 } },
+      { terms: { ...terms, signingBonusMinor: -1 } },
+      { terms: { ...terms, salaryMonths: 25 } },
+      { terms: { ...terms, probationMonths: 13 } },
+      { terms: { ...terms, proposedStartDate: '2026-02' } },
+      { terms: { ...terms, employmentType: 'invalid type' } },
+      { terms: { ...terms, workLocation: ' ' } },
+      { terms: { ...terms, benefitsSummary: ' ' } },
+      { sentProof: { proofHash: 'short', occurredAt: '2026-01-01T01:00:00.000Z' } },
+      { signedProof: { proofHash: 's'.repeat(43), occurredAt: '2026-01-01' } },
+      { decisionProof: {
+        decision: 'pending',
+        proofHash: 'd'.repeat(43),
+        occurredAt: '2026-01-01T01:00:00.000Z',
+      } },
+      { decisionProof: {
+        decision: 'accepted',
+        proofHash: 'short',
+        occurredAt: '2026-01-01T01:00:00.000Z',
+      } },
+      { applicationActions: [null] },
+      { applicationActions: [{ ...action, targetStage: 'screening' }] },
+      { applicationActions: [{ ...action, reasonCode: 'invalid code' }] },
+      { applicationActions: [{ ...action, occurredAt: '2026-01-01' }] },
+    ]);
+  });
+
+  it('考勤负载拒绝非法来源事实、修订影响和月结版本链', async () => {
+    const store = positionService();
+    const impact = {
+      workedMinutes: 480,
+      leaveMinutes: 0,
+      overtimeMinutes: 0,
+      absentMinutes: 0,
+    };
+    const sourceFact = {
+      employeeSourceId: 'employee-001',
+      providerCode: 'legacy_clock',
+      externalEventId: 'event-001',
+      factType: 'punch_in',
+      occurredAt: '2026-01-01T01:00:00.000Z',
+      timeZone: 'Asia/Shanghai',
+      impact,
+      sourceObservedAt: '2026-01-01T01:01:00.000Z',
+      createdAt: '2026-01-01T01:02:00.000Z',
+      sourceEvidenceSourceAttachmentId: 'attendance-source-001',
+      sourceEvidenceChecksum: 's'.repeat(43),
+    };
+    await expectInvalidPayloads(store, 'attendance.source_fact', sourceFact, [
+      { employeeSourceId: 'invalid id' },
+      { sourceEvidenceSourceAttachmentId: null },
+      { providerCode: 'INVALID' },
+      { externalEventId: '\n' },
+      { factType: 'break' },
+      { timeZone: '' },
+      { occurredAt: '2026-01-01' },
+      { sourceObservedAt: '2026-01-01' },
+      { createdAt: '2026-01-01' },
+      { sourceEvidenceChecksum: 'short' },
+      { impact: null },
+      { impact: { ...impact, workedMinutes: -1 } },
+      { impact: { ...impact, leaveMinutes: 44_641 } },
+      { impact: { ...impact, overtimeMinutes: 0.5 } },
+    ]);
+
+    const correction = {
+      employeeSourceId: 'employee-001',
+      sourceFactSourceId: 'source-fact-001',
+      approvalHistorySourceId: 'approval-history-001',
+      approvalEvidenceChecksum: 'a'.repeat(43),
+      replacementImpact: impact,
+      reasonCode: 'CLOCK_CORRECTION',
+      createdAt: '2026-01-02T00:00:00.000Z',
+      sourceEvidenceSourceAttachmentId: 'attendance-correction-001',
+      sourceEvidenceChecksum: 'c'.repeat(43),
+    };
+    await expectInvalidPayloads(store, 'attendance.correction', correction, [
+      { employeeSourceId: null },
+      { sourceFactSourceId: 'invalid id' },
+      { approvalHistorySourceId: null },
+      { sourceEvidenceSourceAttachmentId: 'invalid id' },
+      { approvalEvidenceChecksum: 'short' },
+      { sourceEvidenceChecksum: 'short' },
+      { reasonCode: 'invalid code' },
+      { createdAt: '2026-01-02' },
+      { replacementImpact: null },
+      { replacementImpact: { ...impact, absentMinutes: -1 } },
+    ]);
+
+    const month = {
+      employeeSourceId: 'employee-001',
+      month: '2026-01',
+      snapshotVersion: 1,
+      rulesetVersion: 'rules-v1',
+      sourceCutoffAt: '2026-02-01T00:00:00.000Z',
+      closedAt: '2026-02-01T01:00:00.000Z',
+      previousSnapshotSourceId: null,
+      supersessionApprovalHistorySourceId: null,
+      supersessionApprovalEvidenceChecksum: null,
+      expectedImpact: impact,
+      expectedSourceFactCount: 1,
+      expectedCorrectionCount: 0,
+      sourceEvidenceSourceAttachmentId: 'attendance-month-001',
+      sourceEvidenceChecksum: 'm'.repeat(43),
+    };
+    await expectInvalidPayloads(store, 'attendance.monthly_snapshot', month, [
+      { employeeSourceId: 'invalid id' },
+      { month: '2026-13' },
+      { snapshotVersion: 0 },
+      { snapshotVersion: 10_001 },
+      { rulesetVersion: 'invalid ruleset' },
+      { sourceCutoffAt: '2026-02-01' },
+      { closedAt: '2026-02-01' },
+      { previousSnapshotSourceId: 'invalid id' },
+      { supersessionApprovalHistorySourceId: 'invalid id' },
+      { supersessionApprovalEvidenceChecksum: 'short' },
+      { sourceEvidenceSourceAttachmentId: null },
+      { sourceEvidenceChecksum: 'short' },
+      { expectedImpact: null },
+      { expectedSourceFactCount: -1 },
+      { expectedSourceFactCount: 10_000_001 },
+      { expectedCorrectionCount: -1 },
+      { expectedImpact: { ...impact, workedMinutes: 44_641 } },
+      { previousSnapshotSourceId: 'snapshot-000' },
+      {
+        snapshotVersion: 2,
+        previousSnapshotSourceId: null,
+        supersessionApprovalHistorySourceId: 'approval-history-001',
+        supersessionApprovalEvidenceChecksum: 'a'.repeat(43),
+      },
+      {
+        snapshotVersion: 2,
+        previousSnapshotSourceId: 'snapshot-001',
+        supersessionApprovalHistorySourceId: null,
+        supersessionApprovalEvidenceChecksum: 'a'.repeat(43),
+      },
+      {
+        snapshotVersion: 2,
+        previousSnapshotSourceId: 'snapshot-001',
+        supersessionApprovalHistorySourceId: 'approval-history-001',
+        supersessionApprovalEvidenceChecksum: null,
+      },
+    ]);
+  });
+
+  it('薪资主数据和运行负载拒绝非法区间、金额、明细及证据', async () => {
+    const store = positionService();
+    const evidence = {
+      sourceEvidenceSourceAttachmentId: 'payroll-evidence-001',
+      sourceEvidenceChecksum: 'e'.repeat(43),
+    };
+    const approval = {
+      approvalHistorySourceId: 'approval-history-001',
+      approvalEvidenceChecksum: 'a'.repeat(43),
+    };
+    const rulePack = {
+      code: 'CN_RULES',
+      jurisdictionCode: 'CN_SH',
+      version: 1,
+      effectiveFrom: '2026-01-01',
+      effectiveTo: null,
+      monthlyBasicDeductionMinor: 500_000,
+      taxBrackets: [{
+        upperBoundMinor: null,
+        rateBps: 300,
+        quickDeductionMinor: 0,
+      }],
+      sourceDigest: 'd'.repeat(43),
+      sourceReference: 'tax/rules/2026',
+      ...approval,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      ...evidence,
+    };
+    await expectInvalidPayloads(store, 'payroll.rule_pack', rulePack, [
+      { code: 'invalid code' },
+      { jurisdictionCode: null },
+      { version: 0 },
+      { effectiveFrom: '2026-01' },
+      { effectiveTo: '2025-12-31' },
+      { monthlyBasicDeductionMinor: -1 },
+      { taxBrackets: [] },
+      { sourceDigest: 'short' },
+      { sourceReference: 'invalid reference?' },
+      { approvalHistorySourceId: 'invalid id' },
+      { approvalEvidenceChecksum: 'short' },
+      { createdAt: '2026-01-01' },
+      { taxBrackets: [null] },
+      { taxBrackets: [{ upperBoundMinor: -1, rateBps: 300, quickDeductionMinor: 0 }] },
+      { taxBrackets: [{ upperBoundMinor: null, rateBps: 10_001, quickDeductionMinor: 0 }] },
+      { taxBrackets: [{ upperBoundMinor: null, rateBps: 300, quickDeductionMinor: -1 }] },
+    ]);
+
+    const attendanceAdjustment = {
+      overtimePayMinorPerMinute: 10,
+      absenceDeductionMinorPerMinute: 10,
+      unpaidLeaveDeductionMinorPerMinute: 10,
+    };
+    const compensation = {
+      employeeSourceId: 'employee-001',
+      version: 1,
+      effectiveFrom: '2026-01-01',
+      effectiveTo: null,
+      ...approval,
+      data: {
+        currency: 'CNY',
+        taxableEarnings: [{ code: 'BASE', amountMinor: 100_000 }],
+        nonTaxableEarnings: [],
+        employeeSocialInsuranceMinor: 0,
+        employeeHousingFundMinor: 0,
+        specialAdditionalDeductionMinor: 0,
+        otherPreTaxWithholdingMinor: 0,
+        postTaxDeductionMinor: 0,
+        attendanceAdjustment,
+      },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      ...evidence,
+    };
+    await expectInvalidPayloads(store, 'payroll.compensation_profile', compensation, [
+      { employeeSourceId: 'invalid id' },
+      { version: 0 },
+      { effectiveFrom: '2026-01' },
+      { approvalHistorySourceId: null },
+      { createdAt: '2026-01-01' },
+      { data: null },
+      { data: { ...compensation.data, currency: 'USD' } },
+      { data: { ...compensation.data, taxableEarnings: null } },
+      { data: { ...compensation.data, nonTaxableEarnings: null } },
+      { data: { ...compensation.data, attendanceAdjustment: null } },
+      { data: { ...compensation.data, taxableEarnings: [null] } },
+      { data: {
+        ...compensation.data,
+        taxableEarnings: [{ code: 'invalid code', amountMinor: 100_000 }],
+      } },
+      { data: {
+        ...compensation.data,
+        taxableEarnings: [{ code: 'BASE', amountMinor: -1 }],
+      } },
+      { data: {
+        ...compensation.data,
+        employeeSocialInsuranceMinor: -1,
+      } },
+      { data: {
+        ...compensation.data,
+        attendanceAdjustment: {
+          ...attendanceAdjustment,
+          overtimePayMinorPerMinute: -1,
+        },
+      } },
+    ]);
+
+    const period = {
+      period: '2026-01',
+      status: 'collecting',
+      preparedByEmployeeSourceId: 'employee-preparer',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      ...evidence,
+    };
+    await expectInvalidPayloads(store, 'payroll.period', period, [
+      { period: '2026-13' },
+      { status: 'approved' },
+      { preparedByEmployeeSourceId: 'invalid id' },
+      { createdAt: '2026-01-01' },
+      { updatedAt: '2026-01-01' },
+      { updatedAt: '2025-12-31T00:00:00.000Z' },
+      {
+        status: 'draft',
+        updatedAt: '2026-01-02T00:00:00.000Z',
+      },
+      { sourceEvidenceChecksum: 'short' },
+    ]);
+
+    const line = {
+      employeeSourceId: 'employee-001',
+      compensationProfileSourceId: 'compensation-001',
+      attendanceSnapshotSourceId: 'attendance-001',
+      expectedGrossMinor: 100_000,
+      expectedWithholdingTaxMinor: 1_000,
+      expectedNetMinor: 99_000,
+    };
+    const calculation = {
+      periodSourceId: 'period-001',
+      expectedPeriodVersion: 2,
+      runNumber: 1,
+      rulePackSourceId: 'rule-pack-001',
+      rulePackVersion: 1,
+      lines: [line],
+      expectedEmployeeCount: 1,
+      expectedTotalGrossMinor: 100_000,
+      expectedTotalTaxMinor: 1_000,
+      expectedTotalNetMinor: 99_000,
+      completedAt: '2026-01-03T00:00:00.000Z',
+      ...evidence,
+    };
+    await expectInvalidPayloads(store, 'payroll.calculation_run', calculation, [
+      { periodSourceId: 'invalid id' },
+      { rulePackSourceId: null },
+      { expectedPeriodVersion: 1 },
+      { runNumber: 0 },
+      { rulePackVersion: 0 },
+      { lines: [] },
+      { expectedEmployeeCount: 2 },
+      { expectedTotalGrossMinor: -1 },
+      { expectedTotalTaxMinor: 0.5 },
+      { expectedTotalNetMinor: -1 },
+      { completedAt: '2026-01-03' },
+      { lines: [null] },
+      { lines: [{ ...line, employeeSourceId: 'invalid id' }] },
+      { lines: [{ ...line, compensationProfileSourceId: 'invalid id' }] },
+      { lines: [{ ...line, attendanceSnapshotSourceId: 'invalid id' }] },
+      { lines: [{ ...line, expectedGrossMinor: -1 }] },
+      { lines: [{ ...line, expectedWithholdingTaxMinor: 0.5 }] },
+      { lines: [{ ...line, expectedNetMinor: -1 }] },
+      { lines: [line, line], expectedEmployeeCount: 2 },
+    ]);
+  });
+
+  it('薪资审批、锁定和个税负载拒绝不可信引用、版本及提交证据', async () => {
+    const store = positionService();
+    const evidence = {
+      sourceEvidenceSourceAttachmentId: 'payroll-control-evidence-001',
+      sourceEvidenceChecksum: 'e'.repeat(43),
+    };
+    const approval = {
+      periodSourceId: 'period-001',
+      expectedPeriodVersion: 3,
+      approvalHistorySourceId: 'approval-history-001',
+      approvalEvidenceChecksum: 'a'.repeat(43),
+      approvedByEmployeeSourceId: 'employee-approver',
+      ...evidence,
+    };
+    await expectInvalidPayloads(store, 'payroll.period_approval', approval, [
+      { periodSourceId: 'invalid id' },
+      { approvalHistorySourceId: null },
+      { approvedByEmployeeSourceId: 'invalid id' },
+      { expectedPeriodVersion: 2 },
+      { approvalEvidenceChecksum: 'short' },
+      { sourceEvidenceSourceAttachmentId: 'invalid id' },
+    ]);
+
+    const lock = {
+      periodSourceId: 'period-001',
+      expectedPeriodVersion: 5,
+      approvalControlSourceId: 'approval-control-001',
+      lockedByEmployeeSourceId: 'employee-locker',
+      lockedAt: '2026-01-04T00:00:00.000Z',
+      strongAuthMethod: 'webauthn_uv',
+      ...evidence,
+    };
+    await expectInvalidPayloads(store, 'payroll.period_lock', lock, [
+      { periodSourceId: null },
+      { approvalControlSourceId: 'invalid id' },
+      { lockedByEmployeeSourceId: null },
+      { expectedPeriodVersion: 4 },
+      { lockedAt: '2026-01-04' },
+      { strongAuthMethod: 'password' },
+      { sourceEvidenceChecksum: 'short' },
+    ]);
+
+    const tax = {
+      periodSourceId: 'period-001',
+      payrollRunSourceId: 'payroll-run-001',
+      expectedPeriodVersion: 6,
+      preparedByEmployeeSourceId: 'employee-preparer',
+      approvedByEmployeeSourceId: 'employee-approver',
+      approvalHistorySourceId: 'approval-history-001',
+      approvalEvidenceChecksum: 'a'.repeat(43),
+      expectedEmployeeCount: 1,
+      expectedTotalTaxableEarningsMinor: 100_000,
+      expectedTotalWithholdingTaxMinor: 1_000,
+      taxSubmissionId: 'tax-submission-001',
+      taxSubmissionEvidenceId: 'tax-evidence-001',
+      submittedAt: '2026-01-05T00:00:00.000Z',
+      ...evidence,
+    };
+    await expectInvalidPayloads(store, 'payroll.tax_filing', tax, [
+      { periodSourceId: 'invalid id' },
+      { payrollRunSourceId: null },
+      { preparedByEmployeeSourceId: 'invalid id' },
+      { approvedByEmployeeSourceId: null },
+      { approvalHistorySourceId: 'invalid id' },
+      { approvalEvidenceChecksum: 'short' },
+      { expectedPeriodVersion: 5 },
+      { expectedEmployeeCount: 0 },
+      { expectedEmployeeCount: 5_001 },
+      { expectedTotalTaxableEarningsMinor: -1 },
+      { expectedTotalWithholdingTaxMinor: 0.5 },
+      { taxSubmissionId: 'invalid id' },
+      { taxSubmissionEvidenceId: null },
+      { submittedAt: '2026-01-05' },
+      { sourceEvidenceChecksum: 'short' },
+    ]);
+  });
+
+  it('资金批次、银行回盘和业务附件拒绝非法明细与归属证据', async () => {
+    const store = positionService();
+    const evidence = {
+      sourceEvidenceSourceAttachmentId: 'treasury-evidence-001',
+      sourceEvidenceChecksum: 'e'.repeat(43),
+    };
+    const disbursementLine = {
+      employeeSourceId: 'employee-001',
+      bankAccountSourceId: 'bank-account-001',
+      expectedNetPayMinor: 99_000,
+    };
+    const disbursement = {
+      payrollPeriodSourceId: 'period-001',
+      payrollRunSourceId: 'payroll-run-001',
+      expectedPayrollVersion: 6,
+      debtorBankAccountSourceId: 'debtor-account-001',
+      preparedByEmployeeSourceId: 'employee-preparer',
+      exportApprovedByEmployeeSourceId: 'employee-approver',
+      approvalHistorySourceId: 'approval-history-001',
+      approvalEvidenceChecksum: 'a'.repeat(43),
+      requestedExecutionDate: '2026-01-06',
+      lines: [disbursementLine],
+      expectedLineCount: 1,
+      expectedTotalMinor: 99_000,
+      bankSubmissionId: 'bank-submission-001',
+      bankSubmissionEvidenceId: 'bank-submission-evidence-001',
+      preparedAt: '2026-01-05T00:00:00.000Z',
+      submittedAt: '2026-01-06T00:00:00.000Z',
+      ...evidence,
+    };
+    await expectInvalidPayloads(store, 'treasury.disbursement_batch', disbursement, [
+      { lines: null },
+      { lines: [] },
+      { lines: [null] },
+      { lines: [{ ...disbursementLine, employeeSourceId: 'invalid id' }] },
+      { lines: [{ ...disbursementLine, bankAccountSourceId: 'invalid id' }] },
+      { lines: [{ ...disbursementLine, expectedNetPayMinor: 0 }] },
+      { payrollPeriodSourceId: 'invalid id' },
+      { approvalEvidenceChecksum: 'short' },
+      { expectedPayrollVersion: 5 },
+      { expectedLineCount: 2 },
+      { expectedTotalMinor: 0 },
+      { requestedExecutionDate: '2026-01' },
+      { bankSubmissionId: 'invalid id' },
+      { bankSubmissionEvidenceId: null },
+      { preparedAt: '2026-01-05' },
+    ]);
+
+    const returnLine = {
+      employeeSourceId: 'employee-001',
+      expectedAmountMinor: 99_000,
+      bankLineReference: 'bank-line-001',
+    };
+    const bankReturn = {
+      batchSourceId: 'batch-001',
+      expectedBatchVersion: 4,
+      expectedBankSubmissionId: 'bank-submission-001',
+      lines: [returnLine],
+      expectedLineCount: 1,
+      expectedTotalMinor: 99_000,
+      signatureVerified: true,
+      malwareClean: true,
+      receivedAt: '2026-01-06T01:00:00.000Z',
+      ...evidence,
+    };
+    await expectInvalidPayloads(store, 'treasury.bank_return', bankReturn, [
+      { lines: null },
+      { lines: [] },
+      { lines: [null] },
+      { lines: [{ ...returnLine, employeeSourceId: 'invalid id' }] },
+      { lines: [{ ...returnLine, bankLineReference: 'invalid id' }] },
+      { lines: [{ ...returnLine, expectedAmountMinor: 0 }] },
+      { batchSourceId: 'invalid id' },
+      { expectedBatchVersion: 3 },
+      { expectedBankSubmissionId: null },
+      { expectedLineCount: 2 },
+      { expectedTotalMinor: 0 },
+      { signatureVerified: false },
+      { malwareClean: false },
+      { receivedAt: '2026-01-06' },
+    ]);
+
+    const attachment = {
+      ownerEntityType: 'recruitment.candidate',
+      ownerSourceId: 'candidate-001',
+      purpose: 'candidate_resume',
+      uploadedByEmployeeSourceId: 'employee-uploader',
+      businessCreatedAt: '2026-01-06T00:00:00.000Z',
+      ...evidence,
+    };
+    await expectInvalidPayloads(store, 'business.attachment', attachment, [
+      { ownerEntityType: 'org.employee' },
+      { ownerSourceId: 'invalid id' },
+      { purpose: 'unknown' },
+      { uploadedByEmployeeSourceId: 'invalid id' },
+      { businessCreatedAt: '2026-01-06' },
+      { sourceEvidenceSourceAttachmentId: 'invalid id' },
+    ]);
+  });
 });
