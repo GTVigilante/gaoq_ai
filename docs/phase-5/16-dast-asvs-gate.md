@@ -31,7 +31,7 @@ ZAP 不能替代业务授权验证。安全测试必须额外完成至少：100 
 
 ## 证据契约与 Go/No-Go
 
-安全平台将逐项 ASVS 矩阵、两轮 ZAP 报告、授权探针、监控、审计查询和测试数据清单组装为严格白名单的 `gaoq.phase5.dast-asvs.v1` JSON。文件只保存目标 Origin 的 SHA-256，不保存 URL；API、Worker、Web 镜像、commit、ZAP 镜像、Node 调度器、认证脚本、Hook、手动工作流和 ASVS 目录必须固定摘要。AppSec、平台、QA、风险四类负责人使用不同证据 ID 签署。
+安全平台将逐项 ASVS 矩阵、两轮 ZAP 报告、授权探针、监控、审计查询和测试数据清单组装为严格白名单的 `gaoq.phase5.dast-asvs.v1` JSON。文件只保存目标 Origin 的 SHA-256，不保存 URL；API、Worker、ERP Web、Website 镜像、commit、ZAP 镜像、Node 调度器、认证脚本、Hook、手动工作流和 ASVS 目录必须固定摘要。AppSec、平台、QA、风险四类负责人使用不同证据 ID 签署。
 
 ```bash
 pnpm security:dast:validate-evidence -- /secure/security/phase-5-dast-asvs.json

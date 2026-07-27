@@ -25,10 +25,11 @@
     "targetNamespace": { "$ref": "#/definitions/dnsLabel" },
     "release": {
       "type": "object",
-      "required": ["commitSha", "deploymentManifestHash", "rolloutId"],
+      "required": ["commitSha", "deploymentManifestHash", "websitePublicConfigHash", "rolloutId"],
       "properties": {
         "commitSha": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
         "deploymentManifestHash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "websitePublicConfigHash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
         "rolloutId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$" }
       },
       "additionalProperties": false

@@ -32,7 +32,12 @@ export class MarketingNotificationProcessor extends WorkerHost {
     });
     const response = await fetch(new URL('/v1/notify', endpoint), {
       method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        'idempotency-key':
+          `marketing:${job.data.tenantId}:${job.data.leadId}:${job.data.channel}:v1`,
+      },
       body: JSON.stringify({
         channel: job.data.channel, leadId: lead.id, audience: lead.audience,
         name: lead.name, contact, requestSummary: lead.requestSummary,

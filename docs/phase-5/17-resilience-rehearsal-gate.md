@@ -15,7 +15,7 @@
 
 1. 使用副本集与时间点恢复，把独立区域故障声明前的最后可恢复点恢复到隔离区域；以 UTC 时间戳计算实际 RPO，不接受人工填写但与时间戳不一致的数值。
 2. 至少恢复 20 个集合，验证副本集健康、事务、索引和集合校验和；组织、审批、招聘、考勤、薪酬、OP、审计和迁移八个域必须逐域核对记录数、关联数与确定性摘要。
-3. 数据库可查询不等于业务恢复。RTO 从故障声明开始，到 API、Worker、Web 均至少两个健康副本且全部恢复冒烟测试通过为止。
+3. 数据库可查询不等于业务恢复。RTO 从故障声明开始，到 API、Worker、ERP Web、Website 均至少两个健康副本且全部恢复冒烟测试通过为止。
 4. 审计 HMAC 前向链与不同权限域 WORM 锚点必须连续；未解释记录差异和未解释金额差异必须同时为零。
 
 ### Redis、BullMQ、对象证据与 KMS
@@ -54,7 +54,7 @@ Environment 只配置非敏感变量：
 
 - `RESILIENCE_ENVIRONMENT_NAME`：固定恢复环境名，必须带 `dr/recovery/resilience/stage/staging/preprod/uat` 独立标签；
 - `RESILIENCE_REGION`：固定隔离区域名；
-- `RESILIENCE_API_IMAGE_DIGEST`、`RESILIENCE_WORKER_IMAGE_DIGEST`、`RESILIENCE_WEB_IMAGE_DIGEST`：现场实际部署的三类不可变镜像 SHA-256；
+- `RESILIENCE_API_IMAGE_DIGEST`、`RESILIENCE_WORKER_IMAGE_DIGEST`、`RESILIENCE_WEB_IMAGE_DIGEST`、`RESILIENCE_WEBSITE_IMAGE_DIGEST`：现场实际部署的四类不可变镜像 SHA-256；
 - `RESILIENCE_DEPLOYMENT_MANIFEST_SHA256`：本次隔离环境部署清单 SHA-256。
 
 受控编排平台把严格白名单的证据摘要以只读普通文件放置在 `/var/lib/gaoq/resilience/phase-5-resilience.json`。文件不得是符号链接，不得允许组或其他用户写入，最大 512 KiB。GitHub 只上传校验结论，不上传原始备份、恢复日志、员工数据、工资行、外部报文、Token、证书或密钥；完整原始证据必须在企业 WORM 中按证据 ID 和 SHA-256 管理。
@@ -63,11 +63,11 @@ Environment 只配置非敏感变量：
 pnpm resilience:validate-evidence -- /secure/resilience/phase-5-resilience.json
 ```
 
-现场工作流额外使用 `--enforce-environment`，把证据中的环境、区域、当前 `main` commit、三类镜像和部署清单与 GitHub Environment 精确绑定，防止拿其他环境或旧版本的通过报告冒充本次演练。
+现场工作流额外使用 `--enforce-environment`，把证据中的环境、区域、当前 `main` commit、四类镜像和部署清单与 GitHub Environment 精确绑定，防止拿其他环境或旧版本的通过报告冒充本次演练。
 
 ## 证据与签署
 
-`gaoq.phase5.resilience.v1` 证据绑定 commit、API/Worker/Web 镜像摘要、部署清单和当前校验器/工作流摘要；严格拒绝未知字段。八个业务域、Outbox、Inbox、BullMQ、审计链、业务金额、八类外部连接、备份清单、恢复日志、监控、告警、运行手册和回滚决定均以独立 SHA-256 引用，不在 GitHub 复制正文。
+`gaoq.phase5.resilience.v1` 证据绑定 commit、API/Worker/ERP Web/Website 镜像摘要、部署清单和当前校验器/工作流摘要；严格拒绝未知字段。八个业务域、Outbox、Inbox、BullMQ、审计链、业务金额、八类外部连接、备份清单、恢复日志、监控、告警、运行手册和回滚决定均以独立 SHA-256 引用，不在 GitHub 复制正文。
 
 SRE、平台、数据、集成、安全、QA 和业务连续性七类负责人必须在演练结束后以不同证据 ID 作出 `approve` 签署。签署只表示本门禁通过，不替代最终由项目发起人、产品、架构、HR、财务、法务等角色共同完成的 Go/No-Go。
 

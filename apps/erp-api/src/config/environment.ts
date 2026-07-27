@@ -896,6 +896,40 @@ const environmentSchema = z.object({
       message: '生产环境必须注入营销线索加密与盲索引密钥',
     });
   }
+  if (environment.NODE_ENV === 'production' && environment.MARKETING_WEBSITE_ORIGIN === undefined) {
+    context.addIssue({
+      code: 'custom',
+      path: ['MARKETING_WEBSITE_ORIGIN'],
+      message: '生产环境必须精确配置营销官网 HTTPS Origin',
+    });
+  }
+  if (environment.MARKETING_WEBSITE_ORIGIN !== undefined) {
+    const marketingOrigin = new URL(environment.MARKETING_WEBSITE_ORIGIN);
+    if (
+      (environment.NODE_ENV === 'production' && marketingOrigin.protocol !== 'https:') ||
+      (environment.NODE_ENV === 'production' && (
+        marketingOrigin.hostname === 'localhost' ||
+        marketingOrigin.hostname === '127.0.0.1' ||
+        ['::1', '[::1]'].includes(marketingOrigin.hostname) ||
+        marketingOrigin.hostname.endsWith('.local')
+      )) ||
+      marketingOrigin.username !== '' ||
+      marketingOrigin.password !== '' ||
+      marketingOrigin.pathname !== '/' ||
+      marketingOrigin.search !== '' ||
+      marketingOrigin.hash !== '' ||
+      (marketingOrigin.protocol === 'https:' &&
+        marketingOrigin.port !== '' && marketingOrigin.port !== '443') ||
+      (marketingOrigin.protocol === 'http:' &&
+        marketingOrigin.port !== '' && marketingOrigin.port !== '80')
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['MARKETING_WEBSITE_ORIGIN'],
+        message: '营销官网 Origin 必须是无凭据、路径、query、fragment 或异常端口的标准根 Origin',
+      });
+    }
+  }
   if (
     environment.MARKETING_LEAD_ENCRYPTION_KEY_BASE64 !== undefined &&
     environment.MARKETING_LEAD_ENCRYPTION_KEY_BASE64 ===

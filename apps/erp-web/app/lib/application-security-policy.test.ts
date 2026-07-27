@@ -15,7 +15,8 @@ describe('Web 全站安全策略', () => {
   });
 
   it('生产环境只接受精确 HTTPS 根 Origin', () => {
-    expect(parseApplicationApiOrigin(undefined, true)).toBe('http://localhost:3001');
+    expect(() => parseApplicationApiOrigin(undefined, true))
+      .toThrowError('APPLICATION_API_ORIGIN_REQUIRED');
     expect(parseApplicationApiOrigin('https://erp.example.com/', true))
       .toBe('https://erp.example.com');
     for (const value of [

@@ -154,10 +154,10 @@ function validateSource(source, enforceEnvironment) {
   ], 'PHASE5_GO_NO_GO_SOURCE_INVALID');
   pattern(source.commitSha, COMMIT, 'PHASE5_GO_NO_GO_COMMIT_INVALID');
   pattern(source.releaseCandidate, /^rc-[0-9]{8}-[0-9]{2}$/u, 'PHASE5_GO_NO_GO_RC_INVALID');
-  object(source.images, ['api', 'worker', 'web'], 'PHASE5_GO_NO_GO_IMAGES_INVALID');
+  object(source.images, ['api', 'worker', 'web', 'website'], 'PHASE5_GO_NO_GO_IMAGES_INVALID');
   const images = Object.values(source.images);
   for (const image of images) pattern(image, SHA256, 'PHASE5_GO_NO_GO_IMAGE_INVALID');
-  if (new Set(images).size !== 3) fail('PHASE5_GO_NO_GO_IMAGES_NOT_INDEPENDENT');
+  if (new Set(images).size !== 4) fail('PHASE5_GO_NO_GO_IMAGES_NOT_INDEPENDENT');
   pattern(source.deploymentManifestHash, SHA256, 'PHASE5_GO_NO_GO_MANIFEST_INVALID');
   equal(source.harnessSha256, HARNESS_DIGEST, 'PHASE5_GO_NO_GO_HARNESS_INVALID');
   if (enforceEnvironment) validateExpectedSource(source);
@@ -170,14 +170,15 @@ function validateExpectedSource(source) {
     api: process.env.GO_NO_GO_EXPECTED_API_IMAGE,
     worker: process.env.GO_NO_GO_EXPECTED_WORKER_IMAGE,
     web: process.env.GO_NO_GO_EXPECTED_WEB_IMAGE,
+    website: process.env.GO_NO_GO_EXPECTED_WEBSITE_IMAGE,
     manifest: process.env.GO_NO_GO_EXPECTED_DEPLOYMENT_MANIFEST,
   };
   pattern(expected.commitSha, COMMIT, 'PHASE5_GO_NO_GO_EXPECTED_SOURCE_REQUIRED');
-  for (const field of ['api', 'worker', 'web', 'manifest']) {
+  for (const field of ['api', 'worker', 'web', 'website', 'manifest']) {
     pattern(expected[field], SHA256, 'PHASE5_GO_NO_GO_EXPECTED_SOURCE_REQUIRED');
   }
   equal(source.commitSha, expected.commitSha, 'PHASE5_GO_NO_GO_COMMIT_MISMATCH');
-  for (const image of ['api', 'worker', 'web']) {
+  for (const image of ['api', 'worker', 'web', 'website']) {
     equal(source.images[image], expected[image], 'PHASE5_GO_NO_GO_IMAGE_MISMATCH');
   }
   equal(source.deploymentManifestHash, expected.manifest, 'PHASE5_GO_NO_GO_MANIFEST_MISMATCH');
@@ -536,6 +537,7 @@ function bindExpectedEnvironment(document) {
   process.env.GO_NO_GO_EXPECTED_API_IMAGE = document.source.images.api;
   process.env.GO_NO_GO_EXPECTED_WORKER_IMAGE = document.source.images.worker;
   process.env.GO_NO_GO_EXPECTED_WEB_IMAGE = document.source.images.web;
+  process.env.GO_NO_GO_EXPECTED_WEBSITE_IMAGE = document.source.images.website;
   process.env.GO_NO_GO_EXPECTED_DEPLOYMENT_MANIFEST = document.source.deploymentManifestHash;
 }
 
@@ -551,7 +553,12 @@ function fixture() {
     },
     source: {
       commitSha: 'a'.repeat(40), releaseCandidate: 'rc-20260723-01',
-      images: { api: hash('api'), worker: hash('worker'), web: hash('web') },
+      images: {
+        api: hash('api'),
+        worker: hash('worker'),
+        web: hash('web'),
+        website: hash('website'),
+      },
       deploymentManifestHash: hash('deployment-manifest'), harnessSha256: HARNESS_DIGEST,
     },
     gates: GATE_NAMES.map((name, index) => ({

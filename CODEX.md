@@ -16,15 +16,20 @@
 - 2026-07-27 已在本机专用 MongoDB Replica Set 与 Redis 上完成 API、Worker、
   Web、OAuth Client Credentials、官方 MCP SDK、CORS、队列和指标端点联调；
   该结果属于本地运行验证，不替代现场验收。
-- 2026-07-27 已交付 `/careers` 招聘门户、ERP 开放职位最小投影与候选人联系人
-  投递 BFF；生产服务身份、WAF 限流和简历原件扫描/对象存储仍待现场配置与验收。
+- 2026-07-27 已交付 `/careers` 招聘门户、ERP 开放职位最小投影、候选人联系人
+  投递 BFF、可信入口验证、精确 Origin 和共享 Redis 失败关闭限流；生产服务身份、
+  边缘代理注入、简历原件扫描/对象存储仍待现场配置与验收。
 - 2026-07-27 已交付智能简历库：隔离网关脱敏读取契约、OpenAI 严格结构化输出、
   受控分类标签、BullMQ Worker、人工确认与标签检索、ERP 管理页面及独立索引迁移；
   真实附件网关、OpenAI Secret/数据保留控制、代表性简历评测与招聘 UAT 待现场验收。
-- 2026-07-27 已交付双语营销官网、ERP 工作台 CMS、受控内容发布协议与加密预约
-  线索入口；对象存储、通知、验证码、AI 网关和正式域名仍待现场配置与验收。
-- GitHub PR #103 的 Hosted Actions 当前在任何步骤执行前被账户付款或 Spending
-  limit 拦截；这是外部门禁未执行，不得记为代码测试失败或门禁通过。
+- 2026-07-27 已交付双语营销官网、ERP 工作台 CMS、事务 Outbox、通知幂等、
+  严格生产 HTTPS/CSP、安全头、独立镜像与加密预约线索入口；对象存储、真实通知、
+  验证码、AI 网关和正式域名仍待现场配置与验收。
+- 用户已明确不使用 NAS、自建 Runner 或虚拟机，后续 CI/CD 只采用 GitHub 官方
+  托管 Runner。现有 Phase 5/6 self-hosted 手工验收定义在迁移完成前视为停用，
+  不得接入 NAS；仓库当前为 Private，Hosted Actions 在任何步骤执行前被账户付款
+  或 Spending limit 拦截。在免费额度恢复或用户明确批准公开仓库前，外部门禁
+  保持未执行，不得记为代码测试失败或门禁通过。
 
 ## 目录约定
 
@@ -52,12 +57,17 @@
 pnpm install --frozen-lockfile
 pnpm audit
 pnpm check
+NODE_ENV=production \
+NEXT_PUBLIC_WEBSITE_ORIGIN=https://www.example.invalid \
+NEXT_PUBLIC_ERP_API_ORIGIN=https://erp.example.invalid \
+NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL=https://captcha.example.invalid/widget \
 pnpm build
 ```
 
 `pnpm check` 覆盖 Lint、TypeCheck、单元/集成/协议测试、文档、安全、镜像、
 Kubernetes、MCP、迁移、容量、韧性、发布和 Phase 6 证据门禁自测。本地自测
-不能替代目标环境中的真实联调、生产等价演练或人工签署。
+不能替代目标环境中的真实联调、生产等价演练或人工签署。两个 Web 应用的生产
+构建必须显式提供公开 HTTPS Origin；`.invalid` 仅用于不发布产物的工程构建门禁。
 
 需要本地基础设施的真实 MCP 握手使用：
 

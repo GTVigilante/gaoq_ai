@@ -149,7 +149,8 @@ draft → pending_approval → approved → clearing → ready → scheduled →
 - BFF 到 ERP 在集群内只允许 `http://<service>.<namespace>.svc.cluster.local:3001` 完整服务域名，或经受控 HTTPS API Origin；OAuth `resource` 仍须与 ERP 注册值逐字一致。NetworkPolicy 只放行 Web Pod 到 API Pod 的 3001 端口。
 - ERP `GET /recruitment/portal/positions` 只返回 `open` 职位的 `id/title/department/location/headcount/publishedAt` 公开投影，不返回租户、HC、职级或内部状态引用。
 - 门户投递复用 `POST /recruitment/applications`。BFF 固定 `sourceChannel=portal` 和授权版本、目的及期限；租户只来自服务令牌，浏览器不得上报租户、渠道或授权期限。
-- 候选人姓名、手机、邮箱继续由 Recruitment 独立密钥域加密并以盲索引去重；公开响应只返回申请标识。Web 必须执行同源校验、蜜罐与限流，生产入口仍需配置分布式 WAF/网关限流。
+- 候选人姓名、手机、邮箱继续由 Recruitment 独立密钥域加密并以盲索引去重；公开响应只返回申请标识。Web 精确校验 `CAREERS_PUBLIC_ORIGIN`，生产入口必须先删除客户端同名头，再注入 `x-gaoq-edge-verification` 与 `CAREERS_CLIENT_IP_HEADER` 指定的受控来源地址头；禁止信任 `x-forwarded-for` 链。
+- 招聘投递限流使用 `CAREERS_RATE_LIMIT_REDIS_URL` 对来源地址 SHA-256 摘要执行十分钟共享窗口，多副本与重启状态一致；Redis、入口验证 Secret 或来源地址不可用时失败关闭。OAuth Token 请求、只读请求和带 `Idempotency-Key` 的写请求分别使用 3/5/8 秒上限；只读与幂等写最多重试一次，非幂等写禁止重试。
 - 当前门户建立候选人档案与职位申请；简历附件上传仍须经“病毒扫描 → 对象存储 → `candidate_resume` 附件登记”证据链交付，未完成该网关前不得把联系人投递描述为已上传简历原件。
 | 合同完成与入职转化 | Webhook/应用命令 | `esign.flow.completed.v1`、`onboarding.completed.v1` | 只读状态，不提供终态执行 Tool | R2/R3 |
 

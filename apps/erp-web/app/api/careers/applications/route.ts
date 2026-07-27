@@ -6,13 +6,15 @@ import {
   RecruitmentPortalApiError,
   recruitmentPortalFetch,
 } from '../../../lib/recruitment-portal-api';
+import {
+  assertRecruitmentPortalRequestAllowed,
+  RecruitmentPortalProtectionError,
+} from '../../../lib/recruitment-portal-protection';
 
 const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/u;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const E164 = /^\+[1-9][0-9]{7,14}$/u;
 const EMAIL = /^[^\s@]{1,64}@[^\s@]{1,189}$/u;
-const rateWindows = new Map<string, readonly number[]>();
-
 interface ApplicationInput {
   readonly submissionId: string;
   readonly positionId: string;
@@ -30,9 +32,18 @@ export const dynamic = 'force-dynamic';
 export async function POST(request: NextRequest): Promise<NextResponse<
   CareerApplicationResponse | { readonly code: string; readonly message: string }
 >> {
-  if (!sameOrigin(request)) return error('CAREERS_ORIGIN_DENIED', '请求来源无效', 403);
-  if (!consumeRateLimit(clientAddress(request))) {
-    return error('CAREERS_RATE_LIMITED', '提交过于频繁，请稍后再试', 429);
+  try {
+    await assertRecruitmentPortalRequestAllowed(request);
+  } catch (caught) {
+    if (caught instanceof RecruitmentPortalProtectionError) {
+      const message = caught.status === 429
+        ? '提交过于频繁，请稍后再试'
+        : caught.status === 503
+          ? '申请保护服务暂时不可用'
+          : '请求来源无效';
+      return error(caught.code, message, caught.status);
+    }
+    return error('CAREERS_PROTECTION_UNAVAILABLE', '申请保护服务暂时不可用', 503);
   }
   const raw = await request.json().catch(() => null) as unknown;
   const input = parseInput(raw);
@@ -132,35 +143,6 @@ function parseInput(value: unknown): ApplicationInput | null {
     consentAccepted: true,
     ...(typeof record.website === 'string' ? { website: record.website } : {}),
   };
-}
-
-function sameOrigin(request: NextRequest): boolean {
-  const origin = request.headers.get('origin');
-  if (origin === null) return process.env.NODE_ENV !== 'production';
-  try {
-    return new URL(origin).host === request.nextUrl.host;
-  } catch {
-    return false;
-  }
-}
-
-function clientAddress(request: NextRequest): string {
-  const forwarded = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
-  return forwarded !== undefined && /^[0-9A-Fa-f:.]{3,64}$/u.test(forwarded)
-    ? forwarded
-    : 'unknown';
-}
-
-function consumeRateLimit(subject: string): boolean {
-  const now = Date.now();
-  const recent = (rateWindows.get(subject) ?? []).filter((value) => now - value < 10 * 60_000);
-  if (rateWindows.size > 10_000) rateWindows.clear();
-  if (recent.length >= 5) {
-    rateWindows.set(subject, recent);
-    return false;
-  }
-  rateWindows.set(subject, [...recent, now]);
-  return true;
 }
 
 function error(

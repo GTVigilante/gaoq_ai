@@ -11,6 +11,7 @@ import { OAuthClientRegistry } from './oauth-client-registry.js';
 import type { BrowserOAuthIdentity } from './token-grant.service.js';
 
 const RESOURCE = 'https://erp.example.com/mcp';
+const PAYROLL_RESOURCE = 'https://payroll.example.com/api';
 const REDIRECT_URI = 'https://client.example.com/oauth/callback';
 const CLIENT_ID = 'mcp-client-001';
 const CODE_VERIFIER = 'A'.repeat(43);
@@ -55,6 +56,7 @@ const clientConfig = JSON.stringify([{
   clientName: '标准 MCP 客户端',
   redirectUris: [REDIRECT_URI],
   allowedScopes: ['erp:mcp:server:connect', 'erp:org:chart:read'],
+  allowedResources: [RESOURCE],
   tenantIds: ['tenant-001'],
   status: 'active',
 }]);
@@ -75,7 +77,9 @@ function fixture() {
     get: (key: string) => {
       if (key === 'AUTH_RESOURCE') return RESOURCE;
       if (key === 'AUTH_ISSUER') return 'https://erp.example.com';
-      if (key === 'AUTH_ADDITIONAL_RESOURCES_JSON') return '[]';
+      if (key === 'AUTH_ADDITIONAL_RESOURCES_JSON') {
+        return JSON.stringify([{ resource: PAYROLL_RESOURCE, audience: 'gaoq-payroll' }]);
+      }
       return clientConfig;
     },
   } as unknown as ConfigService<AppEnvironment, true>;
@@ -98,6 +102,21 @@ async function begin(service: OAuthAuthorizationTransactionService) {
     codeChallenge: CODE_CHALLENGE,
   });
 }
+
+describe('OAuthAuthorizationTransactionService 客户端资源授权', () => {
+  it('在写入 Redis 前拒绝全局已注册但未授予客户端的资源', async () => {
+    const { service, redis } = fixture();
+    await expect(service.begin({
+      clientId: CLIENT_ID,
+      redirectUri: REDIRECT_URI,
+      scopes: ['erp:mcp:server:connect'],
+      resource: PAYROLL_RESOURCE,
+      state: 'client-state-001',
+      codeChallenge: CODE_CHALLENGE,
+    })).rejects.toThrow('该客户端无权访问目标 resource');
+    expect(redis.records.size).toBe(0);
+  });
+});
 
 describe('OAuthAuthorizationTransactionService', () => {
   it('授权请求、同意、PKCE 交换形成一次性资源绑定闭环', async () => {

@@ -37,6 +37,15 @@ const bootstrap = async (): Promise<void> => {
     origin: [...new Set(allowedOrigins)],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: [
+      'authorization',
+      'content-type',
+      'idempotency-key',
+      'if-match',
+      'x-csrf-token',
+    ],
+    exposedHeaders: ['etag', 'x-trace-id'],
+    maxAge: 600,
   });
   app.useGlobalPipes(
     new ValidationPipe({

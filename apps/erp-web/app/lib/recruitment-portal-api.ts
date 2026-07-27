@@ -1,13 +1,15 @@
 import 'server-only';
 
-const SAFE_ORIGIN = /^https:\/\/[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/u;
-const LOCAL_ORIGIN = /^http:\/\/(?:localhost|127\.0\.0\.1)(?::[0-9]{1,5})?$/u;
 const CLUSTER_ORIGIN =
   /^http:\/\/[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?\.svc\.cluster\.local:3001$/u;
 const CLIENT_ID = /^[A-Za-z0-9._-]{8,128}$/u;
 const CLIENT_SECRET = /^[\x21-\x7E]{32,256}$/u;
 const SCOPE = /^erp:[a-z][a-z0-9_]*:[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$/u;
 const ACCESS_TOKEN = /^[A-Za-z0-9._~-]{40,4096}$/u;
+const TRANSIENT_STATUS = new Set([502, 503, 504]);
+const TOKEN_TIMEOUT_MS = 3_000;
+const READ_TIMEOUT_MS = 5_000;
+const WRITE_TIMEOUT_MS = 8_000;
 
 interface ApiEnvelope<T> {
   readonly code: string;
@@ -58,14 +60,19 @@ export async function recruitmentPortalFetch<T>(
   if (!SCOPE.test(scope)) throw new Error('RECRUITMENT_PORTAL_SCOPE_INVALID');
   const origin = apiOrigin();
   const token = await serviceToken(origin, scope);
-  const response = await fetch(`${origin}${path}`, {
+  const method = (init.method ?? 'GET').toUpperCase();
+  const retryable = ['GET', 'HEAD'].includes(method) || hasIdempotencyKey(init.headers);
+  const headers = new Headers(init.headers);
+  headers.set('accept', 'application/json');
+  headers.set('authorization', `Bearer ${token}`);
+  const response = await fetchWithPolicy(`${origin}${path}`, {
     ...init,
     cache: 'no-store',
-    headers: {
-      accept: 'application/json',
-      authorization: `Bearer ${token}`,
-      ...(init.headers ?? {}),
-    },
+    headers,
+  }, {
+    attempts: retryable ? 2 : 1,
+    timeoutMs: ['GET', 'HEAD'].includes(method) ? READ_TIMEOUT_MS : WRITE_TIMEOUT_MS,
+    failureCode: 'RECRUITMENT_PORTAL_UPSTREAM_UNAVAILABLE',
   });
   return readEnvelope<T>(response);
 }
@@ -87,7 +94,7 @@ async function serviceToken(origin: string, scope: string): Promise<string> {
     resource: oauthResource(origin),
     scope,
   });
-  const response = await fetch(`${origin}/api/auth/oauth/token`, {
+  const response = await fetchWithPolicy(`${origin}/api/auth/oauth/token`, {
     method: 'POST',
     cache: 'no-store',
     headers: {
@@ -96,6 +103,10 @@ async function serviceToken(origin: string, scope: string): Promise<string> {
       'content-type': 'application/x-www-form-urlencoded',
     },
     body,
+  }, {
+    attempts: 2,
+    timeoutMs: TOKEN_TIMEOUT_MS,
+    failureCode: 'RECRUITMENT_PORTAL_AUTH_UNAVAILABLE',
   });
   const value = await response.json().catch(() => null) as unknown;
   if (!response.ok || !isTokenResponse(value)) {
@@ -131,13 +142,30 @@ function apiOrigin(): string {
   const raw = process.env.ERP_API_ORIGIN ??
     process.env.NEXT_PUBLIC_ERP_API_ORIGIN ??
     'http://localhost:3001';
-  const normalized = raw.replace(/\/$/u, '');
-  if (!SAFE_ORIGIN.test(normalized) &&
-    !CLUSTER_ORIGIN.test(normalized) &&
-    !(process.env.NODE_ENV !== 'production' && LOCAL_ORIGIN.test(normalized))) {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
     throw new Error('RECRUITMENT_PORTAL_API_ORIGIN_INVALID');
   }
-  return normalized;
+  const localDevelopment =
+    process.env.NODE_ENV !== 'production' &&
+    parsed.protocol === 'http:' &&
+    ['localhost', '127.0.0.1', '::1', '[::1]'].includes(parsed.hostname);
+  const publicHttps =
+    parsed.protocol === 'https:' &&
+    !['localhost', '127.0.0.1', '::1', '[::1]'].includes(parsed.hostname) &&
+    !parsed.hostname.endsWith('.local') &&
+    (parsed.port === '' || parsed.port === '443');
+  if (
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    parsed.pathname !== '/' ||
+    parsed.search !== '' ||
+    parsed.hash !== '' ||
+    (!CLUSTER_ORIGIN.test(parsed.origin) && !localDevelopment && !publicHttps)
+  ) throw new Error('RECRUITMENT_PORTAL_API_ORIGIN_INVALID');
+  return parsed.origin;
 }
 
 function oauthResource(origin: string): string {
@@ -183,4 +211,46 @@ function isEnvelope<T>(value: unknown): value is ApiEnvelope<T> {
     typeof record.traceId === 'string' &&
     Object.hasOwn(record, 'data')
   );
+}
+
+async function fetchWithPolicy(
+  input: string,
+  init: RequestInit,
+  policy: {
+    readonly attempts: 1 | 2;
+    readonly timeoutMs: number;
+    readonly failureCode: string;
+  },
+): Promise<Response> {
+  for (let attempt = 1; attempt <= policy.attempts; attempt += 1) {
+    try {
+      const timeout = AbortSignal.timeout(policy.timeoutMs);
+      const signal = init.signal == null
+        ? timeout
+        : AbortSignal.any([init.signal, timeout]);
+      const response = await fetch(input, { ...init, signal });
+      if (!TRANSIENT_STATUS.has(response.status) || attempt === policy.attempts) return response;
+    } catch (caught) {
+      const timedOut = caught instanceof DOMException && caught.name === 'TimeoutError';
+      if (attempt === policy.attempts) {
+        throw new RecruitmentPortalApiError(
+          timedOut ? 'RECRUITMENT_PORTAL_UPSTREAM_TIMEOUT' : policy.failureCode,
+          timedOut ? '人才系统响应超时' : '人才系统暂时不可用',
+          timedOut ? 504 : 503,
+        );
+      }
+    }
+  }
+  throw new RecruitmentPortalApiError(policy.failureCode, '人才系统暂时不可用', 503);
+}
+
+function hasIdempotencyKey(headers: HeadersInit | undefined): boolean {
+  if (headers === undefined) return false;
+  const value = new Headers(headers).get('idempotency-key');
+  return value !== null && value.length >= 8 && value.length <= 256;
+}
+
+/** 仅供单元测试清理服务令牌缓存。 */
+export function resetRecruitmentPortalTokenCacheForTests(): void {
+  tokens.clear();
 }
