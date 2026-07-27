@@ -24,6 +24,10 @@ describe('MetricsService', () => {
       new Date('2026-07-27T00:00:02.500Z'),
     );
     metrics.recordKnowledgeSearchIndex('delete', 'dead');
+    metrics.recordKnowledgeExamRun('start', 'success');
+    metrics.recordKnowledgeExamRun('review', 'pending');
+    metrics.setKnowledgeExamRunBacklog('pending_review', 7, 1_800);
+    metrics.observeKnowledgeExamGrading('manual', 3_600);
 
     const output = await metrics.render();
     expect(metrics.contentType).toContain('text/plain');
@@ -46,6 +50,21 @@ describe('MetricsService', () => {
     );
     expect(output).toContain(
       'gaoq_knowledge_search_index_last_success_timestamp_seconds{operation="upsert"}',
+    );
+    expect(output).toContain(
+      'gaoq_knowledge_exam_run_transition_total{operation="start",outcome="success"} 1',
+    );
+    expect(output).toContain(
+      'gaoq_knowledge_exam_run_transition_total{operation="review",outcome="pending"} 1',
+    );
+    expect(output).toContain(
+      'gaoq_knowledge_exam_run_backlog{status="pending_review"} 7',
+    );
+    expect(output).toContain(
+      'gaoq_knowledge_exam_run_oldest_age_seconds{status="pending_review"} 1800',
+    );
+    expect(output).toContain(
+      'gaoq_knowledge_exam_grading_duration_seconds_count{review_mode="manual"} 1',
     );
     expect(output).not.toContain('tenant_id');
     expect(output).not.toContain('user_id');

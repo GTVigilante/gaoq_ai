@@ -171,7 +171,7 @@ export class KnowledgeExamRunService {
         await this.assertAssignmentOwnership(assignment.onboardingInstanceId, session);
         if (
           existing.submissionRef === submissionRef &&
-          ['submitted', 'pending_review', 'graded'].includes(existing.status)
+          ['submitted', 'pending_review', 'graded', 'dead'].includes(existing.status)
         ) {
           return { examRun: summary(existing) };
         }

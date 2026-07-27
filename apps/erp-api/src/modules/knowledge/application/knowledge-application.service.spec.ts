@@ -101,10 +101,6 @@ function fixture(options?: {
     append: vi.fn().mockResolvedValue('01J8ZQK7V0A2M4N6P8R0T2W4Z9'),
   };
   const searchIndexTasks = { append: vi.fn().mockResolvedValue(undefined) };
-  const grader = { grade: vi.fn().mockResolvedValue({
-    scoreBps: 8_500, questionBankDigest: 'a'.repeat(43),
-    questionSetDigest: 'b'.repeat(43), gradingEvidenceId: 'grading-001',
-  }) };
   const verifier = { verify: vi.fn().mockResolvedValue({
     contentVerified: true, questionBankVerified: true,
   }) };
@@ -160,7 +156,6 @@ function fixture(options?: {
     evidence as unknown as KnowledgeEvidenceRepository,
     outbox as unknown as KnowledgeOutboxWriter,
     searchIndexTasks as unknown as KnowledgeSearchIndexTaskWriter,
-    grader,
     verifier,
     searcher,
     onboarding as unknown as OnboardingApplicationService,
@@ -178,14 +173,14 @@ function fixture(options?: {
         'erp:knowledge:course:read',
         'erp:knowledge:assignment:create', 'erp:knowledge:assignment:read',
         'erp:knowledge:search',
-        'erp:knowledge:exam:grade', 'erp:knowledge:assignment:complete',
+        'erp:knowledge:assignment:complete',
         'erp:integration:knowledge:progress', 'erp:knowledge:onboarding:attest',
       ],
     },
   };
   return {
     service, context, trusted, courses, assignments, attempts, evidence,
-    outbox, searchIndexTasks, grader, verifier, searcher, onboarding, profiles,
+    outbox, searchIndexTasks, verifier, searcher, onboarding, profiles,
     employments, employees,
     get assignment() { return assignment; },
     get attempt() { return attempt; },
@@ -355,76 +350,6 @@ describe('KnowledgeApplicationService', () => {
       SESSION,
     );
     expect(store.searcher.search).not.toHaveBeenCalled();
-  });
-
-  it('考试只接受评分端口结果，摘要不包含提交或题库数据', async () => {
-    const store = fixture();
-    const result = await store.context.run(store.trusted, () =>
-      store.service.gradeExam('assignment-001', 'knowledge-grade-001', 'submission-001'),
-    );
-    expect(store.grader.grade).toHaveBeenCalledOnce();
-    expect(result.attempt).toMatchObject({ scoreBps: 8_500, passed: true });
-    expect(result.attempt).not.toHaveProperty('submissionRef');
-    expect(result.attempt).not.toHaveProperty('questionSetDigest');
-  });
-
-  it('同步兼容评分严格执行最大次数且主观题必须走可靠运行', async () => {
-    const exhausted = fixture();
-    exhausted.attempts.countByAssignment.mockResolvedValue(3);
-    await expect(exhausted.context.run(exhausted.trusted, () =>
-      exhausted.service.gradeExam(
-        'assignment-001',
-        'knowledge-grade-limit',
-        'submission-limit',
-      ),
-    )).rejects.toMatchObject({ response: {
-      code: 'KNOWLEDGE_EXAM_ATTEMPTS_EXHAUSTED',
-    } });
-    expect(exhausted.grader.grade).not.toHaveBeenCalled();
-
-    const subjectiveDraft = createCourseVersion({
-      id: 'course-001', tenantId: 'tenant-001', courseCode: 'LEADERSHIP', revision: 1,
-      title: '管理能力', contentRef: 'content-001', questionBankRef: 'bank-001',
-      questionBankDigest: 'a'.repeat(43), passingScoreBps: 8_000,
-      questionMode: 'subjective', gradingPolicyVersion: 'manual-v1',
-    }, NOW);
-    const subjective = publishCourseVersion(subjectiveDraft, {
-      tenantId: 'tenant-001', expectedVersion: 1,
-      contentVerified: true, questionBankVerified: true,
-    }, NOW);
-    const manual = fixture({ course: subjective });
-    await expect(manual.context.run(manual.trusted, () =>
-      manual.service.gradeExam(
-        'assignment-001',
-        'knowledge-grade-manual',
-        'submission-manual',
-      ),
-    )).rejects.toMatchObject({ response: {
-      code: 'KNOWLEDGE_EXAM_RUN_REQUIRED',
-    } });
-    expect(manual.grader.grade).not.toHaveBeenCalled();
-  });
-
-  it('终态任务拒绝继续考试', async () => {
-    const passed: ExamAttempt = {
-      id: 'attempt-001', tenantId: 'tenant-001', assignmentId: 'assignment-001',
-      attemptNumber: 1, submissionRef: 'submission-001',
-      questionSetDigest: 'b'.repeat(43), gradingEvidenceId: 'grading-001',
-      questionMode: 'objective', gradingPolicyVersion: 'objective-auto-v1',
-      passingRule: 'score_threshold', manualReviewEvidenceId: null,
-      submissionReason: 'learner',
-      scoreBps: 8_500, passed: true, gradedAt: NOW.toISOString(),
-    };
-    const first = fixture({ attempt: passed });
-    await first.context.run(first.trusted, () => first.service.completeAssignment(
-      'assignment-001', 2, 'knowledge-complete-002', 'attempt-001',
-    ));
-    await expect(first.context.run(first.trusted, () => first.service.gradeExam(
-      'assignment-001', 'knowledge-grade-002', 'submission-002',
-    ))).rejects.toMatchObject({ response: {
-      code: 'KNOWLEDGE_ASSIGNMENT_TERMINAL',
-    } });
-    expect(first.grader.grade).not.toHaveBeenCalled();
   });
 
   it('全部必修完成后生成聚合证明并回填 Onboarding', async () => {
