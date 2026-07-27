@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ULID_PATTERN } from '@gaoq/shared-utils';
 import type { Job } from 'bullmq';
@@ -8,6 +9,7 @@ import type { Model } from 'mongoose';
 import { z } from 'zod';
 
 import { AuditService } from '../../core/audit/audit.service.js';
+import type { AuditRecordInput } from '../../core/audit/audit.types.js';
 import { TenantContextService } from '../../core/tenant/tenant-context.service.js';
 import { AttendanceApplicationService } from '../attendance/application/attendance-application.service.js';
 import { AttendanceDataCryptoService } from '../attendance/persistence/attendance-data-crypto.service.js';
@@ -44,6 +46,8 @@ const PROCESSING_LEASE_MS = 15 * 60 * 1_000;
 
 @Processor(ATTENDANCE_PROVIDER_QUEUE, { concurrency: 4, limiter: { max: 20, duration: 1_000 } })
 export class AttendanceProviderProcessor extends WorkerHost {
+  private readonly logger = new Logger(AttendanceProviderProcessor.name);
+
   constructor(
     @InjectModel(AttendanceProviderStateRecord.name)
     private readonly states: Model<AttendanceProviderStateDocument>,
@@ -69,17 +73,23 @@ export class AttendanceProviderProcessor extends WorkerHost {
       return this.runTrusted(data.tenantId, data.stateId, 'pull', async () => {
         try {
           const count = await this.pull.pullState(data.stateId);
-          await this.audit.record({
+          await this.auditAfterCommit({
             action: 'integration.attendance_provider.pull',
             resourceType: 'attendance_provider_state', resourceId: data.stateId,
             riskLevel: 'R1', outcome: 'success', metadata: { eventCount: count },
+          }, {
+            code: 'ATTENDANCE_PROVIDER_PULL_AUDIT_AFTER_COMMIT_FAILED',
+            tenantId: data.tenantId, stateId: data.stateId,
           });
           return count;
         } catch (error) {
-          await this.audit.record({
+          await this.auditAfterCommit({
             action: 'integration.attendance_provider.pull',
             resourceType: 'attendance_provider_state', resourceId: data.stateId,
             riskLevel: 'R1', outcome: 'failure', metadata: { failureCode: failureCode(error) },
+          }, {
+            code: 'ATTENDANCE_PROVIDER_PULL_FAILURE_AUDIT_AFTER_COMMIT_FAILED',
+            tenantId: data.tenantId, stateId: data.stateId,
           });
           throw error;
         }
@@ -190,22 +200,28 @@ export class AttendanceProviderProcessor extends WorkerHost {
         { runValidators: true },
       );
       if (updated.modifiedCount !== 1) throw new Error('ATTENDANCE_PROVIDER_INBOX_LEASE_LOST');
-      await this.audit.record({
+      await this.auditAfterCommit({
         action: 'integration.attendance_provider.fact.ingest',
         resourceType: 'attendance_source_fact', resourceId: result.fact.id,
         riskLevel: 'R1', outcome: 'success', metadata: {
           providerCode: claimed.providerCode, normalizerVersion: normalizer.schemaVersion,
         },
+      }, {
+        code: 'ATTENDANCE_PROVIDER_INGEST_AUDIT_AFTER_COMMIT_FAILED',
+        tenantId, inboxId: claimed.id, sourceFactId: result.fact.id,
       });
       return 1;
     } catch (error) {
       await this.failInbox(claimed, failureCode(error));
-      await this.audit.record({
+      await this.auditAfterCommit({
         action: 'integration.attendance_provider.fact.ingest',
         resourceType: 'attendance_provider_inbox', resourceId: claimed.id,
         riskLevel: 'R1', outcome: 'failure', metadata: {
           providerCode: claimed.providerCode, failureCode: failureCode(error),
         },
+      }, {
+        code: 'ATTENDANCE_PROVIDER_INGEST_FAILURE_AUDIT_AFTER_COMMIT_FAILED',
+        tenantId, inboxId: claimed.id,
       });
       throw error;
     }
@@ -241,13 +257,16 @@ export class AttendanceProviderProcessor extends WorkerHost {
       { runValidators: true },
     );
     if (updated.modifiedCount !== 1) throw new Error('ATTENDANCE_PROVIDER_INBOX_LEASE_LOST');
-    await this.audit.record({
+    await this.auditAfterCommit({
       action: 'integration.attendance_provider.fact.review',
       resourceType: 'attendance_provider_inbox', resourceId: inbox.id,
       riskLevel: 'R2', outcome: 'failure', metadata: {
         providerCode: inbox.providerCode, failureCode: code,
         ...(normalizerVersion === null ? {} : { normalizerVersion }),
       },
+    }, {
+      code: 'ATTENDANCE_PROVIDER_REVIEW_AUDIT_AFTER_COMMIT_FAILED',
+      tenantId: inbox.tenantId, inboxId: inbox.id,
     });
   }
 
@@ -260,6 +279,17 @@ export class AttendanceProviderProcessor extends WorkerHost {
       { runValidators: true },
     );
     if (updated.modifiedCount !== 1) throw new Error('ATTENDANCE_PROVIDER_INBOX_LEASE_LOST');
+  }
+
+  private async auditAfterCommit(
+    input: AuditRecordInput,
+    context: Readonly<Record<string, string>>,
+  ): Promise<void> {
+    try {
+      await this.audit.record(input);
+    } catch {
+      this.logger.error(context);
+    }
   }
 
   private runTrusted<T>(
