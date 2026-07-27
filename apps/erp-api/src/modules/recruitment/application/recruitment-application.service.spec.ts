@@ -120,6 +120,62 @@ const createInput = {
   },
 };
 
+const candidateMigrationBase = {
+  targetId: null as string | null,
+  status: 'active' as const,
+  name: '张三',
+  phone: '+8613800138000',
+  email: 'candidate@example.com',
+  consentVersion: 'privacy-v1',
+  consentPurpose: '招聘评估与候选人联络',
+  consentCapturedAt: '2026-07-20T00:00:00.000Z',
+  consentExpiresAt: '2027-07-20T00:00:00.000Z',
+  consentWithdrawnAt: null as string | null,
+  retentionExpiresAt: '2028-07-20T00:00:00.000Z',
+  version: 1,
+  createdAt: '2026-07-20T00:00:00.000Z',
+  updatedAt: '2026-07-20T00:00:00.000Z',
+  migrationEvidenceRef:
+    'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/candidate-evidence-001',
+  evidenceChecksum: 'a'.repeat(43),
+};
+
+const applicationMigrationBase = {
+  targetId: null as string | null,
+  candidateId: migratedCandidate.id,
+  positionId: POSITION_ID,
+  sourceChannel: 'legacy_ats',
+  actions: [
+    {
+      targetStage: 'screening' as const,
+      reasonCode: null,
+      occurredAt: '2026-07-20T01:00:00.000Z',
+    },
+    {
+      targetStage: 'interview' as const,
+      reasonCode: null,
+      occurredAt: '2026-07-20T02:00:00.000Z',
+    },
+  ],
+  expectedStage: 'interview' as const,
+  expectedVersion: 3,
+  appliedAt: '2026-07-20T00:00:00.000Z',
+  endedAt: null as string | null,
+  updatedAt: '2026-07-20T02:00:00.000Z',
+  migrationEvidenceRef:
+    'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/application-evidence-001',
+  evidenceChecksum: 'b'.repeat(43),
+};
+
+const migratedApplication = {
+  ...application,
+  sourceChannel: 'legacy_ats',
+  stage: 'interview' as const,
+  version: 3,
+  appliedAt: '2026-07-20T00:00:00.000Z',
+  updatedAt: '2026-07-20T02:00:00.000Z',
+};
+
 describe('RecruitmentApplicationService', () => {
   it('候选人迁移只允许服务身份，写入加密仓储边界且响应和事件不含 PII', async () => {
     const input = {
@@ -535,6 +591,29 @@ describe('RecruitmentApplicationService', () => {
     expect(store.applications.insert).not.toHaveBeenCalled();
   });
 
+  it('申请创建对职位状态、日期和唯一键冲突使用稳定错误契约', async () => {
+    const missing = fixture();
+    missing.positions.findById.mockResolvedValueOnce(null);
+    await expect(missing.service.createApplication('create-position-missing', createInput))
+      .rejects.toMatchObject({ response: { code: 'RECRUITMENT_POSITION_NOT_FOUND' } });
+
+    const paused = fixture();
+    paused.positions.findById.mockResolvedValueOnce({ ...position, status: 'paused' });
+    await expect(paused.service.createApplication('create-position-paused', createInput))
+      .rejects.toMatchObject({ response: { code: 'RECRUITMENT_POSITION_NOT_OPEN' } });
+
+    const invalidDate = fixture();
+    await expect(invalidDate.service.createApplication('create-invalid-date', {
+      ...createInput,
+      consent: { ...createInput.consent, expiresAt: 'invalid-date' },
+    })).rejects.toMatchObject({ response: { code: 'RECRUITMENT_INVALID_DATE' } });
+
+    const duplicate = fixture();
+    duplicate.applications.insert.mockRejectedValueOnce({ code: 11_000 });
+    await expect(duplicate.service.createApplication('create-duplicate', createInput))
+      .rejects.toMatchObject({ response: { code: 'RECRUITMENT_UNIQUE_CONFLICT' } });
+  });
+
   it('通用入口拒绝自报渠道投递，只有受信任 Worker 窄接口可写入', async () => {
     const channelInput = {
       ...createInput, sourceChannel: 'sandbox_ats',
@@ -632,6 +711,33 @@ describe('RecruitmentApplicationService', () => {
     expect(store.outbox.append).not.toHaveBeenCalled();
   });
 
+  it('阶段推进统一映射仓储冲突、领域冲突、租户越权和非法迁移', async () => {
+    const writeConflict = fixture();
+    writeConflict.applications.replace.mockRejectedValueOnce(new RecruitmentWriteConflictError());
+    await expect(writeConflict.service.transitionApplication(
+      APPLICATION_ID, 1, 'transition-write-conflict', { targetStage: 'screening' },
+    )).rejects.toMatchObject({ response: { code: 'RECRUITMENT_VERSION_CONFLICT' } });
+
+    const versionConflict = fixture();
+    await expect(versionConflict.service.transitionApplication(
+      APPLICATION_ID, 2, 'transition-version-conflict', { targetStage: 'screening' },
+    )).rejects.toMatchObject({ response: { code: 'RECRUITMENT_VERSION_CONFLICT' } });
+
+    const tenantMismatch = fixture();
+    tenantMismatch.applications.findById.mockResolvedValueOnce({
+      ...application,
+      tenantId: 'tenant-other',
+    });
+    await expect(tenantMismatch.service.transitionApplication(
+      APPLICATION_ID, 1, 'transition-tenant-mismatch', { targetStage: 'screening' },
+    )).rejects.toMatchObject({ response: { code: 'RECRUITMENT_TENANT_MISMATCH' } });
+
+    const invalidTransition = fixture();
+    await expect(invalidTransition.service.transitionApplication(
+      APPLICATION_ID, 1, 'transition-invalid', { targetStage: 'interview' },
+    )).rejects.toMatchObject({ response: { code: 'CANDIDATE_STAGE_TRANSITION_INVALID' } });
+  });
+
   it('通用接口拒绝客户端自报 Offer 或雇佣证据', async () => {
     const store = fixture();
     await expect(store.service.transitionApplication(
@@ -653,6 +759,18 @@ describe('RecruitmentApplicationService', () => {
     });
     await expect(allowed.service.getApplication(APPLICATION_ID))
       .resolves.toMatchObject({ id: APPLICATION_ID });
+  });
+
+  it('读取对申请缺失和职位引用失效采用失败关闭', async () => {
+    const missingApplication = fixture();
+    missingApplication.applications.findById.mockResolvedValueOnce(null);
+    await expect(missingApplication.service.getApplication(APPLICATION_ID))
+      .rejects.toMatchObject({ response: { code: 'RECRUITMENT_APPLICATION_NOT_FOUND' } });
+
+    const missingPosition = fixture();
+    missingPosition.positions.findById.mockResolvedValueOnce(null);
+    await expect(missingPosition.service.getApplication(APPLICATION_ID))
+      .rejects.toThrow('RECRUITMENT_POSITION_REFERENCE_INVALID');
   });
 
   it('渠道回执投影只允许系统 Worker，并且不泄露候选人和证据字段', async () => {
