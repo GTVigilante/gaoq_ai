@@ -61,14 +61,14 @@
 ## 5. 覆盖率边界
 
 2026-07-27 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，321 个测试文件、1,603 项测试全部
-通过；覆盖率为语句 75.87%、分支 66.22%、函数 78.55%、行 78.82%。该结果低于
+`pnpm --filter @gaoq/erp-api test:coverage`，321 个测试文件、1,637 项测试全部
+通过；覆盖率为语句 76.58%、分支 67.06%、函数 79.39%、行 79.45%。该结果低于
 Phase 0 规定的全系统 80% 门槛，必须作为实施缺口继续处理，禁止通过排除生产文件、
 降低阈值或只报告局部高覆盖率来宣称达标。
 
 租户上下文、身份授权、审批数据加密、审批仓储、审批应用状态机、MCP 确认、
-薪酬影子周期、Care 仓储、组织仓储、招聘仓储和知识库仓储已建立独立不可回退
-门禁：
+薪酬影子周期、Care 仓储、组织仓储、招聘仓储、知识库仓储和营销 CMS 服务已
+建立独立不可回退门禁：
 `pnpm quality:tenant-context-coverage`、
 `pnpm quality:authorization-coverage`、
 `pnpm quality:approval-crypto-coverage`、
@@ -78,18 +78,19 @@ Phase 0 规定的全系统 80% 门槛，必须作为实施缺口继续处理，�
 `pnpm quality:org-repositories-coverage`、
 `pnpm quality:recruitment-repositories-coverage`、
 `pnpm quality:knowledge-repositories-coverage`、
+`pnpm quality:marketing-cms-service-coverage`、
 `pnpm quality:approval-repositories-coverage` 和
-`pnpm quality:approval-application-coverage`。十一条链路当前覆盖率分别为
+`pnpm quality:approval-application-coverage`。十二条链路当前覆盖率分别为
 100%/100%/100%/100%、100%/95.83%/100%/100%、
 98.75%/96.96%/100%/100%、
 98.06%/94.04%/98.64%/99.02%、
 94.62%/90.76%/98.19%/95.96%、100%/97.74%/100%/100%、
 99.00%/97.24%/97.29%/98.84%、
 100%/91.66%/100%/100%、100%/100%/100%/100%、
-97.44%/91.32%/100%/99.53% 和 100%/99.43%/100%/100%
-（语句/分支/函数/行）；十一项阈值均固定为 90%，使用相互隔离的报告目录，
-并已接入 `pnpm check`。这只证明十一条关键链路达标，不替代全仓 80% 或其余
-关键服务 90% 的证据。
+97.44%/91.32%/100%/99.53%、100%/99.43%/100%/100% 和
+100%/97.27%/100%/100%（语句/分支/函数/行）；十二项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明十二条关键链路达标，
+不替代全仓 80% 或其余关键服务 90% 的证据。
 
 ## 6. 架构边界
 
