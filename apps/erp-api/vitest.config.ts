@@ -137,6 +137,12 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/integration/recruitment-channel-stage-delivery.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/talent-lifecycle/persistence/talent-lifecycle.repository.ts': {
           branches: 90,
           functions: 90,

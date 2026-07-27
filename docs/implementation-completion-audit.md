@@ -71,7 +71,7 @@
 MCP 确认、MCP 运行时、
 薪酬影子周期、薪酬运行、薪酬审批、薪酬主数据、薪酬四方对账、薪酬税务申报、薪酬 L4 数据加密、资金支付、Treasury 银行回盘、Treasury L4 数据加密、Treasury Outbox、Care 纪念日应用、Care 离职应用、
 数据迁移控制面、Knowledge 考试运行 Relay、Knowledge 搜索索引 Relay、考勤应用、考勤仓储、考勤供应商拉取、
-招聘渠道职位投递、人才全周期仓储、招聘 Offer、Care 仓储、组织仓储、招聘仓储、知识库仓储、营销 CMS 和生产执行授权服务已建立
+招聘渠道职位投递、招聘渠道阶段回传、人才全周期仓储、招聘 Offer、Care 仓储、组织仓储、招聘仓储、知识库仓储、营销 CMS 和生产执行授权服务已建立
 独立不可回退门禁：
 `pnpm quality:tenant-context-coverage`、
 `pnpm quality:audit-anchor-coverage`、
@@ -101,6 +101,7 @@ MCP 确认、MCP 运行时、
 `pnpm quality:attendance-repositories-coverage`、
 `pnpm quality:attendance-provider-pull-coverage`、
 `pnpm quality:recruitment-channel-position-delivery-coverage`、
+`pnpm quality:recruitment-channel-stage-delivery-coverage`、
 `pnpm quality:talent-lifecycle-repository-coverage`、
 `pnpm quality:recruitment-offer-coverage`、
 `pnpm quality:care-repositories-coverage` 和
@@ -110,7 +111,7 @@ MCP 确认、MCP 运行时、
 `pnpm quality:marketing-cms-service-coverage`、
 `pnpm quality:approval-repositories-coverage` 和
 `pnpm quality:approval-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。三十八条链路当前覆盖率分别为
+`pnpm quality:production-execution-authorization-coverage`。三十九条链路当前覆盖率分别为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -138,6 +139,7 @@ MCP 确认、MCP 运行时、
 100%/100%/100%/100%、
 98.61%/97.00%/100%/99.21%、
 100%/97.46%/100%/100%、
+100%/96.00%/100%/100%、
 100%/97.05%/100%/100%、
 95.97%/94.01%/100%/96.83%、
 100%/91.66%/100%/100%、100%/100%/100%/100%、
@@ -174,6 +176,11 @@ Knowledge 搜索索引 Relay 已补齐 5 项幂等回执、时间边界、参数
 终态提交后的审计故障只作独立告警，不再误写业务失败。覆盖率达到
 100%/97.46%/100%/100%（语句/分支/函数/行），独立四维 90% 门禁已接入
 `pnpm check`。
+
+招聘渠道阶段回传已覆盖 23 项强版本顺序、本地来源跳过、加密申请映射、稳定
+幂等键、非法回执、回执盲指纹、租约竞争、重试/死信和失败关闭测试；业务终态
+提交后的审计故障只作独立告警。覆盖率达到 100%/96.00%/100%/100%
+（语句/分支/函数/行），独立四维 90% 门禁已接入 `pnpm check`。
 
 人才全周期仓储已覆盖 20 项可信租户、授权前非敏感投影、备注密文组合、AAD
 解密、候选人时间线、会话绑定、跨租户拒绝、乐观锁和损坏密文失败关闭测试；
