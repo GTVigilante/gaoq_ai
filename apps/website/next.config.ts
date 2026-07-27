@@ -1,8 +1,4 @@
 import type { NextConfig } from 'next';
-import {
-  parseWebsiteBuildEnvironment,
-  websiteSecurityHeaders,
-} from './app/lib/website-security-policy';
 
 export interface WebsiteBuildEnvironment {
   readonly NODE_ENV?: string;
