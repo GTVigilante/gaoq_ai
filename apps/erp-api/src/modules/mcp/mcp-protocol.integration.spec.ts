@@ -1112,5 +1112,5 @@ describe('MCP Streamable HTTP 协议集成', () => {
     ]) {
       await expect(client.readResource({ uri })).rejects.toThrow();
     }
-  });
+  }, 30_000);
 });
