@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { createEventId, ULID_PATTERN } from '@gaoq/shared-utils';
 import type { Job } from 'bullmq';
@@ -8,6 +9,7 @@ import type { Model } from 'mongoose';
 import { z } from 'zod';
 
 import { AuditService } from '../../core/audit/audit.service.js';
+import type { AuditRecordInput } from '../../core/audit/audit.types.js';
 import { TenantContextService } from '../../core/tenant/tenant-context.service.js';
 import { RecruitmentApplicationService } from '../recruitment/application/recruitment-application.service.js';
 import { RecruitmentResumeService } from '../recruitment/application/recruitment-resume.service.js';
@@ -73,6 +75,8 @@ const PROCESSING_LEASE_MS = 15 * 60 * 1_000;
 /** 招聘渠道 Worker：补拉、解密、标准化、证据校验、领域写入和阶段回执串成可恢复链路。 */
 @Processor(RECRUITMENT_CHANNEL_QUEUE, { concurrency: 4, limiter: { max: 20, duration: 1_000 } })
 export class RecruitmentChannelProcessor extends WorkerHost {
+  private readonly logger = new Logger(RecruitmentChannelProcessor.name);
+
   constructor(
     @InjectModel(RecruitmentChannelBindingRecord.name)
     private readonly bindings: Model<RecruitmentChannelBindingDocument>,
@@ -120,17 +124,23 @@ export class RecruitmentChannelProcessor extends WorkerHost {
       return this.runTrusted(data.tenantId, data.bindingId, 'pull', async () => {
         try {
           const count = await this.pull.pullBinding(data.bindingId);
-          await this.audit.record({
+          await this.auditAfterCommit({
             action: 'integration.recruitment_channel.pull',
             resourceType: 'recruitment_channel_binding', resourceId: data.bindingId,
             riskLevel: 'R1', outcome: 'success', metadata: { deliveryCount: count },
+          }, {
+            code: 'RECRUITMENT_CHANNEL_PULL_AUDIT_AFTER_COMMIT_FAILED',
+            tenantId: data.tenantId, bindingId: data.bindingId,
           });
           return count;
         } catch (error) {
-          await this.audit.record({
+          await this.auditAfterCommit({
             action: 'integration.recruitment_channel.pull',
             resourceType: 'recruitment_channel_binding', resourceId: data.bindingId,
             riskLevel: 'R1', outcome: 'failure', metadata: { failureCode: failureCode(error) },
+          }, {
+            code: 'RECRUITMENT_CHANNEL_PULL_FAILURE_AUDIT_AFTER_COMMIT_FAILED',
+            tenantId: data.tenantId, bindingId: data.bindingId,
           });
           throw error;
         }
@@ -278,23 +288,29 @@ export class RecruitmentChannelProcessor extends WorkerHost {
         { runValidators: true },
       );
       if (updated.modifiedCount !== 1) throw new Error('RECRUITMENT_CHANNEL_INBOX_LEASE_LOST');
-      await this.audit.record({
+      await this.auditAfterCommit({
         action: 'integration.recruitment_channel.application.apply',
         resourceType: 'recruitment_application', resourceId: result.application.id,
         riskLevel: 'R2', outcome: 'success', metadata: {
           channelCode: claimed.channelCode, normalizerVersion: normalizer.schemaVersion,
           resumeArchived: evidence.resumeSnapshotId !== null,
         },
+      }, {
+        code: 'RECRUITMENT_CHANNEL_APPLICATION_AUDIT_AFTER_COMMIT_FAILED',
+        tenantId, inboxId: claimed.id, applicationId: result.application.id,
       });
       return 1;
     } catch (error) {
       await this.failInbox(claimed, failureCode(error));
-      await this.audit.record({
+      await this.auditAfterCommit({
         action: 'integration.recruitment_channel.application.apply',
         resourceType: 'recruitment_channel_inbox', resourceId: claimed.id,
         riskLevel: 'R2', outcome: 'failure', metadata: {
           channelCode: claimed.channelCode, failureCode: failureCode(error),
         },
+      }, {
+        code: 'RECRUITMENT_CHANNEL_APPLICATION_FAILURE_AUDIT_AFTER_COMMIT_FAILED',
+        tenantId, inboxId: claimed.id,
       });
       throw error;
     }
@@ -374,12 +390,15 @@ export class RecruitmentChannelProcessor extends WorkerHost {
       { runValidators: true },
     );
     if (updated.modifiedCount !== 1) throw new Error('RECRUITMENT_CHANNEL_INBOX_LEASE_LOST');
-    await this.audit.record({
+    await this.auditAfterCommit({
       action: 'integration.recruitment_channel.application.review',
       resourceType: 'recruitment_channel_inbox', resourceId: inbox.id,
       riskLevel: 'R2', outcome: 'failure', metadata: {
         channelCode: inbox.channelCode, failureCode: code, normalizerVersion,
       },
+    }, {
+      code: 'RECRUITMENT_CHANNEL_REVIEW_AUDIT_AFTER_COMMIT_FAILED',
+      tenantId: inbox.tenantId, inboxId: inbox.id,
     });
   }
 
@@ -392,6 +411,17 @@ export class RecruitmentChannelProcessor extends WorkerHost {
       { runValidators: true },
     );
     if (updated.modifiedCount !== 1) throw new Error('RECRUITMENT_CHANNEL_INBOX_LEASE_LOST');
+  }
+
+  private async auditAfterCommit(
+    input: AuditRecordInput,
+    context: Readonly<Record<string, string>>,
+  ): Promise<void> {
+    try {
+      await this.audit.record(input);
+    } catch {
+      this.logger.error(context);
+    }
   }
 
   private runTrusted<T>(
