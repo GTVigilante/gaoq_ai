@@ -423,7 +423,8 @@ describe('RecruitmentChannelProcessor', () => {
     [{ consentEvidenceId: null }, '同意证据为空'],
     [{ consentEvidenceId: 'bad' }, '同意证据格式非法'],
     [{ resumeSnapshotId: '含 空格' }, '简历快照格式非法'],
-  ])('拒绝非法证据检查点：%s', async (changes) => {
+  ])('拒绝非法证据检查点：%s（%s）', async (changes, description) => {
+    expect(description.length).toBeGreaterThan(0);
     const store = fixture(true);
     Object.assign(store.claimed, changes);
     await expect(store.processor.process(store.job)).rejects.toThrow(
