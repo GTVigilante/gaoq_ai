@@ -57,6 +57,7 @@ const LOCK_TIMEOUT_MS = 5 * 60_000;
 const MAX_RELAY_ATTEMPTS = 6;
 
 interface ClaimedConsentEvent {
+  readonly kind: 'valid';
   readonly eventId: string;
   readonly tenantId: string;
   readonly consentId: string;
@@ -66,6 +67,15 @@ interface ClaimedConsentEvent {
   readonly terminatedAt: string;
   readonly attempts: number;
 }
+
+interface RejectedConsentEvent {
+  readonly kind: 'rejected';
+  readonly eventId: string;
+  readonly attempts: number;
+  readonly failureCode: string;
+}
+
+type ClaimedConsentEventResult = ClaimedConsentEvent | RejectedConsentEvent;
 
 /** 从授权终止 Outbox 原子扇出清理任务，并用空载荷对账恢复 DB→Queue 窗口。 */
 @Injectable()
@@ -91,6 +101,20 @@ export class CareAlumniCleanupCoordinatorService {
     for (let index = 0; index < limit; index += 1) {
       const event = await this.claimNext(workerId, new Date());
       if (event === null) break;
+      if (event.kind === 'rejected') {
+        this.logger.warn({
+          code: event.failureCode,
+          eventId: event.eventId,
+        });
+        await this.releaseEvent(
+          event,
+          workerId,
+          new Date(),
+          event.failureCode,
+        );
+        this.metrics.recordCareAlumniCleanup('relay', 'retry');
+        continue;
+      }
       try {
         const tasks = await this.fanOut(event, workerId);
         await this.enqueue(tasks);
@@ -101,7 +125,12 @@ export class CareAlumniCleanupCoordinatorService {
           code: safeErrorCode(error, 'CARE_ALUMNI_CLEANUP_RELAY_FAILED'),
           eventId: event.eventId,
         });
-        await this.releaseEvent(event, workerId, new Date());
+        await this.releaseEvent(
+          event,
+          workerId,
+          new Date(),
+          safeErrorCode(error, 'CARE_ALUMNI_CLEANUP_RELAY_FAILED'),
+        );
         this.metrics.recordCareAlumniCleanup('relay', 'retry');
       }
     }
@@ -170,7 +199,7 @@ export class CareAlumniCleanupCoordinatorService {
   private async claimNext(
     workerId: string,
     now: Date,
-  ): Promise<ClaimedConsentEvent | null> {
+  ): Promise<ClaimedConsentEventResult | null> {
     const staleBefore = new Date(now.getTime() - LOCK_TIMEOUT_MS);
     const event = await this.outbox.findOneAndUpdate(
       {
@@ -185,29 +214,42 @@ export class CareAlumniCleanupCoordinatorService {
       { sort: { createdAt: 1, eventId: 1 }, returnDocument: 'after' },
     ).lean().exec();
     if (event === null) return null;
-    const envelope = envelopeSchema.parse(event.envelope);
-    const terminationReason = TERMINATION_EVENTS[envelope.type];
-    if (
-      terminationReason === undefined ||
-      envelope.id !== event.eventId ||
-      envelope.tenantId !== event.tenantId ||
-      envelope.type !== event.eventType ||
-      envelope.data.tenantId !== event.tenantId ||
-      envelope.data.aggregateId !== event.aggregateId ||
-      envelope.data.version !== event.aggregateVersion ||
-      envelope.data.status !== terminationReason ||
-      envelope.subject !== `tenant/${event.tenantId}/care/${event.aggregateId}`
-    ) throw new Error('CARE_ALUMNI_CLEANUP_SOURCE_EVENT_MISMATCH');
-    return Object.freeze({
-      eventId: event.eventId,
-      tenantId: event.tenantId,
-      consentId: event.aggregateId,
-      consentVersion: event.aggregateVersion,
-      consentPurpose: envelope.data.purpose,
-      terminationReason,
-      terminatedAt: new Date(envelope.time).toISOString(),
-      attempts: event.attempts,
-    });
+    try {
+      const envelope = envelopeSchema.parse(event.envelope);
+      const terminationReason = TERMINATION_EVENTS[envelope.type];
+      if (
+        terminationReason === undefined ||
+        envelope.id !== event.eventId ||
+        envelope.tenantId !== event.tenantId ||
+        envelope.type !== event.eventType ||
+        envelope.data.tenantId !== event.tenantId ||
+        envelope.data.aggregateId !== event.aggregateId ||
+        envelope.data.version !== event.aggregateVersion ||
+        envelope.data.status !== terminationReason ||
+        envelope.subject !== `tenant/${event.tenantId}/care/${event.aggregateId}`
+      ) throw new Error('CARE_ALUMNI_CLEANUP_SOURCE_EVENT_MISMATCH');
+      return Object.freeze({
+        kind: 'valid',
+        eventId: event.eventId,
+        tenantId: event.tenantId,
+        consentId: event.aggregateId,
+        consentVersion: event.aggregateVersion,
+        consentPurpose: envelope.data.purpose,
+        terminationReason,
+        terminatedAt: new Date(envelope.time).toISOString(),
+        attempts: event.attempts,
+      });
+    } catch (error: unknown) {
+      return Object.freeze({
+        kind: 'rejected',
+        eventId: event.eventId,
+        attempts: event.attempts,
+        failureCode: safeErrorCode(
+          error,
+          'CARE_ALUMNI_CLEANUP_SOURCE_EVENT_INVALID',
+        ),
+      });
+    }
   }
 
   private async fanOut(
@@ -231,6 +273,7 @@ export class CareAlumniCleanupCoordinatorService {
       const session = await this.connection.startSession();
       const created: AlumniCleanupTask[] = [];
       try {
+        let completed = false;
         await session.withTransaction(async () => {
           for (const target of targets) {
             const task = createAlumniCleanupTask({ ...event, sourceEventId: event.eventId, target });
@@ -289,7 +332,11 @@ export class CareAlumniCleanupCoordinatorService {
           if (updated.matchedCount !== 1) {
             throw new Error('CARE_ALUMNI_CLEANUP_SOURCE_CLAIM_LOST');
           }
+          completed = true;
         });
+        if (!completed) {
+          throw new Error('CARE_ALUMNI_CLEANUP_TRANSACTION_EMPTY');
+        }
       } finally {
         await session.endSession();
       }
@@ -312,14 +359,15 @@ export class CareAlumniCleanupCoordinatorService {
   }
 
   private async releaseEvent(
-    event: ClaimedConsentEvent,
+    event: Pick<ClaimedConsentEventResult, 'eventId' | 'attempts'>,
     workerId: string,
     now: Date,
+    failureCode: string,
   ): Promise<void> {
     const attempts = event.attempts + 1;
     const dead = attempts >= MAX_RELAY_ATTEMPTS;
     const delay = Math.min(6 * 60 * 60_000, 60_000 * (2 ** Math.min(attempts - 1, 8)));
-    await this.outbox.updateOne(
+    const result = await this.outbox.updateOne(
       {
         eventId: event.eventId,
         status: 'dispatching',
@@ -331,10 +379,13 @@ export class CareAlumniCleanupCoordinatorService {
         nextAttemptAt: dead ? now : new Date(now.getTime() + delay),
         lockedAt: null,
         lockedBy: null,
-        lastErrorCode: 'CARE_ALUMNI_CLEANUP_RELAY_FAILED',
+        lastErrorCode: failureCode,
       } },
       { timestamps: false },
     );
+    if (result.matchedCount !== 1) {
+      throw new Error('CARE_ALUMNI_CLEANUP_SOURCE_CLAIM_LOST');
+    }
   }
 
   private async refreshBacklogMetrics(): Promise<void> {

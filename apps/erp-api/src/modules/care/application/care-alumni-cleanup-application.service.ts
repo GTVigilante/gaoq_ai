@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -73,7 +74,7 @@ export class CareAlumniCleanupApplicationService {
   ) {}
 
   async dispatchTask(taskId: string, workerId: string): Promise<AlumniCleanupTask> {
-    this.assertScope('erp:care:alumni:cleanup:dispatch');
+    this.assertDispatchContext(taskId, workerId);
     const startedAt = process.hrtime.bigint();
     const claimed = await this.tasks.claim(taskId, workerId, new Date());
     if (claimed === null) {
@@ -238,6 +239,31 @@ export class CareAlumniCleanupApplicationService {
       throw new ForbiddenException({
         code: 'CARE_SCOPE_DENIED',
         message: '缺少校友清理操作权限',
+      });
+    }
+  }
+
+  private assertDispatchContext(taskId: string, workerId: string): void {
+    const actor = this.context.getActorRequired();
+    if (
+      actor.actorType !== 'system_job' ||
+      !actor.scopes.includes('erp:care:alumni:cleanup:dispatch')
+    ) {
+      throw new ForbiddenException({
+        code: 'CARE_ALUMNI_CLEANUP_DISPATCH_DENIED',
+        message: '校友清理仅允许可信系统任务执行',
+      });
+    }
+    if (!/^[A-Za-z0-9_-]{43}$/.test(taskId)) {
+      throw new BadRequestException({
+        code: 'CARE_ALUMNI_CLEANUP_TASK_ID_INVALID',
+        message: '校友清理任务标识不合法',
+      });
+    }
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(workerId)) {
+      throw new BadRequestException({
+        code: 'CARE_ALUMNI_CLEANUP_WORKER_INVALID',
+        message: '校友清理 Worker 标识不合法',
       });
     }
   }
