@@ -359,6 +359,7 @@ describe('RecruitmentChannelProcessor', () => {
   it.each([
     [new Error('NORMALIZER_TIMEOUT'), 'NORMALIZER_TIMEOUT'],
     [new Error('normalizer timeout'), 'RECRUITMENT_CHANNEL_NORMALIZATION_FAILED'],
+    ['上游非结构化异常', 'RECRUITMENT_CHANNEL_NORMALIZATION_FAILED'],
   ])('标准化异常进入人工复核并归一化失败码', async (error, expectedCode) => {
     const store = fixture();
     store.normalizer.normalize.mockRejectedValueOnce(error);
