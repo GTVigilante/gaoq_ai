@@ -8,13 +8,16 @@ import type { AccessProfileRepository } from '../../identity/access-profile.repo
 import {
   applyRecruitmentOfferApprovalOutcome,
   createRecruitmentOffer,
+  recordRecruitmentOfferDecision,
   recordRecruitmentOfferSent,
+  recordRecruitmentOfferSigned,
   requestRecruitmentOfferSend,
   submitRecruitmentOffer,
   type CandidateApplicationStage,
   type RecruitmentOfferStatus,
 } from '../domain/index.js';
 import type { RecruitmentOutboxWriter } from '../persistence/recruitment-outbox.writer.js';
+import { RecruitmentWriteConflictError } from '../persistence/recruitment.repositories.js';
 import type {
   CandidateApplicationRepository,
   CandidateApplicationStageRepository,
@@ -114,13 +117,29 @@ function offer(status: RecruitmentOfferStatus = 'draft') {
   if (status === 'sending') return requestRecruitmentOfferSend(approved, {
     tenantId: 'tenant-001', expectedVersion: 3, sendRequestId: 'send-request-001',
   }, NOW);
-  if (status === 'sent') {
+  if (status === 'sent' || status === 'accepted' || status === 'declined' || status === 'signed') {
     const sending = requestRecruitmentOfferSend(approved, {
       tenantId: 'tenant-001', expectedVersion: 3, sendRequestId: 'send-request-001',
     }, NOW);
-    return recordRecruitmentOfferSent(sending, {
+    const sent = recordRecruitmentOfferSent(sending, {
       tenantId: 'tenant-001', expectedVersion: 4, sendRequestId: 'send-request-001',
       sentEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4X5', deliveryVerified: true,
+    }, NOW);
+    if (status === 'sent') return sent;
+    const decided = recordRecruitmentOfferDecision(sent, {
+      tenantId: 'tenant-001',
+      expectedVersion: 5,
+      decision: status === 'declined' ? 'declined' : 'accepted',
+      acceptanceEvidenceId: 'accept-evidence-001',
+      candidateEvidenceVerified: true,
+    }, NOW);
+    if (status !== 'signed') return decided;
+    return recordRecruitmentOfferSigned(decided, {
+      tenantId: 'tenant-001',
+      expectedVersion: 6,
+      esignFlowId: 'esign-flow-001',
+      signedEvidenceId: 'signed-evidence-001',
+      esignEvidenceVerified: true,
     }, NOW);
   }
   throw new Error(`测试暂不支持状态 ${status}`);
@@ -128,13 +147,7 @@ function offer(status: RecruitmentOfferStatus = 'draft') {
 
 function fixture(options?: {
   readonly actorType?: 'user' | 'service' | 'system_job';
-  readonly offerStatus?:
-    | 'draft'
-    | 'pending_approval'
-    | 'approved'
-    | 'rejected'
-    | 'sending'
-    | 'sent';
+  readonly offerStatus?: RecruitmentOfferStatus;
   readonly applicationStage?: CandidateApplicationStage;
   readonly approvalStatus?: 'running' | 'approved' | 'rejected';
   readonly migrationApprovalOutcome?: 'running' | 'approved' | 'rejected';
@@ -217,7 +230,20 @@ function fixture(options?: {
     evidence as unknown as RecruitmentOfferEvidenceRepository,
     outbox as unknown as RecruitmentOutboxWriter,
   );
-  return { service, execute, approvals, profiles, applications, stages, offers, evidence, outbox };
+  return {
+    service,
+    execute,
+    context,
+    approvals,
+    profiles,
+    applications,
+    stages,
+    positions,
+    interviews,
+    offers,
+    evidence,
+    outbox,
+  };
 }
 
 describe('RecruitmentOfferService', () => {
@@ -492,5 +518,525 @@ describe('RecruitmentOfferService', () => {
     expect(store.applications.replace).toHaveBeenCalledWith(expect.objectContaining({
       stage: 'offer_accepted', acceptanceEvidenceId: result.offer.acceptanceEvidenceId,
     }), 5, SESSION);
+  });
+
+  it('迁移写入要求服务身份、双 Scope 和精确 WORM 证据', async () => {
+    const actor = fixture({
+      actorType: 'user',
+      scopes: ['erp:migration:execute', 'erp:recruitment:migration:write'],
+    });
+    await expect(actor.service.importOfferFromMigration('migration-auth-actor', migrationInput()))
+      .rejects.toMatchObject({
+        response: { code: 'RECRUITMENT_MIGRATION_WRITER_DENIED' },
+      });
+
+    const scope = fixture({ actorType: 'service', scopes: ['erp:migration:execute'] });
+    await expect(scope.service.importOfferFromMigration('migration-auth-scope', migrationInput()))
+      .rejects.toMatchObject({
+        response: { code: 'RECRUITMENT_MIGRATION_WRITER_DENIED' },
+      });
+
+    const reference = fixture({
+      actorType: 'system_job',
+      scopes: ['erp:migration:execute', 'erp:recruitment:migration:write'],
+    });
+    await expect(reference.service.importOfferFromMigration('migration-evidence-ref', {
+      ...migrationInput(),
+      migrationEvidenceRef: 'https://example.invalid/evidence',
+    })).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_MIGRATION_OFFER_EVIDENCE_INVALID' },
+    });
+    await expect(reference.service.importOfferFromMigration('migration-evidence-hash', {
+      ...migrationInput(),
+      evidenceChecksum: 'invalid',
+    })).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_MIGRATION_OFFER_EVIDENCE_INVALID' },
+    });
+    expect(reference.execute).not.toHaveBeenCalled();
+  });
+
+  it('迁移 Offer 拒绝缺失申请、面试、职位、创建人和审批映射', async () => {
+    const options = {
+      actorType: 'service' as const,
+      scopes: ['erp:migration:execute', 'erp:recruitment:migration:write'],
+    };
+
+    const noApplication = fixture(options);
+    noApplication.applications.findById.mockResolvedValue(null);
+    await expect(noApplication.service.importOfferFromMigration(
+      'migration-no-application',
+      migrationInput(),
+    )).rejects.toMatchObject({ response: { code: 'RECRUITMENT_APPLICATION_NOT_FOUND' } });
+
+    const interview = fixture(options);
+    interview.interviews.findById.mockResolvedValue({
+      id: INTERVIEW_ID,
+      applicationId: 'different-application',
+      status: 'completed',
+    });
+    await expect(interview.service.importOfferFromMigration(
+      'migration-invalid-interview',
+      migrationInput(),
+    )).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_MIGRATION_OFFER_INTERVIEW_INVALID' },
+    });
+
+    const position = fixture(options);
+    position.positions.findById.mockResolvedValue(null);
+    await expect(position.service.importOfferFromMigration(
+      'migration-invalid-position',
+      migrationInput(),
+    )).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_MIGRATION_OFFER_POSITION_INVALID' },
+    });
+
+    const creator = fixture(options);
+    creator.profiles.findActorIdByEmployee.mockResolvedValue(null);
+    await expect(creator.service.importOfferFromMigration(
+      'migration-invalid-creator',
+      migrationInput(),
+    )).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_MIGRATION_OFFER_CREATOR_INVALID' },
+    });
+
+    const approval = fixture(options);
+    approval.approvals.verifyRecruitmentMigrationReference.mockResolvedValue({
+      id: APPROVAL_ID,
+      type: 'legacy_history',
+      templateCode: 'different_template',
+      outcome: 'approved',
+    });
+    await expect(approval.service.importOfferFromMigration(
+      'migration-invalid-approval',
+      migrationInput(),
+    )).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_MIGRATION_OFFER_APPROVAL_INVALID' },
+    });
+  });
+
+  it('迁移 Offer 支持完整聚合、证据和申请终态的不可变重放', async () => {
+    const options = {
+      actorType: 'service' as const,
+      scopes: ['erp:migration:execute', 'erp:recruitment:migration:write'],
+    };
+    const first = fixture(options);
+    const input = migrationInput();
+    await first.service.importOfferFromMigration('migration-replay-seed', input);
+    const insertedOffer = first.offers.insertMigrated.mock.calls[0]?.[0] as unknown as
+      ReturnType<typeof offer>;
+    const migratedApplication = first.applications.replace.mock.calls[0]?.[0] as unknown as
+      ReturnType<typeof application>;
+    const migratedEvidence = first.evidence.append.mock.calls.map((call) =>
+      call[0] as unknown as Readonly<Record<string, unknown>>,
+    );
+
+    const replay = fixture(options);
+    replay.offers.findById.mockResolvedValue(insertedOffer);
+    replay.evidence.findByOffer.mockResolvedValue(migratedEvidence);
+    replay.applications.findById.mockResolvedValue(migratedApplication);
+    replay.offers.findMigrationEvidenceById.mockResolvedValue({
+      migrationEvidenceRef: input.migrationEvidenceRef,
+      migrationEvidenceChecksum: input.evidenceChecksum,
+    });
+    const result = await replay.service.importOfferFromMigration(
+      'migration-replay-existing',
+      { ...input, targetId: insertedOffer.id },
+    );
+    expect(result.offer).toEqual(expect.objectContaining({
+      id: insertedOffer.id,
+      status: 'accepted',
+      version: 6,
+    }));
+    expect(replay.offers.insertMigrated).not.toHaveBeenCalled();
+    expect(replay.applications.replace).not.toHaveBeenCalled();
+    expect(replay.outbox.append).not.toHaveBeenCalled();
+  });
+
+  it('迁移 Offer 拒绝既有聚合、证据、申请或 WORM 档案漂移', async () => {
+    const options = {
+      actorType: 'service' as const,
+      scopes: ['erp:migration:execute', 'erp:recruitment:migration:write'],
+    };
+    const first = fixture(options);
+    const input = migrationInput();
+    await first.service.importOfferFromMigration('migration-immutable-seed', input);
+    const insertedOffer = first.offers.insertMigrated.mock.calls[0]?.[0] as unknown as
+      ReturnType<typeof offer>;
+    const migratedApplication = first.applications.replace.mock.calls[0]?.[0] as unknown as
+      ReturnType<typeof application>;
+    const migratedEvidence = first.evidence.append.mock.calls.map((call) =>
+      call[0] as unknown as Readonly<Record<string, unknown>>,
+    );
+    const replay = fixture(options);
+    replay.offers.findById.mockResolvedValue(insertedOffer);
+    replay.evidence.findByOffer.mockResolvedValue(migratedEvidence);
+    replay.applications.findById.mockResolvedValue(migratedApplication);
+    replay.offers.findMigrationEvidenceById.mockResolvedValue({
+      migrationEvidenceRef: input.migrationEvidenceRef,
+      migrationEvidenceChecksum: 'x'.repeat(43),
+    });
+    await expect(replay.service.importOfferFromMigration(
+      'migration-immutable-drift',
+      { ...input, targetId: insertedOffer.id },
+    )).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_MIGRATION_OFFER_IMMUTABLE' },
+    });
+  });
+
+  it('迁移支持草稿和已签署终态并恢复签署证据', async () => {
+    const options = {
+      actorType: 'service' as const,
+      scopes: ['erp:migration:execute', 'erp:recruitment:migration:write'],
+    };
+    const draft = fixture(options);
+    const draftResult = await draft.service.importOfferFromMigration('migration-draft', {
+      ...migrationInput(),
+      status: 'draft',
+      approvalReferenceType: null,
+      approvalReferenceId: null,
+      sendRequested: false,
+      sentProof: null,
+      decisionProof: null,
+      version: 1,
+      updatedAt: '2026-07-21T01:00:00.000Z',
+      applicationActions: [],
+      expectedApplicationStage: 'interview',
+      expectedApplicationVersion: 3,
+      applicationUpdatedAt: '2026-07-21T00:00:00.000Z',
+    });
+    expect(draftResult.offer).toMatchObject({ status: 'draft', version: 1 });
+    expect(draft.approvals.verifyRecruitmentMigrationReference).not.toHaveBeenCalled();
+
+    const signed = fixture(options);
+    const signedResult = await signed.service.importOfferFromMigration('migration-signed', {
+      ...migrationInput(),
+      status: 'signed',
+      signedProof: {
+        proofHash: 'd'.repeat(43),
+        occurredAt: '2026-07-21T05:00:00.000Z',
+      },
+      version: 7,
+      updatedAt: '2026-07-21T05:00:00.000Z',
+    });
+    expect(signedResult.offer).toMatchObject({
+      status: 'signed',
+      version: 7,
+    });
+    expect(signed.evidence.append).toHaveBeenCalledTimes(3);
+    expect(signed.evidence.append).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'signed',
+        proofHash: 'd'.repeat(43),
+        source: 'migration_worm',
+      }),
+      SESSION,
+    );
+  });
+
+  it('创建 Offer 拒绝申请版本、阶段、面试、职位、部门和日期异常', async () => {
+    const createInput = {
+      completedInterviewId: INTERVIEW_ID,
+      terms,
+      expiresAt: '2027-08-01T00:00:00.000Z',
+      retentionExpiresAt: '2033-08-01T00:00:00.000Z',
+    };
+    const version = fixture();
+    await expect(version.service.create(APPLICATION_ID, 2, 'create-version', createInput))
+      .rejects.toMatchObject({ response: { code: 'RECRUITMENT_VERSION_CONFLICT' } });
+
+    const stage = fixture({ applicationStage: 'screening' });
+    await expect(stage.service.create(APPLICATION_ID, 2, 'create-stage', createInput))
+      .rejects.toMatchObject({
+        response: { code: 'RECRUITMENT_OFFER_APPLICATION_STAGE_INVALID' },
+      });
+
+    const interview = fixture();
+    interview.interviews.findById.mockResolvedValue(null);
+    await expect(interview.service.create(APPLICATION_ID, 3, 'create-interview', createInput))
+      .rejects.toMatchObject({
+        response: { code: 'RECRUITMENT_OFFER_INTERVIEW_EVIDENCE_INVALID' },
+      });
+
+    const position = fixture();
+    position.positions.findById.mockResolvedValue(null);
+    await expect(position.service.create(APPLICATION_ID, 3, 'create-position', createInput))
+      .rejects.toThrow('RECRUITMENT_POSITION_REFERENCE_INVALID');
+
+    const department = fixture();
+    department.context.getActorRequired.mockReturnValue({
+      ...department.context.getActorRequired(),
+      departmentIds: [],
+      scopes: [],
+    });
+    await expect(department.service.create(APPLICATION_ID, 3, 'create-department', createInput))
+      .rejects.toMatchObject({ response: { code: 'RECRUITMENT_OFFER_WRITE_DENIED' } });
+
+    const date = fixture();
+    await expect(date.service.create(APPLICATION_ID, 3, 'create-date', {
+      ...createInput,
+      expiresAt: 'invalid',
+    })).rejects.toMatchObject({ response: { code: 'RECRUITMENT_INVALID_DATE' } });
+  });
+
+  it('提交 Offer 支持恢复既有审批并拒绝无效提交状态', async () => {
+    const resumed = fixture({ offerStatus: 'pending_approval', applicationStage: 'offer_approval' });
+    const resumedResult = await resumed.service.submit(OFFER_ID, 2, 'submit-resume');
+    expect(resumedResult.offer).toMatchObject({
+      status: 'pending_approval',
+      approvalInstanceId: APPROVAL_ID,
+      version: 2,
+    });
+    expect(resumed.approvals.createInstance).not.toHaveBeenCalled();
+
+    const invalid = fixture();
+    invalid.approvals.submitInstance.mockResolvedValue({
+      instance: { id: APPROVAL_ID, status: 'draft', version: 2 },
+    });
+    await expect(invalid.service.submit(OFFER_ID, 1, 'submit-invalid'))
+      .rejects.toMatchObject({
+        response: { code: 'RECRUITMENT_OFFER_APPROVAL_SUBMIT_INVALID' },
+      });
+  });
+
+  it('同步审批验证状态、模板并处理批准和拒绝终态', async () => {
+    const invalidState = fixture({ offerStatus: 'draft' });
+    await expect(invalidState.service.syncApproval(OFFER_ID, 1, 'sync-invalid-state'))
+      .rejects.toMatchObject({
+        response: { code: 'RECRUITMENT_OFFER_APPROVAL_SYNC_INVALID' },
+      });
+
+    const template = fixture({ offerStatus: 'pending_approval' });
+    template.approvals.getInstanceStatusForRecruitmentOffer.mockResolvedValue({
+      id: APPROVAL_ID,
+      status: 'approved',
+      templateCode: 'different_template',
+      templateRevision: 1,
+      riskLevel: 'R2',
+      version: 3,
+      submittedAt: NOW.toISOString(),
+      completedAt: NOW.toISOString(),
+    });
+    await expect(template.service.syncApproval(OFFER_ID, 2, 'sync-template'))
+      .rejects.toMatchObject({
+        response: { code: 'RECRUITMENT_OFFER_APPROVAL_TEMPLATE_MISMATCH' },
+      });
+
+    const approved = fixture({
+      offerStatus: 'pending_approval',
+      approvalStatus: 'approved',
+      applicationStage: 'offer_approval',
+    });
+    const approvedResult = await approved.service.syncApproval(OFFER_ID, 2, 'sync-approved');
+    expect(approvedResult.offer).toMatchObject({ status: 'approved', version: 3 });
+    expect(approved.applications.replace).not.toHaveBeenCalled();
+
+    const rejected = fixture({
+      offerStatus: 'pending_approval',
+      approvalStatus: 'rejected',
+      applicationStage: 'offer_approval',
+    });
+    const rejectedResult = await rejected.service.syncApproval(OFFER_ID, 2, 'sync-rejected');
+    expect(rejectedResult.offer).toMatchObject({ status: 'rejected', version: 3 });
+    const rejectedApplication = rejected.applications.replace.mock.calls[0]?.[0] as unknown as {
+      readonly stage: string;
+      readonly endedAt: string | null;
+    };
+    expect(rejectedApplication.stage).toBe('rejected');
+    expect(rejectedApplication.endedAt).toEqual(expect.any(String));
+    expect(rejected.applications.replace).toHaveBeenCalledWith(
+      rejectedApplication,
+      4,
+      SESSION,
+    );
+  });
+
+  it('已终结审批同步要求保留审批引用并保持幂等结果', async () => {
+    const approved = fixture({ offerStatus: 'approved' });
+    const result = await approved.service.syncApproval(OFFER_ID, 3, 'sync-approved-replay');
+    expect(result.offer).toMatchObject({ status: 'approved', version: 3 });
+
+    const invalid = fixture({ offerStatus: 'approved' });
+    invalid.offers.findById.mockResolvedValue({
+      ...offer('approved'),
+      approvalInstanceId: null,
+    });
+    await expect(invalid.service.syncApproval(OFFER_ID, 3, 'sync-approved-invalid'))
+      .rejects.toThrow('RECRUITMENT_OFFER_APPROVAL_INVALID');
+  });
+
+  it('候选人拒绝 Offer 时同步推进申请 withdrawn 并记录原因', async () => {
+    const store = fixture({
+      offerStatus: 'sent',
+      applicationStage: 'offer_sent',
+      scopes: ['erp:recruitment:offer:candidate_decide'],
+    });
+    const result = await store.service.recordCandidateDecision(
+      OFFER_ID,
+      5,
+      'decision-declined',
+      {
+        decision: 'declined',
+        candidateId: CANDIDATE_ID,
+        authenticationEvidenceId: 'auth-evidence-declined',
+        proofHash: 'e'.repeat(43),
+        decidedAt: '2026-07-21T00:02:00.000Z',
+      },
+    );
+    expect(result.offer).toMatchObject({ status: 'declined', version: 6 });
+    const withdrawnApplication = store.applications.replace.mock.calls[0]?.[0] as unknown as {
+      readonly stage: string;
+      readonly endedAt: string | null;
+    };
+    expect(withdrawnApplication.stage).toBe('withdrawn');
+    expect(withdrawnApplication.endedAt).toEqual(expect.any(String));
+    expect(store.applications.replace).toHaveBeenCalledWith(
+      withdrawnApplication,
+      5,
+      SESSION,
+    );
+    expect(store.stages.append).toHaveBeenCalledWith(
+      expect.objectContaining({ reasonCode: 'offer_declined' }),
+      SESSION,
+    );
+  });
+
+  it('投递和候选决定拒绝倒置的外部证据时间', async () => {
+    const sent = fixture({
+      offerStatus: 'sending',
+      applicationStage: 'offer_approval',
+      scopes: ['erp:integration:offer:deliver'],
+    });
+    await expect(sent.service.recordSentForIntegration(
+      OFFER_ID,
+      4,
+      'sent-time-invalid',
+      {
+        sendRequestId: 'send-request-001',
+        proofHash: 'a'.repeat(43),
+        deliveredAt: '2026-07-20T23:59:59.000Z',
+      },
+    )).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_OFFER_EVIDENCE_TIME_INVALID' },
+    });
+
+    const decision = fixture({
+      offerStatus: 'sent',
+      applicationStage: 'offer_sent',
+      scopes: ['erp:recruitment:offer:candidate_decide'],
+    });
+    await expect(decision.service.recordCandidateDecision(
+      OFFER_ID,
+      5,
+      'decision-time-invalid',
+      {
+        decision: 'accepted',
+        candidateId: CANDIDATE_ID,
+        authenticationEvidenceId: 'auth-evidence-001',
+        proofHash: 'b'.repeat(43),
+        decidedAt: '2026-07-20T23:59:59.000Z',
+      },
+    )).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_OFFER_EVIDENCE_TIME_INVALID' },
+    });
+  });
+
+  it('eSign 完成只允许受信任 Scope 并生成脱敏签署事件', async () => {
+    const denied = fixture({ offerStatus: 'accepted', scopes: [] });
+    await expect(denied.service.recordSignedForIntegration(
+      OFFER_ID,
+      6,
+      'signed-denied',
+      { esignFlowId: 'esign-flow-001', signedEvidenceId: 'signed-evidence-001' },
+    )).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_OFFER_TRUSTED_WORKFLOW_REQUIRED' },
+    });
+
+    const store = fixture({
+      offerStatus: 'accepted',
+      scopes: ['erp:integration:esign:apply'],
+    });
+    const result = await store.service.recordSignedForIntegration(
+      OFFER_ID,
+      6,
+      'signed-success',
+      { esignFlowId: 'esign-flow-001', signedEvidenceId: 'signed-evidence-001' },
+    );
+    expect(result.offer).toMatchObject({
+      status: 'signed',
+      version: 7,
+      esignFlowId: 'esign-flow-001',
+      signedEvidenceId: 'signed-evidence-001',
+    });
+    expect(store.outbox.append).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'recruitment.offer.signed' }),
+      SESSION,
+    );
+  });
+
+  it('读取 Offer 支持部门权限或 read_all 并拒绝越权', async () => {
+    const department = fixture({ offerStatus: 'approved' });
+    const result = await department.service.get(OFFER_ID);
+    expect(result).toMatchObject({ id: OFFER_ID, status: 'approved' });
+    expect(result).not.toHaveProperty('terms');
+
+    const all = fixture({ offerStatus: 'approved', scopes: ['erp:recruitment:offer:read_all'] });
+    all.context.getActorRequired.mockReturnValue({
+      ...all.context.getActorRequired(),
+      departmentIds: [],
+    });
+    await expect(all.service.get(OFFER_ID)).resolves.toMatchObject({ id: OFFER_ID });
+
+    const denied = fixture({ offerStatus: 'approved', scopes: [] });
+    denied.context.getActorRequired.mockReturnValue({
+      ...denied.context.getActorRequired(),
+      departmentIds: [],
+    });
+    await expect(denied.service.get(OFFER_ID)).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_OFFER_READ_DENIED' },
+    });
+  });
+
+  it('统一映射未找到、写冲突、重复键和领域错误', async () => {
+    const missingOffer = fixture();
+    missingOffer.offers.findById.mockResolvedValue(null);
+    await expect(missingOffer.service.get(OFFER_ID)).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_OFFER_NOT_FOUND' },
+    });
+
+    const writeConflict = fixture({ offerStatus: 'approved' });
+    writeConflict.offers.replace.mockRejectedValue(new RecruitmentWriteConflictError());
+    await expect(writeConflict.service.requestSend(OFFER_ID, 3, 'write-conflict'))
+      .rejects.toMatchObject({ response: { code: 'RECRUITMENT_VERSION_CONFLICT' } });
+
+    const duplicate = fixture();
+    duplicate.offers.insert.mockRejectedValue({ code: 11_000 });
+    await expect(duplicate.service.create(
+      APPLICATION_ID,
+      3,
+      'duplicate-offer',
+      {
+        completedInterviewId: INTERVIEW_ID,
+        terms,
+        expiresAt: '2027-08-01T00:00:00.000Z',
+        retentionExpiresAt: '2033-08-01T00:00:00.000Z',
+      },
+    )).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_OFFER_ALREADY_EXISTS' },
+    });
+
+    const badRequest = fixture();
+    await expect(badRequest.service.create(
+      APPLICATION_ID,
+      3,
+      'invalid-terms',
+      {
+        completedInterviewId: INTERVIEW_ID,
+        terms: { ...terms, monthlyBaseSalaryMinor: 0 },
+        expiresAt: '2027-08-01T00:00:00.000Z',
+        retentionExpiresAt: '2033-08-01T00:00:00.000Z',
+      },
+    )).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_OFFER_AMOUNT_INVALID' },
+    });
   });
 });
