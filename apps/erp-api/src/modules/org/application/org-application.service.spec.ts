@@ -1257,7 +1257,7 @@ describe('OrgApplicationService', () => {
   it('仓储乐观锁冲突映射稳定版本错误，未知异常保持原样', async () => {
     const writeConflict = assemble();
     writeConflict.departmentRepo.insert.mockRejectedValue(
-      new OrgWriteConflictError('部门版本已变化'),
+      new OrgWriteConflictError(),
     );
     await expect(writeConflict.context.run(trustedContext, () =>
       writeConflict.service.createDepartment('key-write-conflict', {
