@@ -43,6 +43,10 @@ describe('Treasury 持久化契约', () => {
     expect(stored).not.toHaveProperty('dataHash');
     await expect(new AccountModel({ ...stored, dataAuthTag: '' }).validate())
       .rejects.toThrow(/dataAuthTag/u);
+    await expect(new AccountModel({ ...stored, dataIv: 'c'.repeat(15) }).validate())
+      .rejects.toThrow(/dataIv/u);
+    await expect(new AccountModel({ ...stored, dataIv: 'c'.repeat(17) }).validate())
+      .rejects.toThrow(/dataIv/u);
   });
 
   it('所有身份、防重和业务唯一索引均以可信租户为首字段', () => {

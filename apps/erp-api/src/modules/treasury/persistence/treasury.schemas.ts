@@ -14,7 +14,10 @@ const MAX_CIPHERTEXT_LENGTH = 11_184_811;
 
 abstract class ProtectedTreasuryRecord {
   @Prop({ type: String, required: true, maxlength: 64, match: ID_PATTERN }) dataKeyId!: string;
-  @Prop({ type: String, required: true, maxlength: 32, match: BASE64URL_PATTERN }) dataIv!: string;
+  @Prop({
+    type: String, required: true, minlength: 16, maxlength: 16, match: BASE64URL_PATTERN,
+  })
+  dataIv!: string;
   @Prop({ type: String, required: true, maxlength: MAX_CIPHERTEXT_LENGTH, match: BASE64URL_PATTERN })
   dataCiphertext!: string;
   @Prop({ type: String, required: true, minlength: 22, maxlength: 22, match: BASE64URL_PATTERN })
