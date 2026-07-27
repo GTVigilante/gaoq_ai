@@ -211,6 +211,7 @@ draft → pending_approval → approved → clearing → ready → scheduled →
 ### 5.7 Knowledge 与 Care MCP
 
 - Knowledge 只读 Resource/Tool 仅返回课程发布摘要和培训任务进度；不得返回内容引用、题库引用、答卷提交、评分证据或完成证据。评分、完成和 Onboarding 证明回填不注册 MCP。
+- Knowledge 内容校验与评分通过独立 HTTPS 证据网关：部署必须成套注入 `KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT`、独立 Bearer Token、Ed25519 SPKI DER base64 公钥与签名 Key ID。端点固定为 `/v1/courses/verify` 和 `/v1/submissions/grade`，请求只含可信租户、课程/任务/提交引用与摘要；回执必须逐字段绑定原请求，使用严格 16 KiB JSON、每次 5 秒超时、同一幂等键最多重试一次。HTTP 200 回执头必须携带 `x-knowledge-evidence-key-id` 与 `x-knowledge-evidence-signature`，签名原文固定为 `knowledge-evidence-receipt-v1\n<keyId>\n<rawBodySha256Base64url>`；Key ID、公钥类型、原始响应正文签名或请求字段任一不匹配均失败关闭。答卷、题库、标准答案、上游 Token 和任意下载地址不得进入 ERP 请求、响应、日志或 MCP。
 - H5 本人任务目录由服务端按可信主体映射有效员工授权快照与当前任职关系，不接受客户端 employeeId、onboardingInstanceId 或 tenantId；返回字段与 Knowledge MCP 同样执行内容、题库、答卷和证据脱敏。
 - Care Resource Template 固定为 `erp://care/cases/{id}`，Tool 固定为 `care_case_get`。输出仅含员工/劳动关系引用、最后工作日、计划失效时刻、清算任务状态和版本；离职原因、审批实例与所有证据引用均不进入 MCP。校友授权到期执行属于 Worker 内部能力，不注册 REST 或 MCP Tool。
 - `care_offboarding_progress_guide` 必须明确禁止 AI 审批、代报清算证据、关闭劳动关系或停用身份；Care 不注册写 Tool。
@@ -226,7 +227,7 @@ draft → pending_approval → approved → clearing → ready → scheduled →
 
 ## 6. 发布门禁
 
-- 跨租户、越权、授权撤回后继续处理、盲索引误合并、标准答案泄漏、未知 e签状态自动推进任一出现即 No-Go。
+- 跨租户、越权、授权撤回后继续处理、盲索引误合并、知识证据回执错位、标准答案泄漏、未知 e签状态自动推进任一出现即 No-Go。
 - 招聘渠道、日历、短信/邮件、e签宝、对象存储和病毒扫描必须在真实沙箱完成权限、限流、轮换、重试、回执和对账。
 - 候选人到 Employment 的端到端链路、重复事件、乱序回调、Worker 崩溃、数据到期和实体签署证据恢复必须通过。
 - 生产索引只增不删，迁移具备 dry-run、锁、清单校验和、快照恢复与执行后复验。

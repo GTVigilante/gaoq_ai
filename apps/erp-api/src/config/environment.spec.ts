@@ -1,6 +1,17 @@
+import { generateKeyPairSync } from 'node:crypto';
+
 import { describe, expect, it } from 'vitest';
 
 import { validateEnvironment } from './environment.js';
+
+const knowledgeSigning = {
+  KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_PUBLIC_KEY_BASE64:
+    generateKeyPairSync('ed25519').publicKey.export({
+      format: 'der',
+      type: 'spki',
+    }).toString('base64'),
+  KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_KEY_ID: 'knowledge-key-001',
+};
 
 describe('validateEnvironment', () => {
   it('接受完整且合法的本地配置', () => {
@@ -33,6 +44,8 @@ describe('validateEnvironment', () => {
     expect(environment.RECRUITMENT_RESUME_AI_PROVIDER).toBe('disabled');
     expect(environment.RECRUITMENT_RESUME_SOURCE_ENDPOINT).toBeUndefined();
     expect(environment.OPENAI_RESUME_API_KEY).toBeUndefined();
+    expect(environment.KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT).toBeUndefined();
+    expect(environment.KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_PUBLIC_KEY_BASE64).toBeUndefined();
     expect(environment.TREASURY_DATA_ENCRYPTION_KEYS).toBeUndefined();
     expect(environment.TREASURY_BLIND_INDEX_KEYS).toBeUndefined();
     expect(environment.TREASURY_WORM_ARCHIVE_ENDPOINT).toBeUndefined();
@@ -57,6 +70,65 @@ describe('validateEnvironment', () => {
     expect(environment.OP_SSO_CLIENT_SECRET).toBeUndefined();
     expect(environment.OP_SSO_REDIRECT_URI).toBeUndefined();
     expect(environment.MCP_OAUTH_CLIENTS_JSON).toBe('[]');
+  });
+
+  it('知识证据网关必须成套配置并使用独立标准 HTTPS 根地址', () => {
+    const base = {
+      NODE_ENV: 'test',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0',
+      WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://auth.example.internal',
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://auth.example.internal/.well-known/jwks.json',
+      MCP_AUTHORIZATION_SERVER: 'https://auth.example.internal',
+      MCP_ALLOWED_ORIGINS: 'https://client.example.com',
+    };
+    expect(validateEnvironment({
+      ...base,
+      KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT: 'https://knowledge.example.internal',
+      KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN:
+        'knowledge-evidence-token-at-least-32-characters',
+      ...knowledgeSigning,
+    })).toMatchObject({
+      KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT: 'https://knowledge.example.internal',
+    });
+    expect(() => validateEnvironment({
+      ...base,
+      KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT: 'https://knowledge.example.internal',
+    })).toThrow('知识证据网关端点与凭据必须成套配置');
+    expect(() => validateEnvironment({
+      ...base,
+      METRICS_BEARER_TOKEN: 'knowledge-evidence-token-at-least-32-characters',
+      KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT: 'https://knowledge.example.internal',
+      KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN:
+        'knowledge-evidence-token-at-least-32-characters',
+      ...knowledgeSigning,
+    })).toThrow('知识证据网关不得复用其他业务、平台或外部系统凭据');
+    for (const endpoint of [
+      'http://knowledge.example.internal',
+      'https://knowledge.example.internal/path',
+      'https://localhost',
+      'https://127.0.0.2',
+      'https://[::1]',
+      'https://auth.example.internal',
+    ]) expect(() => validateEnvironment({
+      ...base,
+      KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT: endpoint,
+      KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN:
+        'knowledge-evidence-token-at-least-32-characters',
+      ...knowledgeSigning,
+    })).toThrow('知识证据网关必须为独立标准 HTTPS 根地址');
+    expect(() => validateEnvironment({
+      ...base,
+      KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT: 'https://knowledge.example.internal',
+      KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN:
+        'knowledge-evidence-token-at-least-32-characters',
+      ...knowledgeSigning,
+      KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_PUBLIC_KEY_BASE64:
+        Buffer.from('not-an-ed25519-key').toString('base64'),
+    })).toThrow('知识证据网关签名公钥必须为有效 Ed25519 SPKI DER base64');
   });
 
   it('营销官网 Origin 必须精确隔离，生产验证码配置失败关闭', () => {

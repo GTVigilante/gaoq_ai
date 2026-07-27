@@ -1,11 +1,15 @@
+import { createPublicKey } from 'node:crypto';
+import { isIP } from 'node:net';
+
 import { z } from 'zod';
 
 const isLoopbackHostname = (hostname: string): boolean => {
-  const normalized = hostname.toLowerCase().replace(/\.$/u, '');
+  const normalized = hostname.toLowerCase().replace(/\.$/u, '')
+    .replace(/^\[(.*)\]$/u, '$1');
   return normalized === 'localhost' ||
-    normalized === '127.0.0.1' ||
-    normalized === '::1' ||
-    normalized.endsWith('.localhost');
+    normalized.endsWith('.localhost') ||
+    (isIP(normalized) === 4 && normalized.startsWith('127.')) ||
+    (isIP(normalized) === 6 && normalized === '::1');
 };
 
 const environmentSchema = z.object({
@@ -114,6 +118,23 @@ const environmentSchema = z.object({
   OPENAI_RESUME_MODEL: z.preprocess(
     (value) => value === '' ? undefined : value,
     z.string().min(2).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]+$/).optional(),
+  ),
+  /** 知识内容校验与评分使用独立 HTTPS 证据网关，不向 ERP 返回答卷或标准答案。 */
+  KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().url().optional(),
+  ),
+  KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/).optional(),
+  ),
+  KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_PUBLIC_KEY_BASE64: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(56).max(2_048).regex(/^[A-Za-z0-9+/]+={0,2}$/).optional(),
+  ),
+  KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_KEY_ID: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]+$/).optional(),
   ),
   /** 考勤 L4 明细密钥环，与招聘、审批和盲索引密钥域隔离。 */
   ATTENDANCE_DATA_ENCRYPTION_KEYS: z.preprocess(
@@ -456,6 +477,81 @@ const environmentSchema = z.object({
     code: 'custom',
     path: ['RECRUITMENT_RESUME_AI_PROVIDER'],
     message: '简历 AI 关闭时禁止悬空注入模型或 API Key',
+  });
+  const knowledgeEvidenceInfrastructure = [
+    environment.KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT,
+    environment.KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN,
+    environment.KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_PUBLIC_KEY_BASE64,
+    environment.KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_KEY_ID,
+  ];
+  if (
+    knowledgeEvidenceInfrastructure.some((value) => value !== undefined) &&
+    knowledgeEvidenceInfrastructure.some((value) => value === undefined)
+  ) context.addIssue({
+    code: 'custom',
+    path: ['KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT'],
+    message: '知识证据网关端点与凭据必须成套配置',
+  });
+  if (environment.KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT !== undefined) {
+    const endpoint = new URL(environment.KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT);
+    if (
+      endpoint.protocol !== 'https:' || endpoint.username !== '' || endpoint.password !== '' ||
+      endpoint.pathname !== '/' || endpoint.search !== '' || endpoint.hash !== '' ||
+      (endpoint.port !== '' && endpoint.port !== '443') ||
+      isLoopbackHostname(endpoint.hostname) || endpoint.origin === issuer.origin
+    ) context.addIssue({
+      code: 'custom',
+      path: ['KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT'],
+      message: '知识证据网关必须为独立标准 HTTPS 根地址，禁止本地地址、凭据、路径、query、fragment 和非标准端口',
+    });
+  }
+  if (environment.KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_PUBLIC_KEY_BASE64 !== undefined) {
+    try {
+      const publicKey = createPublicKey({
+        key: Buffer.from(
+          environment.KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_PUBLIC_KEY_BASE64,
+          'base64',
+        ),
+        format: 'der',
+        type: 'spki',
+      });
+      if (publicKey.asymmetricKeyType !== 'ed25519') throw new Error('KEY_TYPE_INVALID');
+    } catch {
+      context.addIssue({
+        code: 'custom',
+        path: ['KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_PUBLIC_KEY_BASE64'],
+        message: '知识证据网关签名公钥必须为有效 Ed25519 SPKI DER base64',
+      });
+    }
+  }
+  if (
+    environment.KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN !== undefined &&
+    [
+      environment.RECRUITMENT_RESUME_SOURCE_BEARER_TOKEN,
+      environment.DATA_MIGRATION_ATTACHMENT_GATEWAY_BEARER_TOKEN,
+      environment.ESIGN_MALWARE_SCAN_BEARER_TOKEN,
+      environment.ESIGN_WORM_ARCHIVE_BEARER_TOKEN,
+      environment.MARKETING_MEDIA_GATEWAY_BEARER_TOKEN,
+      environment.MARKETING_AI_GATEWAY_BEARER_TOKEN,
+      environment.MARKETING_CAPTCHA_BEARER_TOKEN,
+      environment.MARKETING_NOTIFICATION_GATEWAY_BEARER_TOKEN,
+      environment.PAYROLL_TAX_WORM_ARCHIVE_BEARER_TOKEN,
+      environment.PAYROLL_TAX_GATEWAY_BEARER_TOKEN,
+      environment.TREASURY_WORM_ARCHIVE_BEARER_TOKEN,
+      environment.TREASURY_BANK_SUBMISSION_BEARER_TOKEN,
+      environment.TREASURY_BANK_RETURN_INBOX_BEARER_TOKEN,
+      environment.PHASE6_PRODUCTION_AUTHORIZATION_BEARER_TOKEN,
+      environment.METRICS_BEARER_TOKEN,
+      environment.AUDIT_WORM_BEARER_TOKEN,
+      environment.OPENAI_RESUME_API_KEY,
+      environment.OP_SSO_CLIENT_SECRET,
+      environment.DINGTALK_CLIENT_SECRET,
+      environment.FEISHU_CLIENT_SECRET,
+    ].includes(environment.KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN)
+  ) context.addIssue({
+    code: 'custom',
+    path: ['KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN'],
+    message: '知识证据网关不得复用其他业务、平台或外部系统凭据',
   });
   if (environment.DATA_MIGRATION_ATTACHMENT_GATEWAY_BEARER_TOKEN !== undefined && [
     environment.TREASURY_WORM_ARCHIVE_BEARER_TOKEN,

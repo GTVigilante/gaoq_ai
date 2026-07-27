@@ -10,9 +10,12 @@ import { KnowledgeApplicationService } from './application/knowledge-application
 import {
   KnowledgeContentVerificationPort,
   KnowledgeGradingPort,
-  UnconfiguredKnowledgeContentVerificationAdapter,
-  UnconfiguredKnowledgeGradingAdapter,
 } from './application/knowledge-ports.js';
+import {
+  HttpKnowledgeContentVerificationAdapter,
+  HttpKnowledgeGradingAdapter,
+  KnowledgeEvidenceHttpClient,
+} from './integration/knowledge-evidence-http.adapters.js';
 import { KnowledgeController } from './knowledge.controller.js';
 import { KnowledgeOutboxWriter } from './persistence/knowledge-outbox.writer.js';
 import {
@@ -59,12 +62,13 @@ import {
     ExamAttemptRepository,
     KnowledgeEvidenceRepository,
     KnowledgeOutboxWriter,
-    UnconfiguredKnowledgeGradingAdapter,
-    { provide: KnowledgeGradingPort, useExisting: UnconfiguredKnowledgeGradingAdapter },
-    UnconfiguredKnowledgeContentVerificationAdapter,
+    KnowledgeEvidenceHttpClient,
+    HttpKnowledgeGradingAdapter,
+    { provide: KnowledgeGradingPort, useExisting: HttpKnowledgeGradingAdapter },
+    HttpKnowledgeContentVerificationAdapter,
     {
       provide: KnowledgeContentVerificationPort,
-      useExisting: UnconfiguredKnowledgeContentVerificationAdapter,
+      useExisting: HttpKnowledgeContentVerificationAdapter,
     },
   ],
   controllers: [KnowledgeController],
