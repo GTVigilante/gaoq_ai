@@ -111,6 +111,7 @@ export class OnboardingApplicationService {
   }
 
   async get(id: string): Promise<OnboardingSummary> {
+    this.assertScope('erp:onboarding:read');
     const instance = await this.requireInstance(id);
     this.assertDepartmentRead(instance.departmentId);
     return summary(instance);
@@ -129,6 +130,7 @@ export class OnboardingApplicationService {
     this.assertTaskScope(input.taskCode);
     if (input.taskCode === 'org_assignment_verified') {
       const current = await this.requireInstance(id);
+      this.assertDepartmentWrite(current.departmentId);
       await this.org.validateOnboardingAssignment({
         departmentId: current.departmentId,
         orgPositionId: required(input.orgPositionId ?? null, '正式组织岗位'),
@@ -166,6 +168,7 @@ export class OnboardingApplicationService {
   ): Promise<{ readonly onboarding: OnboardingSummary }> {
     this.assertScope('erp:onboarding:contract:attest');
     const current = await this.requireInstance(id);
+    this.assertDepartmentWrite(current.departmentId);
     const source = await this.recruitment.getOnboardingSource(current.offerId);
     this.assertSourceMatches(current, source);
     if (source.signedEvidenceId === null) throw new ConflictException({
@@ -193,6 +196,15 @@ export class OnboardingApplicationService {
     } else if (
       current.status === 'provisioning' &&
       expectedVersion !== current.version && expectedVersion !== current.version - 1
+    ) {
+      throw new ConflictException({
+        code: 'ONBOARDING_VERSION_CONFLICT', message: '入职实例版本冲突',
+      });
+    } else if (
+      current.status === 'completed' &&
+      expectedVersion !== current.version &&
+      expectedVersion !== current.version - 1 &&
+      expectedVersion !== current.version - 2
     ) {
       throw new ConflictException({
         code: 'ONBOARDING_VERSION_CONFLICT', message: '入职实例版本冲突',
