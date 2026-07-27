@@ -29,6 +29,18 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/op/op-approval-result-relay.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/op/op-approval-result-delivery.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/payroll/application/payroll-shadow.service.ts': {
           branches: 90,
           functions: 90,

@@ -95,14 +95,19 @@ export class OpApprovalResultRelayService {
             tenantId: event.tenantId, approvalInstanceId: event.aggregateId,
           }).session(session).lean().exec();
           if (bridge !== null) {
+            this.assertBridgeTransition(bridge, terminal);
             await this.createDelivery(event, bridge, terminal, session);
-            await this.bridges.updateOne({
+            const updated = await this.bridges.updateOne({
               tenantId: bridge.tenantId, approvalInstanceId: bridge.approvalInstanceId,
-              approvalVersion: { $lte: terminal.version },
+              approvalStatus: bridge.approvalStatus,
+              approvalVersion: bridge.approvalVersion,
             }, { $set: {
               approvalStatus: terminal.result, approvalVersion: terminal.version,
               completedAt: terminal.occurredAt,
             } }, { session, timestamps: false, runValidators: true });
+            if (updated.matchedCount !== 1) {
+              throw new Error('OP_APPROVAL_BRIDGE_VERSION_CONFLICT');
+            }
           }
         }
         const updated = await this.outbox.updateOne(
@@ -130,6 +135,8 @@ export class OpApprovalResultRelayService {
       event.eventType !== 'cn.gaoq.erp.approval_instance.withdrawn.v1') return null;
     const parsed = terminalEventSchema.parse(event.envelope);
     if (
+      parsed.type !== event.eventType ||
+      parsed.tenantId !== event.tenantId ||
       parsed.data.tenantId !== event.tenantId ||
       parsed.data.aggregateId !== event.aggregateId ||
       parsed.data.version !== event.aggregateVersion
@@ -142,6 +149,22 @@ export class OpApprovalResultRelayService {
     return { result, version: parsed.data.version, occurredAt: new Date(parsed.time) };
   }
 
+  private assertBridgeTransition(
+    bridge: OpApprovalBridgeRecord,
+    terminal: {
+      readonly result: 'approved' | 'rejected' | 'withdrawn';
+      readonly version: number;
+    },
+  ): void {
+    const newTerminal = bridge.approvalStatus === 'running' &&
+      terminal.version > bridge.approvalVersion;
+    const idempotentTerminal = bridge.approvalStatus === terminal.result &&
+      terminal.version === bridge.approvalVersion;
+    if (!newTerminal && !idempotentTerminal) {
+      throw new Error('OP_APPROVAL_BRIDGE_VERSION_CONFLICT');
+    }
+  }
+
   private async createDelivery(
     event: ClaimedApprovalEvent,
     bridge: OpApprovalBridgeRecord,
@@ -152,15 +175,36 @@ export class OpApprovalResultRelayService {
     },
     session: ClientSession,
   ): Promise<void> {
-    await this.deliveries.updateOne({ eventId: event.eventId }, { $setOnInsert: {
-      eventId: event.eventId, tenantId: bridge.tenantId, clientId: bridge.clientId,
-      externalEventId: bridge.externalEventId,
-      sourceDocumentType: bridge.sourceDocumentType, sourceDocumentId: bridge.sourceDocumentId,
-      approvalInstanceId: bridge.approvalInstanceId, approvalVersion: terminal.version,
-      result: terminal.result, occurredAt: terminal.occurredAt,
-      status: 'pending', attempts: 0, operatorRetryCount: 0, nextAttemptAt: new Date(),
-      lockedAt: null, lockedBy: null, lastErrorCode: null, succeededAt: null,
-    } }, { upsert: true, session, runValidators: true, setDefaultsOnInsert: true });
+    const delivery = await this.deliveries.findOneAndUpdate(
+      { eventId: event.eventId },
+      { $setOnInsert: {
+        eventId: event.eventId, tenantId: bridge.tenantId, clientId: bridge.clientId,
+        externalEventId: bridge.externalEventId,
+        sourceDocumentType: bridge.sourceDocumentType, sourceDocumentId: bridge.sourceDocumentId,
+        approvalInstanceId: bridge.approvalInstanceId, approvalVersion: terminal.version,
+        result: terminal.result, occurredAt: terminal.occurredAt,
+        status: 'pending', attempts: 0, operatorRetryCount: 0, nextAttemptAt: new Date(),
+        lockedAt: null, lockedBy: null, lastErrorCode: null, succeededAt: null,
+      } },
+      {
+        upsert: true, returnDocument: 'after', session,
+        runValidators: true, setDefaultsOnInsert: true,
+      },
+    ).lean().exec();
+    if (
+      delivery === null ||
+      delivery.tenantId !== bridge.tenantId ||
+      delivery.clientId !== bridge.clientId ||
+      delivery.externalEventId !== bridge.externalEventId ||
+      delivery.sourceDocumentType !== bridge.sourceDocumentType ||
+      delivery.sourceDocumentId !== bridge.sourceDocumentId ||
+      delivery.approvalInstanceId !== bridge.approvalInstanceId ||
+      delivery.approvalVersion !== terminal.version ||
+      delivery.result !== terminal.result ||
+      delivery.occurredAt.getTime() !== terminal.occurredAt.getTime()
+    ) {
+      throw new Error('OP_APPROVAL_DELIVERY_CONFLICT');
+    }
   }
 
   private async release(
@@ -170,7 +214,7 @@ export class OpApprovalResultRelayService {
   ): Promise<void> {
     const attempts = event.attempts + 1;
     const exhausted = attempts >= MAX_RELAY_ATTEMPTS;
-    await this.outbox.updateOne(
+    const updated = await this.outbox.updateOne(
       { eventId: event.eventId, status: 'dispatching', lockedBy: workerId },
       { $set: {
         status: exhausted ? 'dead' : 'pending', attempts,
@@ -179,6 +223,7 @@ export class OpApprovalResultRelayService {
       } },
       { timestamps: false },
     );
+    if (updated.matchedCount !== 1) throw new Error('OP_APPROVAL_OUTBOX_LEASE_LOST');
   }
 
   private assertInput(workerId: string, limit: number): void {

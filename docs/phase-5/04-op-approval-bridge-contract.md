@@ -49,6 +49,11 @@ Worker 必须先持久化 Inbox 的 `completed|failed` 终态，再写本切片�
 - `cn.gaoq.erp.approval_instance.withdrawn.v1`；
 - 非 OP 来源审批不会创建 OP 投递；非终态事件只完成本消费者的处理；
 - 结果投递以审批 Outbox eventId 为幂等键，最多自动尝试 6 次，采用 1 秒至 30 分钟的 ±20% 抖动退避。
+- Relay 必须逐字校验 CloudEvent 顶层 `type/tenantId`、数据
+  `tenantId/aggregateId/version` 与 Outbox 元数据；已有桥接只能从较低版本
+  `running` 单调推进到终态，或以相同版本、相同终态幂等恢复。投递记录通过
+  eventId 写入后必须重新核对全部不可变控制字段，桥表更新必须绑定读取到的精确
+  状态与版本；陈旧事件、状态冲突、版本竞争或投递内容冲突一律回滚并重试/死信。
 
 ## 4. ERP → OP 回推契约
 
@@ -60,7 +65,7 @@ Worker 必须先持久化 Inbox 的 `completed|failed` 终态，再写本切片�
 timestamp\nnonce\nPUT\npath\nexternalTenantId\nidempotencyKey\nSHA256_BASE64URL(body)
 ```
 
-正文只含 `externalEventId/sourceDocumentType/sourceDocumentId/approvalInstanceId/approvalVersion/result/occurredAt`，禁止发送表单、审批意见、人员隐私或密钥。OP 必须用幂等键去重，并精确回显外部 eventId、审批实例和版本。409/412 进入人工复核；408/425/429/5xx 与网络错误可自动重试；其他 4xx 进入人工复核。外呼成功落库后，即使审计设施失败也不得把投递改回失败或重复外呼。
+正文只含 `externalEventId/sourceDocumentType/sourceDocumentId/approvalInstanceId/approvalVersion/result/occurredAt`，禁止发送表单、审批意见、人员隐私或密钥。OP 必须用幂等键去重，并精确回显外部 eventId、审批实例和版本。409/412 进入人工复核；408/425/429/5xx 与网络错误可自动重试；其他 4xx 进入人工复核。外呼成功或失败终态落库后，审计设施失败只记录稳定告警，不得把投递改回失败、覆盖原始终态、中断剩余批次或触发重复外呼。持久化与审计中的连接器错误码只接受 `^[A-Z0-9_]{3,128}$`，否则收敛为 `OP_APPROVAL_DELIVERY_UNEXPECTED`。
 
 ## 5. REST、MCP、Scope 与审计
 
@@ -83,4 +88,8 @@ timestamp\nnonce\nPUT\npath\nexternalTenantId\nidempotencyKey\nSHA256_BASE64URL(
 - 仓库门禁 `pnpm quality:op-approval-request-coverage` 必须覆盖任务参数、载荷摘要与
   时间、路由、来源唯一桥接、租约、永久/瞬时失败分类和成功/失败审计故障，目标
   文件的语句、分支、函数和行覆盖率均不得低于 90%。
+- 仓库门禁 `pnpm quality:op-approval-result-coverage` 必须覆盖 Outbox/信封身份
+  绑定、非终态跳过、桥接版本单调推进、投递内容幂等校验、事务与租约竞争、退避/
+  死信、HMAC 最小载荷、响应回显、错误分类与成功/失败审计故障；Relay 与 Delivery
+  两个目标文件的语句、分支、函数和行覆盖率均不得低于 90%。
 - 上线前完成追加式索引 dry-run、OP 沙箱双向联调、Secret Manager 注入、容量评估、备份恢复抽查、断连追赶演练和审计抽查。未满足时不得宣称生产验收完成。
