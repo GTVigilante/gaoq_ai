@@ -22,7 +22,12 @@ import { compareMigrationRehearsals } from './data-migration-rehearsal.js';
 
 const HASH = /^[A-Za-z0-9_-]{43}$/;
 const SOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const RUN_ID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/u;
+const REMOTE_ERROR_CODE = /^[A-Z][A-Z0-9_]{1,127}$/u;
 const MAX_LINE_BYTES = 8 * 1024 * 1024;
+const MAX_EVIDENCE_PAGE_RECORDS = 500;
+const MAX_EVIDENCE_PAGES = 20_000;
+const MAX_CURSOR_LENGTH = 1_024;
 
 const attachmentSchema = z.object({
   sourceAttachmentId: z.string().regex(SOURCE_ID),
@@ -115,6 +120,7 @@ export async function applyMigrationPackage(
     method: 'POST', headers, body: JSON.stringify(withoutFormatVersion(validated.manifest)),
   });
   const runId = requiredString(run, 'id');
+  if (!RUN_ID.test(runId)) throw packageError('RESPONSE_INVALID');
   const checkpoint = requiredInteger(run, 'checkpoint');
   if (checkpoint < 0 || checkpoint > validated.recordCount) throw packageError('CHECKPOINT_INVALID');
 
@@ -130,6 +136,7 @@ export async function applyMigrationPackage(
     { method: 'POST', headers, body: '{}' },
   );
   const pendingCount = requiredInteger(transfer, 'pendingCount');
+  if (pendingCount < 0) throw packageError('RESPONSE_INVALID');
   if (pendingCount > 0) {
     await waitForAttachments(endpoint, runId, headers, environment);
   }
@@ -167,7 +174,7 @@ export async function exportMigrationEvidence(
     process.stdout.write(`${JSON.stringify(line)}\n`);
   },
 ): Promise<Readonly<Record<string, unknown>>> {
-  if (!/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/u.test(runId)) throw packageError('RUN_ID_INVALID');
+  if (!RUN_ID.test(runId)) throw packageError('RUN_ID_INVALID');
   const endpoint = requireEndpoint(environment.ERP_API_BASE_URL);
   const token = environment.ERP_MIGRATION_TOKEN;
   if (token === undefined || token.length < 20) throw packageError('TOKEN_REQUIRED');
@@ -190,7 +197,11 @@ export async function exportMigrationEvidence(
 
   for (const kind of ['items', 'associations', 'attachments'] as const) {
     let cursor: string | null = null;
+    let pageCount = 0;
+    const seenCursors = new Set<string>();
     do {
+      pageCount += 1;
+      if (pageCount > MAX_EVIDENCE_PAGES) throw packageError('EVIDENCE_PAGE_LIMIT_EXCEEDED');
       const parameters = new URLSearchParams({ kind, limit: '500' });
       if (cursor !== null) parameters.set('cursor', cursor);
       const page = await requestJson(
@@ -204,7 +215,11 @@ export async function exportMigrationEvidence(
         runId: page.runId, kind: page.kind, records, nextCursor,
       };
       if (page.runId !== runId || page.kind !== kind || !Array.isArray(records) ||
-        (nextCursor !== null && typeof nextCursor !== 'string') ||
+        records.length > MAX_EVIDENCE_PAGE_RECORDS ||
+        (nextCursor !== null && (
+          typeof nextCursor !== 'string' || nextCursor.length < 1 ||
+          nextCursor.length > MAX_CURSOR_LENGTH || seenCursors.has(nextCursor)
+        )) ||
         typeof pageChecksum !== 'string' || digest(canonicalJson(checksumBody)) !== pageChecksum) {
         throw packageError('EVIDENCE_PAGE_INVALID');
       }
@@ -216,6 +231,7 @@ export async function exportMigrationEvidence(
         counts[kind] += 1;
         append(Object.freeze({ formatVersion: 1, recordType: kind, data: record }));
       }
+      if (nextCursor !== null) seenCursors.add(nextCursor);
       cursor = nextCursor;
     } while (cursor !== null);
   }
@@ -285,14 +301,26 @@ function withoutFormatVersion(manifest: MigrationPackageManifest): Record<string
 
 function requireEndpoint(value: string | undefined): string {
   if (value === undefined) throw packageError('ENDPOINT_REQUIRED');
-  const url = new URL(value);
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw packageError('ENDPOINT_INVALID');
+  }
   const local = url.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(url.hostname);
+  if (url.username !== '' || url.password !== '' || url.search !== '' || url.hash !== '') {
+    throw packageError('ENDPOINT_INVALID');
+  }
   if (url.protocol !== 'https:' && !local) throw packageError('ENDPOINT_TLS_REQUIRED');
   return url.toString().replace(/\/$/u, '');
 }
 
 async function requestJson(url: string, init: RequestInit): Promise<Record<string, unknown>> {
-  const response = await fetch(url, { ...init, signal: AbortSignal.timeout(30_000) });
+  const response = await fetch(url, {
+    ...init,
+    redirect: 'error',
+    signal: AbortSignal.timeout(30_000),
+  });
   let value: unknown;
   try {
     value = await response.json();
@@ -300,9 +328,12 @@ async function requestJson(url: string, init: RequestInit): Promise<Record<strin
     throw packageError('RESPONSE_INVALID');
   }
   if (!response.ok) {
-    const code = typeof value === 'object' && value !== null &&
-      typeof (value as { code?: unknown }).code === 'string'
-      ? (value as { code: string }).code : `HTTP_${response.status}`;
+    const candidate = typeof value === 'object' && value !== null
+      ? (value as { code?: unknown }).code
+      : undefined;
+    const code = typeof candidate === 'string' && REMOTE_ERROR_CODE.test(candidate)
+      ? candidate
+      : `HTTP_${response.status}`;
     throw packageError(`REMOTE_${code}`);
   }
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -335,30 +366,41 @@ function packageError(code: string): Error {
   return new Error(`DATA_MIGRATION_PACKAGE_${code}`);
 }
 
-async function main(): Promise<void> {
-  const [command, target, ...rest] = process.argv.slice(2);
+/** 执行迁移来源包 CLI 命令；显式注入环境与输出，便于门禁验证且不暴露 Token。 */
+export async function runMigrationPackageCommand(
+  arguments_: readonly string[],
+  environment: NodeJS.ProcessEnv = process.env,
+  write: (line: string) => void = (line) => process.stdout.write(line),
+): Promise<void> {
+  const [command, target, ...rest] = arguments_;
   if (command === 'compare') {
     if (target === undefined || rest.length !== 2) throw packageError('ARGUMENT_INVALID');
     const result = await compareMigrationRehearsals([target, rest[0] ?? '', rest[1] ?? '']);
-    process.stdout.write(`${JSON.stringify(result)}\n`);
+    write(`${JSON.stringify(result)}\n`);
     return;
   }
   if (!['validate', 'apply', 'evidence'].includes(command ?? '') || target === undefined ||
     rest.length !== 0) throw packageError('ARGUMENT_INVALID');
   if (command === 'validate') {
     const result = await validateMigrationPackage(target);
-    process.stdout.write(`${JSON.stringify({
+    write(`${JSON.stringify({
       valid: true, recordCount: result.recordCount, sourceChecksum: result.sourceChecksum,
       sourceRunId: result.manifest.sourceRunId, scope: result.manifest.scope,
     })}\n`);
     return;
   }
   if (command === 'evidence') {
-    await exportMigrationEvidence(target);
+    await exportMigrationEvidence(target, environment, (line) => {
+      write(`${JSON.stringify(line)}\n`);
+    });
     return;
   }
-  const report = await applyMigrationPackage(target);
-  process.stdout.write(`${JSON.stringify(report)}\n`);
+  const report = await applyMigrationPackage(target, environment);
+  write(`${JSON.stringify(report)}\n`);
+}
+
+async function main(): Promise<void> {
+  await runMigrationPackageCommand(process.argv.slice(2));
 }
 
 const entryPath = process.argv[1];
