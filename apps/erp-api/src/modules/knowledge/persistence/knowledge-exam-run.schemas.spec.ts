@@ -297,4 +297,25 @@ describe('Knowledge 考试运行持久化契约', () => {
       lockedBy: 'worker-001',
     }).validate()).rejects.toThrow('Knowledge 考试运行锁组合非法');
   });
+
+  it('重放原因和时间必须成对出现且原因只接受受控编码', async () => {
+    await expect(new RunModel({
+      ...startingRun,
+      replayReason: 'GATEWAY_RECOVERED',
+      replayedAt: new Date('2026-07-27T00:00:01.000Z'),
+    }).validate()).resolves.toBeUndefined();
+    await expect(new RunModel({
+      ...startingRun,
+      replayReason: 'GATEWAY_RECOVERED',
+    }).validate()).rejects.toThrow('Knowledge 考试重放证据组合非法');
+    await expect(new RunModel({
+      ...startingRun,
+      replayedAt: new Date('2026-07-27T00:00:01.000Z'),
+    }).validate()).rejects.toThrow('Knowledge 考试重放证据组合非法');
+    await expect(new RunModel({
+      ...startingRun,
+      replayReason: '用户确认可以重试',
+      replayedAt: new Date('2026-07-27T00:00:01.000Z'),
+    }).validate()).rejects.toThrow();
+  });
 });
