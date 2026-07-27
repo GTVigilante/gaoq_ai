@@ -1,5 +1,4 @@
 import type { CloudEvent, Money } from '@gaoq/shared-types';
-import { z } from 'zod';
 
 /** 平台契约版本。 */
 export const PLATFORM_CONTRACT_VERSION = '1.0.0' as const;
@@ -140,10 +139,6 @@ type TypedCloudEvent<TType extends string, TData> =
     readonly datacontenttype: 'application/json';
     readonly schemaVersion: '1';
     readonly data: TData;
-    readonly time: string;
-    readonly datacontenttype: 'application/json';
-    readonly subject: string;
-    readonly schemaVersion: '1';
   };
 
 export type DepartmentUpsertedEvent = TypedCloudEvent<
@@ -186,16 +181,6 @@ export type PayrollToErpEvent =
   | PayrollReconciliationCompletedEvent;
 export type PayrollContractEvent = ErpToPayrollEvent | PayrollToErpEvent;
 
-const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
-const EVENT_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u;
-const SOURCE = /^\/{1,2}[A-Za-z0-9][A-Za-z0-9._~:/-]{0,254}$/u;
-const SUBJECT = /^tenant\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\/[A-Za-z0-9._:/-]{1,255}$/u;
-const UTC_DATETIME =
-  /^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,9})?Z$/u;
-const DATE = /^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$/u;
-const PERIOD = /^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])$/u;
-const DIGEST = /^sha256:[a-f0-9]{64}$/u;
-const NON_NEGATIVE_MINOR = /^(?:0|[1-9]\d{0,29})$/u;
 const FORBIDDEN_SUMMARY_KEY =
   /employeeId|employeeNo|displayName|bank|account|card|idCard|taxId|payslip|salaryDetail|items/i;
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
