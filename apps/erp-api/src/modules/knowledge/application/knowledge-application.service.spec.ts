@@ -676,6 +676,73 @@ describe('KnowledgeApplicationService', () => {
     expect(store.searchIndexTasks.append).not.toHaveBeenCalled();
   });
 
+  it('Mongo 事务自动重试相同课程快照时只调用一次外部校验器', async () => {
+    const draft = createCourseVersion({
+      id: 'course-001', tenantId: 'tenant-001', courseCode: 'SECURITY', revision: 1,
+      title: '安全培训', contentRef: 'content-001', questionBankRef: 'bank-001',
+      questionBankDigest: 'a'.repeat(43), passingScoreBps: 8_000,
+    }, NOW);
+    const store = fixture({ course: draft });
+    /** 模拟第一次事务尝试回滚：第二次回调仍读取相同持久化快照。 */
+    store.courses.findById.mockResolvedValue(draft);
+    store.idempotency.execute.mockImplementationOnce(async (
+      _operation: string,
+      _key: string,
+      _request: unknown,
+      handler: (session: ClientSession) => Promise<Record<string, unknown>>,
+    ) => {
+      await handler(SESSION);
+      return handler(SESSION);
+    });
+
+    await expect(store.context.run(store.trusted, () =>
+      store.service.publishCourse('course-001', 1, 'knowledge-publish-retry'),
+    )).resolves.toMatchObject({ course: { status: 'published', version: 2 } });
+
+    expect(store.courses.findById).toHaveBeenCalledTimes(2);
+    expect(store.verifier.verify).toHaveBeenCalledOnce();
+    expect(store.verifier.verify).toHaveBeenCalledWith(draft);
+    expect(store.courses.replace).toHaveBeenCalledTimes(2);
+  });
+
+  it('Mongo 事务重试读取到不同课程事实时重新校验并拒绝旧版本写入', async () => {
+    const draft = createCourseVersion({
+      id: 'course-001', tenantId: 'tenant-001', courseCode: 'SECURITY', revision: 1,
+      title: '安全培训', contentRef: 'content-001', questionBankRef: 'bank-001',
+      questionBankDigest: 'a'.repeat(43), passingScoreBps: 8_000,
+    }, NOW);
+    const changed = Object.freeze({
+      ...draft,
+      contentRef: 'content-002',
+      version: 2,
+      updatedAt: '2026-07-28T00:00:00.000Z',
+    });
+    const store = fixture({ course: draft });
+    store.courses.findById
+      .mockResolvedValueOnce(draft)
+      .mockResolvedValueOnce(changed);
+    store.idempotency.execute.mockImplementationOnce(async (
+      _operation: string,
+      _key: string,
+      _request: unknown,
+      handler: (session: ClientSession) => Promise<Record<string, unknown>>,
+    ) => {
+      await handler(SESSION);
+      return handler(SESSION);
+    });
+
+    await expect(store.context.run(store.trusted, () =>
+      store.service.publishCourse('course-001', 1, 'knowledge-publish-retry-changed'),
+    )).rejects.toMatchObject({
+      response: { code: 'KNOWLEDGE_VERSION_CONFLICT' },
+    });
+
+    expect(store.verifier.verify).toHaveBeenCalledTimes(2);
+    expect(store.verifier.verify).toHaveBeenNthCalledWith(1, draft);
+    expect(store.verifier.verify).toHaveBeenNthCalledWith(2, changed);
+    expect(store.courses.replace).toHaveBeenCalledOnce();
+  });
+
   it('课程发布校验失败时不形成课程终态、事件或索引任务', async () => {
     const draft = createCourseVersion({
       id: 'course-001', tenantId: 'tenant-001', courseCode: 'SECURITY', revision: 1,
