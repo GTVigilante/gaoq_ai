@@ -15,7 +15,7 @@ Go/No-Go 是人工治理决定，不是 CI 成功、AI 建议或某个负责人�
 | --- | --- |
 | 工程质量 | Lint、类型、单元/集成/契约/E2E、构建全部通过 |
 | 供应链 | SAST、SCA、Secret Scan、许可证、SBOM、仓库与依赖扫描无阻断项 |
-| 生产镜像 | API/Worker/Web 固定摘要、nonroot、签名、SLSA provenance、准入策略和回滚冒烟通过 |
+| 生产镜像 | API/Worker/ERP Web/Website 固定摘要、nonroot、签名、SLSA provenance、准入策略和回滚冒烟通过 |
 | 数据迁移 | 固定 `gaoq.phase5.migration-rehearsal.verdict`；全部二十六个 Scope、三轮七十八个运行、故障演练、记录、关联、金额、附件和校验和未解释差异为零 |
 | 性能容量 | 三次独立实测；1000 并发、API P95 `<500ms`、错误率 `≤1%`；1000 人工资 `<300s` |
 | DAST/ASVS | ASVS 5.0 L2 与高风险 L3、认证/越权探针、ZAP 主动扫描和四方签署通过 |
@@ -40,7 +40,7 @@ MCP 固定使用 `2025-11-25`、Streamable HTTP 和 OAuth 2.1。最终能力目�
 
 `.github/workflows/phase-5-go-no-go.yml` 只能在 `main` 手工启动，绑定 Required Reviewers 保护的 `phase-5-go-no-go` Environment，并进入带 `self-hosted`、`linux`、`x64`、`phase-5-go-no-go` 标签的隔离单次 Runner。PR 代码不能触达该 Runner，Runner 不承担生产部署。
 
-Environment 配置以下非敏感变量：环境名、区域、API/Worker/Web 镜像 SHA-256 和部署清单 SHA-256。工作流把这些值及当前 `main` commit 与证据精确绑定。只读证据文件固定为 `/var/lib/gaoq/go-no-go/phase-5-go-no-go.json`，不得是符号链接、不得允许组或其他用户写入，最大 512 KiB。
+Environment 配置以下非敏感变量：环境名、区域、API/Worker/ERP Web/Website 镜像 SHA-256 和部署清单 SHA-256。工作流把这些值及当前 `main` commit 与证据精确绑定。只读证据文件固定为 `/var/lib/gaoq/go-no-go/phase-5-go-no-go.json`，不得是符号链接、不得允许组或其他用户写入，最大 512 KiB。
 
 ```bash
 pnpm release:go-no-go:validate-evidence -- /secure/release/phase-5-go-no-go.json

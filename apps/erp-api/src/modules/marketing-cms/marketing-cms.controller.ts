@@ -214,6 +214,29 @@ export class MarketingCmsController {
     );
   }
 
+  @Post('side-effects/:id/replay')
+  @HttpCode(200)
+  @RequiredScopes('erp:marketing:operations:replay')
+  async replaySideEffect(@Param('id') id: string) {
+    const result = await this.cms.replaySideEffect(this.id(id));
+    try {
+      await this.audit.record({
+        action: 'marketing.side_effect.replay',
+        resourceType: 'marketing_side_effect',
+        resourceId: id,
+        riskLevel: 'R2',
+        outcome: 'success',
+        metadata: { kind: String(result.kind), status: String(result.status) },
+      });
+    } catch {
+      this.logger.error({
+        code: 'MARKETING_SIDE_EFFECT_REPLAY_AUDIT_FAILED',
+        resourceId: id,
+      });
+    }
+    return result;
+  }
+
   @Post('media/uploads')
   @RequiredScopes('erp:marketing:media:create')
   createMedia(@Body() body: unknown) {

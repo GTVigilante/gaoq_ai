@@ -5,15 +5,28 @@ import { describe, expect, it } from 'vitest';
 import type { AppEnvironment } from '../../config/environment.js';
 import {
   OAUTH_REDIRECT_DENIED_CODE,
+  OAUTH_RESOURCE_DENIED_CODE,
   OAUTH_SCOPE_DENIED_CODE,
   OAUTH_SCOPE_INVALID_CODE,
   OAUTH_TENANT_DENIED_CODE,
   OAuthClientRegistry,
 } from './oauth-client-registry.js';
 
-/** 构造仅携带 MCP_OAUTH_CLIENTS_JSON 的 ConfigService 替身。 */
+const RESOURCE = 'https://erp.example.com/mcp';
+const PAYROLL_RESOURCE = 'https://payroll.example.com/api';
+
+/** 构造 OAuth 客户端与资源注册配置替身。 */
 const createConfig = (raw: string | undefined): ConfigService<AppEnvironment, true> =>
-  ({ get: (): string | undefined => raw }) as unknown as ConfigService<AppEnvironment, true>;
+  ({
+    get: (key: keyof AppEnvironment): string | undefined => {
+      if (key === 'MCP_OAUTH_CLIENTS_JSON') return raw;
+      if (key === 'AUTH_RESOURCE') return RESOURCE;
+      if (key === 'AUTH_ADDITIONAL_RESOURCES_JSON') {
+        return JSON.stringify([{ resource: PAYROLL_RESOURCE, audience: 'gaoq-payroll' }]);
+      }
+      return undefined;
+    },
+  }) as unknown as ConfigService<AppEnvironment, true>;
 
 const createRegistry = (raw: string | undefined): OAuthClientRegistry =>
   new OAuthClientRegistry(createConfig(raw));
@@ -23,6 +36,7 @@ const validClient = {
   clientName: 'MCP 公共客户端',
   redirectUris: ['https://claude.ai/api/mcp/auth_callback', 'http://localhost:6274/callback'],
   allowedScopes: ['erp:mcp:server:connect', 'erp:org:chart:read', 'erp:identity:profile:read'],
+  allowedResources: [RESOURCE],
   tenantIds: ['tenant-001', 'tenant-002'],
   status: 'active',
 } as const;
@@ -100,6 +114,21 @@ describe('OAuthClientRegistry 配置解析', () => {
     expect(captureConstructError(toJson([validClient, other]))).toBeInstanceOf(Error);
   });
 
+  it('拒绝重复或未注册 allowedResources，禁止旧客户端隐式获得所有资源', () => {
+    expect(captureConstructError(toJson([{
+      ...validClient,
+      allowedResources: [RESOURCE, RESOURCE],
+    }]))).toBeInstanceOf(Error);
+    expect(captureConstructError(toJson([{
+      ...validClient,
+      allowedResources: ['https://unknown.example.com/api'],
+    }]))).toBeInstanceOf(Error);
+    expect(captureConstructError(toJson([{
+      ...validClient,
+      allowedResources: undefined,
+    }]))).toBeInstanceOf(Error);
+  });
+
   it('拒绝开放重定向风险配置：非 https、非回环 http、凭据与 fragment', () => {
     const evilUris = [
       'http://evil.example.com/callback',
@@ -148,6 +177,7 @@ describe('OAuthClientRegistry 只读查询', () => {
     expect(Object.isFrozen(client)).toBe(true);
     expect(Object.isFrozen(client.redirectUris)).toBe(true);
     expect(Object.isFrozen(client.allowedScopes)).toBe(true);
+    expect(Object.isFrozen(client.allowedResources)).toBe(true);
     expect(Object.isFrozen(client.tenantIds)).toBe(true);
   });
 
@@ -213,6 +243,17 @@ describe('OAuthClientRegistry 只读查询', () => {
     expect(error).toBeInstanceOf(ForbiddenException);
     expect((error as ForbiddenException).getResponse()).toMatchObject({
       code: OAUTH_TENANT_DENIED_CODE,
+    });
+  });
+
+  it('assertResource 拒绝全局已注册但未授予当前客户端的资源', () => {
+    const registry = createRegistry(toJson([validClient]));
+    const client = resolveValidClient(registry);
+    expect(() => registry.assertResource(client, RESOURCE)).not.toThrow();
+    const error = captureError(() => registry.assertResource(client, PAYROLL_RESOURCE));
+    expect(error).toBeInstanceOf(ForbiddenException);
+    expect((error as ForbiddenException).getResponse()).toMatchObject({
+      code: OAUTH_RESOURCE_DENIED_CODE,
     });
   });
 

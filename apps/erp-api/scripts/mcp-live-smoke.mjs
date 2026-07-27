@@ -30,6 +30,7 @@ const serviceClients = [{
   tenantId: 'local-smoke-tenant',
   actorId: 'local-smoke-agent',
   allowedScopes: ['erp:mcp:server:connect'],
+  allowedResources: [resource],
   roleCodes: ['service-reader'],
   departmentIds: [],
   status: 'active',

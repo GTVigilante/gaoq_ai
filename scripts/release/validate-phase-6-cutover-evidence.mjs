@@ -104,11 +104,11 @@ function validateSource(source, enforceEnvironment) {
   ], 'PHASE6_CUTOVER_SOURCE_INVALID');
   pattern(source.commitSha, COMMIT, 'PHASE6_CUTOVER_COMMIT_INVALID');
   pattern(source.releaseCandidate, RELEASE, 'PHASE6_CUTOVER_RC_INVALID');
-  object(source.images, ['api', 'worker', 'web'], 'PHASE6_CUTOVER_IMAGES_INVALID');
+  object(source.images, ['api', 'worker', 'web', 'website'], 'PHASE6_CUTOVER_IMAGES_INVALID');
   for (const value of Object.values(source.images)) {
     pattern(value, SHA256, 'PHASE6_CUTOVER_IMAGES_INVALID');
   }
-  if (new Set(Object.values(source.images)).size !== 3) fail('PHASE6_CUTOVER_IMAGES_INVALID');
+  if (new Set(Object.values(source.images)).size !== 4) fail('PHASE6_CUTOVER_IMAGES_INVALID');
   pattern(source.deploymentManifestHash, SHA256, 'PHASE6_CUTOVER_MANIFEST_INVALID');
   equal(source.harnessSha256, HARNESS_DIGEST, 'PHASE6_CUTOVER_HARNESS_INVALID');
   if (enforceEnvironment) {
@@ -117,14 +117,15 @@ function validateSource(source, enforceEnvironment) {
       api: process.env.PHASE6_CUTOVER_EXPECTED_API_IMAGE,
       worker: process.env.PHASE6_CUTOVER_EXPECTED_WORKER_IMAGE,
       web: process.env.PHASE6_CUTOVER_EXPECTED_WEB_IMAGE,
+      website: process.env.PHASE6_CUTOVER_EXPECTED_WEBSITE_IMAGE,
       manifest: process.env.PHASE6_CUTOVER_EXPECTED_DEPLOYMENT_MANIFEST,
     };
     pattern(expected.commitSha, COMMIT, 'PHASE6_CUTOVER_EXPECTED_SOURCE_REQUIRED');
-    for (const field of ['api', 'worker', 'web', 'manifest']) {
+    for (const field of ['api', 'worker', 'web', 'website', 'manifest']) {
       pattern(expected[field], SHA256, 'PHASE6_CUTOVER_EXPECTED_SOURCE_REQUIRED');
     }
     equal(source.commitSha, expected.commitSha, 'PHASE6_CUTOVER_COMMIT_MISMATCH');
-    for (const image of ['api', 'worker', 'web']) {
+    for (const image of ['api', 'worker', 'web', 'website']) {
       equal(source.images[image], expected[image], 'PHASE6_CUTOVER_IMAGE_MISMATCH');
     }
     equal(source.deploymentManifestHash, expected.manifest,
@@ -454,8 +455,13 @@ function fixture() {
     releaseId: id(1),
     source: {
       commitSha, releaseCandidate: 'rc-20260719-01',
-      images: { api: hash('a'), worker: hash('b'), web: hash('c') },
-      deploymentManifestHash: hash('d'), harnessSha256: HARNESS_DIGEST,
+      images: {
+        api: hash('a'),
+        worker: hash('b'),
+        web: hash('c'),
+        website: hash('d'),
+      },
+      deploymentManifestHash: hash('e'), harnessSha256: HARNESS_DIGEST,
     },
     environment: {
       name: 'cn-prod-primary', region: 'cn-shanghai', timezone: 'Asia/Shanghai',
@@ -514,7 +520,7 @@ function fixture() {
       evidenceId: id(60), evidenceHash: hash('a'), changeEvidenceId: id(61),
       policyId: 'phase6-production-execution-v1',
       enabledAt: new Date(start + 2 * 60 * 60 * 1_000).toISOString(),
-      subjectCommitSha: commitSha, deploymentManifestHash: hash('d'),
+      subjectCommitSha: commitSha, deploymentManifestHash: hash('e'),
       maxAuthorizationTtlSeconds: 900, singleUse: true, bindTenant: true,
       bindResource: true, bindSubjectHash: true, bindExpectedVersion: true,
       bindRelease: true, credentialReuseDetected: false, mcpR3ToolCount: 0,

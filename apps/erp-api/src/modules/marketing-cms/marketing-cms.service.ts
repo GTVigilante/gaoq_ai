@@ -3,15 +3,12 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
-  Logger,
 } from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
-import { InjectModel } from '@nestjs/mongoose';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { createEventId } from '@gaoq/shared-utils';
 import { randomUUID } from 'node:crypto';
-import type { ClientSession, Model } from 'mongoose';
-import type { Queue } from 'bullmq';
+import type { ClientSession, Connection, Model } from 'mongoose';
 import type { AppEnvironment } from '../../config/environment.js';
 import { IdempotencyService } from '../../core/idempotency/idempotency.service.js';
 import { TenantContextService } from '../../core/tenant/tenant-context.service.js';
@@ -20,6 +17,7 @@ import {
   MarketingContentRecord,
   MarketingContentRevisionRecord,
   MarketingLeadRecord,
+  MarketingSideEffectRecord,
   MarketingMediaRecord,
   MarketingAiGenerationRecord,
   type MarketingContentDocument,
@@ -35,14 +33,6 @@ import {
 } from './marketing-cms.types.js';
 import { MarketingLeadCryptoService } from './marketing-lead-crypto.service.js';
 import { MarketingAiGateway, MarketingMediaGateway } from './marketing-gateways.service.js';
-import {
-  MARKETING_NOTIFICATION_QUEUE,
-  type MarketingNotificationJob,
-} from './marketing-notification.queue.js';
-import {
-  MARKETING_AUTOMATION_QUEUE,
-  type MarketingPublishJob,
-} from './marketing-automation.queue.js';
 
 export type MarketingContentView = Readonly<Record<string, unknown>>;
 const TRANSITIONS: Readonly<Record<MarketingStatus, readonly MarketingStatus[]>> = {
@@ -52,13 +42,14 @@ const TRANSITIONS: Readonly<Record<MarketingStatus, readonly MarketingStatus[]>>
 
 @Injectable()
 export class MarketingCmsService {
-  private readonly logger = new Logger(MarketingCmsService.name);
-
   constructor(
+    @InjectConnection() private readonly connection: Connection,
     @InjectModel(MarketingContentRecord.name) private readonly contents: Model<MarketingContentRecord>,
     @InjectModel(MarketingContentRevisionRecord.name)
     private readonly revisions: Model<MarketingContentRevisionRecord>,
     @InjectModel(MarketingLeadRecord.name) private readonly leads: Model<MarketingLeadRecord>,
+    @InjectModel(MarketingSideEffectRecord.name)
+    private readonly sideEffects: Model<MarketingSideEffectRecord>,
     @InjectModel(MarketingMediaRecord.name) private readonly media: Model<MarketingMediaRecord>,
     @InjectModel(MarketingAiGenerationRecord.name)
     private readonly generations: Model<MarketingAiGenerationRecord>,
@@ -69,10 +60,6 @@ export class MarketingCmsService {
     private readonly leadCrypto: MarketingLeadCryptoService,
     private readonly mediaGateway: MarketingMediaGateway,
     private readonly aiGateway: MarketingAiGateway,
-    @InjectQueue(MARKETING_NOTIFICATION_QUEUE)
-    private readonly notificationQueue: Queue<MarketingNotificationJob>,
-    @InjectQueue(MARKETING_AUTOMATION_QUEUE)
-    private readonly automationQueue: Queue<MarketingPublishJob>,
   ) {}
 
   async create(key: string, raw: unknown): Promise<{ readonly content: MarketingContentView }> {
@@ -190,26 +177,25 @@ export class MarketingCmsService {
         ).exec();
         if (next === null) throw versionConflict();
         await this.snapshot(next, session);
+        await this.sideEffects.create([{
+          eventId: createEventId(),
+          tenantId: next.tenantId,
+          kind: 'scheduled_publish',
+          aggregateId: next.id,
+          aggregateVersion: next.version,
+          channel: null,
+          dueAt: scheduledAt,
+          status: 'pending',
+          attempts: 0,
+          nextAttemptAt: new Date(),
+          lockedAt: null,
+          lockedBy: null,
+          dispatchedAt: null,
+          lastErrorCode: null,
+        }], { session });
         return { content: view(next) };
       },
     );
-    const content = result.content;
-    try {
-      await this.automationQueue.add(
-        'publish:scheduled',
-        { tenantId: String(content.tenantId), contentId: id },
-        {
-          jobId: `${String(content.tenantId)}:${id}:${String(content.revision)}`,
-          delay: Math.max(0, scheduledAt.getTime() - Date.now()),
-          attempts: 5,
-          backoff: { type: 'exponential', delay: 5_000 },
-          removeOnComplete: 1_000,
-          removeOnFail: 5_000,
-        },
-      );
-    } catch {
-      this.logger.error({ code: 'MARKETING_SCHEDULE_ENQUEUE_FAILED', contentId: id });
-    }
     return result;
   }
 
@@ -248,39 +234,70 @@ export class MarketingCmsService {
   }> {
     const input = parseLead(raw);
     const tenantId = this.publicTenantId();
-    const id = randomUUID();
-    const dedupeDigest = this.leadCrypto.blindIndex(tenantId, input.contact);
-    const duplicate = await this.leads.findOne({
-      tenantId, dedupeDigest,
-      createdAt: { $gte: new Date(Date.now() - 30 * 86_400_000) },
-      status: { $ne: 'closed' },
-    }).select('id').lean().exec();
-    if (duplicate !== null) return { leadId: duplicate.id, duplicate: true };
-    const protectedContact = this.leadCrypto.protect(tenantId, id, input.contact);
-    await this.leads.create({
-      id, tenantId, siteId: this.publicSiteId(), audience: input.audience,
-      name: input.name, requestSummary: input.requestSummary, attribution: input.attribution,
-      contactIv: protectedContact.iv, contactCiphertext: protectedContact.ciphertext,
-      contactAuthTag: protectedContact.authTag, dedupeDigest,
-      consentedAt: new Date(), status: 'new',
+    return this.connection.transaction(async (session) => {
+      const id = randomUUID();
+      const dedupeDigest = this.leadCrypto.blindIndex(tenantId, input.contact);
+      const duplicate = await this.leads.findOne({
+        tenantId, dedupeDigest,
+        createdAt: { $gte: new Date(Date.now() - 30 * 86_400_000) },
+        status: { $ne: 'closed' },
+      }).select('id').session(session).lean().exec();
+      if (duplicate !== null) return { leadId: duplicate.id, duplicate: true };
+      const protectedContact = this.leadCrypto.protect(tenantId, id, input.contact);
+      await this.leads.create([{
+        id, tenantId, siteId: this.publicSiteId(), audience: input.audience,
+        name: input.name, requestSummary: input.requestSummary, attribution: input.attribution,
+        contactIv: protectedContact.iv, contactCiphertext: protectedContact.ciphertext,
+        contactAuthTag: protectedContact.authTag, dedupeDigest,
+        consentedAt: new Date(), status: 'new',
+      }], { session });
+      const now = new Date();
+      await this.sideEffects.create((['email', 'feishu'] as const).map((channel) => ({
+        eventId: createEventId(),
+        tenantId,
+        kind: 'lead_notification',
+        aggregateId: id,
+        aggregateVersion: 1,
+        channel,
+        dueAt: now,
+        status: 'pending',
+        attempts: 0,
+        nextAttemptAt: now,
+        lockedAt: null,
+        lockedBy: null,
+        dispatchedAt: null,
+        lastErrorCode: null,
+      })), { session });
+      return { leadId: id, duplicate: false };
     });
-    const notifications = await Promise.allSettled((['email', 'feishu'] as const).map(
-      (channel) => this.notificationQueue.add(
-        `lead:${channel}`,
-        { tenantId, leadId: id, channel },
-        {
-          jobId: `${tenantId}:${id}:${channel}`,
-          attempts: 6,
-          backoff: { type: 'exponential', delay: 5_000 },
-          removeOnComplete: 1_000,
-          removeOnFail: 5_000,
+  }
+
+  async replaySideEffect(eventId: string): Promise<Record<string, unknown>> {
+    const tenantId = this.context.getTenantRequired().tenantId;
+    const record = await this.sideEffects.findOneAndUpdate(
+      { tenantId, eventId, status: 'dead' },
+      {
+        $set: {
+          status: 'pending',
+          attempts: 0,
+          nextAttemptAt: new Date(),
+          lockedAt: null,
+          lockedBy: null,
+          lastErrorCode: null,
         },
-      ),
-    ));
-    if (notifications.some((result) => result.status === 'rejected')) {
-      this.logger.error({ code: 'MARKETING_NOTIFICATION_ENQUEUE_FAILED', leadId: id });
-    }
-    return { leadId: id, duplicate: false };
+      },
+      { returnDocument: 'after', lean: true },
+    ).exec();
+    if (record === null) throw new ConflictException({
+      code: 'MARKETING_SIDE_EFFECT_NOT_REPLAYABLE',
+      message: '副作用记录不存在、跨租户或不处于死信状态',
+    });
+    return {
+      eventId: record.eventId,
+      kind: record.kind,
+      status: record.status,
+      attempts: record.attempts,
+    };
   }
 
   async revisionsFor(id: string): Promise<{ readonly items: readonly Record<string, unknown>[] }> {
@@ -583,18 +600,24 @@ function parseLead(value: unknown): {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw leadInvalid();
   const record = value as Record<string, unknown>;
   const allowed = new Set(['audience', 'name', 'contact', 'requestSummary', 'privacyAccepted', 'website', 'utmSource', 'utmCampaign']);
+  const name = typeof record.name === 'string' ? record.name.trim() : '';
+  const contact = typeof record.contact === 'string' ? record.contact.trim() : '';
+  const requestSummary =
+    typeof record.requestSummary === 'string' ? record.requestSummary.trim() : '';
   if (
     Object.keys(record).some((key) => !allowed.has(key)) || record.website !== '' ||
     !['creator', 'brand'].includes(String(record.audience)) ||
-    typeof record.name !== 'string' || record.name.length < 1 || record.name.length > 100 ||
-    typeof record.contact !== 'string' || record.contact.length < 5 || record.contact.length > 254 ||
-    typeof record.requestSummary !== 'string' || record.requestSummary.length < 10 ||
-    record.requestSummary.length > 2000 || record.privacyAccepted !== true ||
+    name.length < 1 || name.length > 100 ||
+    contact.length < 5 || contact.length > 254 ||
+    requestSummary.length < 10 || requestSummary.length > 2000 ||
+    record.privacyAccepted !== true ||
     /<\s*script|javascript:|on[a-z]+\s*=/iu.test(JSON.stringify(record))
   ) throw leadInvalid();
   return {
-    audience: record.audience as 'creator' | 'brand', name: record.name.trim(),
-    contact: record.contact.trim(), requestSummary: record.requestSummary.trim(),
+    audience: record.audience as 'creator' | 'brand',
+    name,
+    contact,
+    requestSummary,
     attribution: Object.fromEntries(
       [['utmSource', record.utmSource], ['utmCampaign', record.utmCampaign]]
         .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].length <= 128),

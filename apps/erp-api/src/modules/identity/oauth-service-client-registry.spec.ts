@@ -5,12 +5,15 @@ import type { AppEnvironment } from '../../config/environment.js';
 import { OAuthServiceClientRegistry } from './oauth-service-client-registry.js';
 
 const SECRET_DIGEST = 'A'.repeat(43);
+const RESOURCE = 'https://erp.example.com/mcp';
+const PAYROLL_RESOURCE = 'https://payroll.example.com/api';
 const validClient = () => ({
   clientId: 'service-client-001',
   clientName: '自动对账代理',
   tenantId: 'tenant-001',
   actorId: 'mcp-agent-001',
   allowedScopes: ['erp:mcp:server:connect', 'erp:org:chart:read'],
+  allowedResources: [RESOURCE],
   roleCodes: ['service-reader'],
   departmentIds: ['department-001'],
   status: 'active',
@@ -28,7 +31,14 @@ const validClient = () => ({
 
 const createRegistry = (value: unknown): OAuthServiceClientRegistry =>
   new OAuthServiceClientRegistry({
-    get: () => JSON.stringify(value),
+    get: (key: keyof AppEnvironment) => {
+      if (key === 'MCP_SERVICE_CLIENTS_JSON') return JSON.stringify(value);
+      if (key === 'AUTH_RESOURCE') return RESOURCE;
+      if (key === 'AUTH_ADDITIONAL_RESOURCES_JSON') {
+        return JSON.stringify([{ resource: PAYROLL_RESOURCE, audience: 'gaoq-payroll' }]);
+      }
+      return undefined;
+    },
   } as unknown as ConfigService<AppEnvironment, true>);
 
 describe('OAuthServiceClientRegistry', () => {
@@ -48,6 +58,9 @@ describe('OAuthServiceClientRegistry', () => {
     const registry = createRegistry([validClient()]);
     const client = registry.resolveActive('service-client-001')!;
     expect(registry.filterAllowedScopes(client)).toEqual(client.allowedScopes);
+    expect(() => registry.assertResource(client, RESOURCE)).not.toThrow();
+    expect(() => registry.assertResource(client, PAYROLL_RESOURCE))
+      .toThrow('resource 超出客户端授权范围');
     expect(() => registry.filterAllowedScopes(client, ['erp:org:chart:write']))
       .toThrow('scope 超出客户端授权范围');
     expect(() => registry.filterAllowedScopes(client, [
@@ -81,6 +94,9 @@ describe('OAuthServiceClientRegistry', () => {
     { configuration: [{ ...validClient(), secret: 'plaintext' }] },
     { configuration: [validClient(), validClient()] },
     { configuration: [{ ...validClient(), allowedScopes: ['erp:org:chart:read', 'erp:org:chart:read'] }] },
+    { configuration: [{ ...validClient(), allowedResources: [RESOURCE, RESOURCE] }] },
+    { configuration: [{ ...validClient(), allowedResources: ['https://unknown.example.com/api'] }] },
+    { configuration: [{ ...validClient(), allowedResources: undefined }] },
     { configuration: [{ ...validClient(), authentication: {
       method: 'client_secret_basic', credentials: [{
         ...validClient().authentication.credentials[0],

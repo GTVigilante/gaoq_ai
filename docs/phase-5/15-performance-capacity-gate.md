@@ -31,8 +31,8 @@ k6 run scripts/load/phase-5-api-capacity.js
 
 - 生产等价但非生产流量；恰好 1000 VU、1800 秒、错误率和各端点延迟全部达标；
 - 数据集恰好 1000 人，工资计算少于 300000ms、状态 completed、错误为零、外部副作用为 false；
-- API/Worker/Web 镜像均以 `sha256:` digest 标识；commit、k6 二进制、压测脚本和原始证据都有 SHA-256；
-- 部署清单以 SHA-256 固定，并与三类镜像、commit、环境名和区域共同绑定；
+- API/Worker/ERP Web/Website 镜像均以 `sha256:` digest 标识；commit、k6 二进制、压测脚本和原始证据都有 SHA-256；
+- 部署清单以 SHA-256 固定，并与四类镜像、commit、环境名和区域共同绑定；
 - 性能、平台、安全三类负责人分别签署独立证据 ID；
 - 三次运行 ID、负载结果、工资运行证据、监控快照、日志查询和九份签署证据均不得复用，但 commit、镜像、数据集、环境、区域和基础设施完全一致。
 
@@ -47,7 +47,7 @@ pnpm performance:validate -- \
 
 校验器仅输出运行 ID、commit 和 `comparisonChecksum`。任一阈值失败、环境不一致、证据重复、缺少签署或出现外部副作用，三次计数全部重新开始。
 
-`.github/workflows/phase-5-performance.yml` 只允许在 `main` 手工启动，绑定 Required Reviewers 保护的 `phase-5-performance` Environment，并使用带 `self-hosted`、`linux`、`x64`、`phase-5-performance` 标签的隔离单次 Runner。Environment 配置环境名、区域、API/Worker/Web 镜像 SHA-256 和部署清单 SHA-256；三个只读证据文件固定为 `/var/lib/gaoq/performance/run-1.json`、`run-2.json`、`run-3.json`。文件不得为符号链接、不得允许组或其他用户写入，单份最大 256 KiB。工作流只上传脱敏比较结论，不上传原始负载、工资、监控、日志或签署材料。
+`.github/workflows/phase-5-performance.yml` 只允许在 `main` 手工启动，绑定 Required Reviewers 保护的 `phase-5-performance` Environment，并使用带 `self-hosted`、`linux`、`x64`、`phase-5-performance` 标签的隔离单次 Runner。Environment 配置环境名、区域、API/Worker/ERP Web/Website 镜像 SHA-256 和部署清单 SHA-256；三个只读证据文件固定为 `/var/lib/gaoq/performance/run-1.json`、`run-2.json`、`run-3.json`。文件不得为符号链接、不得允许组或其他用户写入，单份最大 256 KiB。工作流只上传脱敏比较结论，不上传原始负载、工资、监控、日志或签署材料。
 
 ## Go/No-Go
 

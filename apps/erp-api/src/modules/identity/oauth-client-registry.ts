@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import type { AppEnvironment } from '../../config/environment.js';
 import { ERP_AUTHORIZATION_SCOPE_PATTERN } from './authorization-scope.js';
+import { requireAuthorizationResource } from './authorization-resources.js';
 
 /** 预注册公共客户端的稳定状态。 */
 export type OAuthClientStatus = 'active' | 'disabled';
@@ -14,6 +15,7 @@ export interface OAuthClient {
   readonly clientName: string;
   readonly redirectUris: readonly string[];
   readonly allowedScopes: readonly string[];
+  readonly allowedResources: readonly string[];
   readonly tenantIds: readonly string[];
   readonly status: OAuthClientStatus;
 }
@@ -35,6 +37,9 @@ export const OAUTH_SCOPE_INVALID_CODE = 'MCP_OAUTH_SCOPE_INVALID';
 
 /** 稳定错误码：scope 超出客户端授权范围。 */
 export const OAUTH_SCOPE_DENIED_CODE = 'MCP_OAUTH_SCOPE_DENIED';
+
+/** 稳定错误码：resource 超出客户端授权范围。 */
+export const OAUTH_RESOURCE_DENIED_CODE = 'MCP_OAUTH_RESOURCE_DENIED';
 
 /**
  * 校验单个 redirectUri：
@@ -83,6 +88,7 @@ const oauthClientSchema = z
       .min(1)
       .max(100)
       .transform((scopes) => [...new Set(scopes)]),
+    allowedResources: z.array(z.string().url().min(1).max(2_048)).min(1).max(20),
     tenantIds: z.array(z.string().min(1).max(128).regex(IDENTIFIER_PATTERN)).min(1).max(100),
     status: z.enum(['active', 'disabled']),
   })
@@ -105,7 +111,10 @@ const deepFreeze = <T>(value: T): T => {
  * 严格解析 MCP_OAUTH_CLIENTS_JSON。
  * 未配置或仅空白字符时视为空注册表；任何格式错误都在启动阶段直接抛错。
  */
-const parseRegistry = (raw: string): ReadonlyMap<string, OAuthClient> => {
+const parseRegistry = (
+  raw: string,
+  config: ConfigService<AppEnvironment, true>,
+): ReadonlyMap<string, OAuthClient> => {
   if (raw.trim() === '') {
     return new Map();
   }
@@ -127,6 +136,16 @@ const parseRegistry = (raw: string): ReadonlyMap<string, OAuthClient> => {
     if (clients.has(client.clientId)) {
       throw new Error(`MCP_OAUTH_CLIENTS_JSON 配置无效：clientId 重复 ${client.clientId}`);
     }
+    if (new Set(client.allowedResources).size !== client.allowedResources.length) {
+      throw new Error('MCP_OAUTH_CLIENTS_JSON 配置无效：allowedResources 禁止重复');
+    }
+    try {
+      for (const resource of client.allowedResources) {
+        requireAuthorizationResource(config, resource);
+      }
+    } catch {
+      throw new Error('MCP_OAUTH_CLIENTS_JSON 配置无效：allowedResources 包含未注册资源');
+    }
     clients.set(client.clientId, deepFreeze<OAuthClient>({ ...client }));
   }
   return clients;
@@ -144,6 +163,7 @@ export class OAuthClientRegistry {
   constructor(config: ConfigService<AppEnvironment, true>) {
     this.clients = parseRegistry(
       config.get('MCP_OAUTH_CLIENTS_JSON', { infer: true }) ?? '[]',
+      config,
     );
   }
 
@@ -180,6 +200,16 @@ export class OAuthClientRegistry {
       throw new ForbiddenException({
         code: OAUTH_TENANT_DENIED_CODE,
         message: '该客户端无权访问目标租户',
+      });
+    }
+  }
+
+  /** 校验公共客户端只能申请其显式登记的资源，旧客户端不获得隐式默认授权。 */
+  assertResource(client: OAuthClient, resource: string): void {
+    if (!client.allowedResources.includes(resource)) {
+      throw new ForbiddenException({
+        code: OAUTH_RESOURCE_DENIED_CODE,
+        message: '该客户端无权访问目标 resource',
       });
     }
   }

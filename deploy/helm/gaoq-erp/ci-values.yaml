@@ -1,6 +1,7 @@
 release:
   commitSha: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   deploymentManifestHash: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  websitePublicConfigHash: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
   rolloutId: ci-render-001
 targetNamespace: erp-prod
 images:

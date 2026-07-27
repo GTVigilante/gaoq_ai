@@ -68,7 +68,7 @@ function validateEvidence(document) {
     'asvsVersion', 'asvsCatalogSha256',
   ]);
   pattern(document.source.commitSha, COMMIT, 'PHASE5_DAST_COMMIT_INVALID');
-  object(document.source.images, ['api', 'worker', 'web']);
+  object(document.source.images, ['api', 'worker', 'web', 'website']);
   for (const image of Object.values(document.source.images)) {
     pattern(image, SHA256, 'PHASE5_DAST_IMAGE_DIGEST_INVALID');
   }
@@ -262,7 +262,13 @@ function fixture() {
       startedAt: '2026-07-22T00:00:00.000Z', endedAt: '2026-07-22T01:00:00.000Z',
     },
     source: {
-      commitSha: 'a'.repeat(40), images: { api: hash('api'), worker: hash('worker'), web: hash('web') },
+      commitSha: 'a'.repeat(40),
+      images: {
+        api: hash('api'),
+        worker: hash('worker'),
+        web: hash('web'),
+        website: hash('website'),
+      },
       zapVersion: '2.17.0', zapImageDigest: ZAP_IMAGE_DIGEST,
       scanHarnessSha256: HARNESS_DIGEST, asvsVersion: '5.0.0',
       asvsCatalogSha256: ASVS_CATALOG_DIGEST,

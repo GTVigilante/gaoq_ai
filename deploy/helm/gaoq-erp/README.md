@@ -8,6 +8,8 @@
 - `targetNamespace`：ERP 工作负载的独立业务命名空间；它与保存 Helm release ConfigMap 的控制命名空间分离。
 - `release.commitSha`：与发布证据一致的 40 位 Git commit。
 - `release.deploymentManifestHash`：发布系统生成的不可变部署包清单摘要，不对包含本字段的渲染 YAML 做自引用哈希。
+- `release.websitePublicConfigHash`：Website 镜像构建时三个公开 HTTPS 地址的
+  canonical 清单摘要；必须与镜像 provenance 和发布证据一致。
 - `release.rolloutId`：本次发布窗口的唯一标识。
 - `runtime.*`：平台预创建且可独立轮换的 API、Worker、ERP Web、Website ConfigMap 与 Secret 名称。Web Secret 只允许保存招聘门户 BFF 的最小 OAuth 客户端凭据；Website Secret 只保存缓存失效密钥，禁止相互复用。
 - `networkPolicy.*Labels`：经平台负责人确认的入口网关、监控和 DNS 工作负载标签。

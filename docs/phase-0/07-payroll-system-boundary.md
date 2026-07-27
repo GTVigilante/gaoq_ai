@@ -12,19 +12,40 @@
 - GaoQ OAuth 为算薪 API 注册独立 resource/audience，算薪通过 GaoQ JWKS 验签。
 - 跨系统员工主键固定为 `tenantId + employeeId`。
 - `@gaoq/platform-contracts` 定义可信身份、整数分金额、CloudEvents、组织投影和
-  脱敏工资摘要；生产通过内部 npm Registry 锁定精确版本。
+  脱敏工资摘要；`0.2.0` 起使用逐事件严格 Zod Schema，并导出
+  `PAYROLL_PLATFORM_EVENTS_JSON_SCHEMA` Draft-07；生产通过内部 npm Registry
+  锁定精确版本。
 - 组织增量采用 Outbox CloudEvents；首次同步和事件版本缺口使用受服务身份保护的
   游标快照修复。
 
 ## OAuth 注册
 
 - `AUTH_ADDITIONAL_RESOURCES_JSON` 注册算薪 API 的 resource/audience。
+- 公共与服务客户端分别在 `MCP_OAUTH_CLIENTS_JSON`、
+  `MCP_SERVICE_CLIENTS_JSON` 显式列出 `allowedResources`。全局已注册不代表
+  当前客户端获授权；字段缺失、重复或引用未知 resource 均在启动阶段失败关闭。
 - 算薪 Web 使用公共客户端、Authorization Code + PKCE，不分发客户端密钥。
 - 主数据同步 Worker 使用机密客户端，为 ERP 与算薪两个 resource 分别申请最小
   Scope 令牌：`erp:payroll:master-data:read` 和
   `erp:payroll:master-data:sync`。
 - 用户访问令牌必须携带服务端解析的 `employee_id`；算薪系统不接受请求头或请求体
   提供的员工身份回退。
+
+## 共享事件 v1
+
+- ERP → 算薪：`cn.gaoq.erp.department.upserted.v1`、
+  `cn.gaoq.erp.employee.upserted.v1`、
+  `cn.gaoq.erp.employment.changed.v1`。
+- 算薪 → ERP：`cn.gaoq.payroll.run.status_changed.v1`、
+  `cn.gaoq.payroll.payslip.published.v1`、
+  `cn.gaoq.payroll.cost_summary.published.v1`、
+  `cn.gaoq.payroll.reconciliation.completed.v1`。
+- 信封必须逐字包含 CloudEvents 1.0、UTC `time`、JSON 媒体类型、租户绑定
+  `subject`、`traceId`、`idempotencyKey` 与 `schemaVersion=1`，并拒绝未知字段。
+  金额只接受非负 CNY 整数分，摘要只接受 `sha256:` 加 64 位小写十六进制。
+- 早期本地提交中的 `com.gaoq.*` 从未进入发布分支或外部联调，作为首次发布前的
+  协议纠正直接拒绝，不设隐式别名。未来已发布事件的破坏性变更必须升主版本并
+  至少并行一个迭代周期。
 
 ## 运行边界
 

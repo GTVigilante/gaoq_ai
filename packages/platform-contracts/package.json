@@ -22,7 +22,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@gaoq/shared-types": "workspace:^"
+    "@gaoq/shared-types": "workspace:^",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "typescript": "^5.9.3",
