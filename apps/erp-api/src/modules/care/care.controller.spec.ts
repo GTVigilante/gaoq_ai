@@ -4,17 +4,21 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AuditService } from '../../core/audit/audit.service.js';
 import { REQUIRED_SCOPES_KEY } from '../identity/auth.decorators.js';
 import type { CareApplicationService } from './application/care-application.service.js';
+import type { CareAlumniCleanupApplicationService } from './application/care-alumni-cleanup-application.service.js';
 import { CareController } from './care.controller.js';
 
 const ID = '01J8ZQK7V0A2M4N6P8R0T2W4Y6';
 
 function fixture() {
   const service = { recordTaskEvidence: vi.fn() };
+  const alumniCleanup = { getStatus: vi.fn() };
+  const audit = { record: vi.fn() };
   const controller = new CareController(
     service as unknown as CareApplicationService,
-    { record: vi.fn() } as unknown as AuditService,
+    alumniCleanup as unknown as CareAlumniCleanupApplicationService,
+    audit as unknown as AuditService,
   );
-  return { controller, service, response: { setHeader: vi.fn() } };
+  return { controller, service, alumniCleanup, audit, response: { setHeader: vi.fn() } };
 }
 
 describe('CareController', () => {
@@ -28,6 +32,7 @@ describe('CareController', () => {
       'erp:care:alumni:consent:attest', 'erp:care:employment:read',
     ]);
     expect(scope('withdrawAlumniConsent')).toEqual(['erp:care:alumni:consent:withdraw']);
+    expect(scope('getAlumniCleanupStatus')).toEqual(['erp:care:alumni:cleanup:read']);
     expect(Object.hasOwn(CareController.prototype, 'execute')).toBe(false);
   });
 
@@ -42,6 +47,26 @@ describe('CareController', () => {
       store.response as never,
     )).rejects.toBeInstanceOf(BadRequestException);
     expect(store.service.recordTaskEvidence).not.toHaveBeenCalled();
+  });
+
+  it('下游清理状态只返回脱敏控制面并写 R1 审计', async () => {
+    const store = fixture();
+    store.alumniCleanup.getStatus.mockResolvedValue({
+      consentStatus: 'withdrawn',
+      cleanupStatus: 'pending',
+      counts: { pending: 2, dispatching: 0, completed: 0, dead: 0 },
+      targets: [],
+    });
+    await expect(store.controller.getAlumniCleanupStatus(ID)).resolves.toMatchObject({
+      cleanupStatus: 'pending',
+    });
+    expect(store.audit.record).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'care.alumni_cleanup.read',
+      riskLevel: 'R1',
+    }));
+    expect(JSON.stringify(store.audit.record.mock.calls[0]?.[0])).not.toMatch(
+      /personId|proofDigest/iu,
+    );
   });
 });
 

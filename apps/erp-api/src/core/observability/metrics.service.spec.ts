@@ -31,6 +31,9 @@ describe('MetricsService', () => {
     metrics.recordCareOccasion('dispatch', 'delivered', 0.4);
     metrics.recordCareOccasion('reconcile', 'deduplicated');
     metrics.setCareOccasionBacklog('pending', 3, 900);
+    metrics.recordCareAlumniCleanup('dispatch', 'completed', 1.2);
+    metrics.recordCareAlumniCleanup('reconcile', 'retry');
+    metrics.setCareAlumniCleanupBacklog('dead', 2, 3_600);
 
     const output = await metrics.render();
     expect(metrics.contentType).toContain('text/plain');
@@ -77,6 +80,14 @@ describe('MetricsService', () => {
     );
     expect(output).toContain('gaoq_care_occasion_backlog{status="pending"} 3');
     expect(output).toContain('gaoq_care_occasion_oldest_age_seconds{status="pending"} 900');
+    expect(output).toContain(
+      'gaoq_care_alumni_cleanup_transition_total{operation="dispatch",outcome="completed"} 1',
+    );
+    expect(output).toContain(
+      'gaoq_care_alumni_cleanup_transition_total{operation="reconcile",outcome="retry"} 1',
+    );
+    expect(output).toContain('gaoq_care_alumni_cleanup_backlog{status="dead"} 2');
+    expect(output).toContain('gaoq_care_alumni_cleanup_oldest_age_seconds{status="dead"} 3600');
     expect(output).not.toContain('tenant_id');
     expect(output).not.toContain('user_id');
   });

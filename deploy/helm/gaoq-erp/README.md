@@ -17,6 +17,11 @@
   构建时固化并进入镜像供应链证据，禁止把构建期公开变量当成 Pod 运行时配置。
 - `networkPolicy.*Labels`：经平台负责人确认的入口网关、监控和 DNS 工作负载标签。
 - `networkPolicy.httpsEgressCidrs`：统一 HTTPS 出站网关的私网 CIDR；ERP、钉钉、飞书、电子签、银行、税务、WORM 等外联只能经该网关。
+- 校友授权下游清理的 `CARE_ALUMNI_CLEANUP_TARGETS_JSON` 必须由 Secret Manager
+  分别注入 API 与 Worker 的独立 Secret 对象；每目标使用独立 Origin、Bearer
+  Token 和 Ed25519 信任根。目标域名解析出的已审批精确出口 CIDR 才能加入
+  `networkPolicy.httpsEgressCidrs`，禁止 `0.0.0.0/0`、`::/0`、直接 IP 目标或
+  为绕过 DNS 漂移扩大网段。
 - `networkPolicy.mongodbCidrs`、`networkPolicy.redisCidrs`：托管 MongoDB Replica Set 和 Redis 的独立私网 CIDR。
 
 ## 验证

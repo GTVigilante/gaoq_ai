@@ -4,6 +4,7 @@ import type { ClientSession, Model } from 'mongoose';
 
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import type {
+  AlumniCleanupTask,
   AlumniConsent,
   CareCase,
   CareOccasionPreference,
@@ -11,6 +12,8 @@ import type {
   CareTaskEvidence,
 } from '../domain/index.js';
 import {
+  CareAlumniCleanupTaskRecord,
+  type CareAlumniCleanupTaskDocument,
   CareAlumniConsentRecord,
   type CareAlumniConsentDocument,
   CareCaseRecord,
@@ -185,6 +188,148 @@ export class CareAlumniConsentRepository extends TenantRepository {
         expiredAt: consent.expiredAt === null ? null : new Date(consent.expiredAt),
         version: consent.version,
       } },
+      { session, timestamps: false, runValidators: true },
+    );
+    if (result.matchedCount !== 1) throw new CareWriteConflictError();
+  }
+}
+
+@Injectable()
+export class CareAlumniCleanupTaskRepository extends TenantRepository {
+  constructor(
+    context: TenantContextService,
+    @InjectModel(CareAlumniCleanupTaskRecord.name)
+    private readonly records: Model<CareAlumniCleanupTaskDocument>,
+  ) { super(context); }
+
+  async findById(
+    id: string,
+    session?: ClientSession,
+  ): Promise<AlumniCleanupTask | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), id });
+    if (session !== undefined) query.session(session);
+    const value = await query.lean().exec();
+    return value === null ? null : toAlumniCleanupTask(value);
+  }
+
+  async findByConsentId(consentId: string): Promise<readonly AlumniCleanupTask[]> {
+    const values = await this.records.find({
+      tenantId: this.tenantId(),
+      consentId,
+    }).sort({ targetCode: 1, consentVersion: 1 }).lean().exec();
+    return Object.freeze(values.map((value) => toAlumniCleanupTask(value)));
+  }
+
+  async upsertPlanned(
+    task: AlumniCleanupTask,
+    session: ClientSession,
+  ): Promise<boolean> {
+    this.assertTenant(task.tenantId);
+    const result = await this.records.updateOne(
+      {
+        tenantId: this.tenantId(),
+        consentId: task.consentId,
+        consentVersion: task.consentVersion,
+        consentPurpose: task.consentPurpose,
+        targetCode: task.targetCode,
+        policyVersion: task.policyVersion,
+      },
+      {
+        $setOnInsert: {
+          ...toAlumniCleanupTaskRecord(task),
+        },
+      },
+      {
+        upsert: true,
+        session,
+        timestamps: false,
+        runValidators: true,
+        setDefaultsOnInsert: true,
+      },
+    );
+    if (result.upsertedCount === 1) return true;
+    const existing = await this.records.findOne({
+      tenantId: this.tenantId(),
+      id: task.id,
+    }).session(session).lean().exec();
+    if (
+      existing === null ||
+      existing.controlDigest !== task.controlDigest ||
+      existing.sourceEventId !== task.sourceEventId ||
+      existing.policyVersion !== task.policyVersion
+    ) throw new CareWriteConflictError();
+    return false;
+  }
+
+  async claim(
+    id: string,
+    workerId: string,
+    now: Date,
+  ): Promise<AlumniCleanupTask | null> {
+    const staleBefore = new Date(now.getTime() - 15 * 60_000);
+    const value = await this.records.findOneAndUpdate(
+      {
+        tenantId: this.tenantId(),
+        id,
+        nextAttemptAt: { $lte: now },
+        $or: [
+          { status: 'pending' },
+          { status: 'dispatching', lockedAt: { $lt: staleBefore } },
+        ],
+      },
+      {
+        $set: {
+          status: 'dispatching',
+          lockedAt: now,
+          lockedBy: workerId,
+          updatedAt: now,
+        },
+        $inc: { version: 1 },
+      },
+      {
+        returnDocument: 'after',
+        timestamps: false,
+        runValidators: true,
+      },
+    ).lean().exec();
+    return value === null ? null : toAlumniCleanupTask(value);
+  }
+
+  async replaceClaimed(
+    task: AlumniCleanupTask,
+    expectedVersion: number,
+    workerId: string,
+    session: ClientSession,
+  ): Promise<void> {
+    this.assertTenant(task.tenantId);
+    const result = await this.records.updateOne(
+      {
+        tenantId: this.tenantId(),
+        id: task.id,
+        version: expectedVersion,
+        status: 'dispatching',
+        lockedBy: workerId,
+      },
+      {
+        $set: {
+          status: task.status,
+          attempts: task.attempts,
+          nextAttemptAt: new Date(task.nextAttemptAt),
+          lockedAt: task.lockedAt === null ? null : new Date(task.lockedAt),
+          lockedBy: task.lockedBy,
+          proofDigest: task.proofDigest,
+          proofAction: task.proofAction,
+          proofStorage: task.proofStorage,
+          proofCompletedAt:
+            task.proofCompletedAt === null ? null : new Date(task.proofCompletedAt),
+          proofRetentionUntil:
+            task.proofRetentionUntil === null ? null : new Date(task.proofRetentionUntil),
+          proofKeyId: task.proofKeyId,
+          lastErrorCode: task.lastErrorCode,
+          version: task.version,
+          updatedAt: new Date(task.updatedAt),
+        },
+      },
       { session, timestamps: false, runValidators: true },
     );
     if (result.matchedCount !== 1) throw new CareWriteConflictError();
@@ -583,6 +728,58 @@ function toOccasionPreference(
     createdAt: value.createdAt.toISOString(),
     updatedAt: value.updatedAt.toISOString(),
   });
+}
+
+function toAlumniCleanupTask(
+  value: CareAlumniCleanupTaskRecord,
+): AlumniCleanupTask {
+  return Object.freeze({
+    id: value.id,
+    tenantId: value.tenantId,
+    consentId: value.consentId,
+    consentVersion: value.consentVersion,
+    consentPurpose: value.consentPurpose,
+    terminationReason: value.terminationReason,
+    terminatedAt: value.terminatedAt.toISOString(),
+    sourceEventId: value.sourceEventId,
+    targetCode: value.targetCode,
+    policyVersion: value.policyVersion,
+    controlDigest: value.controlDigest,
+    maxAttempts: value.maxAttempts,
+    proofRetentionDays: value.proofRetentionDays,
+    status: value.status,
+    attempts: value.attempts,
+    nextAttemptAt: value.nextAttemptAt.toISOString(),
+    lockedAt: value.lockedAt?.toISOString() ?? null,
+    lockedBy: value.lockedBy,
+    proofDigest: value.proofDigest,
+    proofAction: value.proofAction,
+    proofStorage: value.proofStorage,
+    proofCompletedAt: value.proofCompletedAt?.toISOString() ?? null,
+    proofRetentionUntil: value.proofRetentionUntil?.toISOString() ?? null,
+    proofKeyId: value.proofKeyId,
+    lastErrorCode: value.lastErrorCode,
+    version: value.version,
+    createdAt: value.createdAt.toISOString(),
+    updatedAt: value.updatedAt.toISOString(),
+  });
+}
+
+function toAlumniCleanupTaskRecord(
+  task: AlumniCleanupTask,
+): Record<string, unknown> {
+  return {
+    ...task,
+    terminatedAt: new Date(task.terminatedAt),
+    nextAttemptAt: new Date(task.nextAttemptAt),
+    lockedAt: task.lockedAt === null ? null : new Date(task.lockedAt),
+    proofCompletedAt:
+      task.proofCompletedAt === null ? null : new Date(task.proofCompletedAt),
+    proofRetentionUntil:
+      task.proofRetentionUntil === null ? null : new Date(task.proofRetentionUntil),
+    createdAt: new Date(task.createdAt),
+    updatedAt: new Date(task.updatedAt),
+  };
 }
 
 function toOccasionTask(value: CareOccasionTaskRecord): CareOccasionTask {

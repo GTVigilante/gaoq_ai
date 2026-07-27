@@ -132,6 +132,173 @@ CareAlumniConsentRecordSchema.index(
 );
 CareAlumniConsentRecordSchema.index({ tenantId: 1, status: 1, expiresAt: 1 });
 
+export type CareAlumniCleanupTaskStatusRecord =
+  | 'pending'
+  | 'dispatching'
+  | 'completed'
+  | 'dead';
+
+@Schema({
+  collection: 'care_alumni_cleanup_tasks',
+  timestamps: true,
+  versionKey: false,
+  id: false,
+})
+export class CareAlumniCleanupTaskRecord {
+  @Prop({ type: String, required: true, immutable: true, maxlength: MAX_ID })
+  id!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: MAX_ID })
+  tenantId!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: MAX_ID })
+  consentId!: string;
+  @Prop({ type: Number, required: true, immutable: true, min: 2 })
+  consentVersion!: number;
+  @Prop({
+    type: String,
+    enum: ['alumni_network', 'rehire_contact', 'alumni_events'],
+    required: true,
+    immutable: true,
+  })
+  consentPurpose!: 'alumni_network' | 'rehire_contact' | 'alumni_events';
+  @Prop({
+    type: String,
+    enum: ['withdrawn', 'expired'],
+    required: true,
+    immutable: true,
+  })
+  terminationReason!: 'withdrawn' | 'expired';
+  @Prop({ type: Date, required: true, immutable: true }) terminatedAt!: Date;
+  @Prop({ type: String, required: true, immutable: true, maxlength: MAX_ID })
+  sourceEventId!: string;
+  @Prop({
+    type: String,
+    required: true,
+    immutable: true,
+    maxlength: 32,
+    match: /^[a-z][a-z0-9_-]{1,31}$/,
+  })
+  targetCode!: string;
+  @Prop({
+    type: String,
+    required: true,
+    immutable: true,
+    maxlength: 64,
+    match: /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/,
+  })
+  policyVersion!: string;
+  @Prop({
+    type: String,
+    required: true,
+    immutable: true,
+    maxlength: 43,
+    match: /^[A-Za-z0-9_-]{43}$/,
+  })
+  controlDigest!: string;
+  @Prop({ type: Number, required: true, immutable: true, min: 1, max: 12 })
+  maxAttempts!: number;
+  @Prop({ type: Number, required: true, immutable: true, min: 2_555, max: 36_500 })
+  proofRetentionDays!: number;
+  @Prop({
+    type: String,
+    enum: ['pending', 'dispatching', 'completed', 'dead'],
+    required: true,
+  })
+  status!: CareAlumniCleanupTaskStatusRecord;
+  @Prop({ type: Number, required: true, min: 0, max: 12 }) attempts!: number;
+  @Prop({ type: Date, required: true }) nextAttemptAt!: Date;
+  @Prop({ type: Date, default: null }) lockedAt!: Date | null;
+  @Prop({ type: String, default: null, maxlength: MAX_ID }) lockedBy!: string | null;
+  @Prop({
+    type: String,
+    default: null,
+    maxlength: 43,
+    match: /^[A-Za-z0-9_-]{43}$/,
+  })
+  proofDigest!: string | null;
+  @Prop({
+    type: String,
+    enum: ['deleted', 'anonymized', 'crypto_shredded'],
+    default: null,
+  })
+  proofAction!: 'deleted' | 'anonymized' | 'crypto_shredded' | null;
+  @Prop({
+    type: String,
+    enum: ['immutable_worm', 'append_only_ledger'],
+    default: null,
+  })
+  proofStorage!: 'immutable_worm' | 'append_only_ledger' | null;
+  @Prop({ type: Date, default: null }) proofCompletedAt!: Date | null;
+  @Prop({ type: Date, default: null }) proofRetentionUntil!: Date | null;
+  @Prop({
+    type: String,
+    default: null,
+    maxlength: 64,
+    match: /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/,
+  })
+  proofKeyId!: string | null;
+  @Prop({
+    type: String,
+    default: null,
+    maxlength: 64,
+    match: /^[A-Z][A-Z0-9_]{7,63}$/,
+  })
+  lastErrorCode!: string | null;
+  @Prop({ type: Number, required: true, min: 1 }) version!: number;
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+export type CareAlumniCleanupTaskDocument =
+  HydratedDocument<CareAlumniCleanupTaskRecord>;
+export const CareAlumniCleanupTaskRecordSchema =
+  SchemaFactory.createForClass(CareAlumniCleanupTaskRecord);
+CareAlumniCleanupTaskRecordSchema.pre('validate', function validateAlumniCleanupState() {
+  const dispatching = this.status === 'dispatching';
+  if (dispatching !== (this.lockedAt instanceof Date && this.lockedBy !== null)) {
+    this.invalidate('status', '下游清理 dispatching 状态必须且只能持有完整锁');
+  }
+  const completed = this.status === 'completed';
+  const hasProof = this.proofDigest !== null &&
+    this.proofAction !== null &&
+    this.proofStorage !== null &&
+    this.proofCompletedAt instanceof Date &&
+    this.proofRetentionUntil instanceof Date &&
+    this.proofKeyId !== null;
+  if (completed !== hasProof) {
+    this.invalidate('proofDigest', '下游清理证明字段必须且只能在 completed 终态完整存在');
+  }
+  if (
+    this.attempts > this.maxAttempts ||
+    (this.status === 'dead' && this.attempts < this.maxAttempts)
+  ) this.invalidate('attempts', '下游清理尝试次数与策略上限不一致');
+});
+CareAlumniCleanupTaskRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
+CareAlumniCleanupTaskRecordSchema.index(
+  {
+    tenantId: 1,
+    consentId: 1,
+    consentVersion: 1,
+    consentPurpose: 1,
+    targetCode: 1,
+    policyVersion: 1,
+  },
+  { unique: true },
+);
+CareAlumniCleanupTaskRecordSchema.index({
+  status: 1,
+  nextAttemptAt: 1,
+  lockedAt: 1,
+  tenantId: 1,
+  id: 1,
+});
+CareAlumniCleanupTaskRecordSchema.index({ sourceEventId: 1, targetCode: 1 });
+CareAlumniCleanupTaskRecordSchema.index(
+  { tenantId: 1, proofDigest: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { proofDigest: { $type: 'string' } },
+  },
+);
+
 export type CareOccasionChannelRecord = 'email' | 'sms' | 'feishu' | 'dingtalk';
 export type CareOccasionTaskStatusRecord =
   | 'pending'

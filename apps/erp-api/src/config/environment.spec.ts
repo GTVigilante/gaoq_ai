@@ -66,6 +66,7 @@ describe('validateEnvironment', () => {
     expect(environment.ORG_PERSON_BIRTHDAY_BLIND_INDEX_KEYS).toBeUndefined();
     expect(environment.CARE_OCCASION_NOTIFICATION_ENDPOINT).toBeUndefined();
     expect(environment.CARE_OCCASION_POLICIES_JSON).toBe('[]');
+    expect(environment.CARE_ALUMNI_CLEANUP_TARGETS_JSON).toBe('[]');
     expect(environment.TREASURY_DATA_ENCRYPTION_KEYS).toBeUndefined();
     expect(environment.TREASURY_BLIND_INDEX_KEYS).toBeUndefined();
     expect(environment.TREASURY_WORM_ARCHIVE_ENDPOINT).toBeUndefined();
@@ -142,6 +143,49 @@ describe('validateEnvironment', () => {
       ...base,
       CARE_OCCASION_POLICIES_JSON: '[{"tenantId":"tenant-001"}]',
     })).toThrow('CARE_OCCASION_POLICIES_JSON');
+  });
+
+  it('校友下游清理登记表使用独立 HTTPS、凭据和 Ed25519 信任域', () => {
+    const base = {
+      NODE_ENV: 'test',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0',
+      WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://auth.example.internal',
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://auth.example.internal/.well-known/jwks.json',
+      MCP_AUTHORIZATION_SERVER: 'https://auth.example.internal',
+      MCP_ALLOWED_ORIGINS: 'https://client.example.com',
+    };
+    const cleanupTarget = {
+      targetCode: 'crm',
+      endpoint: 'https://privacy-crm.example.net',
+      bearerToken: 'crm-cleanup-token-distinct-at-least-32-characters',
+      policyVersion: 'privacy-v1',
+      signingKeyId: 'crm-proof-key-v1',
+      signingPublicKeyBase64:
+        careOccasionSigning.CARE_OCCASION_NOTIFICATION_SIGNING_PUBLIC_KEY_BASE64,
+      maxAttempts: 6,
+      proofRetentionDays: 2_555,
+    };
+    expect(validateEnvironment({
+      ...base,
+      CARE_ALUMNI_CLEANUP_TARGETS_JSON: JSON.stringify([cleanupTarget]),
+    }).CARE_ALUMNI_CLEANUP_TARGETS_JSON).toContain('privacy-crm');
+    expect(() => validateEnvironment({
+      ...base,
+      CARE_ALUMNI_CLEANUP_TARGETS_JSON: JSON.stringify([
+        { ...cleanupTarget, endpoint: 'https://erp.example.com' },
+      ]),
+    })).toThrow('CARE_ALUMNI_CLEANUP_TARGETS_JSON');
+    expect(() => validateEnvironment({
+      ...base,
+      CARE_OCCASION_NOTIFICATION_ENDPOINT: 'https://care.example.net',
+      CARE_OCCASION_NOTIFICATION_BEARER_TOKEN: cleanupTarget.bearerToken,
+      ...careOccasionSigning,
+      CARE_ALUMNI_CLEANUP_TARGETS_JSON: JSON.stringify([cleanupTarget]),
+    })).toThrow('禁止复用');
   });
 
   it('知识证据网关必须成套配置并使用独立标准 HTTPS 根地址', () => {

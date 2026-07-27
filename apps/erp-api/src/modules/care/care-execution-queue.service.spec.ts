@@ -133,4 +133,69 @@ describe('CareExecutionQueueService', () => {
       repeat: { every: 900_000 },
     });
   });
+
+  it('校友清理队列只携带可信租户与任务标识，并注册固定空载荷控制任务', async () => {
+    const context = new TenantContextService();
+    const queue = { add: vi.fn().mockResolvedValue({}) };
+    const service = new CareExecutionQueueService(
+      context,
+      queue as unknown as Queue<CareJobData>,
+    );
+    const task = {
+      id: 'A'.repeat(43),
+      tenantId: 'tenant-001',
+      consentId: '01J8ZQK7V0A2M4N6P8R0T2W4C4',
+      consentVersion: 2,
+      consentPurpose: 'alumni_network' as const,
+      terminationReason: 'withdrawn' as const,
+      terminatedAt: '2026-07-27T00:00:00.000Z',
+      sourceEventId: '01J8ZQK7V0A2M4N6P8R0T2W4C6',
+      targetCode: 'crm',
+      policyVersion: 'privacy-v1',
+      controlDigest: 'B'.repeat(43),
+      maxAttempts: 3,
+      proofRetentionDays: 2_555,
+      status: 'pending' as const,
+      attempts: 0,
+      nextAttemptAt: '2026-07-27T00:00:00.000Z',
+      lockedAt: null,
+      lockedBy: null,
+      proofDigest: null,
+      proofAction: null,
+      proofStorage: null,
+      proofCompletedAt: null,
+      proofRetentionUntil: null,
+      proofKeyId: null,
+      lastErrorCode: null,
+      version: 1,
+      createdAt: '2026-07-27T00:00:00.000Z',
+      updatedAt: '2026-07-27T00:00:00.000Z',
+    };
+    await context.run({
+      tenant: { tenantId: 'tenant-001', source: 'service_identity' },
+      actor: {
+        actorId: 'system:cleanup',
+        actorType: 'system_job',
+        tenantId: 'tenant-001',
+        roleCodes: [],
+        scopes: [],
+        departmentIds: [],
+        traceId: 'trace-001',
+      },
+    }, () => service.scheduleAlumniCleanup(task));
+    expect(queue.add.mock.calls[0]?.slice(0, 2)).toEqual([
+      'dispatch:care:alumni-cleanup',
+      { tenantId: 'tenant-001', cleanupTaskId: 'A'.repeat(43) },
+    ]);
+    expect(JSON.stringify(queue.add.mock.calls[0]?.[1])).not.toMatch(
+      /consent|purpose|person|contact|proof|policy/iu,
+    );
+    await service.ensureAlumniCleanupSchedules();
+    expect(queue.add.mock.calls.slice(1).map((call) => String(call[0]))).toEqual([
+      'relay:care:alumni-cleanup',
+      'reconcile:care:alumni-cleanup',
+    ]);
+    expect(queue.add.mock.calls.slice(1).every((call) =>
+      JSON.stringify(call[1]) === '{}')).toBe(true);
+  });
 });

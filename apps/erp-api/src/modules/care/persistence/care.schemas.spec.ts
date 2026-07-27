@@ -2,6 +2,8 @@ import { Mongoose } from 'mongoose';
 import { describe, expect, it } from 'vitest';
 
 import {
+  CareAlumniCleanupTaskRecordSchema,
+  type CareAlumniCleanupTaskRecord,
   CareAlumniConsentRecordSchema,
   type CareAlumniConsentRecord,
   CareCaseRecordSchema,
@@ -21,6 +23,10 @@ const EvidenceModel = mongoose.model<CareTaskEvidenceRecord>(
 );
 const ConsentModel = mongoose.model<CareAlumniConsentRecord>(
   'SpecCareAlumniConsent', CareAlumniConsentRecordSchema,
+);
+const AlumniCleanupTaskModel = mongoose.model<CareAlumniCleanupTaskRecord>(
+  'SpecCareAlumniCleanupTask',
+  CareAlumniCleanupTaskRecordSchema,
 );
 const OccasionPreferenceModel = mongoose.model<CareOccasionPreferenceRecord>(
   'SpecCareOccasionPreference',
@@ -97,6 +103,69 @@ describe('Care 持久化契约', () => {
     }).validate()).rejects.toThrow(/status/);
     await expect(new ConsentModel({
       ...active, status: 'withdrawn',
+    }).validate()).rejects.toThrow(/status/);
+  });
+
+  it('校友清理任务自然键、证明摘要与状态组合失败关闭', async () => {
+    expect(CareAlumniCleanupTaskRecordSchema.indexes()).toContainEqual([
+      {
+        tenantId: 1,
+        consentId: 1,
+        consentVersion: 1,
+        consentPurpose: 1,
+        targetCode: 1,
+        policyVersion: 1,
+      },
+      expect.objectContaining({ unique: true }),
+    ]);
+    const valid = {
+      id: 'A'.repeat(43),
+      tenantId: 'tenant-001',
+      consentId: 'consent-001',
+      consentVersion: 2,
+      consentPurpose: 'alumni_network',
+      terminationReason: 'withdrawn',
+      terminatedAt: new Date('2026-07-27T00:00:00.000Z'),
+      sourceEventId: '01J8ZQK7V0A2M4N6P8R0T2W4C6',
+      targetCode: 'crm',
+      policyVersion: 'privacy-v1',
+      controlDigest: 'B'.repeat(43),
+      maxAttempts: 3,
+      proofRetentionDays: 2_555,
+      status: 'pending',
+      attempts: 0,
+      nextAttemptAt: new Date('2026-07-27T00:00:00.000Z'),
+      lockedAt: null,
+      lockedBy: null,
+      proofDigest: null,
+      proofAction: null,
+      proofStorage: null,
+      proofCompletedAt: null,
+      proofRetentionUntil: null,
+      proofKeyId: null,
+      lastErrorCode: null,
+      version: 1,
+    };
+    await expect(new AlumniCleanupTaskModel(valid).validate()).resolves.toBeUndefined();
+    await expect(new AlumniCleanupTaskModel({
+      ...valid,
+      status: 'completed',
+    }).validate()).rejects.toThrow(/proofDigest/);
+    await expect(new AlumniCleanupTaskModel({
+      ...valid,
+      status: 'pending',
+      proofDigest: 'C'.repeat(43),
+      proofAction: 'deleted',
+      proofStorage: 'immutable_worm',
+      proofCompletedAt: new Date('2026-07-27T00:01:00.000Z'),
+      proofRetentionUntil: new Date('2033-07-27T00:01:00.000Z'),
+      proofKeyId: 'proof-key-v1',
+    }).validate()).rejects.toThrow(/proofDigest/);
+    await expect(new AlumniCleanupTaskModel({
+      ...valid,
+      status: 'dispatching',
+      lockedAt: null,
+      lockedBy: 'worker-001',
     }).validate()).rejects.toThrow(/status/);
   });
 

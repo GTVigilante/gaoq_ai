@@ -8,6 +8,8 @@ import { IdentityPersistenceModule } from '../identity/identity-persistence.modu
 import { OrgCoreModule } from '../org/org-core.module.js';
 import { OutboxRecord, OutboxRecordSchema } from '../org/persistence/outbox.schema.js';
 import { CareApplicationService } from './application/care-application.service.js';
+import { CareAlumniCleanupApplicationService } from './application/care-alumni-cleanup-application.service.js';
+import { CareAlumniCleanupCoordinatorService } from './application/care-alumni-cleanup-coordinator.service.js';
 import { CareOccasionApplicationService } from './application/care-occasion-application.service.js';
 import { CareOccasionPolicyService } from './application/care-occasion-policy.service.js';
 import { CareTalentSourceService } from './application/care-talent-source.service.js';
@@ -21,6 +23,7 @@ import {
 } from './application/care-ports.js';
 import { CareOutboxWriter } from './persistence/care-outbox.writer.js';
 import {
+  CareAlumniCleanupTaskRepository,
   CareAlumniConsentRepository,
   CareCaseRepository,
   CareOccasionPreferenceRepository,
@@ -29,6 +32,8 @@ import {
   CareTaskEvidenceRepository,
 } from './persistence/care.repositories.js';
 import {
+  CareAlumniCleanupTaskRecord,
+  CareAlumniCleanupTaskRecordSchema,
   CareAlumniConsentRecord,
   CareAlumniConsentRecordSchema,
   CareCaseRecord,
@@ -44,6 +49,9 @@ import {
 } from './persistence/care.schemas.js';
 import { CareOccasionNotificationPort } from './integration/care-occasion-notification.port.js';
 import { CareOccasionNotificationHttpAdapter } from './integration/care-occasion-notification-http.adapter.js';
+import { CareAlumniCleanupPort } from './integration/care-alumni-cleanup.port.js';
+import { CareAlumniCleanupHttpAdapter } from './integration/care-alumni-cleanup-http.adapter.js';
+import { CareAlumniCleanupTargetRegistry } from './integration/care-alumni-cleanup-target-registry.js';
 
 @Module({
   imports: [
@@ -57,6 +65,10 @@ import { CareOccasionNotificationHttpAdapter } from './integration/care-occasion
       { name: CareTaskEvidenceRecord.name, schema: CareTaskEvidenceRecordSchema },
       { name: CareAlumniConsentRecord.name, schema: CareAlumniConsentRecordSchema },
       {
+        name: CareAlumniCleanupTaskRecord.name,
+        schema: CareAlumniCleanupTaskRecordSchema,
+      },
+      {
         name: CareOccasionPreferenceRecord.name,
         schema: CareOccasionPreferenceRecordSchema,
       },
@@ -67,12 +79,15 @@ import { CareOccasionNotificationHttpAdapter } from './integration/care-occasion
   ],
   providers: [
     CareApplicationService,
+    CareAlumniCleanupApplicationService,
+    CareAlumniCleanupCoordinatorService,
     CareOccasionApplicationService,
     CareOccasionPolicyService,
     CareTalentSourceService,
     CareCaseRepository,
     CareTaskEvidenceRepository,
     CareAlumniConsentRepository,
+    CareAlumniCleanupTaskRepository,
     CareOccasionPreferenceRepository,
     CareOccasionTaskRepository,
     CareOccasionTenantRepository,
@@ -83,6 +98,12 @@ import { CareOccasionNotificationHttpAdapter } from './integration/care-occasion
       provide: CareOccasionNotificationPort,
       useExisting: CareOccasionNotificationHttpAdapter,
     },
+    CareAlumniCleanupTargetRegistry,
+    CareAlumniCleanupHttpAdapter,
+    {
+      provide: CareAlumniCleanupPort,
+      useExisting: CareAlumniCleanupHttpAdapter,
+    },
     UnconfiguredCareTaskEvidenceVerifier,
     { provide: CareTaskEvidenceVerificationPort, useExisting: UnconfiguredCareTaskEvidenceVerifier },
     UnconfiguredAlumniConsentVerifier,
@@ -90,6 +111,8 @@ import { CareOccasionNotificationHttpAdapter } from './integration/care-occasion
   ],
   exports: [
     CareApplicationService,
+    CareAlumniCleanupApplicationService,
+    CareAlumniCleanupCoordinatorService,
     CareOccasionApplicationService,
     CareTalentSourceService,
     CareOccasionPreferenceRepository,

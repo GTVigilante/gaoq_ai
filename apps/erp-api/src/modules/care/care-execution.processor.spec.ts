@@ -5,6 +5,8 @@ import { TenantContextService } from '../../core/tenant/tenant-context.service.j
 import type { AuditService } from '../../core/audit/audit.service.js';
 import type { CareApplicationService } from './application/care-application.service.js';
 import type { CareOccasionApplicationService } from './application/care-occasion-application.service.js';
+import type { CareAlumniCleanupApplicationService } from './application/care-alumni-cleanup-application.service.js';
+import type { CareAlumniCleanupCoordinatorService } from './application/care-alumni-cleanup-coordinator.service.js';
 import { CareExecutionProcessor } from './care-execution.processor.js';
 import type { CareJobData } from './care-execution.queue.js';
 
@@ -13,6 +15,13 @@ describe('CareExecutionProcessor', () => {
     dispatchTask: vi.fn(),
     reconcileRegisteredTenants: vi.fn(),
   } as unknown as CareOccasionApplicationService;
+  const alumniCleanup = {
+    dispatchTask: vi.fn(),
+  } as unknown as CareAlumniCleanupApplicationService;
+  const alumniCoordinator = {
+    relayBatch: vi.fn(),
+    reconcileAndEnqueue: vi.fn(),
+  } as unknown as CareAlumniCleanupCoordinatorService;
 
   it('只从队列数据建立可信系统身份，不接受数据内 Scope 或执行参数', async () => {
     const context = new TenantContextService();
@@ -34,6 +43,8 @@ describe('CareExecutionProcessor', () => {
       context, { executeScheduledJob } as unknown as CareApplicationService,
       audit as unknown as AuditService,
       occasions,
+      alumniCleanup,
+      alumniCoordinator,
     );
     const job = {
       id: 'job-001', name: 'execute:care:case',
@@ -56,6 +67,8 @@ describe('CareExecutionProcessor', () => {
       { executeScheduledJob: vi.fn() } as unknown as CareApplicationService,
       { record: vi.fn() } as unknown as AuditService,
       occasions,
+      alumniCleanup,
+      alumniCoordinator,
     );
     await expect(processor.process({
       name: 'unknown', data: {},
@@ -76,6 +89,8 @@ describe('CareExecutionProcessor', () => {
       { executeScheduledJob: vi.fn().mockRejectedValue(failure) } as unknown as CareApplicationService,
       audit as unknown as AuditService,
       occasions,
+      alumniCleanup,
+      alumniCoordinator,
     );
     const job = {
       id: 'job-002', name: 'execute:care:case',
@@ -108,6 +123,8 @@ describe('CareExecutionProcessor', () => {
       context, { expireAlumniConsent } as unknown as CareApplicationService,
       audit as unknown as AuditService,
       occasions,
+      alumniCleanup,
+      alumniCoordinator,
     );
     await expect(processor.process({
       id: 'job-expiry-001', name: 'expire:care:alumni-consent',
@@ -141,6 +158,8 @@ describe('CareExecutionProcessor', () => {
       } as unknown as CareApplicationService,
       audit as unknown as AuditService,
       occasions,
+      alumniCleanup,
+      alumniCoordinator,
     );
     await expect(processor.process({
       id: 'job-audit-001', name: 'execute:care:case',
@@ -180,6 +199,8 @@ describe('CareExecutionProcessor', () => {
         dispatchTask,
         reconcileRegisteredTenants: vi.fn(),
       } as unknown as CareOccasionApplicationService,
+      alumniCleanup,
+      alumniCoordinator,
     );
     const data = {
       tenantId: 'tenant-001',
@@ -223,6 +244,8 @@ describe('CareExecutionProcessor', () => {
         dispatchTask: vi.fn(),
         reconcileRegisteredTenants,
       } as unknown as CareOccasionApplicationService,
+      alumniCleanup,
+      alumniCoordinator,
     );
     await expect(processor.process({
       name: 'reconcile:care:occasions',
@@ -233,5 +256,67 @@ describe('CareExecutionProcessor', () => {
       data: { tenantId: 'tenant-spoofed' },
     } as unknown as Job<CareJobData>)).rejects.toThrow();
     expect(reconcileRegisteredTenants).toHaveBeenCalledOnce();
+  });
+
+  it('校友清理投递使用最小可信身份，relay 与对账拒绝任何队列范围参数', async () => {
+    const context = new TenantContextService();
+    const audit = { record: vi.fn().mockResolvedValue(undefined) };
+    const dispatchTask = vi.fn().mockImplementation(() => {
+      expect(context.getActorRequired().scopes).toEqual([
+        'erp:care:alumni:cleanup:dispatch',
+      ]);
+      return Promise.resolve({
+        id: 'A'.repeat(43),
+        targetCode: 'crm',
+        policyVersion: 'privacy-v1',
+        status: 'completed',
+        attempts: 1,
+        version: 3,
+      });
+    });
+    const relayBatch = vi.fn().mockResolvedValue(2);
+    const reconcileAndEnqueue = vi.fn().mockResolvedValue(3);
+    const processor = new CareExecutionProcessor(
+      context,
+      {} as CareApplicationService,
+      audit as unknown as AuditService,
+      occasions,
+      { dispatchTask } as unknown as CareAlumniCleanupApplicationService,
+      {
+        relayBatch,
+        reconcileAndEnqueue,
+      } as unknown as CareAlumniCleanupCoordinatorService,
+    );
+    const data = { tenantId: 'tenant-001', cleanupTaskId: 'A'.repeat(43) };
+    await expect(processor.process({
+      id: 'cleanup-job-001',
+      name: 'dispatch:care:alumni-cleanup',
+      data,
+    } as Job<CareJobData>)).resolves.toBe(1);
+    expect(dispatchTask).toHaveBeenCalledWith(
+      'A'.repeat(43),
+      'care-cleanup:cleanup-job-001',
+    );
+    expect(JSON.stringify(data)).not.toMatch(/consent|purpose|proof|contact/iu);
+    expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'care.alumni_cleanup.dispatch',
+      resourceType: 'care_alumni_cleanup_task',
+      riskLevel: 'R2',
+      outcome: 'success',
+    }));
+    await expect(processor.process({
+      id: 'relay-job-001',
+      name: 'relay:care:alumni-cleanup',
+      data: {},
+    } as Job<CareJobData>)).resolves.toBe(2);
+    await expect(processor.process({
+      id: 'reconcile-job-001',
+      name: 'reconcile:care:alumni-cleanup',
+      data: {},
+    } as Job<CareJobData>)).resolves.toBe(3);
+    await expect(processor.process({
+      name: 'relay:care:alumni-cleanup',
+      data: { tenantId: 'tenant-spoofed' },
+    } as unknown as Job<CareJobData>)).rejects.toThrow();
   });
 });

@@ -7,6 +7,7 @@ import type { ClientSession, Model } from 'mongoose';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import { OutboxRecord, type OutboxDocument } from '../../org/persistence/outbox.schema.js';
 import type {
+  AlumniCleanupDomainEvent,
   AlumniConsentDomainEvent,
   CareDomainEvent,
   CareOccasionDomainEvent,
@@ -20,7 +21,11 @@ export class CareOutboxWriter {
   ) {}
 
   async append(
-    event: CareDomainEvent | AlumniConsentDomainEvent | CareOccasionDomainEvent,
+    event:
+      | CareDomainEvent
+      | AlumniConsentDomainEvent
+      | AlumniCleanupDomainEvent
+      | CareOccasionDomainEvent,
     session: ClientSession,
   ): Promise<void> {
     const trusted = this.context.getRequired();

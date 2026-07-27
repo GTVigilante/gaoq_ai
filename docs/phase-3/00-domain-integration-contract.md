@@ -80,7 +80,28 @@ draft → pending_approval → approved → clearing → ready → scheduled →
 - 事件固定为 `care.occasion.preference_updated/unsubscribed/scheduled/delivered/cancelled/dead/replayed` v1 CloudEvent，只含目的、类型、状态、策略版本、尝试次数、受控拒绝码或重放原因码；不含员工、生日、具体联系方式、通知正文或送达证据。审计同样只记录开关、类型、状态、版本与计数。
 - 指标固定为 `gaoq_care_occasion_transition_total{operation,outcome}`、`gaoq_care_occasion_dispatch_duration_seconds{outcome}`、`gaoq_care_occasion_backlog{status}` 和 `gaoq_care_occasion_oldest_age_seconds{status}`，禁止使用租户、员工、任务或渠道地址标签。
 
-### 2.3 人才全周期与服务追踪
+### 2.3 校友授权终止后的下游清理
+
+- `care.alumni_consent.withdrawn|expired` v1 Outbox 是唯一触发源；协调器必须重读
+  当前授权终态，并按服务端登记目标原子创建任务。自然键和幂等键必须包含授权、
+  授权版本、目的、目标和政策版本，重复或乱序事件不得重复产生外部副作用。
+- `CARE_ALUMNI_CLEANUP_TARGETS_JSON` 只能由 Secret Manager 注入。每个目标必须
+  使用独立标准 HTTPS Origin、Bearer Token 和 Ed25519 信任根，禁止跨目标复用。
+- 外部端点固定为 `/v1/alumni-consent-cleanups/execute`。回执必须绑定控制摘要和
+  政策版本，声明未来处理已阻断，并使用 `immutable_worm|append_only_ledger`；
+  签名、摘要、上下文、存储类别或至少七年保留期不匹配时失败关闭。
+- MongoDB 是任务事实源，BullMQ 只携带可信租户和任务 ID。任务支持锁恢复、指数
+  退避、dead、审批重放和只读对账；灾后重建只从权威终态授权恢复缺失/已死的原始
+  终止 Outbox，仍由运行时 relay 唯一扇出任务。
+- REST 固定为 `GET /care/alumni-consents/:id/cleanup-status`；事件固定为
+  `care.alumni_cleanup.scheduled/completed/dead/replayed` v1 CloudEvent。标准
+  MCP 固定为 `care_alumni_cleanup_status_get`、
+  `erp://care/alumni-consents/{id}/cleanup` 和
+  `care_alumni_cleanup_status_guide`，只返回脱敏终态与计数，不开放清理或恢复。
+- 详细运行、SLO、告警、保留与 UAT 见
+  [校友授权终止后的下游清理证明运行手册](./05-alumni-cleanup-proof-runbook.md)。
+
+### 2.4 人才全周期与服务追踪
 
 - Talent Lifecycle 是跨域只读投影和服务触点权威，不改写 Recruitment、Onboarding、Org、Care 的业务事实。`Candidate → Person → Employment` 引用构成人才身份主线；同一候选人的多次申请、复聘和多段劳动关系都保留在同一主线下。
 - 生命周期阶段按 `离职处理中 → 在职 → 入职中 → Offer → 招聘中 → 校友 → 曾任员工 → 人才库 → 停用` 的优先级从权威状态推导，不能由浏览器或 AI 直接设置。

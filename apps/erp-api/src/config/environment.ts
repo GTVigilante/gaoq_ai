@@ -3,6 +3,8 @@ import { isIP } from 'node:net';
 
 import { z } from 'zod';
 
+import { parseCareAlumniCleanupTargets } from './care-alumni-cleanup-targets.js';
+
 const isLoopbackHostname = (hostname: string): boolean => {
   const normalized = hostname.toLowerCase().replace(/\.$/u, '')
     .replace(/^\[(.*)\]$/u, '$1');
@@ -142,6 +144,11 @@ const environmentSchema = z.object({
   ),
   /** 关怀策略由部署控制面按租户注入，浏览器不得提交时区、发送时间或模板。 */
   CARE_OCCASION_POLICIES_JSON: z.string().default('[]'),
+  /**
+   * 校友授权终止后的下游清理登记表包含独立凭据和签名公钥，
+   * 必须作为整体由 Secret Manager 注入，禁止进入 ConfigMap。
+   */
+  CARE_ALUMNI_CLEANUP_TARGETS_JSON: z.string().default('[]'),
   /** 简历对象只经隔离网关读取；网关完成归属校验、恶意文件扫描、提取与 PII 去除。 */
   RECRUITMENT_RESUME_SOURCE_ENDPOINT: z.preprocess(
     (value) => value === '' ? undefined : value,
@@ -1421,6 +1428,35 @@ export const validateEnvironment = (input: Record<string, unknown>): AppEnvironm
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : '格式非法';
     throw new Error(`环境变量校验失败：CARE_OCCASION_POLICIES_JSON ${message}`, {
+      cause: error,
+    });
+  }
+
+  try {
+    const targets = parseCareAlumniCleanupTargets(
+      result.data.CARE_ALUMNI_CLEANUP_TARGETS_JSON,
+      [
+        new URL(result.data.AUTH_ISSUER).origin,
+        new URL(result.data.AUTH_RESOURCE).origin,
+        ...(result.data.CARE_OCCASION_NOTIFICATION_ENDPOINT === undefined
+          ? []
+          : [new URL(result.data.CARE_OCCASION_NOTIFICATION_ENDPOINT).origin]),
+      ],
+    );
+    const forbiddenTokens = new Set([
+      result.data.DINGTALK_CLIENT_SECRET,
+      result.data.FEISHU_CLIENT_SECRET,
+      result.data.CARE_OCCASION_NOTIFICATION_BEARER_TOKEN,
+      result.data.KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN,
+      result.data.KNOWLEDGE_SEARCH_GATEWAY_BEARER_TOKEN,
+      result.data.RECRUITMENT_RESUME_SOURCE_BEARER_TOKEN,
+    ].filter((value): value is string => value !== undefined));
+    if (targets.some((target) => forbiddenTokens.has(target.bearerToken))) {
+      throw new Error('下游清理凭据禁止复用平台或其他业务凭据');
+    }
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : '格式非法';
+    throw new Error(`环境变量校验失败：CARE_ALUMNI_CLEANUP_TARGETS_JSON ${message}`, {
       cause: error,
     });
   }

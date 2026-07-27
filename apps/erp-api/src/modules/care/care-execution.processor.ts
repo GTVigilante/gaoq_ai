@@ -5,13 +5,19 @@ import { z } from 'zod';
 import { TenantContextService } from '../../core/tenant/tenant-context.service.js';
 import { AuditService } from '../../core/audit/audit.service.js';
 import { CareApplicationService } from './application/care-application.service.js';
+import { CareAlumniCleanupApplicationService } from './application/care-alumni-cleanup-application.service.js';
+import { CareAlumniCleanupCoordinatorService } from './application/care-alumni-cleanup-coordinator.service.js';
 import { CareOccasionApplicationService } from './application/care-occasion-application.service.js';
 import {
+  CARE_DISPATCH_ALUMNI_CLEANUP_JOB,
   CARE_DISPATCH_OCCASION_JOB,
   CARE_EXECUTE_CASE_JOB,
   CARE_EXPIRE_ALUMNI_CONSENT_JOB,
   CARE_EXECUTION_QUEUE,
+  CARE_RECONCILE_ALUMNI_CLEANUP_JOB,
   CARE_RECONCILE_OCCASIONS_JOB,
+  CARE_RELAY_ALUMNI_CLEANUP_JOB,
+  type CareAlumniCleanupDispatchJobData,
   type CareAlumniConsentExpiryJobData,
   type CareExecutionJobData,
   type CareJobData,
@@ -31,6 +37,11 @@ const occasionDispatchJobSchema = z.object({
   occasionTaskId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{1,128}$/),
 }).strict();
 const occasionReconcileJobSchema = z.object({}).strict();
+const alumniCleanupDispatchJobSchema = z.object({
+  tenantId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
+  cleanupTaskId: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+}).strict();
+const alumniCleanupControlJobSchema = z.object({}).strict();
 
 @Processor(CARE_EXECUTION_QUEUE, { concurrency: 4, limiter: { max: 20, duration: 1_000 } })
 export class CareExecutionProcessor extends WorkerHost {
@@ -39,6 +50,8 @@ export class CareExecutionProcessor extends WorkerHost {
     private readonly care: CareApplicationService,
     private readonly audit: AuditService,
     private readonly occasions: CareOccasionApplicationService,
+    private readonly alumniCleanup: CareAlumniCleanupApplicationService,
+    private readonly alumniCleanupCoordinator: CareAlumniCleanupCoordinatorService,
   ) { super(); }
 
   override async process(job: Job<CareJobData>): Promise<number> {
@@ -55,7 +68,73 @@ export class CareExecutionProcessor extends WorkerHost {
       occasionReconcileJobSchema.parse(job.data);
       return this.occasions.reconcileRegisteredTenants();
     }
+    if (job.name === CARE_RELAY_ALUMNI_CLEANUP_JOB) {
+      alumniCleanupControlJobSchema.parse(job.data);
+      return this.alumniCleanupCoordinator.relayBatch(
+        `care-cleanup-relay:${String(job.id ?? 'repeat')}`,
+      );
+    }
+    if (job.name === CARE_RECONCILE_ALUMNI_CLEANUP_JOB) {
+      alumniCleanupControlJobSchema.parse(job.data);
+      return this.alumniCleanupCoordinator.reconcileAndEnqueue();
+    }
+    if (job.name === CARE_DISPATCH_ALUMNI_CLEANUP_JOB) {
+      return this.processAlumniCleanup(
+        job as Job<CareAlumniCleanupDispatchJobData>,
+      );
+    }
     throw new Error('CARE_EXECUTION_JOB_UNKNOWN');
+  }
+
+  private async processAlumniCleanup(
+    job: Job<CareAlumniCleanupDispatchJobData>,
+  ): Promise<number> {
+    const data = alumniCleanupDispatchJobSchema.parse(job.data);
+    await this.context.run({
+      tenant: { tenantId: data.tenantId, source: 'service_identity' },
+      actor: {
+        actorId: 'system:care-alumni-cleanup-dispatch',
+        actorType: 'system_job',
+        tenantId: data.tenantId,
+        roleCodes: ['CARE_ALUMNI_CLEANUP_WORKER'],
+        scopes: ['erp:care:alumni:cleanup:dispatch'],
+        departmentIds: [],
+        traceId: String(job.id ?? data.cleanupTaskId),
+      },
+    }, async () => {
+      const workerId = `care-cleanup:${String(job.id ?? data.cleanupTaskId)}`;
+      let task: Awaited<ReturnType<
+        CareAlumniCleanupApplicationService['dispatchTask']
+      >>;
+      try {
+        task = await this.alumniCleanup.dispatchTask(data.cleanupTaskId, workerId);
+      } catch (error: unknown) {
+        await this.recordFailureWithoutMasking({
+          action: 'care.alumni_cleanup.dispatch',
+          resourceType: 'care_alumni_cleanup_task',
+          resourceId: data.cleanupTaskId,
+          riskLevel: 'R2',
+          outcome: 'failure',
+          metadata: { failureCode: safeFailureCode(error) },
+        });
+        throw error;
+      }
+      await this.audit.record({
+        action: 'care.alumni_cleanup.dispatch',
+        resourceType: 'care_alumni_cleanup_task',
+        resourceId: task.id,
+        riskLevel: 'R2',
+        outcome: 'success',
+        metadata: {
+          targetCode: task.targetCode,
+          policyVersion: task.policyVersion,
+          status: task.status,
+          attempts: task.attempts,
+          version: task.version,
+        },
+      });
+    });
+    return 1;
   }
 
   private async processOccasion(

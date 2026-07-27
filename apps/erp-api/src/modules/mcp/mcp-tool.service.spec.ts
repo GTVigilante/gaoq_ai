@@ -17,6 +17,7 @@ import type { KnowledgeApplicationService } from '../knowledge/application/knowl
 import type { KnowledgeExamRunService } from '../knowledge/application/knowledge-exam-run.service.js';
 import type { CareApplicationService } from '../care/application/care-application.service.js';
 import type { CareOccasionApplicationService } from '../care/application/care-occasion-application.service.js';
+import type { CareAlumniCleanupApplicationService } from '../care/application/care-alumni-cleanup-application.service.js';
 import type { AttendanceApplicationService } from '../attendance/application/attendance-application.service.js';
 import type { PayrollRunService } from '../payroll/application/payroll-run.service.js';
 import type { PayrollPayslipService } from '../payroll/application/payroll-payslip.service.js';
@@ -100,6 +101,7 @@ function assemble() {
   const knowledgeExamRuns = { get: vi.fn() };
   const care = { getForMcp: vi.fn() };
   const careOccasions = { getMySummaryForMcp: vi.fn() };
+  const careAlumniCleanup = { getStatusForMcp: vi.fn() };
   const attendance = {
     getMyMonth: vi.fn(), validateCorrectionRequest: vi.fn(), requestCorrection: vi.fn(),
   };
@@ -143,11 +145,13 @@ function assemble() {
     marketing as unknown as MarketingCmsService,
     confirmations as unknown as McpConfirmationService,
     careOccasions as unknown as CareOccasionApplicationService,
+    careAlumniCleanup as unknown as CareAlumniCleanupApplicationService,
   );
   return {
     context, audit, organization, approvals, recruitmentApplications,
     recruitmentInterviews, recruitmentManagement, recruitmentOffers, confirmations, service,
-    onboarding, knowledge, care, careOccasions, attendance, payroll, payslips,
+    onboarding, knowledge, care, careOccasions, careAlumniCleanup,
+    attendance, payroll, payslips,
     taxFilings, reconciliations, shadows,
     opSummaries, opApprovalBridges, managementDashboard, analyticsExports, dataMigrations,
     talentLifecycle,
@@ -558,6 +562,36 @@ describe('McpToolService', () => {
     });
     expect(JSON.stringify(result)).not.toMatch(
       /birthdayMonthDay|scheduledAt|employeeId|contact|EvidenceId|templateCode|body/iu,
+    );
+  });
+
+  it('校友清理 MCP 只返回终止状态与固定计数', async () => {
+    const store = assemble();
+    const consentId = '01J8ZQK7V0A2M4N6P8R0T2W4C4';
+    store.careAlumniCleanup.getStatusForMcp.mockResolvedValue({
+      consentStatus: 'withdrawn',
+      cleanupStatus: 'attention_required',
+      counts: { pending: 0, dispatching: 0, completed: 2, dead: 1 },
+    });
+    const denied = await store.service.getCareAlumniCleanupStatus(
+      consentId,
+      extra(['erp:mcp:server:connect']),
+    );
+    expect(denied.isError).toBe(true);
+    expect(store.careAlumniCleanup.getStatusForMcp).not.toHaveBeenCalled();
+    const result = await store.service.getCareAlumniCleanupStatus(
+      consentId,
+      extra(['erp:mcp:server:connect', 'erp:care:alumni:cleanup:read']),
+    );
+    expect(result.structuredContent).toEqual({
+      cleanupStatus: {
+        consentStatus: 'withdrawn',
+        cleanupStatus: 'attention_required',
+        counts: { pending: 0, dispatching: 0, completed: 2, dead: 1 },
+      },
+    });
+    expect(JSON.stringify(result)).not.toMatch(
+      /person|contact|channel|target|proof|evidence|completedAt/iu,
     );
   });
 

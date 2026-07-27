@@ -287,6 +287,23 @@ const careOccasionSummarySchema = z.object({
   deliveredCount: z.number().int().nonnegative(),
   attentionRequiredCount: z.number().int().nonnegative(),
 });
+const careAlumniCleanupStatusSchema = z.object({
+  consentStatus: z.enum(['active', 'withdrawn', 'expired']),
+  cleanupStatus: z.enum([
+    'not_required',
+    'pending',
+    'in_progress',
+    'completed',
+    'attention_required',
+    'configuration_required',
+  ]),
+  counts: z.object({
+    pending: z.number().int().nonnegative(),
+    dispatching: z.number().int().nonnegative(),
+    completed: z.number().int().nonnegative(),
+    dead: z.number().int().nonnegative(),
+  }),
+});
 const talentLifecycleSchema = z.object({
   candidateId: recruitmentIdSchema,
   stage: z.enum([
@@ -876,6 +893,31 @@ export class McpRuntimeService {
     );
 
     server.registerResource(
+      'care-alumni-cleanup-status',
+      new ResourceTemplate(
+        'erp://care/alumni-consents/{id}/cleanup',
+        { list: undefined },
+      ),
+      {
+        title: '校友授权下游清理脱敏状态',
+        description: '只返回终止状态和任务计数；不返回自然人、联系方式、下游证明或错误正文。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getCareAlumniCleanupStatus(
+          requiredResourceId(id),
+          extra,
+        );
+        if (result.isError === true) throw new Error('无权读取下游清理状态');
+        return { contents: [{
+          uri: uri.toString(),
+          mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
+    server.registerResource(
       'talent-lifecycle',
       new ResourceTemplate('erp://talent-lifecycle/people/{candidateId}', { list: undefined }),
       {
@@ -1336,6 +1378,24 @@ export class McpRuntimeService {
     );
 
     server.registerPrompt(
+      'care_alumni_cleanup_status_guide',
+      {
+        title: '校友授权下游清理只读检查',
+        description: '只读取脱敏状态计数；AI 不清理、不恢复授权，也不读取个人数据或证明。',
+        argsSchema: { consentId: recruitmentIdSchema },
+      },
+      ({ consentId }) => ({
+        messages: [{
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `请仅调用 care_alumni_cleanup_status_get 读取授权 ${consentId} 的脱敏清理状态和任务计数。不要索取自然人身份、联系方式、授权证明、下游证明摘要、错误正文或渠道数据；不要执行清理、重放或恢复授权。`,
+          },
+        }],
+      }),
+    );
+
+    server.registerPrompt(
       'talent_lifecycle_follow_up_guide',
       {
         title: '人才全周期跟进检查清单',
@@ -1771,6 +1831,23 @@ export class McpRuntimeService {
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
       },
       async (extra) => this.tools.getMyCareOccasionSummary(extra),
+    );
+
+    server.registerTool(
+      'care_alumni_cleanup_status_get',
+      {
+        title: '查询校友授权下游清理脱敏状态',
+        description: '仅返回授权终止状态、总体清理状态和固定状态计数。风险等级 R0。',
+        inputSchema: { consentId: recruitmentIdSchema },
+        outputSchema: z.object({ cleanupStatus: careAlumniCleanupStatusSchema }),
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+        },
+      },
+      async ({ consentId }, extra) =>
+        this.tools.getCareAlumniCleanupStatus(consentId, extra),
     );
 
     server.registerTool(

@@ -19,6 +19,7 @@ import { KnowledgeApplicationService } from '../knowledge/application/knowledge-
 import { KnowledgeExamRunService } from '../knowledge/application/knowledge-exam-run.service.js';
 import { CareApplicationService } from '../care/application/care-application.service.js';
 import { CareOccasionApplicationService } from '../care/application/care-occasion-application.service.js';
+import { CareAlumniCleanupApplicationService } from '../care/application/care-alumni-cleanup-application.service.js';
 import { AttendanceApplicationService } from '../attendance/application/attendance-application.service.js';
 import { PayrollRunService } from '../payroll/application/payroll-run.service.js';
 import { PayrollPayslipService } from '../payroll/application/payroll-payslip.service.js';
@@ -90,6 +91,7 @@ export class McpToolService {
     private readonly marketing: MarketingCmsService,
     private readonly confirmations: McpConfirmationService,
     private readonly careOccasions: CareOccasionApplicationService,
+    private readonly careAlumniCleanup: CareAlumniCleanupApplicationService,
   ) {}
 
   async getMarketingSideEffect(
@@ -233,6 +235,40 @@ export class McpToolService {
         },
       );
       return structuredResult({ occasionSummary: summary });
+    });
+  }
+
+  async getCareAlumniCleanupStatus(
+    consentId: string,
+    extra: McpExtra,
+  ): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      const scope = 'erp:care:alumni:cleanup:read';
+      if (!identity.scopes.includes(scope)) {
+        await this.auditTool(
+          identity,
+          'care_alumni_cleanup_status_get',
+          'R0',
+          'denied',
+        );
+        return scopeError(scope);
+      }
+      const cleanupStatus =
+        await this.careAlumniCleanup.getStatusForMcp(consentId);
+      await this.auditTool(
+        identity,
+        'care_alumni_cleanup_status_get',
+        'R0',
+        'success',
+        {
+          consentStatus: cleanupStatus.consentStatus,
+          cleanupStatus: cleanupStatus.cleanupStatus,
+          pending: cleanupStatus.counts.pending,
+          dead: cleanupStatus.counts.dead,
+        },
+      );
+      return structuredResult({ cleanupStatus });
     });
   }
 

@@ -3,6 +3,7 @@ import type {
   CareOccasionPreference,
   CareOccasionTask,
 } from './care-occasion.js';
+import type { AlumniCleanupTask } from './care-alumni-cleanup.js';
 
 export interface CareDomainEvent {
   readonly type:
@@ -26,6 +27,19 @@ export interface AlumniConsentDomainEvent {
     | 'care.alumni_consent.granted'
     | 'care.alumni_consent.withdrawn'
     | 'care.alumni_consent.expired';
+  readonly tenantId: string;
+  readonly aggregateId: string;
+  readonly version: number;
+  readonly occurredAt: string;
+  readonly payload: Readonly<Record<string, unknown>>;
+}
+
+export interface AlumniCleanupDomainEvent {
+  readonly type:
+    | 'care.alumni_cleanup.scheduled'
+    | 'care.alumni_cleanup.completed'
+    | 'care.alumni_cleanup.dead'
+    | 'care.alumni_cleanup.replayed';
   readonly tenantId: string;
   readonly aggregateId: string;
   readonly version: number;
@@ -76,6 +90,30 @@ export function alumniConsentEvent(
     payload: Object.freeze({
       careCaseId: consent.careCaseId, purpose: consent.purpose,
       channels: consent.channels, status: consent.status, expiresAt: consent.expiresAt,
+    }),
+  });
+}
+
+/** 清理事件不携带自然人、联系方式、授权证据或清理证明对象。 */
+export function alumniCleanupTaskEvent(
+  task: AlumniCleanupTask,
+  type: AlumniCleanupDomainEvent['type'],
+  extra: Readonly<Record<string, unknown>> = {},
+): AlumniCleanupDomainEvent {
+  return Object.freeze({
+    type,
+    tenantId: task.tenantId,
+    aggregateId: task.id,
+    version: task.version,
+    occurredAt: task.updatedAt,
+    payload: Object.freeze({
+      purpose: task.consentPurpose,
+      terminationReason: task.terminationReason,
+      targetCode: task.targetCode,
+      policyVersion: task.policyVersion,
+      status: task.status,
+      attempts: task.attempts,
+      ...extra,
     }),
   });
 }

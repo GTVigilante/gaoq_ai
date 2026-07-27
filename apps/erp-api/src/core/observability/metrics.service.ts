@@ -14,6 +14,13 @@ type CareOccasionOutcome =
   | 'retry'
   | 'dead'
   | 'deduplicated';
+type CareAlumniCleanupOutcome =
+  | 'success'
+  | 'completed'
+  | 'retry'
+  | 'dead'
+  | 'deduplicated'
+  | 'deferred';
 
 /** 低基数 Prometheus 指标注册中心；严禁使用租户、用户、资源 ID 作为标签。 */
 @Injectable()
@@ -180,6 +187,31 @@ export class MetricsService {
     labelNames: ['status'] as const,
     registers: [this.registry],
   });
+  private readonly careAlumniCleanupTransitions = new Counter({
+    name: 'gaoq_care_alumni_cleanup_transition_total',
+    help: '校友授权终止后下游清理固定状态推进结果总数。',
+    labelNames: ['operation', 'outcome'] as const,
+    registers: [this.registry],
+  });
+  private readonly careAlumniCleanupDispatchDuration = new Histogram({
+    name: 'gaoq_care_alumni_cleanup_dispatch_duration_seconds',
+    help: '校友下游清理单次投递与不可变证明验证耗时（秒）。',
+    labelNames: ['outcome'] as const,
+    buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60],
+    registers: [this.registry],
+  });
+  private readonly careAlumniCleanupBacklog = new Gauge({
+    name: 'gaoq_care_alumni_cleanup_backlog',
+    help: '校友下游清理任务各固定待处理状态数量。',
+    labelNames: ['status'] as const,
+    registers: [this.registry],
+  });
+  private readonly careAlumniCleanupOldestAge = new Gauge({
+    name: 'gaoq_care_alumni_cleanup_oldest_age_seconds',
+    help: '校友下游清理任务各固定待处理状态最老记录年龄（秒）。',
+    labelNames: ['status'] as const,
+    registers: [this.registry],
+  });
 
   constructor() {
     collectDefaultMetrics({ register: this.registry, prefix: 'gaoq_process_' });
@@ -329,6 +361,32 @@ export class MetricsService {
   ): void {
     this.careOccasionBacklog.set({ status }, Math.max(0, count));
     this.careOccasionOldestAge.set({ status }, Math.max(0, oldestAgeSeconds));
+  }
+
+  recordCareAlumniCleanup(
+    operation: 'relay' | 'dispatch' | 'reconcile' | 'replay',
+    outcome: CareAlumniCleanupOutcome,
+    durationSeconds?: number,
+  ): void {
+    this.careAlumniCleanupTransitions.inc({ operation, outcome });
+    if (operation === 'dispatch' && durationSeconds !== undefined) {
+      this.careAlumniCleanupDispatchDuration.observe(
+        { outcome },
+        Math.max(0, durationSeconds),
+      );
+    }
+  }
+
+  setCareAlumniCleanupBacklog(
+    status: 'pending' | 'dispatching' | 'dead',
+    count: number,
+    oldestAgeSeconds: number,
+  ): void {
+    this.careAlumniCleanupBacklog.set({ status }, Math.max(0, count));
+    this.careAlumniCleanupOldestAge.set(
+      { status },
+      Math.max(0, oldestAgeSeconds),
+    );
   }
 }
 

@@ -310,6 +310,22 @@ describe('MCP Streamable HTTP 协议集成', () => {
           },
         },
       }),
+      getCareAlumniCleanupStatus: vi.fn().mockResolvedValue({
+        content: [{ type: 'text' as const, text: JSON.stringify({
+          cleanupStatus: {
+            consentStatus: 'withdrawn',
+            cleanupStatus: 'in_progress',
+            counts: { pending: 1, dispatching: 0, completed: 2, dead: 0 },
+          },
+        }) }],
+        structuredContent: {
+          cleanupStatus: {
+            consentStatus: 'withdrawn',
+            cleanupStatus: 'in_progress',
+            counts: { pending: 1, dispatching: 0, completed: 2, dead: 0 },
+          },
+        },
+      }),
       getTalentLifecycle: vi.fn().mockResolvedValue({
         content: [{ type: 'text' as const, text: JSON.stringify({ lifecycle: {
           candidateId: '01J8ZQK7V0A2M4N6P8R0T2W4E1',
@@ -566,6 +582,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       'knowledge_search',
       'care_case_get',
       'care_occasion_summary_get_self',
+      'care_alumni_cleanup_status_get',
       'talent_lifecycle_get',
       'attendance_month_get',
       'payroll_period_get',
@@ -617,6 +634,9 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ uriTemplate: 'erp://knowledge/search/{query}' }),
       expect.objectContaining({ uriTemplate: 'erp://care/cases/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://care/occasions/mine' }),
+      expect.objectContaining({
+        uriTemplate: 'erp://care/alumni-consents/{id}/cleanup',
+      }),
       expect.objectContaining({ uriTemplate: 'erp://talent-lifecycle/people/{candidateId}' }),
       expect.objectContaining({ uriTemplate: 'erp://attendance/months/{month}/me' }),
       expect.objectContaining({ uriTemplate: 'erp://payroll/periods/{id}' }),
@@ -642,6 +662,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ name: 'knowledge_search_guide' }),
       expect.objectContaining({ name: 'care_offboarding_progress_guide' }),
       expect.objectContaining({ name: 'care_occasion_summary_guide' }),
+      expect.objectContaining({ name: 'care_alumni_cleanup_status_guide' }),
       expect.objectContaining({ name: 'talent_lifecycle_follow_up_guide' }),
       expect.objectContaining({ name: 'attendance_month_review_guide' }),
       expect.objectContaining({ name: 'payroll_period_review_guide' }),
@@ -660,6 +681,30 @@ describe('MCP Streamable HTTP 协议集成', () => {
     const result = await client.callTool({ name: 'get_org_chart', arguments: {} });
     expect(result.structuredContent).toEqual({ departments: [], employees: [] });
     expect(tools.getOrgChart).toHaveBeenCalledOnce();
+
+    const cleanupId = '01J8ZQK7V0A2M4N6P8R0T2W4C4';
+    const cleanupResult = await client.callTool({
+      name: 'care_alumni_cleanup_status_get',
+      arguments: { consentId: cleanupId },
+    });
+    expect(cleanupResult.structuredContent).toEqual({
+      cleanupStatus: {
+        consentStatus: 'withdrawn',
+        cleanupStatus: 'in_progress',
+        counts: { pending: 1, dispatching: 0, completed: 2, dead: 0 },
+      },
+    });
+    const cleanupResource = await client.readResource({
+      uri: `erp://care/alumni-consents/${cleanupId}/cleanup`,
+    });
+    const cleanupContent = cleanupResource.contents[0];
+    const cleanupText = cleanupContent !== undefined && 'text' in cleanupContent
+      ? cleanupContent.text
+      : '{}';
+    expect(JSON.parse(cleanupText)).toEqual(
+      cleanupResult.structuredContent,
+    );
+    expect(tools.getCareAlumniCleanupStatus).toHaveBeenCalledTimes(2);
 
     const marketingResult = await client.callTool({
       name: 'marketing_side_effect_get',

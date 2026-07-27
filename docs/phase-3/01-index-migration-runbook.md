@@ -2,7 +2,7 @@
 
 ## 变更边界
 
-- 招聘/eSign/组织/入职迁移标识固定为 `phase-3-indexes-v1`；Knowledge 使用 `phase-3-knowledge-indexes-v1`，Knowledge 授权搜索追加清单使用 `phase-3-knowledge-search-indexes-v1`，Knowledge 考试编排追加清单使用 `phase-3-knowledge-exam-indexes-v1`，Care 与 Employment 终止引用使用 `phase-3-care-indexes-v1`，生日/周年关怀使用 `phase-3-care-occasion-indexes-v1`，招聘渠道使用 `phase-3-recruitment-channel-indexes-v1`，智能简历库使用 `phase-3-recruitment-resume-indexes-v1`，人才全周期使用 `phase-3-talent-lifecycle-indexes-v1`。已发布清单不得通过追加 Schema 改写 checksum。
+- 招聘/eSign/组织/入职迁移标识固定为 `phase-3-indexes-v1`；Knowledge 使用 `phase-3-knowledge-indexes-v1`，Knowledge 授权搜索追加清单使用 `phase-3-knowledge-search-indexes-v1`，Knowledge 考试编排追加清单使用 `phase-3-knowledge-exam-indexes-v1`，Care 与 Employment 终止引用使用 `phase-3-care-indexes-v1`，生日/周年关怀使用 `phase-3-care-occasion-indexes-v1`，校友授权下游清理证明使用 `phase-3-care-alumni-cleanup-indexes-v1`，招聘渠道使用 `phase-3-recruitment-channel-indexes-v1`，智能简历库使用 `phase-3-recruitment-resume-indexes-v1`，人才全周期使用 `phase-3-talent-lifecycle-indexes-v1`。已发布清单不得通过追加 Schema 改写 checksum。
 - 只创建缺失索引，不删除未知索引；同名或同键异配置立即失败关闭。
 - apply 使用 30 分钟数据库租约，完成后重新读取并复验全部索引。
 - 唯一索引创建前必须先在影子库检查重复数据并保留快照；本脚本不会自动删除或合并业务数据。
@@ -88,6 +88,21 @@
    还要求 `REDIS_URL`，按 500 条批量写入稳定 JobId，不输出业务标识或连接信息。
    非法历史标识、Mongo/Redis 不可用或任一批写入失败时必须失败关闭并重跑；已存在
    JobId 由 BullMQ 幂等去重。到期业务状态仍只能由 Worker 写入，迁移工具不得直改授权。
+
+   校友授权清理必须使用独立追加清单，禁止改变已发布
+   `phase-3-care-indexes-v1` checksum：
+
+   ```bash
+   pnpm --filter @gaoq/erp-api migrate:phase3:care-alumni-cleanup-indexes -- --dry-run
+   pnpm --filter @gaoq/erp-api migrate:phase3:care-alumni-cleanup-indexes
+   pnpm --filter @gaoq/erp-api reconcile:phase3:care-alumni-cleanup
+   ```
+
+   执行前检查授权/版本/目的/目标/政策自然键和租户内证明摘要重复；执行后必须验证
+   恢复扫描、源事件定位和部分唯一证明索引。重放与重建必须遵守
+   [校友授权终止后的下游清理证明运行手册](./05-alumni-cleanup-proof-runbook.md)，
+   不得修改完成证明；重建只能从权威终态授权的原版本、原目的和原终止时刻恢复
+   缺失/已死源事件，再由运行时 relay 扇出。
 10. 对招聘渠道追加清单执行 dry-run 和变更审核：
 
    ```bash
