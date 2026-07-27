@@ -4,6 +4,7 @@ import type { HydratedDocument } from 'mongoose';
 const MAX_ID = 128;
 const positive = (value: number): boolean => Number.isSafeInteger(value) && value >= 1;
 const bps = (value: number): boolean => Number.isSafeInteger(value) && value >= 0 && value <= 10_000;
+const nullableBps = (value: number | null): boolean => value === null || bps(value);
 
 @Schema({ collection: 'knowledge_course_versions', timestamps: true, versionKey: false, id: false })
 export class KnowledgeCourseVersionRecord {
@@ -21,7 +22,7 @@ export class KnowledgeCourseVersionRecord {
     match: /^[A-Za-z0-9_-]{43}$/u,
   })
   questionBankDigest!: string | null;
-  @Prop({ type: Number, default: null, immutable: true, validate: { validator: bps } })
+  @Prop({ type: Number, default: null, immutable: true, validate: { validator: nullableBps } })
   passingScoreBps!: number | null;
   @Prop({
     type: String,
@@ -167,6 +168,23 @@ KnowledgeTrainingAssignmentRecordSchema.index(
 );
 KnowledgeTrainingAssignmentRecordSchema.index({ tenantId: 1, onboardingInstanceId: 1, mandatory: 1, status: 1 });
 KnowledgeTrainingAssignmentRecordSchema.index({ tenantId: 1, mandatory: 1, status: 1 });
+KnowledgeTrainingAssignmentRecordSchema.pre('validate', function validateTrainingAssignment() {
+  const hasPassedExam = this.passedExamAttemptId !== null;
+  const hasCompletionEvidence = this.completionEvidenceId !== null;
+  if (
+    (this.status === 'assigned' &&
+      (this.progressBps !== 0 || hasPassedExam || hasCompletionEvidence)) ||
+    (this.status === 'in_progress' &&
+      (this.progressBps === 0 || hasPassedExam || hasCompletionEvidence)) ||
+    (this.status === 'completed' &&
+      (
+        this.progressBps !== 10_000 ||
+        !hasCompletionEvidence ||
+        this.examRequired !== hasPassedExam
+      )) ||
+    (this.status === 'expired' && (hasPassedExam || hasCompletionEvidence))
+  ) throw new Error('Knowledge 培训任务状态与证据组合非法');
+});
 
 @Schema({ collection: 'knowledge_exam_attempts', timestamps: true, versionKey: false, id: false })
 export class KnowledgeExamAttemptRecord {
