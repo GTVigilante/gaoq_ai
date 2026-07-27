@@ -61,12 +61,12 @@
 ## 5. 覆盖率边界
 
 2026-07-27 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，321 个测试文件、1,837 项测试全部
-通过；覆盖率为语句 80.73%、分支 72.76%、函数 83.82%、行 83.26%。分支仍低于
+`pnpm --filter @gaoq/erp-api test:coverage`，321 个测试文件、1,855 项测试全部
+通过；覆盖率为语句 81.13%、分支 73.21%、函数 84.31%、行 83.63%。分支仍低于
 Phase 0 规定的全系统 80% 门槛，必须作为实施缺口继续处理，禁止
 通过排除生产文件、降低阈值或只报告局部高覆盖率来宣称达标。
 
-租户上下文、审计链锚定、审计链验证、身份授权、审批数据加密、审批仓储、
+租户上下文、审计链锚定、审计链验证、组织主数据应用、身份授权、审批数据加密、审批仓储、
 审批应用状态机、
 MCP 确认、MCP 运行时、
 薪酬影子周期、薪酬运行、薪酬审批、Treasury Outbox、Care 纪念日应用、Care 离职应用、
@@ -76,6 +76,7 @@ MCP 确认、MCP 运行时、
 `pnpm quality:tenant-context-coverage`、
 `pnpm quality:audit-anchor-coverage`、
 `pnpm quality:audit-chain-verification-coverage`、
+`pnpm quality:org-application-coverage`、
 `pnpm quality:authorization-coverage`、
 `pnpm quality:approval-crypto-coverage`、
 `pnpm quality:mcp-confirmation-coverage`、
@@ -97,9 +98,10 @@ MCP 确认、MCP 运行时、
 `pnpm quality:knowledge-repositories-coverage`、
 `pnpm quality:marketing-cms-service-coverage`、
 `pnpm quality:approval-repositories-coverage` 和
-`pnpm quality:approval-application-coverage`。二十五条链路当前覆盖率分别为
+`pnpm quality:approval-application-coverage`。二十六条链路当前覆盖率分别为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
+97.44%/93.52%/100%/97.50%、
 100%/95.83%/100%/100%、
 98.75%/96.96%/100%/100%、
 98.06%/94.04%/98.64%/99.02%、
@@ -117,8 +119,8 @@ MCP 确认、MCP 运行时、
 95.97%/94.01%/100%/96.83%、
 100%/91.66%/100%/100%、100%/100%/100%/100%、
 97.44%/91.32%/100%/99.53%、100%/99.43%/100%/100% 和
-100%/97.27%/100%/100%（语句/分支/函数/行）；二十五项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明二十五条关键链路达标，
+100%/97.27%/100%/100%（语句/分支/函数/行）；二十六项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明二十六条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 数据迁移控制面已有 61 项幂等重放、证据分页、检查点竞争、关联映射、附件与
@@ -153,6 +155,11 @@ Treasury Outbox 已覆盖 13 项可信租户、精确事件字段、状态、强
 
 审计链验证服务已覆盖连续序号、前向哈希、事件 HMAC、链头一致性、空链、
 资源标识和 1,000 条满批分页，覆盖率达到四维 100%；独立四维 90% 门禁已接入
+`pnpm check`。
+
+组织主数据应用服务已覆盖 34 项可信租户、组织视图裁剪、岗位/职级/员工引用、
+入职与迁移事实幂等、Care 离职终态、乐观锁和失败关闭测试；覆盖率达到
+97.44%/93.52%/100%/97.50%（语句/分支/函数/行），独立四维 90% 门禁已接入
 `pnpm check`。
 
 ## 6. 架构边界
