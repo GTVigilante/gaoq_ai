@@ -190,6 +190,131 @@ function listQuery<T>(value: readonly T[]) {
   };
 }
 
+function positionInput(overrides: Partial<{
+  sequence: number;
+  sourceRecordId: string;
+  sourceVersion: string;
+  payload: Readonly<Record<string, unknown>>;
+  associationSourceIds: readonly string[];
+  attachments: readonly { sourceAttachmentId: string; checksum: string }[];
+}> = {}) {
+  const payload = overrides.payload ?? {
+    code: 'POS-001',
+    name: '产品经理',
+    status: 'active',
+  };
+  return {
+    sequence: overrides.sequence ?? 1,
+    sourceRecordId: overrides.sourceRecordId ?? 'legacy-position-001',
+    sourceVersion: overrides.sourceVersion ?? '1',
+    entityType: 'org.position' as const,
+    payload,
+    payloadHash: dataMigrationChecksum.digest(dataMigrationChecksum.canonicalJson(payload)),
+    associationSourceIds: [...(overrides.associationSourceIds ?? [])],
+    attachments: [...(overrides.attachments ?? [])],
+  };
+}
+
+function positionService(options: {
+  readonly run?: Readonly<Record<string, unknown>> | null;
+  readonly existingItem?: Readonly<Record<string, unknown>> | null;
+  readonly mapping?: Readonly<Record<string, unknown>> | null;
+  readonly createError?: unknown;
+  readonly checkpointModifiedCount?: number;
+  readonly attachmentExisting?: Readonly<Record<string, unknown>> | null;
+  readonly attachmentWriteError?: unknown;
+} = {}) {
+  const context = new TenantContextService();
+  const currentRun = options.run === undefined ? run() : options.run;
+  const runs = {
+    findOne: vi.fn().mockReturnValue(query(currentRun)),
+    updateOne: vi.fn().mockReturnValue({
+      exec: () => Promise.resolve({
+        modifiedCount: options.checkpointModifiedCount ?? 1,
+      }),
+    }),
+  };
+  const items = {
+    findOne: vi.fn().mockReturnValue(query(options.existingItem ?? null)),
+    create: vi.fn().mockResolvedValue(undefined),
+  };
+  const mappings = {
+    findOne: vi.fn().mockReturnValue(query(options.mapping ?? null)),
+    findOneAndUpdate: vi.fn().mockReturnValue(query({ targetId: 'position-001' })),
+  };
+  const associations = {
+    findOneAndUpdate: vi.fn().mockReturnValue(query({})),
+  };
+  const attachmentWrite = options.attachmentWriteError === undefined
+    ? { exec: () => Promise.resolve({ modifiedCount: 1 }) }
+    : { exec: () => Promise.reject(asRejectionError(options.attachmentWriteError)) };
+  const attachments = {
+    findOne: vi.fn().mockReturnValue(query(options.attachmentExisting ?? null)),
+    updateOne: vi.fn().mockReturnValue(attachmentWrite),
+  };
+  const organization = {
+    createPosition: options.createError === undefined
+      ? vi.fn().mockResolvedValue({
+        position: {
+          id: 'position-001',
+          tenantId: 'tenant-001',
+          code: 'POS-001',
+          name: '产品经理',
+          status: 'active',
+          version: 1,
+          createdAt: '2026-07-22T00:00:00.000Z',
+          updatedAt: '2026-07-22T00:00:00.000Z',
+        },
+      })
+      : vi.fn().mockRejectedValue(options.createError),
+    updatePosition: vi.fn(),
+  };
+  const service = new DataMigrationService(
+    context,
+    organization as unknown as OrgApplicationService,
+    runs as unknown as Model<DataMigrationRunDocument>,
+    items as unknown as Model<DataMigrationItemDocument>,
+    mappings as unknown as Model<DataMigrationMappingDocument>,
+    associations as unknown as Model<DataMigrationAssociationDocument>,
+    attachments as unknown as Model<DataMigrationAttachmentDocument>,
+  );
+  return {
+    context,
+    service,
+    runs,
+    items,
+    mappings,
+    associations,
+    attachments,
+    organization,
+  };
+}
+
+function asRejectionError(value: unknown): Error {
+  if (value instanceof Error) return value;
+  const error = new Error('mock rejection');
+  if (typeof value === 'object' && value !== null) Object.assign(error, value);
+  return error;
+}
+
+function validateMigrationInput(
+  store: ReturnType<typeof positionService>,
+  entityType: 'org.department' | 'org.position' | 'org.job_level',
+  payload: Readonly<Record<string, unknown>>,
+  associationSourceIds: readonly string[] = [],
+): Promise<void> {
+  const validator = store.service as unknown as {
+    validateInput(
+      currentRun: Readonly<Record<string, unknown>>,
+      input: Readonly<Record<string, unknown>>,
+    ): Promise<void>;
+  };
+  return validator.validateInput(run(), {
+    ...positionInput({ payload, associationSourceIds }),
+    entityType,
+  });
+}
+
 describe('DataMigrationService', () => {
   it('四方对账控制面必须同时具备 Payroll 与 Treasury 迁移权限', async () => {
     const context = new TenantContextService();
@@ -2635,5 +2760,848 @@ describe('DataMigrationService', () => {
       '"tenantId":', '"payload":', '"displayName":', '"createdAt":', '"updatedAt":',
     ]) expect(serialized).not.toContain(forbidden);
     expect(items.find).toHaveBeenCalledWith({ tenantId: 'tenant-001', runId: RUN_ID });
+  });
+
+  it('启动迁移创建受控运行并允许完全一致的来源运行幂等重放', async () => {
+    const context = new TenantContextService();
+    const input = {
+      sourceSystem: 'legacy-hr',
+      sourceRunId: 'full-001',
+      mode: 'full' as const,
+      scope: 'org_reference' as const,
+      expectedSourceCount: 1,
+      expectedSourceChecksum: 'e'.repeat(43),
+    };
+    const createdRuns = {
+      create: vi.fn().mockResolvedValue(undefined),
+      findOne: vi.fn(),
+    };
+    const createService = new DataMigrationService(
+      context,
+      {} as OrgApplicationService,
+      createdRuns as unknown as Model<DataMigrationRunDocument>,
+      {} as Model<DataMigrationItemDocument>,
+      {} as Model<DataMigrationMappingDocument>,
+      {} as Model<DataMigrationAssociationDocument>,
+      {} as Model<DataMigrationAttachmentDocument>,
+    );
+
+    const created = await trusted(context, () => createService.start(input));
+    expect(created).toMatchObject({
+      sourceSystem: 'legacy-hr',
+      sourceRunId: 'full-001',
+      mode: 'full',
+      scope: 'org_reference',
+      status: 'running',
+      checkpoint: 0,
+    });
+    expect(createdRuns.create).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: 'tenant-001',
+      expectedSourceChecksum: 'e'.repeat(43),
+      sourceChecksum: dataMigrationChecksum.empty,
+      targetChecksum: dataMigrationChecksum.empty,
+    }));
+
+    const duplicateRuns = {
+      create: vi.fn().mockRejectedValue({ code: 11_000 }),
+      findOne: vi.fn().mockReturnValue(query(run())),
+    };
+    const replayService = new DataMigrationService(
+      context,
+      {} as OrgApplicationService,
+      duplicateRuns as unknown as Model<DataMigrationRunDocument>,
+      {} as Model<DataMigrationItemDocument>,
+      {} as Model<DataMigrationMappingDocument>,
+      {} as Model<DataMigrationAssociationDocument>,
+      {} as Model<DataMigrationAttachmentDocument>,
+    );
+    await expect(trusted(context, () => replayService.start(input))).resolves.toMatchObject({
+      id: RUN_ID,
+      status: 'running',
+      checkpoint: 0,
+    });
+  });
+
+  it('启动迁移拒绝未知存储故障、非受信身份及复用不同快照', async () => {
+    const context = new TenantContextService();
+    const input = {
+      sourceSystem: 'legacy-hr',
+      sourceRunId: 'full-001',
+      mode: 'full' as const,
+      scope: 'org_reference' as const,
+      expectedSourceCount: 1,
+      expectedSourceChecksum: 'e'.repeat(43),
+    };
+    const brokenRuns = {
+      create: vi.fn().mockRejectedValue(new Error('database unavailable')),
+    };
+    const broken = new DataMigrationService(
+      context,
+      {} as OrgApplicationService,
+      brokenRuns as unknown as Model<DataMigrationRunDocument>,
+      {} as Model<DataMigrationItemDocument>,
+      {} as Model<DataMigrationMappingDocument>,
+      {} as Model<DataMigrationAssociationDocument>,
+      {} as Model<DataMigrationAttachmentDocument>,
+    );
+    await expect(trusted(context, () => broken.start(input))).rejects.toThrow(
+      'database unavailable',
+    );
+
+    const user: ActorContext = {
+      actorType: 'user',
+      actorId: 'user-001',
+      tenantId: 'tenant-001',
+      roleCodes: [],
+      scopes: ['erp:migration:execute', 'erp:org:master:write'],
+      departmentIds: [],
+      traceId: 'trace-user-001',
+    };
+    await expect(context.run({
+      tenant: { tenantId: 'tenant-001', source: 'access_token' },
+      actor: user,
+    }, () => broken.start(input))).rejects.toThrow('当前身份无权执行数据迁移');
+
+    for (const existing of [
+      null,
+      { ...run(), expectedSourceChecksum: 'x'.repeat(43) },
+      { ...run(), expectedSourceCount: 2 },
+      { ...run(), mode: 'incremental' as const },
+      { ...run(), scope: 'org_workforce' as const },
+    ]) {
+      const duplicateRuns = {
+        create: vi.fn().mockRejectedValue({ code: 11_000 }),
+        findOne: vi.fn().mockReturnValue(query(existing)),
+      };
+      const service = new DataMigrationService(
+        context,
+        {} as OrgApplicationService,
+        duplicateRuns as unknown as Model<DataMigrationRunDocument>,
+        {} as Model<DataMigrationItemDocument>,
+        {} as Model<DataMigrationMappingDocument>,
+        {} as Model<DataMigrationAssociationDocument>,
+        {} as Model<DataMigrationAttachmentDocument>,
+      );
+      await expect(trusted(context, () => service.start(input))).rejects.toThrow(
+        '来源运行标识已绑定不同快照',
+      );
+    }
+  });
+
+  it('完成迁移只冻结完整且零差异的运行', async () => {
+    const context = new TenantContextService();
+    const eligibleRun = {
+      ...run(),
+      checkpoint: 1,
+      sourceChecksum: 'e'.repeat(43),
+      targetChecksum: 't'.repeat(43),
+    };
+    const completedRun = {
+      ...eligibleRun,
+      status: 'completed' as const,
+      completedAt: new Date('2026-07-27T00:00:00.000Z'),
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(eligibleRun)),
+      findOneAndUpdate: vi.fn().mockReturnValue(query(completedRun)),
+    };
+    const items = {
+      aggregate: vi.fn().mockReturnValue({
+        exec: () => Promise.resolve([{ _id: 'applied', count: 1 }]),
+      }),
+    };
+    const associations = {
+      aggregate: vi.fn().mockReturnValue({ exec: () => Promise.resolve([]) }),
+    };
+    const attachments = {
+      aggregate: vi.fn().mockReturnValue({ exec: () => Promise.resolve([]) }),
+    };
+    const service = new DataMigrationService(
+      context,
+      {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      {} as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+    );
+
+    const report = await trusted(context, () => service.complete(RUN_ID));
+    expect(report).toMatchObject({
+      runId: RUN_ID,
+      status: 'completed',
+      counts: { applied: 1, duplicate: 0, rejected: 0 },
+      phaseSixEligible: true,
+      differences: [],
+    });
+    const updateCall = runs.findOneAndUpdate.mock.calls[0];
+    expect(updateCall?.[0]).toEqual({
+      tenantId: 'tenant-001',
+      id: RUN_ID,
+      status: 'running',
+      checkpoint: 1,
+    });
+    const update = updateCall?.[1] as unknown as {
+      $set: { status: string; completedAt: unknown };
+    };
+    expect(update.$set.status).toBe('completed');
+    expect(update.$set.completedAt).toBeInstanceOf(Date);
+    expect(updateCall?.[2]).toEqual({ returnDocument: 'after', runValidators: true });
+  });
+
+  it('完成迁移拒绝缺失、非运行、不完整和并发状态变化', async () => {
+    const context = new TenantContextService();
+    for (const [value, message] of [
+      [null, '迁移运行不存在'],
+      [{ ...run(), status: 'completed' as const }, '迁移运行已结束'],
+      [run(), '来源记录尚未全部处理'],
+    ] as const) {
+      const runs = { findOne: vi.fn().mockReturnValue(query(value)) };
+      const service = new DataMigrationService(
+        context,
+        {} as OrgApplicationService,
+        runs as unknown as Model<DataMigrationRunDocument>,
+        {} as Model<DataMigrationItemDocument>,
+        {} as Model<DataMigrationMappingDocument>,
+        {} as Model<DataMigrationAssociationDocument>,
+        {} as Model<DataMigrationAttachmentDocument>,
+      );
+      await expect(trusted(context, () => service.complete(RUN_ID))).rejects.toThrow(message);
+    }
+
+    const eligibleRun = {
+      ...run(),
+      checkpoint: 1,
+      sourceChecksum: 'e'.repeat(43),
+      targetChecksum: 't'.repeat(43),
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(eligibleRun)),
+      findOneAndUpdate: vi.fn().mockReturnValue(query(null)),
+    };
+    const emptyAggregate = { aggregate: vi.fn().mockReturnValue({
+      exec: () => Promise.resolve([]),
+    }) };
+    const service = new DataMigrationService(
+      context,
+      {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      emptyAggregate as unknown as Model<DataMigrationItemDocument>,
+      {} as Model<DataMigrationMappingDocument>,
+      emptyAggregate as unknown as Model<DataMigrationAssociationDocument>,
+      emptyAggregate as unknown as Model<DataMigrationAttachmentDocument>,
+    );
+    await expect(trusted(context, () => service.complete(RUN_ID))).rejects.toThrow(
+      '迁移运行状态已变化',
+    );
+  });
+
+  it('报告输出全部六类差异并拒绝越权与不存在运行', async () => {
+    const context = new TenantContextService();
+    const mismatched = {
+      ...run(),
+      expectedSourceCount: 3,
+      checkpoint: 1,
+      sourceChecksum: 'x'.repeat(43),
+    };
+    const runs = { findOne: vi.fn().mockReturnValue(query(mismatched)) };
+    const items = {
+      aggregate: vi.fn().mockReturnValue({
+        exec: () => Promise.resolve([
+          { _id: 'applied', count: 1 },
+          { _id: 'duplicate', count: 2 },
+          { _id: 'rejected', count: 3 },
+        ]),
+      }),
+    };
+    const associations = {
+      aggregate: vi.fn().mockReturnValue({
+        exec: () => Promise.resolve([
+          { _id: 'resolved', count: 4 },
+          { _id: 'missing', count: 5 },
+        ]),
+      }),
+    };
+    const attachments = {
+      aggregate: vi.fn().mockReturnValue({
+        exec: () => Promise.resolve([
+          { _id: 'pending', count: 2 },
+          { _id: 'processing', count: 3 },
+          { _id: 'verified', count: 4 },
+          { _id: 'rejected', count: 5 },
+        ]),
+      }),
+    };
+    const service = new DataMigrationService(
+      context,
+      {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      {} as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+    );
+
+    const report = await reader(context, () => service.report(RUN_ID));
+    expect(report).toMatchObject({
+      counts: { applied: 1, duplicate: 2, rejected: 3 },
+      associationCount: 9,
+      unresolvedAssociationCount: 5,
+      attachmentCount: 14,
+      pendingAttachmentCount: 5,
+      phaseSixEligible: false,
+    });
+    expect(report.differences.map((entry) => entry.code)).toEqual([
+      'SOURCE_COUNT_MISMATCH',
+      'SOURCE_CHECKSUM_MISMATCH',
+      'REJECTED_RECORDS',
+      'ASSOCIATION_UNRESOLVED',
+      'ATTACHMENT_MIGRATION_PENDING',
+      'ATTACHMENT_MIGRATION_REJECTED',
+    ]);
+
+    const denied: ActorContext = {
+      actorType: 'user',
+      actorId: 'employee-001',
+      tenantId: 'tenant-001',
+      roleCodes: [],
+      scopes: [],
+      departmentIds: [],
+      traceId: 'trace-denied',
+    };
+    await expect(context.run({
+      tenant: { tenantId: 'tenant-001', source: 'access_token' },
+      actor: denied,
+    }, () => service.report(RUN_ID))).rejects.toThrow('当前身份无权读取迁移报告');
+
+    runs.findOne.mockReturnValue(query(null));
+    await expect(reader(context, () => service.report(RUN_ID))).rejects.toThrow(
+      '迁移运行不存在',
+    );
+  });
+
+  it('关联与附件证据分页使用稳定复合游标并保持字段白名单', async () => {
+    const context = new TenantContextService();
+    const frozenRun = { ...run(), status: 'completed' as const };
+    const runs = { findOne: vi.fn().mockReturnValue(query(frozenRun)) };
+    const association = {
+      id: 'association-001',
+      tenantId: 'tenant-001',
+      runId: RUN_ID,
+      sequence: 1,
+      relationship: 'department',
+      sourceAssociationId: 'legacy-department-001',
+      targetId: 'department-001',
+      status: 'resolved',
+      sourcePayload: { forbidden: true },
+    };
+    const attachment = {
+      id: 'attachment-001',
+      tenantId: 'tenant-001',
+      runId: RUN_ID,
+      sequence: 1,
+      sourceAttachmentId: 'legacy-attachment-001',
+      checksum: 'a'.repeat(43),
+      status: 'verified',
+      attempts: 1,
+      targetEvidenceId: 'evidence-001',
+      rejectionCode: null,
+      content: 'forbidden',
+    };
+    const associations = {
+      find: vi.fn()
+        .mockReturnValueOnce(listQuery([association, {
+          ...association,
+          sourceAssociationId: 'legacy-department-002',
+        }]))
+        .mockReturnValueOnce(listQuery([])),
+    };
+    const attachments = {
+      find: vi.fn()
+        .mockReturnValueOnce(listQuery([attachment, {
+          ...attachment,
+          sourceAttachmentId: 'legacy-attachment-002',
+        }]))
+        .mockReturnValueOnce(listQuery([])),
+    };
+    const service = new DataMigrationService(
+      context,
+      {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      {} as Model<DataMigrationItemDocument>,
+      {} as Model<DataMigrationMappingDocument>,
+      associations as unknown as Model<DataMigrationAssociationDocument>,
+      attachments as unknown as Model<DataMigrationAttachmentDocument>,
+    );
+
+    const associationPage = await evidenceReader(context, () => service.evidence(RUN_ID, {
+      kind: 'associations',
+      limit: 1,
+    }));
+    expect(associationPage.records).toEqual([{
+      id: 'association-001',
+      sequence: 1,
+      relationship: 'department',
+      sourceAssociationId: 'legacy-department-001',
+      targetId: 'department-001',
+      status: 'resolved',
+    }]);
+    expect(associationPage.nextCursor).toMatch(/^[A-Za-z0-9_-]+$/u);
+    const associationCursor = associationPage.nextCursor;
+    if (associationCursor === null) throw new Error('关联证据游标缺失');
+    await evidenceReader(context, () => service.evidence(RUN_ID, {
+      kind: 'associations',
+      limit: 1,
+      cursor: associationCursor,
+    }));
+    const associationFilter = associations.find.mock.calls.at(-1)?.[0] as unknown as {
+      tenantId: string;
+      runId: string;
+      $or: unknown;
+    };
+    expect(associationFilter).toMatchObject({
+      tenantId: 'tenant-001',
+      runId: RUN_ID,
+    });
+    expect(associationFilter.$or).toBeInstanceOf(Array);
+
+    const attachmentPage = await evidenceReader(context, () => service.evidence(RUN_ID, {
+      kind: 'attachments',
+      limit: 1,
+    }));
+    expect(attachmentPage.records).toEqual([{
+      id: 'attachment-001',
+      sequence: 1,
+      sourceAttachmentId: 'legacy-attachment-001',
+      checksum: 'a'.repeat(43),
+      status: 'verified',
+      attempts: 1,
+      targetEvidenceId: 'evidence-001',
+      rejectionCode: null,
+    }]);
+    expect(attachmentPage.nextCursor).toMatch(/^[A-Za-z0-9_-]+$/u);
+    const attachmentCursor = attachmentPage.nextCursor;
+    if (attachmentCursor === null) throw new Error('附件证据游标缺失');
+    await evidenceReader(context, () => service.evidence(RUN_ID, {
+      kind: 'attachments',
+      limit: 1,
+      cursor: attachmentCursor,
+    }));
+    const attachmentFilter = attachments.find.mock.calls.at(-1)?.[0] as unknown as {
+      tenantId: string;
+      runId: string;
+      $or: unknown;
+    };
+    expect(attachmentFilter).toMatchObject({
+      tenantId: 'tenant-001',
+      runId: RUN_ID,
+    });
+    expect(attachmentFilter.$or).toBeInstanceOf(Array);
+  });
+
+  it('证据导出拒绝缺失双 Scope、未冻结运行、缺失运行和非法游标', async () => {
+    const context = new TenantContextService();
+    const runs = { findOne: vi.fn().mockReturnValue(query({
+      ...run(),
+      status: 'completed' as const,
+    })) };
+    const items = { find: vi.fn().mockReturnValue(listQuery([])) };
+    const service = new DataMigrationService(
+      context,
+      {} as OrgApplicationService,
+      runs as unknown as Model<DataMigrationRunDocument>,
+      items as unknown as Model<DataMigrationItemDocument>,
+      {} as Model<DataMigrationMappingDocument>,
+      {} as Model<DataMigrationAssociationDocument>,
+      {} as Model<DataMigrationAttachmentDocument>,
+    );
+    const oneScope: ActorContext = {
+      actorType: 'user',
+      actorId: 'auditor-001',
+      tenantId: 'tenant-001',
+      roleCodes: [],
+      scopes: ['erp:migration:read'],
+      departmentIds: [],
+      traceId: 'trace-one-scope',
+    };
+    await expect(context.run({
+      tenant: { tenantId: 'tenant-001', source: 'access_token' },
+      actor: oneScope,
+    }, () => service.evidence(RUN_ID, {
+      kind: 'items',
+      limit: 10,
+    }))).rejects.toThrow('当前身份无权导出迁移证据');
+
+    runs.findOne.mockReturnValue(query(null));
+    await expect(evidenceReader(context, () => service.evidence(RUN_ID, {
+      kind: 'items',
+      limit: 10,
+    }))).rejects.toThrow('迁移运行不存在');
+
+    runs.findOne.mockReturnValue(query(run()));
+    await expect(evidenceReader(context, () => service.evidence(RUN_ID, {
+      kind: 'items',
+      limit: 10,
+    }))).rejects.toThrow('迁移运行结束后才能导出完整证据');
+
+    runs.findOne.mockReturnValue(query({ ...run(), status: 'completed' as const }));
+    for (const cursor of [
+      'not-json',
+      Buffer.from('null', 'utf8').toString('base64url'),
+      Buffer.from(JSON.stringify({
+        kind: 'items',
+        sequence: 0,
+        tieOne: '',
+        tieTwo: '',
+      }), 'utf8').toString('base64url'),
+      Buffer.from(JSON.stringify({
+        kind: 'attachments',
+        sequence: 1,
+        tieOne: '',
+        tieTwo: '',
+      }), 'utf8').toString('base64url'),
+    ]) {
+      await expect(evidenceReader(context, () => service.evidence(RUN_ID, {
+        kind: 'items',
+        limit: 10,
+        cursor,
+      }))).rejects.toThrow('迁移证据游标非法');
+    }
+  });
+
+  it('应用入口失败关闭重复证据、摘要漂移、运行状态和检查点越界', async () => {
+    const duplicateAssociation = positionService();
+    await expect(trusted(
+      duplicateAssociation.context,
+      () => duplicateAssociation.service.apply(RUN_ID, positionInput({
+        associationSourceIds: ['duplicate-001', 'duplicate-001'],
+      })),
+    )).rejects.toThrow('关联来源标识不得重复');
+
+    const duplicateAttachment = positionService();
+    const repeatedAttachment = {
+      sourceAttachmentId: 'attachment-001',
+      checksum: 'a'.repeat(43),
+    };
+    await expect(trusted(
+      duplicateAttachment.context,
+      () => duplicateAttachment.service.apply(RUN_ID, positionInput({
+        attachments: [repeatedAttachment, repeatedAttachment],
+      })),
+    )).rejects.toThrow('附件来源标识不得重复');
+
+    const invalidHash = positionService();
+    await expect(trusted(invalidHash.context, () => invalidHash.service.apply(RUN_ID, {
+      ...positionInput(),
+      payloadHash: 'x'.repeat(43),
+    }))).rejects.toThrow('来源记录校验和不匹配');
+
+    const missingRun = positionService({ run: null });
+    await expect(trusted(
+      missingRun.context,
+      () => missingRun.service.apply(RUN_ID, positionInput()),
+    )).rejects.toThrow('迁移运行不存在');
+
+    const completedRun = positionService({
+      run: { ...run(), status: 'completed', completedAt: new Date() },
+    });
+    await expect(trusted(
+      completedRun.context,
+      () => completedRun.service.apply(RUN_ID, positionInput()),
+    )).rejects.toThrow('迁移运行已结束');
+
+    const outOfRange = positionService();
+    await expect(trusted(
+      outOfRange.context,
+      () => outOfRange.service.apply(RUN_ID, positionInput({ sequence: 2 })),
+    )).rejects.toThrow('来源序号超过声明记录数');
+
+    const wrongScope = positionService({
+      run: { ...run(), scope: 'org_workforce' },
+    });
+    await expect(trusted(
+      wrongScope.context,
+      () => wrongScope.service.apply(RUN_ID, positionInput()),
+    )).rejects.toThrow('实体类型不属于当前迁移范围');
+
+    const checkpointGap = positionService({
+      run: { ...run(), expectedSourceCount: 3 },
+    });
+    await expect(trusted(
+      checkpointGap.context,
+      () => checkpointGap.service.apply(RUN_ID, positionInput({ sequence: 2 })),
+    )).rejects.toThrow('必须从当前检查点的下一条继续');
+  });
+
+  it('应用入口区分本次重放、跨运行重复和序号篡改', async () => {
+    const input = positionInput();
+    const targetHash = 't'.repeat(43);
+    const currentMapping = {
+      payloadHash: input.payloadHash,
+      targetId: 'position-001',
+      targetVersion: 1,
+      targetHash,
+      lastRunId: RUN_ID,
+      lastSequence: 1,
+    };
+    const replay = positionService({ mapping: currentMapping });
+    await expect(trusted(
+      replay.context,
+      () => replay.service.apply(RUN_ID, input),
+    )).resolves.toMatchObject({
+      status: 'applied',
+      targetId: 'position-001',
+      targetVersion: 1,
+    });
+    expect(replay.organization.createPosition).not.toHaveBeenCalled();
+
+    const duplicate = positionService({
+      mapping: {
+        ...currentMapping,
+        lastRunId: '01J8ZQK7V0A2M4N6P8R0T2W4F0',
+      },
+    });
+    await expect(trusted(
+      duplicate.context,
+      () => duplicate.service.apply(RUN_ID, input),
+    )).resolves.toMatchObject({ status: 'duplicate', targetId: 'position-001' });
+
+    const sourceFactHash = dataMigrationChecksum.sourceFactHash(input);
+    const existingItem = {
+      sequence: 1,
+      sourceRecordId: input.sourceRecordId,
+      entityType: input.entityType,
+      status: 'applied',
+      targetId: 'position-001',
+      targetVersion: 1,
+      targetHash,
+      rejectionCode: null,
+      sourceFactHash,
+    };
+    const itemReplay = positionService({
+      run: { ...run(), checkpoint: 1 },
+      existingItem,
+    });
+    await expect(trusted(
+      itemReplay.context,
+      () => itemReplay.service.apply(RUN_ID, input),
+    )).resolves.toMatchObject({ status: 'applied', targetId: 'position-001' });
+    expect(itemReplay.runs.updateOne).not.toHaveBeenCalled();
+
+    const sequenceConflict = positionService({
+      existingItem: { ...existingItem, sourceFactHash: 'x'.repeat(43) },
+    });
+    await expect(trusted(
+      sequenceConflict.context,
+      () => sequenceConflict.service.apply(RUN_ID, input),
+    )).rejects.toThrow('同一序号已被不同来源记录占用');
+  });
+
+  it('应用入口把领域拒绝固化到迁移账本并保留基础设施异常', async () => {
+    const rejected = positionService({
+      createError: new Error('ORG_POSITION_INVALID'),
+    });
+    await expect(trusted(
+      rejected.context,
+      () => rejected.service.apply(RUN_ID, positionInput()),
+    )).resolves.toMatchObject({
+      status: 'rejected',
+      targetId: null,
+      targetVersion: null,
+      rejectionCode: 'ORG_POSITION_INVALID',
+    });
+    expect(rejected.items.create).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'rejected',
+      rejectionCode: 'ORG_POSITION_INVALID',
+      targetHash: null,
+    }));
+
+    const responseRejected = positionService({
+      createError: { response: { code: 'ORG_POSITION_CONFLICT' } },
+    });
+    await expect(trusted(
+      responseRejected.context,
+      () => responseRejected.service.apply(RUN_ID, positionInput()),
+    )).resolves.toMatchObject({
+      status: 'rejected',
+      rejectionCode: 'ORG_POSITION_CONFLICT',
+    });
+
+    const invalidResponse = positionService({
+      createError: { response: { code: 42 } },
+    });
+    await expect(trusted(
+      invalidResponse.context,
+      () => invalidResponse.service.apply(RUN_ID, positionInput()),
+    )).rejects.toMatchObject({ response: { code: 42 } });
+  });
+
+  it('检查点和附件证据写入对并发、复用与唯一键冲突失败关闭', async () => {
+    const checkpointRace = positionService({ checkpointModifiedCount: 0 });
+    await expect(trusted(
+      checkpointRace.context,
+      () => checkpointRace.service.apply(RUN_ID, positionInput()),
+    )).rejects.toThrow('迁移检查点已由其它执行者推进');
+
+    const attachment = {
+      sourceAttachmentId: 'attachment-001',
+      checksum: 'a'.repeat(43),
+    };
+    const attachmentReused = positionService({
+      attachmentExisting: {
+        sequence: 2,
+        checksum: attachment.checksum,
+      },
+    });
+    await expect(trusted(
+      attachmentReused.context,
+      () => attachmentReused.service.apply(RUN_ID, positionInput({
+        attachments: [attachment],
+      })),
+    )).rejects.toThrow('同一来源附件标识已绑定不同记录或校验和');
+
+    const checksumReused = positionService({
+      attachmentExisting: {
+        sequence: 1,
+        checksum: 'b'.repeat(43),
+      },
+    });
+    await expect(trusted(
+      checksumReused.context,
+      () => checksumReused.service.apply(RUN_ID, positionInput({
+        attachments: [attachment],
+      })),
+    )).rejects.toThrow('同一来源附件标识已绑定不同记录或校验和');
+
+    const attachmentDuplicateKey = positionService({
+      attachmentWriteError: { code: 11_000 },
+    });
+    await expect(trusted(
+      attachmentDuplicateKey.context,
+      () => attachmentDuplicateKey.service.apply(RUN_ID, positionInput({
+        attachments: [attachment],
+      })),
+    )).rejects.toThrow('同一来源附件标识已绑定不同记录或校验和');
+
+    const attachmentStorageFailure = positionService({
+      attachmentWriteError: new Error('attachment storage unavailable'),
+    });
+    await expect(trusted(
+      attachmentStorageFailure.context,
+      () => attachmentStorageFailure.service.apply(RUN_ID, positionInput({
+        attachments: [attachment],
+      })),
+    )).rejects.toThrow('attachment storage unavailable');
+  });
+
+  it('组织参考负载逐字段拒绝结构、类型、枚举和数值越界', async () => {
+    const store = positionService();
+    await expect(validateMigrationInput(store, 'org.department', {
+      code: 'DEP-001',
+      name: '产品部',
+      parentSourceId: null,
+      sortOrder: 0,
+      status: 'active',
+    })).resolves.toBeUndefined();
+    for (const payload of [
+      {
+        code: 'DEP-001',
+        name: '产品部',
+        parentSourceId: null,
+        sortOrder: 0,
+        status: 'active',
+        extra: true,
+      },
+      {
+        code: 1,
+        name: '产品部',
+        parentSourceId: null,
+        sortOrder: 0,
+        status: 'active',
+      },
+      {
+        code: 'DEP-001',
+        name: null,
+        parentSourceId: null,
+        sortOrder: 0,
+        status: 'active',
+      },
+      {
+        code: 'DEP-001',
+        name: '产品部',
+        parentSourceId: null,
+        sortOrder: 0,
+        status: 'deleted',
+      },
+      {
+        code: 'DEP-001',
+        name: '产品部',
+        parentSourceId: 1,
+        sortOrder: 0,
+        status: 'active',
+      },
+      {
+        code: 'DEP-001',
+        name: '产品部',
+        parentSourceId: null,
+        sortOrder: 0.5,
+        status: 'active',
+      },
+      {
+        code: 'DEP-001',
+        name: '产品部',
+        parentSourceId: null,
+        sortOrder: -1,
+        status: 'active',
+      },
+    ]) {
+      await expect(validateMigrationInput(
+        store,
+        'org.department',
+        payload,
+      )).rejects.toThrow('DATA_MIGRATION_PAYLOAD_INVALID');
+    }
+
+    await expect(validateMigrationInput(store, 'org.position', {
+      code: 'POS-001',
+      name: '产品经理',
+      status: 'inactive',
+    })).resolves.toBeUndefined();
+    for (const payload of [
+      { code: 'POS-001', name: '产品经理', status: 'active', extra: true },
+      { code: null, name: '产品经理', status: 'active' },
+      { code: 'POS-001', name: 1, status: 'active' },
+      { code: 'POS-001', name: '产品经理', status: 'deleted' },
+    ]) {
+      await expect(validateMigrationInput(
+        store,
+        'org.position',
+        payload,
+      )).rejects.toThrow('DATA_MIGRATION_PAYLOAD_INVALID');
+    }
+
+    for (const track of ['professional', 'management'] as const) {
+      await expect(validateMigrationInput(store, 'org.job_level', {
+        code: 'P5',
+        name: '资深',
+        rank: 5,
+        track,
+      })).resolves.toBeUndefined();
+    }
+    for (const payload of [
+      { code: 'P5', name: '资深', rank: 5, track: 'professional', extra: true },
+      { code: null, name: '资深', rank: 5, track: 'professional' },
+      { code: 'P5', name: null, rank: 5, track: 'professional' },
+      { code: 'P5', name: '资深', rank: 5, track: 'individual' },
+      { code: 'P5', name: '资深', rank: 5.5, track: 'professional' },
+      { code: 'P5', name: '资深', rank: 0, track: 'professional' },
+      { code: 'P5', name: '资深', rank: 31, track: 'professional' },
+    ]) {
+      await expect(validateMigrationInput(
+        store,
+        'org.job_level',
+        payload,
+      )).rejects.toThrow('DATA_MIGRATION_PAYLOAD_INVALID');
+    }
   });
 });
