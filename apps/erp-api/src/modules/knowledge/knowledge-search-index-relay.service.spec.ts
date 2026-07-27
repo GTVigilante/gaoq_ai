@@ -122,6 +122,58 @@ describe('Knowledge 搜索索引事务任务 Relay', () => {
     expect(index.apply).toHaveBeenCalledOnce();
     expect(records.updateOne).toHaveBeenCalledTimes(2);
   });
+
+  it('拒绝无效或越界的索引回执时间并保留可重试任务', async () => {
+    for (const indexedAt of [
+      'invalid-time',
+      '2026-07-27T00:06:00.000Z',
+      '2026-07-26T23:54:59.000Z',
+    ]) {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-07-27T00:00:00.000Z'));
+      try {
+        const records = modelReturning(task);
+        const relay = new KnowledgeSearchIndexRelayService(
+          records as never,
+          { apply: vi.fn().mockResolvedValue({
+            receiptId: 'receipt-invalid',
+            indexedContentDigest: 'a'.repeat(43),
+            indexedAt,
+          }) },
+          { recordKnowledgeSearchIndex: vi.fn() } as never,
+        );
+
+        await expect(relay.relayBatch('worker-receipt')).resolves.toBe(0);
+        expect(lastUpdate(records)).toMatchObject({
+          status: 'pending',
+          attempts: 1,
+          lockedBy: null,
+          lastErrorCode: 'KNOWLEDGE_SEARCH_INDEX_RECEIPT_TIME_INVALID',
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+  });
+
+  it('入口拒绝非法 Worker 标识与批量上限且不认领任务', async () => {
+    const records = modelReturning(task);
+    const relay = new KnowledgeSearchIndexRelayService(
+      records as never,
+      { apply: vi.fn() },
+      { recordKnowledgeSearchIndex: vi.fn() } as never,
+    );
+
+    await expect(relay.relayBatch('invalid worker')).rejects.toThrow(
+      'KNOWLEDGE_SEARCH_INDEX_WORKER_INVALID',
+    );
+    for (const limit of [0, 201, 1.5]) {
+      await expect(relay.relayBatch('worker-001', limit)).rejects.toThrow(
+        'KNOWLEDGE_SEARCH_INDEX_LIMIT_INVALID',
+      );
+    }
+    expect(records.findOneAndUpdate).not.toHaveBeenCalled();
+  });
 });
 
 function modelReturning(value: typeof task | (typeof task & { readonly attempts: number })) {
