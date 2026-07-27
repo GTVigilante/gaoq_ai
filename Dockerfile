@@ -10,6 +10,7 @@ RUN corepack enable && corepack prepare pnpm@10.29.2 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY apps/erp-api/package.json apps/erp-api/package.json
 COPY apps/erp-web/package.json apps/erp-web/package.json
+COPY packages/platform-contracts/package.json packages/platform-contracts/package.json
 COPY packages/shared-types/package.json packages/shared-types/package.json
 COPY packages/shared-utils/package.json packages/shared-utils/package.json
 RUN pnpm install --frozen-lockfile
@@ -19,6 +20,7 @@ COPY apps/erp-api apps/erp-api
 COPY packages packages
 RUN pnpm --filter @gaoq/shared-types build && \
     pnpm --filter @gaoq/shared-utils build && \
+    pnpm --filter @gaoq/platform-contracts build && \
     pnpm --filter @gaoq/erp-api build && \
     pnpm --filter @gaoq/erp-api deploy --prod --legacy /runtime/erp-api
 
