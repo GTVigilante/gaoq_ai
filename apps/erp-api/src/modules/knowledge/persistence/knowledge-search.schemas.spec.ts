@@ -68,6 +68,68 @@ describe('Knowledge 搜索索引任务持久化契约', () => {
       ...base,
       audienceMode: 'employment_scope',
     }).validate()).rejects.toThrow(/授权组合非法/);
+    await expect(new TaskModel({
+      ...base,
+      audienceMode: 'employment_scope',
+      audienceDepartmentIds: ['department-001'],
+    }).validate()).resolves.toBeUndefined();
+    await expect(new TaskModel({
+      ...base,
+      audienceMode: 'employment_scope',
+      audiencePositionIds: ['position-001'],
+    }).validate()).resolves.toBeUndefined();
+    await expect(new TaskModel({
+      ...base,
+      audienceDepartmentIds: ['department-001'],
+    }).validate()).rejects.toThrow(/授权组合非法/);
+  });
+
+  it('受众标识必须安全、有限且不重复', async () => {
+    for (const audienceDepartmentIds of [
+      ['department-001', 'department-001'],
+      ['unsafe/id'],
+      Array.from({ length: 201 }, (_, index) => `department-${index}`),
+    ]) {
+      await expect(new TaskModel({
+        ...base,
+        audienceDepartmentIds,
+      }).validate()).rejects.toThrow(/授权范围非法/);
+    }
+    await expect(new TaskModel({
+      ...base,
+      audiencePositionIds: ['unsafe id'],
+    }).validate()).rejects.toThrow(/授权范围非法/);
+  });
+
+  it('完成证据和处理锁的每个半组合均失败关闭', async () => {
+    for (const [field, value] of [
+      ['completedAt', new Date('2026-07-27T00:00:01.000Z')],
+      ['receiptId', 'receipt-001'],
+      ['indexedContentDigest', 'a'.repeat(43)],
+      ['indexedAt', new Date('2026-07-27T00:00:01.000Z')],
+    ] as const) {
+      await expect(new TaskModel({
+        ...base,
+        [field]: value,
+      }).validate()).rejects.toThrow(/完成证据组合非法/);
+    }
+    await expect(new TaskModel({
+      ...base,
+      status: 'completed',
+      completedAt: new Date('2026-07-27T00:00:01.000Z'),
+      receiptId: 'receipt-001',
+      indexedContentDigest: 'a'.repeat(43),
+    }).validate()).rejects.toThrow(/完成证据组合非法/);
+    await expect(new TaskModel({
+      ...base,
+      status: 'processing',
+      lockedAt: new Date('2026-07-27T00:00:00.000Z'),
+    }).validate()).rejects.toThrow(/锁组合非法/);
+    await expect(new TaskModel({
+      ...base,
+      status: 'processing',
+      lockedBy: 'worker-001',
+    }).validate()).rejects.toThrow(/锁组合非法/);
   });
 
   it('事件键与课程版本操作均有租户内唯一约束', () => {

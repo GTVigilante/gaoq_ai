@@ -78,8 +78,8 @@ export class KnowledgeExamRunRecord {
   @Prop({
     type: String,
     default: null,
-    maxlength: 256,
-    match: /^[\p{L}\p{N} ._:-]{8,256}$/u,
+    maxlength: 64,
+    match: /^[A-Z][A-Z0-9_]{7,63}$/u,
   })
   replayReason!: string | null;
   @Prop({ type: Date, default: null }) replayedAt!: Date | null;
@@ -192,4 +192,7 @@ KnowledgeExamRunRecordSchema.pre('validate', function validateExamRun() {
   if (
     (this.lockedAt === null) !== (this.lockedBy === null)
   ) throw new Error('Knowledge 考试运行锁组合非法');
+  if (
+    (this.replayReason === null) !== (this.replayedAt === null)
+  ) throw new Error('Knowledge 考试重放证据组合非法');
 });

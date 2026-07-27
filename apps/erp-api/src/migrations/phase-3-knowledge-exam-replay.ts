@@ -9,6 +9,16 @@ const REASON_CODE = /^[A-Z][A-Z0-9_]{7,63}$/u;
 
 export type KnowledgeExamReplayMode = 'dry-run' | 'apply';
 
+export interface KnowledgeExamReplayResult {
+  readonly tenantId: string;
+  readonly runId: string;
+  readonly previousVersion: number;
+  readonly version: number;
+  readonly status: ReturnType<typeof inferReplayStatus>;
+  readonly replayedAt: string;
+  readonly applied: boolean;
+}
+
 export function inferReplayStatus(run: {
   readonly gatewaySessionRef: string | null;
   readonly submissionRef: string | null;
@@ -29,7 +39,7 @@ export async function replayKnowledgeExamRun(
     readonly reasonCode: string;
   },
   mode: KnowledgeExamReplayMode,
-) {
+): Promise<KnowledgeExamReplayResult> {
   if (
     !SAFE_ID.test(input.tenantId) ||
     !ULID.test(input.runId) ||
@@ -39,15 +49,7 @@ export async function replayKnowledgeExamRun(
   ) throw new Error('KNOWLEDGE_EXAM_REPLAY_INPUT_INVALID');
   const runs = connection.collection('knowledge_exam_runs');
   const session = await connection.startSession();
-  let result: {
-    readonly tenantId: string;
-    readonly runId: string;
-    readonly previousVersion: number;
-    readonly version: number;
-    readonly status: ReturnType<typeof inferReplayStatus>;
-    readonly replayedAt: string;
-    readonly applied: boolean;
-  } | null = null;
+  let result: KnowledgeExamReplayResult | null = null;
   try {
     await session.withTransaction(async () => {
       const current = await runs.findOne({
@@ -96,6 +98,8 @@ export async function replayKnowledgeExamRun(
             attempts: 0,
             nextActionAt: now,
             lastErrorCode: null,
+            replayReason: input.reasonCode,
+            replayedAt: now,
             updatedAt: now,
           },
           $inc: { version: 1 },

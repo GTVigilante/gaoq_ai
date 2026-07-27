@@ -58,7 +58,7 @@ pnpm --filter @gaoq/erp-api replay:phase3:knowledge-exam -- \
   --expected-version <N> --reason-code GATEWAY_RECOVERED
 ```
 
-重放使用租户及版本门禁，只按已形成的最远证据恢复到 `starting`、`in_progress`、`submitted` 或 `pending_review`，并在同一事务发布 `replayed` Outbox 事件；不改分数、不伪造证据、不绕过最大次数。原因码只允许大写受控编码，不接受可能包含敏感信息的自由文本。
+重放使用租户及版本门禁，只按已形成的最远证据恢复到 `starting`、`in_progress`、`submitted` 或 `pending_review`，并在同一事务把受控 `replayReason`、`replayedAt` 写回权威运行记录并发布 `replayed` Outbox 事件；两处事实使用同一时间与原因码，便于对账。不改分数、不伪造证据、不绕过最大次数。原因码只允许大写受控编码，不接受可能包含敏感信息的自由文本。
 
 标准 AI 对接只读能力固定为 Tool `knowledge_exam_run_get`、Resource Template `erp://knowledge/exam-runs/{id}`、Prompt `knowledge_exam_run_status_guide`。三者复用应用服务和本人任职校验；不提供开始、提交、评分、复核或重放 MCP Tool。
 
