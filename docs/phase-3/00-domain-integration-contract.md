@@ -73,7 +73,7 @@ draft → pending_approval → approved → clearing → ready → scheduled →
 
 - Talent Lifecycle 是跨域只读投影和服务触点权威，不改写 Recruitment、Onboarding、Org、Care 的业务事实。`Candidate → Person → Employment` 引用构成人才身份主线；同一候选人的多次申请、复聘和多段劳动关系都保留在同一主线下。
 - 生命周期阶段按 `离职处理中 → 在职 → 入职中 → Offer → 招聘中 → 校友 → 曾任员工 → 人才库 → 停用` 的优先级从权威状态推导，不能由浏览器或 AI 直接设置。
-- 服务触点只保存受控类型、渠道、方向、结果、责任人、发生时间和下一步行动；自由备注使用 Recruitment L3 密钥域、`talent_touchpoint` AAD 加密。索引、日志、审计和 Outbox 均不得包含备注明文。
+- 服务触点只保存受控类型、渠道、方向、结果、责任人、发生时间和下一步行动；自由备注使用 Recruitment L3 密钥域、`talent_touchpoint` AAD 加密。索引、日志、审计、Outbox 和幂等响应快照均不得包含备注明文；关闭操作必须先用候选人引用和责任人非敏感投影完成授权，再解密完整记录。
 - 候选人招聘联系要求候选人仍为 `active`，且联系授权与保留期限均未过期。校友活动和复聘联系还必须存在目的匹配、渠道匹配且未过期的有效 `AlumniConsent`；撤回后只允许记录内部撤回事实，不得继续外呼。
 - 关闭开放跟进要求强 `If-Match`、幂等键和责任人校验；跨责任人关闭仅允许 `erp:talent-lifecycle:touchpoint:write_all`。
 
@@ -217,7 +217,7 @@ draft → pending_approval → approved → clearing → ready → scheduled →
 
 ### 5.8 Talent Lifecycle 360
 
-- ERP 管理端 `/workspace/talent-lifecycle` 提供人才列表、阶段筛选、跨域时间线、开放跟进、下一步行动和服务记录；列表只搜索候选人标识、授权可见姓名及职位名称，部门数据范围继续由各权威域应用服务裁剪。
+- ERP 管理端 `/workspace/talent-lifecycle` 提供人才列表、阶段筛选、跨域时间线、开放跟进、下一步行动和服务记录；列表只搜索候选人标识、授权可见姓名及职位名称，部门数据范围继续由各权威域应用服务裁剪。没有 `read_all` 的主体只读取本人负责的服务触点，避免跨责任人备注明文泄露。
 - 只读端点固定为 `GET /talent-lifecycle/people` 与 `GET /talent-lifecycle/people/:candidateId`，要求 `erp:talent-lifecycle:read`。创建触点固定为 `POST /talent-lifecycle/people/:candidateId/touchpoints`，关闭固定为 `POST /talent-lifecycle/touchpoints/:id/close`，同时要求读 Scope 与 `erp:talent-lifecycle:touchpoint:write`。
 - 创建与关闭分别发布 `cn.gaoq.erp.talent.touchpoint.created.v1`、`cn.gaoq.erp.talent.touchpoint.completed.v1` 或 `cn.gaoq.erp.talent.touchpoint.cancelled.v1`。事件只含候选人引用、受控类型/渠道/结果、状态和版本，不含姓名、联系方式或备注。
 - MCP Resource Template 固定为 `erp://talent-lifecycle/people/{candidateId}`，Tool 固定为 `talent_lifecycle_get`，Prompt 固定为 `talent_lifecycle_follow_up_guide`。输出仅含候选人引用、生命周期阶段、当前申请阶段、员工状态、开放跟进数、下一行动时间和更新时间。

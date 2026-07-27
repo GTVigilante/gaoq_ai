@@ -47,4 +47,21 @@ describe('TalentTouchpointRecordSchema', () => {
       noteIv: 'AAAAAAAAAAAAAAAA',
     }).validate()).rejects.toThrow('必须保存完整密文组合');
   });
+
+  it('按 AES-256-GCM 的真实 base64url 长度校验 IV 与 AuthTag', async () => {
+    await new TouchpointModel({
+      ...record(),
+      noteKeyId: 'recruitment-key-001',
+      noteIv: 'A'.repeat(16),
+      noteCiphertext: 'AA',
+      noteAuthTag: 'A'.repeat(22),
+    }).validate();
+    await expect(new TouchpointModel({
+      ...record(),
+      noteKeyId: 'recruitment-key-001',
+      noteIv: 'A'.repeat(15),
+      noteCiphertext: 'AA',
+      noteAuthTag: 'A'.repeat(22),
+    }).validate()).rejects.toThrow();
+  });
 });

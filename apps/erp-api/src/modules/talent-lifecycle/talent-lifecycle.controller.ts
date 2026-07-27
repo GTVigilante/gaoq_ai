@@ -23,7 +23,7 @@ import {
   TalentLifecycleService,
   type TalentLifecycleDetail,
   type TalentLifecycleSummary,
-  type TalentTouchpointView,
+  type TalentTouchpointMutationView,
 } from './application/talent-lifecycle.service.js';
 
 const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
@@ -63,7 +63,7 @@ export class TalentLifecycleController {
     @Headers('idempotency-key') key: string | undefined,
     @Body() body: CreateTalentTouchpointDto,
     @Res({ passthrough: true }) response: Response,
-  ): Promise<{ readonly touchpoint: TalentTouchpointView }> {
+  ): Promise<{ readonly touchpoint: TalentTouchpointMutationView }> {
     const result = await this.lifecycle.createTouchpoint(
       this.ulid(candidateId),
       this.key(key),
@@ -99,7 +99,7 @@ export class TalentLifecycleController {
     @Headers('idempotency-key') key: string | undefined,
     @Body() body: CloseTalentTouchpointDto,
     @Res({ passthrough: true }) response: Response,
-  ): Promise<{ readonly touchpoint: TalentTouchpointView }> {
+  ): Promise<{ readonly touchpoint: TalentTouchpointMutationView }> {
     const result = await this.lifecycle.closeTouchpoint(
       this.ulid(id),
       this.version(ifMatch),

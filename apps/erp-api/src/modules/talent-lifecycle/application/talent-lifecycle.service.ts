@@ -52,7 +52,7 @@ export interface TalentTimelineEntry extends Record<string, unknown> {
   readonly referenceId: string;
 }
 
-export interface TalentTouchpointView extends Record<string, unknown> {
+export interface TalentTouchpointMutationView extends Record<string, unknown> {
   readonly id: string;
   readonly candidateId: string;
   readonly kind: TalentTouchpoint['kind'];
@@ -63,8 +63,11 @@ export interface TalentTouchpointView extends Record<string, unknown> {
   readonly occurredAt: string;
   readonly nextActionAt: string | null;
   readonly status: TalentTouchpoint['status'];
-  readonly note: string | null;
   readonly version: number;
+}
+
+export interface TalentTouchpointView extends TalentTouchpointMutationView {
+  readonly note: string | null;
 }
 
 export interface TalentLifecycleSummary extends Record<string, unknown> {
@@ -167,7 +170,7 @@ export class TalentLifecycleService {
     candidateId: string,
     key: string,
     input: CreateTalentTouchpointDto,
-  ): Promise<{ readonly touchpoint: TalentTouchpointView }> {
+  ): Promise<{ readonly touchpoint: TalentTouchpointMutationView }> {
     this.assertWriteScope();
     const lifecycle = await this.get(candidateId);
     this.assertContactAllowed(lifecycle, input);
@@ -194,7 +197,7 @@ export class TalentLifecycleService {
         }, now);
         await this.touchpoints.insert(touchpoint, session);
         await this.outbox.append(touchpoint, 'created', session);
-        return { touchpoint: touchpointView(touchpoint) };
+        return { touchpoint: touchpointMutationView(touchpoint) };
       },
     ));
   }
@@ -204,13 +207,13 @@ export class TalentLifecycleService {
     expectedVersion: number,
     key: string,
     input: CloseTalentTouchpointDto,
-  ): Promise<{ readonly touchpoint: TalentTouchpointView }> {
+  ): Promise<{ readonly touchpoint: TalentTouchpointMutationView }> {
     this.assertWriteScope();
-    const current = await this.requireTouchpoint(id);
-    await this.recruitment.get(current.candidateId);
+    const route = await this.requireTouchpointRoute(id);
+    await this.recruitment.get(route.candidateId);
     const actor = this.context.getActorRequired();
     if (
-      current.ownerActorId !== actor.actorId &&
+      route.ownerActorId !== actor.actorId &&
       !actor.scopes.includes('erp:talent-lifecycle:touchpoint:write_all')
     ) throw new ForbiddenException({
       code: 'TALENT_TOUCHPOINT_OWNER_DENIED',
@@ -229,7 +232,7 @@ export class TalentLifecycleService {
         }, new Date());
         await this.touchpoints.replace(closed, expectedVersion, session);
         await this.outbox.append(closed, input.status, session);
-        return { touchpoint: touchpointView(closed) };
+        return { touchpoint: touchpointMutationView(closed) };
       },
     ));
   }
@@ -237,11 +240,17 @@ export class TalentLifecycleService {
   private async compose(
     candidate: RecruitmentTalentCandidate,
   ): Promise<TalentLifecycleDetail> {
-    const [onboarding, organization, touchpoints] = await Promise.all([
+    const [onboarding, organization, candidateTouchpoints] = await Promise.all([
       this.onboarding.getByCandidateId(candidate.candidateId),
       this.organization.getByCandidateId(candidate.candidateId),
       this.touchpoints.findByCandidateId(candidate.candidateId),
     ]);
+    const actor = this.context.getActorRequired();
+    const touchpoints = actor.scopes.includes('erp:talent-lifecycle:read_all')
+      ? candidateTouchpoints
+      : candidateTouchpoints.filter((touchpoint) =>
+          touchpoint.ownerActorId === actor.actorId,
+        );
     const employments = organization?.employments ?? [];
     const care = await this.care.getByEmploymentIds(
       employments.map((employment) => employment.id),
@@ -308,6 +317,17 @@ export class TalentLifecycleService {
       message: '人才服务触点不存在',
     });
     return touchpoint;
+  }
+
+  private async requireTouchpointRoute(
+    id: string,
+  ): Promise<{ readonly candidateId: string; readonly ownerActorId: string }> {
+    const route = await this.touchpoints.findAuthorizationRoute(id);
+    if (route === null) throw new NotFoundException({
+      code: 'TALENT_TOUCHPOINT_NOT_FOUND',
+      message: '人才服务触点不存在',
+    });
+    return route;
   }
 
   private assertReadScope(): void {
@@ -592,7 +612,9 @@ function summary(value: TalentLifecycleDetail): TalentLifecycleSummary {
   });
 }
 
-function touchpointView(touchpoint: TalentTouchpoint): TalentTouchpointView {
+function touchpointMutationView(
+  touchpoint: TalentTouchpoint,
+): TalentTouchpointMutationView {
   return Object.freeze({
     id: touchpoint.id,
     candidateId: touchpoint.candidateId,
@@ -604,7 +626,13 @@ function touchpointView(touchpoint: TalentTouchpoint): TalentTouchpointView {
     occurredAt: touchpoint.occurredAt,
     nextActionAt: touchpoint.nextActionAt,
     status: touchpoint.status,
-    note: touchpoint.note,
     version: touchpoint.version,
+  });
+}
+
+function touchpointView(touchpoint: TalentTouchpoint): TalentTouchpointView {
+  return Object.freeze({
+    ...touchpointMutationView(touchpoint),
+    note: touchpoint.note,
   });
 }

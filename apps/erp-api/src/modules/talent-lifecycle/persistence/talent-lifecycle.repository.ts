@@ -20,6 +20,11 @@ export class TalentTouchpointWriteConflictError extends Error {
   }
 }
 
+export interface TalentTouchpointAuthorizationRoute {
+  readonly candidateId: string;
+  readonly ownerActorId: string;
+}
+
 @Injectable()
 export class TalentTouchpointRepository {
   constructor(
@@ -34,6 +39,23 @@ export class TalentTouchpointRepository {
     if (session !== undefined) query.session(session);
     const record = await query.lean().exec();
     return record === null ? null : this.toDomain(record);
+  }
+
+  /** 授权前只读取非敏感路由字段，禁止提前解密服务备注。 */
+  async findAuthorizationRoute(
+    id: string,
+  ): Promise<TalentTouchpointAuthorizationRoute | null> {
+    const record = await this.records
+      .findOne(
+        { tenantId: this.tenantId(), id },
+        { _id: 0, candidateId: 1, ownerActorId: 1 },
+      )
+      .lean()
+      .exec();
+    return record === null ? null : Object.freeze({
+      candidateId: record.candidateId,
+      ownerActorId: record.ownerActorId,
+    });
   }
 
   async findByCandidateId(candidateId: string): Promise<readonly TalentTouchpoint[]> {

@@ -37,7 +37,28 @@ const candidate = Object.freeze({
   })]),
 });
 
-function fixture(alumniConsents: readonly Record<string, unknown>[] = []) {
+const ownedTouchpoint = Object.freeze({
+  id: '01J8ZQK7V0A2M4N6P8R0T2W4T1',
+  tenantId: 'tenant-001',
+  candidateId: candidate.candidateId,
+  kind: 'candidate_outreach' as const,
+  channel: 'phone' as const,
+  direction: 'outbound' as const,
+  outcome: 'follow_up_required' as const,
+  ownerActorId: 'employee-001',
+  occurredAt: '2026-07-27T07:30:00.000Z',
+  nextActionAt: '2026-07-28T07:30:00.000Z',
+  status: 'open' as const,
+  note: '仅授权后解密的备注',
+  version: 1,
+  createdAt: '2026-07-27T08:00:00.000Z',
+  updatedAt: '2026-07-27T08:00:00.000Z',
+});
+
+function fixture(
+  alumniConsents: readonly Record<string, unknown>[] = [],
+  candidateTouchpoints: readonly Record<string, unknown>[] = [],
+) {
   const context = new TenantContextService();
   const recruitment = {
     get: vi.fn().mockResolvedValue(candidate),
@@ -52,9 +73,10 @@ function fixture(alumniConsents: readonly Record<string, unknown>[] = []) {
     }),
   };
   const touchpoints = {
-    findByCandidateId: vi.fn().mockResolvedValue([]),
+    findByCandidateId: vi.fn().mockResolvedValue(candidateTouchpoints),
     insert: vi.fn().mockResolvedValue(undefined),
     findById: vi.fn(),
+    findAuthorizationRoute: vi.fn(),
     replace: vi.fn(),
   };
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
@@ -92,7 +114,7 @@ function fixture(alumniConsents: readonly Record<string, unknown>[] = []) {
       traceId: 'trace-talent-001',
     },
   }, operation);
-  return { service, run, touchpoints, outbox };
+  return { service, run, recruitment, touchpoints, outbox };
 }
 
 describe('TalentLifecycleService', () => {
@@ -128,8 +150,42 @@ describe('TalentLifecycleService', () => {
       ownerActorId: 'employee-001',
       status: 'open',
     });
+    expect(result.touchpoint).not.toHaveProperty('note');
     expect(store.touchpoints.insert).toHaveBeenCalledOnce();
     expect(store.outbox.append).toHaveBeenCalledOnce();
+  });
+
+  it('普通读取只解密本人负责的服务备注', async () => {
+    const store = fixture([], [
+      ownedTouchpoint,
+      { ...ownedTouchpoint, id: '01J8ZQK7V0A2M4N6P8R0T2W4T2', ownerActorId: 'employee-002' },
+    ]);
+    const detail = await store.run(() => store.service.get(candidate.candidateId));
+    expect(detail.touchpoints).toEqual([
+      expect.objectContaining({ id: ownedTouchpoint.id, note: ownedTouchpoint.note }),
+    ]);
+  });
+
+  it('关闭触点先以非敏感路由完成授权且幂等响应不保存备注明文', async () => {
+    const store = fixture();
+    store.touchpoints.findAuthorizationRoute.mockResolvedValue({
+      candidateId: candidate.candidateId,
+      ownerActorId: 'employee-001',
+    });
+    store.touchpoints.findById.mockResolvedValue(ownedTouchpoint);
+    store.touchpoints.replace.mockResolvedValue(undefined);
+
+    const result = await store.run(() => store.service.closeTouchpoint(
+      ownedTouchpoint.id,
+      1,
+      'talent-touchpoint-close-001',
+      { status: 'completed' },
+    ));
+
+    expect(store.recruitment.get.mock.invocationCallOrder[0])
+      .toBeLessThan(store.touchpoints.findById.mock.invocationCallOrder[0] ?? 0);
+    expect(result.touchpoint).not.toHaveProperty('note');
+    expect(result.touchpoint).toMatchObject({ status: 'completed', version: 2 });
   });
 
   it('校友联系没有用途和渠道匹配的有效授权时失败关闭', async () => {

@@ -81,10 +81,22 @@ export class TalentTouchpointRecord {
   @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
   noteKeyId!: string | null;
 
-  @Prop({ type: String, default: null, maxlength: 32, match: BASE64URL_PATTERN })
+  @Prop({
+    type: String,
+    default: null,
+    minlength: 16,
+    maxlength: 16,
+    match: BASE64URL_PATTERN,
+  })
   noteIv!: string | null;
 
-  @Prop({ type: String, default: null, maxlength: 8_192, match: BASE64URL_PATTERN })
+  @Prop({
+    type: String,
+    default: null,
+    minlength: 1,
+    maxlength: 8_192,
+    match: BASE64URL_PATTERN,
+  })
   noteCiphertext!: string | null;
 
   @Prop({ type: String, default: null, minlength: 22, maxlength: 22, match: BASE64URL_PATTERN })
