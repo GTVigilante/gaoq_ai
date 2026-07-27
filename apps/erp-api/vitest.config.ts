@@ -178,6 +178,24 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/attendance/attendance.controller.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/payroll/payroll.controller.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/treasury/treasury.controller.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/care/application/care-occasion-application.service.ts': {
           branches: 90,
           functions: 90,

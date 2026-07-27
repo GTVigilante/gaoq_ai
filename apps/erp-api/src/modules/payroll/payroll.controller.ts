@@ -4,6 +4,7 @@ import {
   Controller,
   Get,
   Headers,
+  Logger,
   Param,
   Post,
   Req,
@@ -11,6 +12,7 @@ import {
 } from '@nestjs/common';
 
 import { AuditService } from '../../core/audit/audit.service.js';
+import type { AuditRecordInput } from '../../core/audit/audit.types.js';
 import type { ErpRequest } from '../../core/http/request-context.js';
 import { RequiredScopes } from '../identity/auth.decorators.js';
 import { PayrollMasterDataService } from './application/payroll-master-data.service.js';
@@ -51,6 +53,8 @@ import { LegacyPayrollBoundaryGuard } from './legacy-payroll-boundary.guard.js';
 @Controller('payroll')
 @UseGuards(LegacyPayrollBoundaryGuard)
 export class PayrollController {
+  private readonly logger = new Logger(PayrollController.name);
+
   constructor(
     private readonly runs: PayrollRunService,
     private readonly approvals: PayrollApprovalService,
@@ -116,7 +120,7 @@ export class PayrollController {
       sourceSignatureEvidenceId: body.sourceSignatureEvidenceId,
       sourceManifestHash: body.sourceManifestHash, lines: body.lines,
     });
-    await this.auditShadow('payroll.shadow_cycle.import', result, 'R3');
+    await this.auditShadow('payroll.shadow_cycle.import', result, 'R3', true);
     return result;
   }
 
@@ -132,7 +136,7 @@ export class PayrollController {
     const result = await this.shadows.explainDifference(
       this.key(key), cycleId, differenceId, body.explanationCode, body.evidenceId,
     );
-    await this.auditShadow('payroll.shadow_difference.explain', result, 'R2');
+    await this.auditShadow('payroll.shadow_difference.explain', result, 'R2', true);
     return result;
   }
 
@@ -152,7 +156,7 @@ export class PayrollController {
     const result = await this.shadows.signCycle(
       this.key(key), id, body.strongAuthEvidenceId, request.verifiedAccessToken, 'payroll_owner',
     );
-    await this.auditShadow('payroll.shadow_cycle.sign_payroll', result, 'R3');
+    await this.auditShadow('payroll.shadow_cycle.sign_payroll', result, 'R3', true);
     return result;
   }
 
@@ -172,7 +176,7 @@ export class PayrollController {
     const result = await this.shadows.signCycle(
       this.key(key), id, body.strongAuthEvidenceId, request.verifiedAccessToken, 'finance_owner',
     );
-    await this.auditShadow('payroll.shadow_cycle.sign_finance', result, 'R3');
+    await this.auditShadow('payroll.shadow_cycle.sign_finance', result, 'R3', true);
     return result;
   }
 
@@ -210,7 +214,7 @@ export class PayrollController {
     @Body() body: PreparePayrollTaxFilingDto,
   ): Promise<PayrollTaxFilingSummary> {
     const result = await this.taxFilings.prepare(this.key(key), id, body.expectedVersion);
-    await this.audit.record({
+    await this.auditAfterCommit({
       action: 'payroll.tax_filing.prepare', resourceType: 'payroll_tax_filing',
       resourceId: result.id, riskLevel: 'R3', outcome: 'success', metadata: {
         periodId: result.periodId, payrollRunId: result.payrollRunId,
@@ -241,7 +245,7 @@ export class PayrollController {
       this.key(key), id, body.expectedVersion, body.strongAuthEvidenceId,
       request.verifiedAccessToken,
     );
-    await this.auditTaxFiling('payroll.tax_filing.approve', result, 'R3');
+    await this.auditTaxFiling('payroll.tax_filing.approve', result, 'R3', true);
     return result;
   }
 
@@ -254,7 +258,7 @@ export class PayrollController {
     @Body() body: SubmitPayrollTaxFilingDto,
   ): Promise<PayrollTaxFilingSummary> {
     const result = await this.taxFilings.submit(this.key(key), id, body.expectedVersion);
-    await this.auditTaxFiling('payroll.tax_filing.submit', result, 'R3');
+    await this.auditTaxFiling('payroll.tax_filing.submit', result, 'R3', true);
     return result;
   }
 
@@ -265,7 +269,7 @@ export class PayrollController {
     @Body() body: CreatePayrollPeriodDto,
   ): Promise<PayrollPeriodSummary> {
     const result = await this.runs.createPeriod(this.key(key), body.period);
-    await this.auditPeriod('payroll.period.create', result, 'R2');
+    await this.auditPeriod('payroll.period.create', result, 'R2', true);
     return result;
   }
 
@@ -290,7 +294,7 @@ export class PayrollController {
     @Body() body: PayrollVersionCommandDto,
   ): Promise<PayrollPeriodSummary> {
     const result = await this.approvals.requestApproval(this.key(key), id, body.expectedVersion);
-    await this.auditPeriod('payroll.approval.request', result, 'R2');
+    await this.auditPeriod('payroll.approval.request', result, 'R2', true);
     return result;
   }
 
@@ -304,7 +308,7 @@ export class PayrollController {
     const result = await this.approvals.applyApproval(
       this.key(key), id, body.expectedVersion, body.approvalInstanceId,
     );
-    await this.auditPeriod('payroll.approval.apply', result, 'R2');
+    await this.auditPeriod('payroll.approval.apply', result, 'R2', true);
     return result;
   }
 
@@ -324,7 +328,7 @@ export class PayrollController {
       this.key(key), id, body.expectedVersion, body.strongAuthEvidenceId,
       request.verifiedAccessToken,
     );
-    await this.auditPeriod('payroll.period.lock', result, 'R3');
+    await this.auditPeriod('payroll.period.lock', result, 'R3', true);
     return result;
   }
 
@@ -336,7 +340,7 @@ export class PayrollController {
     @Body() body: StartPayrollCollectionDto,
   ): Promise<PayrollPeriodSummary> {
     const result = await this.runs.startCollection(this.key(key), id, body.expectedVersion);
-    await this.auditPeriod('payroll.period.start_collection', result, 'R2');
+    await this.auditPeriod('payroll.period.start_collection', result, 'R2', true);
     return result;
   }
 
@@ -356,7 +360,7 @@ export class PayrollController {
     @Body() body: AttestCompensationProfileDto,
   ) {
     const result = await this.masterData.attestCompensation(this.key(key), body);
-    await this.audit.record({
+    await this.auditAfterCommit({
       action: 'payroll.compensation.attest', resourceType: 'payroll_compensation_profile',
       resourceId: result.id, riskLevel: 'R2', outcome: 'success', metadata: {
         employeeId: result.employeeId, version: result.version,
@@ -374,7 +378,7 @@ export class PayrollController {
     @Body() body: AttestPayrollRulePackDto,
   ) {
     const result = await this.masterData.attestRulePack(this.key(key), body);
-    await this.audit.record({
+    await this.auditAfterCommit({
       action: 'payroll.rule_pack.attest', resourceType: 'payroll_rule_pack',
       resourceId: result.id, riskLevel: 'R2', outcome: 'success', metadata: {
         code: result.code, jurisdictionCode: result.jurisdictionCode,
@@ -395,8 +399,9 @@ export class PayrollController {
     action: string,
     period: PayrollPeriodSummary,
     riskLevel: 'R0' | 'R2' | 'R3',
+    afterCommit = false,
   ): Promise<void> {
-    await this.audit.record({
+    const input: AuditRecordInput = {
       action, resourceType: 'payroll_period', resourceId: period.id,
       riskLevel, outcome: 'success', metadata: {
         period: period.period, status: period.status, version: period.version,
@@ -404,15 +409,21 @@ export class PayrollController {
         inputSnapshotHash: period.inputSnapshotHash ?? 'none',
         resultHash: period.resultHash ?? 'none', employeeCount: period.employeeCount ?? 0,
       },
-    });
+    };
+    if (afterCommit) {
+      await this.auditAfterCommit(input);
+      return;
+    }
+    await this.audit.record(input);
   }
 
   private async auditTaxFiling(
     action: string,
     filing: PayrollTaxFilingSummary,
     riskLevel: 'R1' | 'R3',
+    afterCommit = false,
   ): Promise<void> {
-    await this.audit.record({
+    const input: AuditRecordInput = {
       action, resourceType: 'payroll_tax_filing', resourceId: filing.id,
       riskLevel, outcome: 'success', metadata: {
         periodId: filing.periodId, payrollRunId: filing.payrollRunId,
@@ -424,15 +435,21 @@ export class PayrollController {
         taxSubmissionId: filing.taxSubmissionId ?? 'none',
         taxSubmissionEvidenceId: filing.taxSubmissionEvidenceId ?? 'none',
       },
-    });
+    };
+    if (afterCommit) {
+      await this.auditAfterCommit(input);
+      return;
+    }
+    await this.audit.record(input);
   }
 
   private async auditShadow(
     action: string,
     cycle: PayrollShadowCycleSummary,
     riskLevel: 'R1' | 'R2' | 'R3',
+    afterCommit = false,
   ): Promise<void> {
-    await this.audit.record({
+    const input: AuditRecordInput = {
       action, resourceType: 'payroll_shadow_cycle', resourceId: cycle.id,
       riskLevel, outcome: 'success', metadata: {
         periodId: cycle.periodId, payrollRunId: cycle.payrollRunId, period: cycle.period,
@@ -446,6 +463,26 @@ export class PayrollController {
         financeSignoffId: cycle.financeSignoffId ?? 'none',
         cutoverReadinessId: cycle.cutoverReadinessId ?? 'none',
       },
-    });
+    };
+    if (afterCommit) {
+      await this.auditAfterCommit(input);
+      return;
+    }
+    await this.audit.record(input);
+  }
+
+  /** 业务或外部副作用已提交后，审计故障只记录稳定告警，禁止诱发重复执行。 */
+  private async auditAfterCommit(input: AuditRecordInput): Promise<void> {
+    try {
+      await this.audit.record(input);
+    } catch {
+      this.logger.error({
+        code: 'PAYROLL_AUDIT_AFTER_COMMIT_FAILED',
+        action: input.action,
+        resourceType: input.resourceType,
+        resourceId: input.resourceId,
+        riskLevel: input.riskLevel,
+      });
+    }
   }
 }

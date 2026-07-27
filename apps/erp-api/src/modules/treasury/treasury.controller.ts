@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Headers,
+  Logger,
   Param,
   Post,
   Req,
@@ -10,6 +11,7 @@ import {
 } from '@nestjs/common';
 
 import { AuditService } from '../../core/audit/audit.service.js';
+import type { AuditRecordInput } from '../../core/audit/audit.types.js';
 import type { ErpRequest } from '../../core/http/request-context.js';
 import { RequiredScopes } from '../identity/auth.decorators.js';
 import {
@@ -40,6 +42,8 @@ import { LegacyPayrollBoundaryGuard } from '../payroll/legacy-payroll-boundary.g
 @Controller('treasury')
 @UseGuards(LegacyPayrollBoundaryGuard)
 export class TreasuryController {
+  private readonly logger = new Logger(TreasuryController.name);
+
   constructor(
     private readonly accounts: TreasuryBankAccountService,
     private readonly bankReturns: TreasuryBankReturnService,
@@ -58,7 +62,7 @@ export class TreasuryController {
     @Body() body: ExecuteTreasuryReconciliationDto,
   ) {
     const result = await this.reconciliation.reconcile(this.key(key), id, body.expectedVersion);
-    await this.audit.record({
+    await this.auditAfterCommit({
       action: 'payroll.reconciliation.execute', resourceType: 'payroll_reconciliation',
       resourceId: result.id, riskLevel: 'R3', outcome: 'success', metadata: {
         periodId: result.periodId, payrollRunId: result.payrollRunId, batchId: result.batchId,
@@ -85,7 +89,7 @@ export class TreasuryController {
     const result = await this.recovery.create(
       this.key(key), id, body, request.verifiedAccessToken,
     );
-    await this.audit.record({
+    await this.auditAfterCommit({
       action: 'treasury.disbursement.recovery_create',
       resourceType: 'treasury_disbursement_batch', resourceId: result.id,
       riskLevel: 'R3', outcome: 'success', metadata: {
@@ -108,7 +112,7 @@ export class TreasuryController {
     @Body() body: IngestTreasuryBankReturnDto,
   ): Promise<TreasuryBankReturnSummary> {
     const result = await this.bankReturns.ingest(this.key(key), id, body.expectedVersion);
-    await this.audit.record({
+    await this.auditAfterCommit({
       action: 'treasury.bank_return.ingest', resourceType: 'treasury_bank_return',
       resourceId: result.id, riskLevel: 'R3', outcome: 'success', metadata: {
         batchId: result.batchId, status: result.status, batchVersion: result.batchVersion,
@@ -132,7 +136,7 @@ export class TreasuryController {
     @Body() body: SubmitTreasuryDisbursementDto,
   ): Promise<TreasuryDisbursementSummary> {
     const result = await this.disbursements.submit(this.key(key), id, body);
-    await this.audit.record({
+    await this.auditAfterCommit({
       action: 'treasury.disbursement.submit', resourceType: 'treasury_disbursement_batch',
       resourceId: result.id, riskLevel: 'R3', outcome: 'success', metadata: {
         payrollPeriodId: result.payrollPeriodId, payrollRunId: result.payrollRunId,
@@ -159,7 +163,7 @@ export class TreasuryController {
     const result = await this.disbursements.approveExport(
       this.key(key), id, body, request.verifiedAccessToken,
     );
-    await this.audit.record({
+    await this.auditAfterCommit({
       action: 'treasury.disbursement.approve_export',
       resourceType: 'treasury_disbursement_batch', resourceId: result.id,
       riskLevel: 'R3', outcome: 'success', metadata: {
@@ -180,7 +184,7 @@ export class TreasuryController {
     @Body() body: AttestTreasuryBankAccountDto,
   ): Promise<TreasuryBankAccountSummary> {
     const result = await this.accounts.attest(this.key(key), body);
-    await this.audit.record({
+    await this.auditAfterCommit({
       action: 'treasury.bank_account.attest', resourceType: 'treasury_bank_account',
       resourceId: result.id, riskLevel: 'R3', outcome: 'success', metadata: {
         ownerType: result.ownerType, ownerId: result.ownerId,
@@ -198,7 +202,7 @@ export class TreasuryController {
     @Body() body: PrepareTreasuryDisbursementDto,
   ): Promise<TreasuryDisbursementSummary> {
     const result = await this.disbursements.prepare(this.key(key), body);
-    await this.audit.record({
+    await this.auditAfterCommit({
       action: 'treasury.disbursement.prepare', resourceType: 'treasury_disbursement_batch',
       resourceId: result.id, riskLevel: 'R2', outcome: 'success', metadata: {
         payrollPeriodId: result.payrollPeriodId, payrollRunId: result.payrollRunId,
@@ -216,5 +220,20 @@ export class TreasuryController {
       code: 'IDEMPOTENCY_KEY_REQUIRED', message: '写接口必须提供 Idempotency-Key',
     });
     return value;
+  }
+
+  /** 银行、WORM 或业务事务已提交后，审计故障不得把成功终态反向暴露为失败。 */
+  private async auditAfterCommit(input: AuditRecordInput): Promise<void> {
+    try {
+      await this.audit.record(input);
+    } catch {
+      this.logger.error({
+        code: 'TREASURY_AUDIT_AFTER_COMMIT_FAILED',
+        action: input.action,
+        resourceType: input.resourceType,
+        resourceId: input.resourceId,
+        riskLevel: input.riskLevel,
+      });
+    }
   }
 }

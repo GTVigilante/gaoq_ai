@@ -62,6 +62,10 @@ draft → collecting → calculating → review → pending_approval → approve
 - 本人只读自己的已发布薪资单；直属经理默认不得读取个人工资。HR、薪酬、财务、审计和管理层分别使用服务端字段白名单与行级范围，不能依赖前端隐藏。
 - 制单、复核、审批、锁定、导出、上传回盘、解除冻结不能由同一主体独占。R2/R3 操作强制近期 MFA、强 `If-Match`、幂等键、目的和审计。
 - 导出使用短期单次下载、受控对象存储和水印；审计只记批次、字段策略、行数、摘要和操作者，不记工资、账号或文件正文。
+- REST 写入口只能在业务事务、WORM 或外部副作用成功后记录成功审计。此时审计
+  故障不得向客户端反向暴露失败或触发重试，只记录动作、资源类型、资源标识和
+  风险级别组成的稳定告警；禁止记录异常正文、访问令牌、工资、账户、考勤明细或
+  文件正文。敏感读取没有业务提交，审计不可用时继续失败关闭。
 
 ## 5. 外部集成
 
@@ -95,6 +99,12 @@ draft → collecting → calculating → review → pending_approval → approve
 | 影子差异归因 | `POST /payroll/shadow-cycles/{cycleId}/differences/{differenceId}/explanation` | `payroll.shadow_difference.explained.v1` | 不开放 | R2 |
 | 薪酬/财务双签影子周期 | 两个角色隔离的 `payroll-signoff` / `finance-signoff` 端点 | `payroll.shadow_cycle.signed.v1` | 不开放 | R3 |
 | 查询影子周期与两期资格 | 脱敏 `GET` | `payroll.cutover_readiness.eligible.v1` | 只读 Tools + Resources | R1 |
+
+考勤、旧 Payroll 与旧 Treasury 控制器的所有路由、HTTP 方法、最小 Scope、
+幂等/月份/强认证边界和提交后审计语义由
+`pnpm quality:phase4-entry-controllers-coverage` 逐文件四维 90% 失败关闭。
+`PAYROLL_SYSTEM_MODE=external` 时旧 Payroll/Treasury 控制器仍由统一边界守卫
+返回 410；该质量门禁不扩大 MCP 能力，也不重新启用旧工资事实源。
 
 MCP Server 必须继续使用 MCP 2025-11-25、OAuth 2.1 Resource Server、JSON Schema、结构化内容、风险注解和审计。任何 AI 客户端都只能通过应用服务读取脱敏投影；禁止 MCP 直接查数据库、接触银行/税务文件、执行发薪或绕过 Approval。
 
