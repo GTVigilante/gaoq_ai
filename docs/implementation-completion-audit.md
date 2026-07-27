@@ -70,7 +70,7 @@
 审批应用状态机、
 MCP 确认、MCP 运行时、
 薪酬影子周期、薪酬运行、薪酬审批、薪酬主数据、薪酬四方对账、薪酬税务申报、薪酬 L4 数据加密、资金支付、Treasury 银行回盘、Treasury L4 数据加密、Treasury Outbox、Care 纪念日应用、Care 离职应用、
-数据迁移控制面、Knowledge 考试运行 Relay、Knowledge 搜索索引 Relay、考勤应用、考勤仓储、
+数据迁移控制面、Knowledge 考试运行 Relay、Knowledge 搜索索引 Relay、考勤应用、考勤仓储、考勤供应商拉取、
 招聘 Offer、Care 仓储、组织仓储、招聘仓储、知识库仓储、营销 CMS 和生产执行授权服务已建立
 独立不可回退门禁：
 `pnpm quality:tenant-context-coverage`、
@@ -99,6 +99,7 @@ MCP 确认、MCP 运行时、
 `pnpm quality:knowledge-search-index-relay-coverage`、
 `pnpm quality:attendance-application-coverage`、
 `pnpm quality:attendance-repositories-coverage`、
+`pnpm quality:attendance-provider-pull-coverage`、
 `pnpm quality:recruitment-offer-coverage`、
 `pnpm quality:care-repositories-coverage` 和
 `pnpm quality:org-repositories-coverage`、
@@ -107,7 +108,7 @@ MCP 确认、MCP 运行时、
 `pnpm quality:marketing-cms-service-coverage`、
 `pnpm quality:approval-repositories-coverage` 和
 `pnpm quality:approval-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。三十五条链路当前覆盖率分别为
+`pnpm quality:production-execution-authorization-coverage`。三十六条链路当前覆盖率分别为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -133,12 +134,13 @@ MCP 确认、MCP 运行时、
 100%/100%/100%/100%、
 99.20%/99.17%/100%/99.11%、
 100%/100%/100%/100%、
+98.61%/97.00%/100%/99.21%、
 95.97%/94.01%/100%/96.83%、
 100%/91.66%/100%/100%、100%/100%/100%/100%、
 97.44%/91.32%/100%/99.53%、100%/99.43%/100%/100%、
 100%/97.27%/100%/100% 和
-100%/100%/100%/100%（语句/分支/函数/行）；三十五项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明三十五条关键链路达标，
+100%/100%/100%/100%（语句/分支/函数/行）；三十六项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明三十六条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 数据迁移控制面已有 61 项幂等重放、证据分页、检查点竞争、关联映射、附件与
@@ -157,6 +159,11 @@ Knowledge 搜索索引 Relay 已补齐 5 项幂等回执、时间边界、参数
 考勤仓储已覆盖 17 项可信租户、源事实/修订/月快照密文读写、盲索引、迁移证据、
 会话绑定、并发冲突和失败关闭测试，目标生产文件达到四维 100%，独立四维 90%
 门禁已接入 `pnpm check`。
+
+考勤供应商拉取已覆盖 50 项系统任务授权、加密游标、员工分页、小批拉取、Inbox
+幂等、租约竞争、载荷规范化和失败关闭测试；部分游标密文字段不再被误判为首次
+同步。覆盖率达到 98.61%/97.00%/100%/99.21%（语句/分支/函数/行），独立
+四维 90% 门禁已接入 `pnpm check`。
 
 Care 离职应用已补齐 36 项可信组织主数据、审批恢复、清算证据、R3 Saga、
 校友授权和异常语义测试，服务覆盖率达到 99.54%/97.43%/100%/100%
