@@ -15,6 +15,9 @@ export interface CourseVersion {
   readonly questionBankRef: string | null;
   readonly questionBankDigest: string | null;
   readonly passingScoreBps: number | null;
+  readonly audienceMode: 'assigned_only' | 'employment_scope';
+  readonly audienceDepartmentIds: readonly string[];
+  readonly audiencePositionIds: readonly string[];
   readonly status: 'draft' | 'published' | 'retired';
   readonly version: number;
   readonly createdAt: string;
@@ -63,6 +66,9 @@ export function createCourseVersion(
     readonly questionBankRef?: string;
     readonly questionBankDigest?: string;
     readonly passingScoreBps?: number;
+    readonly audienceMode?: 'assigned_only' | 'employment_scope';
+    readonly audienceDepartmentIds?: readonly string[];
+    readonly audiencePositionIds?: readonly string[];
   },
   now: Date,
 ): CourseVersion {
@@ -82,6 +88,27 @@ export function createCourseVersion(
     invalid('KNOWLEDGE_QUESTION_DIGEST_INVALID', '题库摘要必须为 SHA-256 base64url');
   }
   if (input.passingScoreBps !== undefined) assertBps(input.passingScoreBps, 'passingScoreBps');
+  const audienceMode = input.audienceMode ?? 'assigned_only';
+  const audienceDepartmentIds = normalizeAudienceIds(
+    input.audienceDepartmentIds ?? [],
+    'audienceDepartmentIds',
+  );
+  const audiencePositionIds = normalizeAudienceIds(
+    input.audiencePositionIds ?? [],
+    'audiencePositionIds',
+  );
+  if (audienceMode === 'assigned_only') {
+    if (audienceDepartmentIds.length > 0 || audiencePositionIds.length > 0) invalid(
+      'KNOWLEDGE_AUDIENCE_INVALID',
+      '仅限已分配人员的课程不能同时配置部门或岗位范围',
+    );
+  } else if (
+    audienceMode !== 'employment_scope' ||
+    (audienceDepartmentIds.length === 0 && audiencePositionIds.length === 0)
+  ) invalid(
+    'KNOWLEDGE_AUDIENCE_INVALID',
+    '任职范围课程必须至少配置一个部门或岗位',
+  );
   const occurredAt = iso(now);
   return Object.freeze({
     id: input.id, tenantId: input.tenantId, courseCode: input.courseCode,
@@ -89,7 +116,28 @@ export function createCourseVersion(
     questionBankRef: input.questionBankRef ?? null,
     questionBankDigest: input.questionBankDigest ?? null,
     passingScoreBps: input.passingScoreBps ?? null,
+    audienceMode,
+    audienceDepartmentIds,
+    audiencePositionIds,
     status: 'draft', version: 1, createdAt: occurredAt, updatedAt: occurredAt,
+  });
+}
+
+export function retireCourseVersion(
+  course: CourseVersion,
+  input: { readonly tenantId: string; readonly expectedVersion: number },
+  now: Date,
+): CourseVersion {
+  assertVersion(course, input.tenantId, input.expectedVersion);
+  if (course.status !== 'published') invalid(
+    'KNOWLEDGE_COURSE_RETIRE_INVALID',
+    '只能下架已发布课程',
+  );
+  return Object.freeze({
+    ...course,
+    status: 'retired',
+    version: course.version + 1,
+    updatedAt: iso(now),
   });
 }
 
@@ -259,6 +307,20 @@ function assertBps(value: number, field: string): void {
   if (!Number.isSafeInteger(value) || value < 0 || value > 10_000) invalid(
     'KNOWLEDGE_BPS_INVALID', `${field} 必须为 0..10000 的整数`,
   );
+}
+
+function normalizeAudienceIds(values: readonly string[], field: string): readonly string[] {
+  if (values.length > 200) invalid(
+    'KNOWLEDGE_AUDIENCE_INVALID',
+    `${field} 数量不能超过 200`,
+  );
+  const normalized = [...new Set<string>(values)];
+  if (normalized.length !== values.length) invalid(
+    'KNOWLEDGE_AUDIENCE_INVALID',
+    `${field} 不能包含重复标识`,
+  );
+  for (const value of normalized) assertId(value, field);
+  return Object.freeze(normalized.sort((left, right) => left.localeCompare(right)));
 }
 
 function assertLocalDate(value: string, field: string): void {

@@ -7,6 +7,7 @@ import {
   createTrainingAssignment,
   publishCourseVersion,
   recordTrainingProgress,
+  retireCourseVersion,
 } from './training.js';
 
 const NOW = new Date('2026-07-21T00:00:00.000Z');
@@ -64,5 +65,49 @@ describe('Knowledge 培训与考试领域', () => {
       questionSetDigest: 'b'.repeat(43), gradingEvidenceId: 'grading-001',
       scoreBps: 10_000, passingScoreBps: 8_000, serverGradingVerified: false,
     }, NOW)).toThrow(/服务端评分器/);
+  });
+
+  it('任职受众至少配置一个维度，配置两维时完整保留并仅允许发布后下架', () => {
+    expect(() => createCourseVersion({
+      id: 'course-version-001',
+      tenantId: 'tenant-001',
+      courseCode: 'SECURITY',
+      revision: 1,
+      title: '信息安全',
+      contentRef: 'content-001',
+      audienceMode: 'employment_scope',
+      audienceDepartmentIds: [],
+      audiencePositionIds: [],
+    }, NOW)).toThrow(/至少配置一个部门或岗位/);
+    const draft = createCourseVersion({
+      id: 'course-version-001',
+      tenantId: 'tenant-001',
+      courseCode: 'SECURITY',
+      revision: 1,
+      title: '信息安全',
+      contentRef: 'content-001',
+      audienceMode: 'employment_scope',
+      audienceDepartmentIds: ['department-001'],
+      audiencePositionIds: ['position-001'],
+    }, NOW);
+    expect(draft).toMatchObject({
+      audienceMode: 'employment_scope',
+      audienceDepartmentIds: ['department-001'],
+      audiencePositionIds: ['position-001'],
+    });
+    expect(() => retireCourseVersion(draft, {
+      tenantId: 'tenant-001',
+      expectedVersion: 1,
+    }, NOW)).toThrow(/只能下架已发布课程/);
+    const published = publishCourseVersion(draft, {
+      tenantId: 'tenant-001',
+      expectedVersion: 1,
+      contentVerified: true,
+      questionBankVerified: true,
+    }, NOW);
+    expect(retireCourseVersion(published, {
+      tenantId: 'tenant-001',
+      expectedVersion: 2,
+    }, NOW)).toMatchObject({ status: 'retired', version: 3 });
   });
 });

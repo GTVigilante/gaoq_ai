@@ -184,7 +184,7 @@ async function verifyMcpSdk(token) {
       client.listResourceTemplates(),
       client.listPrompts(),
     ]);
-    assert.equal(tools.tools.length, 43);
+    assert.equal(tools.tools.length, 44);
     assert.ok(resources.resources.length >= 4);
     assert.equal(templates.resourceTemplates.length, 20);
     assert.equal(prompts.prompts.length, 18);

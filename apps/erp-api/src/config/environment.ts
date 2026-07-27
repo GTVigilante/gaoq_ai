@@ -136,6 +136,23 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]+$/).optional(),
   ),
+  /** 知识检索使用独立网关与签名信任域，禁止复用评分服务身份。 */
+  KNOWLEDGE_SEARCH_GATEWAY_ENDPOINT: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().url().optional(),
+  ),
+  KNOWLEDGE_SEARCH_GATEWAY_BEARER_TOKEN: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/).optional(),
+  ),
+  KNOWLEDGE_SEARCH_GATEWAY_SIGNING_PUBLIC_KEY_BASE64: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(56).max(2_048).regex(/^[A-Za-z0-9+/]+={0,2}$/).optional(),
+  ),
+  KNOWLEDGE_SEARCH_GATEWAY_SIGNING_KEY_ID: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]+$/).optional(),
+  ),
   /** 考勤 L4 明细密钥环，与招聘、审批和盲索引密钥域隔离。 */
   ATTENDANCE_DATA_ENCRYPTION_KEYS: z.preprocess(
     (value) => value === '' ? undefined : value,
@@ -547,11 +564,80 @@ const environmentSchema = z.object({
       environment.OP_SSO_CLIENT_SECRET,
       environment.DINGTALK_CLIENT_SECRET,
       environment.FEISHU_CLIENT_SECRET,
+      environment.KNOWLEDGE_SEARCH_GATEWAY_BEARER_TOKEN,
     ].includes(environment.KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN)
   ) context.addIssue({
     code: 'custom',
     path: ['KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN'],
     message: '知识证据网关不得复用其他业务、平台或外部系统凭据',
+  });
+  const knowledgeSearchInfrastructure = [
+    environment.KNOWLEDGE_SEARCH_GATEWAY_ENDPOINT,
+    environment.KNOWLEDGE_SEARCH_GATEWAY_BEARER_TOKEN,
+    environment.KNOWLEDGE_SEARCH_GATEWAY_SIGNING_PUBLIC_KEY_BASE64,
+    environment.KNOWLEDGE_SEARCH_GATEWAY_SIGNING_KEY_ID,
+  ];
+  if (
+    knowledgeSearchInfrastructure.some((value) => value !== undefined) &&
+    knowledgeSearchInfrastructure.some((value) => value === undefined)
+  ) context.addIssue({
+    code: 'custom',
+    path: ['KNOWLEDGE_SEARCH_GATEWAY_ENDPOINT'],
+    message: '知识搜索网关端点、凭据、公钥与 Key ID 必须成套配置',
+  });
+  if (environment.KNOWLEDGE_SEARCH_GATEWAY_ENDPOINT !== undefined) {
+    const endpoint = new URL(environment.KNOWLEDGE_SEARCH_GATEWAY_ENDPOINT);
+    const evidenceEndpoint = environment.KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT === undefined
+      ? null
+      : new URL(environment.KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT);
+    if (
+      endpoint.protocol !== 'https:' || endpoint.username !== '' || endpoint.password !== '' ||
+      endpoint.pathname !== '/' || endpoint.search !== '' || endpoint.hash !== '' ||
+      (endpoint.port !== '' && endpoint.port !== '443') ||
+      isLoopbackHostname(endpoint.hostname) || endpoint.origin === issuer.origin ||
+      endpoint.origin === evidenceEndpoint?.origin
+    ) context.addIssue({
+      code: 'custom',
+      path: ['KNOWLEDGE_SEARCH_GATEWAY_ENDPOINT'],
+      message: '知识搜索网关必须为独立标准 HTTPS 根地址，禁止与认证或评分网关共用 Origin',
+    });
+  }
+  if (environment.KNOWLEDGE_SEARCH_GATEWAY_SIGNING_PUBLIC_KEY_BASE64 !== undefined) {
+    try {
+      const publicKey = createPublicKey({
+        key: Buffer.from(
+          environment.KNOWLEDGE_SEARCH_GATEWAY_SIGNING_PUBLIC_KEY_BASE64,
+          'base64',
+        ),
+        format: 'der',
+        type: 'spki',
+      });
+      if (publicKey.asymmetricKeyType !== 'ed25519') throw new Error('KEY_TYPE_INVALID');
+    } catch {
+      context.addIssue({
+        code: 'custom',
+        path: ['KNOWLEDGE_SEARCH_GATEWAY_SIGNING_PUBLIC_KEY_BASE64'],
+        message: '知识搜索网关签名公钥必须为有效 Ed25519 SPKI DER base64',
+      });
+    }
+  }
+  if (
+    environment.KNOWLEDGE_SEARCH_GATEWAY_BEARER_TOKEN !== undefined &&
+    environment.KNOWLEDGE_SEARCH_GATEWAY_BEARER_TOKEN ===
+      environment.KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN
+  ) context.addIssue({
+    code: 'custom',
+    path: ['KNOWLEDGE_SEARCH_GATEWAY_BEARER_TOKEN'],
+    message: '知识搜索网关不得复用评分证据服务身份',
+  });
+  if (
+    environment.KNOWLEDGE_SEARCH_GATEWAY_SIGNING_PUBLIC_KEY_BASE64 !== undefined &&
+    environment.KNOWLEDGE_SEARCH_GATEWAY_SIGNING_PUBLIC_KEY_BASE64 ===
+      environment.KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_PUBLIC_KEY_BASE64
+  ) context.addIssue({
+    code: 'custom',
+    path: ['KNOWLEDGE_SEARCH_GATEWAY_SIGNING_PUBLIC_KEY_BASE64'],
+    message: '知识搜索与评分证据网关必须使用独立签名信任域',
   });
   if (environment.DATA_MIGRATION_ATTACHMENT_GATEWAY_BEARER_TOKEN !== undefined && [
     environment.TREASURY_WORM_ARCHIVE_BEARER_TOKEN,

@@ -48,7 +48,12 @@ export class CourseVersionRepository extends TenantRepository {
       id: value.id, tenantId: value.tenantId, courseCode: value.courseCode,
       revision: value.revision, title: value.title, contentRef: value.contentRef,
       questionBankRef: value.questionBankRef, questionBankDigest: value.questionBankDigest,
-      passingScoreBps: value.passingScoreBps, status: value.status, version: value.version,
+      passingScoreBps: value.passingScoreBps,
+      audienceMode: value.audienceMode ?? 'assigned_only',
+      audienceDepartmentIds: Object.freeze([...(value.audienceDepartmentIds ?? [])]),
+      audiencePositionIds: Object.freeze([...(value.audiencePositionIds ?? [])]),
+      status: value.status,
+      version: value.version,
       createdAt: value.createdAt.toISOString(), updatedAt: value.updatedAt.toISOString(),
     });
   }
@@ -63,14 +68,83 @@ export class CourseVersionRepository extends TenantRepository {
       id: value.id, tenantId: value.tenantId, courseCode: value.courseCode,
       revision: value.revision, title: value.title, contentRef: value.contentRef,
       questionBankRef: value.questionBankRef, questionBankDigest: value.questionBankDigest,
-      passingScoreBps: value.passingScoreBps, status: value.status, version: value.version,
+      passingScoreBps: value.passingScoreBps,
+      audienceMode: value.audienceMode ?? 'assigned_only',
+      audienceDepartmentIds: Object.freeze([...(value.audienceDepartmentIds ?? [])]),
+      audiencePositionIds: Object.freeze([...(value.audiencePositionIds ?? [])]),
+      status: value.status,
+      version: value.version,
       createdAt: value.createdAt.toISOString(), updatedAt: value.updatedAt.toISOString(),
+    })));
+  }
+
+  async findSearchEligible(
+    assignedCourseVersionIds: readonly string[],
+    departmentIds: readonly string[],
+    positionIds: readonly string[],
+  ): Promise<readonly CourseVersion[]> {
+    if (
+      assignedCourseVersionIds.length > 200 ||
+      departmentIds.length > 500 ||
+      positionIds.length > 200
+    ) throw new Error('知识搜索授权投影超过上限');
+    const authorization: Record<string, unknown>[] = [];
+    if (assignedCourseVersionIds.length > 0) {
+      authorization.push({ id: { $in: [...assignedCourseVersionIds] } });
+    }
+    if (departmentIds.length > 0 || positionIds.length > 0) authorization.push({
+      audienceMode: 'employment_scope',
+      $and: [
+        {
+          $or: [
+            { audienceDepartmentIds: { $size: 0 } },
+            ...(departmentIds.length === 0
+              ? []
+              : [{ audienceDepartmentIds: { $in: [...departmentIds] } }]),
+          ],
+        },
+        {
+          $or: [
+            { audiencePositionIds: { $size: 0 } },
+            ...(positionIds.length === 0
+              ? []
+              : [{ audiencePositionIds: { $in: [...positionIds] } }]),
+          ],
+        },
+      ],
+    });
+    if (authorization.length === 0) return Object.freeze([]);
+    const values = await this.records.find({
+      tenantId: this.tenantId(),
+      status: 'published',
+      $or: authorization,
+    }).sort({ courseCode: 1, revision: -1, id: 1 }).limit(201).lean().exec();
+    if (values.length > 200) throw new Error('知识搜索授权课程超过 200 条上限');
+    return Object.freeze(values.map((value) => Object.freeze({
+      id: value.id,
+      tenantId: value.tenantId,
+      courseCode: value.courseCode,
+      revision: value.revision,
+      title: value.title,
+      contentRef: value.contentRef,
+      questionBankRef: value.questionBankRef,
+      questionBankDigest: value.questionBankDigest,
+      passingScoreBps: value.passingScoreBps,
+      audienceMode: value.audienceMode ?? 'assigned_only',
+      audienceDepartmentIds: Object.freeze([...(value.audienceDepartmentIds ?? [])]),
+      audiencePositionIds: Object.freeze([...(value.audiencePositionIds ?? [])]),
+      status: value.status,
+      version: value.version,
+      createdAt: value.createdAt.toISOString(),
+      updatedAt: value.updatedAt.toISOString(),
     })));
   }
 
   async insert(course: CourseVersion, session: ClientSession): Promise<void> {
     this.assertTenant(course.tenantId);
     await this.records.create([{ ...course,
+      audienceDepartmentIds: [...course.audienceDepartmentIds],
+      audiencePositionIds: [...course.audiencePositionIds],
       createdAt: new Date(course.createdAt), updatedAt: new Date(course.updatedAt),
     }], { session });
   }

@@ -18,6 +18,36 @@ export class KnowledgeCourseVersionRecord {
   questionBankDigest!: string | null;
   @Prop({ type: Number, default: null, immutable: true, validate: { validator: bps } })
   passingScoreBps!: number | null;
+  @Prop({
+    type: String,
+    enum: ['assigned_only', 'employment_scope'],
+    required: true,
+    immutable: true,
+    default: 'assigned_only',
+  })
+  audienceMode!: 'assigned_only' | 'employment_scope';
+  @Prop({
+    type: [String],
+    required: true,
+    immutable: true,
+    default: [],
+    validate: {
+      validator: (values: unknown): boolean => validAudienceIds(values),
+      message: 'audienceDepartmentIds 必须为不超过 200 个的不重复标识',
+    },
+  })
+  audienceDepartmentIds!: string[];
+  @Prop({
+    type: [String],
+    required: true,
+    immutable: true,
+    default: [],
+    validate: {
+      validator: (values: unknown): boolean => validAudienceIds(values),
+      message: 'audiencePositionIds 必须为不超过 200 个的不重复标识',
+    },
+  })
+  audiencePositionIds!: string[];
   @Prop({ type: String, enum: ['draft', 'published', 'retired'], required: true })
   status!: 'draft' | 'published' | 'retired';
   @Prop({ type: Number, required: true, validate: { validator: positive } }) version!: number;
@@ -29,6 +59,22 @@ export const KnowledgeCourseVersionRecordSchema = SchemaFactory.createForClass(K
 KnowledgeCourseVersionRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 KnowledgeCourseVersionRecordSchema.index({ tenantId: 1, courseCode: 1, revision: 1 }, { unique: true });
 KnowledgeCourseVersionRecordSchema.index({ tenantId: 1, status: 1, courseCode: 1 });
+KnowledgeCourseVersionRecordSchema.index({ tenantId: 1, status: 1, audienceDepartmentIds: 1 });
+KnowledgeCourseVersionRecordSchema.index({ tenantId: 1, status: 1, audiencePositionIds: 1 });
+KnowledgeCourseVersionRecordSchema.pre('validate', function validateAudience() {
+  const departmentIds = Array.isArray(this.audienceDepartmentIds)
+    ? this.audienceDepartmentIds
+    : [];
+  const positionIds = Array.isArray(this.audiencePositionIds)
+    ? this.audiencePositionIds
+    : [];
+  if (
+    (this.audienceMode === 'assigned_only' &&
+      (departmentIds.length > 0 || positionIds.length > 0)) ||
+    (this.audienceMode === 'employment_scope' &&
+      departmentIds.length === 0 && positionIds.length === 0)
+  ) throw new Error('知识课程授权范围组合非法');
+});
 
 @Schema({ collection: 'knowledge_training_assignments', timestamps: true, versionKey: false, id: false })
 export class KnowledgeTrainingAssignmentRecord {
@@ -116,3 +162,10 @@ export const KnowledgeOnboardingAttestationRecordSchema = SchemaFactory.createFo
 );
 KnowledgeOnboardingAttestationRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 KnowledgeOnboardingAttestationRecordSchema.index({ tenantId: 1, onboardingInstanceId: 1 }, { unique: true });
+
+function validAudienceIds(values: unknown): boolean {
+  return Array.isArray(values) &&
+    values.length <= 200 &&
+    new Set(values).size === values.length &&
+    values.every((value) => typeof value === 'string' && value.length >= 1 && value.length <= MAX_ID);
+}

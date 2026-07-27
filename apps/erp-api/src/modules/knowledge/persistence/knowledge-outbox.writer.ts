@@ -15,7 +15,7 @@ export class KnowledgeOutboxWriter {
     @InjectModel(OutboxRecord.name) private readonly records: Model<OutboxDocument>,
   ) {}
 
-  async append(event: KnowledgeDomainEvent, session: ClientSession): Promise<void> {
+  async append(event: KnowledgeDomainEvent, session: ClientSession): Promise<string> {
     const trusted = this.context.getRequired();
     if (event.tenantId !== trusted.tenant.tenantId) throw new Error('Knowledge Outbox 拒绝跨租户事件');
     const eventId = createEventId(new Date(event.occurredAt));
@@ -37,5 +37,6 @@ export class KnowledgeOutboxWriter {
       eventType, envelope: { ...envelope }, status: 'pending', attempts: 0,
       nextAttemptAt: new Date(event.occurredAt),
     }], { session });
+    return eventId;
   }
 }

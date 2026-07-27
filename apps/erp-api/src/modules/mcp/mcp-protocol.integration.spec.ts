@@ -170,6 +170,46 @@ describe('MCP Streamable HTTP 协议集成', () => {
           progressBps: 5_000, version: 2,
         } },
       }),
+      searchKnowledge: vi.fn().mockResolvedValue({
+        content: [{ type: 'text' as const, text: JSON.stringify({
+          items: [{
+            course: {
+              id: '01J8ZQK7V0A2M4N6P8R0T2W4A1',
+              courseCode: 'SECURITY',
+              revision: 1,
+              title: '安全培训',
+              examRequired: true,
+              passingScoreBps: 8_000,
+              status: 'published',
+              version: 2,
+            },
+            snippetText: '企业信息安全基础',
+            highlights: [{ start: 2, end: 6 }],
+            scoreBps: 9_000,
+            indexedAt: '2026-07-27T00:00:00.000Z',
+          }],
+          nextCursor: null,
+        }) }],
+        structuredContent: {
+          items: [{
+            course: {
+              id: '01J8ZQK7V0A2M4N6P8R0T2W4A1',
+              courseCode: 'SECURITY',
+              revision: 1,
+              title: '安全培训',
+              examRequired: true,
+              passingScoreBps: 8_000,
+              status: 'published',
+              version: 2,
+            },
+            snippetText: '企业信息安全基础',
+            highlights: [{ start: 2, end: 6 }],
+            scoreBps: 9_000,
+            indexedAt: '2026-07-27T00:00:00.000Z',
+          }],
+          nextCursor: null,
+        },
+      }),
       getCareCase: vi.fn().mockResolvedValue({
         content: [{ type: 'text' as const, text: JSON.stringify({ careCase: {
           id: '01J8ZQK7V0A2M4N6P8R0T2W4C1',
@@ -444,6 +484,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       'onboarding_get',
       'knowledge_course_get',
       'knowledge_assignment_get',
+      'knowledge_search',
       'care_case_get',
       'talent_lifecycle_get',
       'attendance_month_get',
@@ -492,6 +533,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ uriTemplate: 'erp://onboarding/instances/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://knowledge/courses/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://knowledge/assignments/{id}' }),
+      expect.objectContaining({ uriTemplate: 'erp://knowledge/search/{query}' }),
       expect.objectContaining({ uriTemplate: 'erp://care/cases/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://talent-lifecycle/people/{candidateId}' }),
       expect.objectContaining({ uriTemplate: 'erp://attendance/months/{month}/me' }),
@@ -514,6 +556,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ name: 'recruitment_offer_send_guide' }),
       expect.objectContaining({ name: 'onboarding_progress_guide' }),
       expect.objectContaining({ name: 'knowledge_training_progress_guide' }),
+      expect.objectContaining({ name: 'knowledge_search_guide' }),
       expect.objectContaining({ name: 'care_offboarding_progress_guide' }),
       expect.objectContaining({ name: 'talent_lifecycle_follow_up_guide' }),
       expect.objectContaining({ name: 'attendance_month_review_guide' }),
@@ -606,6 +649,24 @@ describe('MCP Streamable HTTP 协议集成', () => {
     );
     expect(tools.getKnowledgeAssignment).toHaveBeenCalledOnce();
     expect(tools.getKnowledgeCourse).toHaveBeenCalledOnce();
+    const searchResult = await client.callTool({
+      name: 'knowledge_search',
+      arguments: { query: '信息安全', limit: 10 },
+    });
+    expect(searchResult.structuredContent).toMatchObject({
+      items: [{
+        course: { id: '01J8ZQK7V0A2M4N6P8R0T2W4A1' },
+        snippetText: '企业信息安全基础',
+      }],
+      nextCursor: null,
+    });
+    const searchResource = await client.readResource({
+      uri: `erp://knowledge/search/${encodeURIComponent('信息安全')}`,
+    });
+    expect(JSON.stringify([searchResult, searchResource])).not.toMatch(
+      /tenantId|employeeId|departmentIds|positionIds|contentRef|questionBank|answer/iu,
+    );
+    expect(tools.searchKnowledge).toHaveBeenCalledTimes(2);
 
     const careResult = await client.callTool({
       name: 'care_case_get',

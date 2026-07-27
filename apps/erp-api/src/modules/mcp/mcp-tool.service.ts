@@ -164,6 +164,25 @@ export class McpToolService {
     );
   }
 
+  async searchKnowledge(
+    input: { readonly query: string; readonly cursor?: string; readonly limit?: number },
+    extra: McpExtra,
+  ): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:knowledge:search')) {
+        await this.auditTool(identity, 'knowledge_search', 'R0', 'denied');
+        return scopeError('erp:knowledge:search');
+      }
+      const result = await this.knowledge.searchMyKnowledge(input);
+      await this.auditTool(identity, 'knowledge_search', 'R0', 'success', {
+        count: result.items.length,
+        hasNextPage: result.nextCursor !== null,
+      });
+      return structuredResult(result);
+    });
+  }
+
   async getCareCase(id: string, extra: McpExtra): Promise<McpToolResult> {
     const identity = parseMcpIdentity(extra.authInfo);
     return this.run(identity, async () => {

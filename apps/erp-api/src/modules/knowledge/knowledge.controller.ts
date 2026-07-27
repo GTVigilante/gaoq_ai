@@ -7,6 +7,7 @@ import {
   HttpCode,
   Param,
   Post,
+  Query,
   Res,
 } from '@nestjs/common';
 import type { Response } from 'express';
@@ -17,6 +18,7 @@ import {
   KnowledgeApplicationService,
   type CourseSummary,
   type ExamAttemptSummary,
+  type PersonalKnowledgeSearchResult,
   type PersonalTrainingAssignmentView,
   type TrainingAssignmentSummary,
 } from './application/knowledge-application.service.js';
@@ -26,6 +28,7 @@ import {
   CreateCourseVersionDto,
   GradeExamDto,
   RecordTrainingProgressDto,
+  SearchMyKnowledgeDto,
 } from './application/knowledge.dto.js';
 
 const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
@@ -72,6 +75,28 @@ export class KnowledgeController {
     return result;
   }
 
+  @Post('courses/:id/retire')
+  @HttpCode(200)
+  @RequiredScopes('erp:knowledge:course:publish')
+  async retireCourse(
+    @Param('id') id: string,
+    @Headers('if-match') ifMatch: string | undefined,
+    @Headers('idempotency-key') key: string | undefined,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<{ readonly course: CourseSummary }> {
+    const result = await this.knowledge.retireCourse(
+      this.id(id),
+      this.version(ifMatch),
+      this.key(key),
+    );
+    this.etag(response, result.course.version);
+    await this.auditResult('knowledge.course.retire', 'knowledge_course', result.course.id, 'R2', {
+      status: result.course.status,
+      version: result.course.version,
+    });
+    return result;
+  }
+
   @Get('courses/:id')
   @RequiredScopes('erp:knowledge:course:read')
   async getCourse(
@@ -80,6 +105,26 @@ export class KnowledgeController {
   ): Promise<CourseSummary> {
     const result = await this.knowledge.getCourse(this.id(id));
     this.etag(response, result.version);
+    return result;
+  }
+
+  @Get('search')
+  @RequiredScopes('erp:knowledge:search')
+  async searchMyKnowledge(
+    @Query() query: SearchMyKnowledgeDto,
+  ): Promise<PersonalKnowledgeSearchResult> {
+    const result = await this.knowledge.searchMyKnowledge(query);
+    await this.auditResult(
+      'knowledge.search.read',
+      'knowledge_search_result',
+      'mine',
+      'R0',
+      {
+        count: result.items.length,
+        limit: query.limit ?? 10,
+        hasNextPage: result.nextCursor !== null,
+      },
+    );
     return result;
   }
 

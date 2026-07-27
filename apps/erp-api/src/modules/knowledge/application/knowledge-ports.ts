@@ -9,6 +9,29 @@ export interface KnowledgeGradingResult {
   readonly gradingEvidenceId: string;
 }
 
+export interface KnowledgeSearchHit {
+  readonly courseVersionId: string;
+  readonly revision: number;
+  readonly snippetText: string;
+  readonly highlights: readonly {
+    readonly start: number;
+    readonly end: number;
+  }[];
+  readonly scoreBps: number;
+  readonly indexedAt: string;
+}
+
+export interface KnowledgeSearchResult {
+  readonly items: readonly KnowledgeSearchHit[];
+  readonly nextCursor: string | null;
+}
+
+export interface KnowledgeSearchIndexReceipt {
+  readonly receiptId: string;
+  readonly indexedContentDigest: string;
+  readonly indexedAt: string;
+}
+
 export abstract class KnowledgeGradingPort {
   /** 实现必须按 submissionRef 幂等，且不得把答案或标准答案返回给应用服务。 */
   abstract grade(input: {
@@ -19,6 +42,38 @@ export abstract class KnowledgeGradingPort {
     readonly questionBankDigest: string;
     readonly submissionRef: string;
   }): Promise<KnowledgeGradingResult>;
+}
+
+export abstract class KnowledgeSearchPort {
+  /** 仅传可信授权投影与允许课程集合，禁止向网关透传访问令牌或搜索 DSL。 */
+  abstract search(input: {
+    readonly tenantId: string;
+    readonly employeeId: string;
+    readonly departmentIds: readonly string[];
+    readonly positionIds: readonly string[];
+    readonly allowedCourseVersionIds: readonly string[];
+    readonly authorizationDigest: string;
+    readonly queryText: string;
+    readonly cursor: string | null;
+    readonly limit: number;
+  }): Promise<KnowledgeSearchResult>;
+}
+
+export abstract class KnowledgeSearchIndexPort {
+  /** 只发送内容引用与授权投影；搜索网关自行从受信内容域构建或删除索引。 */
+  abstract apply(input: {
+    readonly eventId: string;
+    readonly tenantId: string;
+    readonly courseVersionId: string;
+    readonly courseCode: string;
+    readonly revision: number;
+    readonly courseVersion: number;
+    readonly contentRef: string;
+    readonly operation: 'upsert' | 'delete';
+    readonly audienceMode: 'assigned_only' | 'employment_scope';
+    readonly audienceDepartmentIds: readonly string[];
+    readonly audiencePositionIds: readonly string[];
+  }): Promise<KnowledgeSearchIndexReceipt>;
 }
 
 export abstract class KnowledgeContentVerificationPort {

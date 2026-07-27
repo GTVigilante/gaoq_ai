@@ -11,6 +11,10 @@ const ID = '01J8ZQK7V0A2M4N6P8R0T2W4Y6';
 function fixture() {
   const service = {
     listMyAssignments: vi.fn().mockResolvedValue({ items: [] }),
+    searchMyKnowledge: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
+    retireCourse: vi.fn().mockResolvedValue({ course: {
+      id: ID, status: 'retired', version: 3,
+    } }),
     completeAssignment: vi.fn().mockResolvedValue({ assignment: {
       id: ID, onboardingInstanceId: ID, status: 'completed', version: 3,
     } }),
@@ -27,8 +31,10 @@ describe('KnowledgeController', () => {
   it('写接口声明精确 Scope，考试与完成不向通用人工任务 Scope 开放', () => {
     expect(scope('createCourse')).toEqual(['erp:knowledge:course:create']);
     expect(scope('publishCourse')).toEqual(['erp:knowledge:course:publish']);
+    expect(scope('retireCourse')).toEqual(['erp:knowledge:course:publish']);
     expect(scope('getCourse')).toEqual(['erp:knowledge:course:read']);
     expect(scope('listMyAssignments')).toEqual(['erp:knowledge:assignment:read']);
+    expect(scope('searchMyKnowledge')).toEqual(['erp:knowledge:search']);
     expect(scope('recordProgress')).toEqual(['erp:integration:knowledge:progress']);
     expect(scope('gradeExam')).toEqual(['erp:knowledge:exam:grade']);
     expect(scope('completeAssignment')).toEqual(['erp:knowledge:assignment:complete']);
@@ -56,6 +62,26 @@ describe('KnowledgeController', () => {
       riskLevel: 'R0',
       metadata: { count: 0 },
     }));
+  });
+
+  it('本人知识检索不把查询正文写入审计', async () => {
+    const store = fixture();
+    await expect(store.controller.searchMyKnowledge({
+      query: '信息安全',
+      limit: 10,
+    })).resolves.toEqual({ items: [], nextCursor: null });
+    expect(store.service.searchMyKnowledge).toHaveBeenCalledWith({
+      query: '信息安全',
+      limit: 10,
+    });
+    expect(store.audit.record).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'knowledge.search.read',
+      resourceType: 'knowledge_search_result',
+      resourceId: 'mine',
+      riskLevel: 'R0',
+      metadata: { count: 0, limit: 10, hasNextPage: false },
+    }));
+    expect(JSON.stringify(store.audit.record.mock.calls)).not.toContain('信息安全');
   });
 });
 

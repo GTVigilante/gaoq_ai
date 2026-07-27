@@ -15,7 +15,11 @@ const COURSE: CourseVersion = {
   id: 'course-version-001', tenantId: 'tenant-001', courseCode: 'SECURITY',
   revision: 1, title: '信息安全', contentRef: 'content-001',
   questionBankRef: 'question-bank-001', questionBankDigest: 'a'.repeat(43),
-  passingScoreBps: 8_000, status: 'draft', version: 1,
+  passingScoreBps: 8_000,
+  audienceMode: 'assigned_only',
+  audienceDepartmentIds: [],
+  audiencePositionIds: [],
+  status: 'draft', version: 1,
   createdAt: '2026-07-21T00:00:00.000Z', updatedAt: '2026-07-21T00:00:00.000Z',
 };
 const GRADING_INPUT = {
@@ -23,9 +27,39 @@ const GRADING_INPUT = {
   courseVersionId: COURSE.id, questionBankRef: 'question-bank-001',
   questionBankDigest: 'a'.repeat(43), submissionRef: 'submission-001',
 };
+const SEARCH_INPUT = {
+  tenantId: 'tenant-001',
+  employeeId: 'employee-001',
+  departmentIds: ['department-001'],
+  positionIds: ['position-001'],
+  allowedCourseVersionIds: [COURSE.id],
+  authorizationDigest: 'c'.repeat(43),
+  queryText: '信息 安全',
+  cursor: null,
+  limit: 10,
+};
+const SEARCH_INDEX_INPUT = {
+  eventId: '01J8ZQK7V0A2M4N6P8R0T2W4Y0',
+  tenantId: COURSE.tenantId,
+  courseVersionId: COURSE.id,
+  courseCode: COURSE.courseCode,
+  revision: COURSE.revision,
+  courseVersion: 2,
+  contentRef: COURSE.contentRef,
+  operation: 'upsert' as const,
+  audienceMode: 'employment_scope' as const,
+  audienceDepartmentIds: ['department-001'],
+  audiencePositionIds: ['position-001'],
+};
 const SIGNING_KEY_ID = 'knowledge-key-001';
 const signingKeys = generateKeyPairSync('ed25519');
 const SIGNING_PUBLIC_KEY_BASE64 = signingKeys.publicKey.export({
+  format: 'der',
+  type: 'spki',
+}).toString('base64');
+const SEARCH_SIGNING_KEY_ID = 'knowledge-search-key-001';
+const searchSigningKeys = generateKeyPairSync('ed25519');
+const SEARCH_SIGNING_PUBLIC_KEY_BASE64 = searchSigningKeys.publicKey.export({
   format: 'der',
   type: 'spki',
 }).toString('base64');
@@ -37,26 +71,49 @@ function config(overrides?: Readonly<Record<string, string>>) {
       'knowledge-evidence-token-at-least-32-characters',
     KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_PUBLIC_KEY_BASE64: SIGNING_PUBLIC_KEY_BASE64,
     KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_KEY_ID: SIGNING_KEY_ID,
+    KNOWLEDGE_SEARCH_GATEWAY_ENDPOINT: 'https://knowledge-search.example.internal',
+    KNOWLEDGE_SEARCH_GATEWAY_BEARER_TOKEN:
+      'knowledge-search-token-distinct-at-least-32-characters',
+    KNOWLEDGE_SEARCH_GATEWAY_SIGNING_PUBLIC_KEY_BASE64:
+      SEARCH_SIGNING_PUBLIC_KEY_BASE64,
+    KNOWLEDGE_SEARCH_GATEWAY_SIGNING_KEY_ID: SEARCH_SIGNING_KEY_ID,
     ...overrides,
   };
   return { get: (key: string) => values[key] } as unknown as
     ConfigService<AppEnvironment, true>;
 }
 
-function response(body: unknown, status = 200): Response {
+function response(
+  body: unknown,
+  status = 200,
+  gateway: 'evidence' | 'search' = 'evidence',
+): Response {
+  const keyId = gateway === 'evidence' ? SIGNING_KEY_ID : SEARCH_SIGNING_KEY_ID;
+  const privateKey = gateway === 'evidence'
+    ? signingKeys.privateKey
+    : searchSigningKeys.privateKey;
   const bytes = Buffer.from(JSON.stringify(body), 'utf8');
   const receiptHash = createHash('sha256').update(bytes).digest('base64url');
   const signature = sign(
     null,
-    Buffer.from(`knowledge-evidence-receipt-v1\n${SIGNING_KEY_ID}\n${receiptHash}`, 'utf8'),
-    signingKeys.privateKey,
+    Buffer.from(
+      `${gateway === 'evidence'
+        ? 'knowledge-evidence-receipt-v1'
+        : 'knowledge-search-receipt-v1'}\n${keyId}\n${receiptHash}`,
+      'utf8',
+    ),
+    privateKey,
   ).toString('base64url');
   return new Response(bytes, {
     status,
     headers: {
       'content-type': 'application/json; charset=utf-8',
-      'x-knowledge-evidence-key-id': SIGNING_KEY_ID,
-      'x-knowledge-evidence-signature': signature,
+      [gateway === 'evidence'
+        ? 'x-knowledge-evidence-key-id'
+        : 'x-knowledge-search-key-id']: keyId,
+      [gateway === 'evidence'
+        ? 'x-knowledge-evidence-signature'
+        : 'x-knowledge-search-signature']: signature,
     },
   });
 }
@@ -199,5 +256,141 @@ describe('Knowledge 证据 HTTPS Adapters', () => {
       );
     }
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('全文检索仅发送可信授权投影并返回无 HTML 的偏移高亮', async () => {
+    const queryDigest = createHash('sha256')
+      .update(JSON.stringify(['search-query', SEARCH_INPUT.queryText]), 'utf8')
+      .digest('base64url');
+    const fetchMock = vi.fn().mockResolvedValue(response({
+      tenantId: SEARCH_INPUT.tenantId,
+      employeeId: SEARCH_INPUT.employeeId,
+      authorizationDigest: SEARCH_INPUT.authorizationDigest,
+      queryDigest,
+      items: [{
+        courseVersionId: COURSE.id,
+        revision: COURSE.revision,
+        snippetText: '企业信息安全基础',
+        highlights: [{ start: 2, end: 6 }],
+        scoreBps: 9_000,
+        indexedAt: '2026-07-27T00:00:00.000Z',
+      }],
+      nextCursor: null,
+      partial: false,
+    }, 200, 'search'));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await new KnowledgeEvidenceHttpClient(config()).search(SEARCH_INPUT);
+    expect(result).toEqual({
+      items: [{
+        courseVersionId: COURSE.id,
+        revision: COURSE.revision,
+        snippetText: '企业信息安全基础',
+        highlights: [{ start: 2, end: 6 }],
+        scoreBps: 9_000,
+        indexedAt: '2026-07-27T00:00:00.000Z',
+      }],
+      nextCursor: null,
+    });
+    const call = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(call[0]).toBe('https://knowledge-search.example.internal/v1/search');
+    const rawBody = call[1].body;
+    if (typeof rawBody !== 'string') throw new Error('测试请求正文必须为字符串');
+    const body = JSON.parse(rawBody) as Record<string, unknown>;
+    expect(body).toEqual(SEARCH_INPUT);
+    expect(body).not.toHaveProperty('tenantFilter');
+    expect(body).not.toHaveProperty('queryDsl');
+    expect(JSON.stringify(result)).not.toMatch(/[<>&]/u);
+  });
+
+  it('全文检索拒绝未授权课程、部分结果和越界高亮', async () => {
+    const queryDigest = createHash('sha256')
+      .update(JSON.stringify(['search-query', SEARCH_INPUT.queryText]), 'utf8')
+      .digest('base64url');
+    const base = {
+      tenantId: SEARCH_INPUT.tenantId,
+      employeeId: SEARCH_INPUT.employeeId,
+      authorizationDigest: SEARCH_INPUT.authorizationDigest,
+      queryDigest,
+      nextCursor: null,
+      partial: false,
+    };
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(response({
+        ...base,
+        items: [{
+          courseVersionId: 'course-version-other',
+          revision: 1,
+          snippetText: '不应返回',
+          highlights: [],
+          scoreBps: 8_000,
+          indexedAt: '2026-07-27T00:00:00.000Z',
+        }],
+      }, 200, 'search'))
+      .mockResolvedValueOnce(response({ ...base, items: [], partial: true }, 200, 'search'))
+      .mockResolvedValueOnce(response({
+        ...base,
+        items: [{
+          courseVersionId: COURSE.id,
+          revision: 1,
+          snippetText: '安全',
+          highlights: [{ start: 0, end: 3 }],
+          scoreBps: 8_000,
+          indexedAt: '2026-07-27T00:00:00.000Z',
+        }],
+      }, 200, 'search')));
+    const client = new KnowledgeEvidenceHttpClient(config());
+    await expect(client.search(SEARCH_INPUT))
+      .rejects.toThrow('KNOWLEDGE_SEARCH_RECEIPT_MISMATCH');
+    await expect(client.search(SEARCH_INPUT))
+      .rejects.toThrow('KNOWLEDGE_SEARCH_RECEIPT_INVALID');
+    await expect(client.search(SEARCH_INPUT))
+      .rejects.toThrow('KNOWLEDGE_SEARCH_RECEIPT_MISMATCH');
+  });
+
+  it('索引更新仅发送内容引用与授权投影并绑定签名回执', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response({
+      eventId: SEARCH_INDEX_INPUT.eventId,
+      tenantId: SEARCH_INDEX_INPUT.tenantId,
+      courseVersionId: SEARCH_INDEX_INPUT.courseVersionId,
+      courseVersion: SEARCH_INDEX_INPUT.courseVersion,
+      operation: SEARCH_INDEX_INPUT.operation,
+      receiptId: 'search-index-receipt-001',
+      indexedContentDigest: 'd'.repeat(43),
+      indexedAt: '2026-07-27T00:00:00.000Z',
+      partial: false,
+    }, 200, 'search'));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(new KnowledgeEvidenceHttpClient(config()).applySearchIndex(
+      SEARCH_INDEX_INPUT,
+    )).resolves.toEqual({
+      receiptId: 'search-index-receipt-001',
+      indexedContentDigest: 'd'.repeat(43),
+      indexedAt: '2026-07-27T00:00:00.000Z',
+    });
+    const call = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(call[0]).toBe(
+      'https://knowledge-search.example.internal/v1/indexes/courses/upsert',
+    );
+    const rawBody = call[1].body;
+    if (typeof rawBody !== 'string') throw new Error('测试请求正文必须为字符串');
+    expect(JSON.parse(rawBody)).toEqual(SEARCH_INDEX_INPUT);
+    expect(rawBody).not.toMatch(/正文|answer|token|authorization/iu);
+  });
+
+  it('索引回执课程版本错位时失败关闭', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({
+      eventId: SEARCH_INDEX_INPUT.eventId,
+      tenantId: SEARCH_INDEX_INPUT.tenantId,
+      courseVersionId: SEARCH_INDEX_INPUT.courseVersionId,
+      courseVersion: 99,
+      operation: SEARCH_INDEX_INPUT.operation,
+      receiptId: 'search-index-receipt-001',
+      indexedContentDigest: 'd'.repeat(43),
+      indexedAt: '2026-07-27T00:00:00.000Z',
+      partial: false,
+    }, 200, 'search')));
+    await expect(new KnowledgeEvidenceHttpClient(config()).applySearchIndex(
+      SEARCH_INDEX_INPUT,
+    )).rejects.toThrow('KNOWLEDGE_SEARCH_INDEX_RECEIPT_MISMATCH');
   });
 });

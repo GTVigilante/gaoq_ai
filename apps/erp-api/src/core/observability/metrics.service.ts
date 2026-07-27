@@ -5,6 +5,7 @@ type AuditOutcome = 'success' | 'failure';
 type VerificationOutcome = 'success' | 'failure';
 type ApprovalNotificationOutcome = 'sent' | 'retry' | 'dead';
 type McpConfirmationStage = 'prepare' | 'confirm' | 'execute';
+type KnowledgeSearchIndexOutcome = 'success' | 'retry' | 'dead';
 
 /** 低基数 Prometheus 指标注册中心；严禁使用租户、用户、资源 ID 作为标签。 */
 @Injectable()
@@ -96,6 +97,25 @@ export class MetricsService {
     labelNames: ['stage', 'risk_level', 'outcome'] as const,
     registers: [this.registry],
   });
+  private readonly knowledgeSearchIndexDeliveries = new Counter({
+    name: 'gaoq_knowledge_search_index_delivery_total',
+    help: 'Knowledge 搜索索引事务任务投递结果总数。',
+    labelNames: ['operation', 'outcome'] as const,
+    registers: [this.registry],
+  });
+  private readonly knowledgeSearchIndexConvergence = new Histogram({
+    name: 'gaoq_knowledge_search_index_convergence_seconds',
+    help: 'Knowledge 搜索索引从事务任务创建到签名回执索引时间的收敛耗时（秒）。',
+    labelNames: ['operation'] as const,
+    buckets: [0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 900, 3_600],
+    registers: [this.registry],
+  });
+  private readonly knowledgeSearchIndexLastSuccess = new Gauge({
+    name: 'gaoq_knowledge_search_index_last_success_timestamp_seconds',
+    help: 'Knowledge 搜索索引最近一次成功签名回执的 Unix 时间戳（秒）。',
+    labelNames: ['operation'] as const,
+    registers: [this.registry],
+  });
 
   constructor() {
     collectDefaultMetrics({ register: this.registry, prefix: 'gaoq_process_' });
@@ -170,6 +190,29 @@ export class MetricsService {
     outcome: 'success' | 'failure' | 'denied',
   ): void {
     this.mcpConfirmations.inc({ stage, risk_level: riskLevel, outcome });
+  }
+
+  recordKnowledgeSearchIndex(
+    operation: 'upsert' | 'delete',
+    outcome: KnowledgeSearchIndexOutcome,
+    convergenceSeconds?: number,
+    indexedAt?: Date,
+  ): void {
+    this.knowledgeSearchIndexDeliveries.inc({ operation, outcome });
+    if (
+      outcome === 'success' &&
+      convergenceSeconds !== undefined &&
+      indexedAt !== undefined
+    ) {
+      this.knowledgeSearchIndexConvergence.observe(
+        { operation },
+        Math.max(0, convergenceSeconds),
+      );
+      this.knowledgeSearchIndexLastSuccess.set(
+        { operation },
+        indexedAt.getTime() / 1_000,
+      );
+    }
   }
 }
 

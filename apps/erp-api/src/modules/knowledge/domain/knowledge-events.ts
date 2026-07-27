@@ -4,6 +4,7 @@ export interface KnowledgeDomainEvent {
   readonly type:
     | 'knowledge.course.created'
     | 'knowledge.course.published'
+    | 'knowledge.course.retired'
     | 'knowledge.assignment.created'
     | 'knowledge.assignment.progressed'
     | 'knowledge.exam.graded'
@@ -18,10 +19,13 @@ export interface KnowledgeDomainEvent {
 
 export function courseEvent(
   course: CourseVersion,
-  type: 'knowledge.course.created' | 'knowledge.course.published',
+  type: 'knowledge.course.created' | 'knowledge.course.published' | 'knowledge.course.retired',
 ): KnowledgeDomainEvent {
   return event(type, course.tenantId, course.id, course.version, course.updatedAt, {
-    courseCode: course.courseCode, revision: course.revision, status: course.status,
+    courseCode: course.courseCode,
+    revision: course.revision,
+    status: course.status,
+    audienceMode: course.audienceMode,
   });
 }
 

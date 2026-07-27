@@ -2,7 +2,7 @@
 
 ## 变更边界
 
-- 招聘/eSign/组织/入职迁移标识固定为 `phase-3-indexes-v1`；Knowledge 使用 `phase-3-knowledge-indexes-v1`，Care 与 Employment 终止引用使用 `phase-3-care-indexes-v1`，招聘渠道使用 `phase-3-recruitment-channel-indexes-v1`，智能简历库使用 `phase-3-recruitment-resume-indexes-v1`，人才全周期使用 `phase-3-talent-lifecycle-indexes-v1`。已发布清单不得通过追加 Schema 改写 checksum。
+- 招聘/eSign/组织/入职迁移标识固定为 `phase-3-indexes-v1`；Knowledge 使用 `phase-3-knowledge-indexes-v1`，Knowledge 授权搜索追加清单使用 `phase-3-knowledge-search-indexes-v1`，Care 与 Employment 终止引用使用 `phase-3-care-indexes-v1`，招聘渠道使用 `phase-3-recruitment-channel-indexes-v1`，智能简历库使用 `phase-3-recruitment-resume-indexes-v1`，人才全周期使用 `phase-3-talent-lifecycle-indexes-v1`。已发布清单不得通过追加 Schema 改写 checksum。
 - 只创建缺失索引，不删除未知索引；同名或同键异配置立即失败关闭。
 - apply 使用 30 分钟数据库租约，完成后重新读取并复验全部索引。
 - 唯一索引创建前必须先在影子库检查重复数据并保留快照；本脚本不会自动删除或合并业务数据。
@@ -32,6 +32,19 @@
    ```
 
 7. 执行候选申请、Offer、eSign 回调、Onboarding 重试、Employment 唯一约束、培训进度源事件重放和答卷提交重放冒烟测试。
+
+   Knowledge 授权搜索必须先执行独立追加清单，再按“只读审核 → 显式应用 → 对账 → 必要时重建 → 再对账”顺序运行：
+
+   ```bash
+   pnpm --filter @gaoq/erp-api migrate:phase3:knowledge-search-indexes -- --dry-run
+   pnpm --filter @gaoq/erp-api migrate:phase3:knowledge-search-indexes
+   pnpm --filter @gaoq/erp-api migrate:phase3:knowledge-search-reconcile
+   pnpm --filter @gaoq/erp-api migrate:phase3:knowledge-search-rebuild -- --dry-run
+   pnpm --filter @gaoq/erp-api migrate:phase3:knowledge-search-rebuild -- --apply
+   pnpm --filter @gaoq/erp-api migrate:phase3:knowledge-search-reconcile
+   ```
+
+   对账命令只输出 `expected/completed/missing/pending/dead/stale/ready` 聚合值，不读取正文、身份或受众成员；非就绪以退出码 2 失败关闭。`--apply` 只为缺失业务键补任务并回填旧课程的 `assigned_only` 默认受众，不重放已完成任务；只有独立审批恢复死信或灾后重建时才可使用 `--force-replay`。重建按租户和课程编码选择最高仍发布修订执行 `upsert`，旧修订与已下架版本执行 `delete`。执行后必须确认三类 Knowledge 搜索指标持续采集、死信为零，并保存真实搜索集群的中文/英文分词、权限撤销、调岗、离职、下架、旧版本、超时、性能、安全和 UAT 证据；本地替身不得代替现场证据。
 8. 对 Care 追加清单执行同样的 dry-run、唯一键查重和审核后运行：
 
    ```bash

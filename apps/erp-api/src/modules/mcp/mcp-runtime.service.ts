@@ -220,6 +220,20 @@ const knowledgeAssignmentSchema = z.object({
   status: z.enum(['assigned', 'in_progress', 'completed', 'expired']),
   progressBps: z.number().int().min(0).max(10_000), version: z.number().int().positive(),
 });
+const knowledgeSearchItemSchema = z.object({
+  course: knowledgeCourseSchema,
+  snippetText: z.string().min(1).max(512),
+  highlights: z.array(z.object({
+    start: z.number().int().nonnegative(),
+    end: z.number().int().positive(),
+  })).max(8),
+  scoreBps: z.number().int().min(0).max(10_000),
+  indexedAt: z.string().datetime({ offset: true }),
+});
+const knowledgeSearchOutputSchema = z.object({
+  items: z.array(knowledgeSearchItemSchema).max(20),
+  nextCursor: z.string().regex(/^[A-Za-z0-9_-]{16,256}$/).nullable(),
+});
 const careTaskStatusSchema = z.enum(['pending', 'completed']);
 const careCaseSchema = z.object({
   id: z.string(), employeeId: z.string(), employmentId: z.string(),
@@ -747,6 +761,28 @@ export class McpRuntimeService {
     );
 
     server.registerResource(
+      'knowledge-search',
+      new ResourceTemplate('erp://knowledge/search/{query}', { list: undefined }),
+      {
+        title: '本人授权知识检索',
+        description: '按当前有效任职读取首屏搜索结果；只接受受控纯文本，不返回内容引用或权限投影。',
+        mimeType: 'application/json',
+      },
+      async (uri, { query }, extra) => {
+        const result = await this.tools.searchKnowledge({
+          query: requiredKnowledgeSearchQuery(query),
+          limit: 10,
+        }, extra);
+        if (result.isError === true) throw new Error('无权检索知识内容');
+        return { contents: [{
+          uri: uri.toString(),
+          mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
+    server.registerResource(
       'care-case',
       new ResourceTemplate('erp://care/cases/{id}', { list: undefined }),
       {
@@ -1146,6 +1182,26 @@ export class McpRuntimeService {
           content: {
             type: 'text',
             text: `请读取培训任务 ${assignmentId} 的脱敏摘要，说明进度、截止日期和状态。不要索取课程正文、题库、答案、答卷或证据；不要代替评分、完成任务或回填入职证明。`,
+          },
+        }],
+      }),
+    );
+
+    server.registerPrompt(
+      'knowledge_search_guide',
+      {
+        title: '本人授权知识检索指南',
+        description: '指导 AI 使用只读知识检索，不扩大权限、不拼接搜索 DSL 或索取下载地址。',
+        argsSchema: {
+          query: z.string().min(2).max(128).regex(/^[\p{L}\p{M}\p{N}\s._-]+$/u),
+        },
+      },
+      ({ query }) => ({
+        messages: [{
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `请仅用 knowledge_search 检索“${query}”，概括本人当前任职已授权课程中的命中内容并保留课程标题。不要尝试提供 tenantId、employeeId、部门、岗位、搜索 DSL、下载地址或扩大结果上限；不要把片段当作完整政策原文。`,
           },
         }],
       }),
@@ -1553,6 +1609,26 @@ export class McpRuntimeService {
     );
 
     server.registerTool(
+      'knowledge_search',
+      {
+        title: '检索本人授权知识',
+        description: '仅检索当前有效任职按分配、部门及岗位授权的已发布课程，返回纯文本片段与偏移高亮。风险等级 R0。',
+        inputSchema: {
+          query: z.string().min(2).max(128).regex(/^[\p{L}\p{M}\p{N}\s._-]+$/u),
+          cursor: z.string().regex(/^[A-Za-z0-9_-]{16,256}$/).optional(),
+          limit: z.number().int().min(1).max(20).optional(),
+        },
+        outputSchema: knowledgeSearchOutputSchema,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      },
+      async ({ query, cursor, limit }, extra) => this.tools.searchKnowledge({
+        query,
+        ...(cursor === undefined ? {} : { cursor }),
+        ...(limit === undefined ? {} : { limit }),
+      }, extra),
+    );
+
+    server.registerTool(
       'care_case_get',
       {
         title: '查询离职案件脱敏进度',
@@ -1899,6 +1975,23 @@ function requiredResourceId(value: string | string[] | undefined): string {
     throw new Error('MCP_RECRUITMENT_RESOURCE_ID_INVALID');
   }
   return value;
+}
+
+function requiredKnowledgeSearchQuery(value: string | string[] | undefined): string {
+  if (typeof value !== 'string') throw new Error('MCP_KNOWLEDGE_SEARCH_QUERY_INVALID');
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    throw new Error('MCP_KNOWLEDGE_SEARCH_QUERY_INVALID');
+  }
+  const normalized = decoded.normalize('NFKC').trim().replace(/\s+/gu, ' ');
+  if (
+    normalized.length < 2 ||
+    normalized.length > 128 ||
+    !/^[\p{L}\p{M}\p{N}\s._-]+$/u.test(normalized)
+  ) throw new Error('MCP_KNOWLEDGE_SEARCH_QUERY_INVALID');
+  return normalized;
 }
 
 function requiredMarketingEventId(value: string | string[] | undefined): string {

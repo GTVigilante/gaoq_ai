@@ -90,7 +90,11 @@ function assemble() {
   };
   const recruitmentOffers = { get: vi.fn(), requestSend: vi.fn() };
   const onboarding = { get: vi.fn() };
-  const knowledge = { getCourse: vi.fn(), getAssignment: vi.fn() };
+  const knowledge = {
+    getCourse: vi.fn(),
+    getAssignment: vi.fn(),
+    searchMyKnowledge: vi.fn(),
+  };
   const care = { getForMcp: vi.fn() };
   const attendance = {
     getMyMonth: vi.fn(), validateCorrectionRequest: vi.fn(), requestCorrection: vi.fn(),
@@ -450,6 +454,44 @@ describe('McpToolService', () => {
     });
     expect(JSON.stringify([course, assignment])).not.toMatch(
       /questionBank|contentRef|submissionRef|EvidenceId|answer/iu,
+    );
+  });
+
+  it('知识搜索 MCP 复用本人授权应用服务且不接受客户端租户或员工标识', async () => {
+    const store = assemble();
+    store.knowledge.searchMyKnowledge.mockResolvedValue({
+      items: [{
+        course: {
+          id: 'course-001', courseCode: 'SECURITY', revision: 1, title: '安全培训',
+          examRequired: false, passingScoreBps: null, status: 'published', version: 2,
+        },
+        snippetText: '企业信息安全基础',
+        highlights: [{ start: 2, end: 6 }],
+        scoreBps: 9_000,
+        indexedAt: '2026-07-27T00:00:00.000Z',
+      }],
+      nextCursor: null,
+    });
+    const denied = await store.service.searchKnowledge(
+      { query: '信息安全', limit: 10 },
+      extra(['erp:mcp:server:connect']),
+    );
+    expect(denied.isError).toBe(true);
+    expect(store.knowledge.searchMyKnowledge).not.toHaveBeenCalled();
+    const result = await store.service.searchKnowledge(
+      { query: '信息安全', limit: 10 },
+      extra(['erp:mcp:server:connect', 'erp:knowledge:search']),
+    );
+    expect(store.knowledge.searchMyKnowledge).toHaveBeenCalledWith({
+      query: '信息安全',
+      limit: 10,
+    });
+    expect(result.structuredContent).toMatchObject({
+      items: [{ course: { id: 'course-001' }, snippetText: '企业信息安全基础' }],
+      nextCursor: null,
+    });
+    expect(JSON.stringify(result)).not.toMatch(
+      /tenantId|employeeId|departmentIds|positionIds|contentRef|questionBank|answer/iu,
     );
   });
 

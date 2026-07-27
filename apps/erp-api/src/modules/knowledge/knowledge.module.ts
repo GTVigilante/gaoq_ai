@@ -10,14 +10,21 @@ import { KnowledgeApplicationService } from './application/knowledge-application
 import {
   KnowledgeContentVerificationPort,
   KnowledgeGradingPort,
+  KnowledgeSearchPort,
 } from './application/knowledge-ports.js';
 import {
   HttpKnowledgeContentVerificationAdapter,
   HttpKnowledgeGradingAdapter,
+  HttpKnowledgeSearchAdapter,
   KnowledgeEvidenceHttpClient,
 } from './integration/knowledge-evidence-http.adapters.js';
 import { KnowledgeController } from './knowledge.controller.js';
 import { KnowledgeOutboxWriter } from './persistence/knowledge-outbox.writer.js';
+import { KnowledgeSearchIndexTaskWriter } from './persistence/knowledge-search-index-task.writer.js';
+import {
+  KnowledgeSearchIndexTaskRecord,
+  KnowledgeSearchIndexTaskRecordSchema,
+} from './persistence/knowledge-search.schemas.js';
 import {
   CourseVersionRepository,
   ExamAttemptRepository,
@@ -52,6 +59,10 @@ import {
         name: KnowledgeOnboardingAttestationRecord.name,
         schema: KnowledgeOnboardingAttestationRecordSchema,
       },
+      {
+        name: KnowledgeSearchIndexTaskRecord.name,
+        schema: KnowledgeSearchIndexTaskRecordSchema,
+      },
       { name: OutboxRecord.name, schema: OutboxRecordSchema },
     ]),
   ],
@@ -62,6 +73,7 @@ import {
     ExamAttemptRepository,
     KnowledgeEvidenceRepository,
     KnowledgeOutboxWriter,
+    KnowledgeSearchIndexTaskWriter,
     KnowledgeEvidenceHttpClient,
     HttpKnowledgeGradingAdapter,
     { provide: KnowledgeGradingPort, useExisting: HttpKnowledgeGradingAdapter },
@@ -70,6 +82,8 @@ import {
       provide: KnowledgeContentVerificationPort,
       useExisting: HttpKnowledgeContentVerificationAdapter,
     },
+    HttpKnowledgeSearchAdapter,
+    { provide: KnowledgeSearchPort, useExisting: HttpKnowledgeSearchAdapter },
   ],
   controllers: [KnowledgeController],
   exports: [KnowledgeApplicationService],

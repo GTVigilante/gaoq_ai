@@ -6,6 +6,7 @@ export {
   createTrainingAssignment,
   publishCourseVersion,
   recordTrainingProgress,
+  retireCourseVersion,
 } from './training.js';
 export type { CourseVersion, ExamAttempt, TrainingAssignment } from './training.js';
 export {
