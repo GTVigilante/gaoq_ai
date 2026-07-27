@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import type { Model } from 'mongoose';
 
@@ -28,6 +28,7 @@ const LOCAL_SOURCES = new Set(['portal', 'manual_import']);
 @Injectable()
 export class RecruitmentChannelStageDeliveryService {
   private readonly workerId = `recruitment-channel-stage-${randomUUID()}`;
+  private readonly logger = new Logger(RecruitmentChannelStageDeliveryService.name);
 
   constructor(
     @InjectModel(RecruitmentChannelStageDeliveryRecord.name)
@@ -103,7 +104,7 @@ export class RecruitmentChannelStageDeliveryService {
     }
     if (LOCAL_SOURCES.has(application.sourceChannel)) {
       await this.finish(delivery, 'skipped', null);
-      await this.auditSuccess(delivery, application.sourceChannel, 'skipped');
+      await this.auditSuccessAfterCommit(delivery, application.sourceChannel, 'skipped');
       return;
     }
     const binding = await this.bindings.findOne({
@@ -132,7 +133,7 @@ export class RecruitmentChannelStageDeliveryService {
     )[0];
     if (fingerprint === undefined) throw new Error('RECRUITMENT_CHANNEL_KEY_INVALID');
     await this.finish(delivery, 'succeeded', fingerprint);
-    await this.auditSuccess(delivery, application.sourceChannel, 'succeeded');
+    await this.auditSuccessAfterCommit(delivery, application.sourceChannel, 'succeeded');
   }
 
   private decryptExternalId(mapping: RecruitmentExternalMappingRecord): string {
@@ -170,7 +171,7 @@ export class RecruitmentChannelStageDeliveryService {
   private async fail(delivery: RecruitmentChannelStageDeliveryRecord, code: string): Promise<void> {
     const exhausted = delivery.attempts >= MAX_ATTEMPTS;
     const now = new Date();
-    await this.deliveries.updateOne(
+    const updated = await this.deliveries.updateOne(
       {
         tenantId: delivery.tenantId, eventId: delivery.eventId,
         status: 'processing', lockedBy: this.workerId,
@@ -182,21 +183,34 @@ export class RecruitmentChannelStageDeliveryService {
       } },
       { runValidators: true },
     );
+    if (updated.modifiedCount !== 1) {
+      throw new Error('RECRUITMENT_CHANNEL_STAGE_FAILURE_LEASE_LOST');
+    }
   }
 
-  private auditSuccess(
+  private async auditSuccessAfterCommit(
     delivery: RecruitmentChannelStageDeliveryRecord,
     channelCode: string,
     result: 'succeeded' | 'skipped',
   ): Promise<void> {
-    return this.audit.record({
-      action: 'integration.recruitment_channel.stage.deliver',
-      resourceType: 'recruitment_application', resourceId: delivery.applicationId,
-      riskLevel: 'R2', outcome: 'success', metadata: {
-        channelCode, stage: delivery.stage,
-        applicationVersion: delivery.applicationVersion, result,
-      },
-    });
+    try {
+      await this.audit.record({
+        action: 'integration.recruitment_channel.stage.deliver',
+        resourceType: 'recruitment_application', resourceId: delivery.applicationId,
+        riskLevel: 'R2', outcome: 'success', metadata: {
+          channelCode, stage: delivery.stage,
+          applicationVersion: delivery.applicationVersion, result,
+        },
+      });
+    } catch {
+      this.logger.error({
+        code: 'RECRUITMENT_CHANNEL_STAGE_AUDIT_AFTER_COMMIT_FAILED',
+        tenantId: delivery.tenantId,
+        eventId: delivery.eventId,
+        applicationId: delivery.applicationId,
+        result,
+      });
+    }
   }
 }
 
