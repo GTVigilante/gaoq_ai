@@ -26,6 +26,7 @@ import type {
   DataMigrationMappingDocument,
   DataMigrationRunDocument,
 } from '../persistence/data-migration.schemas.js';
+import type { ApplyDataMigrationRecordDto } from '../data-migration.dto.js';
 import { DataMigrationService, dataMigrationChecksum } from './data-migration.service.js';
 
 const RUN_ID = '01J8ZQK7V0A2M4N6P8R0T2W4F1';
@@ -299,7 +300,7 @@ function asRejectionError(value: unknown): Error {
 
 function validateMigrationInput(
   store: ReturnType<typeof positionService>,
-  entityType: 'org.department' | 'org.position' | 'org.job_level',
+  entityType: ApplyDataMigrationRecordDto['entityType'],
   payload: Readonly<Record<string, unknown>>,
   associationSourceIds: readonly string[] = [],
 ): Promise<void> {
@@ -313,6 +314,21 @@ function validateMigrationInput(
     ...positionInput({ payload, associationSourceIds }),
     entityType,
   });
+}
+
+async function expectInvalidPayloads(
+  store: ReturnType<typeof positionService>,
+  entityType: ApplyDataMigrationRecordDto['entityType'],
+  baseline: Readonly<Record<string, unknown>>,
+  overrides: readonly Readonly<Record<string, unknown>>[],
+): Promise<void> {
+  for (const override of overrides) {
+    await expect(validateMigrationInput(
+      store,
+      entityType,
+      { ...baseline, ...override },
+    )).rejects.toThrow('DATA_MIGRATION_PAYLOAD_INVALID');
+  }
 }
 
 describe('DataMigrationService', () => {
@@ -3603,5 +3619,235 @@ describe('DataMigrationService', () => {
         payload,
       )).rejects.toThrow('DATA_MIGRATION_PAYLOAD_INVALID');
     }
+  });
+
+  it('员工与任职负载逐字段拒绝非法来源标识、重复关联和终止字段', async () => {
+    const store = positionService();
+    const employee = {
+      employeeNo: 'E001',
+      displayName: '张三',
+      status: 'active',
+      departmentSourceIds: ['department-001'],
+      primaryDepartmentSourceId: 'department-001',
+      positionSourceIds: ['position-001'],
+      jobLevelSourceId: 'job-level-001',
+    };
+    await expectInvalidPayloads(store, 'org.employee', employee, [
+      { employeeNo: null },
+      { displayName: null },
+      { status: 'deleted' },
+      { primaryDepartmentSourceId: null },
+      { primaryDepartmentSourceId: 'invalid id' },
+      { jobLevelSourceId: 1 },
+      { jobLevelSourceId: 'invalid id' },
+      { departmentSourceIds: null },
+      { departmentSourceIds: [] },
+      { departmentSourceIds: ['invalid id'] },
+      { departmentSourceIds: ['department-001', 'department-001'] },
+      { positionSourceIds: null },
+      { positionSourceIds: ['invalid id'] },
+      { positionSourceIds: ['position-001', 'position-001'] },
+      { primaryDepartmentSourceId: 'department-002' },
+    ]);
+
+    const employment = {
+      employeeSourceId: 'employee-001',
+      sourcePersonId: 'person-001',
+      identityEvidenceId: 'identity-evidence-001',
+      onboardingInstanceId: 'onboarding-001',
+      onboardingCompletionEvidenceId: 'onboarding-evidence-001',
+      offerId: 'offer-001',
+      signedEvidenceId: 'signed-evidence-001',
+      status: 'active',
+      effectiveFrom: '2026-01-01',
+      effectiveTo: null,
+      terminationCareCaseId: null,
+      terminationExecutionEvidenceId: null,
+      terminationEvidenceId: null,
+    };
+    await expectInvalidPayloads(store, 'org.employment', employment, [
+      { employeeSourceId: null },
+      { sourcePersonId: 'invalid id' },
+      { identityEvidenceId: null },
+      { onboardingInstanceId: 'invalid id' },
+      { onboardingCompletionEvidenceId: null },
+      { offerId: 'invalid id' },
+      { signedEvidenceId: null },
+      { terminationCareCaseId: 1 },
+      { terminationEvidenceId: 'invalid id' },
+      { terminationExecutionEvidenceId: 1 },
+      { status: 'terminated' },
+      { effectiveFrom: null },
+      { effectiveTo: 1 },
+    ]);
+  });
+
+  it('审批历史负载逐字段拒绝非法证据、终态、时间和归档顺序', async () => {
+    const store = positionService();
+    const history = {
+      templateSourceId: 'template-001',
+      templateCode: 'leave',
+      templateRevision: 1,
+      initiatorEmployeeSourceId: 'employee-001',
+      outcome: 'approved',
+      completedAt: '2026-01-02T00:00:00.000Z',
+      archivedAt: '2026-01-03T00:00:00.000Z',
+      historyEvidenceSourceAttachmentId: 'attachment-001',
+      historyEvidenceChecksum: 'h'.repeat(43),
+    };
+    await expectInvalidPayloads(store, 'approval.history', history, [
+      { templateSourceId: null },
+      { initiatorEmployeeSourceId: 'invalid id' },
+      { historyEvidenceSourceAttachmentId: null },
+      { templateCode: null },
+      { templateRevision: 1.5 },
+      { templateRevision: 0 },
+      { outcome: 'running' },
+      { completedAt: '2026-01-02' },
+      { archivedAt: '2026-01-03' },
+      { historyEvidenceChecksum: null },
+      { historyEvidenceChecksum: 'short' },
+      { archivedAt: '2026-01-01T00:00:00.000Z' },
+    ]);
+  });
+
+  it('招聘 HC 负载逐字段拒绝非法引用、文本、人数、状态、版本与时间', async () => {
+    const store = positionService();
+    const requisition = {
+      departmentSourceId: 'department-001',
+      positionTitle: '产品经理',
+      headcount: 1,
+      justification: '业务增长',
+      status: 'approved',
+      approvalReferenceType: 'approval.history',
+      approvalReferenceSourceId: 'approval-history-001',
+      version: 1,
+      createdByEmployeeSourceId: 'employee-001',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      governanceEvidenceSourceAttachmentId: 'attachment-001',
+      governanceEvidenceChecksum: 'g'.repeat(43),
+    };
+    await expectInvalidPayloads(store, 'recruitment.requisition', requisition, [
+      { departmentSourceId: null },
+      { createdByEmployeeSourceId: 'invalid id' },
+      { governanceEvidenceSourceAttachmentId: null },
+      { approvalReferenceSourceId: 'invalid id' },
+      { positionTitle: null },
+      { positionTitle: ' ' },
+      { positionTitle: 'x'.repeat(129) },
+      { justification: null },
+      { justification: ' ' },
+      { justification: 'x'.repeat(4_097) },
+      { headcount: 1.5 },
+      { headcount: 0 },
+      { headcount: 10_001 },
+      { status: 'cancelled' },
+      { version: 1.5 },
+      { version: 0 },
+      { createdAt: '2026-01-01' },
+      { updatedAt: '2026-01-02' },
+      { governanceEvidenceChecksum: null },
+      { governanceEvidenceChecksum: 'short' },
+      { approvalReferenceType: 'approval.instance' },
+      { approvalReferenceSourceId: null },
+    ]);
+
+    const draft = {
+      ...requisition,
+      status: 'draft',
+      approvalReferenceType: null,
+      approvalReferenceSourceId: null,
+    };
+    await expectInvalidPayloads(store, 'recruitment.requisition', draft, [
+      { approvalReferenceType: 'approval.history' },
+      { approvalReferenceSourceId: 'approval-history-001' },
+    ]);
+  });
+
+  it('招聘候选人与申请负载逐字段拒绝隐私、证据、状态和动作漂移', async () => {
+    const store = positionService();
+    const candidate = {
+      status: 'active',
+      name: '张三',
+      phone: null,
+      email: null,
+      consentVersion: 'v1',
+      consentPurpose: 'recruitment',
+      consentCapturedAt: '2026-01-01T00:00:00.000Z',
+      consentExpiresAt: '2027-01-01T00:00:00.000Z',
+      consentWithdrawnAt: null,
+      retentionExpiresAt: '2028-01-01T00:00:00.000Z',
+      version: 1,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      candidateEvidenceSourceAttachmentId: 'attachment-001',
+      candidateEvidenceChecksum: 'c'.repeat(43),
+    };
+    await expectInvalidPayloads(store, 'recruitment.candidate', candidate, [
+      { candidateEvidenceSourceAttachmentId: null },
+      { candidateEvidenceSourceAttachmentId: 'invalid id' },
+      { candidateEvidenceChecksum: null },
+      { candidateEvidenceChecksum: 'short' },
+      { status: 'deleted' },
+      { name: 1 },
+      { phone: 1 },
+      { email: 1 },
+      { consentVersion: null },
+      { consentPurpose: null },
+      { consentCapturedAt: '2026-01-01' },
+      { consentExpiresAt: '2027-01-01' },
+      { consentWithdrawnAt: '2026-01-02' },
+      { retentionExpiresAt: '2028-01-01' },
+      { createdAt: '2026-01-01' },
+      { updatedAt: '2026-01-02' },
+      { version: 1.5 },
+      { version: 0 },
+    ]);
+
+    const application = {
+      candidateSourceId: 'candidate-001',
+      positionSourceId: 'position-001',
+      sourceChannel: 'careers',
+      actions: [{
+        targetStage: 'screening',
+        reasonCode: null,
+        occurredAt: '2026-01-02T00:00:00.000Z',
+      }],
+      expectedStage: 'screening',
+      expectedVersion: 2,
+      appliedAt: '2026-01-01T00:00:00.000Z',
+      endedAt: null,
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      applicationEvidenceSourceAttachmentId: 'attachment-002',
+      applicationEvidenceChecksum: 'a'.repeat(43),
+    };
+    await expectInvalidPayloads(store, 'recruitment.application', application, [
+      { candidateSourceId: null },
+      { candidateSourceId: 'invalid id' },
+      { positionSourceId: null },
+      { positionSourceId: 'invalid id' },
+      { applicationEvidenceSourceAttachmentId: null },
+      { applicationEvidenceSourceAttachmentId: 'invalid id' },
+      { applicationEvidenceChecksum: null },
+      { applicationEvidenceChecksum: 'short' },
+      { sourceChannel: null },
+      { sourceChannel: 'invalid channel' },
+      { expectedStage: 'offer' },
+      { expectedVersion: 1.5 },
+      { expectedVersion: 0 },
+      { appliedAt: '2026-01-01' },
+      { updatedAt: '2026-01-02' },
+      { endedAt: '2026-01-03' },
+      { actions: null },
+      { actions: Array.from({ length: 21 }, () => application.actions[0]) },
+      { actions: [null] },
+      { actions: [{ targetStage: 'offer', reasonCode: null,
+        occurredAt: '2026-01-02T00:00:00.000Z' }] },
+      { actions: [{ targetStage: 'screening', reasonCode: 'invalid code',
+        occurredAt: '2026-01-02T00:00:00.000Z' }] },
+      { actions: [{ targetStage: 'screening', reasonCode: null,
+        occurredAt: '2026-01-02' }] },
+    ]);
   });
 });
