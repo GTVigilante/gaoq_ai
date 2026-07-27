@@ -91,10 +91,14 @@ Content-Type: application/json
 
 ```bash
 pnpm quality:org-delivery-reliability-coverage
+pnpm quality:org-platform-adapters-coverage
 pnpm check
 pnpm build
 ```
 
-专项门禁覆盖投递状态机、过期租约恢复、双平台适配器协议、HTTP 安全边界、对账租约
-和队列载荷，目标文件语句、分支、函数和行覆盖率均不得低于 90%。真实平台沙箱回执、
-Prometheus 规则加载和 24 小时演练属于外部验收，不能用本地测试替代。
+第一条专项门禁覆盖投递状态机、过期租约恢复、对账租约和队列载荷；第二条覆盖钉钉、
+飞书、OP 适配器与专用 HTTP 客户端的目标白名单、令牌刷新、HMAC、身份恢复、分页
+和响应硬上限。两组目标文件语句、分支、函数和行覆盖率均不得低于 90%。当前平台
+边界 88 项测试全部通过，五个生产文件合计为
+97.18%/95.18%/100%/97.99%。真实平台沙箱回执、Prometheus 规则加载和 24 小时
+演练属于外部验收，不能用本地测试替代。

@@ -586,6 +586,36 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/integration/dingtalk-org-push.adapter.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/integration/feishu-org-push.adapter.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/integration/op-org-push.adapter.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/integration/org-platform-http.client.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/integration/op-org-http.client.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/core/idempotency/idempotency.service.ts': {
           branches: 90,
           functions: 90,
