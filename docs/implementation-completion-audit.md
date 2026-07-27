@@ -67,9 +67,10 @@
 通过排除生产文件、降低阈值或只报告局部高覆盖率来宣称达标。
 
 租户上下文、身份授权、审批数据加密、审批仓储、审批应用状态机、MCP 确认、
-薪酬影子周期、薪酬运行、薪酬审批、Care 纪念日应用、数据迁移控制面、
-Knowledge 考试运行 Relay、Knowledge 搜索索引 Relay、考勤应用、招聘 Offer、
-Care 仓储、组织仓储、招聘仓储、知识库仓储和营销 CMS 服务已建立独立不可回退门禁：
+薪酬影子周期、薪酬运行、薪酬审批、Care 纪念日应用、Care 离职应用、
+数据迁移控制面、Knowledge 考试运行 Relay、Knowledge 搜索索引 Relay、考勤应用、
+招聘 Offer、Care 仓储、组织仓储、招聘仓储、知识库仓储和营销 CMS 服务已建立
+独立不可回退门禁：
 `pnpm quality:tenant-context-coverage`、
 `pnpm quality:authorization-coverage`、
 `pnpm quality:approval-crypto-coverage`、
@@ -78,6 +79,7 @@ Care 仓储、组织仓储、招聘仓储、知识库仓储和营销 CMS 服务�
 `pnpm quality:payroll-run-coverage`、
 `pnpm quality:payroll-approval-coverage`、
 `pnpm quality:care-occasion-application-coverage`、
+`pnpm quality:care-application-coverage`、
 `pnpm quality:data-migration-coverage`、
 `pnpm quality:knowledge-exam-run-relay-coverage`、
 `pnpm quality:knowledge-search-index-relay-coverage`、
@@ -89,7 +91,7 @@ Care 仓储、组织仓储、招聘仓储、知识库仓储和营销 CMS 服务�
 `pnpm quality:knowledge-repositories-coverage`、
 `pnpm quality:marketing-cms-service-coverage`、
 `pnpm quality:approval-repositories-coverage` 和
-`pnpm quality:approval-application-coverage`。二十条链路当前覆盖率分别为
+`pnpm quality:approval-application-coverage`。二十一条链路当前覆盖率分别为
 100%/100%/100%/100%、100%/95.83%/100%/100%、
 98.75%/96.96%/100%/100%、
 98.06%/94.04%/98.64%/99.02%、
@@ -97,6 +99,7 @@ Care 仓储、组织仓储、招聘仓储、知识库仓储和营销 CMS 服务�
 99.00%/97.24%/97.29%/98.84%、92.18%/90.20%/96.10%/93.18%、
 100%/100%/100%/100%、
 100%/96.85%/100%/100%、
+99.54%/97.43%/100%/100%、
 93.37%/90.19%/97.97%/95.29%、
 98.06%/94.04%/100%/100%、
 100%/100%/100%/100%、
@@ -104,8 +107,8 @@ Care 仓储、组织仓储、招聘仓储、知识库仓储和营销 CMS 服务�
 95.97%/94.01%/100%/96.83%、
 100%/91.66%/100%/100%、100%/100%/100%/100%、
 97.44%/91.32%/100%/99.53%、100%/99.43%/100%/100% 和
-100%/97.27%/100%/100%（语句/分支/函数/行）；二十项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明二十条关键链路达标，
+100%/97.27%/100%/100%（语句/分支/函数/行）；二十一项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明二十一条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 数据迁移控制面已有 61 项幂等重放、证据分页、检查点竞争、关联映射、附件与
@@ -120,6 +123,10 @@ Knowledge 考试运行 Relay 已补齐 24 项隔离网关、超时封存、自�
 Knowledge 搜索索引 Relay 已补齐 5 项幂等回执、时间边界、参数约束、认领竞争、
 指数退避与死信测试，服务覆盖率达到四维 100%，独立四维 90% 门禁已接入
 `pnpm check`。
+
+Care 离职应用已补齐 36 项可信组织主数据、审批恢复、清算证据、R3 Saga、
+校友授权和异常语义测试，服务覆盖率达到 99.54%/97.43%/100%/100%
+（语句/分支/函数/行），独立四维 90% 门禁已接入 `pnpm check`。
 
 ## 6. 架构边界
 
