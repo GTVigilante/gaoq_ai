@@ -71,7 +71,7 @@
 审批应用状态机、审批模板领域、
 MCP 确认、MCP 运行时、
 薪酬影子周期、薪酬运行、薪酬审批、薪酬主数据、薪酬四方对账、薪酬税务申报、薪酬 L4 数据加密、资金支付、Treasury 银行回盘、Treasury L4 数据加密、Treasury Outbox、Care 纪念日应用、Care 离职应用、
-数据迁移控制面、Knowledge 考试运行 Relay、Knowledge 搜索索引 Relay、考勤应用、考勤仓储、考勤供应商拉取、考勤供应商入站处理、电子签回调处理、
+数据迁移控制面、数据迁移打包 CLI、Knowledge 考试运行 Relay、Knowledge 搜索索引 Relay、考勤应用、考勤仓储、考勤供应商拉取、考勤供应商入站处理、电子签回调处理、
 招聘渠道拉取、招聘渠道入站处理、招聘渠道职位扇出、招聘渠道阶段扇出、招聘申请、招聘面试、招聘简历、招聘渠道职位投递、招聘渠道阶段回传、招聘管理、人才全周期仓储、招聘 Offer、Care 仓储、组织仓储、招聘仓储、知识库仓储、营销 CMS 和生产执行授权服务已建立
 独立不可回退门禁：
 `pnpm quality:tenant-context-coverage`、
@@ -96,6 +96,7 @@ MCP 确认、MCP 运行时、
 `pnpm quality:care-occasion-application-coverage`、
 `pnpm quality:care-application-coverage`、
 `pnpm quality:data-migration-coverage`、
+`pnpm quality:data-migration-package-coverage`、
 `pnpm quality:knowledge-exam-run-relay-coverage`、
 `pnpm quality:knowledge-search-index-relay-coverage`、
 `pnpm quality:attendance-application-coverage`、
@@ -123,7 +124,7 @@ MCP 确认、MCP 运行时、
 `pnpm quality:approval-repositories-coverage` 和
 `pnpm quality:approval-application-coverage`、
 `pnpm quality:approval-template-domain-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。五十条链路当前覆盖率分别为
+`pnpm quality:production-execution-authorization-coverage`。五十一条链路当前覆盖率分别为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -146,6 +147,7 @@ MCP 确认、MCP 运行时、
 100%/96.85%/100%/100%、
 99.54%/97.43%/100%/100%、
 93.37%/90.19%/97.97%/95.29%、
+95.26%/91.55%/92.30%/95.69%、
 98.06%/94.04%/100%/100%、
 100%/100%/100%/100%、
 99.20%/99.17%/100%/99.11%、
@@ -168,13 +170,19 @@ MCP 确认、MCP 运行时、
 100%/91.66%/100%/100%、100%/100%/100%/100%、
 97.44%/91.32%/100%/99.53%、100%/99.43%/100%/100%、
 100%/97.27%/100%/100% 和
-100%/100%/100%/100%（语句/分支/函数/行）；五十项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明五十条关键链路达标，
+100%/100%/100%/100%（语句/分支/函数/行）；五十一项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明五十一条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 数据迁移控制面已有 61 项幂等重放、证据分页、检查点竞争、关联映射、附件与
 全域负载失败关闭测试，服务覆盖率达到 93.37%/90.19%/97.97%/95.29%
 （语句/分支/函数/行），独立四维 90% 门禁已接入 `pnpm check`。
+
+数据迁移打包 CLI 已覆盖 19 项来源包流式校验、符号链接逃逸、断点续传、附件
+等待、远端响应、证据分页与控制总数测试；负数待传数、重复游标、超大页面、
+非白名单远端错误码及含凭据/query/fragment 的端点均失败关闭。覆盖率达到
+95.26%/91.55%/92.30%/95.69%（语句/分支/函数/行），独立四维 90% 门禁已接入
+`pnpm check`。
 
 Knowledge 考试运行 Relay 已补齐 24 项隔离网关、超时封存、自动/人工评分、
 事务终态、审计隔离、退避、死信与熔断测试，服务覆盖率达到

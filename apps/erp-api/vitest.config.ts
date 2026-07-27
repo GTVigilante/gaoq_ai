@@ -101,6 +101,12 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/cli/data-migration-package.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/knowledge/knowledge-exam-run-relay.service.ts': {
           branches: 90,
           functions: 90,
