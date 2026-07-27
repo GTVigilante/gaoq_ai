@@ -323,6 +323,12 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/approval/approval.controller.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/approval/domain/template.ts': {
           branches: 90,
           functions: 90,

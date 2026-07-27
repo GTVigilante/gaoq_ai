@@ -5,6 +5,7 @@ import {
   Get,
   Headers,
   HttpCode,
+  Logger,
   Param,
   Post,
   Res,
@@ -12,6 +13,7 @@ import {
 import type { Response } from 'express';
 
 import { AuditService } from '../../core/audit/audit.service.js';
+import type { AuditRecordInput } from '../../core/audit/audit.types.js';
 import { RequiredScopes } from '../identity/auth.decorators.js';
 import {
   ApprovalApplicationService,
@@ -37,6 +39,8 @@ const IF_MATCH_PATTERN = /^"([1-9][0-9]*)"$/;
 /** 审批 REST 工作台；租户与主体完全来自已验证身份上下文。 */
 @Controller('approvals')
 export class ApprovalController {
+  private readonly logger = new Logger(ApprovalController.name);
+
   constructor(
     private readonly approvals: ApprovalApplicationService,
     private readonly audit: AuditService,
@@ -334,7 +338,7 @@ export class ApprovalController {
   }
 
   private async auditDelegation(action: string, delegation: ApprovalDelegationView): Promise<void> {
-    await this.audit.record({
+    await this.auditAfterCommit({
       action,
       resourceType: 'approval_delegation',
       resourceId: delegation.id,
@@ -349,7 +353,7 @@ export class ApprovalController {
     resourceType: string,
     resource: { readonly id: string; readonly riskLevel: 'R1' | 'R2'; readonly version: number },
   ): Promise<void> {
-    await this.audit.record({
+    await this.auditAfterCommit({
       action,
       resourceType,
       resourceId: resource.id,
@@ -357,5 +361,19 @@ export class ApprovalController {
       outcome: 'success',
       metadata: { version: resource.version },
     });
+  }
+
+  private async auditAfterCommit(input: AuditRecordInput): Promise<void> {
+    try {
+      await this.audit.record(input);
+    } catch {
+      this.logger.error({
+        code: 'APPROVAL_AUDIT_AFTER_COMMIT_FAILED',
+        action: input.action,
+        resourceType: input.resourceType,
+        resourceId: input.resourceId,
+        riskLevel: input.riskLevel,
+      });
+    }
   }
 }
