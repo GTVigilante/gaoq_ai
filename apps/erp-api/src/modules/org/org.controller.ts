@@ -5,6 +5,7 @@ import {
   Get,
   Headers,
   HttpCode,
+  Logger,
   Param,
   Patch,
   Post,
@@ -34,6 +35,8 @@ const IF_MATCH_PATTERN = /^"([1-9][0-9]*)"$/;
 /** 组织主数据 REST 契约；请求租户永远由已验证访问令牌派生。 */
 @Controller('org')
 export class OrgController {
+  private readonly logger = new Logger(OrgController.name);
+
   constructor(
     private readonly organization: OrgApplicationService,
     private readonly audit: AuditService,
@@ -197,22 +200,11 @@ export class OrgController {
       body,
     );
     this.setVersion(response, result.employee.version);
-    await this.audit.record({
-      action: 'org.employee.status_transition',
-      resourceType: 'org_employee',
-      resourceId: result.employee.id,
-      riskLevel: result.employee.status === 'terminated' ? 'R2' : 'R1',
-      outcome: 'success',
-      ...(result.identityTermination === undefined ? {} : {
-        metadata: {
-          accessProfileDisabled: result.identityTermination.accessProfileDisabled,
-          externalIdentitiesDisabled: result.identityTermination.externalIdentitiesDisabled,
-          actorCount: result.identityTermination.actorIds.length,
-          sessionsRevoked: result.identityTermination.sessionsRevoked,
-          refreshTokensRevoked: result.identityTermination.refreshTokensRevoked,
-        },
-      }),
-    });
+    await this.auditSuccess(
+      'org.employee.status_transition',
+      'org_employee',
+      result.employee.id,
+    );
     return { employee: result.employee };
   }
 
@@ -253,12 +245,21 @@ export class OrgController {
   }
 
   private async auditSuccess(action: string, resourceType: string, resourceId: string): Promise<void> {
-    await this.audit.record({
-      action,
-      resourceType,
-      resourceId,
-      riskLevel: 'R1',
-      outcome: 'success',
-    });
+    try {
+      await this.audit.record({
+        action,
+        resourceType,
+        resourceId,
+        riskLevel: 'R1',
+        outcome: 'success',
+      });
+    } catch {
+      this.logger.error({
+        code: 'ORG_AUDIT_AFTER_COMMIT_FAILED',
+        action,
+        resourceType,
+        resourceId,
+      });
+    }
   }
 }
