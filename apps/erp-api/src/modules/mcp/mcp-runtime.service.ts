@@ -120,6 +120,26 @@ const confirmationExecuteInputSchema = {
   confirmationCredential: z.string().regex(/^mcpc_[A-Za-z0-9_-]{43}$/),
 };
 const recruitmentIdSchema = z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/);
+const marketingEventIdSchema = z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/);
+const marketingSideEffectSchema = z.object({
+  eventId: marketingEventIdSchema,
+  kind: z.enum(['lead_notification', 'scheduled_publish']),
+  aggregateId: z.string(),
+  aggregateVersion: z.number().int().positive(),
+  channel: z.enum(['email', 'feishu']).nullable(),
+  status: z.enum([
+    'pending', 'dispatching', 'dispatched', 'delivered', 'cancelled', 'dead',
+  ]),
+  attempts: z.number().int().nonnegative(),
+  deliveryAttempts: z.number().int().nonnegative(),
+  nextAttemptAt: z.string(),
+  dispatchedAt: z.string().nullable(),
+  completedAt: z.string().nullable(),
+  lastErrorCode: z.string().nullable(),
+});
+const marketingSideEffectOutputSchema = z.object({
+  sideEffect: marketingSideEffectSchema,
+});
 const recruitmentApplicationSchema = z.object({
   id: recruitmentIdSchema, candidateId: recruitmentIdSchema, positionId: recruitmentIdSchema,
   stage: z.enum([
@@ -950,6 +970,28 @@ export class McpRuntimeService {
       },
     );
 
+    server.registerResource(
+      'marketing-side-effect-status',
+      new ResourceTemplate('erp://marketing/side-effects/{eventId}', { list: undefined }),
+      {
+        title: '营销副作用可靠性状态',
+        description: '只读返回当前租户通知或排期副作用的路由、尝试次数和终态；不返回联系人或正文。',
+        mimeType: 'application/json',
+      },
+      async (uri, { eventId }, extra) => {
+        const result = await this.tools.getMarketingSideEffect(
+          requiredMarketingEventId(eventId),
+          extra,
+        );
+        if (result.isError === true) throw new Error('无权读取营销副作用状态');
+        return { contents: [{
+          uri: uri.toString(),
+          mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
     server.registerPrompt(
       'approval_submission_guide',
       {
@@ -966,6 +1008,19 @@ export class McpRuntimeService {
           },
         }],
       }),
+    );
+
+    server.registerPrompt(
+      'marketing_side_effect_triage_guide',
+      {
+        title: '营销副作用故障核对清单',
+        description: '指导 AI 只读解释通知与排期副作用状态，不代替用户执行 R2 重放。',
+        argsSchema: { eventId: marketingEventIdSchema },
+      },
+      ({ eventId }) => ({ messages: [{ role: 'user', content: {
+        type: 'text',
+        text: `请读取营销副作用 ${eventId}，核对类型、渠道、入队/送达尝试、受控错误码和最终状态。不得索取或复述联系人、正文、凭据或上游响应；不得调用人工重放接口。若状态为 dead，只说明需要具备 R2 权限的人员在 ERP 审计页面复核。`,
+      } }] }),
     );
 
     server.registerPrompt(
@@ -1204,6 +1259,23 @@ export class McpRuntimeService {
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
       },
       async (extra) => this.tools.getMyPermissions(extra),
+    );
+
+    server.registerTool(
+      'marketing_side_effect_get',
+      {
+        title: '查询营销副作用可靠性状态',
+        description: '按当前租户返回通知或排期副作用的受控状态、尝试次数与错误码，不返回联系人或正文。风险等级 R1。',
+        inputSchema: { eventId: marketingEventIdSchema },
+        outputSchema: marketingSideEffectOutputSchema,
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      async ({ eventId }, extra) => this.tools.getMarketingSideEffect(eventId, extra),
     );
 
     server.registerTool(
@@ -1762,6 +1834,13 @@ export class McpRuntimeService {
 function requiredResourceId(value: string | string[] | undefined): string {
   if (typeof value !== 'string' || !/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(value)) {
     throw new Error('MCP_RECRUITMENT_RESOURCE_ID_INVALID');
+  }
+  return value;
+}
+
+function requiredMarketingEventId(value: string | string[] | undefined): string {
+  if (typeof value !== 'string' || !/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(value)) {
+    throw new Error('MCP_MARKETING_EVENT_ID_INVALID');
   }
   return value;
 }

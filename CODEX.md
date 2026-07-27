@@ -25,6 +25,9 @@
 - 2026-07-27 已交付双语营销官网、ERP 工作台 CMS、事务 Outbox、通知幂等、
   严格生产 HTTPS/CSP、安全头、独立镜像与加密预约线索入口；对象存储、真实通知、
   验证码、AI 网关和正式域名仍待现场配置与验收。
+- 2026-07-27 已补齐营销副作用 `dispatched → delivered|dead|cancelled` 终态、
+  送达尝试计数、最终失败告警、撤销排期事务取消、跨租户队列路由拒绝及从数据库
+  Outbox 重建丢失延迟任务；真实邮件/飞书幂等与故障恢复仍待目标环境演练。
 - 用户已明确不使用 NAS、自建 Runner 或虚拟机，后续 CI/CD 只采用 GitHub 官方
   托管 Runner。现有 Phase 5/6 self-hosted 手工验收定义在迁移完成前视为停用，
   不得接入 NAS；仓库当前为 Private，Hosted Actions 在任何步骤执行前被账户付款

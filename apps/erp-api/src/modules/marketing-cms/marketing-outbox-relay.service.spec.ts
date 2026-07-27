@@ -13,7 +13,7 @@ interface SideEffectFixture {
 }
 
 const record: SideEffectFixture = {
-  eventId: '01J8ZQK7V0A2M4N6P8R0T2W4Y',
+  eventId: '01J8ZQK7V0A2M4N6P8R0T2W4Y0',
   tenantId: 'tenant-001',
   kind: 'lead_notification',
   aggregateId: 'lead-001',
@@ -36,7 +36,13 @@ describe('Marketing Outbox Relay', () => {
     await expect(relay.relayBatch('worker-001')).resolves.toBe(1);
     expect(notifications.add).toHaveBeenCalledWith(
       'lead:email',
-      { tenantId: 'tenant-001', leadId: 'lead-001', channel: 'email' },
+      {
+        sideEffectEventId: record.eventId,
+        tenantId: 'tenant-001',
+        leadId: 'lead-001',
+        aggregateVersion: 1,
+        channel: 'email',
+      },
       expect.objectContaining({
         jobId: `marketing-side-effect:${record.eventId}`,
         attempts: 6,
@@ -91,11 +97,33 @@ describe('Marketing Outbox Relay', () => {
     await relay.relayBatch('worker-001');
     expect(automation.add.mock.calls[0]?.[0]).toBe('publish:scheduled');
     expect(automation.add.mock.calls[0]?.[1]).toEqual({
+      sideEffectEventId: record.eventId,
       tenantId: 'tenant-001',
       contentId: 'content-001',
+      aggregateVersion: 1,
     });
     const options = automation.add.mock.calls[0]?.[2] as { readonly delay?: number } | undefined;
     expect(options?.delay).toBeGreaterThan(0);
+  });
+
+  it('连续入队失败达到上限时进入 dead 并保留无敏感错误码', async () => {
+    const records = modelReturning({ ...record, attempts: 7 });
+    const relay = new MarketingOutboxRelayService(
+      records as never,
+      { add: vi.fn().mockRejectedValue(new Error('upstream details')) } as never,
+      { add: vi.fn() } as never,
+    );
+    await expect(relay.relayBatch('worker-001')).resolves.toBe(0);
+    const update = records.updateOne.mock.calls.at(-1)?.[1] as {
+      readonly $set?: Record<string, unknown>;
+    } | undefined;
+    expect(update?.$set).toMatchObject({
+      status: 'dead',
+      attempts: 8,
+      lockedBy: null,
+      lastErrorCode: 'MARKETING_OUTBOX_ENQUEUE_FAILED',
+    });
+    expect(update?.$set?.completedAt).toBeInstanceOf(Date);
   });
 });
 

@@ -28,6 +28,7 @@ import { OpApprovalBridgeService } from '../op/application/op-approval-bridge.se
 import { ManagementDashboardService } from '../analytics/application/management-dashboard.service.js';
 import { AnalyticsExportService } from '../analytics/application/analytics-export.service.js';
 import { DataMigrationService } from '../data-migration/application/data-migration.service.js';
+import { MarketingCmsService } from '../marketing-cms/marketing-cms.service.js';
 import { parseMcpIdentity, type McpIdentity } from './mcp-auth-context.js';
 import {
   McpConfirmationService,
@@ -81,8 +82,29 @@ export class McpToolService {
     private readonly managementDashboard: ManagementDashboardService,
     private readonly analyticsExports: AnalyticsExportService,
     private readonly dataMigrations: DataMigrationService,
+    private readonly marketing: MarketingCmsService,
     private readonly confirmations: McpConfirmationService,
   ) {}
+
+  async getMarketingSideEffect(
+    eventId: string,
+    extra: McpExtra,
+  ): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:marketing:operations:read')) {
+        await this.auditTool(identity, 'marketing_side_effect_get', 'R1', 'denied');
+        return scopeError('erp:marketing:operations:read');
+      }
+      const sideEffect = await this.marketing.getSideEffectStatus(eventId);
+      await this.auditTool(identity, 'marketing_side_effect_get', 'R1', 'success', {
+        eventId,
+        status: String(sideEffect.status),
+        kind: String(sideEffect.kind),
+      });
+      return structuredResult({ sideEffect });
+    });
+  }
 
   async getRecruitmentApplication(id: string, extra: McpExtra): Promise<McpToolResult> {
     return this.getRecruitmentResource(

@@ -22,8 +22,9 @@ import { MARKETING_OUTBOX_QUEUE } from './marketing-outbox.queue.js';
 import { MarketingOutboxProcessor } from './marketing-outbox.processor.js';
 import { MarketingOutboxRelayService } from './marketing-outbox-relay.service.js';
 import { MarketingOutboxScheduler } from './marketing-outbox.scheduler.js';
+import { MarketingSideEffectDeliveryService } from './marketing-side-effect-delivery.service.js';
 
-/** CMS Worker 仅装配线索通知所需模型、密钥服务与队列。 */
+/** CMS Worker 仅装配通知、排期、可靠性终态所需模型、密钥服务与队列。 */
 @Module({
   imports: [
     BullModule.registerQueue({ name: MARKETING_NOTIFICATION_QUEUE }),
@@ -45,6 +46,7 @@ import { MarketingOutboxScheduler } from './marketing-outbox.scheduler.js';
     MarketingOutboxRelayService,
     MarketingOutboxProcessor,
     MarketingOutboxScheduler,
+    MarketingSideEffectDeliveryService,
   ],
 })
 export class MarketingCmsWorkerModule {}

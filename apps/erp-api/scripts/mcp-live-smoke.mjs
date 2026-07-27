@@ -184,10 +184,10 @@ async function verifyMcpSdk(token) {
       client.listResourceTemplates(),
       client.listPrompts(),
     ]);
-    assert.equal(tools.tools.length, 41);
+    assert.equal(tools.tools.length, 42);
     assert.ok(resources.resources.length >= 4);
-    assert.equal(templates.resourceTemplates.length, 18);
-    assert.equal(prompts.prompts.length, 16);
+    assert.equal(templates.resourceTemplates.length, 19);
+    assert.equal(prompts.prompts.length, 17);
     const toolNames = new Set(tools.tools.map((tool) => tool.name));
     for (const forbidden of [
       'treasury_disbursement_submit',

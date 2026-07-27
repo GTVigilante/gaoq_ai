@@ -129,11 +129,22 @@ export class MarketingCmsService {
         { $set: {
           status: target,
           publishedAt: target === 'published' ? now : current.publishedAt,
+          scheduledAt:
+            current.status === 'scheduled' &&
+              (target === 'draft' || target === 'published')
+              ? null
+              : current.scheduledAt,
           updatedBy: this.context.getActorRequired().actorId,
         }, $inc: { version: 1, revision: 1 } },
         { returnDocument: 'after', session, lean: true },
       ).exec();
       if (next === null) throw versionConflict();
+      if (
+        current.status === 'scheduled' &&
+        (target === 'draft' || target === 'published')
+      ) {
+        await this.cancelScheduledSideEffect(current, session, now);
+      }
       await this.snapshot(next, session);
       if (target === 'published') await this.publishEvent(view(next), session, now);
       return { content: view(next) };
@@ -191,6 +202,8 @@ export class MarketingCmsService {
           lockedAt: null,
           lockedBy: null,
           dispatchedAt: null,
+          deliveryAttempts: 0,
+          completedAt: null,
           lastErrorCode: null,
         }], { session });
         return { content: view(next) };
@@ -266,6 +279,8 @@ export class MarketingCmsService {
         lockedAt: null,
         lockedBy: null,
         dispatchedAt: null,
+        deliveryAttempts: 0,
+        completedAt: null,
         lastErrorCode: null,
       })), { session });
       return { leadId: id, duplicate: false };
@@ -283,6 +298,9 @@ export class MarketingCmsService {
           nextAttemptAt: new Date(),
           lockedAt: null,
           lockedBy: null,
+          dispatchedAt: null,
+          deliveryAttempts: 0,
+          completedAt: null,
           lastErrorCode: null,
         },
       },
@@ -297,6 +315,34 @@ export class MarketingCmsService {
       kind: record.kind,
       status: record.status,
       attempts: record.attempts,
+    };
+  }
+
+  async getSideEffectStatus(eventId: string): Promise<Record<string, unknown>> {
+    const tenantId = this.context.getTenantRequired().tenantId;
+    const record = await this.sideEffects.findOne({ tenantId, eventId })
+      .select(
+        'eventId kind aggregateId aggregateVersion channel status attempts ' +
+        'deliveryAttempts nextAttemptAt dispatchedAt completedAt lastErrorCode',
+      )
+      .lean().exec();
+    if (record === null) throw new NotFoundException({
+      code: 'MARKETING_SIDE_EFFECT_NOT_FOUND',
+      message: '副作用记录不存在或不属于当前租户',
+    });
+    return {
+      eventId: record.eventId,
+      kind: record.kind,
+      aggregateId: record.aggregateId,
+      aggregateVersion: record.aggregateVersion,
+      channel: record.channel,
+      status: record.status,
+      attempts: record.attempts,
+      deliveryAttempts: record.deliveryAttempts,
+      nextAttemptAt: record.nextAttemptAt.toISOString(),
+      dispatchedAt: record.dispatchedAt?.toISOString() ?? null,
+      completedAt: record.completedAt?.toISOString() ?? null,
+      lastErrorCode: record.lastErrorCode,
     };
   }
 
@@ -342,6 +388,9 @@ export class MarketingCmsService {
           { returnDocument: 'after', session, lean: true },
         ).exec();
         if (next === null) throw versionConflict();
+        if (current.status === 'scheduled') {
+          await this.cancelScheduledSideEffect(current, session, new Date());
+        }
         await this.snapshot(next, session);
         return { content: view(next) };
       },
@@ -506,6 +555,36 @@ export class MarketingCmsService {
       status: record.status, modelId: record.modelId,
       promptVersion: record.promptVersion, output: record.output,
     };
+  }
+
+  private async cancelScheduledSideEffect(
+    content: MarketingContentDocument,
+    session: ClientSession,
+    now: Date,
+  ): Promise<void> {
+    const cancelled = await this.sideEffects.updateOne(
+      {
+        tenantId: content.tenantId,
+        kind: 'scheduled_publish',
+        aggregateId: content.id,
+        aggregateVersion: content.version,
+        channel: null,
+        status: { $in: ['pending', 'dispatching', 'dispatched', 'dead'] },
+      },
+      {
+        $set: {
+          status: 'cancelled',
+          lockedAt: null,
+          lockedBy: null,
+          completedAt: now,
+          lastErrorCode: null,
+        },
+      },
+      { session, timestamps: false },
+    );
+    if (cancelled.matchedCount !== 1) {
+      throw new Error('MARKETING_SCHEDULED_SIDE_EFFECT_MISSING');
+    }
   }
 
   private async owned(id: string, session?: ClientSession): Promise<MarketingContentDocument> {

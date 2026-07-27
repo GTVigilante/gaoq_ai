@@ -98,6 +98,127 @@ describe('MarketingCmsService 事务副作用', () => {
       }),
     ], { session: SESSION });
   });
+
+  it('撤销排期时在同一事务清理时间并把待发布副作用置为 cancelled', async () => {
+    const current = {
+      id: 'content-001',
+      tenantId: 'tenant-001',
+      siteId: 'gaoq',
+      type: 'page',
+      locale: 'zh-CN',
+      slug: 'home',
+      title: '首页',
+      summary: '',
+      blocks: [],
+      seo: {},
+      status: 'scheduled',
+      revision: 3,
+      version: 3,
+      publishedAt: null,
+      scheduledAt: new Date(Date.now() + 120_000),
+    };
+    const contents = {
+      findOne: vi.fn().mockReturnValue({
+        session: vi.fn(),
+        exec: vi.fn().mockResolvedValue(current),
+      }),
+      findOneAndUpdate: vi.fn().mockReturnValue({
+        exec: vi.fn().mockResolvedValue({
+          ...current,
+          status: 'draft',
+          version: 4,
+          revision: 4,
+          scheduledAt: null,
+        }),
+      }),
+    };
+    const updateSideEffect = vi
+      .fn<
+        (
+          filter: Record<string, unknown>,
+          update: Record<string, unknown>,
+          options: Record<string, unknown>,
+        ) => Promise<{ matchedCount: number }>
+      >()
+      .mockResolvedValue({ matchedCount: 1 });
+    const sideEffects = {
+      updateOne: updateSideEffect,
+    };
+    const service = createService({
+      contents,
+      revisions: { create: vi.fn().mockResolvedValue(undefined) },
+      sideEffects,
+    });
+    await service.transition('content-001', 3, 'withdraw-schedule-001', 'draft');
+    expect(contents.findOneAndUpdate.mock.calls[0]?.[1]).toMatchObject({
+      $set: { status: 'draft', scheduledAt: null },
+    });
+    const [filter, update, options] = updateSideEffect.mock.calls[0] ?? [];
+    expect(filter).toMatchObject({
+      tenantId: 'tenant-001',
+      aggregateId: 'content-001',
+      aggregateVersion: 3,
+    });
+    expect(update).toMatchObject({ $set: { status: 'cancelled' } });
+    expect(options).toEqual({ session: SESSION, timestamps: false });
+  });
+
+  it('人工重放严格绑定可信租户且拒绝跨租户或非死信记录', async () => {
+    const sideEffects = {
+      findOneAndUpdate: vi.fn().mockReturnValue({
+        exec: vi.fn().mockResolvedValue(null),
+      }),
+    };
+    const service = createService({ sideEffects });
+    await expect(service.replaySideEffect('01J8ZQK7V0A2M4N6P8R0T2W4Y0'))
+      .rejects.toMatchObject({
+        response: { code: 'MARKETING_SIDE_EFFECT_NOT_REPLAYABLE' },
+      });
+    expect(sideEffects.findOneAndUpdate.mock.calls[0]?.[0]).toEqual({
+      tenantId: 'tenant-001',
+      eventId: '01J8ZQK7V0A2M4N6P8R0T2W4Y0',
+      status: 'dead',
+    });
+  });
+
+  it('副作用状态查询只返回当前租户的非 PII 可靠性投影', async () => {
+    const findOne = vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        lean: vi.fn().mockReturnValue({
+          exec: vi.fn().mockResolvedValue({
+            eventId: '01J8ZQK7V0A2M4N6P8R0T2W4Y0',
+            tenantId: 'tenant-001',
+            kind: 'lead_notification',
+            aggregateId: 'lead-001',
+            aggregateVersion: 1,
+            channel: 'email',
+            status: 'dead',
+            attempts: 1,
+            deliveryAttempts: 6,
+            nextAttemptAt: new Date('2026-07-27T00:00:00.000Z'),
+            dispatchedAt: new Date('2026-07-27T00:00:01.000Z'),
+            completedAt: new Date('2026-07-27T00:01:00.000Z'),
+            lastErrorCode: 'MARKETING_NOTIFICATION_GATEWAY_FAILED',
+            contactCiphertext: 'forbidden',
+          }),
+        }),
+      }),
+    });
+    const service = createService({ sideEffects: { findOne } });
+    const result = await service.getSideEffectStatus(
+      '01J8ZQK7V0A2M4N6P8R0T2W4Y0',
+    );
+    expect(findOne).toHaveBeenCalledWith({
+      tenantId: 'tenant-001',
+      eventId: '01J8ZQK7V0A2M4N6P8R0T2W4Y0',
+    });
+    expect(result).toMatchObject({
+      status: 'dead',
+      deliveryAttempts: 6,
+      completedAt: '2026-07-27T00:01:00.000Z',
+    });
+    expect(JSON.stringify(result)).not.toMatch(/tenantId|contactCiphertext/u);
+  });
 });
 
 function createService(overrides: Record<string, unknown>): MarketingCmsService {
