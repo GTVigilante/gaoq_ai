@@ -11,13 +11,11 @@ import { KnowledgeExamRunService } from './application/knowledge-exam-run.servic
 import {
   KnowledgeContentVerificationPort,
   KnowledgeExamOrchestrationPort,
-  KnowledgeGradingPort,
   KnowledgeSearchPort,
 } from './application/knowledge-ports.js';
 import {
   HttpKnowledgeContentVerificationAdapter,
   HttpKnowledgeExamOrchestrationAdapter,
-  HttpKnowledgeGradingAdapter,
   HttpKnowledgeSearchAdapter,
   KnowledgeEvidenceHttpClient,
 } from './integration/knowledge-evidence-http.adapters.js';
@@ -87,8 +85,6 @@ import {
     KnowledgeOutboxWriter,
     KnowledgeSearchIndexTaskWriter,
     KnowledgeEvidenceHttpClient,
-    HttpKnowledgeGradingAdapter,
-    { provide: KnowledgeGradingPort, useExisting: HttpKnowledgeGradingAdapter },
     HttpKnowledgeExamOrchestrationAdapter,
     {
       provide: KnowledgeExamOrchestrationPort,

@@ -18,8 +18,6 @@ import {
   type KnowledgeExamOrchestrationInput,
   type KnowledgeExamStartReceipt,
   type KnowledgeExamTimeoutReceipt,
-  KnowledgeGradingPort,
-  type KnowledgeGradingResult,
   KnowledgeSearchPort,
   type KnowledgeSearchResult,
   KnowledgeSearchIndexPort,
@@ -46,17 +44,6 @@ const verificationReceiptSchema = z.object({
   contentVerified: z.boolean(),
   questionBankVerified: z.boolean(),
   verificationEvidenceId: z.string().regex(ULID),
-}).strict();
-const gradingReceiptSchema = z.object({
-  tenantId: z.string().regex(SAFE_ID),
-  assignmentId: z.string().regex(SAFE_ID),
-  courseVersionId: z.string().regex(SAFE_ID),
-  submissionRef: z.string().regex(SAFE_ID),
-  questionBankRef: z.string().regex(SAFE_ID),
-  questionBankDigest: z.string().regex(DIGEST),
-  questionSetDigest: z.string().regex(DIGEST),
-  gradingEvidenceId: z.string().regex(ULID),
-  scoreBps: z.number().int().min(0).max(10_000),
 }).strict();
 const examBindingSchema = z.object({
   runId: z.string().regex(ULID),
@@ -191,41 +178,6 @@ export class KnowledgeEvidenceHttpClient {
     return Object.freeze({
       contentVerified: receipt.contentVerified,
       questionBankVerified: receipt.questionBankVerified,
-    });
-  }
-
-  async grade(input: {
-    readonly tenantId: string;
-    readonly assignmentId: string;
-    readonly courseVersionId: string;
-    readonly questionBankRef: string;
-    readonly questionBankDigest: string;
-    readonly submissionRef: string;
-  }): Promise<KnowledgeGradingResult> {
-    const parsed = gradingReceiptSchema.safeParse(await this.post(
-      '/v1/submissions/grade',
-      input,
-      digest([
-        'grade', input.tenantId, input.assignmentId, input.courseVersionId,
-        input.questionBankRef, input.questionBankDigest, input.submissionRef,
-      ]),
-      'evidence',
-    ));
-    if (!parsed.success) throw new Error('KNOWLEDGE_GRADING_RECEIPT_INVALID');
-    const receipt = parsed.data;
-    if (
-      receipt.tenantId !== input.tenantId ||
-      receipt.assignmentId !== input.assignmentId ||
-      receipt.courseVersionId !== input.courseVersionId ||
-      receipt.submissionRef !== input.submissionRef ||
-      receipt.questionBankRef !== input.questionBankRef ||
-      receipt.questionBankDigest !== input.questionBankDigest
-    ) throw new Error('KNOWLEDGE_GRADING_RECEIPT_MISMATCH');
-    return Object.freeze({
-      scoreBps: receipt.scoreBps,
-      questionBankDigest: receipt.questionBankDigest,
-      questionSetDigest: receipt.questionSetDigest,
-      gradingEvidenceId: receipt.gradingEvidenceId,
     });
   }
 
@@ -403,7 +355,6 @@ export class KnowledgeEvidenceHttpClient {
   private async post(
     path:
       | '/v1/courses/verify'
-      | '/v1/submissions/grade'
       | '/v1/exam-runs/start'
       | '/v1/exam-runs/timeout'
       | '/v1/exam-runs/finalize'
@@ -511,17 +462,6 @@ export class KnowledgeEvidenceHttpClient {
       )
     ) throw new Error('KNOWLEDGE_EXAM_FINALIZATION_RESULT_INVALID');
     return Object.freeze({ ...parsed.data.result });
-  }
-}
-
-@Injectable()
-export class HttpKnowledgeGradingAdapter extends KnowledgeGradingPort {
-  constructor(private readonly client: KnowledgeEvidenceHttpClient) { super(); }
-
-  override grade(
-    input: Parameters<KnowledgeGradingPort['grade']>[0],
-  ): Promise<KnowledgeGradingResult> {
-    return this.client.grade(input);
   }
 }
 

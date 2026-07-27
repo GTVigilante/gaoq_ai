@@ -28,15 +28,12 @@ import {
   completeTrainingAssignment,
   courseEvent,
   createCourseVersion,
-  createExamAttempt,
   createTrainingAssignment,
-  examGradedEvent,
   onboardingAttestedEvent,
   publishCourseVersion,
   recordTrainingProgress,
   retireCourseVersion,
   type CourseVersion,
-  type ExamAttempt,
   type TrainingAssignment,
 } from '../domain/index.js';
 import { KnowledgeOutboxWriter } from '../persistence/knowledge-outbox.writer.js';
@@ -50,7 +47,6 @@ import {
 } from '../persistence/knowledge.repositories.js';
 import {
   KnowledgeContentVerificationPort,
-  KnowledgeGradingPort,
   KnowledgeSearchPort,
 } from './knowledge-ports.js';
 
@@ -83,15 +79,6 @@ export interface TrainingAssignmentSummary extends Record<string, unknown> {
   readonly status: TrainingAssignment['status'];
   readonly progressBps: number;
   readonly version: number;
-}
-
-export interface ExamAttemptSummary extends Record<string, unknown> {
-  readonly id: string;
-  readonly assignmentId: string;
-  readonly attemptNumber: number;
-  readonly scoreBps: number;
-  readonly passed: boolean;
-  readonly gradedAt: string;
 }
 
 export interface PersonalTrainingAssignmentView extends Record<string, unknown> {
@@ -133,7 +120,6 @@ export class KnowledgeApplicationService {
     private readonly evidence: KnowledgeEvidenceRepository,
     private readonly outbox: KnowledgeOutboxWriter,
     private readonly searchIndexTasks: KnowledgeSearchIndexTaskWriter,
-    private readonly grader: KnowledgeGradingPort,
     private readonly verifier: KnowledgeContentVerificationPort,
     private readonly searcher: KnowledgeSearchPort,
     private readonly onboarding: OnboardingApplicationService,
@@ -452,96 +438,6 @@ export class KnowledgeApplicationService {
     ));
   }
 
-  /** 评分器必须按 submissionRef 幂等，且只返回分数与不可变证据摘要。 */
-  async gradeExam(
-    assignmentId: string,
-    key: string,
-    submissionRef: string,
-  ): Promise<{ readonly attempt: ExamAttemptSummary }> {
-    this.assertScope('erp:knowledge:exam:grade');
-    const assignment = await this.requireAssignment(assignmentId);
-    if (assignment.status === 'completed' || assignment.status === 'expired') {
-      throw new ConflictException({
-        code: 'KNOWLEDGE_ASSIGNMENT_TERMINAL', message: '终态培训任务不能继续考试',
-      });
-    }
-    const existingAttempt = await this.attempts.findBySubmissionRef(submissionRef);
-    if (existingAttempt !== null) {
-      if (existingAttempt.assignmentId !== assignmentId) throw new ConflictException({
-        code: 'KNOWLEDGE_SUBMISSION_REUSED', message: '答卷提交引用已绑定其他培训任务',
-      });
-      return { attempt: attemptSummary(existingAttempt) };
-    }
-    const course = await this.requireCourse(assignment.courseVersionId);
-    const maxAttempts = course.maxAttempts;
-    const questionMode = course.questionMode;
-    if (
-      !assignment.examRequired || course.questionBankRef === null ||
-      course.questionBankDigest === null || course.passingScoreBps === null ||
-      maxAttempts === null || questionMode === null
-    ) throw new ConflictException({
-      code: 'KNOWLEDGE_EXAM_NOT_CONFIGURED', message: '该培训任务未配置考试',
-    });
-    if (questionMode !== 'objective' || course.manualReviewRequired) {
-      throw new ConflictException({
-        code: 'KNOWLEDGE_EXAM_RUN_REQUIRED',
-        message: '主观题或混合题必须使用可靠考试运行流程',
-      });
-    }
-    if (await this.attempts.countByAssignment(assignmentId) >= maxAttempts) {
-      throw new ConflictException({
-        code: 'KNOWLEDGE_EXAM_ATTEMPTS_EXHAUSTED', message: '已达到课程最大考试次数',
-      });
-    }
-    const graded = await this.grader.grade({
-      tenantId: this.context.getTenantRequired().tenantId,
-      assignmentId, courseVersionId: course.id,
-      questionBankRef: course.questionBankRef,
-      questionBankDigest: course.questionBankDigest,
-      submissionRef,
-    });
-    if (graded.questionBankDigest !== course.questionBankDigest) throw new ConflictException({
-      code: 'KNOWLEDGE_QUESTION_BANK_DIGEST_MISMATCH', message: '评分题库版本不匹配',
-    });
-    return this.run(async () => this.idempotency.execute(
-      'knowledge.exam.grade', key, { assignmentId, submissionRef }, async (session) => {
-        const replay = await this.attempts.findBySubmissionRef(submissionRef, session);
-        if (replay !== null) {
-          if (replay.assignmentId !== assignmentId) throw new ConflictException({
-            code: 'KNOWLEDGE_SUBMISSION_REUSED', message: '答卷提交引用已绑定其他培训任务',
-          });
-          return { attempt: attemptSummary(replay) };
-        }
-        const freshAssignment = await this.requireAssignment(assignmentId, session);
-        if (freshAssignment.status === 'completed' || freshAssignment.status === 'expired') {
-          throw new ConflictException({
-            code: 'KNOWLEDGE_ASSIGNMENT_TERMINAL', message: '终态培训任务不能继续考试',
-          });
-        }
-        if (freshAssignment.courseVersionId !== course.id) throw new ConflictException({
-          code: 'KNOWLEDGE_ASSIGNMENT_COURSE_CHANGED', message: '培训任务课程引用已变化',
-        });
-        const attemptNumber = await this.attempts.nextAttemptNumber(assignmentId, session);
-        if (attemptNumber > maxAttempts) throw new ConflictException({
-          code: 'KNOWLEDGE_EXAM_ATTEMPTS_EXHAUSTED', message: '已达到课程最大考试次数',
-        });
-        const attempt = createExamAttempt({
-          id: createEventId(new Date()), tenantId: freshAssignment.tenantId,
-          assignmentId, attemptNumber,
-          submissionRef, questionSetDigest: graded.questionSetDigest,
-          gradingEvidenceId: graded.gradingEvidenceId, scoreBps: graded.scoreBps,
-          questionMode,
-          gradingPolicyVersion: course.gradingPolicyVersion ?? 'objective-auto-v1',
-          passingRule: course.passingRule ?? 'score_threshold',
-          passingScoreBps: course.passingScoreBps ?? 0, serverGradingVerified: true,
-        }, new Date());
-        await this.attempts.insert(attempt, session);
-        await this.outbox.append(examGradedEvent(attempt), session);
-        return { attempt: attemptSummary(attempt) };
-      },
-    ));
-  }
-
   async completeAssignment(
     id: string,
     expectedVersion: number,
@@ -747,13 +643,6 @@ function assignmentSummary(value: TrainingAssignment): TrainingAssignmentSummary
     courseVersionId: value.courseVersionId, mandatory: value.mandatory,
     examRequired: value.examRequired, dueDate: value.dueDate, status: value.status,
     progressBps: value.progressBps, version: value.version,
-  });
-}
-
-function attemptSummary(value: ExamAttempt): ExamAttemptSummary {
-  return Object.freeze({
-    id: value.id, assignmentId: value.assignmentId, attemptNumber: value.attemptNumber,
-    scoreBps: value.scoreBps, passed: value.passed, gradedAt: value.gradedAt,
   });
 }
 
