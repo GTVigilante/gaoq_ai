@@ -5,9 +5,23 @@ import { createConnection, type ClientSession, type Connection } from 'mongoose'
 
 const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const DIGEST = /^[A-Za-z0-9_-]{43}$/u;
 const REASON_CODE = /^[A-Z][A-Z0-9_]{7,63}$/u;
+const POSITIVE_INTEGER = /^[1-9][0-9]{0,15}$/u;
+const QUESTION_MODES = ['objective', 'subjective', 'mixed'] as const;
 
 export type KnowledgeExamReplayMode = 'dry-run' | 'apply';
+
+export interface KnowledgeExamReplayCommand {
+  readonly uri: string;
+  readonly mode: KnowledgeExamReplayMode;
+  readonly input: {
+    readonly tenantId: string;
+    readonly runId: string;
+    readonly expectedVersion: number;
+    readonly reasonCode: string;
+  };
+}
 
 export interface KnowledgeExamReplayResult {
   readonly tenantId: string;
@@ -28,6 +42,74 @@ export function inferReplayStatus(run: {
   if (run.submissionRef === null) return 'in_progress';
   if (run.reviewEvidenceId !== null) return 'pending_review';
   return 'submitted';
+}
+
+export function parseKnowledgeExamReplayCommand(
+  argv: readonly string[],
+  environment: Readonly<{ readonly MONGODB_URI?: string }>,
+): KnowledgeExamReplayCommand {
+  const args = argv.filter((argument) => argument !== '--');
+  const modeFlags = args.filter((argument) =>
+    argument === '--dry-run' || argument === '--apply',
+  );
+  if (modeFlags.length !== 1) {
+    throw new Error('KNOWLEDGE_EXAM_REPLAY_ARGUMENT_INVALID');
+  }
+  const mode: KnowledgeExamReplayMode =
+    modeFlags[0] === '--apply' ? 'apply' : 'dry-run';
+  const filtered = args.filter((argument) =>
+    argument !== '--dry-run' && argument !== '--apply',
+  );
+  const allowed = new Set([
+    '--tenant-id',
+    '--run-id',
+    '--expected-version',
+    '--reason-code',
+  ]);
+  const values = new Map<string, string>();
+  for (let index = 0; index < filtered.length; index += 2) {
+    const key = filtered[index];
+    const value = filtered[index + 1];
+    if (
+      key === undefined ||
+      value === undefined ||
+      !allowed.has(key) ||
+      values.has(key)
+    ) {
+      throw new Error('KNOWLEDGE_EXAM_REPLAY_ARGUMENT_INVALID');
+    }
+    values.set(key, value);
+  }
+  const tenantId = values.get('--tenant-id');
+  const runId = values.get('--run-id');
+  const expectedVersion = values.get('--expected-version');
+  const reasonCode = values.get('--reason-code');
+  const parsedExpectedVersion = Number(expectedVersion);
+  if (
+    values.size !== allowed.size ||
+    tenantId === undefined ||
+    runId === undefined ||
+    expectedVersion === undefined ||
+    reasonCode === undefined ||
+    !POSITIVE_INTEGER.test(expectedVersion) ||
+    !Number.isSafeInteger(parsedExpectedVersion)
+  ) {
+    throw new Error('KNOWLEDGE_EXAM_REPLAY_ARGUMENT_INVALID');
+  }
+  const uri = environment.MONGODB_URI;
+  if (uri === undefined || !uri.startsWith('mongodb://')) {
+    throw new Error('KNOWLEDGE_EXAM_REPLAY_MONGODB_URI_REQUIRED');
+  }
+  return Object.freeze({
+    uri,
+    mode,
+    input: Object.freeze({
+      tenantId,
+      runId,
+      expectedVersion: parsedExpectedVersion,
+      reasonCode,
+    }),
+  });
 }
 
 export async function replayKnowledgeExamRun(
@@ -61,16 +143,11 @@ export async function replayKnowledgeExamRun(
         lockedBy: null,
       }, { session });
       if (current === null) throw new Error('KNOWLEDGE_EXAM_REPLAY_STATE_CONFLICT');
+      const facts = readReplayFacts(current);
       const status = inferReplayStatus({
-        gatewaySessionRef: typeof current.gatewaySessionRef === 'string'
-          ? current.gatewaySessionRef
-          : null,
-        submissionRef: typeof current.submissionRef === 'string'
-          ? current.submissionRef
-          : null,
-        reviewEvidenceId: typeof current.reviewEvidenceId === 'string'
-          ? current.reviewEvidenceId
-          : null,
+        gatewaySessionRef: facts.gatewaySessionRef,
+        submissionRef: facts.submissionRef,
+        reviewEvidenceId: facts.reviewEvidenceId,
       });
       const now = new Date();
       result = Object.freeze({
@@ -112,12 +189,12 @@ export async function replayKnowledgeExamRun(
       await appendReplayEvent(connection, session, {
         tenantId: input.tenantId,
         runId: input.runId,
-        assignmentId: String(current.assignmentId),
-        courseVersionId: String(current.courseVersionId),
-        attemptNumber: Number(current.attemptNumber),
-        questionMode: String(current.questionMode),
+        assignmentId: facts.assignmentId,
+        courseVersionId: facts.courseVersionId,
+        attemptNumber: facts.attemptNumber,
+        questionMode: facts.questionMode,
         status,
-        timedOut: current.timedOut === true,
+        timedOut: facts.timedOut,
         version: input.expectedVersion + 1,
         reasonCode: input.reasonCode,
         occurredAt: now,
@@ -130,54 +207,139 @@ export async function replayKnowledgeExamRun(
   return result;
 }
 
-async function main(): Promise<void> {
-  const args = process.argv.slice(2).filter((arg) => arg !== '--');
-  const modeFlag = args.filter((arg) => arg === '--dry-run' || arg === '--apply');
-  if (modeFlag.length !== 1) throw new Error('KNOWLEDGE_EXAM_REPLAY_ARGUMENT_INVALID');
-  const mode: KnowledgeExamReplayMode = modeFlag[0] === '--apply' ? 'apply' : 'dry-run';
-  const filtered = args.filter((arg) => arg !== '--dry-run' && arg !== '--apply');
-  const values = new Map<string, string>();
-  for (let index = 0; index < filtered.length; index += 2) {
-    const key = filtered[index];
-    const value = filtered[index + 1];
-    if (key === undefined || value === undefined || !key.startsWith('--')) {
-      throw new Error('KNOWLEDGE_EXAM_REPLAY_ARGUMENT_INVALID');
-    }
-    values.set(key, value);
-  }
-  if (
-    values.size !== 4 ||
-    !values.has('--tenant-id') ||
-    !values.has('--run-id') ||
-    !values.has('--expected-version') ||
-    !values.has('--reason-code')
-  ) throw new Error('KNOWLEDGE_EXAM_REPLAY_ARGUMENT_INVALID');
-  const uri = process.env.MONGODB_URI;
-  if (uri === undefined || !uri.startsWith('mongodb://')) {
-    throw new Error('KNOWLEDGE_EXAM_REPLAY_MONGODB_URI_REQUIRED');
-  }
-  const connection = createConnection(uri, {
+export async function runKnowledgeExamReplayCli(
+  argv: readonly string[],
+  environment: Readonly<{ readonly MONGODB_URI?: string }>,
+  dependencies: {
+    readonly connect?: (uri: string) => Connection;
+    readonly writeOutput?: (output: string) => void;
+  } = {},
+): Promise<void> {
+  const command = parseKnowledgeExamReplayCommand(argv, environment);
+  const connection = dependencies.connect?.(command.uri) ?? createConnection(command.uri, {
     autoIndex: false,
     serverSelectionTimeoutMS: 5_000,
   });
   try {
     await connection.asPromise();
-    const tenantId = values.get('--tenant-id');
-    const runId = values.get('--run-id');
-    const expectedVersion = Number(values.get('--expected-version'));
-    const reasonCode = values.get('--reason-code');
-    if (tenantId === undefined || runId === undefined || reasonCode === undefined) {
-      throw new Error('KNOWLEDGE_EXAM_REPLAY_ARGUMENT_INVALID');
-    }
-    process.stdout.write(`${JSON.stringify(await replayKnowledgeExamRun(connection, {
-      tenantId,
-      runId,
-      expectedVersion,
-      reasonCode,
-    }, mode))}\n`);
+    const output = `${JSON.stringify(await replayKnowledgeExamRun(
+      connection,
+      command.input,
+      command.mode,
+    ))}\n`;
+    if (dependencies.writeOutput === undefined) process.stdout.write(output);
+    else dependencies.writeOutput(output);
   } finally {
     await connection.close();
   }
+}
+
+export function knowledgeExamReplayErrorCode(error: unknown): string {
+  return error instanceof Error &&
+    /^KNOWLEDGE_EXAM_REPLAY_[A-Z_]{1,96}$/.test(error.message)
+    ? error.message
+    : 'KNOWLEDGE_EXAM_REPLAY_DATABASE_FAILURE';
+}
+
+function readReplayFacts(current: Record<string, unknown>): {
+  readonly assignmentId: string;
+  readonly courseVersionId: string;
+  readonly attemptNumber: number;
+  readonly questionMode: typeof QUESTION_MODES[number];
+  readonly gatewaySessionRef: string | null;
+  readonly submissionRef: string | null;
+  readonly reviewEvidenceId: string | null;
+  readonly timedOut: boolean;
+} {
+  const assignmentId = readRequiredId(current.assignmentId);
+  const courseVersionId = readRequiredId(current.courseVersionId);
+  const attemptNumber = current.attemptNumber;
+  const maxAttempts = current.maxAttempts;
+  const questionMode = current.questionMode;
+  const manualReviewRequired = current.manualReviewRequired;
+  const gatewaySessionRef = readNullableId(current.gatewaySessionRef);
+  const submissionRef = readNullableId(current.submissionRef);
+  const questionSetDigest = readNullableDigest(current.questionSetDigest);
+  const reviewEvidenceId = readNullableId(current.reviewEvidenceId);
+  const finalAttemptId = readNullableId(current.finalAttemptId);
+  const startedAt = readNullableDate(current.startedAt);
+  const deadlineAt = readNullableDate(current.deadlineAt);
+  const submittedAt = readNullableDate(current.submittedAt);
+  const submissionReason = current.submissionReason;
+  const timedOut = current.timedOut;
+  const hasGatewaySession = gatewaySessionRef !== null;
+  const hasSubmission = submissionRef !== null;
+  if (
+    assignmentId === null ||
+    courseVersionId === null ||
+    !Number.isSafeInteger(attemptNumber) ||
+    Number(attemptNumber) < 1 ||
+    !Number.isSafeInteger(maxAttempts) ||
+    Number(maxAttempts) < 1 ||
+    Number(maxAttempts) > 10 ||
+    Number(attemptNumber) > Number(maxAttempts) ||
+    !QUESTION_MODES.includes(questionMode as typeof QUESTION_MODES[number]) ||
+    typeof manualReviewRequired !== 'boolean' ||
+    manualReviewRequired !== (questionMode !== 'objective') ||
+    typeof timedOut !== 'boolean' ||
+    hasGatewaySession !== (questionSetDigest !== null) ||
+    hasGatewaySession !== (startedAt !== null) ||
+    hasGatewaySession !== (deadlineAt !== null) ||
+    (startedAt !== null &&
+      deadlineAt !== null &&
+      deadlineAt.getTime() <= startedAt.getTime()) ||
+    (gatewaySessionRef === null && submissionRef !== null) ||
+    hasSubmission !== (submittedAt !== null) ||
+    hasSubmission !==
+      (submissionReason === 'learner' || submissionReason === 'timeout') ||
+    timedOut !== (submissionReason === 'timeout') ||
+    (submissionRef === null && reviewEvidenceId !== null) ||
+    (timedOut &&
+      submittedAt !== null &&
+      deadlineAt !== null &&
+      submittedAt.getTime() !== deadlineAt.getTime()) ||
+    (reviewEvidenceId !== null && !manualReviewRequired) ||
+    finalAttemptId !== null
+  ) {
+    throw new Error('KNOWLEDGE_EXAM_REPLAY_RECORD_INVALID');
+  }
+  return Object.freeze({
+    assignmentId,
+    courseVersionId,
+    attemptNumber: Number(attemptNumber),
+    questionMode: questionMode as typeof QUESTION_MODES[number],
+    gatewaySessionRef,
+    submissionRef,
+    reviewEvidenceId,
+    timedOut,
+  });
+}
+
+function readRequiredId(value: unknown): string | null {
+  return typeof value === 'string' && SAFE_ID.test(value) ? value : null;
+}
+
+function readNullableId(value: unknown): string | null {
+  if (value === null) return null;
+  const id = readRequiredId(value);
+  if (id === null) throw new Error('KNOWLEDGE_EXAM_REPLAY_RECORD_INVALID');
+  return id;
+}
+
+function readNullableDigest(value: unknown): string | null {
+  if (value === null) return null;
+  if (typeof value !== 'string' || !DIGEST.test(value)) {
+    throw new Error('KNOWLEDGE_EXAM_REPLAY_RECORD_INVALID');
+  }
+  return value;
+}
+
+function readNullableDate(value: unknown): Date | null {
+  if (value === null) return null;
+  if (!(value instanceof Date) || !Number.isFinite(value.getTime())) {
+    throw new Error('KNOWLEDGE_EXAM_REPLAY_RECORD_INVALID');
+  }
+  return value;
 }
 
 async function appendReplayEvent(
@@ -197,12 +359,6 @@ async function appendReplayEvent(
     readonly occurredAt: Date;
   },
 ): Promise<void> {
-  if (
-    !SAFE_ID.test(input.assignmentId) ||
-    !SAFE_ID.test(input.courseVersionId) ||
-    !Number.isSafeInteger(input.attemptNumber) ||
-    !['objective', 'subjective', 'mixed'].includes(input.questionMode)
-  ) throw new Error('KNOWLEDGE_EXAM_REPLAY_RECORD_INVALID');
   const eventId = createEventId(input.occurredAt);
   const eventType = 'cn.gaoq.erp.knowledge.exam.run.replayed.v1';
   const time = input.occurredAt.toISOString();
@@ -248,13 +404,10 @@ async function appendReplayEvent(
 
 const entryPath = process.argv[1];
 if (entryPath !== undefined && import.meta.url === pathToFileURL(entryPath).href) {
-  void main().catch((error: unknown) => {
-    const code =
-      error instanceof Error &&
-      /^KNOWLEDGE_EXAM_REPLAY_[A-Z_]{1,96}$/.test(error.message)
-        ? error.message
-        : 'KNOWLEDGE_EXAM_REPLAY_DATABASE_FAILURE';
-    process.stderr.write(`${code}\n`);
-    process.exitCode = 1;
-  });
+  void runKnowledgeExamReplayCli(process.argv.slice(2), process.env).catch(
+    (error: unknown) => {
+      process.stderr.write(`${knowledgeExamReplayErrorCode(error)}\n`);
+      process.exitCode = 1;
+    },
+  );
 }
