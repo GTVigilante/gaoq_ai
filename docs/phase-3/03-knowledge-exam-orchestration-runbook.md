@@ -60,6 +60,8 @@ pnpm --filter @gaoq/erp-api replay:phase3:knowledge-exam -- \
 
 重放使用租户及版本门禁，只按已形成的最远证据恢复到 `starting`、`in_progress`、`submitted` 或 `pending_review`，并在同一事务把受控 `replayReason`、`replayedAt` 写回权威运行记录并发布 `replayed` Outbox 事件；两处事实使用同一时间与原因码，便于对账。不改分数、不伪造证据、不绕过最大次数。原因码只允许大写受控编码，不接受可能包含敏感信息的自由文本。
 
+CLI 只接受一次 `--dry-run` 或 `--apply`、四个不重复白名单参数及十进制正整数版本；执行前再次验证 dead 记录的任务/课程引用、考试次数、题型、证据顺序与超时事实。参数、数据库配置或权威记录受损时失败关闭，终端只输出稳定错误码，连接在成功与失败路径都必须关闭。
+
 标准 AI 对接只读能力固定为 Tool `knowledge_exam_run_get`、Resource Template `erp://knowledge/exam-runs/{id}`、Prompt `knowledge_exam_run_status_guide`。三者复用应用服务和本人任职校验；不提供开始、提交、评分、复核或重放 MCP Tool。
 
 真实评分沙箱仍必须覆盖客观/主观/混合代表题集、伪造签名、摘要错配、跨租户、超时边界、网关断连、人工复核积压、重复回执、SLA、性能、安全与业务 UAT。本地替身通过不等于外部验收完成。

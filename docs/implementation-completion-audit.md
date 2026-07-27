@@ -1,7 +1,7 @@
 # 仓库实施完成度审计
 
-- 审计日期：2026-07-27
-- 审计对象：Phase 0–6、开放 Issue、Draft PR #122 与 GitHub 治理配置
+- 审计日期：2026-07-28
+- 审计对象：Phase 0–6、开放 Issue、当前堆叠 Draft PR 与 GitHub 治理配置
 - 结论：应用、契约、迁移控制面、生产门禁、Helm/Kubernetes 编排和标准 MCP
   已形成仓库实施基线；真实外部联调、目标环境演练、UAT、切换与 Hypercare
   尚未完成。Phase 0 的 GitHub Project 因最小权限未授权而未配置，其余关键
@@ -23,7 +23,7 @@
 
 | Phase | 仓库实施证据 | 尚缺外部证据 | 结论 |
 |---|---|---|---|
-| 0 | `docs/phase-0/`、Issue 模板、7 个 Milestone、标签及 Draft PR 流程 | Issue #41 的 GitHub Project 需要 `project` 权限；全仓覆盖率以 187 个分支余量达到 80%，其余关键链路 90% 证据尚未全部建立 | 未满足退出条件 |
+| 0 | `docs/phase-0/`、Issue 模板、7 个 Milestone、标签及 Draft PR 流程 | Issue #41 的 GitHub Project 需要 `project` 权限；全仓覆盖率已达到 80%，其余关键链路 90% 证据尚未全部建立 | 未满足退出条件 |
 | 1 | `apps/erp-api/src/modules/auth/`、`org/`、`security/`、`integration/`，`deploy/helm/`，Phase 1 工作流 | 境内云 VPC、WAF/KMS、真实 SSO/组织下发、监控告警、备份恢复与 RPO/RTO 演练 | 实施已交付，外部验收待完成 |
 | 2 | `apps/erp-api/src/modules/approval/`、审批前端、通知、迁移与 MCP 能力 | 氚云模板/历史/在途审批真实盘点迁移、三次演练和业务签署 | 实施已交付，外部验收待完成 |
 | 3 | 招聘、eSign、Onboarding、Knowledge、Care、Talent Lifecycle 360 及对应 REST/事件/MCP | 真实渠道、e签宝、对象/WORM、OpenAI/搜索/评分/通知、CRM/校友平台与跨角色 UAT | 实施已交付，外部验收待完成 |
@@ -50,7 +50,8 @@
 
 - GitHub 是唯一代码协作、Issue、PR 与 CI 入口；不使用 NAS、自建 Runner、虚拟机
   或本地内网作为 CI 替代品。
-- Draft PR #122 承载当前实现；合入前仍需评审、可运行 CI 与所有适用 DoD。
+- 当前实现由以 Draft PR #122 为根的堆叠 PR 承载，最新 Knowledge 切片为
+  Draft PR #129；合入前仍需按顺序评审、可运行 CI 与所有适用 DoD。
 - GitHub Hosted Actions 当前在任何 Job 步骤开始前被账号付款或 Spending limit
   拦截。该状态既不是代码测试失败，也不是 CI 通过；相同 commit 不重复空跑。
 - Issue #41 需要用户明确授权 `read:project,project` 后才能创建 Project。未获授权
@@ -61,18 +62,18 @@
 ## 5. 覆盖率边界
 
 2026-07-28 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，323 个测试文件、2,745 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，323 个测试文件、2,781 项测试全部
 通过；覆盖率为语句
-87.19%（23,976/27,498）、分支 82.01%（15,901/19,388）、函数
-89.20%（4,386/4,917）、行 88.91%（21,932/24,666）。全仓四维已达到 Phase 0
-规定的 80% 门槛，分支高于最低值 390 个；必须保留专项 90% 门禁并继续增加
+87.33%（24,055/27,543）、分支 82.22%（15,979/19,433）、函数
+89.29%（4,397/4,924）、行 89.05%（22,005/24,709）。全仓四维已达到 Phase 0
+规定的 80% 门槛，分支高于最低值 432 个；必须保留专项 90% 门禁并继续增加
 安全余量，禁止通过排除生产文件、降低阈值或只报告局部高覆盖率维持达标。
 
 租户上下文、审计链锚定、审计链验证、组织主数据应用、组织主数据入口、身份授权、审批数据加密、审批仓储、
 审批应用状态机、审批入口控制器、审批模板领域、
 MCP 确认、MCP 运行时、
 薪酬影子周期、薪酬运行、薪酬审批、薪酬主数据、薪酬四方对账、薪酬税务申报、薪酬 L4 数据加密、资金支付、Treasury 银行回盘、Treasury L4 数据加密、Treasury Outbox、Care 纪念日应用、Care 离职应用、校友授权清理协调、
-数据迁移控制面、数据迁移打包 CLI、Knowledge 考试运行 Relay、Knowledge 搜索索引 Relay、Knowledge REST 入口控制器、Knowledge 应用服务、Knowledge 考试应用与入口、Knowledge 领域模型、Knowledge 持久化 Schema、考勤应用、考勤仓储、考勤供应商拉取、考勤供应商入站处理、电子签回调处理、
+数据迁移控制面、数据迁移打包 CLI、Knowledge 考试运行 Relay、Knowledge 搜索索引 Relay、Knowledge REST 入口控制器、Knowledge 应用服务、Knowledge 考试应用与入口、Knowledge 领域模型、Knowledge 持久化 Schema、Knowledge 考试重放 CLI、考勤应用、考勤仓储、考勤供应商拉取、考勤供应商入站处理、电子签回调处理、
 招聘渠道拉取、招聘渠道入站处理、招聘渠道职位扇出、招聘渠道阶段扇出、招聘申请、招聘面试、招聘简历、招聘渠道职位投递、招聘渠道阶段回传、招聘管理、人才全周期应用、人才全周期仓储、招聘 Offer、Care 仓储、组织仓储、招聘仓储、知识库仓储、营销 CMS、OAuth 授权控制器、WebAuthn 强认证、入职应用与入口控制器和生产执行授权服务已建立
 独立不可回退门禁：
 `pnpm quality:tenant-context-coverage`、
@@ -107,6 +108,7 @@ MCP 确认、MCP 运行时、
 `pnpm quality:knowledge-exam-entry-coverage`、
 `pnpm quality:knowledge-domain-coverage`、
 `pnpm quality:knowledge-persistence-schemas-coverage`、
+`pnpm quality:knowledge-exam-replay-coverage`、
 `pnpm quality:attendance-application-coverage`、
 `pnpm quality:attendance-repositories-coverage`、
 `pnpm quality:attendance-provider-pull-coverage`、
@@ -137,7 +139,7 @@ MCP 确认、MCP 运行时、
 `pnpm quality:oauth-controller-coverage`、
 `pnpm quality:strong-auth-coverage`、
 `pnpm quality:onboarding-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。六十三条链路当前覆盖率分别为
+`pnpm quality:production-execution-authorization-coverage`。六十四条链路当前覆盖率分别为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -171,6 +173,7 @@ MCP 确认、MCP 运行时、
 100%/98.85%/100%/100%、
 99.35%/100%/95.45%/100%、
 100%/98.85%/100%/100%、
+95.93%/94.78%/93.75%/97.27%、
 99.20%/99.17%/100%/99.11%、
 100%/100%/100%/100%、
 98.61%/97.00%/100%/99.21%、
@@ -195,8 +198,8 @@ MCP 确认、MCP 运行时、
 96.09%/91.51%/100%/99.45%、
 100%/100%/100%/100%、
 100%/98.23%/100%/100% 和
-100%/100%/100%/100%（语句/分支/函数/行）；六十三项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明六十三条关键链路达标，
+100%/100%/100%/100%（语句/分支/函数/行）；六十四项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明六十四条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 OAuth 授权控制器已覆盖 45 项预注册回调、PKCE、授权决策、授权码、
@@ -274,6 +277,12 @@ Knowledge 持久化 Schema 已覆盖 22 项课程授权、可空考试配置、�
 允许 `passingScoreBps=null`，受损任务记录在 Mongo 校验边界失败关闭。三个目标文件
 合计覆盖率达到 100%/98.85%/100%/100%（语句/分支/函数/行），且各自均已
 接入独立四维 90% 门禁。
+
+Knowledge 考试重放 CLI 已覆盖 40 项证据状态推断、精确参数、重复参数、
+十进制版本、数据库配置、连接关闭、稳定错误码、事务竞争、脱敏 Outbox 和受损
+dead 记录失败关闭测试；重放前会验证引用链、题型、次数和超时事实。覆盖率达到
+95.93%/94.78%/93.75%/97.27%（语句/分支/函数/行），独立四维 90% 门禁
+已接入 `pnpm check`。
 
 考勤仓储已覆盖 17 项可信租户、源事实/修订/月快照密文读写、盲索引、迁移证据、
 会话绑定、并发冲突和失败关闭测试，目标生产文件达到四维 100%，独立四维 90%
