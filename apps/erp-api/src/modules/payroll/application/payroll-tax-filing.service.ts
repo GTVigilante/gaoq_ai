@@ -742,10 +742,12 @@ export class PayrollTaxFilingService {
     ) return null;
     if (
       !['approved', 'submitting'].includes(filing.status) || filing.version !== expectedVersion ||
-      filing.objectRef === null
+      filing.objectRef === null || filing.objectEvidenceId === null ||
+      filing.approvedBy === null || filing.strongAuthEvidenceId === null ||
+      filing.strongAuthReferenceType === null
     ) throw new ConflictException({
       code: 'PAYROLL_TAX_PRODUCTION_AUTHORIZATION_SUBJECT_INVALID',
-      message: '个税清单状态、版本或不可变对象不足以申请生产执行授权',
+      message: '个税清单状态、版本、不可变对象或审批证据不足以申请生产执行授权',
     });
     return this.productionAuthorization.authorize({
       action: 'payroll-tax-submission',
@@ -755,6 +757,8 @@ export class PayrollTaxFilingService {
         filing.periodId, filing.payrollRunId, filing.objectRef, filing.contentHash,
         filing.employeeCount,
         filing.totalTaxableEarningsMinor, filing.totalWithholdingTaxMinor,
+        filing.objectEvidenceId, filing.approvedBy, filing.strongAuthEvidenceId,
+        filing.strongAuthReferenceType,
       ]),
       expectedVersion,
     });
