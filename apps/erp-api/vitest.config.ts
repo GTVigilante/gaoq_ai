@@ -65,6 +65,12 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/treasury/application/treasury-bank-return.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/treasury/persistence/treasury-outbox.writer.ts': {
           branches: 90,
           functions: 90,
