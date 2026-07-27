@@ -61,14 +61,14 @@
 ## 5. 覆盖率边界
 
 2026-07-27 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，321 个测试文件、1,729 项测试全部
-通过；覆盖率为语句 78.29%、分支 70.32%、函数 80.63%、行 80.96%。语句与分支
+`pnpm --filter @gaoq/erp-api test:coverage`，321 个测试文件、1,775 项测试全部
+通过；覆盖率为语句 79.27%、分支 71.27%、函数 81.49%、行 81.87%。语句与分支
 仍低于 Phase 0 规定的全系统 80% 门槛，必须作为实施缺口继续处理，禁止
 通过排除生产文件、降低阈值或只报告局部高覆盖率来宣称达标。
 
 租户上下文、身份授权、审批数据加密、审批仓储、审批应用状态机、MCP 确认、
-薪酬影子周期、薪酬运行、薪酬审批、Care 纪念日应用、考勤应用、招聘 Offer、
-Care 仓储、组织仓储、招聘仓储、知识库
+薪酬影子周期、薪酬运行、薪酬审批、Care 纪念日应用、数据迁移控制面、考勤应用、
+招聘 Offer、Care 仓储、组织仓储、招聘仓储、知识库
 仓储和营销 CMS 服务已建立独立不可回退门禁：
 `pnpm quality:tenant-context-coverage`、
 `pnpm quality:authorization-coverage`、
@@ -78,6 +78,7 @@ Care 仓储、组织仓储、招聘仓储、知识库
 `pnpm quality:payroll-run-coverage`、
 `pnpm quality:payroll-approval-coverage`、
 `pnpm quality:care-occasion-application-coverage`、
+`pnpm quality:data-migration-coverage`、
 `pnpm quality:attendance-application-coverage`、
 `pnpm quality:recruitment-offer-coverage`、
 `pnpm quality:care-repositories-coverage` 和
@@ -86,7 +87,7 @@ Care 仓储、组织仓储、招聘仓储、知识库
 `pnpm quality:knowledge-repositories-coverage`、
 `pnpm quality:marketing-cms-service-coverage`、
 `pnpm quality:approval-repositories-coverage` 和
-`pnpm quality:approval-application-coverage`。十七条链路当前覆盖率分别为
+`pnpm quality:approval-application-coverage`。十八条链路当前覆盖率分别为
 100%/100%/100%/100%、100%/95.83%/100%/100%、
 98.75%/96.96%/100%/100%、
 98.06%/94.04%/98.64%/99.02%、
@@ -94,18 +95,18 @@ Care 仓储、组织仓储、招聘仓储、知识库
 99.00%/97.24%/97.29%/98.84%、92.18%/90.20%/96.10%/93.18%、
 100%/100%/100%/100%、
 100%/96.85%/100%/100%、
+93.37%/90.19%/97.97%/95.29%、
 99.20%/99.17%/100%/99.11%、
 95.97%/94.01%/100%/96.83%、
 100%/91.66%/100%/100%、100%/100%/100%/100%、
 97.44%/91.32%/100%/99.53%、100%/99.43%/100%/100% 和
-100%/97.27%/100%/100%（语句/分支/函数/行）；十七项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明十七条关键链路达标，
+100%/97.27%/100%/100%（语句/分支/函数/行）；十八项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明十八条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
-数据迁移控制面新增 53 项幂等重放、证据分页、检查点竞争、关联映射、附件与
-负载验证测试，服务覆盖率提升至 88.23%/84.58%/97.97%/91.11%
-（语句/分支/函数/行）。语句与分支未达到 90%，因此本轮只记录测试增量，
-不建立关键链路门禁，也不得把局部行覆盖率达标描述为迁移控制面整体达标。
+数据迁移控制面已有 61 项幂等重放、证据分页、检查点竞争、关联映射、附件与
+全域负载失败关闭测试，服务覆盖率达到 93.37%/90.19%/97.97%/95.29%
+（语句/分支/函数/行），独立四维 90% 门禁已接入 `pnpm check`。
 
 ## 6. 架构边界
 
