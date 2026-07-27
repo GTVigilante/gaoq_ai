@@ -353,7 +353,8 @@ export function retireApprovalTemplate(
 /** 生成实例使用的完整不可变模板快照。 */
 export function snapshotApprovalTemplate(template: ApprovalTemplate): ApprovalTemplateSnapshot {
   if (
-    template.status !== 'published' || template.approvedBy === null || template.publishedAt === null
+    template.status !== 'published' || template.approvedBy === null ||
+    template.publishedAt === null || template.retiredAt !== null
   ) throw new ApprovalDomainError('APPROVAL_TEMPLATE_NOT_PUBLISHED', '模板尚未发布');
   assertTemplateDefinitionIntegrity(template);
   return deepFreeze(structuredClone({
@@ -381,6 +382,8 @@ export function snapshotApprovalTemplateForMigration(
   if (
     !['published', 'retired'].includes(template.status) ||
     template.approvedBy === null || template.publishedAt === null ||
+    (template.status === 'published' && template.retiredAt !== null) ||
+    (template.status === 'retired' && template.retiredAt === null) ||
     createdAt < template.publishedAt ||
     (template.retiredAt !== null && createdAt > template.retiredAt)
   ) throw new ApprovalDomainError(
