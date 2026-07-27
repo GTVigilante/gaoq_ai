@@ -6,8 +6,11 @@ import type { IdempotencyService } from '../../../core/idempotency/idempotency.s
 import type { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import type { AccessProfileRepository } from '../../identity/access-profile.repository.js';
 import {
+  createApprovalDelegation,
   createApprovalInstanceDraft,
+  createNextApprovalTemplateRevision,
   createApprovalTemplateDraft,
+  decideApprovalInstance,
   publishApprovalTemplate,
   submitApprovalInstance,
   type ApprovalTemplateDefinition,
@@ -56,6 +59,15 @@ function draftInstance(templateCode = 'EXPENSE', riskLevel: 'R1' | 'R2' = 'R1') 
     id: 'instance-001', tenantId: 'tenant-001', title: '费用申请', initiatorId: 'actor-001',
     template: template(templateCode, riskLevel), formData: { amount: 123_45, remark: '仅财务可见' },
   }, NOW);
+}
+
+function runningInstance(templateCode = 'EXPENSE', riskLevel: 'R1' | 'R2' = 'R1') {
+  return submitApprovalInstance(draftInstance(templateCode, riskLevel), {
+    tenantId: 'tenant-001',
+    expectedVersion: 1,
+    actorId: 'actor-001',
+    resolvedNodes: [{ nodeId: 'manager', actorIds: ['manager-001'] }],
+  }, NOW).instance;
 }
 
 function trustedContext(scopes: readonly string[] = [], actorId = 'actor-001'): TenantContextService {
@@ -869,6 +881,205 @@ describe('ApprovalApplicationService', () => {
     )).resolves.toMatchObject({ instance: { status: 'approved', version: 3 } });
     expect(deps.instances.replace).toHaveBeenCalledOnce();
     expect(deps.actions.append).toHaveBeenCalledOnce();
+  });
+
+  it('模板创建支持首版和连续修订并同步写入 Outbox', async () => {
+    const firstDeps = dependencies();
+    const first = await service(firstDeps).createTemplate('template-create-001', {
+      code: 'EXPENSE',
+      name: '费用审批',
+      riskLevel: 'R1',
+      definition: definition(),
+    });
+    expect(first.template).toMatchObject({ code: 'EXPENSE', revision: 1, status: 'draft' });
+    expect(firstDeps.templates.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ revision: 1 }),
+      SESSION,
+    );
+    expect(firstDeps.outbox.append).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'approval_template.draft_created' }),
+      SESSION,
+    );
+
+    const nextDeps = dependencies();
+    nextDeps.templates.findLatestByCode.mockResolvedValue(template());
+    const next = await service(nextDeps).createTemplate('template-create-002', {
+      code: 'EXPENSE',
+      name: '费用审批第二版',
+      riskLevel: 'R2',
+      definition: definition(),
+    });
+    expect(next.template).toMatchObject({ code: 'EXPENSE', revision: 2, status: 'draft' });
+  });
+
+  it('发布新模板时原子退役旧发布版本并生成两条事件', async () => {
+    const previous = template();
+    const current = createNextApprovalTemplateRevision(previous, {
+      id: 'template-002',
+      tenantId: 'tenant-001',
+      name: '费用审批第二版',
+      riskLevel: 'R2',
+      definition: definition(),
+      actorId: 'editor-002',
+    }, NOW);
+    const deps = dependencies();
+    deps.templates.findById.mockResolvedValue(current);
+    deps.templates.findPublishedByCode.mockResolvedValue(previous);
+
+    const result = await service(deps).publishTemplate(
+      current.id,
+      current.version,
+      'template-publish-001',
+    );
+    expect(result.template).toMatchObject({ id: current.id, status: 'published', revision: 2 });
+    expect(deps.templates.replace).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ id: previous.id, status: 'retired' }),
+      previous.version,
+      SESSION,
+    );
+    expect(deps.templates.replace).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ id: current.id, status: 'published' }),
+      current.version,
+      SESSION,
+    );
+    expect(deps.outbox.append).toHaveBeenCalledTimes(2);
+  });
+
+  it('委托目录、创建和撤销均要求专用权限并返回最小投影', async () => {
+    const current = createApprovalDelegation({
+      id: 'delegation-001',
+      tenantId: 'tenant-001',
+      principalApproverId: 'actor-001',
+      delegateId: 'actor-002',
+      validFrom: NOW.toISOString(),
+      validUntil: '2026-08-01T00:00:00.000Z',
+      actorId: 'actor-001',
+    }, NOW);
+    const deps = dependencies();
+    deps.delegations.findMine.mockResolvedValue([current]);
+    deps.delegations.findById.mockResolvedValue(current);
+    const approvals = service(
+      deps,
+      trustedContext([
+        'erp:approval:delegation:read',
+        'erp:approval:delegation:write',
+      ]),
+    );
+
+    await expect(approvals.listMyDelegations()).resolves.toEqual([
+      expect.objectContaining({
+        id: current.id,
+        principalApproverId: 'actor-001',
+        delegateId: 'actor-002',
+      }),
+    ]);
+    const validFrom = new Date(Date.now() + 60_000).toISOString();
+    const validUntil = new Date(Date.now() + 86_400_000).toISOString();
+    await expect(approvals.createDelegation('delegation-create-001', {
+      delegateId: 'actor-002',
+      validFrom,
+      validUntil,
+    })).resolves.toMatchObject({
+      delegation: { status: 'active', delegateId: 'actor-002' },
+    });
+    await expect(approvals.revokeDelegation(
+      current.id,
+      current.version,
+      'delegation-revoke-001',
+    )).resolves.toMatchObject({
+      delegation: { status: 'revoked', version: 2 },
+    });
+    expect(deps.delegations.insert).toHaveBeenCalledOnce();
+    expect(deps.delegations.replace).toHaveBeenCalledOnce();
+    expect(deps.outbox.append).toHaveBeenCalledTimes(2);
+  });
+
+  it('委托创建拒绝时间重叠，撤销拒绝不存在记录', async () => {
+    const overlapDeps = dependencies();
+    overlapDeps.delegations.hasOverlap.mockResolvedValue(true);
+    overlapDeps.delegations.findById.mockResolvedValue(null);
+    const approvals = service(
+      overlapDeps,
+      trustedContext(['erp:approval:delegation:write']),
+    );
+    await expect(approvals.createDelegation('delegation-overlap-001', {
+      delegateId: 'actor-002',
+      validFrom: new Date(Date.now() + 60_000).toISOString(),
+      validUntil: new Date(Date.now() + 86_400_000).toISOString(),
+    })).rejects.toMatchObject({
+      response: { code: 'APPROVAL_DELEGATION_OVERLAP' },
+    });
+    await expect(approvals.revokeDelegation(
+      'missing',
+      1,
+      'delegation-revoke-missing',
+    )).rejects.toMatchObject({
+      response: { code: 'APPROVAL_DELEGATION_NOT_FOUND' },
+    });
+  });
+
+  it('R1 转交、加签、撤回和归档复用同一事务转换出口', async () => {
+    const transferDeps = dependencies();
+    transferDeps.instances.findById.mockResolvedValue(runningInstance());
+    const transferred = await service(
+      transferDeps,
+      trustedContext([], 'manager-001'),
+    ).transferTask('instance-001', 2, 'manager-001', 'manager-002', 'transfer-001');
+    expect(transferred.instance).toMatchObject({ status: 'running', version: 3 });
+
+    const signerDeps = dependencies();
+    signerDeps.instances.findById.mockResolvedValue(runningInstance());
+    const signed = await service(
+      signerDeps,
+      trustedContext(['erp:approval:task:add_signer'], 'manager-001'),
+    ).addSigner('instance-001', 2, 'manager-002', 'add-signer-001');
+    expect(signed.instance).toMatchObject({ status: 'running', version: 3 });
+
+    const withdrawDeps = dependencies();
+    withdrawDeps.instances.findById.mockResolvedValue(runningInstance());
+    const withdrawn = await service(withdrawDeps).withdrawInstance(
+      'instance-001',
+      2,
+      'withdraw-001',
+    );
+    expect(withdrawn.instance).toMatchObject({ status: 'withdrawn', version: 3 });
+
+    const running = runningInstance();
+    const approved = decideApprovalInstance(running, {
+      tenantId: 'tenant-001',
+      expectedVersion: running.version,
+      actorId: 'manager-001',
+      principalApproverId: 'manager-001',
+      delegationVerified: false,
+      outcome: 'approved',
+    }, NOW).instance;
+    const archiveDeps = dependencies();
+    archiveDeps.instances.findById.mockResolvedValue(approved);
+    const archived = await service(
+      archiveDeps,
+      trustedContext(['erp:approval:instance:archive'], 'admin-001'),
+    ).archiveInstance('instance-001', approved.version, 'archive-001');
+    expect(archived.instance).toMatchObject({ status: 'archived', version: 4 });
+
+    for (const deps of [transferDeps, signerDeps, withdrawDeps, archiveDeps]) {
+      expect(deps.instances.replace).toHaveBeenCalledOnce();
+      expect(deps.actions.append).toHaveBeenCalledOnce();
+      expect(deps.outbox.append).toHaveBeenCalledOnce();
+      expect(deps.notifications.append).toHaveBeenCalledOnce();
+    }
+  });
+
+  it('收件箱只返回实例摘要且不暴露正文', async () => {
+    const deps = dependencies();
+    deps.instances.findInbox.mockResolvedValue([runningInstance()]);
+    const result = await service(deps, trustedContext([], 'manager-001')).getInbox();
+    expect(result).toEqual([
+      expect.objectContaining({ status: 'running', templateCode: 'EXPENSE' }),
+    ]);
+    expect(result[0]).not.toHaveProperty('formData');
+    expect(deps.instances.findInbox).toHaveBeenCalledWith('manager-001');
   });
 
   it('普通审批人读取时 L3/L4 字段脱敏，L1/L2 保留', async () => {

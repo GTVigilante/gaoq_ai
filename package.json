@@ -17,6 +17,13 @@
     "test": "pnpm -r --if-present test",
     "test:coverage": "pnpm -r --if-present test:coverage",
     "quality:mcp-confirmation-coverage": "pnpm --filter @gaoq/erp-api test:coverage:mcp-confirmation",
+    "quality:payroll-shadow-coverage": "pnpm --filter @gaoq/erp-api test:coverage:payroll-shadow",
+    "quality:approval-crypto-coverage": "pnpm --filter @gaoq/erp-api test:coverage:approval-crypto",
+    "quality:tenant-context-coverage": "pnpm --filter @gaoq/erp-api test:coverage:tenant-context",
+    "quality:care-repositories-coverage": "pnpm --filter @gaoq/erp-api test:coverage:care-repositories",
+    "quality:org-repositories-coverage": "pnpm --filter @gaoq/erp-api test:coverage:org-repositories",
+    "quality:approval-repositories-coverage": "pnpm --filter @gaoq/erp-api test:coverage:approval-repositories",
+    "quality:authorization-coverage": "pnpm --filter @gaoq/erp-api test:coverage:authorization",
     "security:licenses": "pnpm licenses list --prod --json | node scripts/validate-dependency-licenses.mjs",
     "security:containers": "node scripts/validate-container-images.mjs",
     "website:production:self-test": "node scripts/validate-website-production-build.mjs",
@@ -53,7 +60,7 @@
     "release:phase6:platform-intake:self-test": "node scripts/release/validate-phase-6-platform-intake.mjs --self-test",
     "release:phase6:platform-intake:print-contract": "node scripts/release/validate-phase-6-platform-intake.mjs --print-contract",
     "release:phase6:workflows:validate": "node scripts/validate-phase-6-workflows.mjs",
-    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm quality:mcp-confirmation-coverage && node scripts/validate-docs.mjs && pnpm security:validate && pnpm security:containers && pnpm website:production:self-test && pnpm deployment:local-runtime:validate && pnpm deployment:kubernetes:validate && pnpm deployment:kubernetes:guardrails:validate && pnpm security:dast:self-test && pnpm performance:self-test && pnpm migration:rehearsal:self-test && pnpm resilience:self-test && pnpm release:readiness:self-test && pnpm release:go-no-go:self-test && pnpm mcp:catalog:self-test && pnpm mcp:integration:self-test && pnpm release:phase6:cutover:self-test && pnpm release:phase6:hypercare:self-test && pnpm release:phase6:deployment:self-test && pnpm release:phase6:platform-intake:self-test && pnpm release:phase6:workflows:validate"
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm quality:mcp-confirmation-coverage && pnpm quality:payroll-shadow-coverage && pnpm quality:approval-crypto-coverage && pnpm quality:tenant-context-coverage && pnpm quality:care-repositories-coverage && pnpm quality:org-repositories-coverage && pnpm quality:approval-repositories-coverage && pnpm quality:authorization-coverage && node scripts/validate-docs.mjs && pnpm security:validate && pnpm security:containers && pnpm website:production:self-test && pnpm deployment:local-runtime:validate && pnpm deployment:kubernetes:validate && pnpm deployment:kubernetes:guardrails:validate && pnpm security:dast:self-test && pnpm performance:self-test && pnpm migration:rehearsal:self-test && pnpm resilience:self-test && pnpm release:readiness:self-test && pnpm release:go-no-go:self-test && pnpm mcp:catalog:self-test && pnpm mcp:integration:self-test && pnpm release:phase6:cutover:self-test && pnpm release:phase6:hypercare:self-test && pnpm release:phase6:deployment:self-test && pnpm release:phase6:platform-intake:self-test && pnpm release:phase6:workflows:validate"
   },
   "pnpm": {
     "overrides": {

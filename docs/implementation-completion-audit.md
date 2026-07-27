@@ -61,16 +61,31 @@
 ## 5. 覆盖率边界
 
 2026-07-27 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，320 个测试文件、1,465 项测试全部
-通过；覆盖率为语句 72.66%、分支 62.44%、函数 73.52%、行 76.00%。该结果低于
+`pnpm --filter @gaoq/erp-api test:coverage`，321 个测试文件、1,570 项测试全部
+通过；覆盖率为语句 74.78%、分支 64.36%、函数 76.97%、行 77.88%。该结果低于
 Phase 0 规定的全系统 80% 门槛，必须作为实施缺口继续处理，禁止通过排除生产文件、
 降低阈值或只报告局部高覆盖率来宣称达标。
 
-MCP 确认关键链路已建立独立不可回退门禁：
-`pnpm quality:mcp-confirmation-coverage`。当前
-`mcp-confirmation.service.ts` 的语句、函数和行覆盖率为 100%，分支覆盖率为
-97.74%；四项阈值均固定为 90%，并已接入 `pnpm check`。这只证明该关键链路达标，
-不替代全仓 80% 或租户、权限、审批、薪酬、加密等其余关键链路 90% 的证据。
+租户上下文、身份授权、审批数据加密、审批仓储、MCP 确认、薪酬影子周期、
+Care 仓储和组织仓储已建立独立不可回退门禁：
+`pnpm quality:tenant-context-coverage`、
+`pnpm quality:authorization-coverage`、
+`pnpm quality:approval-crypto-coverage`、
+`pnpm quality:mcp-confirmation-coverage` 和
+`pnpm quality:payroll-shadow-coverage`、
+`pnpm quality:care-repositories-coverage` 和
+`pnpm quality:org-repositories-coverage`、
+`pnpm quality:approval-repositories-coverage`。八条链路当前覆盖率分别为
+100%/100%/100%/100%、100%/95.83%/100%/100%、
+98.75%/96.96%/100%/100%、
+98.06%/94.04%/98.64%/99.02%、100%/97.74%/100%/100%、
+99.00%/97.24%/97.29%/98.84%、
+100%/91.66%/100%/100% 和 100%/100%/100%/100%
+（语句/分支/函数/行）；八项阈值均固定为 90%，使用相互隔离的报告目录，并已
+接入 `pnpm check`。这只证明八条关键链路达标，不替代全仓 80% 或其他关键服务
+等其余关键链路 90% 的证据。审批应用服务已由
+76.98%/70.15%/82.88%/80.28% 提升至
+86.45%/72.61%/96.39%/89.78%，仍不得作为审批状态机 90% 达标证据。
 
 ## 6. 架构边界
 
@@ -80,13 +95,15 @@ MCP 确认关键链路已建立独立不可回退门禁：
 ERP 默认以 `PAYROLL_SYSTEM_MODE=external` 关闭旧工资/资金 REST。因此这些能力
 不是当前 ERP 仓库的遗漏；若要重新纳入，必须先以新 ADR 替代现有系统边界。
 
-## 6. 后续执行顺序
+## 7. 后续执行顺序
 
-1. 在不付费、不使用自建基础设施的前提下等待 GitHub Hosted Actions 免费额度或
+1. 按风险优先补齐全仓和其余关键链路测试；达到章程阈值后再启用全仓不可回退
+   门禁，并保留原始覆盖率报告。
+2. 在不付费、不使用自建基础设施的前提下等待 GitHub Hosted Actions 免费额度或
    账号限制恢复；新 commit 只触发一次并记录原始结论。
-2. 用户批准最小 Project 权限后完成 Issue #41；未批准前继续以 Milestone、标签、
+3. 用户批准最小 Project 权限后完成 Issue #41；未批准前继续以 Milestone、标签、
    Issue 和 Draft PR 管理，不把看板缺失描述为完成。
-3. 取得真实目标环境后按 Phase 1 → 5 → 6 顺序执行外部联调、迁移/性能/安全/容灾
+4. 取得真实目标环境后按 Phase 1 → 5 → 6 顺序执行外部联调、迁移/性能/安全/容灾
    演练、UAT、Go/No-Go、切换与 Hypercare。
-4. 每项外部证据必须绑定 commit、镜像摘要、环境、原始记录和签署；通过后再勾选
+5. 每项外部证据必须绑定 commit、镜像摘要、环境、原始记录和签署；通过后再勾选
    Issue 验收项、关闭子项并按 DoD 推进 Epic。
