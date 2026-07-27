@@ -41,6 +41,18 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/recruitment/persistence/recruitment.repositories.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/knowledge/persistence/knowledge.repositories.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/approval/persistence/approval.repositories.ts': {
           branches: 90,
           functions: 90,
