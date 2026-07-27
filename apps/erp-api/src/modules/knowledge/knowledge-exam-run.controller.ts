@@ -5,6 +5,7 @@ import {
   Get,
   Headers,
   HttpCode,
+  Logger,
   Param,
   Post,
   Res,
@@ -12,6 +13,7 @@ import {
 import type { Response } from 'express';
 
 import { AuditService } from '../../core/audit/audit.service.js';
+import type { AuditRecordInput } from '../../core/audit/audit.types.js';
 import { RequiredScopes } from '../identity/auth.decorators.js';
 import {
   KnowledgeExamRunService,
@@ -24,6 +26,8 @@ const IF_MATCH = /^"([1-9][0-9]*)"$/;
 
 @Controller('knowledge')
 export class KnowledgeExamRunController {
+  private readonly logger = new Logger(KnowledgeExamRunController.name);
+
   constructor(
     private readonly runs: KnowledgeExamRunService,
     private readonly audit: AuditService,
@@ -40,7 +44,7 @@ export class KnowledgeExamRunController {
     const result = await this.runs.start(this.id(assignmentId), this.key(key));
     response.setHeader('ETag', `"${result.examRun.version}"`);
     response.setHeader('Retry-After', '2');
-    await this.audit.record({
+    await this.auditAfterCommit({
       action: 'knowledge.exam.run.start',
       resourceType: 'knowledge_exam_run',
       resourceId: result.examRun.id,
@@ -73,7 +77,7 @@ export class KnowledgeExamRunController {
     );
     response.setHeader('ETag', `"${result.examRun.version}"`);
     response.setHeader('Retry-After', '2');
-    await this.audit.record({
+    await this.auditAfterCommit({
       action: 'knowledge.exam.run.submit',
       resourceType: 'knowledge_exam_run',
       resourceId: result.examRun.id,
@@ -130,5 +134,20 @@ export class KnowledgeExamRunController {
       });
     }
     return version;
+  }
+
+  /** 考试运行已提交后的审计故障只记录独立告警，不能反向暴露为业务失败。 */
+  private async auditAfterCommit(input: AuditRecordInput): Promise<void> {
+    try {
+      await this.audit.record(input);
+    } catch {
+      this.logger.error({
+        code: 'KNOWLEDGE_EXAM_AUDIT_AFTER_COMMIT_FAILED',
+        action: input.action,
+        resourceType: input.resourceType,
+        resourceId: input.resourceId,
+        riskLevel: input.riskLevel,
+      });
+    }
   }
 }

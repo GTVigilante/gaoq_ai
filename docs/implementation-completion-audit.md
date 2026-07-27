@@ -61,18 +61,18 @@
 ## 5. 覆盖率边界
 
 2026-07-28 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，323 个测试文件、2,674 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，323 个测试文件、2,696 项测试全部
 通过；覆盖率为语句
-86.75%（23,840/27,480）、分支 81.33%（15,745/19,359）、函数
-89.01%（4,374/4,914）、行 88.57%（21,832/24,649）。全仓四维已达到 Phase 0
-规定的 80% 门槛，分支高于最低值 257 个；必须保留专项 90% 门禁并继续增加
+86.91%（23,888/27,484）、分支 81.54%（15,786/19,359）、函数
+89.05%（4,377/4,915）、行 88.69%（21,866/24,653）。全仓四维已达到 Phase 0
+规定的 80% 门槛，分支高于最低值 298 个；必须保留专项 90% 门禁并继续增加
 安全余量，禁止通过排除生产文件、降低阈值或只报告局部高覆盖率维持达标。
 
 租户上下文、审计链锚定、审计链验证、组织主数据应用、组织主数据入口、身份授权、审批数据加密、审批仓储、
 审批应用状态机、审批入口控制器、审批模板领域、
 MCP 确认、MCP 运行时、
 薪酬影子周期、薪酬运行、薪酬审批、薪酬主数据、薪酬四方对账、薪酬税务申报、薪酬 L4 数据加密、资金支付、Treasury 银行回盘、Treasury L4 数据加密、Treasury Outbox、Care 纪念日应用、Care 离职应用、校友授权清理协调、
-数据迁移控制面、数据迁移打包 CLI、Knowledge 考试运行 Relay、Knowledge 搜索索引 Relay、Knowledge REST 入口控制器、Knowledge 应用服务、考勤应用、考勤仓储、考勤供应商拉取、考勤供应商入站处理、电子签回调处理、
+数据迁移控制面、数据迁移打包 CLI、Knowledge 考试运行 Relay、Knowledge 搜索索引 Relay、Knowledge REST 入口控制器、Knowledge 应用服务、Knowledge 考试应用与入口、考勤应用、考勤仓储、考勤供应商拉取、考勤供应商入站处理、电子签回调处理、
 招聘渠道拉取、招聘渠道入站处理、招聘渠道职位扇出、招聘渠道阶段扇出、招聘申请、招聘面试、招聘简历、招聘渠道职位投递、招聘渠道阶段回传、招聘管理、人才全周期应用、人才全周期仓储、招聘 Offer、Care 仓储、组织仓储、招聘仓储、知识库仓储、营销 CMS、OAuth 授权控制器、WebAuthn 强认证、入职应用与入口控制器和生产执行授权服务已建立
 独立不可回退门禁：
 `pnpm quality:tenant-context-coverage`、
@@ -104,6 +104,7 @@ MCP 确认、MCP 运行时、
 `pnpm quality:knowledge-search-index-relay-coverage`、
 `pnpm quality:knowledge-controller-coverage`、
 `pnpm quality:knowledge-application-coverage`、
+`pnpm quality:knowledge-exam-entry-coverage`、
 `pnpm quality:attendance-application-coverage`、
 `pnpm quality:attendance-repositories-coverage`、
 `pnpm quality:attendance-provider-pull-coverage`、
@@ -134,7 +135,7 @@ MCP 确认、MCP 运行时、
 `pnpm quality:oauth-controller-coverage`、
 `pnpm quality:strong-auth-coverage`、
 `pnpm quality:onboarding-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。六十条链路当前覆盖率分别为
+`pnpm quality:production-execution-authorization-coverage`。六十一条链路当前覆盖率分别为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -165,6 +166,7 @@ MCP 确认、MCP 运行时、
 100%/100%/100%/100%、
 100%/100%/100%/100%、
 99.16%/93.93%/98.18%/99.05%、
+100%/98.85%/100%/100%、
 99.20%/99.17%/100%/99.11%、
 100%/100%/100%/100%、
 98.61%/97.00%/100%/99.21%、
@@ -189,8 +191,8 @@ MCP 确认、MCP 运行时、
 96.09%/91.51%/100%/99.45%、
 100%/100%/100%/100%、
 100%/98.23%/100%/100% 和
-100%/100%/100%/100%（语句/分支/函数/行）；六十项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明六十条关键链路达标，
+100%/100%/100%/100%（语句/分支/函数/行）；六十一项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明六十一条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 OAuth 授权控制器已覆盖 45 项预注册回调、PKCE、授权决策、授权码、
@@ -250,6 +252,12 @@ Knowledge 应用服务已覆盖 39 项课程创建/发布/下架、任务分配/
 发布校验只在幂等事务的新执行分支内执行。覆盖率达到
 99.16%/93.93%/98.18%/99.05%（语句/分支/函数/行），独立四维 90% 门禁已接入
 `pnpm check`。
+
+Knowledge 考试应用与入口已覆盖 28 项所有权、活动运行、尝试上限、完整考试策略、
+提交状态与截止时间、唯一键竞争、最小响应和提交后审计隔离测试；考试开始与提交
+后的审计失败只记录稳定告警，R0 读取审计仍失败关闭。两个目标文件合计覆盖率达到
+100%/98.85%/100%/100%（语句/分支/函数/行），且各自均已接入独立四维 90%
+门禁。
 
 考勤仓储已覆盖 17 项可信租户、源事实/修订/月快照密文读写、盲索引、迁移证据、
 会话绑定、并发冲突和失败关闭测试，目标生产文件达到四维 100%，独立四维 90%

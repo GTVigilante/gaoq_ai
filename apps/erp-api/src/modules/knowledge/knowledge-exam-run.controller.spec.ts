@@ -1,6 +1,6 @@
-import { BadRequestException, HttpStatus } from '@nestjs/common';
+import { BadRequestException, HttpStatus, Logger } from '@nestjs/common';
 import { HTTP_CODE_METADATA } from '@nestjs/common/constants.js';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuditService } from '../../core/audit/audit.service.js';
 import { REQUIRED_SCOPES_KEY } from '../identity/auth.decorators.js';
@@ -50,6 +50,10 @@ function fixture() {
   };
 }
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe('KnowledgeExamRunController', () => {
   it('只暴露精确开始、提交和本人读取 Scope，异步写接口返回 202', () => {
     expect(scope('start')).toEqual(['erp:knowledge:exam:start']);
@@ -90,7 +94,129 @@ describe('KnowledgeExamRunController', () => {
       { submissionRef: ID },
       store.response as never,
     )).rejects.toBeInstanceOf(BadRequestException);
+    await expect(store.controller.submit(
+      ID,
+      '"9007199254740992"',
+      'exam-submit-001',
+      { submissionRef: ID },
+      store.response as never,
+    )).rejects.toBeInstanceOf(BadRequestException);
+    await expect(store.controller.submit(
+      ID,
+      '"2"',
+      undefined,
+      { submissionRef: ID },
+      store.response as never,
+    )).rejects.toMatchObject({
+      response: { code: 'IDEMPOTENCY_KEY_REQUIRED' },
+    });
+    await expect(store.controller.start(
+      ID,
+      undefined,
+      store.response as never,
+    )).rejects.toMatchObject({
+      response: { code: 'IDEMPOTENCY_KEY_REQUIRED' },
+    });
+    await expect(store.controller.get(
+      'not-an-id',
+      store.response as never,
+    )).rejects.toMatchObject({
+      response: { code: 'KNOWLEDGE_ID_INVALID' },
+    });
     expect(store.service.submit).not.toHaveBeenCalled();
+    expect(store.service.start).not.toHaveBeenCalled();
+    expect(store.service.get).not.toHaveBeenCalled();
+  });
+
+  it('提交设置版本与轮询提示并记录最小 R2 审计', async () => {
+    const store = fixture();
+    const result = await store.controller.submit(
+      ID,
+      '"2"',
+      'exam-submit-001',
+      { submissionRef: ID },
+      store.response as never,
+    );
+
+    expect(result.examRun).toMatchObject({ status: 'submitted', version: 3 });
+    expect(store.service.submit).toHaveBeenCalledWith(
+      ID,
+      2,
+      'exam-submit-001',
+      ID,
+    );
+    expect(store.response.setHeader.mock.calls).toEqual([
+      ['ETag', '"3"'],
+      ['Retry-After', '2'],
+    ]);
+    expect(store.audit.record).toHaveBeenCalledWith({
+      action: 'knowledge.exam.run.submit',
+      resourceType: 'knowledge_exam_run',
+      resourceId: ID,
+      riskLevel: 'R2',
+      outcome: 'success',
+      metadata: {
+        assignmentId: ID,
+        attemptNumber: 1,
+        status: 'submitted',
+      },
+    });
+    expect(JSON.stringify(store.audit.record.mock.calls)).not.toMatch(
+      /submissionRef|questionBank|evidence/iu,
+    );
+  });
+
+  it('本人读取设置 ETag 并保持 R0 审计失败关闭', async () => {
+    const store = fixture();
+    await expect(store.controller.get(
+      ID,
+      store.response as never,
+    )).resolves.toMatchObject({ id: ID, version: 1 });
+    expect(store.service.get).toHaveBeenCalledWith(ID);
+    expect(store.response.setHeader).toHaveBeenCalledWith('ETag', '"1"');
+    expect(store.audit.record).toHaveBeenCalledWith({
+      action: 'knowledge.exam.run.read',
+      resourceType: 'knowledge_exam_run',
+      resourceId: ID,
+      riskLevel: 'R0',
+      outcome: 'success',
+      metadata: { status: 'starting', version: 1 },
+    });
+
+    const failed = fixture();
+    failed.audit.record.mockRejectedValueOnce(new Error('审计不可用'));
+    await expect(failed.controller.get(
+      ID,
+      failed.response as never,
+    )).rejects.toThrow('审计不可用');
+  });
+
+  it.each([
+    ['start', 'R1'],
+    ['submit', 'R2'],
+  ] as const)('考试 %s 提交后的审计故障只告警且保留成功终态', async (action, riskLevel) => {
+    const store = fixture();
+    const error = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    store.audit.record.mockRejectedValueOnce(new Error('WORM 暂时不可用'));
+
+    const result = action === 'start'
+      ? await store.controller.start(ID, 'exam-start-001', store.response as never)
+      : await store.controller.submit(
+        ID,
+        '"2"',
+        'exam-submit-001',
+        { submissionRef: ID },
+        store.response as never,
+      );
+
+    expect(result).toHaveProperty('examRun');
+    expect(error).toHaveBeenCalledWith({
+      code: 'KNOWLEDGE_EXAM_AUDIT_AFTER_COMMIT_FAILED',
+      action: `knowledge.exam.run.${action}`,
+      resourceType: 'knowledge_exam_run',
+      resourceId: ID,
+      riskLevel,
+    });
   });
 });
 

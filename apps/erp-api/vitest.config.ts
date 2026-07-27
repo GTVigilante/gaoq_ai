@@ -143,6 +143,18 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/knowledge/application/knowledge-exam-run.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/knowledge/knowledge-exam-run.controller.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/attendance/application/attendance-application.service.ts': {
           branches: 90,
           functions: 90,
