@@ -269,6 +269,7 @@ export class RecruitmentManagementService {
   ): Promise<{ readonly requisition: RecruitmentRequisitionSummary }> {
     return this.run(async () => {
       const current = await this.requireRequisition(id);
+      this.assertDepartmentWrite(current.departmentId);
       if (current.status === 'pending_approval' && current.approvalInstanceId !== null) {
         return this.linkApproval(id, expectedVersion, key, current.approvalInstanceId);
       }
@@ -311,6 +312,7 @@ export class RecruitmentManagementService {
   ): Promise<{ readonly requisition: RecruitmentRequisitionSummary }> {
     return this.run(async () => {
       const current = await this.requireRequisition(id);
+      this.assertDepartmentWrite(current.departmentId);
       if (current.status === 'approved' || current.status === 'rejected') {
         if (current.version !== expectedVersion) throw new RecruitmentDomainError(
           'RECRUITMENT_VERSION_CONFLICT', 'HC 需求版本冲突',
@@ -460,6 +462,17 @@ export class RecruitmentManagementService {
       { id, expectedVersion, approvalInstanceId },
       async (session) => {
         const current = await this.requireRequisition(id, session);
+        this.assertDepartmentWrite(current.departmentId);
+        if (
+          current.status === 'pending_approval' &&
+          current.approvalInstanceId === approvalInstanceId
+        ) {
+          if (current.version !== expectedVersion) throw new RecruitmentDomainError(
+            'RECRUITMENT_VERSION_CONFLICT',
+            'HC 需求版本冲突',
+          );
+          return { requisition: requisitionSummary(current) };
+        }
         const requisition = submitRecruitmentRequisition(current, {
           tenantId: this.context.getTenantRequired().tenantId,
           expectedVersion,
@@ -485,6 +498,7 @@ export class RecruitmentManagementService {
       { id, expectedVersion, approvalInstanceId, outcome },
       async (session) => {
         const current = await this.requireRequisition(id, session);
+        this.assertDepartmentWrite(current.departmentId);
         const requisition = applyRecruitmentApprovalOutcome(current, {
           tenantId: this.context.getTenantRequired().tenantId,
           expectedVersion,
