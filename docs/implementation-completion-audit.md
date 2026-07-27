@@ -69,7 +69,7 @@ Phase 0 规定的全系统 80% 门槛，必须作为实施缺口继续处理，�
 租户上下文、审计链锚定、审计链验证、组织主数据应用、身份授权、审批数据加密、审批仓储、
 审批应用状态机、
 MCP 确认、MCP 运行时、
-薪酬影子周期、薪酬运行、薪酬审批、薪酬主数据、薪酬四方对账、薪酬税务申报、薪酬 L4 数据加密、资金支付、Treasury 银行回盘、Treasury Outbox、Care 纪念日应用、Care 离职应用、
+薪酬影子周期、薪酬运行、薪酬审批、薪酬主数据、薪酬四方对账、薪酬税务申报、薪酬 L4 数据加密、资金支付、Treasury 银行回盘、Treasury L4 数据加密、Treasury Outbox、Care 纪念日应用、Care 离职应用、
 数据迁移控制面、Knowledge 考试运行 Relay、Knowledge 搜索索引 Relay、考勤应用、
 招聘 Offer、Care 仓储、组织仓储、招聘仓储、知识库仓储、营销 CMS 和生产执行授权服务已建立
 独立不可回退门禁：
@@ -90,6 +90,7 @@ MCP 确认、MCP 运行时、
 `pnpm quality:payroll-data-crypto-coverage`、
 `pnpm quality:treasury-disbursement-coverage`、
 `pnpm quality:treasury-bank-return-coverage`、
+`pnpm quality:treasury-data-crypto-coverage`、
 `pnpm quality:treasury-outbox-writer-coverage`、
 `pnpm quality:care-occasion-application-coverage`、
 `pnpm quality:care-application-coverage`、
@@ -105,7 +106,7 @@ MCP 确认、MCP 运行时、
 `pnpm quality:marketing-cms-service-coverage`、
 `pnpm quality:approval-repositories-coverage` 和
 `pnpm quality:approval-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。三十三条链路当前覆盖率分别为
+`pnpm quality:production-execution-authorization-coverage`。三十四条链路当前覆盖率分别为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -122,6 +123,7 @@ MCP 确认、MCP 运行时、
 96.51%/94.54%/100%/98.59%、
 93.88%/93.23%/96.05%/95.77%、
 97.04%/96.27%/100%/97.05%、
+98.26%/96.82%/100%/99.00%、
 98.48%/98.67%/100%/98.46%、
 100%/96.85%/100%/100%、
 99.54%/97.43%/100%/100%、
@@ -133,8 +135,8 @@ MCP 确认、MCP 运行时、
 100%/91.66%/100%/100%、100%/100%/100%/100%、
 97.44%/91.32%/100%/99.53%、100%/99.43%/100%/100%、
 100%/97.27%/100%/100% 和
-100%/100%/100%/100%（语句/分支/函数/行）；三十三项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明三十三条关键链路达标，
+100%/100%/100%/100%（语句/分支/函数/行）；三十四项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明三十四条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 数据迁移控制面已有 61 项幂等重放、证据分页、检查点竞争、关联映射、附件与
