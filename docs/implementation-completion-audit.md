@@ -62,16 +62,16 @@
 ## 5. 覆盖率边界
 
 2026-07-28 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，332 个测试文件、3,097 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，333 个测试文件、3,122 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-86.11%（24,781/28,776）、分支 82.46%（16,338/19,812）、函数
-87.05%（4,507/5,177）、行 87.91%（22,672/25,789）。全仓四维已达到 Phase 0
-规定的 80% 门槛，分支高于最低命中数 488 个。全量命令通过
+86.32%（24,840/28,776）、分支 82.56%（16,357/19,812）、函数
+87.32%（4,521/5,177）、行 88.10%（22,722/25,789）。全仓四维已达到 Phase 0
+规定的 80% 门槛，分支高于最低命中数 507 个。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
 
-租户上下文、审计链锚定、审计链锚定 Worker、审计链验证、组织主数据应用、组织主数据入口、身份授权、审批数据加密、审批仓储、
+租户上下文、可观测性运行时、审计链锚定、审计链锚定 Worker、审计链验证、组织主数据应用、组织主数据入口、身份授权、审批数据加密、审批仓储、
 审批应用状态机、审批入口控制器、审批模板领域、
 MCP 确认服务、MCP HTTP 入口、MCP 运行时、MCP Tool 应用层、OP 审批桥入站申请、OP 审批结果回传、
 OP Webhook 双入口、
@@ -80,6 +80,7 @@ OP Webhook 双入口、
 招聘渠道拉取、招聘渠道入站处理、招聘渠道职位扇出、招聘渠道阶段扇出、招聘申请、招聘面试、招聘简历、招聘渠道职位投递、招聘渠道阶段回传、招聘管理、人才全周期应用、人才全周期仓储、招聘 Offer、Care 仓储、组织仓储、招聘仓储、知识库仓储、营销 CMS、OAuth 授权控制器、WebAuthn 强认证、入职应用与入口控制器和生产执行授权服务已建立
 独立不可回退门禁：
 `pnpm quality:tenant-context-coverage`、
+`pnpm quality:observability-runtime-coverage`、
 `pnpm quality:audit-anchor-coverage`、
 `pnpm quality:audit-anchor-worker-coverage`、
 `pnpm quality:audit-chain-verification-coverage`、
@@ -150,8 +151,9 @@ OP Webhook 双入口、
 `pnpm quality:oauth-controller-coverage`、
 `pnpm quality:strong-auth-coverage`、
 `pnpm quality:onboarding-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。七十二条链路当前覆盖率分别为
-100%/100%/100%/100%、100%/100%/100%/100%、
+`pnpm quality:production-execution-authorization-coverage`。七十三条链路当前覆盖率分别为
+100%/100%/100%/100%、100%/93.33%/100%/100%、
+100%/100%/100%/100%、
 100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -217,9 +219,14 @@ OP Webhook 双入口、
 96.09%/91.51%/100%/99.45%、
 100%/100%/100%/100%、
 100%/98.23%/100%/100% 和
-100%/100%/100%/100%（语句/分支/函数/行）；七十二项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明七十二条关键链路达标，
+100%/100%/100%/100%（语句/分支/函数/行）；七十三项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明七十三条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
+
+可观测性运行时已覆盖 29 项独立 Bearer 鉴权、精确路由、无缓存响应、有界 HTTP
+指标标签、业务异常状态映射、队列固定状态轮询、重叠轮询跳过、采集失败恢复、
+Worker 健康检查及安全渲染失败响应测试；7 个生产文件合计覆盖率达到
+100%/93.33%/100%/100%，逐文件四维 90% 门禁已接入 `pnpm check`。
 
 审计链锚定 Worker 已覆盖 6 项固定任务名、批量上限、未知任务失败关闭、
 WORM 停用不调度、六小时幂等调度、固定重试/退避/保留策略及失败传播测试；

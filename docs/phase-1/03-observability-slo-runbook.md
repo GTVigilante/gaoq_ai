@@ -4,7 +4,9 @@
 
 - API 指标：`GET /api/metrics`；Worker 指标：独立端口 `GET /metrics`，默认 `9464`。
 - 两个端点都只接受 Secret Manager 注入的 `METRICS_BEARER_TOKEN`，不得复用用户、服务或 MCP OAuth Token。
-- Worker 指标端口只承载 `/metrics`，不会装配任何 ERP 业务控制器。生产网络策略仅允许 Prometheus 抓取节点访问。
+- Worker 指标端口只承载无需凭据的 `/health/live` 和受独立 Bearer 保护的
+  `/metrics`，不会装配任何 ERP 业务控制器。生产网络策略仅允许平台探针和
+  Prometheus 抓取节点访问。
 - 指标标签只允许 HTTP 方法、编译期控制器/方法、状态码和固定结果枚举；禁止租户、员工、资源 ID、trace ID 或外部响应文本进入标签。
 
 ## 2. Phase 1 指标与 SLO

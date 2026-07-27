@@ -424,6 +424,48 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/core/observability/http-metrics.interceptor.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/core/observability/metrics-access.guard.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/core/observability/metrics-authorization.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/core/observability/metrics.controller.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/core/observability/metrics.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/core/observability/queue-metrics.poller.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/core/observability/worker-metrics.server.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/core/audit/audit-anchor.service.ts': {
           branches: 90,
           functions: 90,
