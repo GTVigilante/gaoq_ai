@@ -4,6 +4,7 @@ import {
   Controller,
   Get,
   HttpException,
+  Logger,
   Param,
   Post,
   Query,
@@ -61,6 +62,8 @@ const SAFE_STATE_PATTERN = /^[\x21-\x7E]{1,512}$/;
 @PublicRoute()
 @RawResponse()
 export class OAuthController {
+  private readonly logger = new Logger(OAuthController.name);
+
   constructor(
     private readonly config: ConfigService<AppEnvironment, true>,
     private readonly transactions: OAuthAuthorizationTransactionService,
@@ -175,34 +178,29 @@ export class OAuthController {
       this.cookies.readRequired(request),
     );
     this.cookies.set(response, identity.refreshToken);
+    const traceId = request.traceId ?? createTraceId();
     let decision;
     try {
       decision = await this.transactions.decide(requestId, body.approved, identity);
     } catch (error) {
-      await this.audit.recordTrustedUser(identity.tenantId, {
+      await this.recordDecisionAudit({
+        tenantId: identity.tenantId,
         actorId: identity.actorId,
-        traceId: request.traceId ?? createTraceId(),
-        action: 'identity.oauth.authorize',
-        resourceType: 'oauth_client',
-        resourceId: 'unknown',
-        riskLevel: 'R1',
+        traceId,
+        clientId: 'unknown',
         outcome: 'failure',
-        metadata: { approved: body.approved },
+        approved: body.approved,
       });
       throw error;
     }
-    await this.audit.recordTrustedUser(identity.tenantId, {
+    await this.recordDecisionAudit({
+      tenantId: identity.tenantId,
       actorId: identity.actorId,
-      traceId: request.traceId ?? createTraceId(),
-      action: 'identity.oauth.authorize',
-      resourceType: 'oauth_client',
-      resourceId: decision.clientId,
-      riskLevel: 'R1',
+      traceId,
+      clientId: decision.clientId,
       outcome: body.approved ? 'success' : 'denied',
-      metadata: {
-        approved: body.approved,
-        scopeCount: decision.scopes.length,
-      },
+      approved: body.approved,
+      scopeCount: decision.scopes.length,
     });
     response.setHeader('Cache-Control', 'no-store');
     response.status(200).json({ redirect_to: decision.redirectTo });
@@ -301,8 +299,9 @@ export class OAuthController {
       response.status(400).json({ error: 'invalid_request' });
       return;
     }
-    const rateLimitSubject = body.client_id ?? this.basicClientId(authorization) ??
-      this.assertionClientId(body.client_assertion) ?? 'unknown';
+    const rateLimitSubject = authorization === undefined
+      ? this.assertionClientId(body.client_assertion) ?? 'unknown'
+      : this.basicClientId(authorization) ?? 'unknown';
     try {
       await this.rateLimits.assertAllowed('token_client', rateLimitSubject);
     } catch (error) {
@@ -342,6 +341,40 @@ export class OAuthController {
     if (code.includes('CLIENT')) return 'unauthorized_client';
     if (code.includes('SCOPE')) return 'invalid_scope';
     return 'invalid_request';
+  }
+
+  private async recordDecisionAudit(input: {
+    readonly tenantId: string;
+    readonly actorId: string;
+    readonly traceId: string;
+    readonly clientId: string;
+    readonly outcome: 'success' | 'denied' | 'failure';
+    readonly approved: boolean;
+    readonly scopeCount?: number;
+  }): Promise<void> {
+    try {
+      await this.audit.recordTrustedUser(input.tenantId, {
+        actorId: input.actorId,
+        traceId: input.traceId,
+        action: 'identity.oauth.authorize',
+        resourceType: 'oauth_client',
+        resourceId: input.clientId,
+        riskLevel: 'R1',
+        outcome: input.outcome,
+        metadata: {
+          approved: input.approved,
+          ...(input.scopeCount === undefined ? {} : { scopeCount: input.scopeCount }),
+        },
+      });
+    } catch {
+      this.logger.error({
+        code: input.outcome === 'failure'
+          ? 'OAUTH_DECISION_FAILURE_AUDIT_FAILED'
+          : 'OAUTH_DECISION_AUDIT_AFTER_COMMIT_FAILED',
+        tenantId: input.tenantId,
+        clientId: input.clientId,
+      });
+    }
   }
 
   private tokenError(error: HttpException): string {
