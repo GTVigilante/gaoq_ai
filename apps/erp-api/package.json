@@ -62,7 +62,8 @@
     "migration:package": "node dist/cli/data-migration-package.js",
     "typecheck": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && pnpm --filter @gaoq/platform-contracts build && tsc --noEmit",
     "test": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && pnpm --filter @gaoq/platform-contracts build && vitest run",
-    "test:coverage": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && pnpm --filter @gaoq/platform-contracts build && vitest run --coverage"
+    "test:coverage": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && pnpm --filter @gaoq/platform-contracts build && vitest run --coverage",
+    "test:coverage:mcp-confirmation": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && pnpm --filter @gaoq/platform-contracts build && vitest run src/modules/mcp/mcp-confirmation.service.spec.ts --coverage --coverage.include=src/modules/mcp/mcp-confirmation.service.ts --coverage.reporter=text"
   },
   "dependencies": {
     "@gaoq/shared-types": "workspace:*",
