@@ -330,8 +330,10 @@ describe('AttendanceProviderProcessor', () => {
 
   it('已有一致证据检查点时跳过重复检查点写入', async () => {
     const fixture = assemble();
-    fixture.claimed.normalizerVersion = 'feishu-user-task-v1';
-    fixture.claimed.evidenceVerifiedAt = new Date();
+    Object.assign(fixture.claimed, {
+      normalizerVersion: 'feishu-user-task-v1',
+      evidenceVerifiedAt: new Date(),
+    });
     await expect(fixture.processor.process(fixture.job)).resolves.toBe(1);
     expect(fixture.inboxUpdateOne).toHaveBeenCalledTimes(1);
     expect((fixture.inboxUpdateOne.mock.calls[0]?.[1] as {
