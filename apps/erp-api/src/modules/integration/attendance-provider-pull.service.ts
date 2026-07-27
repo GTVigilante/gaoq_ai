@@ -254,9 +254,13 @@ export class AttendanceProviderPullService {
 
   private readCursor(state: AttendanceProviderStateRecord): AttendanceProviderCursor | null {
     if (
+      state.cursorKeyId === null && state.cursorIv === null &&
+      state.cursorCiphertext === null && state.cursorAuthTag === null
+    ) return null;
+    if (
       state.cursorKeyId === null || state.cursorIv === null ||
       state.cursorCiphertext === null || state.cursorAuthTag === null
-    ) return null;
+    ) throw new Error('ATTENDANCE_PROVIDER_CURSOR_INVALID');
     const value = this.crypto.unprotect({
       tenantId: state.tenantId, resourceType: 'provider_cursor', resourceId: state.id,
     }, {
