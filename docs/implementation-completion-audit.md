@@ -69,7 +69,7 @@ Phase 0 规定的全系统 80% 门槛，必须作为实施缺口继续处理，�
 租户上下文、审计链锚定、审计链验证、组织主数据应用、身份授权、审批数据加密、审批仓储、
 审批应用状态机、
 MCP 确认、MCP 运行时、
-薪酬影子周期、薪酬运行、薪酬审批、薪酬主数据、薪酬四方对账、薪酬税务申报、资金支付、Treasury Outbox、Care 纪念日应用、Care 离职应用、
+薪酬影子周期、薪酬运行、薪酬审批、薪酬主数据、薪酬四方对账、薪酬税务申报、薪酬 L4 数据加密、资金支付、Treasury Outbox、Care 纪念日应用、Care 离职应用、
 数据迁移控制面、Knowledge 考试运行 Relay、Knowledge 搜索索引 Relay、考勤应用、
 招聘 Offer、Care 仓储、组织仓储、招聘仓储、知识库仓储、营销 CMS 和生产执行授权服务已建立
 独立不可回退门禁：
@@ -87,6 +87,7 @@ MCP 确认、MCP 运行时、
 `pnpm quality:payroll-master-data-coverage`、
 `pnpm quality:payroll-reconciliation-coverage`、
 `pnpm quality:payroll-tax-filing-coverage`、
+`pnpm quality:payroll-data-crypto-coverage`、
 `pnpm quality:treasury-disbursement-coverage`、
 `pnpm quality:treasury-outbox-writer-coverage`、
 `pnpm quality:care-occasion-application-coverage`、
@@ -103,7 +104,7 @@ MCP 确认、MCP 运行时、
 `pnpm quality:marketing-cms-service-coverage`、
 `pnpm quality:approval-repositories-coverage` 和
 `pnpm quality:approval-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。三十一条链路当前覆盖率分别为
+`pnpm quality:production-execution-authorization-coverage`。三十二条链路当前覆盖率分别为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -117,6 +118,7 @@ MCP 确认、MCP 运行时、
 100%/100%/100%/100%、
 96.42%/96.79%/100%/98.96%、
 98.88%/98.58%/100%/100%、
+96.51%/94.54%/100%/98.59%、
 93.88%/93.23%/96.05%/95.77%、
 98.48%/98.67%/100%/98.46%、
 100%/96.85%/100%/100%、
@@ -129,8 +131,8 @@ MCP 确认、MCP 运行时、
 100%/91.66%/100%/100%、100%/100%/100%/100%、
 97.44%/91.32%/100%/99.53%、100%/99.43%/100%/100%、
 100%/97.27%/100%/100% 和
-100%/100%/100%/100%（语句/分支/函数/行）；三十一项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明三十一条关键链路达标，
+100%/100%/100%/100%（语句/分支/函数/行）；三十二项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明三十二条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 数据迁移控制面已有 61 项幂等重放、证据分页、检查点竞争、关联映射、附件与
@@ -186,6 +188,12 @@ Treasury Outbox 已覆盖 13 项可信租户、精确事件字段、状态、强
 生产授权、税局回执、迁移重放、明文销毁、乐观锁和失败关闭测试；生产授权摘要
 已绑定不可变对象证据、审批人和强认证证据。覆盖率达到
 98.88%/98.58%/100%/100%（语句/分支/函数/行），独立四维 90% 门禁已接入
+`pnpm check`。
+
+薪酬 L4 数据加密服务已覆盖 8 项上下文/AAD、密钥轮换、严格密钥环、
+IV/Tag 固定长度、规范 Base64URL、密文篡改、8 MiB 上限和失败关闭测试；
+外部密文在解码前执行长度约束，非规范主密钥稳定归类为密钥环错误。覆盖率达到
+96.51%/94.54%/100%/98.59%（语句/分支/函数/行），独立四维 90% 门禁已接入
 `pnpm check`。
 
 资金支付服务已覆盖 22 项锁定工资、银行账户密文、WORM 文件、WebAuthn
