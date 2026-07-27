@@ -10,7 +10,7 @@ export class McpOriginGuard implements CanActivate {
   /** 在身份验证前拒绝不可信 MCP Origin，防止 DNS rebinding。 */
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest<ErpRequest>();
-    if (request.path !== '/mcp') {
+    if (request.path !== '/mcp' && request.path !== '/mcp/') {
       return true;
     }
     if (!this.runtime.isOriginAllowed(request.header('origin'))) {
