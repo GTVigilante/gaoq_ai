@@ -23,7 +23,7 @@
 
 | Phase | 仓库实施证据 | 尚缺外部证据 | 结论 |
 |---|---|---|---|
-| 0 | `docs/phase-0/`、Issue 模板、7 个 Milestone、标签及 Draft PR 流程 | Issue #41 的 GitHub Project 需要 `project` 权限；全仓覆盖率以 97 个分支余量达到 80%，其余关键链路 90% 证据尚未全部建立 | 未满足退出条件 |
+| 0 | `docs/phase-0/`、Issue 模板、7 个 Milestone、标签及 Draft PR 流程 | Issue #41 的 GitHub Project 需要 `project` 权限；全仓覆盖率以 114 个分支余量达到 80%，其余关键链路 90% 证据尚未全部建立 | 未满足退出条件 |
 | 1 | `apps/erp-api/src/modules/auth/`、`org/`、`security/`、`integration/`，`deploy/helm/`，Phase 1 工作流 | 境内云 VPC、WAF/KMS、真实 SSO/组织下发、监控告警、备份恢复与 RPO/RTO 演练 | 实施已交付，外部验收待完成 |
 | 2 | `apps/erp-api/src/modules/approval/`、审批前端、通知、迁移与 MCP 能力 | 氚云模板/历史/在途审批真实盘点迁移、三次演练和业务签署 | 实施已交付，外部验收待完成 |
 | 3 | 招聘、eSign、Onboarding、Knowledge、Care、Talent Lifecycle 360 及对应 REST/事件/MCP | 真实渠道、e签宝、对象/WORM、OpenAI/搜索/评分/通知、CRM/校友平台与跨角色 UAT | 实施已交付，外部验收待完成 |
@@ -61,14 +61,14 @@
 ## 5. 覆盖率边界
 
 2026-07-28 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，323 个测试文件、2,516 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，323 个测试文件、2,546 项测试全部
 通过；覆盖率为语句
-85.82%（23,557/27,449）、分支 80.50%（15,577/19,349）、函数
-87.84%（4,314/4,911）、行 87.65%（21,578/24,618）。全仓四维已达到 Phase 0
-规定的 80% 门槛，分支高于最低值 97 个；必须保留专项 90% 门禁并继续增加
+86.01%（23,612/27,452）、分支 80.58%（15,590/19,345）、函数
+88.12%（4,328/4,911）、行 87.86%（21,633/24,621）。全仓四维已达到 Phase 0
+规定的 80% 门槛，分支高于最低值 114 个；必须保留专项 90% 门禁并继续增加
 安全余量，禁止通过排除生产文件、降低阈值或只报告局部高覆盖率维持达标。
 
-租户上下文、审计链锚定、审计链验证、组织主数据应用、身份授权、审批数据加密、审批仓储、
+租户上下文、审计链锚定、审计链验证、组织主数据应用、组织主数据入口、身份授权、审批数据加密、审批仓储、
 审批应用状态机、审批模板领域、
 MCP 确认、MCP 运行时、
 薪酬影子周期、薪酬运行、薪酬审批、薪酬主数据、薪酬四方对账、薪酬税务申报、薪酬 L4 数据加密、资金支付、Treasury 银行回盘、Treasury L4 数据加密、Treasury Outbox、Care 纪念日应用、Care 离职应用、
@@ -79,6 +79,7 @@ MCP 确认、MCP 运行时、
 `pnpm quality:audit-anchor-coverage`、
 `pnpm quality:audit-chain-verification-coverage`、
 `pnpm quality:org-application-coverage`、
+`pnpm quality:org-controller-coverage`、
 `pnpm quality:authorization-coverage`、
 `pnpm quality:approval-crypto-coverage`、
 `pnpm quality:mcp-confirmation-coverage`、
@@ -129,10 +130,11 @@ MCP 确认、MCP 运行时、
 `pnpm quality:oauth-controller-coverage`、
 `pnpm quality:strong-auth-coverage`、
 `pnpm quality:onboarding-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。五十五条链路当前覆盖率分别为
+`pnpm quality:production-execution-authorization-coverage`。五十六条链路当前覆盖率分别为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
+100%/100%/100%/100%、
 100%/95.83%/100%/100%、
 98.75%/96.96%/100%/100%、
 98.06%/94.04%/98.64%/99.02%、
@@ -179,8 +181,8 @@ MCP 确认、MCP 运行时、
 96.09%/91.51%/100%/99.45%、
 100%/100%/100%/100%、
 100%/98.23%/100%/100% 和
-100%/100%/100%/100%（语句/分支/函数/行）；五十五项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明五十五条关键链路达标，
+100%/100%/100%/100%（语句/分支/函数/行）；五十六项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明五十六条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 OAuth 授权控制器已覆盖 45 项预注册回调、PKCE、授权决策、授权码、
@@ -342,6 +344,11 @@ Treasury Outbox 已覆盖 13 项可信租户、精确事件字段、状态、强
 入职与迁移事实幂等、Care 离职终态、乐观锁和失败关闭测试；覆盖率达到
 97.44%/93.52%/100%/97.50%（语句/分支/函数/行），独立四维 90% 门禁已接入
 `pnpm check`。
+
+组织主数据入口控制器已覆盖 31 项完整 REST、精确 Scope、ULID、幂等键、
+强 `If-Match`、ETag、Care 离职边界和审计终态测试；主数据写入后的审计故障
+只记录稳定告警，不反向暴露为业务失败。覆盖率达到四维 100%，独立四维 90%
+门禁已接入 `pnpm check`。
 
 薪酬主数据服务已覆盖 17 项可信连接器、审批/WORM 证据、L4 加密回读、
 生效区间与版本链、员工引用、规则确定性和并发失败关闭测试；覆盖率达到
