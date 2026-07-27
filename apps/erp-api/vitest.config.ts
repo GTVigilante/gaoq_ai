@@ -124,6 +124,18 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/integration/payroll-master-data-snapshot.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/integration/payroll-master-data-snapshot.controller.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/payroll/application/payroll-reconciliation.service.ts': {
           branches: 90,
           functions: 90,
@@ -161,6 +173,24 @@ export default defineConfig({
           statements: 90,
         },
         'src/modules/treasury/persistence/treasury-outbox.writer.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/attendance/attendance.controller.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/payroll/payroll.controller.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/treasury/treasury.controller.ts': {
           branches: 90,
           functions: 90,
           lines: 90,

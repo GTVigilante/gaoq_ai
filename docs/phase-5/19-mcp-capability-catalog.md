@@ -38,6 +38,11 @@ R1/R2 状态、WebAuthn 仪式与显式可信用户审计。公共确认端点�
 
 OP、钉钉、飞书、e签宝、银行、税务、附件和 WORM 只通过应用服务与 Adapter 被 MCP 间接读取或发起受控意图。真实沙箱联调必须证明外部超时/重复/乱序不会绕过确认、租户、幂等、Outbox/Inbox、对账与审计；MCP 服务自身不得持有或返回供应商 Token。银行、税务、真实签署和资金动作只验证沙箱/受控替身，禁止生产副作用。
 
+专业算薪主数据快照保持
+`GET /integrations/payroll/v1/master-data/snapshots` 专用服务身份边界。MCP 不注册
+批量部门、员工或劳动关系快照 Resource/Tool；AI 只能使用目录中已有的脱敏控制
+摘要能力，不能把 MCP 变成跨系统主数据导出通道。
+
 业务附件迁移固定为 L4，不注册正文、对象定位符、checksum 的迁移 Tool 或 Resource。AI 只能读取聚合迁移报告；未来若增加领域附件状态能力，也必须复用应用服务并返回无正文、无对象地址、无上传人员标识的最小安全投影。
 
 工具自测和本目录不等于联调完成。最终 `integration-mcp` verdict 必须绑定 commit、API/Worker/ERP Web/Website 四类镜像、`catalogHash`、三类客户端原始协议记录、八类外部沙箱证据、跨租户拒绝、审计和安全签署，随后才能进入[跨职能 Go/No-Go 门禁](./18-go-no-go-evidence-gate.md)。

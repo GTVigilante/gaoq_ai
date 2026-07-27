@@ -277,6 +277,13 @@ AWAITING_SIGNATURE → PARTIAL_SIGNED → PROVIDER_COMPLETED → COMPLETED
 `@gaoq/platform-contracts@1.0.0` 是 ERP、专业算薪应用、Worker 和协议测试的
 唯一共享契约包。正式事件逐字固定为：
 
+首次同步与版本缺口修复使用
+`GET /integrations/payroll/v1/master-data/snapshots`。入口只接受带
+`erp:payroll:master-data:read` 的可信 `service|system_job`；快照摘要绑定租户和
+契约版本，游标采用规范 Base64URL、精确字段集与 200 条页边界，任何跨租户、
+主数据漂移或非规范游标均失败关闭。每页仅审计摘要、偏移和实体计数，禁止审计
+人员正文。该接口不属于 MCP 能力目录。
+
 | 方向 | 事件 |
 | --- | --- |
 | ERP → 算薪 | `cn.gaoq.erp.department.upserted.v1` |
