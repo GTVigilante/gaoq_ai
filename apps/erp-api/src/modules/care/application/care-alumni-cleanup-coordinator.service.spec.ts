@@ -132,7 +132,7 @@ function fixture(input: {
   readonly targets?: readonly typeof target[];
   readonly taskUpsert?: { readonly upsertedCount: number };
   readonly existingTask?: Record<string, unknown> | null;
-  readonly transaction?: 'run' | 'empty';
+  readonly transaction?: 'run' | 'empty' | 'retry';
   readonly outboxUpdates?: readonly { readonly matchedCount: number }[];
   readonly queueFailure?: Error;
   readonly reconcileCandidates?: readonly Record<string, unknown>[];
@@ -170,7 +170,9 @@ function fixture(input: {
   };
   const session = {
     withTransaction: vi.fn(async (operation: () => Promise<void>) => {
-      if (input.transaction !== 'empty') await operation();
+      if (input.transaction === 'empty') return;
+      await operation();
+      if (input.transaction === 'retry') await operation();
     }),
     endSession: vi.fn().mockResolvedValue(undefined),
   };
@@ -448,6 +450,16 @@ describe('CareAlumniCleanupCoordinatorService', () => {
     expect(store.session.endSession).toHaveBeenCalledOnce();
   });
 
+  it('事务自动重试时只入队最终成功尝试生成的任务', async () => {
+    const store = fixture({ transaction: 'retry' });
+
+    await expect(store.service.relayBatch('worker-001', 1)).resolves.toBe(1);
+
+    expect(store.session.withTransaction).toHaveBeenCalledOnce();
+    expect(store.tasks.updateOne).toHaveBeenCalledTimes(2);
+    expect(store.queue.scheduleAlumniCleanup).toHaveBeenCalledOnce();
+  });
+
   it('事务内来源认领丢失时回滚并释放原认领', async () => {
     const store = fixture({
       outboxUpdates: [{ matchedCount: 0 }, { matchedCount: 1 }],
@@ -482,6 +494,10 @@ describe('CareAlumniCleanupCoordinatorService', () => {
     const release = outboxUpdateAt(store.outbox.updateOne).set;
     expect(release).toMatchObject({ status: 'dead', attempts: 6 });
     expect(release.nextAttemptAt).toBeInstanceOf(Date);
+    expect(store.metrics.recordCareAlumniCleanup).toHaveBeenCalledWith(
+      'relay',
+      'dead',
+    );
   });
 
   it('队列暂时不可用不回滚已提交事务，依赖对账窗口恢复', async () => {

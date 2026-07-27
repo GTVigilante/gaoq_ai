@@ -106,13 +106,13 @@ export class CareAlumniCleanupCoordinatorService {
           code: event.failureCode,
           eventId: event.eventId,
         });
-        await this.releaseEvent(
+        const outcome = await this.releaseEvent(
           event,
           workerId,
           new Date(),
           event.failureCode,
         );
-        this.metrics.recordCareAlumniCleanup('relay', 'retry');
+        this.metrics.recordCareAlumniCleanup('relay', outcome);
         continue;
       }
       try {
@@ -125,13 +125,13 @@ export class CareAlumniCleanupCoordinatorService {
           code: safeErrorCode(error, 'CARE_ALUMNI_CLEANUP_RELAY_FAILED'),
           eventId: event.eventId,
         });
-        await this.releaseEvent(
+        const outcome = await this.releaseEvent(
           event,
           workerId,
           new Date(),
           safeErrorCode(error, 'CARE_ALUMNI_CLEANUP_RELAY_FAILED'),
         );
-        this.metrics.recordCareAlumniCleanup('relay', 'retry');
+        this.metrics.recordCareAlumniCleanup('relay', outcome);
       }
     }
     await this.refreshBacklogMetrics();
@@ -271,10 +271,12 @@ export class CareAlumniCleanupCoordinatorService {
         terminatedAt !== event.terminatedAt
       ) throw new Error('CARE_ALUMNI_CLEANUP_SOURCE_STATE_MISMATCH');
       const session = await this.connection.startSession();
-      const created: AlumniCleanupTask[] = [];
+      let committedTasks: readonly AlumniCleanupTask[] = [];
       try {
         let completed = false;
         await session.withTransaction(async () => {
+          completed = false;
+          const transactionTasks: AlumniCleanupTask[] = [];
           for (const target of targets) {
             const task = createAlumniCleanupTask({ ...event, sourceEventId: event.eventId, target });
             const result = await this.tasks.updateOne(
@@ -300,7 +302,7 @@ export class CareAlumniCleanupCoordinatorService {
                 alumniCleanupTaskEvent(task, 'care.alumni_cleanup.scheduled'),
                 session,
               );
-              created.push(task);
+              transactionTasks.push(task);
             } else {
               const existing = await this.tasks.findOne({
                 tenantId: task.tenantId,
@@ -311,7 +313,9 @@ export class CareAlumniCleanupCoordinatorService {
                 existing.controlDigest !== task.controlDigest ||
                 existing.policyVersion !== task.policyVersion
               ) throw new Error('CARE_ALUMNI_CLEANUP_TASK_CONTEXT_MISMATCH');
-              if (existing.status === 'pending') created.push(toDomain(existing));
+              if (existing.status === 'pending') {
+                transactionTasks.push(toDomain(existing));
+              }
             }
           }
           const updated = await this.outbox.updateOne(
@@ -332,6 +336,7 @@ export class CareAlumniCleanupCoordinatorService {
           if (updated.matchedCount !== 1) {
             throw new Error('CARE_ALUMNI_CLEANUP_SOURCE_CLAIM_LOST');
           }
+          committedTasks = Object.freeze(transactionTasks);
           completed = true;
         });
         if (!completed) {
@@ -340,7 +345,7 @@ export class CareAlumniCleanupCoordinatorService {
       } finally {
         await session.endSession();
       }
-      return Object.freeze(created);
+      return committedTasks;
     });
   }
 
@@ -363,7 +368,7 @@ export class CareAlumniCleanupCoordinatorService {
     workerId: string,
     now: Date,
     failureCode: string,
-  ): Promise<void> {
+  ): Promise<'retry' | 'dead'> {
     const attempts = event.attempts + 1;
     const dead = attempts >= MAX_RELAY_ATTEMPTS;
     const delay = Math.min(6 * 60 * 60_000, 60_000 * (2 ** Math.min(attempts - 1, 8)));
@@ -386,6 +391,7 @@ export class CareAlumniCleanupCoordinatorService {
     if (result.matchedCount !== 1) {
       throw new Error('CARE_ALUMNI_CLEANUP_SOURCE_CLAIM_LOST');
     }
+    return dead ? 'dead' : 'retry';
   }
 
   private async refreshBacklogMetrics(): Promise<void> {
