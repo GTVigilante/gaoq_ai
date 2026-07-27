@@ -189,10 +189,10 @@ export class TalentLifecycleService {
           direction: input.direction,
           outcome: input.outcome,
           ownerActorId: this.context.getActorRequired().actorId,
-          occurredAt: new Date(input.occurredAt).toISOString(),
+          occurredAt: requiredIso(input.occurredAt),
           nextActionAt: input.nextActionAt === undefined
             ? null
-            : new Date(input.nextActionAt).toISOString(),
+            : requiredIso(input.nextActionAt),
           note: input.note ?? null,
         }, now);
         await this.touchpoints.insert(touchpoint, session);
@@ -635,4 +635,15 @@ function touchpointView(touchpoint: TalentTouchpoint): TalentTouchpointView {
     ...touchpointMutationView(touchpoint),
     note: touchpoint.note,
   });
+}
+
+function requiredIso(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new BadRequestException({
+      code: 'TALENT_TOUCHPOINT_INPUT_INVALID',
+      message: '服务触点时间格式无效',
+    });
+  }
+  return parsed.toISOString();
 }
