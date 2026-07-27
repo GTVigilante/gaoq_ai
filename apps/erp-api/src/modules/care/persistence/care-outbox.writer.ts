@@ -6,7 +6,11 @@ import type { ClientSession, Model } from 'mongoose';
 
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import { OutboxRecord, type OutboxDocument } from '../../org/persistence/outbox.schema.js';
-import type { AlumniConsentDomainEvent, CareDomainEvent } from '../domain/index.js';
+import type {
+  AlumniConsentDomainEvent,
+  CareDomainEvent,
+  CareOccasionDomainEvent,
+} from '../domain/index.js';
 
 @Injectable()
 export class CareOutboxWriter {
@@ -15,7 +19,10 @@ export class CareOutboxWriter {
     @InjectModel(OutboxRecord.name) private readonly records: Model<OutboxDocument>,
   ) {}
 
-  async append(event: CareDomainEvent | AlumniConsentDomainEvent, session: ClientSession): Promise<void> {
+  async append(
+    event: CareDomainEvent | AlumniConsentDomainEvent | CareOccasionDomainEvent,
+    session: ClientSession,
+  ): Promise<void> {
     const trusted = this.context.getRequired();
     if (event.tenantId !== trusted.tenant.tenantId) throw new Error('Care Outbox 拒绝跨租户事件');
     const eventId = createEventId(new Date(event.occurredAt));

@@ -4,10 +4,16 @@ import { describe, expect, it, vi } from 'vitest';
 import { TenantContextService } from '../../core/tenant/tenant-context.service.js';
 import type { AuditService } from '../../core/audit/audit.service.js';
 import type { CareApplicationService } from './application/care-application.service.js';
+import type { CareOccasionApplicationService } from './application/care-occasion-application.service.js';
 import { CareExecutionProcessor } from './care-execution.processor.js';
 import type { CareJobData } from './care-execution.queue.js';
 
 describe('CareExecutionProcessor', () => {
+  const occasions = {
+    dispatchTask: vi.fn(),
+    reconcileRegisteredTenants: vi.fn(),
+  } as unknown as CareOccasionApplicationService;
+
   it('只从队列数据建立可信系统身份，不接受数据内 Scope 或执行参数', async () => {
     const context = new TenantContextService();
     const audit = { record: vi.fn().mockResolvedValue(undefined) };
@@ -27,6 +33,7 @@ describe('CareExecutionProcessor', () => {
     const processor = new CareExecutionProcessor(
       context, { executeScheduledJob } as unknown as CareApplicationService,
       audit as unknown as AuditService,
+      occasions,
     );
     const job = {
       id: 'job-001', name: 'execute:care:case',
@@ -48,6 +55,7 @@ describe('CareExecutionProcessor', () => {
       new TenantContextService(),
       { executeScheduledJob: vi.fn() } as unknown as CareApplicationService,
       { record: vi.fn() } as unknown as AuditService,
+      occasions,
     );
     await expect(processor.process({
       name: 'unknown', data: {},
@@ -67,6 +75,7 @@ describe('CareExecutionProcessor', () => {
       context,
       { executeScheduledJob: vi.fn().mockRejectedValue(failure) } as unknown as CareApplicationService,
       audit as unknown as AuditService,
+      occasions,
     );
     const job = {
       id: 'job-002', name: 'execute:care:case',
@@ -98,6 +107,7 @@ describe('CareExecutionProcessor', () => {
     const processor = new CareExecutionProcessor(
       context, { expireAlumniConsent } as unknown as CareApplicationService,
       audit as unknown as AuditService,
+      occasions,
     );
     await expect(processor.process({
       id: 'job-expiry-001', name: 'expire:care:alumni-consent',
@@ -130,6 +140,7 @@ describe('CareExecutionProcessor', () => {
         }),
       } as unknown as CareApplicationService,
       audit as unknown as AuditService,
+      occasions,
     );
     await expect(processor.process({
       id: 'job-audit-001', name: 'execute:care:case',
@@ -142,5 +153,85 @@ describe('CareExecutionProcessor', () => {
     expect(audit.record.mock.calls[0]?.[0]).toMatchObject({
       action: 'care.case.execute', outcome: 'success',
     });
+  });
+
+  it('关怀 Worker 只从最小队列数据建立可信身份并写脱敏终态审计', async () => {
+    const context = new TenantContextService();
+    const audit = { record: vi.fn().mockResolvedValue(undefined) };
+    const dispatchTask = vi.fn().mockImplementation(() => {
+      const trusted = context.getRequired();
+      expect(trusted.actor.scopes).toEqual([
+        'erp:care:occasion:dispatch',
+        'erp:care:occasion:source:read',
+      ]);
+      return Promise.resolve({
+        id: 'care-task-001',
+        occasionType: 'birthday',
+        status: 'delivered',
+        attempts: 1,
+        version: 3,
+      });
+    });
+    const processor = new CareExecutionProcessor(
+      context,
+      {} as CareApplicationService,
+      audit as unknown as AuditService,
+      {
+        dispatchTask,
+        reconcileRegisteredTenants: vi.fn(),
+      } as unknown as CareOccasionApplicationService,
+    );
+    const data = {
+      tenantId: 'tenant-001',
+      occasionTaskId: 'care-task-001',
+    };
+    await expect(processor.process({
+      id: 'occasion-job-001',
+      name: 'dispatch:care:occasion',
+      data,
+    } as Job<CareJobData>)).resolves.toBe(1);
+    expect(dispatchTask).toHaveBeenCalledWith('care-task-001', 'occasion-job-001');
+    expect(JSON.stringify(data)).not.toMatch(
+      /employee|birthdayMonthDay|contact|template|body|evidence/iu,
+    );
+    expect(audit.record).toHaveBeenCalledWith({
+      action: 'care.occasion.dispatch',
+      resourceType: 'care_occasion_task',
+      resourceId: 'care-task-001',
+      riskLevel: 'R1',
+      outcome: 'success',
+      metadata: {
+        occasionType: 'birthday',
+        status: 'delivered',
+        attempts: 1,
+        version: 3,
+      },
+    });
+    await expect(processor.process({
+      name: 'dispatch:care:occasion',
+      data: { ...data, preferredChannels: ['sms'] },
+    } as unknown as Job<CareJobData>)).rejects.toThrow();
+  });
+
+  it('关怀周期对账只接受空载荷，禁止队列指定租户或员工范围', async () => {
+    const reconcileRegisteredTenants = vi.fn().mockResolvedValue(2);
+    const processor = new CareExecutionProcessor(
+      new TenantContextService(),
+      {} as CareApplicationService,
+      { record: vi.fn() } as unknown as AuditService,
+      {
+        dispatchTask: vi.fn(),
+        reconcileRegisteredTenants,
+      } as unknown as CareOccasionApplicationService,
+    );
+    await expect(processor.process({
+      name: 'reconcile:care:occasions',
+      data: {},
+    } as Job<CareJobData>)).resolves.toBe(2);
+    await expect(processor.process({
+      name: 'reconcile:care:occasions',
+      data: { tenantId: 'tenant-spoofed' },
+    } as unknown as Job<CareJobData>)).rejects.toThrow();
+    expect(reconcileRegisteredTenants).toHaveBeenCalledOnce();
   });
 });

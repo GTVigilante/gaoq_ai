@@ -5,9 +5,10 @@ import { CareExecutionProcessor } from './care-execution.processor.js';
 import { CARE_EXECUTION_QUEUE } from './care-execution.queue.js';
 import { CareCoreModule } from './care-core.module.js';
 import { AuditModule } from '../../core/audit/audit.module.js';
+import { CareOccasionScheduleBootstrap } from './care-occasion-schedule.bootstrap.js';
 
 @Module({
   imports: [AuditModule, CareCoreModule, BullModule.registerQueue({ name: CARE_EXECUTION_QUEUE })],
-  providers: [CareExecutionProcessor],
+  providers: [CareExecutionProcessor, CareOccasionScheduleBootstrap],
 })
 export class CareWorkerModule {}

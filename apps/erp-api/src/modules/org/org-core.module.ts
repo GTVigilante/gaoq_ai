@@ -4,6 +4,8 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { IdempotencyModule } from '../../core/idempotency/idempotency.module.js';
 import { IdentityPersistenceModule } from '../identity/identity-persistence.module.js';
 import { OrgApplicationService } from './application/org-application.service.js';
+import { OrgCareOccasionSourceService } from './application/org-care-occasion-source.service.js';
+import { OrgPersonBirthdayService } from './application/org-person-birthday.service.js';
 import { OrgTalentSourceService } from './application/org-talent-source.service.js';
 
 import {
@@ -33,6 +35,7 @@ import {
 } from './persistence/org.repositories.js';
 import { OutboxRecord, OutboxRecordSchema } from './persistence/outbox.schema.js';
 import { OrgOutboxWriter } from './persistence/outbox.writer.js';
+import { OrgPersonBirthdayBlindIndexService } from './persistence/org-person-birthday-blind-index.service.js';
 
 @Module({
   imports: [
@@ -54,24 +57,30 @@ import { OrgOutboxWriter } from './persistence/outbox.writer.js';
   ],
   providers: [
     OrgApplicationService,
+    OrgCareOccasionSourceService,
+    OrgPersonBirthdayService,
     OrgTalentSourceService,
     DepartmentRepository,
     EmployeeRepository,
     PositionRepository,
     JobLevelRepository,
     OrgOutboxWriter,
+    OrgPersonBirthdayBlindIndexService,
     PersonRepository,
     EmploymentRepository,
     EmployeeNumberSequenceRepository,
   ],
   exports: [
     OrgApplicationService,
+    OrgCareOccasionSourceService,
+    OrgPersonBirthdayService,
     OrgTalentSourceService,
     DepartmentRepository,
     EmployeeRepository,
     PositionRepository,
     JobLevelRepository,
     OrgOutboxWriter,
+    OrgPersonBirthdayBlindIndexService,
     PersonRepository,
     EmploymentRepository,
     EmployeeNumberSequenceRepository,

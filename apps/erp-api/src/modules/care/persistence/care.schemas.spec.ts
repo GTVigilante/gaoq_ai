@@ -5,6 +5,10 @@ import {
   CareAlumniConsentRecordSchema,
   type CareAlumniConsentRecord,
   CareCaseRecordSchema,
+  CareOccasionPreferenceRecordSchema,
+  type CareOccasionPreferenceRecord,
+  CareOccasionTaskRecordSchema,
+  type CareOccasionTaskRecord,
   CareTaskEvidenceRecordSchema,
   type CareCaseRecord,
   type CareTaskEvidenceRecord,
@@ -17,6 +21,14 @@ const EvidenceModel = mongoose.model<CareTaskEvidenceRecord>(
 );
 const ConsentModel = mongoose.model<CareAlumniConsentRecord>(
   'SpecCareAlumniConsent', CareAlumniConsentRecordSchema,
+);
+const OccasionPreferenceModel = mongoose.model<CareOccasionPreferenceRecord>(
+  'SpecCareOccasionPreference',
+  CareOccasionPreferenceRecordSchema,
+);
+const OccasionTaskModel = mongoose.model<CareOccasionTaskRecord>(
+  'SpecCareOccasionTask',
+  CareOccasionTaskRecordSchema,
 );
 
 describe('Care 持久化契约', () => {
@@ -85,6 +97,54 @@ describe('Care 持久化契约', () => {
     }).validate()).rejects.toThrow(/status/);
     await expect(new ConsentModel({
       ...active, status: 'withdrawn',
+    }).validate()).rejects.toThrow(/status/);
+  });
+
+  it('关怀偏好退订与任务终态证据必须保持组合一致', async () => {
+    const preference = {
+      id: 'preference-001',
+      tenantId: 'tenant-001',
+      personId: 'person-001',
+      employeeId: 'employee-001',
+      currentEmploymentId: 'employment-001',
+      birthdayEnabled: true,
+      anniversaryEnabled: false,
+      preferredChannels: ['feishu'],
+      unsubscribed: false,
+      version: 1,
+    };
+    await expect(new OccasionPreferenceModel(preference).validate()).resolves.toBeUndefined();
+    await expect(new OccasionPreferenceModel({
+      ...preference,
+      unsubscribed: true,
+    }).validate()).rejects.toThrow(/unsubscribed/);
+    const task = {
+      id: 'care-task-001',
+      tenantId: 'tenant-001',
+      personId: 'person-001',
+      employeeId: 'employee-001',
+      employmentId: 'employment-001',
+      occasionType: 'birthday',
+      occurrenceYear: 2026,
+      scheduledAt: new Date('2026-07-27T01:00:00.000Z'),
+      templateCode: 'CARE_BIRTHDAY_V1',
+      policyVersion: 'care-v1',
+      preferredChannels: ['feishu'],
+      sourceDigest: 's'.repeat(43),
+      status: 'pending',
+      attempts: 0,
+      nextAttemptAt: new Date('2026-07-27T01:00:00.000Z'),
+      lockedAt: null,
+      lockedBy: null,
+      denialCode: null,
+      deliveryEvidenceId: null,
+      deliveredAt: null,
+      version: 1,
+    };
+    await expect(new OccasionTaskModel(task).validate()).resolves.toBeUndefined();
+    await expect(new OccasionTaskModel({
+      ...task,
+      status: 'delivered',
     }).validate()).rejects.toThrow(/status/);
   });
 });

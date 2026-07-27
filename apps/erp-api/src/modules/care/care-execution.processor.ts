@@ -5,13 +5,17 @@ import { z } from 'zod';
 import { TenantContextService } from '../../core/tenant/tenant-context.service.js';
 import { AuditService } from '../../core/audit/audit.service.js';
 import { CareApplicationService } from './application/care-application.service.js';
+import { CareOccasionApplicationService } from './application/care-occasion-application.service.js';
 import {
+  CARE_DISPATCH_OCCASION_JOB,
   CARE_EXECUTE_CASE_JOB,
   CARE_EXPIRE_ALUMNI_CONSENT_JOB,
   CARE_EXECUTION_QUEUE,
+  CARE_RECONCILE_OCCASIONS_JOB,
   type CareAlumniConsentExpiryJobData,
   type CareExecutionJobData,
   type CareJobData,
+  type CareOccasionDispatchJobData,
 } from './care-execution.queue.js';
 
 const executionJobSchema = z.object({
@@ -22,6 +26,11 @@ const consentExpiryJobSchema = z.object({
   tenantId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
   consentId: z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/),
 }).strict();
+const occasionDispatchJobSchema = z.object({
+  tenantId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
+  occasionTaskId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{1,128}$/),
+}).strict();
+const occasionReconcileJobSchema = z.object({}).strict();
 
 @Processor(CARE_EXECUTION_QUEUE, { concurrency: 4, limiter: { max: 20, duration: 1_000 } })
 export class CareExecutionProcessor extends WorkerHost {
@@ -29,6 +38,7 @@ export class CareExecutionProcessor extends WorkerHost {
     private readonly context: TenantContextService,
     private readonly care: CareApplicationService,
     private readonly audit: AuditService,
+    private readonly occasions: CareOccasionApplicationService,
   ) { super(); }
 
   override async process(job: Job<CareJobData>): Promise<number> {
@@ -38,7 +48,67 @@ export class CareExecutionProcessor extends WorkerHost {
     if (job.name === CARE_EXPIRE_ALUMNI_CONSENT_JOB) {
       return this.processConsentExpiry(job as Job<CareAlumniConsentExpiryJobData>);
     }
+    if (job.name === CARE_DISPATCH_OCCASION_JOB) {
+      return this.processOccasion(job as Job<CareOccasionDispatchJobData>);
+    }
+    if (job.name === CARE_RECONCILE_OCCASIONS_JOB) {
+      occasionReconcileJobSchema.parse(job.data);
+      return this.occasions.reconcileRegisteredTenants();
+    }
     throw new Error('CARE_EXECUTION_JOB_UNKNOWN');
+  }
+
+  private async processOccasion(
+    job: Job<CareOccasionDispatchJobData>,
+  ): Promise<number> {
+    const data = occasionDispatchJobSchema.parse(job.data);
+    await this.context.run({
+      tenant: { tenantId: data.tenantId, source: 'service_identity' },
+      actor: {
+        actorId: 'system:care-occasion-dispatch',
+        actorType: 'system_job',
+        tenantId: data.tenantId,
+        roleCodes: ['CARE_OCCASION_WORKER'],
+        scopes: [
+          'erp:care:occasion:dispatch',
+          'erp:care:occasion:source:read',
+        ],
+        departmentIds: [],
+        traceId: String(job.id ?? data.occasionTaskId),
+      },
+    }, async () => {
+      let task: Awaited<ReturnType<CareOccasionApplicationService['dispatchTask']>>;
+      try {
+        task = await this.occasions.dispatchTask(
+          data.occasionTaskId,
+          String(job.id ?? data.occasionTaskId),
+        );
+      } catch (error) {
+        await this.recordFailureWithoutMasking({
+          action: 'care.occasion.dispatch',
+          resourceType: 'care_occasion_task',
+          resourceId: data.occasionTaskId,
+          riskLevel: 'R1',
+          outcome: 'failure',
+          metadata: { failureCode: safeFailureCode(error) },
+        });
+        throw error;
+      }
+      await this.audit.record({
+        action: 'care.occasion.dispatch',
+        resourceType: 'care_occasion_task',
+        resourceId: task.id,
+        riskLevel: 'R1',
+        outcome: 'success',
+        metadata: {
+          occasionType: task.occasionType,
+          status: task.status,
+          attempts: task.attempts,
+          version: task.version,
+        },
+      });
+    });
+    return 1;
   }
 
   private async processCase(job: Job<CareExecutionJobData>): Promise<number> {

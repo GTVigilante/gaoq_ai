@@ -7,6 +7,13 @@ type ApprovalNotificationOutcome = 'sent' | 'retry' | 'dead';
 type McpConfirmationStage = 'prepare' | 'confirm' | 'execute';
 type KnowledgeSearchIndexOutcome = 'success' | 'retry' | 'dead';
 type KnowledgeExamRunOutcome = 'success' | 'pending' | 'retry' | 'dead' | 'deferred';
+type CareOccasionOutcome =
+  | 'success'
+  | 'delivered'
+  | 'cancelled'
+  | 'retry'
+  | 'dead'
+  | 'deduplicated';
 
 /** 低基数 Prometheus 指标注册中心；严禁使用租户、用户、资源 ID 作为标签。 */
 @Injectable()
@@ -148,6 +155,31 @@ export class MetricsService {
     buckets: [1, 5, 15, 30, 60, 120, 300, 900, 3_600, 14_400, 86_400, 604_800],
     registers: [this.registry],
   });
+  private readonly careOccasionTransitions = new Counter({
+    name: 'gaoq_care_occasion_transition_total',
+    help: '员工关怀编排固定状态推进结果总数。',
+    labelNames: ['operation', 'outcome'] as const,
+    registers: [this.registry],
+  });
+  private readonly careOccasionDispatchDuration = new Histogram({
+    name: 'gaoq_care_occasion_dispatch_duration_seconds',
+    help: '员工关怀单次通知编排耗时（秒）。',
+    labelNames: ['outcome'] as const,
+    buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
+    registers: [this.registry],
+  });
+  private readonly careOccasionBacklog = new Gauge({
+    name: 'gaoq_care_occasion_backlog',
+    help: '员工关怀任务各固定待处理状态数量。',
+    labelNames: ['status'] as const,
+    registers: [this.registry],
+  });
+  private readonly careOccasionOldestAge = new Gauge({
+    name: 'gaoq_care_occasion_oldest_age_seconds',
+    help: '员工关怀任务各固定待处理状态最老记录年龄（秒）。',
+    labelNames: ['status'] as const,
+    registers: [this.registry],
+  });
 
   constructor() {
     collectDefaultMetrics({ register: this.registry, prefix: 'gaoq_process_' });
@@ -274,6 +306,29 @@ export class MetricsService {
       { review_mode: reviewMode },
       Math.max(0, durationSeconds),
     );
+  }
+
+  recordCareOccasion(
+    operation: 'dispatch' | 'replay' | 'reconcile',
+    outcome: CareOccasionOutcome,
+    durationSeconds?: number,
+  ): void {
+    this.careOccasionTransitions.inc({ operation, outcome });
+    if (operation === 'dispatch' && durationSeconds !== undefined) {
+      this.careOccasionDispatchDuration.observe(
+        { outcome },
+        Math.max(0, durationSeconds),
+      );
+    }
+  }
+
+  setCareOccasionBacklog(
+    status: 'pending' | 'dispatching' | 'dead',
+    count: number,
+    oldestAgeSeconds: number,
+  ): void {
+    this.careOccasionBacklog.set({ status }, Math.max(0, count));
+    this.careOccasionOldestAge.set({ status }, Math.max(0, oldestAgeSeconds));
   }
 }
 

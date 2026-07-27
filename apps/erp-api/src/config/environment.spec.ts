@@ -20,6 +20,14 @@ const knowledgeSearchSigning = {
     }).toString('base64'),
   KNOWLEDGE_SEARCH_GATEWAY_SIGNING_KEY_ID: 'knowledge-search-key-001',
 };
+const careOccasionSigning = {
+  CARE_OCCASION_NOTIFICATION_SIGNING_PUBLIC_KEY_BASE64:
+    generateKeyPairSync('ed25519').publicKey.export({
+      format: 'der',
+      type: 'spki',
+    }).toString('base64'),
+  CARE_OCCASION_NOTIFICATION_SIGNING_KEY_ID: 'care-key-001',
+};
 
 describe('validateEnvironment', () => {
   it('接受完整且合法的本地配置', () => {
@@ -55,6 +63,9 @@ describe('validateEnvironment', () => {
     expect(environment.KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT).toBeUndefined();
     expect(environment.KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_PUBLIC_KEY_BASE64).toBeUndefined();
     expect(environment.KNOWLEDGE_SEARCH_GATEWAY_ENDPOINT).toBeUndefined();
+    expect(environment.ORG_PERSON_BIRTHDAY_BLIND_INDEX_KEYS).toBeUndefined();
+    expect(environment.CARE_OCCASION_NOTIFICATION_ENDPOINT).toBeUndefined();
+    expect(environment.CARE_OCCASION_POLICIES_JSON).toBe('[]');
     expect(environment.TREASURY_DATA_ENCRYPTION_KEYS).toBeUndefined();
     expect(environment.TREASURY_BLIND_INDEX_KEYS).toBeUndefined();
     expect(environment.TREASURY_WORM_ARCHIVE_ENDPOINT).toBeUndefined();
@@ -79,6 +90,58 @@ describe('validateEnvironment', () => {
     expect(environment.OP_SSO_CLIENT_SECRET).toBeUndefined();
     expect(environment.OP_SSO_REDIRECT_URI).toBeUndefined();
     expect(environment.MCP_OAUTH_CLIENTS_JSON).toBe('[]');
+  });
+
+  it('关怀通知网关与租户策略必须完整、独立且失败关闭', () => {
+    const base = {
+      NODE_ENV: 'test',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0',
+      WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://auth.example.internal',
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://auth.example.internal/.well-known/jwks.json',
+      MCP_AUTHORIZATION_SERVER: 'https://auth.example.internal',
+      MCP_ALLOWED_ORIGINS: 'https://client.example.com',
+    };
+    expect(validateEnvironment({
+      ...base,
+      CARE_OCCASION_NOTIFICATION_ENDPOINT: 'https://care.example.internal',
+      CARE_OCCASION_NOTIFICATION_BEARER_TOKEN:
+        'care-notification-token-distinct-at-least-32-characters',
+      ...careOccasionSigning,
+      CARE_OCCASION_POLICIES_JSON: JSON.stringify([{
+        tenantId: 'tenant-001',
+        version: 'care-v1',
+        timeZone: 'Asia/Shanghai',
+        dispatchLocalTime: '09:00',
+        quietHoursStart: '21:00',
+        quietHoursEnd: '08:00',
+        leapDayPolicy: 'feb28',
+        rehireAnniversaryBasis: 'current_employment',
+        birthdayTemplateCode: 'CARE_BIRTHDAY_V1',
+        anniversaryTemplateCode: 'CARE_ANNIVERSARY_V1',
+        maxAttempts: 6,
+      }]),
+    })).toMatchObject({
+      CARE_OCCASION_NOTIFICATION_ENDPOINT: 'https://care.example.internal',
+    });
+    expect(() => validateEnvironment({
+      ...base,
+      CARE_OCCASION_NOTIFICATION_ENDPOINT: 'https://care.example.internal',
+    })).toThrow('关怀通知网关端点、凭据、公钥与 Key ID 必须成套配置');
+    expect(() => validateEnvironment({
+      ...base,
+      CARE_OCCASION_NOTIFICATION_ENDPOINT: 'https://localhost',
+      CARE_OCCASION_NOTIFICATION_BEARER_TOKEN:
+        'care-notification-token-distinct-at-least-32-characters',
+      ...careOccasionSigning,
+    })).toThrow('关怀通知网关必须为独立标准 HTTPS 域名根地址');
+    expect(() => validateEnvironment({
+      ...base,
+      CARE_OCCASION_POLICIES_JSON: '[{"tenantId":"tenant-001"}]',
+    })).toThrow('CARE_OCCASION_POLICIES_JSON');
   });
 
   it('知识证据网关必须成套配置并使用独立标准 HTTPS 根地址', () => {

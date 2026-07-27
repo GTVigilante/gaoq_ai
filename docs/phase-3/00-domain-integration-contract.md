@@ -15,6 +15,7 @@
 | `Person` / `Employee` / `Employment` | Org | 自然人、组织视图、劳动关系严格分层；由组织应用服务事务化建立 |
 | `TrainingAssignment` / `ExamAttempt` | Knowledge | 进度由服务端事件计算；学员接口和 MCP 永不返回标准答案 |
 | `CareCase` / `AlumniConsent` | Care | 权限失效与离职日期绑定；校友联系有目的、授权、到期时间和撤回清理 |
+| `CareOccasionPreference` / `CareOccasionTask` | Care | 员工本人明确选择；生日/周年按租户策略规划；通知只接受签名终态回执 |
 | `TalentLifecycleProjection` / `TalentTouchpoint` | Talent Lifecycle | `candidateId` 是招聘起点；全景只经各域应用服务实时组装，不复制候选人身份、离职原因或证据；服务备注加密且责任人来自可信身份 |
 
 ## 2. 招聘状态机
@@ -69,7 +70,17 @@ draft → pending_approval → approved → clearing → ready → scheduled →
 - 执行采用 `scheduled → executing → Org terminate → completed` 可恢复 Saga。队列任务按租户与案件唯一，重试读取最新版本；Org 以案件、执行证据和业务日期三元组校验重放。
 - 校友联系必须有明确目的、渠道、授权版本、授予时间和不超过五年的到期时间；撤回后立即停止非必要联系，不得复用员工在职授权。授权创建后按可信租户和授权标识生成稳定的 BullMQ 延迟任务，到期由只持有 `erp:care:alumni:consent:expire` 的 Worker 转为 `expired` 并发布 `care.alumni_consent.expired`；任务数据、事件和审计均不得包含自然人标识或授权证据标识。延迟任务失败按同一 JobId 重试；运行时 Worker 禁止跨租户全库扫描，存量任务只能由受控迁移命令在 dry-run 审核后显式重建。
 
-### 2.2 人才全周期与服务追踪
+### 2.2 生日与入职周年关怀
+
+- `Person` 生日继续按 L4 管理：身份服务专用入口只提交 `MM-DD` 与证明引用，在内存中用独立 `ORG_PERSON_BIRTHDAY_BLIND_INDEX_KEYS` 密钥环生成最多五个 HMAC 轮换指纹；组织集合、索引、事件、审计和响应均不保存生日明文。Care 只能经 `OrgCareOccasionSourceService` 窄口解析在职员工、当前/历史 Employment 与月日，普通用户不得获得内部主数据读取 Scope。
+- 本人 REST 固定为 `GET/POST/PUT /care/occasion-preferences/me` 与 `POST /care/occasion-preferences/me/unsubscribe`；员工、租户和当前劳动关系只从 Access Profile 与权威组织事实解析。未创建偏好时默认不启用任何关怀，所有写入强制 `Idempotency-Key`，更新/退订另强制 `If-Match`；全局退订同事务关闭两类关怀、清空渠道并取消全部待发送任务。
+- 租户策略只从 `CARE_OCCASION_POLICIES_JSON` 控制面读取，必须显式版本化 IANA 时区、发送本地时间、静默时段、闰日口径、复聘周年口径、受控模板和最大重试次数。发送时间落入静默时段、策略缺失、主数据摘要变化、模板变化、已离职、已退订或类型关闭均失败关闭。
+- MongoDB 是偏好与投递任务唯一事实源；同租户、员工、关怀类型和发生年度唯一。BullMQ 投递任务只携带可信租户与任务 ID，周期对账任务为空载荷；不得携带生日、联系方式、通知正文、模板内容或证据。Worker 抢占锁 15 分钟后可恢复，稳定幂等键覆盖“外部已送达但本地事务失败”，达到策略上限进入 `dead`，只能由运维 Scope 显式重放。
+- 外部通知端点固定为 `/v1/employee-care/dispatch`。ERP 只发送员工引用、关怀类型、目的 `employee_care`、模板编码、策略版本、计划时刻、偏好渠道和控制摘要；网关负责最新渠道授权、地址解析和正文渲染。回执必须绑定租户、任务与控制摘要，并使用 Ed25519 签名；未配置、非标准 HTTPS、签名/Key ID/上下文/渠道错配、超时或未来时间回执均失败关闭。
+- 事件固定为 `care.occasion.preference_updated/unsubscribed/scheduled/delivered/cancelled/dead/replayed` v1 CloudEvent，只含目的、类型、状态、策略版本、尝试次数、受控拒绝码或重放原因码；不含员工、生日、具体联系方式、通知正文或送达证据。审计同样只记录开关、类型、状态、版本与计数。
+- 指标固定为 `gaoq_care_occasion_transition_total{operation,outcome}`、`gaoq_care_occasion_dispatch_duration_seconds{outcome}`、`gaoq_care_occasion_backlog{status}` 和 `gaoq_care_occasion_oldest_age_seconds{status}`，禁止使用租户、员工、任务或渠道地址标签。
+
+### 2.3 人才全周期与服务追踪
 
 - Talent Lifecycle 是跨域只读投影和服务触点权威，不改写 Recruitment、Onboarding、Org、Care 的业务事实。`Candidate → Person → Employment` 引用构成人才身份主线；同一候选人的多次申请、复聘和多段劳动关系都保留在同一主线下。
 - 生命周期阶段按 `离职处理中 → 在职 → 入职中 → Offer → 招聘中 → 校友 → 曾任员工 → 人才库 → 停用` 的优先级从权威状态推导，不能由浏览器或 AI 直接设置。
@@ -223,6 +234,7 @@ draft → pending_approval → approved → clearing → ready → scheduled →
 - H5 本人任务目录由服务端按可信主体映射有效员工授权快照与当前任职关系，不接受客户端 employeeId、onboardingInstanceId 或 tenantId；返回字段与 Knowledge MCP 同样执行内容、题库、答卷和证据脱敏。
 - Care Resource Template 固定为 `erp://care/cases/{id}`，Tool 固定为 `care_case_get`。输出仅含员工/劳动关系引用、最后工作日、计划失效时刻、清算任务状态和版本；离职原因、审批实例与所有证据引用均不进入 MCP。校友授权到期执行属于 Worker 内部能力，不注册 REST 或 MCP Tool。
 - `care_offboarding_progress_guide` 必须明确禁止 AI 审批、代报清算证据、关闭劳动关系或停用身份；Care 不注册写 Tool。
+- 关怀只读 MCP 固定为 Tool `care_occasion_summary_get_self`、Resource Template `erp://care/occasions/mine` 和 Prompt `care_occasion_summary_guide`；只返回本人偏好开关与 pending/delivered/dead 计数，不返回生日、具体计划日期、员工标识、联系方式、模板、正文或送达证据。AI 不注册偏好修改、退订、渠道授权、发送、对账或重放 Tool。
 
 ### 5.8 Talent Lifecycle 360
 

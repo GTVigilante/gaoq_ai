@@ -2,7 +2,7 @@
 
 ## 变更边界
 
-- 招聘/eSign/组织/入职迁移标识固定为 `phase-3-indexes-v1`；Knowledge 使用 `phase-3-knowledge-indexes-v1`，Knowledge 授权搜索追加清单使用 `phase-3-knowledge-search-indexes-v1`，Knowledge 考试编排追加清单使用 `phase-3-knowledge-exam-indexes-v1`，Care 与 Employment 终止引用使用 `phase-3-care-indexes-v1`，招聘渠道使用 `phase-3-recruitment-channel-indexes-v1`，智能简历库使用 `phase-3-recruitment-resume-indexes-v1`，人才全周期使用 `phase-3-talent-lifecycle-indexes-v1`。已发布清单不得通过追加 Schema 改写 checksum。
+- 招聘/eSign/组织/入职迁移标识固定为 `phase-3-indexes-v1`；Knowledge 使用 `phase-3-knowledge-indexes-v1`，Knowledge 授权搜索追加清单使用 `phase-3-knowledge-search-indexes-v1`，Knowledge 考试编排追加清单使用 `phase-3-knowledge-exam-indexes-v1`，Care 与 Employment 终止引用使用 `phase-3-care-indexes-v1`，生日/周年关怀使用 `phase-3-care-occasion-indexes-v1`，招聘渠道使用 `phase-3-recruitment-channel-indexes-v1`，智能简历库使用 `phase-3-recruitment-resume-indexes-v1`，人才全周期使用 `phase-3-talent-lifecycle-indexes-v1`。已发布清单不得通过追加 Schema 改写 checksum。
 - 只创建缺失索引，不删除未知索引；同名或同键异配置立即失败关闭。
 - apply 使用 30 分钟数据库租约，完成后重新读取并复验全部索引。
 - 唯一索引创建前必须先在影子库检查重复数据并保留快照；本脚本不会自动删除或合并业务数据。
@@ -63,6 +63,19 @@
    ```
 
 9. 验证同一劳动关系不能存在两个进行中离职案件、同一清算任务证据不可替换、Care 终止引用唯一，且 Worker 重试不会重复关闭劳动关系。
+
+   生日/周年关怀必须使用独立追加清单，禁止把 Person 新索引追加回已发布
+   `phase-3-indexes-v1`：
+
+   ```bash
+   pnpm --filter @gaoq/erp-api migrate:phase3:care-occasion-indexes -- --dry-run
+   pnpm --filter @gaoq/erp-api migrate:phase3:care-occasion-indexes
+   ```
+
+   执行前检查同租户生日证明引用、员工偏好，以及“员工 + 类型 + 年度”任务自然键
+   重复；执行后验证盲索引不含明文月日、待处理任务可按状态/时间扫描、Worker 锁可
+   恢复且全局对账队列为空载荷。详细验收见
+   [生日与入职周年关怀运行手册](./04-care-occasion-orchestration-runbook.md)。
 
    Care 索引迁移后先只读校验存量活动校友授权，再显式重建稳定到期任务：
 

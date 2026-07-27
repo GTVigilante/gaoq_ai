@@ -12,6 +12,24 @@ const isLoopbackHostname = (hostname: string): boolean => {
     (isIP(normalized) === 6 && normalized === '::1');
 };
 
+const careOccasionPoliciesEnvironmentSchema = z.array(z.object({
+  tenantId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
+  version: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/),
+  timeZone: z.string().min(1).max(64),
+  dispatchLocalTime: z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/),
+  quietHoursStart: z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/),
+  quietHoursEnd: z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/),
+  leapDayPolicy: z.enum(['feb28', 'mar01']),
+  rehireAnniversaryBasis: z.enum(['current_employment', 'original_employment']),
+  birthdayTemplateCode: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/),
+  anniversaryTemplateCode: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/),
+  maxAttempts: z.number().int().min(1).max(12),
+}).strict()).max(10_000).superRefine((policies, context) => {
+  if (new Set(policies.map((policy) => policy.tenantId)).size !== policies.length) {
+    context.addIssue({ code: 'custom', message: '关怀策略租户重复' });
+  }
+});
+
 const environmentSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   RUNTIME_ROLE: z.enum(['api', 'worker']).default('api'),
@@ -100,6 +118,30 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(64).max(16_384).optional(),
   ),
+  /** Person 生日月日 HMAC 盲索引密钥环；不得复用招聘、考勤或资金密钥。 */
+  ORG_PERSON_BIRTHDAY_BLIND_INDEX_KEYS: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(64).max(16_384).optional(),
+  ),
+  /** 员工关怀通知网关只接收受控模板与主体标识，并返回签名送达证据。 */
+  CARE_OCCASION_NOTIFICATION_ENDPOINT: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().url().optional(),
+  ),
+  CARE_OCCASION_NOTIFICATION_BEARER_TOKEN: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/).optional(),
+  ),
+  CARE_OCCASION_NOTIFICATION_SIGNING_KEY_ID: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/).optional(),
+  ),
+  CARE_OCCASION_NOTIFICATION_SIGNING_PUBLIC_KEY_BASE64: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(40).max(512).optional(),
+  ),
+  /** 关怀策略由部署控制面按租户注入，浏览器不得提交时区、发送时间或模板。 */
+  CARE_OCCASION_POLICIES_JSON: z.string().default('[]'),
   /** 简历对象只经隔离网关读取；网关完成归属校验、恶意文件扫描、提取与 PII 去除。 */
   RECRUITMENT_RESUME_SOURCE_ENDPOINT: z.preprocess(
     (value) => value === '' ? undefined : value,
@@ -494,6 +536,70 @@ const environmentSchema = z.object({
     code: 'custom',
     path: ['RECRUITMENT_RESUME_AI_PROVIDER'],
     message: '简历 AI 关闭时禁止悬空注入模型或 API Key',
+  });
+  const careOccasionNotificationInfrastructure = [
+    environment.CARE_OCCASION_NOTIFICATION_ENDPOINT,
+    environment.CARE_OCCASION_NOTIFICATION_BEARER_TOKEN,
+    environment.CARE_OCCASION_NOTIFICATION_SIGNING_PUBLIC_KEY_BASE64,
+    environment.CARE_OCCASION_NOTIFICATION_SIGNING_KEY_ID,
+  ];
+  if (
+    careOccasionNotificationInfrastructure.some((value) => value !== undefined) &&
+    careOccasionNotificationInfrastructure.some((value) => value === undefined)
+  ) context.addIssue({
+    code: 'custom',
+    path: ['CARE_OCCASION_NOTIFICATION_ENDPOINT'],
+    message: '关怀通知网关端点、凭据、公钥与 Key ID 必须成套配置',
+  });
+  if (environment.CARE_OCCASION_NOTIFICATION_ENDPOINT !== undefined) {
+    const endpoint = new URL(environment.CARE_OCCASION_NOTIFICATION_ENDPOINT);
+    const hostname = endpoint.hostname.toLowerCase().replace(/\.$/u, '')
+      .replace(/^\[(.*)\]$/u, '$1');
+    if (
+      endpoint.protocol !== 'https:' || endpoint.username !== '' || endpoint.password !== '' ||
+      endpoint.pathname !== '/' || endpoint.search !== '' || endpoint.hash !== '' ||
+      (endpoint.port !== '' && endpoint.port !== '443') ||
+      isLoopbackHostname(hostname) || isIP(hostname) !== 0 ||
+      endpoint.origin === issuer.origin
+    ) context.addIssue({
+      code: 'custom',
+      path: ['CARE_OCCASION_NOTIFICATION_ENDPOINT'],
+      message: '关怀通知网关必须为独立标准 HTTPS 域名根地址，禁止 IP、本地地址、凭据、路径、query、fragment 和非标准端口',
+    });
+  }
+  if (
+    environment.CARE_OCCASION_NOTIFICATION_SIGNING_PUBLIC_KEY_BASE64 !== undefined
+  ) {
+    try {
+      const publicKey = createPublicKey({
+        key: Buffer.from(
+          environment.CARE_OCCASION_NOTIFICATION_SIGNING_PUBLIC_KEY_BASE64,
+          'base64',
+        ),
+        format: 'der',
+        type: 'spki',
+      });
+      if (publicKey.asymmetricKeyType !== 'ed25519') throw new Error('KEY_TYPE_INVALID');
+    } catch {
+      context.addIssue({
+        code: 'custom',
+        path: ['CARE_OCCASION_NOTIFICATION_SIGNING_PUBLIC_KEY_BASE64'],
+        message: '关怀通知网关签名公钥必须为有效 Ed25519 SPKI DER base64',
+      });
+    }
+  }
+  if (
+    environment.CARE_OCCASION_NOTIFICATION_BEARER_TOKEN !== undefined &&
+    [
+      environment.DINGTALK_CLIENT_SECRET,
+      environment.FEISHU_CLIENT_SECRET,
+      environment.KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN,
+      environment.KNOWLEDGE_SEARCH_GATEWAY_BEARER_TOKEN,
+    ].includes(environment.CARE_OCCASION_NOTIFICATION_BEARER_TOKEN)
+  ) context.addIssue({
+    code: 'custom',
+    path: ['CARE_OCCASION_NOTIFICATION_BEARER_TOKEN'],
+    message: '关怀通知网关不得复用平台或其他业务凭据',
   });
   const knowledgeEvidenceInfrastructure = [
     environment.KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT,
@@ -1291,6 +1397,32 @@ export const validateEnvironment = (input: Record<string, unknown>): AppEnvironm
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : '格式非法';
     throw new Error(`环境变量校验失败：AUTH_ADDITIONAL_RESOURCES_JSON ${message}`, { cause: error });
+  }
+
+  try {
+    const policies = JSON.parse(result.data.CARE_OCCASION_POLICIES_JSON) as unknown;
+    const parsed = careOccasionPoliciesEnvironmentSchema.safeParse(policies);
+    if (!parsed.success) throw new Error(z.prettifyError(parsed.error));
+    for (const policy of parsed.data) {
+      new Intl.DateTimeFormat('en-CA', { timeZone: policy.timeZone }).format(new Date());
+      const toMinutes = (value: string): number => {
+        const [hour, minute] = value.split(':').map(Number);
+        return (hour ?? 0) * 60 + (minute ?? 0);
+      };
+      const dispatch = toMinutes(policy.dispatchLocalTime);
+      const quietStart = toMinutes(policy.quietHoursStart);
+      const quietEnd = toMinutes(policy.quietHoursEnd);
+      const inQuietHours = quietStart === quietEnd ||
+        (quietStart < quietEnd
+          ? dispatch >= quietStart && dispatch < quietEnd
+          : dispatch >= quietStart || dispatch < quietEnd);
+      if (inQuietHours) throw new Error(`租户 ${policy.tenantId} 的发送时间落入静默时段`);
+    }
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : '格式非法';
+    throw new Error(`环境变量校验失败：CARE_OCCASION_POLICIES_JSON ${message}`, {
+      cause: error,
+    });
   }
 
   return result.data;

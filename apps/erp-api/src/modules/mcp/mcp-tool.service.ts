@@ -18,6 +18,7 @@ import { OnboardingApplicationService } from '../onboarding/application/onboardi
 import { KnowledgeApplicationService } from '../knowledge/application/knowledge-application.service.js';
 import { KnowledgeExamRunService } from '../knowledge/application/knowledge-exam-run.service.js';
 import { CareApplicationService } from '../care/application/care-application.service.js';
+import { CareOccasionApplicationService } from '../care/application/care-occasion-application.service.js';
 import { AttendanceApplicationService } from '../attendance/application/attendance-application.service.js';
 import { PayrollRunService } from '../payroll/application/payroll-run.service.js';
 import { PayrollPayslipService } from '../payroll/application/payroll-payslip.service.js';
@@ -88,6 +89,7 @@ export class McpToolService {
     private readonly talentLifecycle: TalentLifecycleService,
     private readonly marketing: MarketingCmsService,
     private readonly confirmations: McpConfirmationService,
+    private readonly careOccasions: CareOccasionApplicationService,
   ) {}
 
   async getMarketingSideEffect(
@@ -207,6 +209,30 @@ export class McpToolService {
       const careCase = await this.care.getForMcp(id);
       await this.auditTool(identity, 'care_case_get', 'R0', 'success');
       return structuredResult({ careCase });
+    });
+  }
+
+  async getMyCareOccasionSummary(extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      const scope = 'erp:care:occasion:preference:read';
+      if (!identity.scopes.includes(scope)) {
+        await this.auditTool(identity, 'care_occasion_summary_get_self', 'R0', 'denied');
+        return scopeError(scope);
+      }
+      const summary = await this.careOccasions.getMySummaryForMcp();
+      await this.auditTool(
+        identity,
+        'care_occasion_summary_get_self',
+        'R0',
+        'success',
+        {
+          configured: summary.configured,
+          pendingCount: summary.pendingCount,
+          attentionRequiredCount: summary.attentionRequiredCount,
+        },
+      );
+      return structuredResult({ occasionSummary: summary });
     });
   }
 

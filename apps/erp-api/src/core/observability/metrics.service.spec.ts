@@ -28,6 +28,9 @@ describe('MetricsService', () => {
     metrics.recordKnowledgeExamRun('review', 'pending');
     metrics.setKnowledgeExamRunBacklog('pending_review', 7, 1_800);
     metrics.observeKnowledgeExamGrading('manual', 3_600);
+    metrics.recordCareOccasion('dispatch', 'delivered', 0.4);
+    metrics.recordCareOccasion('reconcile', 'deduplicated');
+    metrics.setCareOccasionBacklog('pending', 3, 900);
 
     const output = await metrics.render();
     expect(metrics.contentType).toContain('text/plain');
@@ -66,6 +69,14 @@ describe('MetricsService', () => {
     expect(output).toContain(
       'gaoq_knowledge_exam_grading_duration_seconds_count{review_mode="manual"} 1',
     );
+    expect(output).toContain(
+      'gaoq_care_occasion_transition_total{operation="dispatch",outcome="delivered"} 1',
+    );
+    expect(output).toContain(
+      'gaoq_care_occasion_transition_total{operation="reconcile",outcome="deduplicated"} 1',
+    );
+    expect(output).toContain('gaoq_care_occasion_backlog{status="pending"} 3');
+    expect(output).toContain('gaoq_care_occasion_oldest_age_seconds{status="pending"} 900');
     expect(output).not.toContain('tenant_id');
     expect(output).not.toContain('user_id');
   });

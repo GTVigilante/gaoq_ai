@@ -16,6 +16,7 @@ import type { OnboardingApplicationService } from '../onboarding/application/onb
 import type { KnowledgeApplicationService } from '../knowledge/application/knowledge-application.service.js';
 import type { KnowledgeExamRunService } from '../knowledge/application/knowledge-exam-run.service.js';
 import type { CareApplicationService } from '../care/application/care-application.service.js';
+import type { CareOccasionApplicationService } from '../care/application/care-occasion-application.service.js';
 import type { AttendanceApplicationService } from '../attendance/application/attendance-application.service.js';
 import type { PayrollRunService } from '../payroll/application/payroll-run.service.js';
 import type { PayrollPayslipService } from '../payroll/application/payroll-payslip.service.js';
@@ -98,6 +99,7 @@ function assemble() {
   };
   const knowledgeExamRuns = { get: vi.fn() };
   const care = { getForMcp: vi.fn() };
+  const careOccasions = { getMySummaryForMcp: vi.fn() };
   const attendance = {
     getMyMonth: vi.fn(), validateCorrectionRequest: vi.fn(), requestCorrection: vi.fn(),
   };
@@ -140,11 +142,13 @@ function assemble() {
     talentLifecycle as unknown as TalentLifecycleService,
     marketing as unknown as MarketingCmsService,
     confirmations as unknown as McpConfirmationService,
+    careOccasions as unknown as CareOccasionApplicationService,
   );
   return {
     context, audit, organization, approvals, recruitmentApplications,
     recruitmentInterviews, recruitmentManagement, recruitmentOffers, confirmations, service,
-    onboarding, knowledge, care, attendance, payroll, payslips, taxFilings, reconciliations, shadows,
+    onboarding, knowledge, care, careOccasions, attendance, payroll, payslips,
+    taxFilings, reconciliations, shadows,
     opSummaries, opApprovalBridges, managementDashboard, analyticsExports, dataMigrations,
     talentLifecycle,
     marketing,
@@ -518,6 +522,42 @@ describe('McpToolService', () => {
     });
     expect(JSON.stringify(result)).not.toMatch(
       /reasonCode|separationType|approvalInstanceId|EvidenceId|execution/iu,
+    );
+  });
+
+  it('关怀 MCP 只返回本人最小状态计数且不开放写能力', async () => {
+    const store = assemble();
+    store.careOccasions.getMySummaryForMcp.mockResolvedValue({
+      configured: true,
+      birthdayEnabled: true,
+      anniversaryEnabled: false,
+      unsubscribed: false,
+      pendingCount: 1,
+      deliveredCount: 2,
+      attentionRequiredCount: 0,
+    });
+    const denied = await store.service.getMyCareOccasionSummary(
+      extra(['erp:mcp:server:connect']),
+    );
+    expect(denied.isError).toBe(true);
+    expect(store.careOccasions.getMySummaryForMcp).not.toHaveBeenCalled();
+    const result = await store.service.getMyCareOccasionSummary(extra([
+      'erp:mcp:server:connect',
+      'erp:care:occasion:preference:read',
+    ]));
+    expect(result.structuredContent).toEqual({
+      occasionSummary: {
+        configured: true,
+        birthdayEnabled: true,
+        anniversaryEnabled: false,
+        unsubscribed: false,
+        pendingCount: 1,
+        deliveredCount: 2,
+        attentionRequiredCount: 0,
+      },
+    });
+    expect(JSON.stringify(result)).not.toMatch(
+      /birthdayMonthDay|scheduledAt|employeeId|contact|EvidenceId|templateCode|body/iu,
     );
   });
 

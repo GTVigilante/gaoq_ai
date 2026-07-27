@@ -278,6 +278,15 @@ const careCaseSchema = z.object({
   }),
   version: z.number().int().positive(),
 });
+const careOccasionSummarySchema = z.object({
+  configured: z.boolean(),
+  birthdayEnabled: z.boolean(),
+  anniversaryEnabled: z.boolean(),
+  unsubscribed: z.boolean(),
+  pendingCount: z.number().int().nonnegative(),
+  deliveredCount: z.number().int().nonnegative(),
+  attentionRequiredCount: z.number().int().nonnegative(),
+});
 const talentLifecycleSchema = z.object({
   candidateId: recruitmentIdSchema,
   stage: z.enum([
@@ -848,6 +857,25 @@ export class McpRuntimeService {
     );
 
     server.registerResource(
+      'care-occasion-summary-self',
+      new ResourceTemplate('erp://care/occasions/mine', { list: undefined }),
+      {
+        title: '本人关怀安排最小摘要',
+        description: '只返回开关和状态计数；不返回生日、具体日期、联系方式、模板正文或投递证据。',
+        mimeType: 'application/json',
+      },
+      async (uri, _variables, extra) => {
+        const result = await this.tools.getMyCareOccasionSummary(extra);
+        if (result.isError === true) throw new Error('无权读取本人关怀安排');
+        return { contents: [{
+          uri: uri.toString(),
+          mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
+    server.registerResource(
       'talent-lifecycle',
       new ResourceTemplate('erp://talent-lifecycle/people/{candidateId}', { list: undefined }),
       {
@@ -1291,6 +1319,23 @@ export class McpRuntimeService {
     );
 
     server.registerPrompt(
+      'care_occasion_summary_guide',
+      {
+        title: '本人关怀安排只读检查',
+        description: '只读取本人关怀状态计数；AI 不推断生日、不改偏好、不授权渠道也不触发发送。',
+      },
+      () => ({
+        messages: [{
+          role: 'user',
+          content: {
+            type: 'text',
+            text: '请仅调用 care_occasion_summary_get_self 概括本人生日与入职周年关怀是否启用，以及待处理、已送达和需人工关注的数量。不要推断或索取生日、具体关怀日期、联系方式、渠道授权、模板正文或投递证据；不要修改偏好、退订或触发发送。',
+          },
+        }],
+      }),
+    );
+
+    server.registerPrompt(
       'talent_lifecycle_follow_up_guide',
       {
         title: '人才全周期跟进检查清单',
@@ -1715,6 +1760,17 @@ export class McpRuntimeService {
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
       },
       async ({ id }, extra) => this.tools.getCareCase(id, extra),
+    );
+
+    server.registerTool(
+      'care_occasion_summary_get_self',
+      {
+        title: '查询本人关怀安排最小摘要',
+        description: '仅返回本人关怀开关和状态计数，不返回生日、联系方式、正文或证据。风险等级 R0。',
+        outputSchema: z.object({ occasionSummary: careOccasionSummarySchema }),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      },
+      async (extra) => this.tools.getMyCareOccasionSummary(extra),
     );
 
     server.registerTool(
