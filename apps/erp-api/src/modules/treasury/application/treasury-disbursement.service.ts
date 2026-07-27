@@ -923,7 +923,7 @@ export class TreasuryDisbursementService {
     return batch;
   }
 
-  /** 生产模式要求独立授权域按租户、批次、摘要、版本和发布物签发短时一次性授权。 */
+  /** 生产模式要求独立授权域按租户、批次、文件、审批证据、版本和发布物签发短时一次性授权。 */
   private async authorizeProductionSubmission(
     batchId: string,
     expectedVersion: number,
@@ -938,10 +938,12 @@ export class TreasuryDisbursementService {
     ) return null;
     if (
       !['exported', 'submitting'].includes(batch.status) || batch.version !== expectedVersion ||
-      batch.fileHash === null || batch.objectRef === null
+      batch.fileHash === null || batch.objectRef === null || batch.objectEvidenceId === null ||
+      batch.exportApprovedBy === null || batch.strongAuthEvidenceId === null ||
+      batch.strongAuthReferenceType === null
     ) throw new ConflictException({
       code: 'TREASURY_PRODUCTION_AUTHORIZATION_SUBJECT_INVALID',
-      message: '代发批次状态、版本或不可变文件不足以申请生产执行授权',
+      message: '代发批次状态、版本、不可变文件或审批证据不足以申请生产执行授权',
     });
     return this.productionAuthorization.authorize({
       action: 'treasury-bank-submission',
@@ -950,6 +952,8 @@ export class TreasuryDisbursementService {
       subjectHash: productionExecutionSubjectHash([
         batch.payrollPeriodId, batch.payrollRunId, batch.objectRef, batch.fileHash,
         batch.lineCount, batch.totalMinor,
+        batch.objectEvidenceId, batch.exportApprovedBy,
+        batch.strongAuthEvidenceId, batch.strongAuthReferenceType,
       ]),
       expectedVersion,
     });
