@@ -27,6 +27,10 @@ pending → dispatching → completed
   周期对账队列为空载荷；每分钟恢复 Outbox→任务和 DB→Queue 窗口。
 - 抢占锁 15 分钟后可恢复。失败按 30 秒指数退避，最长 6 小时；达到目标登记的
   `maxAttempts` 后进入 `dead`，禁止自动越过人工门禁。
+- 终止事件信封、Outbox 元数据或源授权终态不一致时，必须在当前批次释放原认领、
+  增加尝试次数并持久化稳定错误码；禁止依赖锁超时反复占用批次。
+- 事务驱动必须确认回调实际执行；空事务、来源认领丢失或幂等上下文漂移均失败
+  关闭。清理投递应用服务只接受具有专用 Scope 的可信 `system_job`。
 - 外部已成功而本地事务失败时保留 `dispatching`；锁恢复后使用同一幂等键重取
   同一证明，不得重复产生业务删除。
 
@@ -72,6 +76,15 @@ pnpm --filter @gaoq/erp-api migrate:phase3:care-alumni-cleanup-indexes -- --dry-
 pnpm --filter @gaoq/erp-api migrate:phase3:care-alumni-cleanup-indexes
 pnpm --filter @gaoq/erp-api reconcile:phase3:care-alumni-cleanup
 ```
+
+仓库内每次变更必须执行独立不可回退门禁：
+
+```bash
+pnpm quality:care-alumni-cleanup-coverage
+```
+
+该门禁覆盖协调器与执行应用服务，语句、分支、函数和行阈值均固定为 90%，并由
+根目录 `pnpm check` 调用；不得排除任一目标生产文件或复用其他报告目录。
 
 对账为只读，只输出状态计数、逾期待处理、陈旧锁、状态/证明不一致、重复自然键、
 重复证明摘要、终止授权漏任务和 Outbox TTL 窗口内漏终态事件。`ready=false` 时
