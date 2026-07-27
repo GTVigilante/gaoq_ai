@@ -1,5 +1,5 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import type { Queue } from 'bullmq';
 import type { Model } from 'mongoose';
@@ -35,6 +35,8 @@ interface ClaimedSideEffect {
 /** 将事务 Outbox 至少一次投递到 BullMQ；稳定 Job ID 与下游幂等键共同防重。 */
 @Injectable()
 export class MarketingOutboxRelayService {
+  private readonly logger = new Logger(MarketingOutboxRelayService.name);
+
   constructor(
     @InjectModel(MarketingSideEffectRecord.name)
     private readonly records: Model<MarketingSideEffectDocument>,
@@ -116,8 +118,10 @@ export class MarketingOutboxRelayService {
       await this.notifications.add(
         `lead:${record.channel}`,
         {
+          sideEffectEventId: record.eventId,
           tenantId: record.tenantId,
           leadId: record.aggregateId,
+          aggregateVersion: record.aggregateVersion,
           channel: record.channel,
         },
         options,
@@ -127,7 +131,12 @@ export class MarketingOutboxRelayService {
     if (record.kind === 'scheduled_publish' && record.channel === null) {
       await this.automation.add(
         'publish:scheduled',
-        { tenantId: record.tenantId, contentId: record.aggregateId },
+        {
+          sideEffectEventId: record.eventId,
+          tenantId: record.tenantId,
+          contentId: record.aggregateId,
+          aggregateVersion: record.aggregateVersion,
+        },
         {
           ...options,
           delay: Math.max(0, record.dueAt.getTime() - Date.now()),
@@ -156,11 +165,21 @@ export class MarketingOutboxRelayService {
             : new Date(Date.now() + Math.min(300_000, 1_000 * (2 ** attempts))),
           lockedAt: null,
           lockedBy: null,
+          completedAt: dead ? new Date() : null,
           lastErrorCode: errorCode,
         },
       },
       { timestamps: false },
     );
+    if (dead) {
+      this.logger.error({
+        code: 'MARKETING_SIDE_EFFECT_DEAD_LETTERED',
+        eventId: record.eventId,
+        kind: record.kind,
+        attempts,
+        failureCode: errorCode,
+      });
+    }
   }
 }
 

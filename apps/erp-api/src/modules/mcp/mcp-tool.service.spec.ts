@@ -27,6 +27,7 @@ import type { ManagementDashboardService } from '../analytics/application/manage
 import type { AnalyticsExportService } from '../analytics/application/analytics-export.service.js';
 import type { DataMigrationService } from '../data-migration/application/data-migration.service.js';
 import type { TalentLifecycleService } from '../talent-lifecycle/application/talent-lifecycle.service.js';
+import type { MarketingCmsService } from '../marketing-cms/marketing-cms.service.js';
 import { McpToolService } from './mcp-tool.service.js';
 import type { McpConfirmationService } from './mcp-confirmation.service.js';
 
@@ -105,6 +106,7 @@ function assemble() {
   const analyticsExports = { get: vi.fn(), request: vi.fn() };
   const dataMigrations = { report: vi.fn() };
   const talentLifecycle = { getForMcp: vi.fn() };
+  const marketing = { getSideEffectStatus: vi.fn() };
   const service = new McpToolService(
     context,
     audit as unknown as AuditService,
@@ -129,6 +131,7 @@ function assemble() {
     analyticsExports as unknown as AnalyticsExportService,
     dataMigrations as unknown as DataMigrationService,
     talentLifecycle as unknown as TalentLifecycleService,
+    marketing as unknown as MarketingCmsService,
     confirmations as unknown as McpConfirmationService,
   );
   return {
@@ -137,6 +140,7 @@ function assemble() {
     onboarding, knowledge, care, attendance, payroll, payslips, taxFilings, reconciliations, shadows,
     opSummaries, opApprovalBridges, managementDashboard, analyticsExports, dataMigrations,
     talentLifecycle,
+    marketing,
   };
 }
 
@@ -892,5 +896,41 @@ describe('McpToolService', () => {
       report: { status: 'failed', phaseSixEligible: false },
     });
     expect(JSON.stringify(result)).not.toMatch(/payload|attachmentContent|displayName/iu);
+  });
+
+  it('营销副作用 Tool 只读复用应用服务并拒绝客户端租户参数', async () => {
+    const store = assemble();
+    const eventId = '01J8ZQK7V0A2M4N6P8R0T2W4Y0';
+    store.marketing.getSideEffectStatus.mockResolvedValue({
+      eventId,
+      kind: 'lead_notification',
+      aggregateId: 'lead-001',
+      aggregateVersion: 1,
+      channel: 'email',
+      status: 'dead',
+      attempts: 1,
+      deliveryAttempts: 6,
+      nextAttemptAt: '2026-07-27T00:00:00.000Z',
+      dispatchedAt: '2026-07-27T00:00:01.000Z',
+      completedAt: '2026-07-27T00:01:00.000Z',
+      lastErrorCode: 'MARKETING_NOTIFICATION_GATEWAY_FAILED',
+    });
+    const denied = await store.service.getMarketingSideEffect(eventId, extra([]));
+    expect(denied.isError).toBe(true);
+    expect(store.marketing.getSideEffectStatus).not.toHaveBeenCalled();
+
+    const result = await store.service.getMarketingSideEffect(
+      eventId,
+      extra(['erp:marketing:operations:read']),
+    );
+    expect(store.marketing.getSideEffectStatus).toHaveBeenCalledWith(eventId);
+    expect(result.structuredContent).toMatchObject({
+      sideEffect: {
+        eventId,
+        status: 'dead',
+        lastErrorCode: 'MARKETING_NOTIFICATION_GATEWAY_FAILED',
+      },
+    });
+    expect(JSON.stringify(result)).not.toMatch(/tenant-001|contact|requestSummary/u);
   });
 });

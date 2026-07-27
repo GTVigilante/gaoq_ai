@@ -237,6 +237,12 @@ export class MarketingCmsController {
     return result;
   }
 
+  @Get('side-effects/:id')
+  @RequiredScopes('erp:marketing:operations:read')
+  getSideEffect(@Param('id') id: string) {
+    return this.cms.getSideEffectStatus(this.id(id));
+  }
+
   @Post('media/uploads')
   @RequiredScopes('erp:marketing:media:create')
   createMedia(@Body() body: unknown) {

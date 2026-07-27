@@ -30,6 +30,40 @@ describe('MCP Streamable HTTP 协议集成', () => {
         content: [{ type: 'text' as const, text: '{"actorId":"employee-001"}' }],
         structuredContent: { actorId: 'employee-001' },
       }),
+      getMarketingSideEffect: vi.fn().mockResolvedValue({
+        content: [{ type: 'text' as const, text: JSON.stringify({
+          sideEffect: {
+            eventId: '01J8ZQK7V0A2M4N6P8R0T2W4Y0',
+            kind: 'lead_notification',
+            aggregateId: 'lead-001',
+            aggregateVersion: 1,
+            channel: 'email',
+            status: 'dead',
+            attempts: 1,
+            deliveryAttempts: 6,
+            nextAttemptAt: '2026-07-27T00:00:00.000Z',
+            dispatchedAt: '2026-07-27T00:00:01.000Z',
+            completedAt: '2026-07-27T00:01:00.000Z',
+            lastErrorCode: 'MARKETING_NOTIFICATION_GATEWAY_FAILED',
+          },
+        }) }],
+        structuredContent: {
+          sideEffect: {
+            eventId: '01J8ZQK7V0A2M4N6P8R0T2W4Y0',
+            kind: 'lead_notification',
+            aggregateId: 'lead-001',
+            aggregateVersion: 1,
+            channel: 'email',
+            status: 'dead',
+            attempts: 1,
+            deliveryAttempts: 6,
+            nextAttemptAt: '2026-07-27T00:00:00.000Z',
+            dispatchedAt: '2026-07-27T00:00:01.000Z',
+            completedAt: '2026-07-27T00:01:00.000Z',
+            lastErrorCode: 'MARKETING_NOTIFICATION_GATEWAY_FAILED',
+          },
+        },
+      }),
       getOrgChart: vi.fn().mockResolvedValue({
         content: [{ type: 'text' as const, text: '{"departments":[],"employees":[]}' }],
         structuredContent: { departments: [], employees: [] },
@@ -350,6 +384,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
           'erp:analytics:management:read',
           'erp:analytics:management:export',
           'erp:migration:read',
+          'erp:marketing:operations:read',
         ],
         departmentIds: ['department-001'],
         sessionId: 'session-001',
@@ -390,6 +425,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
     }
     expect(listedTools.tools.map((tool) => tool.name)).toEqual([
       'get_my_permissions',
+      'marketing_side_effect_get',
       'approval_get_inbox',
       'approval_get',
       'approval_timeline_get',
@@ -470,6 +506,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ uriTemplate: 'erp://analytics/management-dashboard/{asOf}' }),
       expect.objectContaining({ uriTemplate: 'erp://analytics/exports/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://data-migrations/runs/{id}/report' }),
+      expect.objectContaining({ uriTemplate: 'erp://marketing/side-effects/{eventId}' }),
     ]));
     const prompts = await client.listPrompts();
     expect(prompts.prompts).toEqual(expect.arrayContaining([
@@ -490,11 +527,24 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ name: 'op_approval_bridge_review_guide' }),
       expect.objectContaining({ name: 'management_dashboard_review_guide' }),
       expect.objectContaining({ name: 'data_migration_report_review_guide' }),
+      expect.objectContaining({ name: 'marketing_side_effect_triage_guide' }),
     ]));
 
     const result = await client.callTool({ name: 'get_org_chart', arguments: {} });
     expect(result.structuredContent).toEqual({ departments: [], employees: [] });
     expect(tools.getOrgChart).toHaveBeenCalledOnce();
+
+    const marketingResult = await client.callTool({
+      name: 'marketing_side_effect_get',
+      arguments: { eventId: '01J8ZQK7V0A2M4N6P8R0T2W4Y0' },
+    });
+    expect(marketingResult.structuredContent).toMatchObject({
+      sideEffect: {
+        status: 'dead',
+        deliveryAttempts: 6,
+      },
+    });
+    expect(JSON.stringify(marketingResult)).not.toMatch(/contact|requestSummary|tenantId/u);
 
     const offerResult = await client.callTool({
       name: 'recruitment_offer_get',
