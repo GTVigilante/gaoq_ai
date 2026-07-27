@@ -5,6 +5,10 @@ Phase 4 在 ERP 组织与劳动关系主数据之上，建立可重放的考勤�
 > 2026-07-27 架构边界更新：上述 Payroll/Treasury 实现作为专业算薪系统迁移基线；
 > 正式工资写模型由独立专业算薪系统承载。ERP 保留统一身份、组织主数据、门户和
 > 脱敏控制摘要，具体边界以 `docs/phase-0/07-payroll-system-boundary.md` 为准。
+> ERP 与专业算薪的七类共享事件已统一为
+> `cn.gaoq.<域>.<实体>.<动作>.v1`，并由
+> `@gaoq/platform-contracts@1.0.0` 的逐类型运行时验证器和 JSON Schema
+> 共同锁定；旧 `com.gaoq.*` 名称仅有一个发布迭代的显式迁移窗口。
 
 实现顺序：
 

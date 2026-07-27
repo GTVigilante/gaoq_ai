@@ -11,6 +11,10 @@
   MCP 和 Worker 必须复用应用服务。
 - 2026-07-27 已冻结独立专业算薪边界：ERP 负责统一身份与组织主数据，专业算薪
   负责工资唯一事实源；`PAYROLL_SYSTEM_MODE=external` 关闭 ERP 旧工资/资金 REST。
+- 2026-07-27 已将 ERP 与专业算薪共享契约提升至
+  `@gaoq/platform-contracts@1.0.0`：七类事件统一为
+  `cn.gaoq.<域>.<实体>.<动作>.v1`，完整信封和逐类型负载严格校验，并同步导出
+  JSON Schema；旧 `com.gaoq.*` 名称只保留一个迭代的显式严格迁移入口。
 - 强制规范入口为 `docs/phase-0/README.md`；阶段交付与未验收边界分别见
   `docs/phase-1/README.md` 至 `docs/phase-6/README.md`。
 - 2026-07-27 已在本机专用 MongoDB Replica Set 与 Redis 上完成 API、Worker、

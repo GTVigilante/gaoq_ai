@@ -272,6 +272,31 @@ AWAITING_SIGNATURE → PARTIAL_SIGNED → PROVIDER_COMPLETED → COMPLETED
 - 入站：幂等键 = 外部 `eventId`，外部无 eventId 时以"报文哈希 + 时间窗"合成；
 - 所有写接口必须声明幂等键，无幂等键的写接口不允许上线。
 
+### 9.5 ERP 与专业算薪共享事件
+
+`@gaoq/platform-contracts@1.0.0` 是 ERP、专业算薪应用、Worker 和协议测试的
+唯一共享契约包。正式事件逐字固定为：
+
+| 方向 | 事件 |
+| --- | --- |
+| ERP → 算薪 | `cn.gaoq.erp.department.upserted.v1` |
+| ERP → 算薪 | `cn.gaoq.erp.employee.upserted.v1` |
+| ERP → 算薪 | `cn.gaoq.erp.employment.changed.v1` |
+| 算薪 → ERP | `cn.gaoq.payroll.run.status_changed.v1` |
+| 算薪 → ERP | `cn.gaoq.payroll.payslip.published.v1` |
+| 算薪 → ERP | `cn.gaoq.payroll.cost_summary.published.v1` |
+| 算薪 → ERP | `cn.gaoq.payroll.reconciliation.completed.v1` |
+
+- 每个事件必须通过包内逐类型运行时验证器和
+  `PAYROLL_EVENT_JSON_SCHEMAS`；信封与 `data` 均拒绝未知字段。
+- 信封必须包含可信 `source/subject/time/tenantId/traceId/idempotencyKey`、
+  `schemaVersion=1` 和 `application/json`，主题中的租户、实体类型和实体 ID
+  必须与信封及负载一致。
+- 日期、期间、状态、数组、计数、版本、整数分金额和
+  `sha256:<64位小写十六进制>` 摘要按业务语义限制，禁止只校验 JavaScript 类型。
+- 旧 `com.gaoq.*` 名称不属于正式目录。只允许通过包内显式迁移函数并行一个发布
+  迭代；迁移入口仍执行 v1 严格负载校验，禁止把兼容窗口变成宽松解析入口。
+
 ---
 
 ## 10. 安全：签名、防重放、限流、重试、死信

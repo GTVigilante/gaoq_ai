@@ -6,6 +6,27 @@ GaoQ ERP 与专业算薪系统共享的版本化契约包。
 - 专业算薪系统是薪酬规则、工资运行、工资条、薪税与发放结果的唯一事实源。
 - 所有事件使用 CloudEvents 1.0，携带可信 `tenantId`、`traceId` 和 `idempotencyKey`。
 - 本包只定义脱敏控制面契约，禁止加入工资明细、银行卡、证件或税务正文。
+- 当前契约版本为 `1.0.0`，事件名严格使用
+  `cn.gaoq.<域>.<实体>.<动作>.v<主版本>`。
+- `PAYROLL_EVENT_JSON_SCHEMAS` 是应用、Worker 和外部算薪系统共同使用的逐事件
+  JSON Schema；运行时必须调用 `isErpToPayrollEvent`、
+  `isSafePayrollToErpEvent` 或 `isPayrollContractEvent`，禁止只依赖 TypeScript。
+
+## v1 事件目录
+
+| 方向 | 事件 |
+| --- | --- |
+| ERP → 算薪 | `cn.gaoq.erp.department.upserted.v1` |
+| ERP → 算薪 | `cn.gaoq.erp.employee.upserted.v1` |
+| ERP → 算薪 | `cn.gaoq.erp.employment.changed.v1` |
+| 算薪 → ERP | `cn.gaoq.payroll.run.status_changed.v1` |
+| 算薪 → ERP | `cn.gaoq.payroll.payslip.published.v1` |
+| 算薪 → ERP | `cn.gaoq.payroll.cost_summary.published.v1` |
+| 算薪 → ERP | `cn.gaoq.payroll.reconciliation.completed.v1` |
+
+旧 `com.gaoq.*` 名称不由主验证器接受。迁移期只能通过
+`migrateLegacyPayrollEvent` 显式转换；兼容入口仍执行 v1 的完整信封、精确字段、
+格式、范围和脱敏校验。该名称兼容窗口只保留一个发布迭代，之后删除。
 
 发布前必须执行：
 
