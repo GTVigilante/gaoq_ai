@@ -9,6 +9,50 @@ export interface KnowledgeGradingResult {
   readonly gradingEvidenceId: string;
 }
 
+export interface KnowledgeExamStartReceipt {
+  readonly gatewaySessionRef: string;
+  readonly questionSetDigest: string;
+  readonly startedAt: string;
+  readonly deadlineAt: string;
+}
+
+export interface KnowledgeExamTimeoutReceipt {
+  readonly submissionRef: string;
+  readonly submittedAt: string;
+}
+
+export type KnowledgeExamFinalizationReceipt =
+  | {
+      readonly status: 'pending_review';
+      readonly reviewEvidenceId: string;
+      readonly reviewRequestedAt: string;
+    }
+  | {
+      readonly status: 'graded';
+      readonly scoreBps: number;
+      readonly passed: boolean;
+      readonly gradingEvidenceId: string;
+      readonly gradedAt: string;
+    };
+
+export interface KnowledgeExamOrchestrationInput {
+  readonly runId: string;
+  readonly tenantId: string;
+  readonly assignmentId: string;
+  readonly courseVersionId: string;
+  readonly attemptNumber: number;
+  readonly questionBankRef: string;
+  readonly questionBankDigest: string;
+  readonly questionMode: 'objective' | 'subjective' | 'mixed';
+  readonly gradingPolicyVersion: string;
+  readonly passingRule: 'score_threshold' | 'all_required_sections';
+  readonly passingScoreBps: number;
+  readonly timeLimitMinutes: number;
+  readonly manualReviewRequired: boolean;
+  readonly gradingSlaMinutes: number;
+  readonly manualReviewSlaMinutes: number;
+}
+
 export interface KnowledgeSearchHit {
   readonly courseVersionId: string;
   readonly revision: number;
@@ -42,6 +86,37 @@ export abstract class KnowledgeGradingPort {
     readonly questionBankDigest: string;
     readonly submissionRef: string;
   }): Promise<KnowledgeGradingResult>;
+}
+
+export abstract class KnowledgeExamOrchestrationPort {
+  /** 创建答题会话；回执只含不透明会话引用和摘要，禁止返回题目或访问令牌。 */
+  abstract start(input: KnowledgeExamOrchestrationInput): Promise<KnowledgeExamStartReceipt>;
+
+  /** 到时由隔离评分域封存当前答卷并签发不透明提交引用。 */
+  abstract timeout(input: KnowledgeExamOrchestrationInput & {
+    readonly gatewaySessionRef: string;
+    readonly questionSetDigest: string;
+    readonly deadlineAt: string;
+  }): Promise<KnowledgeExamTimeoutReceipt>;
+
+  /** 提交或超时终结答题；结果可能进入人工复核，不得返回答案或评分细目。 */
+  abstract finalize(input: KnowledgeExamOrchestrationInput & {
+    readonly gatewaySessionRef: string;
+    readonly questionSetDigest: string;
+    readonly submissionRef: string;
+    readonly timedOut: boolean;
+    readonly submittedAt: string;
+  }): Promise<KnowledgeExamFinalizationReceipt>;
+
+  /** 查询人工复核结果；必须按 runId 和会话引用幂等。 */
+  abstract status(input: KnowledgeExamOrchestrationInput & {
+    readonly gatewaySessionRef: string;
+    readonly questionSetDigest: string;
+    readonly submissionRef: string;
+    readonly reviewEvidenceId: string;
+    readonly timedOut: boolean;
+    readonly submittedAt: string;
+  }): Promise<KnowledgeExamFinalizationReceipt>;
 }
 
 export abstract class KnowledgeSearchPort {

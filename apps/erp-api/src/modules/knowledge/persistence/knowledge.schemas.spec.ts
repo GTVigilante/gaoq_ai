@@ -25,6 +25,10 @@ describe('Knowledge 持久化契约', () => {
       id: 'course-001', tenantId: 'tenant-001', courseCode: 'SECURITY', revision: 1,
       title: '安全培训', contentRef: 'content-001', questionBankRef: 'bank-001',
       questionBankDigest: 'a'.repeat(43), passingScoreBps: 8_000,
+      questionMode: 'objective', timeLimitMinutes: 60, maxAttempts: 3,
+      gradingPolicyVersion: 'objective-auto-v1', passingRule: 'score_threshold',
+      gradingSlaMinutes: 5, manualReviewSlaMinutes: 1_440,
+      manualReviewRequired: false,
       status: 'published', version: 2,
     }).validate()).resolves.toBeUndefined();
     await expect(new AttemptModel({

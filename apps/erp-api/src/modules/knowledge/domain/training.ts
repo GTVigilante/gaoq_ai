@@ -15,6 +15,14 @@ export interface CourseVersion {
   readonly questionBankRef: string | null;
   readonly questionBankDigest: string | null;
   readonly passingScoreBps: number | null;
+  readonly questionMode: 'objective' | 'subjective' | 'mixed' | null;
+  readonly timeLimitMinutes: number | null;
+  readonly maxAttempts: number | null;
+  readonly gradingPolicyVersion: string | null;
+  readonly passingRule: 'score_threshold' | 'all_required_sections' | null;
+  readonly gradingSlaMinutes: number | null;
+  readonly manualReviewSlaMinutes: number | null;
+  readonly manualReviewRequired: boolean;
   readonly audienceMode: 'assigned_only' | 'employment_scope';
   readonly audienceDepartmentIds: readonly string[];
   readonly audiencePositionIds: readonly string[];
@@ -50,6 +58,11 @@ export interface ExamAttempt {
   readonly submissionRef: string;
   readonly questionSetDigest: string;
   readonly gradingEvidenceId: string;
+  readonly questionMode: 'objective' | 'subjective' | 'mixed';
+  readonly gradingPolicyVersion: string;
+  readonly passingRule: 'score_threshold' | 'all_required_sections';
+  readonly manualReviewEvidenceId: string | null;
+  readonly submissionReason: 'learner' | 'timeout';
   readonly scoreBps: number;
   readonly passed: boolean;
   readonly gradedAt: string;
@@ -66,6 +79,13 @@ export function createCourseVersion(
     readonly questionBankRef?: string;
     readonly questionBankDigest?: string;
     readonly passingScoreBps?: number;
+    readonly questionMode?: 'objective' | 'subjective' | 'mixed';
+    readonly timeLimitMinutes?: number;
+    readonly maxAttempts?: number;
+    readonly gradingPolicyVersion?: string;
+    readonly passingRule?: 'score_threshold' | 'all_required_sections';
+    readonly gradingSlaMinutes?: number;
+    readonly manualReviewSlaMinutes?: number;
     readonly audienceMode?: 'assigned_only' | 'employment_scope';
     readonly audienceDepartmentIds?: readonly string[];
     readonly audiencePositionIds?: readonly string[];
@@ -83,11 +103,66 @@ export function createCourseVersion(
   if (examFields.some((value) => value !== undefined) && examFields.some((value) => value === undefined)) {
     invalid('KNOWLEDGE_EXAM_CONFIG_INCOMPLETE', '考试配置必须完整提供');
   }
+  const policyFields = [
+    input.questionMode,
+    input.timeLimitMinutes,
+    input.maxAttempts,
+    input.gradingPolicyVersion,
+    input.passingRule,
+    input.gradingSlaMinutes,
+    input.manualReviewSlaMinutes,
+  ];
+  if (examFields.every((value) => value === undefined) &&
+    policyFields.some((value) => value !== undefined)) {
+    invalid('KNOWLEDGE_EXAM_POLICY_WITHOUT_BANK', '未配置题库时不能配置考试策略');
+  }
   if (input.questionBankRef !== undefined) assertId(input.questionBankRef, 'questionBankRef');
   if (input.questionBankDigest !== undefined && !/^[A-Za-z0-9_-]{43}$/.test(input.questionBankDigest)) {
     invalid('KNOWLEDGE_QUESTION_DIGEST_INVALID', '题库摘要必须为 SHA-256 base64url');
   }
   if (input.passingScoreBps !== undefined) assertBps(input.passingScoreBps, 'passingScoreBps');
+  const examConfigured = input.questionBankRef !== undefined;
+  const questionMode = examConfigured ? input.questionMode ?? 'objective' : null;
+  const timeLimitMinutes = examConfigured ? input.timeLimitMinutes ?? 60 : null;
+  const maxAttempts = examConfigured ? input.maxAttempts ?? 3 : null;
+  const gradingPolicyVersion = examConfigured
+    ? input.gradingPolicyVersion ?? 'objective-auto-v1'
+    : null;
+  const passingRule = examConfigured ? input.passingRule ?? 'score_threshold' : null;
+  const gradingSlaMinutes = examConfigured ? input.gradingSlaMinutes ?? 5 : null;
+  const manualReviewSlaMinutes = examConfigured
+    ? input.manualReviewSlaMinutes ?? 1_440
+    : null;
+  if (
+    timeLimitMinutes !== null &&
+    (!Number.isSafeInteger(timeLimitMinutes) ||
+      timeLimitMinutes < 5 ||
+      timeLimitMinutes > 240)
+  ) invalid('KNOWLEDGE_EXAM_TIME_LIMIT_INVALID', '答题时限必须为 5..240 分钟');
+  if (
+    maxAttempts !== null &&
+    (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 10)
+  ) invalid('KNOWLEDGE_EXAM_MAX_ATTEMPTS_INVALID', '最大考试次数必须为 1..10');
+  if (
+    gradingPolicyVersion !== null &&
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{2,63}$/u.test(gradingPolicyVersion)
+  ) invalid('KNOWLEDGE_GRADING_POLICY_VERSION_INVALID', '评分策略版本非法');
+  if (
+    passingRule !== null &&
+    !['score_threshold', 'all_required_sections'].includes(passingRule)
+  ) invalid('KNOWLEDGE_PASSING_RULE_INVALID', '考试通过规则非法');
+  if (
+    gradingSlaMinutes !== null &&
+    (!Number.isSafeInteger(gradingSlaMinutes) ||
+      gradingSlaMinutes < 1 ||
+      gradingSlaMinutes > 60)
+  ) invalid('KNOWLEDGE_GRADING_SLA_INVALID', '自动评分 SLA 必须为 1..60 分钟');
+  if (
+    manualReviewSlaMinutes !== null &&
+    (!Number.isSafeInteger(manualReviewSlaMinutes) ||
+      manualReviewSlaMinutes < 30 ||
+      manualReviewSlaMinutes > 10_080)
+  ) invalid('KNOWLEDGE_MANUAL_REVIEW_SLA_INVALID', '人工复核 SLA 必须为 30..10080 分钟');
   const audienceMode = input.audienceMode ?? 'assigned_only';
   const audienceDepartmentIds = normalizeAudienceIds(
     input.audienceDepartmentIds ?? [],
@@ -116,6 +191,14 @@ export function createCourseVersion(
     questionBankRef: input.questionBankRef ?? null,
     questionBankDigest: input.questionBankDigest ?? null,
     passingScoreBps: input.passingScoreBps ?? null,
+    questionMode,
+    timeLimitMinutes,
+    maxAttempts,
+    gradingPolicyVersion,
+    passingRule,
+    gradingSlaMinutes,
+    manualReviewSlaMinutes,
+    manualReviewRequired: questionMode === 'subjective' || questionMode === 'mixed',
     audienceMode,
     audienceDepartmentIds,
     audiencePositionIds,
@@ -226,8 +309,14 @@ export function createExamAttempt(
     readonly submissionRef: string;
     readonly questionSetDigest: string;
     readonly gradingEvidenceId: string;
+    readonly questionMode?: 'objective' | 'subjective' | 'mixed';
+    readonly gradingPolicyVersion?: string;
+    readonly passingRule?: 'score_threshold' | 'all_required_sections';
+    readonly manualReviewEvidenceId?: string;
+    readonly submissionReason?: 'learner' | 'timeout';
     readonly scoreBps: number;
     readonly passingScoreBps: number;
+    readonly passedOverride?: boolean;
     readonly serverGradingVerified: boolean;
   },
   now: Date,
@@ -247,11 +336,29 @@ export function createExamAttempt(
   if (!input.serverGradingVerified) invalid(
     'KNOWLEDGE_SERVER_GRADING_REQUIRED', '考试成绩必须来自服务端评分器',
   );
+  const questionMode = input.questionMode ?? 'objective';
+  const gradingPolicyVersion = input.gradingPolicyVersion ?? 'objective-auto-v1';
+  const passingRule = input.passingRule ?? 'score_threshold';
+  const thresholdPassed = input.scoreBps >= input.passingScoreBps;
+  if (
+    passingRule === 'score_threshold' &&
+    input.passedOverride !== undefined &&
+    input.passedOverride !== thresholdPassed
+  ) invalid('KNOWLEDGE_GRADING_PASS_MISMATCH', '评分通过结论与阈值策略不一致');
+  if (passingRule === 'all_required_sections' && input.passedOverride === undefined) {
+    invalid('KNOWLEDGE_GRADING_PASS_REQUIRED', '分项通过策略必须提供受信通过结论');
+  }
   return Object.freeze({
     id: input.id, tenantId: input.tenantId, assignmentId: input.assignmentId,
     attemptNumber: input.attemptNumber, submissionRef: input.submissionRef,
     questionSetDigest: input.questionSetDigest, gradingEvidenceId: input.gradingEvidenceId,
-    scoreBps: input.scoreBps, passed: input.scoreBps >= input.passingScoreBps,
+    questionMode,
+    gradingPolicyVersion,
+    passingRule,
+    manualReviewEvidenceId: input.manualReviewEvidenceId ?? null,
+    submissionReason: input.submissionReason ?? 'learner',
+    scoreBps: input.scoreBps,
+    passed: input.passedOverride ?? thresholdPassed,
     gradedAt: iso(now),
   });
 }

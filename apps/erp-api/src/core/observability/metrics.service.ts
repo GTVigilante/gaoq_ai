@@ -6,6 +6,7 @@ type VerificationOutcome = 'success' | 'failure';
 type ApprovalNotificationOutcome = 'sent' | 'retry' | 'dead';
 type McpConfirmationStage = 'prepare' | 'confirm' | 'execute';
 type KnowledgeSearchIndexOutcome = 'success' | 'retry' | 'dead';
+type KnowledgeExamRunOutcome = 'success' | 'pending' | 'retry' | 'dead' | 'deferred';
 
 /** 低基数 Prometheus 指标注册中心；严禁使用租户、用户、资源 ID 作为标签。 */
 @Injectable()
@@ -116,6 +117,37 @@ export class MetricsService {
     labelNames: ['operation'] as const,
     registers: [this.registry],
   });
+  private readonly knowledgeExamRunTransitions = new Counter({
+    name: 'gaoq_knowledge_exam_run_transition_total',
+    help: 'Knowledge 考试运行状态推进结果总数。',
+    labelNames: ['operation', 'outcome'] as const,
+    registers: [this.registry],
+  });
+  private readonly knowledgeExamRunLastSuccess = new Gauge({
+    name: 'gaoq_knowledge_exam_run_last_success_timestamp_seconds',
+    help: 'Knowledge 考试运行最近一次成功推进时间。',
+    labelNames: ['operation'] as const,
+    registers: [this.registry],
+  });
+  private readonly knowledgeExamRunBacklog = new Gauge({
+    name: 'gaoq_knowledge_exam_run_backlog',
+    help: 'Knowledge 考试运行各固定状态待处理数量。',
+    labelNames: ['status'] as const,
+    registers: [this.registry],
+  });
+  private readonly knowledgeExamRunOldestAge = new Gauge({
+    name: 'gaoq_knowledge_exam_run_oldest_age_seconds',
+    help: 'Knowledge 考试运行各固定状态最老记录年龄（秒）。',
+    labelNames: ['status'] as const,
+    registers: [this.registry],
+  });
+  private readonly knowledgeExamGradingDuration = new Histogram({
+    name: 'gaoq_knowledge_exam_grading_duration_seconds',
+    help: 'Knowledge 从提交到最终评分完成耗时（秒）。',
+    labelNames: ['review_mode'] as const,
+    buckets: [1, 5, 15, 30, 60, 120, 300, 900, 3_600, 14_400, 86_400, 604_800],
+    registers: [this.registry],
+  });
 
   constructor() {
     collectDefaultMetrics({ register: this.registry, prefix: 'gaoq_process_' });
@@ -213,6 +245,35 @@ export class MetricsService {
         indexedAt.getTime() / 1_000,
       );
     }
+  }
+
+  recordKnowledgeExamRun(
+    operation: 'start' | 'timeout' | 'review' | 'grade' | 'gateway',
+    outcome: KnowledgeExamRunOutcome,
+  ): void {
+    this.knowledgeExamRunTransitions.inc({ operation, outcome });
+    if (outcome === 'success') {
+      this.knowledgeExamRunLastSuccess.set({ operation }, Date.now() / 1_000);
+    }
+  }
+
+  setKnowledgeExamRunBacklog(
+    status: 'starting' | 'in_progress' | 'submitted' | 'pending_review' | 'dead',
+    count: number,
+    oldestAgeSeconds: number,
+  ): void {
+    this.knowledgeExamRunBacklog.set({ status }, Math.max(0, count));
+    this.knowledgeExamRunOldestAge.set({ status }, Math.max(0, oldestAgeSeconds));
+  }
+
+  observeKnowledgeExamGrading(
+    reviewMode: 'automatic' | 'manual',
+    durationSeconds: number,
+  ): void {
+    this.knowledgeExamGradingDuration.observe(
+      { review_mode: reviewMode },
+      Math.max(0, durationSeconds),
+    );
   }
 }
 

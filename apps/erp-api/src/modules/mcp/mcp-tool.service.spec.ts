@@ -14,6 +14,7 @@ import type { RecruitmentManagementService } from '../recruitment/application/re
 import type { RecruitmentOfferService } from '../recruitment/application/recruitment-offer.service.js';
 import type { OnboardingApplicationService } from '../onboarding/application/onboarding-application.service.js';
 import type { KnowledgeApplicationService } from '../knowledge/application/knowledge-application.service.js';
+import type { KnowledgeExamRunService } from '../knowledge/application/knowledge-exam-run.service.js';
 import type { CareApplicationService } from '../care/application/care-application.service.js';
 import type { AttendanceApplicationService } from '../attendance/application/attendance-application.service.js';
 import type { PayrollRunService } from '../payroll/application/payroll-run.service.js';
@@ -95,6 +96,7 @@ function assemble() {
     getAssignment: vi.fn(),
     searchMyKnowledge: vi.fn(),
   };
+  const knowledgeExamRuns = { get: vi.fn() };
   const care = { getForMcp: vi.fn() };
   const attendance = {
     getMyMonth: vi.fn(), validateCorrectionRequest: vi.fn(), requestCorrection: vi.fn(),
@@ -122,6 +124,7 @@ function assemble() {
     recruitmentOffers as unknown as RecruitmentOfferService,
     onboarding as unknown as OnboardingApplicationService,
     knowledge as unknown as KnowledgeApplicationService,
+    knowledgeExamRuns as unknown as KnowledgeExamRunService,
     care as unknown as CareApplicationService,
     attendance as unknown as AttendanceApplicationService,
     payroll as unknown as PayrollRunService,

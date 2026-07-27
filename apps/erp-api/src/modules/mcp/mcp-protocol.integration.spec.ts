@@ -146,11 +146,19 @@ describe('MCP Streamable HTTP 协议集成', () => {
         content: [{ type: 'text' as const, text: JSON.stringify({ course: {
           id: '01J8ZQK7V0A2M4N6P8R0T2W4A1', courseCode: 'SECURITY', revision: 1,
           title: '安全培训', examRequired: true, passingScoreBps: 8_000,
+          questionMode: 'objective', timeLimitMinutes: 60, maxAttempts: 3,
+          gradingPolicyVersion: 'objective-auto-v1', passingRule: 'score_threshold',
+          gradingSlaMinutes: 5, manualReviewSlaMinutes: 1_440,
+          manualReviewRequired: false,
           status: 'published', version: 2,
         } }) }],
         structuredContent: { course: {
           id: '01J8ZQK7V0A2M4N6P8R0T2W4A1', courseCode: 'SECURITY', revision: 1,
           title: '安全培训', examRequired: true, passingScoreBps: 8_000,
+          questionMode: 'objective', timeLimitMinutes: 60, maxAttempts: 3,
+          gradingPolicyVersion: 'objective-auto-v1', passingRule: 'score_threshold',
+          gradingSlaMinutes: 5, manualReviewSlaMinutes: 1_440,
+          manualReviewRequired: false,
           status: 'published', version: 2,
         } },
       }),
@@ -170,6 +178,36 @@ describe('MCP Streamable HTTP 协议集成', () => {
           progressBps: 5_000, version: 2,
         } },
       }),
+      getKnowledgeExamRun: vi.fn().mockResolvedValue({
+        content: [{ type: 'text' as const, text: JSON.stringify({ examRun: {
+          id: '01J8ZQK7V0A2M4N6P8R0T2W4A3',
+          assignmentId: '01J8ZQK7V0A2M4N6P8R0T2W4A2',
+          courseVersionId: '01J8ZQK7V0A2M4N6P8R0T2W4A1',
+          attemptNumber: 1, questionMode: 'mixed',
+          gradingPolicyVersion: 'mixed-v1', passingRule: 'all_required_sections',
+          gradingSlaMinutes: 5, manualReviewSlaMinutes: 1_440,
+          manualReviewRequired: true, status: 'pending_review',
+          startedAt: '2026-07-27T00:00:00.000Z',
+          deadlineAt: '2026-07-27T01:00:00.000Z',
+          submittedAt: '2026-07-27T00:45:00.000Z',
+          submissionReason: 'learner', timedOut: false,
+          finalAttemptId: null, version: 4,
+        } }) }],
+        structuredContent: { examRun: {
+          id: '01J8ZQK7V0A2M4N6P8R0T2W4A3',
+          assignmentId: '01J8ZQK7V0A2M4N6P8R0T2W4A2',
+          courseVersionId: '01J8ZQK7V0A2M4N6P8R0T2W4A1',
+          attemptNumber: 1, questionMode: 'mixed',
+          gradingPolicyVersion: 'mixed-v1', passingRule: 'all_required_sections',
+          gradingSlaMinutes: 5, manualReviewSlaMinutes: 1_440,
+          manualReviewRequired: true, status: 'pending_review',
+          startedAt: '2026-07-27T00:00:00.000Z',
+          deadlineAt: '2026-07-27T01:00:00.000Z',
+          submittedAt: '2026-07-27T00:45:00.000Z',
+          submissionReason: 'learner', timedOut: false,
+          finalAttemptId: null, version: 4,
+        } },
+      }),
       searchKnowledge: vi.fn().mockResolvedValue({
         content: [{ type: 'text' as const, text: JSON.stringify({
           items: [{
@@ -180,6 +218,14 @@ describe('MCP Streamable HTTP 协议集成', () => {
               title: '安全培训',
               examRequired: true,
               passingScoreBps: 8_000,
+              questionMode: 'objective',
+              timeLimitMinutes: 60,
+              maxAttempts: 3,
+              gradingPolicyVersion: 'objective-auto-v1',
+              passingRule: 'score_threshold',
+              gradingSlaMinutes: 5,
+              manualReviewSlaMinutes: 1_440,
+              manualReviewRequired: false,
               status: 'published',
               version: 2,
             },
@@ -199,6 +245,14 @@ describe('MCP Streamable HTTP 协议集成', () => {
               title: '安全培训',
               examRequired: true,
               passingScoreBps: 8_000,
+              questionMode: 'objective',
+              timeLimitMinutes: 60,
+              maxAttempts: 3,
+              gradingPolicyVersion: 'objective-auto-v1',
+              passingRule: 'score_threshold',
+              gradingSlaMinutes: 5,
+              manualReviewSlaMinutes: 1_440,
+              manualReviewRequired: false,
               status: 'published',
               version: 2,
             },
@@ -484,6 +538,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       'onboarding_get',
       'knowledge_course_get',
       'knowledge_assignment_get',
+      'knowledge_exam_run_get',
       'knowledge_search',
       'care_case_get',
       'talent_lifecycle_get',
@@ -533,6 +588,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ uriTemplate: 'erp://onboarding/instances/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://knowledge/courses/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://knowledge/assignments/{id}' }),
+      expect.objectContaining({ uriTemplate: 'erp://knowledge/exam-runs/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://knowledge/search/{query}' }),
       expect.objectContaining({ uriTemplate: 'erp://care/cases/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://talent-lifecycle/people/{candidateId}' }),
@@ -556,6 +612,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ name: 'recruitment_offer_send_guide' }),
       expect.objectContaining({ name: 'onboarding_progress_guide' }),
       expect.objectContaining({ name: 'knowledge_training_progress_guide' }),
+      expect.objectContaining({ name: 'knowledge_exam_run_status_guide' }),
       expect.objectContaining({ name: 'knowledge_search_guide' }),
       expect.objectContaining({ name: 'care_offboarding_progress_guide' }),
       expect.objectContaining({ name: 'talent_lifecycle_follow_up_guide' }),
@@ -649,6 +706,17 @@ describe('MCP Streamable HTTP 协议集成', () => {
     );
     expect(tools.getKnowledgeAssignment).toHaveBeenCalledOnce();
     expect(tools.getKnowledgeCourse).toHaveBeenCalledOnce();
+    const examRunResult = await client.callTool({
+      name: 'knowledge_exam_run_get',
+      arguments: { id: '01J8ZQK7V0A2M4N6P8R0T2W4A3' },
+    });
+    expect(examRunResult.structuredContent).toMatchObject({
+      examRun: { status: 'pending_review', manualReviewRequired: true },
+    });
+    expect(JSON.stringify(examRunResult)).not.toMatch(
+      /questionBank|submissionRef|reviewEvidence|gatewaySession|answer/iu,
+    );
+    expect(tools.getKnowledgeExamRun).toHaveBeenCalledOnce();
     const searchResult = await client.callTool({
       name: 'knowledge_search',
       arguments: { query: '信息安全', limit: 10 },

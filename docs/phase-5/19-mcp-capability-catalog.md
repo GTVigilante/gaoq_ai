@@ -9,7 +9,7 @@
 
 四个静态 Resource 分别提供服务说明、审批待办、已发布审批模板目录和本人委托目录。`erp://approval/templates/published` 只返回表单字段白名单；`erp://approval/delegations/mine` 只返回限期授权最小投影。两者均复用审批应用服务，不返回租户、权限快照、流程节点、审批人解析器、发布审批人或任何表单值；敏感审批正文不得进入 MCP 明文确认命令，持续授权关系不得注册 AI 写 Tool。
 
-确定性目录直接从 `McpRuntimeService` 的 44 个真实 `registerTool` 注册点解析，不维护第二份容易漂移的手工清单：R0 20 个、R1 16 个、R2 8 个、R3 0 个。门禁验证中文标题/说明、输入与输出 Schema、幂等与副作用注解、R1/R2 封闭世界、prepare 不产生破坏性效果，以及应用服务边界。
+确定性目录直接从 `McpRuntimeService` 的 45 个真实 `registerTool` 注册点解析，不维护第二份容易漂移的手工清单：R0 21 个、R1 16 个、R2 8 个、R3 0 个。门禁验证中文标题/说明、输入与输出 Schema、幂等与副作用注解、R1/R2 封闭世界、prepare 不产生破坏性效果，以及应用服务边界。
 
 ```bash
 pnpm --silent mcp:catalog:print > /secure/mcp/gaoq-mcp-catalog.json
@@ -38,7 +38,7 @@ OP、钉钉、飞书、e签宝、银行、税务、附件和 WORM 只通过应�
 
 `.github/workflows/phase-5-mcp-integration.yml` 只允许 `main` 手工启动，绑定 Required Reviewers 保护的 `phase-5-mcp-integration` Environment 和同名隔离单次 Runner 标签。Environment 配置固定环境名及 API/Worker/ERP Web/Website 镜像 SHA-256；现场摘要文件固定为 `/var/lib/gaoq/mcp/phase-5-mcp-integration.json`。工作流把证据与当前 commit、镜像和实时解析的 `catalogHash` 精确绑定，只上传脱敏 verdict，不上传 OAuth Token、协议正文、业务数据或供应商凭据。
 
-证据必须覆盖三类客户端各至少 10 次 Tool 调用、全部 44 个 Tool 的一致目录、至少 4 个 Resource、21 个 Resource Template、19 个 Prompt；OP、钉钉、飞书、e签宝、银行、税务、附件、WORM 各至少 10 次沙箱请求。跨租户和无效 Scope 各至少 30 次并全部拒绝，过期确认至少 10 次并全部拒绝；丢失、重复业务效果、未对账、租户错配、Token 暴露、生产副作用和 R3 Tool 均为零。MCP、集成、安全和 QA 四方在联调结束后独立签署。
+证据必须覆盖三类客户端各至少 10 次 Tool 调用、全部 45 个 Tool 的一致目录、至少 4 个 Resource、22 个 Resource Template、20 个 Prompt；OP、钉钉、飞书、e签宝、银行、税务、附件、WORM 各至少 10 次沙箱请求。跨租户和无效 Scope 各至少 30 次并全部拒绝，过期确认至少 10 次并全部拒绝；丢失、重复业务效果、未对账、租户错配、Token 暴露、生产副作用和 R3 Tool 均为零。MCP、集成、安全和 QA 四方在联调结束后独立签署。
 
 ```bash
 pnpm mcp:integration:validate-evidence -- /secure/mcp/phase-5-mcp-integration.json

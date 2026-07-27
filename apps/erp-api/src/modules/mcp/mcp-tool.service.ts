@@ -16,6 +16,7 @@ import { RecruitmentManagementService } from '../recruitment/application/recruit
 import { RecruitmentOfferService } from '../recruitment/application/recruitment-offer.service.js';
 import { OnboardingApplicationService } from '../onboarding/application/onboarding-application.service.js';
 import { KnowledgeApplicationService } from '../knowledge/application/knowledge-application.service.js';
+import { KnowledgeExamRunService } from '../knowledge/application/knowledge-exam-run.service.js';
 import { CareApplicationService } from '../care/application/care-application.service.js';
 import { AttendanceApplicationService } from '../attendance/application/attendance-application.service.js';
 import { PayrollRunService } from '../payroll/application/payroll-run.service.js';
@@ -71,6 +72,7 @@ export class McpToolService {
     private readonly recruitmentOffers: RecruitmentOfferService,
     private readonly onboarding: OnboardingApplicationService,
     private readonly knowledge: KnowledgeApplicationService,
+    private readonly knowledgeExamRuns: KnowledgeExamRunService,
     private readonly care: CareApplicationService,
     private readonly attendance: AttendanceApplicationService,
     private readonly payroll: PayrollRunService,
@@ -161,6 +163,16 @@ export class McpToolService {
     return this.getRecruitmentResource(
       extra, 'knowledge_assignment_get', 'erp:knowledge:assignment:read',
       'assignment', () => this.knowledge.getAssignment(id),
+    );
+  }
+
+  async getKnowledgeExamRun(id: string, extra: McpExtra): Promise<McpToolResult> {
+    return this.getRecruitmentResource(
+      extra,
+      'knowledge_exam_run_get',
+      'erp:knowledge:exam:read',
+      'examRun',
+      () => this.knowledgeExamRuns.get(id),
     );
   }
 

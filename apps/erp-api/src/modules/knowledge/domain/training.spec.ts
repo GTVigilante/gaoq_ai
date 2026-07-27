@@ -20,6 +20,13 @@ describe('Knowledge 培训与考试领域', () => {
       questionBankRef: 'question-bank-001', questionBankDigest: 'a'.repeat(43),
       passingScoreBps: 8_000,
     }, NOW);
+    expect(course).toMatchObject({
+      questionMode: 'objective',
+      timeLimitMinutes: 60,
+      maxAttempts: 3,
+      gradingPolicyVersion: 'objective-auto-v1',
+      manualReviewRequired: false,
+    });
     expect(() => publishCourseVersion(course, {
       tenantId: 'tenant-001', expectedVersion: 1,
       contentVerified: true, questionBankVerified: false,
@@ -28,6 +35,34 @@ describe('Knowledge 培训与考试领域', () => {
       tenantId: 'tenant-001', expectedVersion: 1,
       contentVerified: true, questionBankVerified: true,
     }, NOW).status).toBe('published');
+  });
+
+  it('主观题和混合题强制进入人工复核且考试策略必须绑定题库', () => {
+    const subjective = createCourseVersion({
+      id: 'course-version-001', tenantId: 'tenant-001', courseCode: 'LEADERSHIP',
+      revision: 1, title: '管理能力', contentRef: 'content-001',
+      questionBankRef: 'question-bank-001', questionBankDigest: 'a'.repeat(43),
+      passingScoreBps: 7_000, questionMode: 'subjective',
+      timeLimitMinutes: 90, maxAttempts: 2, gradingPolicyVersion: 'manual-v2',
+    }, NOW);
+    expect(subjective).toMatchObject({
+      questionMode: 'subjective',
+      timeLimitMinutes: 90,
+      maxAttempts: 2,
+      gradingPolicyVersion: 'manual-v2',
+      manualReviewRequired: true,
+    });
+    expect(() => createCourseVersion({
+      id: 'course-version-002', tenantId: 'tenant-001', courseCode: 'INVALID',
+      revision: 1, title: '非法策略', contentRef: 'content-002',
+      questionMode: 'mixed',
+    }, NOW)).toThrow(/不能配置考试策略/);
+    expect(() => createCourseVersion({
+      id: 'course-version-003', tenantId: 'tenant-001', courseCode: 'INVALID',
+      revision: 1, title: '非法次数', contentRef: 'content-003',
+      questionBankRef: 'question-bank-003', questionBankDigest: 'b'.repeat(43),
+      passingScoreBps: 7_000, maxAttempts: 11,
+    }, NOW)).toThrow(/最大考试次数/);
   });
 
   it('进度不能回退，完成考试课程必须引用服务端评分通过的尝试', () => {
@@ -65,6 +100,39 @@ describe('Knowledge 培训与考试领域', () => {
       questionSetDigest: 'b'.repeat(43), gradingEvidenceId: 'grading-001',
       scoreBps: 10_000, passingScoreBps: 8_000, serverGradingVerified: false,
     }, NOW)).toThrow(/服务端评分器/);
+  });
+
+  it('分项通过策略必须使用签名结论且拒绝阈值策略矛盾结论', () => {
+    expect(() => createExamAttempt({
+      id: 'attempt-001',
+      tenantId: 'tenant-001',
+      assignmentId: 'assignment-001',
+      attemptNumber: 1,
+      submissionRef: 'submission-001',
+      questionSetDigest: 'b'.repeat(43),
+      gradingEvidenceId: 'grading-001',
+      questionMode: 'mixed',
+      gradingPolicyVersion: 'mixed-manual-v2',
+      passingRule: 'all_required_sections',
+      manualReviewEvidenceId: 'review-001',
+      scoreBps: 8_500,
+      passingScoreBps: 8_000,
+      serverGradingVerified: true,
+    }, NOW)).toThrow(/受信通过结论/u);
+    expect(() => createExamAttempt({
+      id: 'attempt-002',
+      tenantId: 'tenant-001',
+      assignmentId: 'assignment-001',
+      attemptNumber: 1,
+      submissionRef: 'submission-002',
+      questionSetDigest: 'b'.repeat(43),
+      gradingEvidenceId: 'grading-002',
+      passingRule: 'score_threshold',
+      scoreBps: 7_000,
+      passingScoreBps: 8_000,
+      passedOverride: true,
+      serverGradingVerified: true,
+    }, NOW)).toThrow(/阈值策略不一致/u);
   });
 
   it('任职受众至少配置一个维度，配置两维时完整保留并仅允许发布后下架', () => {

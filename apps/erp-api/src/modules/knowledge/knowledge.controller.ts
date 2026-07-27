@@ -17,7 +17,6 @@ import { RequiredScopes } from '../identity/auth.decorators.js';
 import {
   KnowledgeApplicationService,
   type CourseSummary,
-  type ExamAttemptSummary,
   type PersonalKnowledgeSearchResult,
   type PersonalTrainingAssignmentView,
   type TrainingAssignmentSummary,
@@ -26,7 +25,6 @@ import {
   AssignCourseDto,
   CompleteTrainingAssignmentDto,
   CreateCourseVersionDto,
-  GradeExamDto,
   RecordTrainingProgressDto,
   SearchMyKnowledgeDto,
 } from './application/knowledge.dto.js';
@@ -169,22 +167,6 @@ export class KnowledgeController {
   ): Promise<TrainingAssignmentSummary> {
     const result = await this.knowledge.getAssignment(this.id(id));
     this.etag(response, result.version);
-    return result;
-  }
-
-  @Post('assignments/:id/exam-attempts')
-  @RequiredScopes('erp:knowledge:exam:grade')
-  async gradeExam(
-    @Param('id') id: string,
-    @Headers('idempotency-key') key: string | undefined,
-    @Body() body: GradeExamDto,
-  ): Promise<{ readonly attempt: ExamAttemptSummary }> {
-    const result = await this.knowledge.gradeExam(this.id(id), this.key(key), body.submissionRef);
-    await this.auditResult('knowledge.exam.grade', 'knowledge_exam_attempt', result.attempt.id, 'R2', {
-      assignmentId: result.attempt.assignmentId,
-      attemptNumber: result.attempt.attemptNumber,
-      passed: result.attempt.passed,
-    });
     return result;
   }
 

@@ -85,6 +85,7 @@ function fixture(options?: {
     findBySubmissionRef: vi.fn().mockImplementation((ref: string) =>
       Promise.resolve(attempt?.submissionRef === ref ? attempt : null)),
     nextAttemptNumber: vi.fn().mockResolvedValue(1),
+    countByAssignment: vi.fn().mockResolvedValue(0),
     insert: vi.fn().mockImplementation((value: ExamAttempt) => { attempt = value; return Promise.resolve(); }),
   };
   const evidence = {
@@ -367,11 +368,51 @@ describe('KnowledgeApplicationService', () => {
     expect(result.attempt).not.toHaveProperty('questionSetDigest');
   });
 
+  it('同步兼容评分严格执行最大次数且主观题必须走可靠运行', async () => {
+    const exhausted = fixture();
+    exhausted.attempts.countByAssignment.mockResolvedValue(3);
+    await expect(exhausted.context.run(exhausted.trusted, () =>
+      exhausted.service.gradeExam(
+        'assignment-001',
+        'knowledge-grade-limit',
+        'submission-limit',
+      ),
+    )).rejects.toMatchObject({ response: {
+      code: 'KNOWLEDGE_EXAM_ATTEMPTS_EXHAUSTED',
+    } });
+    expect(exhausted.grader.grade).not.toHaveBeenCalled();
+
+    const subjectiveDraft = createCourseVersion({
+      id: 'course-001', tenantId: 'tenant-001', courseCode: 'LEADERSHIP', revision: 1,
+      title: '管理能力', contentRef: 'content-001', questionBankRef: 'bank-001',
+      questionBankDigest: 'a'.repeat(43), passingScoreBps: 8_000,
+      questionMode: 'subjective', gradingPolicyVersion: 'manual-v1',
+    }, NOW);
+    const subjective = publishCourseVersion(subjectiveDraft, {
+      tenantId: 'tenant-001', expectedVersion: 1,
+      contentVerified: true, questionBankVerified: true,
+    }, NOW);
+    const manual = fixture({ course: subjective });
+    await expect(manual.context.run(manual.trusted, () =>
+      manual.service.gradeExam(
+        'assignment-001',
+        'knowledge-grade-manual',
+        'submission-manual',
+      ),
+    )).rejects.toMatchObject({ response: {
+      code: 'KNOWLEDGE_EXAM_RUN_REQUIRED',
+    } });
+    expect(manual.grader.grade).not.toHaveBeenCalled();
+  });
+
   it('终态任务拒绝继续考试', async () => {
     const passed: ExamAttempt = {
       id: 'attempt-001', tenantId: 'tenant-001', assignmentId: 'assignment-001',
       attemptNumber: 1, submissionRef: 'submission-001',
       questionSetDigest: 'b'.repeat(43), gradingEvidenceId: 'grading-001',
+      questionMode: 'objective', gradingPolicyVersion: 'objective-auto-v1',
+      passingRule: 'score_threshold', manualReviewEvidenceId: null,
+      submissionReason: 'learner',
       scoreBps: 8_500, passed: true, gradedAt: NOW.toISOString(),
     };
     const first = fixture({ attempt: passed });
@@ -391,6 +432,9 @@ describe('KnowledgeApplicationService', () => {
       id: 'attempt-001', tenantId: 'tenant-001', assignmentId: 'assignment-001',
       attemptNumber: 1, submissionRef: 'submission-001',
       questionSetDigest: 'b'.repeat(43), gradingEvidenceId: 'grading-001',
+      questionMode: 'objective', gradingPolicyVersion: 'objective-auto-v1',
+      passingRule: 'score_threshold', manualReviewEvidenceId: null,
+      submissionReason: 'learner',
       scoreBps: 8_500, passed: true, gradedAt: NOW.toISOString(),
     };
     const store = fixture({ attempt: passed });
@@ -410,6 +454,9 @@ describe('KnowledgeApplicationService', () => {
       id: 'attempt-001', tenantId: 'tenant-001', assignmentId: 'assignment-001',
       attemptNumber: 1, submissionRef: 'submission-001',
       questionSetDigest: 'b'.repeat(43), gradingEvidenceId: 'grading-001',
+      questionMode: 'objective', gradingPolicyVersion: 'objective-auto-v1',
+      passingRule: 'score_threshold', manualReviewEvidenceId: null,
+      submissionReason: 'learner',
       scoreBps: 8_500, passed: true, gradedAt: NOW.toISOString(),
     };
     const store = fixture({ attempt: passed });
@@ -430,6 +477,9 @@ describe('KnowledgeApplicationService', () => {
       id: 'attempt-001', tenantId: 'tenant-001', assignmentId: 'assignment-001',
       attemptNumber: 1, submissionRef: 'submission-001',
       questionSetDigest: 'b'.repeat(43), gradingEvidenceId: 'grading-001',
+      questionMode: 'objective', gradingPolicyVersion: 'objective-auto-v1',
+      passingRule: 'score_threshold', manualReviewEvidenceId: null,
+      submissionReason: 'learner',
       scoreBps: 8_500, passed: true, gradedAt: NOW.toISOString(),
     };
     const store = fixture({ attempt: passed });

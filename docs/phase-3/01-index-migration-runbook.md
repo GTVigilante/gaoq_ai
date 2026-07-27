@@ -2,7 +2,7 @@
 
 ## 变更边界
 
-- 招聘/eSign/组织/入职迁移标识固定为 `phase-3-indexes-v1`；Knowledge 使用 `phase-3-knowledge-indexes-v1`，Knowledge 授权搜索追加清单使用 `phase-3-knowledge-search-indexes-v1`，Care 与 Employment 终止引用使用 `phase-3-care-indexes-v1`，招聘渠道使用 `phase-3-recruitment-channel-indexes-v1`，智能简历库使用 `phase-3-recruitment-resume-indexes-v1`，人才全周期使用 `phase-3-talent-lifecycle-indexes-v1`。已发布清单不得通过追加 Schema 改写 checksum。
+- 招聘/eSign/组织/入职迁移标识固定为 `phase-3-indexes-v1`；Knowledge 使用 `phase-3-knowledge-indexes-v1`，Knowledge 授权搜索追加清单使用 `phase-3-knowledge-search-indexes-v1`，Knowledge 考试编排追加清单使用 `phase-3-knowledge-exam-indexes-v1`，Care 与 Employment 终止引用使用 `phase-3-care-indexes-v1`，招聘渠道使用 `phase-3-recruitment-channel-indexes-v1`，智能简历库使用 `phase-3-recruitment-resume-indexes-v1`，人才全周期使用 `phase-3-talent-lifecycle-indexes-v1`。已发布清单不得通过追加 Schema 改写 checksum。
 - 只创建缺失索引，不删除未知索引；同名或同键异配置立即失败关闭。
 - apply 使用 30 分钟数据库租约，完成后重新读取并复验全部索引。
 - 唯一索引创建前必须先在影子库检查重复数据并保留快照；本脚本不会自动删除或合并业务数据。
@@ -32,6 +32,16 @@
    ```
 
 7. 执行候选申请、Offer、eSign 回调、Onboarding 重试、Employment 唯一约束、培训进度源事件重放和答卷提交重放冒烟测试。
+
+   Knowledge 考试编排必须先执行独立追加清单，再运行只读对账：
+
+   ```bash
+   pnpm --filter @gaoq/erp-api migrate:phase3:knowledge-exam-indexes -- --dry-run
+   pnpm --filter @gaoq/erp-api migrate:phase3:knowledge-exam-indexes
+   pnpm --filter @gaoq/erp-api reconcile:phase3:knowledge-exams
+   ```
+
+   死信只能按 [考试编排与评分运行手册](./03-knowledge-exam-orchestration-runbook.md) 经人工审批显式重放。
 
    Knowledge 授权搜索必须先执行独立追加清单，再按“只读审核 → 显式应用 → 对账 → 必要时重建 → 再对账”顺序运行：
 

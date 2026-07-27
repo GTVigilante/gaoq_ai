@@ -7,18 +7,27 @@ import { OnboardingModule } from '../onboarding/onboarding.module.js';
 import { OrgModule } from '../org/org.module.js';
 import { OutboxRecord, OutboxRecordSchema } from '../org/persistence/outbox.schema.js';
 import { KnowledgeApplicationService } from './application/knowledge-application.service.js';
+import { KnowledgeExamRunService } from './application/knowledge-exam-run.service.js';
 import {
   KnowledgeContentVerificationPort,
+  KnowledgeExamOrchestrationPort,
   KnowledgeGradingPort,
   KnowledgeSearchPort,
 } from './application/knowledge-ports.js';
 import {
   HttpKnowledgeContentVerificationAdapter,
+  HttpKnowledgeExamOrchestrationAdapter,
   HttpKnowledgeGradingAdapter,
   HttpKnowledgeSearchAdapter,
   KnowledgeEvidenceHttpClient,
 } from './integration/knowledge-evidence-http.adapters.js';
 import { KnowledgeController } from './knowledge.controller.js';
+import { KnowledgeExamRunController } from './knowledge-exam-run.controller.js';
+import { KnowledgeExamRunRepository } from './persistence/knowledge-exam-run.repository.js';
+import {
+  KnowledgeExamRunRecord,
+  KnowledgeExamRunRecordSchema,
+} from './persistence/knowledge-exam-run.schemas.js';
 import { KnowledgeOutboxWriter } from './persistence/knowledge-outbox.writer.js';
 import { KnowledgeSearchIndexTaskWriter } from './persistence/knowledge-search-index-task.writer.js';
 import {
@@ -54,6 +63,7 @@ import {
       { name: KnowledgeCourseVersionRecord.name, schema: KnowledgeCourseVersionRecordSchema },
       { name: KnowledgeTrainingAssignmentRecord.name, schema: KnowledgeTrainingAssignmentRecordSchema },
       { name: KnowledgeExamAttemptRecord.name, schema: KnowledgeExamAttemptRecordSchema },
+      { name: KnowledgeExamRunRecord.name, schema: KnowledgeExamRunRecordSchema },
       { name: KnowledgeProgressEventRecord.name, schema: KnowledgeProgressEventRecordSchema },
       {
         name: KnowledgeOnboardingAttestationRecord.name,
@@ -68,6 +78,8 @@ import {
   ],
   providers: [
     KnowledgeApplicationService,
+    KnowledgeExamRunService,
+    KnowledgeExamRunRepository,
     CourseVersionRepository,
     TrainingAssignmentRepository,
     ExamAttemptRepository,
@@ -77,6 +89,11 @@ import {
     KnowledgeEvidenceHttpClient,
     HttpKnowledgeGradingAdapter,
     { provide: KnowledgeGradingPort, useExisting: HttpKnowledgeGradingAdapter },
+    HttpKnowledgeExamOrchestrationAdapter,
+    {
+      provide: KnowledgeExamOrchestrationPort,
+      useExisting: HttpKnowledgeExamOrchestrationAdapter,
+    },
     HttpKnowledgeContentVerificationAdapter,
     {
       provide: KnowledgeContentVerificationPort,
@@ -85,7 +102,7 @@ import {
     HttpKnowledgeSearchAdapter,
     { provide: KnowledgeSearchPort, useExisting: HttpKnowledgeSearchAdapter },
   ],
-  controllers: [KnowledgeController],
-  exports: [KnowledgeApplicationService],
+  controllers: [KnowledgeController, KnowledgeExamRunController],
+  exports: [KnowledgeApplicationService, KnowledgeExamRunService],
 })
 export class KnowledgeModule {}

@@ -36,7 +36,10 @@ describe('KnowledgeController', () => {
     expect(scope('listMyAssignments')).toEqual(['erp:knowledge:assignment:read']);
     expect(scope('searchMyKnowledge')).toEqual(['erp:knowledge:search']);
     expect(scope('recordProgress')).toEqual(['erp:integration:knowledge:progress']);
-    expect(scope('gradeExam')).toEqual(['erp:knowledge:exam:grade']);
+    expect(Object.getOwnPropertyDescriptor(
+      KnowledgeController.prototype,
+      'gradeExam',
+    )).toBeUndefined();
     expect(scope('completeAssignment')).toEqual(['erp:knowledge:assignment:complete']);
   });
 

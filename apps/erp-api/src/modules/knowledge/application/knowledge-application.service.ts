@@ -61,6 +61,14 @@ export interface CourseSummary extends Record<string, unknown> {
   readonly title: string;
   readonly examRequired: boolean;
   readonly passingScoreBps: number | null;
+  readonly questionMode: CourseVersion['questionMode'];
+  readonly timeLimitMinutes: number | null;
+  readonly maxAttempts: number | null;
+  readonly gradingPolicyVersion: string | null;
+  readonly passingRule: CourseVersion['passingRule'];
+  readonly gradingSlaMinutes: number | null;
+  readonly manualReviewSlaMinutes: number | null;
+  readonly manualReviewRequired: boolean;
   readonly status: CourseVersion['status'];
   readonly version: number;
 }
@@ -144,6 +152,13 @@ export class KnowledgeApplicationService {
       readonly questionBankRef?: string;
       readonly questionBankDigest?: string;
       readonly passingScoreBps?: number;
+      readonly questionMode?: 'objective' | 'subjective' | 'mixed';
+      readonly timeLimitMinutes?: number;
+      readonly maxAttempts?: number;
+      readonly gradingPolicyVersion?: string;
+      readonly passingRule?: 'score_threshold' | 'all_required_sections';
+      readonly gradingSlaMinutes?: number;
+      readonly manualReviewSlaMinutes?: number;
       readonly audienceMode?: 'assigned_only' | 'employment_scope';
       readonly audienceDepartmentIds?: readonly string[];
       readonly audiencePositionIds?: readonly string[];
@@ -458,12 +473,26 @@ export class KnowledgeApplicationService {
       return { attempt: attemptSummary(existingAttempt) };
     }
     const course = await this.requireCourse(assignment.courseVersionId);
+    const maxAttempts = course.maxAttempts;
+    const questionMode = course.questionMode;
     if (
       !assignment.examRequired || course.questionBankRef === null ||
-      course.questionBankDigest === null || course.passingScoreBps === null
+      course.questionBankDigest === null || course.passingScoreBps === null ||
+      maxAttempts === null || questionMode === null
     ) throw new ConflictException({
       code: 'KNOWLEDGE_EXAM_NOT_CONFIGURED', message: '该培训任务未配置考试',
     });
+    if (questionMode !== 'objective' || course.manualReviewRequired) {
+      throw new ConflictException({
+        code: 'KNOWLEDGE_EXAM_RUN_REQUIRED',
+        message: '主观题或混合题必须使用可靠考试运行流程',
+      });
+    }
+    if (await this.attempts.countByAssignment(assignmentId) >= maxAttempts) {
+      throw new ConflictException({
+        code: 'KNOWLEDGE_EXAM_ATTEMPTS_EXHAUSTED', message: '已达到课程最大考试次数',
+      });
+    }
     const graded = await this.grader.grade({
       tenantId: this.context.getTenantRequired().tenantId,
       assignmentId, courseVersionId: course.id,
@@ -492,11 +521,18 @@ export class KnowledgeApplicationService {
         if (freshAssignment.courseVersionId !== course.id) throw new ConflictException({
           code: 'KNOWLEDGE_ASSIGNMENT_COURSE_CHANGED', message: '培训任务课程引用已变化',
         });
+        const attemptNumber = await this.attempts.nextAttemptNumber(assignmentId, session);
+        if (attemptNumber > maxAttempts) throw new ConflictException({
+          code: 'KNOWLEDGE_EXAM_ATTEMPTS_EXHAUSTED', message: '已达到课程最大考试次数',
+        });
         const attempt = createExamAttempt({
           id: createEventId(new Date()), tenantId: freshAssignment.tenantId,
-          assignmentId, attemptNumber: await this.attempts.nextAttemptNumber(assignmentId, session),
+          assignmentId, attemptNumber,
           submissionRef, questionSetDigest: graded.questionSetDigest,
           gradingEvidenceId: graded.gradingEvidenceId, scoreBps: graded.scoreBps,
+          questionMode,
+          gradingPolicyVersion: course.gradingPolicyVersion ?? 'objective-auto-v1',
+          passingRule: course.passingRule ?? 'score_threshold',
           passingScoreBps: course.passingScoreBps ?? 0, serverGradingVerified: true,
         }, new Date());
         await this.attempts.insert(attempt, session);
@@ -691,7 +727,17 @@ function courseSummary(course: CourseVersion): CourseSummary {
   return Object.freeze({
     id: course.id, courseCode: course.courseCode, revision: course.revision,
     title: course.title, examRequired: course.questionBankRef !== null,
-    passingScoreBps: course.passingScoreBps, status: course.status, version: course.version,
+    passingScoreBps: course.passingScoreBps,
+    questionMode: course.questionMode,
+    timeLimitMinutes: course.timeLimitMinutes,
+    maxAttempts: course.maxAttempts,
+    gradingPolicyVersion: course.gradingPolicyVersion,
+    passingRule: course.passingRule,
+    gradingSlaMinutes: course.gradingSlaMinutes,
+    manualReviewSlaMinutes: course.manualReviewSlaMinutes,
+    manualReviewRequired: course.manualReviewRequired,
+    status: course.status,
+    version: course.version,
   });
 }
 

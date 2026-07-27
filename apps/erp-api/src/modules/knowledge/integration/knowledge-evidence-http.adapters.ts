@@ -13,6 +13,11 @@ import { z } from 'zod';
 import type { AppEnvironment } from '../../../config/environment.js';
 import {
   KnowledgeContentVerificationPort,
+  KnowledgeExamOrchestrationPort,
+  type KnowledgeExamFinalizationReceipt,
+  type KnowledgeExamOrchestrationInput,
+  type KnowledgeExamStartReceipt,
+  type KnowledgeExamTimeoutReceipt,
   KnowledgeGradingPort,
   type KnowledgeGradingResult,
   KnowledgeSearchPort,
@@ -52,6 +57,57 @@ const gradingReceiptSchema = z.object({
   questionSetDigest: z.string().regex(DIGEST),
   gradingEvidenceId: z.string().regex(ULID),
   scoreBps: z.number().int().min(0).max(10_000),
+}).strict();
+const examBindingSchema = z.object({
+  runId: z.string().regex(ULID),
+  tenantId: z.string().regex(SAFE_ID),
+  assignmentId: z.string().regex(SAFE_ID),
+  courseVersionId: z.string().regex(SAFE_ID),
+  attemptNumber: z.number().int().min(1).max(10),
+  questionBankRef: z.string().regex(SAFE_ID),
+  questionBankDigest: z.string().regex(DIGEST),
+  questionMode: z.enum(['objective', 'subjective', 'mixed']),
+  gradingPolicyVersion: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,63}$/u),
+  passingRule: z.enum(['score_threshold', 'all_required_sections']),
+  passingScoreBps: z.number().int().min(0).max(10_000),
+  timeLimitMinutes: z.number().int().min(5).max(240),
+  manualReviewRequired: z.boolean(),
+  gradingSlaMinutes: z.number().int().min(1).max(60),
+  manualReviewSlaMinutes: z.number().int().min(30).max(10_080),
+});
+const examStartReceiptSchema = examBindingSchema.extend({
+  gatewaySessionRef: z.string().regex(SAFE_ID),
+  questionSetDigest: z.string().regex(DIGEST),
+  startedAt: z.string().datetime({ offset: true }),
+  deadlineAt: z.string().datetime({ offset: true }),
+}).strict();
+const examTimeoutReceiptSchema = examBindingSchema.extend({
+  gatewaySessionRef: z.string().regex(SAFE_ID),
+  questionSetDigest: z.string().regex(DIGEST),
+  deadlineAt: z.string().datetime({ offset: true }),
+  submissionRef: z.string().regex(SAFE_ID),
+  submittedAt: z.string().datetime({ offset: true }),
+}).strict();
+const examFinalizationReceiptSchema = examBindingSchema.extend({
+  gatewaySessionRef: z.string().regex(SAFE_ID),
+  questionSetDigest: z.string().regex(DIGEST),
+  submissionRef: z.string().regex(SAFE_ID),
+  timedOut: z.boolean(),
+  submittedAt: z.string().datetime({ offset: true }),
+  result: z.discriminatedUnion('status', [
+    z.object({
+      status: z.literal('pending_review'),
+      reviewEvidenceId: z.string().regex(ULID),
+      reviewRequestedAt: z.string().datetime({ offset: true }),
+    }).strict(),
+    z.object({
+      status: z.literal('graded'),
+      scoreBps: z.number().int().min(0).max(10_000),
+      passed: z.boolean(),
+      gradingEvidenceId: z.string().regex(ULID),
+      gradedAt: z.string().datetime({ offset: true }),
+    }).strict(),
+  ]),
 }).strict();
 const searchReceiptSchema = z.object({
   tenantId: z.string().regex(SAFE_ID),
@@ -173,6 +229,91 @@ export class KnowledgeEvidenceHttpClient {
     });
   }
 
+  async startExam(
+    input: KnowledgeExamOrchestrationInput,
+  ): Promise<KnowledgeExamStartReceipt> {
+    const parsed = examStartReceiptSchema.safeParse(await this.post(
+      '/v1/exam-runs/start',
+      input,
+      digest(['exam-start', input.tenantId, input.runId, input.gradingPolicyVersion]),
+      'evidence',
+    ));
+    if (!parsed.success || !matchesExamBinding(parsed.data, input)) {
+      throw new Error('KNOWLEDGE_EXAM_START_RECEIPT_INVALID');
+    }
+    const startedAt = new Date(parsed.data.startedAt);
+    const deadlineAt = new Date(parsed.data.deadlineAt);
+    if (
+      deadlineAt.getTime() - startedAt.getTime() !== input.timeLimitMinutes * 60_000 ||
+      startedAt.getTime() < Date.now() - 5 * 60_000 ||
+      startedAt.getTime() > Date.now() + 5 * 60_000
+    ) throw new Error('KNOWLEDGE_EXAM_START_TIME_INVALID');
+    return Object.freeze({
+      gatewaySessionRef: parsed.data.gatewaySessionRef,
+      questionSetDigest: parsed.data.questionSetDigest,
+      startedAt: parsed.data.startedAt,
+      deadlineAt: parsed.data.deadlineAt,
+    });
+  }
+
+  async finalizeExam(
+    input: KnowledgeExamOrchestrationInput & {
+      readonly gatewaySessionRef: string;
+      readonly questionSetDigest: string;
+      readonly submissionRef: string;
+      readonly timedOut: boolean;
+      readonly submittedAt: string;
+    },
+  ): Promise<KnowledgeExamFinalizationReceipt> {
+    return this.examFinalization('/v1/exam-runs/finalize', input);
+  }
+
+  async timeoutExam(
+    input: KnowledgeExamOrchestrationInput & {
+      readonly gatewaySessionRef: string;
+      readonly questionSetDigest: string;
+      readonly deadlineAt: string;
+    },
+  ): Promise<KnowledgeExamTimeoutReceipt> {
+    const parsed = examTimeoutReceiptSchema.safeParse(await this.post(
+      '/v1/exam-runs/timeout',
+      input,
+      digest([
+        'exam-timeout',
+        input.tenantId,
+        input.runId,
+        input.gatewaySessionRef,
+        input.deadlineAt,
+      ]),
+      'evidence',
+    ));
+    if (
+      !parsed.success ||
+      !matchesExamBinding(parsed.data, input) ||
+      parsed.data.gatewaySessionRef !== input.gatewaySessionRef ||
+      parsed.data.questionSetDigest !== input.questionSetDigest ||
+      parsed.data.deadlineAt !== input.deadlineAt ||
+      parsed.data.submittedAt !== input.deadlineAt
+    ) throw new Error('KNOWLEDGE_EXAM_TIMEOUT_RECEIPT_INVALID');
+    return Object.freeze({
+      submissionRef: parsed.data.submissionRef,
+      submittedAt: parsed.data.submittedAt,
+    });
+  }
+
+  async examStatus(
+    input: KnowledgeExamOrchestrationInput & {
+      readonly gatewaySessionRef: string;
+      readonly questionSetDigest: string;
+      readonly submissionRef: string;
+      readonly reviewEvidenceId: string;
+      readonly timedOut: boolean;
+      readonly submittedAt: string;
+    },
+  ): Promise<KnowledgeExamFinalizationReceipt> {
+    return this.examFinalization('/v1/exam-runs/status', input);
+  }
+
   async search(
     input: Parameters<KnowledgeSearchPort['search']>[0],
   ): Promise<KnowledgeSearchResult> {
@@ -263,10 +404,14 @@ export class KnowledgeEvidenceHttpClient {
     path:
       | '/v1/courses/verify'
       | '/v1/submissions/grade'
+      | '/v1/exam-runs/start'
+      | '/v1/exam-runs/timeout'
+      | '/v1/exam-runs/finalize'
+      | '/v1/exam-runs/status'
       | '/v1/search'
       | '/v1/indexes/courses/upsert'
       | '/v1/indexes/courses/delete',
-    body: Readonly<Record<string, unknown>>,
+    body: object,
     idempotencyKey: string,
     gateway: 'evidence' | 'search',
   ): Promise<unknown> {
@@ -310,6 +455,63 @@ export class KnowledgeEvidenceHttpClient {
     verifyReceipt(bytes, response.headers, signingPublicKey, signingKeyId, gateway);
     return parseJson(bytes, gateway);
   }
+
+  private async examFinalization(
+    path: '/v1/exam-runs/finalize' | '/v1/exam-runs/status',
+    input: KnowledgeExamOrchestrationInput & {
+      readonly gatewaySessionRef: string;
+      readonly questionSetDigest: string;
+      readonly submissionRef: string;
+      readonly timedOut: boolean;
+      readonly submittedAt: string;
+    },
+  ): Promise<KnowledgeExamFinalizationReceipt> {
+    const parsed = examFinalizationReceiptSchema.safeParse(await this.post(
+      path,
+      input,
+      digest([
+        'exam-finalize',
+        path,
+        input.tenantId,
+        input.runId,
+        input.gatewaySessionRef,
+        input.submissionRef,
+      ]),
+      'evidence',
+    ));
+    if (
+      !parsed.success ||
+      !matchesExamBinding(parsed.data, input) ||
+      parsed.data.gatewaySessionRef !== input.gatewaySessionRef ||
+      parsed.data.questionSetDigest !== input.questionSetDigest ||
+      parsed.data.submissionRef !== input.submissionRef ||
+      parsed.data.timedOut !== input.timedOut ||
+      parsed.data.submittedAt !== input.submittedAt
+    ) throw new Error('KNOWLEDGE_EXAM_FINALIZATION_RECEIPT_INVALID');
+    if (
+      path === '/v1/exam-runs/status' &&
+      parsed.data.result.status === 'pending_review' &&
+      'reviewEvidenceId' in input &&
+      parsed.data.result.reviewEvidenceId !== input.reviewEvidenceId
+    ) throw new Error('KNOWLEDGE_EXAM_REVIEW_RECEIPT_MISMATCH');
+    const resultTime = new Date(
+      parsed.data.result.status === 'graded'
+        ? parsed.data.result.gradedAt
+        : parsed.data.result.reviewRequestedAt,
+    );
+    const submittedAt = new Date(input.submittedAt);
+    if (
+      resultTime.getTime() < submittedAt.getTime() ||
+      resultTime.getTime() > Date.now() + 5 * 60_000 ||
+      (
+        parsed.data.result.status === 'graded' &&
+        input.passingRule === 'score_threshold' &&
+        parsed.data.result.passed !==
+          (parsed.data.result.scoreBps >= input.passingScoreBps)
+      )
+    ) throw new Error('KNOWLEDGE_EXAM_FINALIZATION_RESULT_INVALID');
+    return Object.freeze({ ...parsed.data.result });
+  }
 }
 
 @Injectable()
@@ -320,6 +522,50 @@ export class HttpKnowledgeGradingAdapter extends KnowledgeGradingPort {
     input: Parameters<KnowledgeGradingPort['grade']>[0],
   ): Promise<KnowledgeGradingResult> {
     return this.client.grade(input);
+  }
+}
+
+@Injectable()
+export class HttpKnowledgeExamOrchestrationAdapter extends KnowledgeExamOrchestrationPort {
+  constructor(private readonly client: KnowledgeEvidenceHttpClient) { super(); }
+
+  override start(input: KnowledgeExamOrchestrationInput): Promise<KnowledgeExamStartReceipt> {
+    return this.client.startExam(input);
+  }
+
+  override timeout(
+    input: KnowledgeExamOrchestrationInput & {
+      readonly gatewaySessionRef: string;
+      readonly questionSetDigest: string;
+      readonly deadlineAt: string;
+    },
+  ): Promise<KnowledgeExamTimeoutReceipt> {
+    return this.client.timeoutExam(input);
+  }
+
+  override finalize(
+    input: KnowledgeExamOrchestrationInput & {
+      readonly gatewaySessionRef: string;
+      readonly questionSetDigest: string;
+      readonly submissionRef: string;
+      readonly timedOut: boolean;
+      readonly submittedAt: string;
+    },
+  ): Promise<KnowledgeExamFinalizationReceipt> {
+    return this.client.finalizeExam(input);
+  }
+
+  override status(
+    input: KnowledgeExamOrchestrationInput & {
+      readonly gatewaySessionRef: string;
+      readonly questionSetDigest: string;
+      readonly submissionRef: string;
+      readonly reviewEvidenceId: string;
+      readonly timedOut: boolean;
+      readonly submittedAt: string;
+    },
+  ): Promise<KnowledgeExamFinalizationReceipt> {
+    return this.client.examStatus(input);
   }
 }
 
@@ -523,6 +769,43 @@ function validAudienceCombination(input: {
   return input.audienceMode === 'assigned_only'
     ? input.audienceDepartmentIds.length === 0 && input.audiencePositionIds.length === 0
     : input.audienceDepartmentIds.length > 0 || input.audiencePositionIds.length > 0;
+}
+
+function matchesExamBinding(
+  receipt: {
+    readonly runId: string;
+    readonly tenantId: string;
+    readonly assignmentId: string;
+    readonly courseVersionId: string;
+    readonly attemptNumber: number;
+    readonly questionBankRef: string;
+    readonly questionBankDigest: string;
+    readonly questionMode: 'objective' | 'subjective' | 'mixed';
+    readonly gradingPolicyVersion: string;
+    readonly passingRule: 'score_threshold' | 'all_required_sections';
+    readonly passingScoreBps: number;
+    readonly timeLimitMinutes: number;
+    readonly manualReviewRequired: boolean;
+    readonly gradingSlaMinutes: number;
+    readonly manualReviewSlaMinutes: number;
+  },
+  input: KnowledgeExamOrchestrationInput,
+): boolean {
+  return receipt.runId === input.runId &&
+    receipt.tenantId === input.tenantId &&
+    receipt.assignmentId === input.assignmentId &&
+    receipt.courseVersionId === input.courseVersionId &&
+    receipt.attemptNumber === input.attemptNumber &&
+    receipt.questionBankRef === input.questionBankRef &&
+    receipt.questionBankDigest === input.questionBankDigest &&
+    receipt.questionMode === input.questionMode &&
+    receipt.gradingPolicyVersion === input.gradingPolicyVersion &&
+    receipt.passingRule === input.passingRule &&
+    receipt.passingScoreBps === input.passingScoreBps &&
+    receipt.timeLimitMinutes === input.timeLimitMinutes &&
+    receipt.manualReviewRequired === input.manualReviewRequired &&
+    receipt.gradingSlaMinutes === input.gradingSlaMinutes &&
+    receipt.manualReviewSlaMinutes === input.manualReviewSlaMinutes;
 }
 
 function safeBaseUrl(value: string, gateway: 'evidence' | 'search'): string {

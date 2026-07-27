@@ -211,6 +211,14 @@ const onboardingSchema = z.object({
 const knowledgeCourseSchema = z.object({
   id: z.string(), courseCode: z.string(), revision: z.number().int().positive(), title: z.string(),
   examRequired: z.boolean(), passingScoreBps: z.number().int().min(0).max(10_000).nullable(),
+  questionMode: z.enum(['objective', 'subjective', 'mixed']).nullable(),
+  timeLimitMinutes: z.number().int().min(5).max(240).nullable(),
+  maxAttempts: z.number().int().min(1).max(10).nullable(),
+  gradingPolicyVersion: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,63}$/u).nullable(),
+  passingRule: z.enum(['score_threshold', 'all_required_sections']).nullable(),
+  gradingSlaMinutes: z.number().int().min(1).max(60).nullable(),
+  manualReviewSlaMinutes: z.number().int().min(30).max(10_080).nullable(),
+  manualReviewRequired: z.boolean(),
   status: z.enum(['draft', 'published', 'retired']), version: z.number().int().positive(),
 });
 const knowledgeAssignmentSchema = z.object({
@@ -219,6 +227,26 @@ const knowledgeAssignmentSchema = z.object({
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   status: z.enum(['assigned', 'in_progress', 'completed', 'expired']),
   progressBps: z.number().int().min(0).max(10_000), version: z.number().int().positive(),
+});
+const knowledgeExamRunSchema = z.object({
+  id: z.string(),
+  assignmentId: z.string(),
+  courseVersionId: z.string(),
+  attemptNumber: z.number().int().min(1).max(10),
+  questionMode: z.enum(['objective', 'subjective', 'mixed']),
+  gradingPolicyVersion: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,63}$/u),
+  passingRule: z.enum(['score_threshold', 'all_required_sections']),
+  gradingSlaMinutes: z.number().int().min(1).max(60),
+  manualReviewSlaMinutes: z.number().int().min(30).max(10_080),
+  manualReviewRequired: z.boolean(),
+  status: z.enum(['starting', 'in_progress', 'submitted', 'pending_review', 'graded', 'dead']),
+  startedAt: z.string().datetime({ offset: true }).nullable(),
+  deadlineAt: z.string().datetime({ offset: true }).nullable(),
+  submittedAt: z.string().datetime({ offset: true }).nullable(),
+  submissionReason: z.enum(['learner', 'timeout']).nullable(),
+  timedOut: z.boolean(),
+  finalAttemptId: z.string().nullable(),
+  version: z.number().int().positive(),
 });
 const knowledgeSearchItemSchema = z.object({
   course: knowledgeCourseSchema,
@@ -761,6 +789,25 @@ export class McpRuntimeService {
     );
 
     server.registerResource(
+      'knowledge-exam-run',
+      new ResourceTemplate('erp://knowledge/exam-runs/{id}', { list: undefined }),
+      {
+        title: '本人考试运行脱敏状态',
+        description: '读取本人考试运行状态与时限；不返回题目、答案、提交引用或评分证据。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getKnowledgeExamRun(requiredResourceId(id), extra);
+        if (result.isError === true) throw new Error('无权读取考试运行');
+        return { contents: [{
+          uri: uri.toString(),
+          mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
+    server.registerResource(
       'knowledge-search',
       new ResourceTemplate('erp://knowledge/search/{query}', { list: undefined }),
       {
@@ -1188,6 +1235,24 @@ export class McpRuntimeService {
     );
 
     server.registerPrompt(
+      'knowledge_exam_run_status_guide',
+      {
+        title: '考试运行状态检查指南',
+        description: '指导 AI 只读说明本人考试状态、时限和复核进度。',
+        argsSchema: { examRunId: recruitmentIdSchema },
+      },
+      ({ examRunId }) => ({
+        messages: [{
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `请仅用 knowledge_exam_run_get 读取考试运行 ${examRunId}，说明当前状态、截止时间以及是否等待人工复核。不要索取或推断题目、答案、答卷、提交引用、评分证据或网关会话；不要代替用户提交、重放或修改考试。`,
+          },
+        }],
+      }),
+    );
+
+    server.registerPrompt(
       'knowledge_search_guide',
       {
         title: '本人授权知识检索指南',
@@ -1606,6 +1671,18 @@ export class McpRuntimeService {
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
       },
       async ({ id }, extra) => this.tools.getKnowledgeAssignment(id, extra),
+    );
+
+    server.registerTool(
+      'knowledge_exam_run_get',
+      {
+        title: '查询本人考试运行脱敏状态',
+        description: '返回状态、时限和人工复核进度，不返回题目、答案、提交引用或评分证据。风险等级 R0。',
+        inputSchema: { id: recruitmentIdSchema },
+        outputSchema: z.object({ examRun: knowledgeExamRunSchema }),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      },
+      async ({ id }, extra) => this.tools.getKnowledgeExamRun(id, extra),
     );
 
     server.registerTool(
