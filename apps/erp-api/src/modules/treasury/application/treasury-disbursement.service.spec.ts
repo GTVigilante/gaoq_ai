@@ -155,8 +155,10 @@ function assemble(
     return result;
   }) };
   let archivedBody = '';
+  let archivedBytes: Buffer | null = null;
   const archive = { put: vi.fn((request: { readonly bytes: Buffer }) => {
     archivedBody = request.bytes.toString('utf8');
+    archivedBytes = request.bytes;
     return Promise.resolve({
       objectRef: 'worm/treasury/object-001', receiptId: 'receipt-001', immutable: true as const,
     });
@@ -196,7 +198,8 @@ function assemble(
   );
   return {
     context, crypto, payroll, strongAuth, accounts, batches, instructions,
-    idempotency, archive, bankGateway, archivedBody: () => archivedBody, outbox,
+    idempotency, archive, bankGateway, archivedBody: () => archivedBody,
+    archivedBytes: () => archivedBytes, outbox,
     profiles, approvals, productionAuthorization, service,
     lockedSource,
     getBatch: () => batch,
@@ -432,6 +435,7 @@ describe('TreasuryDisbursementService', () => {
     expect(persistence).not.toMatch(/622200000000000[12]|张三|高企科技/u);
     expect(store.archivedBody()).toContain('<Document xmlns=');
     expect(store.archivedBody()).toContain('8395.00');
+    expect(store.archivedBytes()?.every((byte) => byte === 0)).toBe(true);
   });
 
   it('制备人与工资锁定人相同则在创建批次前失败', async () => {
