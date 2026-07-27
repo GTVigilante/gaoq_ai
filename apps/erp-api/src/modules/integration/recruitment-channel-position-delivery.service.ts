@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { createEventId } from '@gaoq/shared-utils';
 import type { Model } from 'mongoose';
@@ -29,6 +29,7 @@ const MAX_ATTEMPTS = 12;
 @Injectable()
 export class RecruitmentChannelPositionDeliveryService {
   private readonly workerId = `recruitment-channel-${randomUUID()}`;
+  private readonly logger = new Logger(RecruitmentChannelPositionDeliveryService.name);
 
   constructor(
     @InjectModel(RecruitmentChannelPositionDeliveryRecord.name)
@@ -107,15 +108,7 @@ export class RecruitmentChannelPositionDeliveryService {
     const position = await this.management.getPosition(delivery.positionId);
     if (position.version > delivery.positionVersion) {
       await this.finish(delivery, 'superseded', null);
-      await this.audit.record({
-        action: 'integration.recruitment_channel.position.deliver',
-        resourceType: 'recruitment_position', resourceId: delivery.positionId,
-        riskLevel: 'R2', outcome: 'success', metadata: {
-          channelCode: delivery.channelCode, action: delivery.action,
-          targetStatus: delivery.targetStatus, positionVersion: delivery.positionVersion,
-          result: 'superseded',
-        },
-      });
+      await this.auditSuccessAfterCommit(delivery, 'superseded');
       return;
     }
     if (position.version !== delivery.positionVersion || position.status !== delivery.targetStatus) {
@@ -171,14 +164,7 @@ export class RecruitmentChannelPositionDeliveryService {
     )[0];
     if (fingerprint === undefined) throw new Error('RECRUITMENT_CHANNEL_KEY_INVALID');
     await this.finish(delivery, 'succeeded', fingerprint);
-    await this.audit.record({
-      action: 'integration.recruitment_channel.position.deliver',
-      resourceType: 'recruitment_position', resourceId: delivery.positionId,
-      riskLevel: 'R2', outcome: 'success', metadata: {
-        channelCode: delivery.channelCode, action: delivery.action,
-        targetStatus: delivery.targetStatus, positionVersion: delivery.positionVersion,
-      },
-    });
+    await this.auditSuccessAfterCommit(delivery, 'succeeded');
   }
 
   private async ensurePositionMapping(
@@ -276,7 +262,7 @@ export class RecruitmentChannelPositionDeliveryService {
   private async fail(delivery: RecruitmentChannelPositionDeliveryRecord, code: string): Promise<void> {
     const exhausted = delivery.attempts >= MAX_ATTEMPTS;
     const now = new Date();
-    await this.deliveries.updateOne(
+    const updated = await this.deliveries.updateOne(
       {
         tenantId: delivery.tenantId, eventId: delivery.eventId,
         bindingId: delivery.bindingId, status: 'processing', lockedBy: this.workerId,
@@ -288,6 +274,34 @@ export class RecruitmentChannelPositionDeliveryService {
       } },
       { runValidators: true },
     );
+    if (updated.modifiedCount !== 1) {
+      throw new Error('RECRUITMENT_CHANNEL_POSITION_FAILURE_LEASE_LOST');
+    }
+  }
+
+  private async auditSuccessAfterCommit(
+    delivery: RecruitmentChannelPositionDeliveryRecord,
+    result: 'succeeded' | 'superseded',
+  ): Promise<void> {
+    try {
+      await this.audit.record({
+        action: 'integration.recruitment_channel.position.deliver',
+        resourceType: 'recruitment_position', resourceId: delivery.positionId,
+        riskLevel: 'R2', outcome: 'success', metadata: {
+          channelCode: delivery.channelCode, action: delivery.action,
+          targetStatus: delivery.targetStatus, positionVersion: delivery.positionVersion,
+          result,
+        },
+      });
+    } catch {
+      this.logger.error({
+        code: 'RECRUITMENT_CHANNEL_POSITION_AUDIT_AFTER_COMMIT_FAILED',
+        tenantId: delivery.tenantId,
+        eventId: delivery.eventId,
+        positionId: delivery.positionId,
+        result,
+      });
+    }
   }
 }
 
