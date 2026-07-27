@@ -170,11 +170,14 @@ export class KnowledgeApplicationService {
     key: string,
   ): Promise<{ readonly course: CourseSummary }> {
     this.assertScope('erp:knowledge:course:publish');
-    const current = await this.requireCourse(id);
-    const verification = await this.verifier.verify(current);
     return this.run(async () => this.idempotency.execute(
       'knowledge.course.publish', key, { id, expectedVersion }, async (session) => {
         const fresh = await this.requireCourse(id, session);
+        /**
+         * 校验放在幂等事务的新执行分支内：已完成请求直接重放快照，不再依赖外部校验器；
+         * 首次执行则校验事务内读取的精确课程版本，避免校验对象与写入对象错位。
+         */
+        const verification = await this.verifier.verify(fresh);
         const course = publishCourseVersion(fresh, {
           tenantId: this.context.getTenantRequired().tenantId,
           expectedVersion,
