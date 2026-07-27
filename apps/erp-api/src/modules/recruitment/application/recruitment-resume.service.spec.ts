@@ -34,6 +34,21 @@ function trusted<T>(context: TenantContextService, action: () => T): T {
   }, action);
 }
 
+function workerTrusted<T>(context: TenantContextService, action: () => T): T {
+  return context.run({
+    tenant: { tenantId: 'tenant-001', source: 'system_job' },
+    actor: {
+      actorId: 'recruitment-resume-worker',
+      actorType: 'system_job',
+      tenantId: 'tenant-001',
+      roleCodes: [],
+      scopes: ['erp:recruitment:resume:process'],
+      departmentIds: [],
+      traceId: 'trace-resume-worker-001',
+    },
+  }, action);
+}
+
 describe('RecruitmentResumeService', () => {
   it('发起分析时从可信租户校验候选人并异步入队', async () => {
     const context = new TenantContextService();
@@ -173,7 +188,7 @@ describe('RecruitmentResumeService', () => {
       ai,
     );
 
-    const result = await trusted(context, () => service.processAnalysis(ANALYSIS_ID));
+    const result = await workerTrusted(context, () => service.processAnalysis(ANALYSIS_ID));
 
     expect(result).toMatchObject({ status: 'review_required', aiModel: 'gpt-5.6-luna' });
     const update = records.findOneAndUpdate.mock.calls[1]?.[1] as {
@@ -187,6 +202,37 @@ describe('RecruitmentResumeService', () => {
     expect(update.$set.tags).toEqual([
       expect.objectContaining({ code: 'role_engineering', status: 'suggested' }),
     ]);
+  });
+
+  it('普通用户即使伪造 Worker Scope 也不能执行简历分析', async () => {
+    const context = new TenantContextService();
+    const records = { findOneAndUpdate: vi.fn() };
+    const service = new RecruitmentResumeService(
+      context,
+      {} as IdempotencyService,
+      candidateRepository(),
+      { append: vi.fn() } as unknown as RecruitmentOutboxWriter,
+      records as unknown as Model<RecruitmentResumeAnalysisDocument>,
+      {} as Queue<RecruitmentResumeAnalysisJobData>,
+      {} as RecruitmentResumeSourceGateway,
+      {} as RecruitmentResumeAiAnalyzer,
+    );
+
+    await expect(context.run({
+      tenant: { tenantId: 'tenant-001', source: 'access_token' },
+      actor: {
+        actorId: 'spoofed-user',
+        actorType: 'user',
+        tenantId: 'tenant-001',
+        roleCodes: [],
+        scopes: ['erp:recruitment:resume:process'],
+        departmentIds: [],
+        traceId: 'trace-spoofed-worker',
+      },
+    }, () => service.processAnalysis(ANALYSIS_ID))).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_RESUME_PROCESSOR_DENIED' },
+    });
+    expect(records.findOneAndUpdate).not.toHaveBeenCalled();
   });
 });
 

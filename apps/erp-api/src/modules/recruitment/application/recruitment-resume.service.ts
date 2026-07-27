@@ -274,6 +274,14 @@ export class RecruitmentResumeService {
    * Worker 入口；正文只存在于当前函数内存，不写日志、不写库。
    */
   async processAnalysis(id: string): Promise<RecruitmentResumeAnalysisView | null> {
+    const actor = this.context.getActorRequired();
+    if (
+      actor.actorType !== 'system_job' ||
+      !actor.scopes.includes('erp:recruitment:resume:process')
+    ) throw new ForbiddenException({
+      code: 'RECRUITMENT_RESUME_PROCESSOR_DENIED',
+      message: '简历分析只允许受信任 Worker 执行',
+    });
     this.assertAnalysisId(id);
     const now = new Date();
     const claimed = await this.analyses.findOneAndUpdate(
