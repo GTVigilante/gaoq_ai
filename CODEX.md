@@ -66,6 +66,11 @@
   不得接入 NAS；仓库当前为 Private，Hosted Actions 在任何步骤执行前被账户付款
   或 Spending limit 拦截。在免费额度恢复或用户明确批准公开仓库前，外部门禁
   保持未执行，不得记为代码测试失败或门禁通过。
+- 2026-07-27 已完成开放 Issue 与 Phase 0–6 仓库实施证据审计，并正式定义
+  `status:implementation-delivered` 与 `status:external-acceptance` 的并存规则；
+  新增 Phase 3 Issue 已归入唯一 Milestone。GitHub Project 仍由 Issue #41 跟踪，
+  因当前令牌缺少最小 `project` 权限而保持阻塞；详见
+  `docs/implementation-completion-audit.md`。
 
 ## 目录约定
 

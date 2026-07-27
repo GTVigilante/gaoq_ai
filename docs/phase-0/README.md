@@ -15,6 +15,10 @@
 | 06 | [GitHub 治理规范](./06-github-governance.md) | 规定 Milestone、Issue、分支、PR、DoR 和 DoD |
 | 07 | [专业算薪系统边界](./07-payroll-system-boundary.md) | 规定 ERP 主数据、统一身份与独立工资事实源边界 |
 
+跨阶段的仓库实现、外部验收和 GitHub 阻塞边界统一见
+[仓库实施完成度审计](../implementation-completion-audit.md)。该审计是状态索引，
+不降低本目录任何强制规范或阶段退出条件。
+
 ## 强制性用语
 
 - “必须/禁止”：不可豁免，除非安全负责人和架构负责人共同批准 ADR。

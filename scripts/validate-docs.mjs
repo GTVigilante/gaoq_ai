@@ -17,6 +17,7 @@ const requiredDocuments = [
   'docs/phase-0/04-mcp-service-standard.md',
   'docs/phase-0/05-security-quality-cutover.md',
   'docs/phase-0/06-github-governance.md',
+  'docs/implementation-completion-audit.md',
   'docs/phase-1/README.md',
   'docs/phase-2/README.md',
   'docs/phase-3/README.md',
@@ -55,6 +56,24 @@ const requiredGovernanceMarkers = new Map([
   ['AGENTS.md', ['Phase 0–6', '真实联调', '标准 MCP']],
   ['CODEX.md', ['Phase 0–6', 'pnpm check', '生产完成', '.codex/AGENTS.md']],
   ['.codex/AGENTS.md', ['../AGENTS.md', '../CODEX.md', 'wordpress backup/', 'R3']],
+]);
+
+const deliveryBoundaryDocuments = [
+  'docs/phase-0/06-github-governance.md',
+  'docs/implementation-completion-audit.md',
+  'docs/phase-3/README.md',
+];
+const forbiddenDeliveryBoundaryPatterns = [
+  /状态更正/u,
+  /校友下游数据删除证明仍未交付/u,
+];
+const requiredDeliveryBoundaryMarkers = new Map([
+  ['docs/phase-0/06-github-governance.md',
+    ['status:implementation-delivered', 'status:external-acceptance', 'Issue #41']],
+  ['docs/implementation-completion-audit.md',
+    ['仓库实施已交付', '外部验收待完成', '生产完成', 'PAYROLL_SYSTEM_MODE=external']],
+  ['docs/phase-3/README.md',
+    ['Phase 3 只能标记“代码已交付”', '不得标记生产完成']],
 ]);
 
 /**
@@ -141,6 +160,24 @@ for (const relativePath of governanceDocuments) {
     }
   } catch {
     // 缺失文件已在上一阶段报告。
+  }
+}
+
+for (const relativePath of deliveryBoundaryDocuments) {
+  try {
+    const content = await readFile(resolve(repoRoot, relativePath), 'utf8');
+    for (const pattern of forbiddenDeliveryBoundaryPatterns) {
+      if (pattern.test(content)) {
+        errors.push(`${relativePath}: 仍包含自相矛盾的交付状态 ${pattern}`);
+      }
+    }
+    for (const marker of requiredDeliveryBoundaryMarkers.get(relativePath) ?? []) {
+      if (!content.includes(marker)) {
+        errors.push(`${relativePath}: 缺少交付边界标记 ${marker}`);
+      }
+    }
+  } catch {
+    // 缺失文件已在第一阶段报告。
   }
 }
 

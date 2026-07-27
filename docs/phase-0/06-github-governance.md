@@ -1,8 +1,10 @@
 # 告趣ERP（GaoQ-OS）GitHub 治理规范
 
 - 文档编号：phase-0/06
-- 版本：v1.0
-- 状态：规范约定，**不代表任何已配置的仓库状态**
+- 版本：v1.1
+- 状态：规范约定；Milestone、Issue、标签和 Draft PR 已配置，Project 看板因最小
+  权限未授权仍待 Issue #41 配置，实时边界见
+  [仓库实施完成度审计](../implementation-completion-audit.md)
 - 适用范围：告趣ERP 全部 GitHub 仓库的 Issue、Project、分支、PR、CI 与版本管理
 
 ---
@@ -65,7 +67,7 @@
 | 阶段 | `phase:` | `0`至`6` |
 | 优先级 | `priority:` | `p0`、`p1`、`p2`、`p3` |
 | 风险 | `risk:` | `r0`、`r1`、`r2`、`r3` |
-| 状态辅助 | `status:` | `blocked`、`needs-info`、`wontfix`、`duplicate` |
+| 状态辅助 | `status:` | `implementation-delivered`、`external-acceptance`、`blocked`、`needs-info`、`wontfix`、`duplicate` |
 
 环境标签 `env:dev|staging|prod` 仅 Bug 使用。
 
@@ -73,6 +75,21 @@
 - 每个 Issue 至少 1 个 `type:*` + 1 个 `domain:*` + 1 个 `phase:*` + 1 个 `priority:*`；MCP可触达操作另加`risk:*`；
 - `priority:p0` 只能由产品负责人、首席架构师或值班负责人设置；
 - 新标签需经 ADR 或治理 Issue 评审后加入，禁止随手建标签。
+
+交付状态纪律：
+
+- `status:implementation-delivered` 表示仓库内代码、契约、测试、脚本或运行手册
+  已交付并有可复核路径；它不表示已合入 `main`、Hosted Actions 已运行或生产验收
+  已通过。
+- `status:external-acceptance` 表示仍需真实外部系统、目标基础设施、生产等价环境、
+  业务 UAT、人工签署、切换或 Hypercare 证据。
+- 两个标签可以同时存在，用于明确“工程实现已交付、外部验收未完成”；禁止以
+  `implementation-delivered` 关闭仍有外部验收项的 Issue。
+- `status:blocked` 必须在正文写明阻塞原因、解除条件和责任边界；账号付费限制、
+  缺少 GitHub 权限和缺少目标环境均不得伪装成代码失败。
+- Epic 只有在全部仓库内子项都具备实施证据后才能添加
+  `status:implementation-delivered`；只有全部子 Issue 满足 DoD 并关闭后才能进入
+  Project 的 `Done`。
 
 ---
 
