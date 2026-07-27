@@ -11,6 +11,9 @@ const KEY_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 const BASE64URL_256_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 const MAX_PLAINTEXT_BYTES = 8 * 1024 * 1024;
+const IV_BASE64URL_LENGTH = 16;
+const AUTH_TAG_BASE64URL_LENGTH = 22;
+const MAX_CIPHERTEXT_BASE64URL_LENGTH = Math.ceil(MAX_PLAINTEXT_BYTES * 4 / 3);
 
 const keyRingSchema = z.object({
   activeKeyId: z.string().regex(KEY_PATTERN),
@@ -84,26 +87,36 @@ export class PayrollDataCryptoService {
 
   unprotect(context: PayrollCryptoContext, value: ProtectedPayrollData): unknown {
     this.assertContext(context);
+    const candidate = value as Partial<ProtectedPayrollData> | null | undefined;
     if (
-      !KEY_PATTERN.test(value.keyId) || !BASE64URL_PATTERN.test(value.iv) ||
-      !BASE64URL_PATTERN.test(value.ciphertext) || !BASE64URL_PATTERN.test(value.authTag)
+      candidate === null || candidate === undefined ||
+      typeof candidate.keyId !== 'string' || !KEY_PATTERN.test(candidate.keyId) ||
+      typeof candidate.iv !== 'string' || candidate.iv.length !== IV_BASE64URL_LENGTH ||
+      !BASE64URL_PATTERN.test(candidate.iv) ||
+      typeof candidate.ciphertext !== 'string' || candidate.ciphertext.length < 1 ||
+      candidate.ciphertext.length > MAX_CIPHERTEXT_BASE64URL_LENGTH ||
+      !BASE64URL_PATTERN.test(candidate.ciphertext) ||
+      typeof candidate.authTag !== 'string' ||
+      candidate.authTag.length !== AUTH_TAG_BASE64URL_LENGTH ||
+      !BASE64URL_PATTERN.test(candidate.authTag)
     ) throw new Error('PAYROLL_DATA_CIPHERTEXT_INVALID');
-    const configured = this.loadRing().keys.find((key) => key.keyId === value.keyId);
+    const configured = this.loadRing().keys.find((key) => key.keyId === candidate.keyId);
     if (configured === undefined) throw new Error('PAYROLL_DATA_KEY_UNAVAILABLE');
     const master = this.decodeKey(configured.keyBase64url);
     const key = this.deriveKey(master);
     let plaintext: Buffer | undefined;
     try {
-      const iv = this.decode(value.iv);
-      const ciphertext = this.decode(value.ciphertext);
-      const authTag = this.decode(value.authTag);
-      if (iv.length !== 12 || authTag.length !== 16 || ciphertext.length > MAX_PLAINTEXT_BYTES + 16) {
+      const iv = this.decode(candidate.iv);
+      const ciphertext = this.decode(candidate.ciphertext);
+      const authTag = this.decode(candidate.authTag);
+      if (iv.length !== 12 || authTag.length !== 16 || ciphertext.length > MAX_PLAINTEXT_BYTES) {
         throw new Error('PAYROLL_DATA_CIPHERTEXT_INVALID');
       }
       const decipher = createDecipheriv('aes-256-gcm', key, iv, { authTagLength: 16 });
       decipher.setAAD(this.aad(context));
       decipher.setAuthTag(authTag);
       plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+      if (plaintext.length > MAX_PLAINTEXT_BYTES) throw new Error('PAYROLL_DATA_TOO_LARGE');
       return JSON.parse(plaintext.toString('utf8')) as unknown;
     } catch (error) {
       throw new Error('PAYROLL_DATA_CIPHERTEXT_INVALID', { cause: error });
@@ -152,8 +165,11 @@ export class PayrollDataCryptoService {
   }
 
   private decodeKey(value: string): Buffer {
-    const decoded = this.decode(value);
-    if (decoded.length !== 32) throw new Error('PAYROLL_DATA_KEY_RING_INVALID');
+    const decoded = Buffer.from(value, 'base64url');
+    if (decoded.length !== 32 || decoded.toString('base64url') !== value) {
+      decoded.fill(0);
+      throw new Error('PAYROLL_DATA_KEY_RING_INVALID');
+    }
     return decoded;
   }
 
