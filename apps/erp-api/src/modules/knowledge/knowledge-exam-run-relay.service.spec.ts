@@ -50,7 +50,7 @@ function runRecord(
     attemptNumber: 1,
     questionBankRef: 'question-bank-001',
     questionBankDigest: 'b'.repeat(43),
-    questionMode: 'mixed' as const,
+    questionMode: 'objective' as const,
     gradingPolicyVersion: 'grading-policy-v1',
     passingRule: 'score_threshold' as const,
     timeLimitMinutes: 60,
@@ -272,6 +272,7 @@ describe('Knowledge 考试运行 Relay', () => {
   it('人工复核完成后绑定复核证明并记录人工评分时延', async () => {
     const fixture = createFixture();
     queueFindOneAndUpdate(fixture, runRecord('pending_review', {
+      questionMode: 'mixed',
       manualReviewRequired: true,
     }));
     fixture.gateway.status.mockResolvedValue(GRADED_RECEIPT);
@@ -291,8 +292,12 @@ describe('Knowledge 考试运行 Relay', () => {
     const fixture = createFixture();
     queueFindOneAndUpdate(
       fixture,
-      runRecord('submitted', { manualReviewRequired: true }),
       runRecord('submitted', {
+        questionMode: 'mixed',
+        manualReviewRequired: true,
+      }),
+      runRecord('submitted', {
+        questionMode: 'mixed',
         manualReviewRequired: true,
         attempts: 1,
         lastErrorCode: 'KNOWLEDGE_EXAM_MANUAL_REVIEW_EVIDENCE_MISSING',

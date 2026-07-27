@@ -11,6 +11,58 @@ import {
 } from './training.js';
 
 const NOW = new Date('2026-07-21T00:00:00.000Z');
+const COURSE_INPUT: Parameters<typeof createCourseVersion>[0] = {
+  id: 'course-version-001',
+  tenantId: 'tenant-001',
+  courseCode: 'SECURITY',
+  revision: 1,
+  title: '信息安全',
+  contentRef: 'content-001',
+};
+const ASSIGNMENT_INPUT: Parameters<typeof createTrainingAssignment>[0] = {
+  id: 'assignment-001',
+  tenantId: 'tenant-001',
+  onboardingInstanceId: 'onboarding-001',
+  courseVersionId: 'course-version-001',
+  mandatory: true,
+  examRequired: true,
+  dueDate: '2026-08-31',
+  coursePublished: true,
+};
+const ATTEMPT_INPUT: Parameters<typeof createExamAttempt>[0] = {
+  id: 'attempt-001',
+  tenantId: 'tenant-001',
+  assignmentId: 'assignment-001',
+  attemptNumber: 1,
+  submissionRef: 'submission-001',
+  questionSetDigest: 'b'.repeat(43),
+  gradingEvidenceId: 'grading-001',
+  scoreBps: 8_500,
+  passingScoreBps: 8_000,
+  serverGradingVerified: true,
+};
+
+function draftCourse(
+  override: Partial<Parameters<typeof createCourseVersion>[0]> = {},
+) {
+  return createCourseVersion({ ...COURSE_INPUT, ...override }, NOW);
+}
+
+function assignment(
+  override: Partial<Parameters<typeof createTrainingAssignment>[0]> = {},
+) {
+  return createTrainingAssignment({ ...ASSIGNMENT_INPUT, ...override }, NOW);
+}
+
+function expectDomainError(operation: () => unknown, code: string): void {
+  let captured: unknown;
+  try {
+    operation();
+  } catch (error) {
+    captured = error;
+  }
+  expect(captured).toMatchObject({ code });
+}
 
 describe('Knowledge 培训与考试领域', () => {
   it('题库配置必须完整且发布前经过受信任校验', () => {
@@ -177,5 +229,248 @@ describe('Knowledge 培训与考试领域', () => {
       tenantId: 'tenant-001',
       expectedVersion: 2,
     }, NOW)).toMatchObject({ status: 'retired', version: 3 });
+  });
+
+  it.each([
+    ['标识为空', { id: '' }, 'KNOWLEDGE_ID_INVALID'],
+    ['课程编码非法', { courseCode: '含空格' }, 'KNOWLEDGE_COURSE_CODE_INVALID'],
+    ['修订号非正整数', { revision: 0 }, 'KNOWLEDGE_REVISION_INVALID'],
+    ['标题为空', { title: '　' }, 'KNOWLEDGE_TITLE_INVALID'],
+    ['标题超长', { title: '课'.repeat(129) }, 'KNOWLEDGE_TITLE_INVALID'],
+    [
+      '考试基础配置不完整',
+      { questionBankRef: 'question-bank-001' },
+      'KNOWLEDGE_EXAM_CONFIG_INCOMPLETE',
+    ],
+    [
+      '题库摘要非法',
+      {
+        questionBankRef: 'question-bank-001',
+        questionBankDigest: 'invalid',
+        passingScoreBps: 8_000,
+      },
+      'KNOWLEDGE_QUESTION_DIGEST_INVALID',
+    ],
+    [
+      '及格分越界',
+      {
+        questionBankRef: 'question-bank-001',
+        questionBankDigest: 'a'.repeat(43),
+        passingScoreBps: 10_001,
+      },
+      'KNOWLEDGE_BPS_INVALID',
+    ],
+    [
+      '答题时限越界',
+      {
+        questionBankRef: 'question-bank-001',
+        questionBankDigest: 'a'.repeat(43),
+        passingScoreBps: 8_000,
+        timeLimitMinutes: 4,
+      },
+      'KNOWLEDGE_EXAM_TIME_LIMIT_INVALID',
+    ],
+    [
+      '评分策略版本非法',
+      {
+        questionBankRef: 'question-bank-001',
+        questionBankDigest: 'a'.repeat(43),
+        passingScoreBps: 8_000,
+        gradingPolicyVersion: 'x',
+      },
+      'KNOWLEDGE_GRADING_POLICY_VERSION_INVALID',
+    ],
+    [
+      '通过规则非法',
+      {
+        questionBankRef: 'question-bank-001',
+        questionBankDigest: 'a'.repeat(43),
+        passingScoreBps: 8_000,
+        passingRule: 'unknown' as never,
+      },
+      'KNOWLEDGE_PASSING_RULE_INVALID',
+    ],
+    [
+      '自动评分 SLA 越界',
+      {
+        questionBankRef: 'question-bank-001',
+        questionBankDigest: 'a'.repeat(43),
+        passingScoreBps: 8_000,
+        gradingSlaMinutes: 61,
+      },
+      'KNOWLEDGE_GRADING_SLA_INVALID',
+    ],
+    [
+      '人工复核 SLA 越界',
+      {
+        questionBankRef: 'question-bank-001',
+        questionBankDigest: 'a'.repeat(43),
+        passingScoreBps: 8_000,
+        manualReviewSlaMinutes: 29,
+      },
+      'KNOWLEDGE_MANUAL_REVIEW_SLA_INVALID',
+    ],
+    [
+      '已分配受众夹带部门',
+      { audienceDepartmentIds: ['department-001'] },
+      'KNOWLEDGE_AUDIENCE_INVALID',
+    ],
+    [
+      '受众标识重复',
+      {
+        audienceMode: 'employment_scope',
+        audienceDepartmentIds: ['department-001', 'department-001'],
+      },
+      'KNOWLEDGE_AUDIENCE_INVALID',
+    ],
+    [
+      '受众标识超限',
+      {
+        audienceMode: 'employment_scope',
+        audienceDepartmentIds: Array.from(
+          { length: 201 },
+          (_, index) => `department-${index}`,
+        ),
+      },
+      'KNOWLEDGE_AUDIENCE_INVALID',
+    ],
+  ] as const)('课程不变量失败关闭：%s', (_label, override, code) => {
+    expectDomainError(() => draftCourse(override), code);
+  });
+
+  it('发布、分配、进度与时间事实在非法状态下失败关闭', () => {
+    const draft = draftCourse();
+    expectDomainError(() => publishCourseVersion(draft, {
+      tenantId: 'tenant-001',
+      expectedVersion: 1,
+      contentVerified: false,
+      questionBankVerified: true,
+    }, NOW), 'KNOWLEDGE_COURSE_PUBLISH_INVALID');
+    expectDomainError(() => publishCourseVersion(draft, {
+      tenantId: 'tenant-other',
+      expectedVersion: 1,
+      contentVerified: true,
+      questionBankVerified: true,
+    }, NOW), 'KNOWLEDGE_CROSS_TENANT');
+    expectDomainError(() => publishCourseVersion(draft, {
+      tenantId: 'tenant-001',
+      expectedVersion: 2,
+      contentVerified: true,
+      questionBankVerified: true,
+    }, NOW), 'KNOWLEDGE_VERSION_CONFLICT');
+    expectDomainError(
+      () => assignment({ coursePublished: false }),
+      'KNOWLEDGE_COURSE_NOT_PUBLISHED',
+    );
+    expectDomainError(
+      () => assignment({ dueDate: '2026/08/31' }),
+      'KNOWLEDGE_DATE_INVALID',
+    );
+    expectDomainError(
+      () => assignment({ dueDate: '2026-02-30' }),
+      'KNOWLEDGE_DATE_INVALID',
+    );
+    expectDomainError(
+      () => createTrainingAssignment(ASSIGNMENT_INPUT, new Date('invalid')),
+      'KNOWLEDGE_TIME_INVALID',
+    );
+
+    const active = assignment();
+    const zero = recordTrainingProgress(active, {
+      tenantId: 'tenant-001',
+      expectedVersion: 1,
+      progressBps: 0,
+    }, NOW);
+    expect(zero.status).toBe('assigned');
+    expectDomainError(() => recordTrainingProgress(active, {
+      tenantId: 'tenant-001',
+      expectedVersion: 1,
+      progressBps: Number.NaN,
+    }, NOW), 'KNOWLEDGE_BPS_INVALID');
+    expectDomainError(() => recordTrainingProgress(
+      { ...active, status: 'expired' },
+      { tenantId: 'tenant-001', expectedVersion: 1, progressBps: 1 },
+      NOW,
+    ), 'KNOWLEDGE_ASSIGNMENT_TERMINAL');
+  });
+
+  it('考试尝试在领域层强制人工复核证据与评分事实', () => {
+    expectDomainError(() => createExamAttempt({
+      ...ATTEMPT_INPUT,
+      attemptNumber: 0,
+    }, NOW), 'KNOWLEDGE_ATTEMPT_NUMBER_INVALID');
+    expectDomainError(() => createExamAttempt({
+      ...ATTEMPT_INPUT,
+      questionSetDigest: 'invalid',
+    }, NOW), 'KNOWLEDGE_QUESTION_DIGEST_INVALID');
+    expectDomainError(() => createExamAttempt({
+      ...ATTEMPT_INPUT,
+      questionMode: 'mixed',
+      gradingPolicyVersion: 'mixed-manual-v2',
+      passingRule: 'all_required_sections',
+      passedOverride: true,
+    }, NOW), 'KNOWLEDGE_MANUAL_REVIEW_EVIDENCE_REQUIRED');
+    expectDomainError(() => createExamAttempt({
+      ...ATTEMPT_INPUT,
+      questionMode: 'subjective',
+      gradingPolicyVersion: 'manual-v2',
+      passingRule: 'all_required_sections',
+      manualReviewEvidenceId: '',
+      passedOverride: true,
+    }, NOW), 'KNOWLEDGE_ID_INVALID');
+
+    const reviewed = createExamAttempt({
+      ...ATTEMPT_INPUT,
+      questionMode: 'mixed',
+      gradingPolicyVersion: 'mixed-manual-v2',
+      passingRule: 'all_required_sections',
+      manualReviewEvidenceId: 'review-001',
+      submissionReason: 'timeout',
+      passedOverride: true,
+    }, NOW);
+    expect(reviewed).toMatchObject({
+      manualReviewEvidenceId: 'review-001',
+      submissionReason: 'timeout',
+      passed: true,
+    });
+  });
+
+  it('完成任务拒绝内容不完整、伪造考试证据，并支持免试完成', () => {
+    const active = assignment();
+    expectDomainError(() => completeTrainingAssignment(active, {
+      tenantId: 'tenant-001',
+      expectedVersion: 1,
+      completionEvidenceId: 'completion-001',
+      passedExamAttemptId: 'attempt-001',
+      examPassedVerified: true,
+    }, NOW), 'KNOWLEDGE_CONTENT_INCOMPLETE');
+
+    const completeContent = { ...active, progressBps: 10_000 };
+    expectDomainError(() => completeTrainingAssignment(completeContent, {
+      tenantId: 'tenant-001',
+      expectedVersion: 1,
+      completionEvidenceId: 'completion-001',
+      passedExamAttemptId: 'attempt-001',
+      examPassedVerified: false,
+    }, NOW), 'KNOWLEDGE_PASSED_EXAM_REQUIRED');
+
+    const noExam = { ...completeContent, examRequired: false };
+    expectDomainError(() => completeTrainingAssignment(noExam, {
+      tenantId: 'tenant-001',
+      expectedVersion: 1,
+      completionEvidenceId: 'completion-001',
+      passedExamAttemptId: 'attempt-001',
+      examPassedVerified: true,
+    }, NOW), 'KNOWLEDGE_EXAM_EVIDENCE_UNEXPECTED');
+    expect(completeTrainingAssignment(noExam, {
+      tenantId: 'tenant-001',
+      expectedVersion: 1,
+      completionEvidenceId: 'completion-001',
+      examPassedVerified: false,
+    }, NOW)).toMatchObject({
+      status: 'completed',
+      passedExamAttemptId: null,
+      completionEvidenceId: 'completion-001',
+    });
   });
 });
