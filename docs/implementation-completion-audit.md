@@ -72,7 +72,7 @@
 MCP 确认、MCP 运行时、
 薪酬影子周期、薪酬运行、薪酬审批、薪酬主数据、薪酬四方对账、薪酬税务申报、薪酬 L4 数据加密、资金支付、Treasury 银行回盘、Treasury L4 数据加密、Treasury Outbox、Care 纪念日应用、Care 离职应用、
 数据迁移控制面、数据迁移打包 CLI、Knowledge 考试运行 Relay、Knowledge 搜索索引 Relay、考勤应用、考勤仓储、考勤供应商拉取、考勤供应商入站处理、电子签回调处理、
-招聘渠道拉取、招聘渠道入站处理、招聘渠道职位扇出、招聘渠道阶段扇出、招聘申请、招聘面试、招聘简历、招聘渠道职位投递、招聘渠道阶段回传、招聘管理、人才全周期仓储、招聘 Offer、Care 仓储、组织仓储、招聘仓储、知识库仓储、营销 CMS 和生产执行授权服务已建立
+招聘渠道拉取、招聘渠道入站处理、招聘渠道职位扇出、招聘渠道阶段扇出、招聘申请、招聘面试、招聘简历、招聘渠道职位投递、招聘渠道阶段回传、招聘管理、人才全周期应用、人才全周期仓储、招聘 Offer、Care 仓储、组织仓储、招聘仓储、知识库仓储、营销 CMS 和生产执行授权服务已建立
 独立不可回退门禁：
 `pnpm quality:tenant-context-coverage`、
 `pnpm quality:audit-anchor-coverage`、
@@ -114,6 +114,7 @@ MCP 确认、MCP 运行时、
 `pnpm quality:recruitment-channel-position-delivery-coverage`、
 `pnpm quality:recruitment-channel-stage-delivery-coverage`、
 `pnpm quality:recruitment-management-coverage`、
+`pnpm quality:talent-lifecycle-application-coverage`、
 `pnpm quality:talent-lifecycle-repository-coverage`、
 `pnpm quality:recruitment-offer-coverage`、
 `pnpm quality:care-repositories-coverage` 和
@@ -124,7 +125,7 @@ MCP 确认、MCP 运行时、
 `pnpm quality:approval-repositories-coverage` 和
 `pnpm quality:approval-application-coverage`、
 `pnpm quality:approval-template-domain-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。五十一条链路当前覆盖率分别为
+`pnpm quality:production-execution-authorization-coverage`。五十二条链路当前覆盖率分别为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -165,13 +166,14 @@ MCP 确认、MCP 运行时、
 100%/97.46%/100%/100%、
 100%/96.00%/100%/100%、
 99.51%/99.45%/100%/100%、
+100%/96.85%/100%/100%、
 100%/97.05%/100%/100%、
 95.97%/94.01%/100%/96.83%、
 100%/91.66%/100%/100%、100%/100%/100%/100%、
 97.44%/91.32%/100%/99.53%、100%/99.43%/100%/100%、
 100%/97.27%/100%/100% 和
-100%/100%/100%/100%（语句/分支/函数/行）；五十一项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明五十一条关键链路达标，
+100%/100%/100%/100%（语句/分支/函数/行）；五十二项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明五十二条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 数据迁移控制面已有 61 项幂等重放、证据分页、检查点竞争、关联映射、附件与
@@ -276,6 +278,12 @@ Worker 租约。覆盖率达到四维 100%，独立四维 90% 门禁已接入 `p
 提交与审批同步在预检和事务内均强制部门写范围，已绑定审批的待审批 HC 按精确
 版本幂等恢复。覆盖率达到 99.51%/99.45%/100%/100%
 （语句/分支/函数/行），独立四维 90% 门禁已接入 `pnpm check`。
+
+人才全周期应用已覆盖 17 项读写 Scope、最小 MCP 投影、全阶段推导、完整时间线、
+候选人/校友联系授权、触点负责人、乐观锁与稳定错误契约测试；候选人联系授权
+或保留期为非法时间时改为失败关闭，避免 `Date.parse()` 的 `NaN` 绕过。覆盖率
+达到 100%/96.85%/100%/100%（语句/分支/函数/行），独立四维 90% 门禁已接入
+`pnpm check`。
 
 人才全周期仓储已覆盖 20 项可信租户、授权前非敏感投影、备注密文组合、AAD
 解密、候选人时间线、会话绑定、跨租户拒绝、乐观锁和损坏密文失败关闭测试；

@@ -376,8 +376,8 @@ export class TalentLifecycleService {
         .includes(input.kind) &&
       (
         lifecycle.candidateStatus !== 'active' ||
-        Date.parse(lifecycle.candidateContactConsentExpiresAt) <= Date.now() ||
-        Date.parse(lifecycle.candidateRetentionExpiresAt) <= Date.now()
+        !isFutureInstant(lifecycle.candidateContactConsentExpiresAt) ||
+        !isFutureInstant(lifecycle.candidateRetentionExpiresAt)
       )
     ) throw new ForbiddenException({
       code: 'TALENT_CANDIDATE_CONTACT_CONSENT_REQUIRED',
@@ -646,4 +646,9 @@ function requiredIso(value: string): string {
     });
   }
   return parsed.toISOString();
+}
+
+function isFutureInstant(value: string): boolean {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && timestamp > Date.now();
 }

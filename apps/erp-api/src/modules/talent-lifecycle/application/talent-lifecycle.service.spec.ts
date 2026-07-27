@@ -510,6 +510,8 @@ describe('TalentLifecycleService', () => {
       { ...candidate, candidateStatus: 'withdrawn' },
       { ...candidate, contactConsentExpiresAt: '2026-07-27T07:59:59.999Z' },
       { ...candidate, retentionExpiresAt: '2026-07-27T07:59:59.999Z' },
+      { ...candidate, contactConsentExpiresAt: 'invalid-date' },
+      { ...candidate, retentionExpiresAt: 'invalid-date' },
     ]) {
       const denied = fixture();
       denied.recruitment.get.mockResolvedValueOnce(value);
