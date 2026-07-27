@@ -170,14 +170,29 @@ export class KnowledgeApplicationService {
     key: string,
   ): Promise<{ readonly course: CourseSummary }> {
     this.assertScope('erp:knowledge:course:publish');
+    let verificationCache: {
+      readonly key: string;
+      readonly value: {
+        readonly contentVerified: boolean;
+        readonly questionBankVerified: boolean;
+      };
+    } | null = null;
     return this.run(async () => this.idempotency.execute(
       'knowledge.course.publish', key, { id, expectedVersion }, async (session) => {
         const fresh = await this.requireCourse(id, session);
         /**
          * 校验放在幂等事务的新执行分支内：已完成请求直接重放快照，不再依赖外部校验器；
-         * 首次执行则校验事务内读取的精确课程版本，避免校验对象与写入对象错位。
+         * 首次执行则校验事务内读取的精确课程版本。Mongo 自动重试同一快照时复用结果；
+         * 若重试读取到的版本或内容引用变化，则必须重新校验，禁止沿用旧证明。
          */
-        const verification = await this.verifier.verify(fresh);
+        const verificationKey = courseVerificationKey(fresh);
+        if (verificationCache === null || verificationCache.key !== verificationKey) {
+          verificationCache = {
+            key: verificationKey,
+            value: await this.verifier.verify(fresh),
+          };
+        }
+        const verification = verificationCache.value;
         const course = publishCourseVersion(fresh, {
           tenantId: this.context.getTenantRequired().tenantId,
           expectedVersion,
@@ -638,6 +653,17 @@ function courseSummary(course: CourseVersion): CourseSummary {
     status: course.status,
     version: course.version,
   });
+}
+
+function courseVerificationKey(course: CourseVersion): string {
+  return JSON.stringify([
+    course.tenantId,
+    course.id,
+    course.version,
+    course.contentRef,
+    course.questionBankRef,
+    course.questionBankDigest,
+  ]);
 }
 
 function assignmentSummary(value: TrainingAssignment): TrainingAssignmentSummary {
