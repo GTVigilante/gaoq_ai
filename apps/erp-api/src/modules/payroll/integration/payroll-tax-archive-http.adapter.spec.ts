@@ -64,6 +64,32 @@ describe('Payroll Tax WORM HTTPS Adapter', () => {
     expect(JSON.stringify(headers)).not.toContain('CN_IIT_WITHHOLDING_MANIFEST_V1');
   });
 
+  it('同一独立 WORM 允许受控的工资调整税务更正规范正文', async () => {
+    const bytes = Buffer.from(
+      `{"schema":"CN_IIT_WITHHOLDING_CORRECTION_V1","correctionFilingId":"${FILING_ID}"}`,
+      'utf8',
+    );
+    const sha256 = createHash('sha256').update(bytes).digest('base64url');
+    const objectKey = `payroll-tax/${FILING_ID}/${sha256}.json`;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(receipt({
+      sha256,
+      objectKey,
+      objectRef: 'worm/payroll-tax/correction-001',
+      evidenceId: 'tax-correction-worm-evidence-001',
+    })), { status: 201, headers: { 'content-type': 'application/json' } })));
+    await expect(new HttpPayrollTaxImmutableArchive(config()).put({
+      tenantId: 'tenant-001',
+      filingId: FILING_ID,
+      objectKey,
+      sha256,
+      bytes,
+    })).resolves.toEqual({
+      objectRef: 'worm/payroll-tax/correction-001',
+      evidenceId: 'tax-correction-worm-evidence-001',
+      immutable: true,
+    });
+  });
+
   it('拒绝错摘要、可变回执、保留期不足与超大响应', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);

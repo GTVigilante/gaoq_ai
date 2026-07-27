@@ -1,4 +1,16 @@
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsInt, IsOptional, Matches, Max, Min, ValidateNested } from 'class-validator';
+import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
+  IsIn,
+  IsInt,
+  IsISO8601,
+  IsOptional,
+  Matches,
+  Max,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -40,6 +52,27 @@ export class ApplyPayrollAdjustmentApprovalDto extends PayrollVersionCommandDto 
 export class LockPayrollAdjustmentDto extends PayrollVersionCommandDto {
   @Matches(ULID) strongAuthEvidenceId!: string;
 }
+
+export class OpenPayrollAdjustmentReceivableDto extends PayrollVersionCommandDto {}
+
+export class RecordPayrollAdjustmentRecoveryDto {
+  @IsInt() @Min(1) expectedReceivableVersion!: number;
+  @IsIn(['bank_repayment', 'authorized_payroll_deduction'])
+  method!: 'bank_repayment' | 'authorized_payroll_deduction';
+  @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) amountMinor!: number;
+  @Matches(ID) sourceReferenceId!: string;
+  @Matches(ID) sourceEvidenceId!: string;
+  @IsOptional() @Matches(ID) legalAuthorizationEvidenceId?: string;
+  @IsISO8601({ strict: true, strictSeparator: true }) receivedAt!: string;
+}
+
+export class PreparePayrollAdjustmentTaxCorrectionDto extends PayrollVersionCommandDto {}
+
+export class ApprovePayrollAdjustmentTaxCorrectionDto extends PayrollVersionCommandDto {
+  @Matches(ULID) strongAuthEvidenceId!: string;
+}
+
+export class SubmitPayrollAdjustmentTaxCorrectionDto extends PayrollVersionCommandDto {}
 
 export class PayrollAmountComponentDto {
   @Matches(/^[A-Z][A-Z0-9_]{0,63}$/) code!: string;

@@ -32,6 +32,8 @@
     "migrate:phase4:payroll-shadow-indexes": "node dist/migrations/phase-4-payroll-shadow-indexes.js",
     "migrate:phase4:treasury-indexes": "node dist/migrations/phase-4-treasury-indexes.js",
     "migrate:phase4:treasury-recovery-indexes": "node dist/migrations/phase-4-treasury-recovery-indexes.js",
+    "migrate:phase4:treasury-adjustment-indexes": "node dist/migrations/phase-4-treasury-adjustment-indexes.js",
+    "migrate:phase4:payroll-adjustment-settlement-indexes": "node dist/migrations/phase-4-payroll-adjustment-settlement-indexes.js",
     "migrate:phase5:op-operating-summary-indexes": "node dist/migrations/phase-5-op-operating-summary-indexes.js",
     "migrate:phase5:op-approval-indexes": "node dist/migrations/phase-5-op-approval-indexes.js",
     "migrate:phase5:analytics-indexes": "node dist/migrations/phase-5-analytics-indexes.js",

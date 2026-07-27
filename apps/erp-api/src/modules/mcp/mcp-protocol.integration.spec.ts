@@ -165,6 +165,9 @@ describe('MCP Streamable HTTP 协议集成', () => {
       getPayrollReconciliation: vi.fn(),
       getPayrollShadowCycle: vi.fn(),
       getPayrollCutoverReadiness: vi.fn(),
+      getPayrollAdjustmentStatus: vi.fn(),
+      getPayrollAdjustmentTaxCorrectionStatus: vi.fn(),
+      getAnnualPayrollReconciliationStatus: vi.fn(),
       getOpOperatingSummary: vi.fn().mockResolvedValue({
         content: [{ type: 'text' as const, text: JSON.stringify({ operatingSummary: {
           id: '01J8ZQK7V0A2M4N6P8R0T2W4D1', summaryDate: '2026-07-22', revision: 1,
@@ -401,6 +404,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       'payroll_shadow_cycle_get',
       'payroll_cutover_readiness_get',
       'payroll_adjustment_status_get',
+      'payroll_adjustment_tax_correction_status_get',
       'payroll_annual_reconciliation_status_get',
       'op_operating_summary_get',
       'op_approval_bridge_get',
@@ -450,6 +454,9 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ uriTemplate: 'erp://payroll/shadow-cycles/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://payroll/cutover-readiness/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://payroll/adjustments/{id}' }),
+      expect.objectContaining({
+        uriTemplate: 'erp://payroll/adjustment-tax-corrections/{id}',
+      }),
       expect.objectContaining({ uriTemplate: 'erp://payroll/annual-reconciliations/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://op/operating-summaries/{date}' }),
       expect.objectContaining({ uriTemplate: 'erp://op/approval-bridges/{externalEventId}' }),
@@ -472,6 +479,9 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ name: 'payroll_shadow_cycle_review_guide' }),
       expect.objectContaining({ name: 'payroll_cutover_readiness_review_guide' }),
       expect.objectContaining({ name: 'payroll_adjustment_review_guide' }),
+      expect.objectContaining({
+        name: 'payroll_adjustment_tax_correction_review_guide',
+      }),
       expect.objectContaining({ name: 'payroll_annual_reconciliation_review_guide' }),
       expect.objectContaining({ name: 'op_operating_summary_review_guide' }),
       expect.objectContaining({ name: 'op_approval_bridge_review_guide' }),

@@ -27,7 +27,10 @@ function actor(
   };
 }
 
-function record(status: 'prepared' | 'pending_approval' | 'approved') {
+function record(
+  status: 'prepared' | 'pending_approval' | 'approved',
+  noSettlementAction = false,
+) {
   return {
     id: adjustmentId,
     tenantId: tenant.tenantId,
@@ -37,16 +40,16 @@ function record(status: 'prepared' | 'pending_approval' | 'approved') {
     originalCalculationLineId: '01J8ZQK7V0A2M4N6P8R0T2W4N1',
     employeeId: 'employee-001',
     adjustmentNumber: 1,
-    type: 'supplement' as const,
+    type: noSettlementAction ? 'tax_only' as const : 'supplement' as const,
     reasonCode: 'RETROACTIVE_SALARY_CHANGE',
     originalResultHash: 'o'.repeat(43),
     correctedInputHash: 'i'.repeat(43),
     correctedResultHash: 'c'.repeat(43),
     adjustmentHash: 'a'.repeat(43),
     grossDeltaMinor: 100_000,
-    taxDeltaMinor: 3_000,
-    netDeltaMinor: 97_000,
-    payableMinor: 97_000,
+    taxDeltaMinor: noSettlementAction ? 0 : 3_000,
+    netDeltaMinor: noSettlementAction ? 0 : 97_000,
+    payableMinor: noSettlementAction ? 0 : 97_000,
     receivableMinor: 0,
     preparedBy: 'adjustment-engine',
     requestedBy: status === 'prepared' ? null : 'payroll-requester',
@@ -55,6 +58,12 @@ function record(status: 'prepared' | 'pending_approval' | 'approved') {
     approvalEvidenceId: status === 'approved' ? approvalId : null,
     lockedBy: null,
     strongAuthEvidenceId: null,
+    cashSettlementStatus: noSettlementAction ? 'not_required' as const : 'pending' as const,
+    taxCorrectionStatus: noSettlementAction ? 'not_required' as const : 'pending' as const,
+    cashSettlementReferenceType: null,
+    cashSettlementReferenceId: null,
+    cashSettlementEvidenceId: null,
+    taxCorrectionFilingId: null,
     status,
     version: status === 'prepared' ? 1 : status === 'pending_approval' ? 2 : 3,
     dataKeyId: 'key',
@@ -115,7 +124,16 @@ function assemble(current: ReturnType<typeof record>) {
     findOne: vi.fn().mockReturnValue(query(current)),
     updateOne: vi.fn().mockResolvedValue({ modifiedCount: 1 }),
   };
-  const outbox = { append: vi.fn().mockResolvedValue(undefined) };
+  const outbox = {
+    append: vi.fn<(
+      event: {
+        readonly type: string;
+        readonly version: number;
+        readonly data: Readonly<Record<string, unknown>>;
+      },
+      session: ClientSession,
+    ) => Promise<void>>().mockResolvedValue(undefined),
+  };
   const service = new PayrollAdjustmentService(
     idempotency as never,
     context,
@@ -225,5 +243,36 @@ describe('PayrollAdjustmentService 审批与锁定', () => {
       data: { outcome: 'approved', status: 'approved' },
     });
     expect(JSON.stringify(event)).not.toMatch(/employee-001|finance-approver|97000/u);
+  });
+
+  it('现金和税务均无需动作时锁定后立即追加 settled 终态', async () => {
+    const store = assemble(record('approved', true));
+    const principal = actor('user', 'treasury-locker', [
+      'erp:payroll:adjustment:lock',
+    ]);
+    const result = await store.context.run({ tenant, actor: principal }, () =>
+      store.service.lock(
+        'lock-no-action-001',
+        adjustmentId,
+        3,
+        evidenceId,
+        {
+          actorType: 'user',
+          actorId: 'treasury-locker',
+          tenantId: tenant.tenantId,
+          sessionId: 'session-001',
+        } as never,
+      ));
+
+    expect(result).toMatchObject({ status: 'settled', version: 5 });
+    expect(store.adjustments.updateOne).toHaveBeenCalledTimes(2);
+    expect(store.outbox.append.mock.calls.map(([event]) => [
+      event.type,
+      event.version,
+      event.data['status'],
+    ])).toEqual([
+      ['payroll.adjustment.locked', 4, 'locked'],
+      ['payroll.adjustment.settled', 5, 'settled'],
+    ]);
   });
 });

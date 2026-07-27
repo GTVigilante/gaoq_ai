@@ -64,6 +64,24 @@ describe('Payroll Tax Outbox 白名单', () => {
           strongAuthMethod: 'webauthn_uv',
         },
       },
+      {
+        ...prepared,
+        type: 'payroll.adjustment.receivable_opened',
+        version: 5,
+        data: { ...prepared.data, type: 'reversal', status: 'locked' },
+      },
+      {
+        ...prepared,
+        type: 'payroll.adjustment.cash_settled',
+        version: 6,
+        data: { ...prepared.data, type: 'reversal', status: 'locked' },
+      },
+      {
+        ...prepared,
+        type: 'payroll.adjustment.settled',
+        version: 7,
+        data: { ...prepared.data, type: 'tax_only', status: 'settled' },
+      },
     ];
     await store.context.run({ tenant, actor }, async () => {
       for (const event of events) await store.writer.append(event, session);
@@ -77,6 +95,83 @@ describe('Payroll Tax Outbox 白名单', () => {
     await expect(store.context.run({ tenant, actor }, () => store.writer.append({
       ...prepared, data: { ...prepared.data, employeeId: 'employee-001' },
     }, session))).rejects.toThrow('PAYROLL_ADJUSTMENT_OUTBOX_DATA_INVALID');
+  });
+
+  it('员工应收事件只发布调整摘要与状态，不发布金额、员工或恢复来源', async () => {
+    const store = setup();
+    const events: readonly PayrollEvent[] = [
+      {
+        ...base,
+        type: 'payroll.receivable.opened',
+        version: 1,
+        data: { adjustmentHash: 'a'.repeat(43), status: 'open' },
+      },
+      {
+        ...base,
+        type: 'payroll.receivable.recovery_recorded',
+        version: 2,
+        data: { adjustmentHash: 'a'.repeat(43), status: 'settled' },
+      },
+    ];
+    await store.context.run({ tenant, actor }, async () => {
+      for (const event of events) await store.writer.append(event, session);
+    });
+    const persisted = JSON.stringify(store.records.create.mock.calls);
+    expect(persisted).toContain('payroll.receivable.opened.v1');
+    expect(persisted).toContain('payroll.receivable.recovery_recorded.v1');
+    expect(persisted).not.toMatch(/employee|amount|sourceReference|sourceEvidence/iu);
+    await expect(store.context.run({ tenant, actor }, () => store.writer.append({
+      ...events[0],
+      data: { ...events[0]?.data, amountMinor: 1 },
+    } as PayrollEvent, session))).rejects.toThrow('PAYROLL_RECEIVABLE_OUTBOX_DATA_INVALID');
+  });
+
+  it('工资调整税务更正事件只发布清单控制摘要和证据标识', async () => {
+    const store = setup();
+    const common = {
+      adjustmentHash: 'a'.repeat(43),
+      contentHash: 'c'.repeat(43),
+      period: '2026-07',
+    };
+    const events: readonly PayrollEvent[] = [
+      {
+        ...base,
+        type: 'payroll.adjustment_tax_correction.prepared',
+        version: 2,
+        data: {
+          ...common,
+          objectEvidenceId: 'worm-correction-evidence-001',
+          status: 'prepared',
+        },
+      },
+      {
+        ...base,
+        type: 'payroll.adjustment_tax_correction.approved',
+        version: 3,
+        data: {
+          ...common,
+          strongAuthMethod: 'webauthn_uv',
+          status: 'approved',
+        },
+      },
+      {
+        ...base,
+        type: 'payroll.adjustment_tax_correction.submitted',
+        version: 4,
+        data: {
+          ...common,
+          taxSubmissionId: 'tax-correction-submission-001',
+          taxSubmissionEvidenceId: 'tax-correction-receipt-001',
+          status: 'submitted',
+        },
+      },
+    ];
+    await store.context.run({ tenant, actor }, async () => {
+      for (const event of events) await store.writer.append(event, session);
+    });
+    const persisted = JSON.stringify(store.records.create.mock.calls);
+    expect(persisted).toContain('payroll.adjustment_tax_correction.submitted.v1');
+    expect(persisted).not.toMatch(/employee|amount|objectRef|approvedBy|preparedBy/iu);
   });
 
   it('年度工资代扣事件不发布员工、税额或税局证据标识', async () => {

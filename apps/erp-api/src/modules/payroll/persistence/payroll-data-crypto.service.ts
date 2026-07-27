@@ -32,6 +32,8 @@ export type PayrollCryptoResourceType =
   | 'input_snapshot'
   | 'calculation_line'
   | 'payroll_adjustment'
+  | 'adjustment_receivable'
+  | 'adjustment_tax_correction'
   | 'annual_reconciliation'
   | 'tax_filing'
   | 'shadow_cycle'
@@ -132,8 +134,9 @@ export class PayrollDataCryptoService {
       !ID_PATTERN.test(context.tenantId) || !ID_PATTERN.test(context.resourceId) ||
       !Number.isSafeInteger(context.version) || context.version < 1 ||
       ![
-        'compensation_profile', 'input_snapshot', 'calculation_line', 'tax_filing',
-        'shadow_cycle', 'shadow_difference',
+        'compensation_profile', 'input_snapshot', 'calculation_line',
+        'payroll_adjustment', 'adjustment_receivable', 'adjustment_tax_correction',
+        'annual_reconciliation', 'tax_filing', 'shadow_cycle', 'shadow_difference',
       ]
         .includes(context.resourceType)
     ) throw new Error('PAYROLL_DATA_CONTEXT_INVALID');

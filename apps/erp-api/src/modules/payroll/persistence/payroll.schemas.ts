@@ -457,6 +457,24 @@ export class PayrollAdjustmentRecord extends ProtectedPayrollRecord {
   strongAuthEvidenceId!: string | null;
   @Prop({
     type: String, required: true,
+    enum: ['not_required', 'pending', 'settled'],
+  })
+  cashSettlementStatus!: 'not_required' | 'pending' | 'settled';
+  @Prop({
+    type: String, required: true,
+    enum: ['not_required', 'pending', 'submitted'],
+  })
+  taxCorrectionStatus!: 'not_required' | 'pending' | 'submitted';
+  @Prop({ type: String, default: null, enum: ['treasury_batch', 'receivable'] })
+  cashSettlementReferenceType!: 'treasury_batch' | 'receivable' | null;
+  @Prop({ type: String, default: null, match: ULID_PATTERN })
+  cashSettlementReferenceId!: string | null;
+  @Prop({ type: String, default: null, match: ULID_PATTERN })
+  cashSettlementEvidenceId!: string | null;
+  @Prop({ type: String, default: null, match: ULID_PATTERN })
+  taxCorrectionFilingId!: string | null;
+  @Prop({
+    type: String, required: true,
     enum: ['prepared', 'pending_approval', 'approved', 'locked', 'settled', 'cancelled'],
   })
   status!:
@@ -511,6 +529,27 @@ PayrollAdjustmentRecordSchema.pre('validate', function () {
     (record.status === 'settled' && !locked) ||
     (record.status === 'cancelled' && !approvalDecided)
   ) throw new Error('工资调整审批、锁定证据与状态不一致');
+  const cashEvidenceComplete =
+    record.cashSettlementReferenceType !== null &&
+    record.cashSettlementReferenceId !== null &&
+    record.cashSettlementEvidenceId !== null;
+  const cashReferenceComplete =
+    record.cashSettlementReferenceType !== null &&
+    record.cashSettlementReferenceId !== null;
+  if (
+    (record.cashSettlementReferenceType === null) !==
+      (record.cashSettlementReferenceId === null) ||
+    (record.cashSettlementEvidenceId !== null && !cashReferenceComplete) ||
+    (record.cashSettlementStatus === 'settled' && !cashEvidenceComplete) ||
+    (record.cashSettlementStatus !== 'settled' && record.cashSettlementEvidenceId !== null) ||
+    (record.type === 'tax_only' && record.cashSettlementStatus !== 'not_required') ||
+    (record.type === 'tax_only' && cashReferenceComplete) ||
+    (record.type !== 'tax_only' && record.cashSettlementStatus === 'not_required') ||
+    (record.taxCorrectionStatus === 'submitted' && record.taxCorrectionFilingId === null) ||
+    (record.taxCorrectionStatus === 'not_required' && record.taxCorrectionFilingId !== null) ||
+    (record.status === 'settled' &&
+      (record.cashSettlementStatus === 'pending' || record.taxCorrectionStatus === 'pending'))
+  ) throw new Error('工资调整现金与税务结算状态或证据不一致');
 });
 PayrollAdjustmentRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 PayrollAdjustmentRecordSchema.index(
@@ -518,6 +557,250 @@ PayrollAdjustmentRecordSchema.index(
   { unique: true },
 );
 PayrollAdjustmentRecordSchema.index({ tenantId: 1, period: 1, status: 1 });
+
+/** 负向工资调整的员工应收控制余额；员工身份与来源明细只存在于独立 L4 密文。 */
+@Schema({
+  collection: 'payroll_adjustment_receivables',
+  timestamps: true,
+  versionKey: false,
+  id: false,
+})
+export class PayrollAdjustmentReceivableRecord extends ProtectedPayrollRecord {
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) id!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  tenantId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
+  adjustmentId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  adjustmentHash!: string;
+  @Prop({ type: String, enum: ['CNY'], required: true, immutable: true }) currency!: 'CNY';
+  @Prop({ type: Number, required: true, immutable: true, min: 1 })
+  originalAmountMinor!: number;
+  @Prop({ type: Number, required: true, min: 0 }) outstandingAmountMinor!: number;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  openedBy!: string;
+  @Prop({ type: Date, required: true, immutable: true }) openedAt!: Date;
+  @Prop({ type: Date, default: null }) settledAt!: Date | null;
+  @Prop({ type: String, required: true, enum: ['open', 'settled'] })
+  status!: 'open' | 'settled';
+  @Prop({ type: Number, required: true, min: 1 }) version!: number;
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+export type PayrollAdjustmentReceivableDocument =
+  HydratedDocument<PayrollAdjustmentReceivableRecord>;
+export const PayrollAdjustmentReceivableRecordSchema = SchemaFactory.createForClass(
+  PayrollAdjustmentReceivableRecord,
+);
+PayrollAdjustmentReceivableRecordSchema.pre('validate', function () {
+  const record = this as PayrollAdjustmentReceivableRecord;
+  if (
+    !Number.isSafeInteger(record.originalAmountMinor) ||
+    !Number.isSafeInteger(record.outstandingAmountMinor) ||
+    record.originalAmountMinor < 1 ||
+    record.outstandingAmountMinor < 0 ||
+    record.outstandingAmountMinor > record.originalAmountMinor ||
+    (record.status === 'open' &&
+      (record.outstandingAmountMinor === 0 || record.settledAt !== null)) ||
+    (record.status === 'settled' &&
+      (record.outstandingAmountMinor !== 0 || record.settledAt === null))
+  ) throw new Error('工资调整应收余额、状态与结算时间不一致');
+});
+PayrollAdjustmentReceivableRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
+PayrollAdjustmentReceivableRecordSchema.index(
+  { tenantId: 1, adjustmentId: 1 },
+  { unique: true },
+);
+PayrollAdjustmentReceivableRecordSchema.index(
+  { tenantId: 1, status: 1, openedAt: 1 },
+);
+
+/** 每笔员工还款或经授权工资抵扣都是不可变恢复凭证，禁止覆盖历史分配。 */
+@Schema({
+  collection: 'payroll_adjustment_receivable_recoveries',
+  timestamps: { createdAt: true, updatedAt: false },
+  versionKey: false,
+  id: false,
+})
+export class PayrollAdjustmentReceivableRecoveryRecord {
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) id!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  tenantId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
+  receivableId!: string;
+  @Prop({
+    type: String,
+    required: true,
+    immutable: true,
+    enum: ['bank_repayment', 'authorized_payroll_deduction'],
+  })
+  method!: 'bank_repayment' | 'authorized_payroll_deduction';
+  @Prop({ type: Number, required: true, immutable: true, min: 1 }) amountMinor!: number;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  sourceReferenceId!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  sourceEvidenceId!: string;
+  @Prop({ type: String, default: null, immutable: true, maxlength: 128, match: ID_PATTERN })
+  legalAuthorizationEvidenceId!: string | null;
+  @Prop({ type: Date, required: true, immutable: true }) receivedAt!: Date;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  recordedBy!: string;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  recoveryHash!: string;
+  createdAt!: Date;
+}
+export type PayrollAdjustmentReceivableRecoveryDocument =
+  HydratedDocument<PayrollAdjustmentReceivableRecoveryRecord>;
+export const PayrollAdjustmentReceivableRecoveryRecordSchema = SchemaFactory.createForClass(
+  PayrollAdjustmentReceivableRecoveryRecord,
+);
+PayrollAdjustmentReceivableRecoveryRecordSchema.pre('validate', function () {
+  const record = this as PayrollAdjustmentReceivableRecoveryRecord;
+  if (
+    !Number.isSafeInteger(record.amountMinor) ||
+    record.amountMinor < 1 ||
+    (record.method === 'bank_repayment' &&
+      record.legalAuthorizationEvidenceId !== null) ||
+    (record.method === 'authorized_payroll_deduction' &&
+      record.legalAuthorizationEvidenceId === null)
+  ) throw new Error('工资调整应收恢复方式、金额与法定授权证据不一致');
+});
+PayrollAdjustmentReceivableRecoveryRecordSchema.index(
+  { tenantId: 1, id: 1 },
+  { unique: true },
+);
+PayrollAdjustmentReceivableRecoveryRecordSchema.index(
+  { tenantId: 1, receivableId: 1, sourceReferenceId: 1 },
+  { unique: true },
+);
+PayrollAdjustmentReceivableRecoveryRecordSchema.index(
+  { tenantId: 1, sourceEvidenceId: 1 },
+  { unique: true },
+);
+
+/** 单笔工资调整税务更正清单；员工税务正文只存在于 Payroll 密文和独立 WORM。 */
+@Schema({
+  collection: 'payroll_adjustment_tax_corrections',
+  timestamps: true,
+  versionKey: false,
+  id: false,
+})
+export class PayrollAdjustmentTaxCorrectionRecord extends ProtectedPayrollRecord {
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) id!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  tenantId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
+  adjustmentId!: string;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  adjustmentHash!: string;
+  @Prop({ type: String, required: true, immutable: true, match: MONTH_PATTERN })
+  period!: string;
+  @Prop({
+    type: String,
+    required: true,
+    immutable: true,
+    enum: ['CN_IIT_WITHHOLDING_CORRECTION_V1'],
+  })
+  format!: 'CN_IIT_WITHHOLDING_CORRECTION_V1';
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  contentHash!: string;
+  @Prop({ type: Number, required: true, immutable: true, min: 0 })
+  correctedTaxableEarningsMinor!: number;
+  @Prop({ type: Number, required: true, immutable: true })
+  correctedWithholdingTaxMinor!: number;
+  @Prop({ type: Number, required: true, immutable: true })
+  taxableEarningsDeltaMinor!: number;
+  @Prop({ type: Number, required: true, immutable: true })
+  withholdingTaxDeltaMinor!: number;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  preparedBy!: string;
+  @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
+  approvedBy!: string | null;
+  @Prop({ type: String, default: null, match: ULID_PATTERN })
+  strongAuthEvidenceId!: string | null;
+  @Prop({ type: String, default: null, enum: ['webauthn_evidence'] })
+  strongAuthReferenceType!: 'webauthn_evidence' | null;
+  @Prop({
+    type: String,
+    default: null,
+    maxlength: 512,
+    match: /^[A-Za-z0-9][A-Za-z0-9/._:-]{0,511}$/,
+  })
+  objectRef!: string | null;
+  @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
+  objectEvidenceId!: string | null;
+  @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
+  taxSubmissionId!: string | null;
+  @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
+  taxSubmissionEvidenceId!: string | null;
+  @Prop({
+    type: String,
+    required: true,
+    enum: ['archiving', 'prepared', 'approved', 'submitting', 'submitted'],
+  })
+  status!: 'archiving' | 'prepared' | 'approved' | 'submitting' | 'submitted';
+  @Prop({ type: Number, required: true, min: 1, max: 4 }) version!: number;
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+export type PayrollAdjustmentTaxCorrectionDocument =
+  HydratedDocument<PayrollAdjustmentTaxCorrectionRecord>;
+export const PayrollAdjustmentTaxCorrectionRecordSchema = SchemaFactory.createForClass(
+  PayrollAdjustmentTaxCorrectionRecord,
+);
+PayrollAdjustmentTaxCorrectionRecordSchema.pre('validate', function () {
+  const record = this as PayrollAdjustmentTaxCorrectionRecord;
+  const objectComplete = record.objectRef !== null && record.objectEvidenceId !== null;
+  const approvalComplete =
+    record.approvedBy !== null &&
+    record.strongAuthEvidenceId !== null &&
+    record.strongAuthReferenceType === 'webauthn_evidence';
+  const submissionComplete =
+    record.taxSubmissionId !== null &&
+    record.taxSubmissionEvidenceId !== null;
+  const expectedVersion: Readonly<Record<PayrollAdjustmentTaxCorrectionRecord['status'], number>> = {
+    archiving: 1,
+    prepared: 2,
+    approved: 3,
+    submitting: 3,
+    submitted: 4,
+  };
+  if (
+    ![
+      record.correctedTaxableEarningsMinor,
+      record.correctedWithholdingTaxMinor,
+      record.taxableEarningsDeltaMinor,
+      record.withholdingTaxDeltaMinor,
+    ].every(Number.isSafeInteger) ||
+    record.correctedTaxableEarningsMinor < 0 ||
+    (record.objectRef === null) !== (record.objectEvidenceId === null) ||
+    (record.approvedBy === null) !== (record.strongAuthEvidenceId === null) ||
+    (record.strongAuthEvidenceId === null) !==
+      (record.strongAuthReferenceType === null) ||
+    (record.taxSubmissionId === null) !==
+      (record.taxSubmissionEvidenceId === null) ||
+    record.version !== expectedVersion[record.status] ||
+    (record.status === 'archiving' &&
+      (objectComplete || approvalComplete || submissionComplete)) ||
+    (record.status === 'prepared' &&
+      (!objectComplete || approvalComplete || submissionComplete)) ||
+    (['approved', 'submitting'].includes(record.status) &&
+      (!objectComplete || !approvalComplete || submissionComplete)) ||
+    (record.status === 'submitted' &&
+      (!objectComplete || !approvalComplete || !submissionComplete))
+  ) throw new Error('工资调整税务更正状态、版本与证据不一致');
+});
+PayrollAdjustmentTaxCorrectionRecordSchema.index(
+  { tenantId: 1, id: 1 },
+  { unique: true },
+);
+PayrollAdjustmentTaxCorrectionRecordSchema.index(
+  { tenantId: 1, adjustmentId: 1 },
+  { unique: true },
+);
+PayrollAdjustmentTaxCorrectionRecordSchema.index(
+  { tenantId: 1, period: 1, status: 1 },
+);
 
 /** 员工年度工资代扣、已提交清单与税局评估的追加式核对证据。 */
 @Schema({

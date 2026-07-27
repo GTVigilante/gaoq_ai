@@ -11,6 +11,8 @@ import { OrgModule } from '../org/org.module.js';
 import { OutboxRecord, OutboxRecordSchema } from '../org/persistence/outbox.schema.js';
 import { PayrollMasterDataService } from './application/payroll-master-data.service.js';
 import { PayrollAdjustmentService } from './application/payroll-adjustment.service.js';
+import { PayrollAdjustmentReceivableService } from './application/payroll-adjustment-receivable.service.js';
+import { PayrollAdjustmentTaxCorrectionService } from './application/payroll-adjustment-tax-correction.service.js';
 import { PayrollAnnualReconciliationService } from './application/payroll-annual-reconciliation.service.js';
 import { PayrollApprovalService } from './application/payroll-approval.service.js';
 import { PayrollRunService } from './application/payroll-run.service.js';
@@ -29,6 +31,12 @@ import {
   PayrollCalculationLineRecordSchema,
   PayrollAdjustmentRecord,
   PayrollAdjustmentRecordSchema,
+  PayrollAdjustmentReceivableRecord,
+  PayrollAdjustmentReceivableRecordSchema,
+  PayrollAdjustmentReceivableRecoveryRecord,
+  PayrollAdjustmentReceivableRecoveryRecordSchema,
+  PayrollAdjustmentTaxCorrectionRecord,
+  PayrollAdjustmentTaxCorrectionRecordSchema,
   PayrollAnnualReconciliationRecord,
   PayrollAnnualReconciliationRecordSchema,
   PayrollCalculationRunRecord,
@@ -83,6 +91,18 @@ import {
       { name: PayrollCalculationLineRecord.name, schema: PayrollCalculationLineRecordSchema },
       { name: PayrollAdjustmentRecord.name, schema: PayrollAdjustmentRecordSchema },
       {
+        name: PayrollAdjustmentReceivableRecord.name,
+        schema: PayrollAdjustmentReceivableRecordSchema,
+      },
+      {
+        name: PayrollAdjustmentReceivableRecoveryRecord.name,
+        schema: PayrollAdjustmentReceivableRecoveryRecordSchema,
+      },
+      {
+        name: PayrollAdjustmentTaxCorrectionRecord.name,
+        schema: PayrollAdjustmentTaxCorrectionRecordSchema,
+      },
+      {
         name: PayrollAnnualReconciliationRecord.name,
         schema: PayrollAnnualReconciliationRecordSchema,
       },
@@ -101,6 +121,8 @@ import {
   providers: [
     PayrollRunService,
     PayrollAdjustmentService,
+    PayrollAdjustmentReceivableService,
+    PayrollAdjustmentTaxCorrectionService,
     PayrollAnnualReconciliationService,
     PayrollPayslipService,
     PayrollApprovalService,
@@ -118,6 +140,8 @@ import {
   exports: [
     PayrollRunService, PayrollPayslipService,
     PayrollAdjustmentService,
+    PayrollAdjustmentReceivableService,
+    PayrollAdjustmentTaxCorrectionService,
     PayrollAnnualReconciliationService,
     PayrollApprovalService,
     PayrollMasterDataService,

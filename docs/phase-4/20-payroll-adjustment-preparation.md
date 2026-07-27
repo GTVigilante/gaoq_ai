@@ -32,6 +32,8 @@ MCP 契约逐字固定为 Tool `payroll_adjustment_status_get`、Resource Templa
 
 专用 Approval 送审、可信终态同步和独立 WebAuthn UV 锁定已经由
 [工资调整审批与 WebAuthn 锁定](./24-payroll-adjustment-approval-locking.md) 交付。
-补发 `supplement` 子批次、冲销应收/后续抵扣、税务更正申报和结算回写仍须在
-后续切片完成；在这些收付与申报控制链交付前，不得把 locked 记录记为已补发、
-已追回或已更正申报。
+补发 `supplement` 子批次、冲销应收/恢复凭证、税务更正申报和结算回写分别由
+[补发子批次](./25-payroll-adjustment-supplement-disbursement.md)、
+[员工应收](./27-payroll-adjustment-receivable-settlement.md)和
+[税务更正](./28-payroll-adjustment-tax-correction.md)交付。只有现金与税务子状态
+均终结时整体才为 `settled`；外部沙箱和现场 UAT 未完成前不得宣称生产闭环。

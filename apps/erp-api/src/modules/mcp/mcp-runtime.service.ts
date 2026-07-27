@@ -281,8 +281,21 @@ const payrollAdjustmentControlSchema = z.object({
   status: z.enum([
     'prepared', 'pending_approval', 'approved', 'locked', 'settled', 'cancelled',
   ]),
+  cashSettlementStatus: z.enum(['not_required', 'pending', 'settled']),
+  taxCorrectionStatus: z.enum(['not_required', 'pending', 'submitted']),
   version: z.number().int().positive(),
   adjustmentHash: z.string().length(43),
+});
+const payrollAdjustmentTaxCorrectionControlSchema = z.object({
+  id: recruitmentIdSchema,
+  adjustmentId: recruitmentIdSchema,
+  period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  format: z.literal('CN_IIT_WITHHOLDING_CORRECTION_V1'),
+  contentHash: z.string().length(43),
+  objectEvidenceId: z.string().nullable(),
+  taxSubmissionEvidenceId: z.string().nullable(),
+  status: z.enum(['archiving', 'prepared', 'approved', 'submitting', 'submitted']),
+  version: z.number().int().positive(),
 });
 const annualPayrollReconciliationControlSchema = z.object({
   id: recruitmentIdSchema, taxYear: z.string().regex(/^\d{4}$/),
@@ -902,6 +915,31 @@ export class McpRuntimeService {
     );
 
     server.registerResource(
+      'payroll-adjustment-tax-correction-status',
+      new ResourceTemplate(
+        'erp://payroll/adjustment-tax-corrections/{id}',
+        { list: undefined },
+      ),
+      {
+        title: '工资调整税务更正脱敏控制状态',
+        description: '只返回更正清单、WORM 与税局回执控制状态，不返回员工、金额或税务正文。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getPayrollAdjustmentTaxCorrectionStatus(
+          requiredResourceId(id),
+          extra,
+        );
+        if (result.isError === true) throw new Error('无权读取工资调整税务更正控制状态');
+        return { contents: [{
+          uri: uri.toString(),
+          mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
+    server.registerResource(
       'payroll-annual-reconciliation-status',
       new ResourceTemplate('erp://payroll/annual-reconciliations/{id}', { list: undefined }),
       {
@@ -1255,6 +1293,19 @@ export class McpRuntimeService {
       ({ adjustmentId }) => ({ messages: [{ role: 'user', content: {
         type: 'text',
         text: `请读取工资调整 ${adjustmentId} 的脱敏控制状态，解释补发、冲销或税务调整类型、标准原因、版本和摘要是否完整。不得索取员工、工资金额、更正输入或密文；不得准备、批准、锁定、支付、扣回或税务重报。`,
+      } }] }),
+    );
+
+    server.registerPrompt(
+      'payroll_adjustment_tax_correction_review_guide',
+      {
+        title: '工资调整税务更正控制核对指南',
+        description: '指导 AI 只读核对更正清单、归档、审批和税局受理状态，不读取员工税额或执行申报。',
+        argsSchema: { filingId: recruitmentIdSchema },
+      },
+      ({ filingId }) => ({ messages: [{ role: 'user', content: {
+        type: 'text',
+        text: `请读取工资调整税务更正 ${filingId} 的脱敏控制状态，核对格式、内容摘要、WORM 证据、版本、审批和税局受理证据是否完整。不得索取员工、金额、税务正文、WORM 地址或税局凭据；不得制备、审批、提交或修改更正清单。`,
       } }] }),
     );
 
@@ -1636,6 +1687,27 @@ export class McpRuntimeService {
         },
       },
       async ({ id }, extra) => this.tools.getPayrollAdjustmentStatus(id, extra),
+    );
+
+    server.registerTool(
+      'payroll_adjustment_tax_correction_status_get',
+      {
+        title: '查询工资调整税务更正脱敏控制状态',
+        description: '只返回更正清单、归档和税局受理控制字段；不返回员工、金额、税务正文或 WORM 地址。风险等级 R1。',
+        inputSchema: { id: recruitmentIdSchema },
+        outputSchema: z.object({
+          payrollAdjustmentTaxCorrection:
+            payrollAdjustmentTaxCorrectionControlSchema,
+        }),
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      async ({ id }, extra) =>
+        this.tools.getPayrollAdjustmentTaxCorrectionStatus(id, extra),
     );
 
     server.registerTool(

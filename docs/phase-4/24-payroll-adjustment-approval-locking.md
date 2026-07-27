@@ -59,6 +59,10 @@ prepared → pending_approval → approved
 状态。AI 不注册送审、同步审批、启动强认证或锁定 Tool，也不能读取审批人、员工
 或金额。
 
-锁定不是结算。`supplement` 的 Treasury 子批次、`reversal` 的员工应收与后续
-合法抵扣、`tax_only`/其他类型的税务更正清单、银行/税局回执及最终 settled 回写
-尚未交付；在后续控制链完成前不得宣称已经补发、追回或更正申报。
+锁定不是结算。`supplement` 的 Treasury 子批次、直接或恢复全额成功回盘已由
+[工资调整补发子批次](./25-payroll-adjustment-supplement-disbursement.md) 交付；
+`reversal` 的员工应收与恢复凭证由
+[员工应收](./27-payroll-adjustment-receivable-settlement.md)交付；税务更正清单、
+WORM、WebAuthn 审批、税局回执及最终状态机由
+[工资调整税务更正](./28-payroll-adjustment-tax-correction.md)交付。真实外部联调
+和 UAT 仍是生产放行前置条件。

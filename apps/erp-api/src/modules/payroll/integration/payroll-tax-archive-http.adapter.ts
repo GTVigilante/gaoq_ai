@@ -26,9 +26,13 @@ export class HttpPayrollTaxImmutableArchive extends PayrollTaxImmutableArchive {
     readonly tenantId: string; readonly filingId: string; readonly objectKey: string;
     readonly sha256: string; readonly bytes: Buffer;
   }): Promise<PayrollTaxArchiveReceipt> {
+    const prefix = input.bytes.toString('utf8', 0, 72);
     if (
       input.bytes.length < 2 || input.bytes.length > 8 * 1024 * 1024 ||
-      !input.bytes.toString('utf8', 0, 52).startsWith('{"schema":"CN_IIT_WITHHOLDING_MANIFEST_V1"') ||
+      ![
+        '{"schema":"CN_IIT_WITHHOLDING_MANIFEST_V1"',
+        '{"schema":"CN_IIT_WITHHOLDING_CORRECTION_V1"',
+      ].some((schemaPrefix) => prefix.startsWith(schemaPrefix)) ||
       !HASH.test(input.sha256) ||
       createHash('sha256').update(input.bytes).digest('base64url') !== input.sha256 ||
       !OBJECT_KEY.test(input.objectKey) ||

@@ -80,6 +80,8 @@ const batchSnapshotSchema = z.object({
   debtorAgentClearingCode: z.string().regex(/^[0-9A-Z]{8,12}$/),
   payrollResultHash: z.string().regex(HASH_PATTERN),
   payableResultHash: z.string().regex(HASH_PATTERN),
+  adjustmentId: z.string().regex(ID_PATTERN).optional(),
+  adjustmentHash: z.string().regex(HASH_PATTERN).optional(),
 }).strict();
 const instructionDataSchema = z.object({
   instructionId: z.string().regex(ID_PATTERN),
@@ -91,7 +93,7 @@ const instructionDataSchema = z.object({
   creditorAccount: z.string().regex(/^[0-9]{8,32}$/),
   creditorAgentClearingCode: z.string().regex(/^[0-9A-Z]{8,12}$/),
   amountMinor: z.number().int().safe().positive(),
-  purposeCode: z.literal('PAYROLL'),
+  purposeCode: z.enum(['PAYROLL', 'PAYROLL_ADJUSTMENT']),
 }).strict();
 
 export interface TreasuryDisbursementSummary extends Record<string, unknown> {
@@ -280,7 +282,9 @@ export class TreasuryDisbursementService {
           id: batchId, tenantId: this.tenantId(), payrollPeriodId: source.periodId,
           payrollRunId: source.payrollRunId, payrollResultHash: source.resultHash,
           payableResultHash: controls.payableResultHash, batchSequence: 1,
-          parentBatchId: null, recoverySourceBatchId: null, purpose: 'regular' as const,
+          parentBatchId: null, recoverySourceBatchId: null,
+          adjustmentSourceId: null, adjustmentSourceHash: null,
+          purpose: 'regular' as const,
           format: 'ISO20022_PAIN_001_001_03' as const, fileHash: document.contentHash,
           lineCount: controls.lineCount, totalMinor: controls.totalMinor,
           preparedBy, payrollLockedBy: source.payrollLockedBy, exportApprovedBy,
@@ -584,6 +588,7 @@ export class TreasuryDisbursementService {
       payrollRunId: source.payrollRunId, payrollResultHash: source.resultHash,
       payableResultHash,
       batchSequence: 1, parentBatchId: null, recoverySourceBatchId: null,
+      adjustmentSourceId: null, adjustmentSourceHash: null,
       purpose: 'regular', format: 'ISO20022_PAIN_001_001_03', fileHash: null,
       lineCount: payable.length, totalMinor: Number(total), preparedBy,
       payrollLockedBy: source.payrollLockedBy, exportApprovedBy: null,
@@ -691,6 +696,11 @@ export class TreasuryDisbursementService {
       header.messageId !== batch.id || header.paymentInformationId !== batch.id ||
       header.payrollResultHash !== batch.payrollResultHash ||
       header.payableResultHash !== batch.payableResultHash ||
+      (batch.purpose === 'supplement' &&
+        (header.adjustmentId !== batch.adjustmentSourceId ||
+          header.adjustmentHash !== batch.adjustmentSourceHash)) ||
+      (batch.purpose !== 'supplement' &&
+        (header.adjustmentId !== undefined || header.adjustmentHash !== undefined)) ||
       payrollDigest(resultReferences.sort((left, right) =>
         left.employeeId.localeCompare(right.employeeId))) !== batch.payableResultHash
     ) throw new ConflictException({

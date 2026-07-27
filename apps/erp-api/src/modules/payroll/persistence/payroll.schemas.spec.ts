@@ -4,6 +4,9 @@ import { describe, expect, it } from 'vitest';
 import {
   PayrollCompensationProfileRecordSchema,
   PayrollAdjustmentRecordSchema,
+  PayrollAdjustmentReceivableRecordSchema,
+  PayrollAdjustmentReceivableRecoveryRecordSchema,
+  PayrollAdjustmentTaxCorrectionRecordSchema,
   PayrollAnnualReconciliationRecordSchema,
   PayrollCalculationRunRecordSchema,
   PayrollPeriodApprovalEvidenceRecordSchema,
@@ -18,6 +21,9 @@ import {
   PayrollCutoverReadinessRecordSchema,
   type PayrollCompensationProfileRecord,
   type PayrollAdjustmentRecord,
+  type PayrollAdjustmentReceivableRecord,
+  type PayrollAdjustmentReceivableRecoveryRecord,
+  type PayrollAdjustmentTaxCorrectionRecord,
   type PayrollAnnualReconciliationRecord,
   type PayrollReconciliationRecord,
   type PayrollTaxFilingRecord,
@@ -30,6 +36,15 @@ const ProfileModel = mongoose.model<PayrollCompensationProfileRecord>(
 );
 const AdjustmentModel = mongoose.model<PayrollAdjustmentRecord>(
   'SpecPayrollAdjustment', PayrollAdjustmentRecordSchema,
+);
+const AdjustmentReceivableModel = mongoose.model<PayrollAdjustmentReceivableRecord>(
+  'SpecPayrollAdjustmentReceivable', PayrollAdjustmentReceivableRecordSchema,
+);
+const AdjustmentRecoveryModel = mongoose.model<PayrollAdjustmentReceivableRecoveryRecord>(
+  'SpecPayrollAdjustmentRecovery', PayrollAdjustmentReceivableRecoveryRecordSchema,
+);
+const AdjustmentTaxCorrectionModel = mongoose.model<PayrollAdjustmentTaxCorrectionRecord>(
+  'SpecPayrollAdjustmentTaxCorrection', PayrollAdjustmentTaxCorrectionRecordSchema,
 );
 const AnnualReconciliationModel = mongoose.model<PayrollAnnualReconciliationRecord>(
   'SpecPayrollAnnualReconciliation', PayrollAnnualReconciliationRecordSchema,
@@ -57,6 +72,7 @@ describe('Payroll 持久化契约', () => {
       correctedResultHash: 'r'.repeat(43), adjustmentHash: 'a'.repeat(43),
       grossDeltaMinor: 100_000, taxDeltaMinor: 3_000, netDeltaMinor: 97_000,
       payableMinor: 97_000, receivableMinor: 0, preparedBy: 'payroll-engine',
+      cashSettlementStatus: 'pending', taxCorrectionStatus: 'pending',
       status: 'prepared', version: 1,
       dataKeyId: 'payroll-key-001', dataIv: 'b'.repeat(16),
       dataCiphertext: 'c'.repeat(32), dataAuthTag: 'd'.repeat(22),
@@ -87,10 +103,136 @@ describe('Payroll 持久化契约', () => {
       strongAuthEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4E1',
       version: 4,
     }).validate()).resolves.toBeUndefined();
+    await expect(new AdjustmentModel({
+      ...base,
+      type: 'reversal',
+      grossDeltaMinor: -100_000,
+      taxDeltaMinor: -3_000,
+      netDeltaMinor: -97_000,
+      payableMinor: 0,
+      receivableMinor: 97_000,
+      cashSettlementReferenceType: 'receivable',
+      cashSettlementReferenceId: '01J8ZQK7V0A2M4N6P8R0T2W4V1',
+      status: 'locked',
+      requestedBy: 'payroll-requester',
+      approvalInstanceId: '01J8ZQK7V0A2M4N6P8R0T2W4A1',
+      approvalDecidedBy: 'finance-approver',
+      approvalEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4A1',
+      lockedBy: 'treasury-locker',
+      strongAuthEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4E1',
+      version: 5,
+    }).validate()).resolves.toBeUndefined();
     expect(JSON.stringify(new AdjustmentModel(base).toObject()))
       .not.toMatch(/"correctedInput":|"taxableEarnings":|"attendanceSnapshot":/u);
     expect(PayrollAdjustmentRecordSchema.indexes()).toContainEqual([
       { tenantId: 1, originalCalculationLineId: 1, adjustmentNumber: 1 },
+      expect.objectContaining({ unique: true }),
+    ]);
+  });
+
+  it('员工应收余额与恢复凭证保持追加式一致性', async () => {
+    const receivable = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4V1',
+      tenantId: 'tenant-001',
+      adjustmentId: '01J8ZQK7V0A2M4N6P8R0T2W4A3',
+      adjustmentHash: 'a'.repeat(43),
+      currency: 'CNY',
+      originalAmountMinor: 97_000,
+      outstandingAmountMinor: 57_000,
+      openedBy: 'finance-receivable-opener',
+      openedAt: new Date('2026-07-22T00:00:00.000Z'),
+      settledAt: null,
+      status: 'open',
+      version: 2,
+      dataKeyId: 'payroll-key-001',
+      dataIv: 'b'.repeat(16),
+      dataCiphertext: 'c'.repeat(32),
+      dataAuthTag: 'd'.repeat(22),
+    };
+    await expect(new AdjustmentReceivableModel(receivable).validate())
+      .resolves.toBeUndefined();
+    await expect(new AdjustmentReceivableModel({
+      ...receivable,
+      outstandingAmountMinor: 0,
+    }).validate()).rejects.toThrow('工资调整应收余额、状态与结算时间不一致');
+    const recovery = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4W1',
+      tenantId: 'tenant-001',
+      receivableId: receivable.id,
+      method: 'authorized_payroll_deduction',
+      amountMinor: 40_000,
+      sourceReferenceId: 'payroll-run-2026-08',
+      sourceEvidenceId: 'worm-payroll-run-2026-08',
+      legalAuthorizationEvidenceId: 'employee-consent-001',
+      receivedAt: new Date('2026-08-01T00:00:00.000Z'),
+      recordedBy: 'trusted-payroll-runner',
+      recoveryHash: 'r'.repeat(43),
+    };
+    await expect(new AdjustmentRecoveryModel(recovery).validate())
+      .resolves.toBeUndefined();
+    await expect(new AdjustmentRecoveryModel({
+      ...recovery,
+      legalAuthorizationEvidenceId: null,
+    }).validate()).rejects.toThrow('工资调整应收恢复方式、金额与法定授权证据不一致');
+    expect(PayrollAdjustmentReceivableRecordSchema.indexes()).toContainEqual([
+      { tenantId: 1, adjustmentId: 1 },
+      expect.objectContaining({ unique: true }),
+    ]);
+    expect(PayrollAdjustmentReceivableRecoveryRecordSchema.indexes()).toContainEqual([
+      { tenantId: 1, sourceEvidenceId: 1 },
+      expect.objectContaining({ unique: true }),
+    ]);
+  });
+
+  it('工资调整税务更正要求 WORM、强认证和税局回执按状态成套出现', async () => {
+    const base = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4F1',
+      tenantId: 'tenant-001',
+      adjustmentId: '01J8ZQK7V0A2M4N6P8R0T2W4A3',
+      adjustmentHash: 'a'.repeat(43),
+      period: '2026-07',
+      format: 'CN_IIT_WITHHOLDING_CORRECTION_V1',
+      contentHash: 'c'.repeat(43),
+      correctedTaxableEarningsMinor: 1_100_000,
+      correctedWithholdingTaxMinor: 13_500,
+      taxableEarningsDeltaMinor: 100_000,
+      withholdingTaxDeltaMinor: 3_000,
+      preparedBy: 'tax-correction-maker',
+      approvedBy: null,
+      strongAuthEvidenceId: null,
+      strongAuthReferenceType: null,
+      objectRef: null,
+      objectEvidenceId: null,
+      taxSubmissionId: null,
+      taxSubmissionEvidenceId: null,
+      status: 'archiving',
+      version: 1,
+      dataKeyId: 'payroll-key-001',
+      dataIv: 'b'.repeat(16),
+      dataCiphertext: 'c'.repeat(32),
+      dataAuthTag: 'd'.repeat(22),
+    };
+    await expect(new AdjustmentTaxCorrectionModel(base).validate())
+      .resolves.toBeUndefined();
+    await expect(new AdjustmentTaxCorrectionModel({
+      ...base,
+      status: 'prepared',
+      version: 2,
+    }).validate()).rejects.toThrow('工资调整税务更正状态、版本与证据不一致');
+    await expect(new AdjustmentTaxCorrectionModel({
+      ...base,
+      objectRef: 'worm/payroll-tax/correction-001',
+      objectEvidenceId: 'worm-correction-evidence-001',
+      approvedBy: 'tax-correction-approver',
+      strongAuthEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4E1',
+      strongAuthReferenceType: 'webauthn_evidence',
+      taxSubmissionId: 'tax-correction-submission-001',
+      taxSubmissionEvidenceId: 'tax-correction-receipt-001',
+      status: 'submitted',
+      version: 4,
+    }).validate()).resolves.toBeUndefined();
+    expect(PayrollAdjustmentTaxCorrectionRecordSchema.indexes()).toContainEqual([
+      { tenantId: 1, adjustmentId: 1 },
       expect.objectContaining({ unique: true }),
     ]);
   });

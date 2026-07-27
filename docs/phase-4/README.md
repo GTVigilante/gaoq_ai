@@ -29,6 +29,11 @@ Phase 4 在 ERP 组织与劳动关系主数据之上，建立可重放的考勤�
 23. [年度工资代扣、税表与税局评估核对](./22-payroll-annual-withholding-reconciliation.md)
 24. [Payroll Annual Reconciliation 索引迁移 Runbook](./23-payroll-annual-index-migration-runbook.md)
 25. [工资调整专用审批与 WebAuthn 锁定](./24-payroll-adjustment-approval-locking.md)
+26. [工资调整正向补发子批次与现金结算回写](./25-payroll-adjustment-supplement-disbursement.md)
+27. [Treasury 工资调整来源索引迁移 Runbook](./26-treasury-adjustment-index-migration-runbook.md)
+28. [负向工资调整员工应收与恢复凭证](./27-payroll-adjustment-receivable-settlement.md)
+29. [工资调整税务更正、WORM、审批与税局受理](./28-payroll-adjustment-tax-correction.md)
+30. [工资调整结算索引迁移 Runbook](./29-payroll-adjustment-settlement-index-migration-runbook.md)
 
 ## 强制边界
 

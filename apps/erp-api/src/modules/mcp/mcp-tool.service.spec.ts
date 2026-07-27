@@ -23,6 +23,9 @@ import type { PayrollReconciliationService } from '../payroll/application/payrol
 import type { PayrollShadowService } from '../payroll/application/payroll-shadow.service.js';
 import type { PayrollAdjustmentService } from '../payroll/application/payroll-adjustment.service.js';
 import type {
+  PayrollAdjustmentTaxCorrectionService,
+} from '../payroll/application/payroll-adjustment-tax-correction.service.js';
+import type {
   PayrollAnnualReconciliationService,
 } from '../payroll/application/payroll-annual-reconciliation.service.js';
 import type { OpOperatingSummaryService } from '../op/application/op-operating-summary.service.js';
@@ -103,6 +106,7 @@ function assemble() {
   const reconciliations = { getStatus: vi.fn() };
   const shadows = { getCycle: vi.fn(), getReadiness: vi.fn() };
   const payrollAdjustments = { getControlStatus: vi.fn() };
+  const payrollAdjustmentTaxCorrections = { getControlStatus: vi.fn() };
   const annualPayrollReconciliations = { getControlStatus: vi.fn() };
   const opSummaries = { getLatest: vi.fn() };
   const opApprovalBridges = { get: vi.fn() };
@@ -128,6 +132,7 @@ function assemble() {
     reconciliations as unknown as PayrollReconciliationService,
     shadows as unknown as PayrollShadowService,
     payrollAdjustments as unknown as PayrollAdjustmentService,
+    payrollAdjustmentTaxCorrections as unknown as PayrollAdjustmentTaxCorrectionService,
     annualPayrollReconciliations as unknown as PayrollAnnualReconciliationService,
     opSummaries as unknown as OpOperatingSummaryService,
     opApprovalBridges as unknown as OpApprovalBridgeService,
@@ -140,7 +145,7 @@ function assemble() {
     context, audit, organization, approvals, recruitmentApplications,
     recruitmentInterviews, recruitmentManagement, recruitmentOffers, confirmations, service,
     onboarding, knowledge, care, attendance, payroll, payslips, taxFilings, reconciliations, shadows,
-    payrollAdjustments, annualPayrollReconciliations,
+    payrollAdjustments, payrollAdjustmentTaxCorrections, annualPayrollReconciliations,
     opSummaries, opApprovalBridges, managementDashboard, analyticsExports, dataMigrations,
   };
 }
@@ -627,11 +632,25 @@ describe('McpToolService', () => {
   it('工资调整和年度薪税 MCP 只返回脱敏控制状态', async () => {
     const store = assemble();
     const adjustmentId = '01J8ZQK7V0A2M4N6P8R0T2W4A1';
+    const correctionId = '01J8ZQK7V0A2M4N6P8R0T2W4F1';
     const annualId = '01J8ZQK7V0A2M4N6P8R0T2W4Y1';
     store.payrollAdjustments.getControlStatus.mockResolvedValue({
       id: adjustmentId, period: '2026-07', adjustmentNumber: 1,
       type: 'supplement', reasonCode: 'RETROACTIVE_SALARY_CHANGE',
-      status: 'prepared', version: 1, adjustmentHash: 'a'.repeat(43),
+      status: 'prepared', cashSettlementStatus: 'pending',
+      taxCorrectionStatus: 'pending',
+      version: 1, adjustmentHash: 'a'.repeat(43),
+    });
+    store.payrollAdjustmentTaxCorrections.getControlStatus.mockResolvedValue({
+      id: correctionId,
+      adjustmentId,
+      period: '2026-07',
+      format: 'CN_IIT_WITHHOLDING_CORRECTION_V1',
+      contentHash: 'c'.repeat(43),
+      objectEvidenceId: 'worm-correction-evidence-001',
+      taxSubmissionEvidenceId: null,
+      status: 'prepared',
+      version: 2,
     });
     store.annualPayrollReconciliations.getControlStatus.mockResolvedValue({
       id: annualId, taxYear: '2026', periodCount: 12,
@@ -650,14 +669,32 @@ describe('McpToolService', () => {
       annualId,
       extra(['erp:mcp:server:connect', 'erp:payroll:annual:read']),
     );
+    const correction =
+      await store.service.getPayrollAdjustmentTaxCorrectionStatus(
+        correctionId,
+        extra([
+          'erp:mcp:server:connect',
+          'erp:payroll:adjustment:tax_correction:read',
+        ]),
+      );
     expect(adjustment.structuredContent).toMatchObject({
-      payrollAdjustment: { id: adjustmentId, status: 'prepared' },
+      payrollAdjustment: {
+        id: adjustmentId, status: 'prepared',
+        cashSettlementStatus: 'pending', taxCorrectionStatus: 'pending',
+      },
     });
     expect(annual.structuredContent).toMatchObject({
       annualPayrollReconciliation: { id: annualId, status: 'assessment_matched' },
     });
-    expect(JSON.stringify([adjustment, annual])).not.toMatch(
-      /employeeId|payableMinor|receivableMinor|assessedTax|withheld|filingEvidence/iu,
+    expect(correction.structuredContent).toMatchObject({
+      payrollAdjustmentTaxCorrection: {
+        id: correctionId,
+        adjustmentId,
+        status: 'prepared',
+      },
+    });
+    expect(JSON.stringify([adjustment, annual, correction])).not.toMatch(
+      /employeeId|payableMinor|receivableMinor|assessedTax|withheld|taxableEarningsMinor/iu,
     );
   });
 

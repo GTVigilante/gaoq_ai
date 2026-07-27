@@ -25,6 +25,7 @@ import {
   PayrollAdjustmentError,
   requestPayrollAdjustmentApproval,
   type PayrollAdjustmentControl,
+  type PayrollAdjustmentResult,
   type PayrollCalculationResult,
 } from '../domain/index.js';
 import { PayrollDataCryptoService } from '../persistence/payroll-data-crypto.service.js';
@@ -89,6 +90,11 @@ const adjustmentSchema = z.object({
   receivableMinor: z.number().int().safe().nonnegative(),
   adjustmentHash: z.string().regex(HASH),
 }).strict();
+const adjustmentBundleSchema = z.object({
+  originalResult: resultSchema,
+  correctedResult: resultSchema,
+  adjustment: adjustmentSchema,
+}).passthrough();
 
 export interface PreparePayrollAdjustmentInput {
   readonly periodId: string;
@@ -122,6 +128,8 @@ export interface PayrollAdjustmentSummary extends Record<string, unknown> {
   readonly payableMinor: number;
   readonly receivableMinor: number;
   readonly approvalInstanceId: string | null;
+  readonly cashSettlementStatus: 'not_required' | 'pending' | 'settled';
+  readonly taxCorrectionStatus: 'not_required' | 'pending' | 'submitted';
 }
 
 export interface PayrollAdjustmentControlSummary extends Record<string, unknown> {
@@ -131,8 +139,57 @@ export interface PayrollAdjustmentControlSummary extends Record<string, unknown>
   readonly type: 'supplement' | 'reversal' | 'tax_only';
   readonly reasonCode: string;
   readonly status: PayrollAdjustmentSummary['status'];
+  readonly cashSettlementStatus: PayrollAdjustmentSummary['cashSettlementStatus'];
+  readonly taxCorrectionStatus: PayrollAdjustmentSummary['taxCorrectionStatus'];
   readonly version: number;
   readonly adjustmentHash: string;
+}
+
+/** Treasury 内部只读来源；禁止注册 REST/MCP 或序列化到事件、审计和日志。 */
+export interface LockedPayrollSupplementSource {
+  readonly adjustmentId: string;
+  readonly adjustmentHash: string;
+  readonly periodId: string;
+  readonly period: string;
+  readonly payrollRunId: string;
+  readonly originalCalculationLineId: string;
+  readonly employeeId: string;
+  readonly correctedResultHash: string;
+  readonly payableMinor: number;
+  readonly adjustmentVersion: number;
+  readonly controlActorIds: readonly string[];
+  readonly lockedBy: string;
+}
+
+/** 员工应收内部只读来源；禁止注册 REST/MCP 或序列化到事件、审计和日志。 */
+export interface LockedPayrollReversalSource {
+  readonly adjustmentId: string;
+  readonly adjustmentHash: string;
+  readonly period: string;
+  readonly employeeId: string;
+  readonly receivableMinor: number;
+  readonly adjustmentVersion: number;
+  readonly controlActorIds: readonly string[];
+}
+
+/** 税务更正内部来源；包含 L4 员工税额，只能在 Payroll 服务事务内使用。 */
+export interface LockedPayrollTaxCorrectionSource {
+  readonly adjustmentId: string;
+  readonly adjustmentHash: string;
+  readonly period: string;
+  readonly employeeId: string;
+  readonly reasonCode: string;
+  readonly originalResultHash: string;
+  readonly correctedResultHash: string;
+  readonly originalTaxableEarningsMinor: number;
+  readonly correctedTaxableEarningsMinor: number;
+  readonly originalWithholdingTaxMinor: number;
+  readonly correctedWithholdingTaxMinor: number;
+  readonly taxableEarningsDeltaMinor: number;
+  readonly withholdingTaxDeltaMinor: number;
+  readonly cumulativeTaxWithheldDeltaMinor: number;
+  readonly adjustmentVersion: number;
+  readonly controlActorIds: readonly string[];
 }
 
 /** 锁定工资追加式更正；只准备差额，不执行补发支付、扣款或税务重报。 */
@@ -241,6 +298,15 @@ export class PayrollAdjustmentService {
           requestedBy: null, approvalInstanceId: null,
           approvalDecidedBy: null, approvalEvidenceId: null,
           lockedBy: null, strongAuthEvidenceId: null,
+          cashSettlementStatus:
+            adjustment.type === 'tax_only' ? 'not_required' as const : 'pending' as const,
+          taxCorrectionStatus: taxCorrectionRequired(adjustment)
+            ? 'pending' as const
+            : 'not_required' as const,
+          cashSettlementReferenceType: null,
+          cashSettlementReferenceId: null,
+          cashSettlementEvidenceId: null,
+          taxCorrectionFilingId: null,
           status: 'prepared' as const, version: 1,
           dataKeyId: protectedData.keyId, dataIv: protectedData.iv,
           dataCiphertext: protectedData.ciphertext, dataAuthTag: protectedData.authTag,
@@ -434,6 +500,38 @@ export class PayrollAdjustmentService {
             strongAuthMethod: evidence.method,
           },
         }, session);
+        if (
+          current.cashSettlementStatus === 'not_required' &&
+          current.taxCorrectionStatus === 'not_required'
+        ) {
+          const settled = await this.adjustments.updateOne({
+            tenantId: this.tenantId(),
+            id,
+            status: 'locked',
+            version: next.version,
+          }, { $set: {
+            status: 'settled',
+            version: next.version + 1,
+          } }, { session, runValidators: true });
+          if (settled.modifiedCount !== 1) throw new ConflictException({
+            code: 'PAYROLL_ADJUSTMENT_IMMEDIATE_SETTLEMENT_WRITE_CONFLICT',
+            message: '无需现金和税务动作的工资调整结算发生并发冲突',
+          });
+          await this.outbox.append({
+            type: 'payroll.adjustment.settled',
+            tenantId: this.tenantId(),
+            aggregateId: id,
+            version: next.version + 1,
+            occurredAt: new Date().toISOString(),
+            data: adjustmentEventData(current, 'settled'),
+          }, session);
+          return summary({
+            ...current,
+            ...next,
+            status: 'settled',
+            version: next.version + 1,
+          });
+        }
         return summary({ ...current, ...next });
       },
     ));
@@ -441,16 +539,472 @@ export class PayrollAdjustmentService {
 
   async get(id: string): Promise<PayrollAdjustmentSummary> {
     this.assertScope('erp:payroll:adjustment:read');
-    if (!ULID.test(id)) throw new BadRequestException({
-      code: 'PAYROLL_ADJUSTMENT_ID_INVALID', message: '工资调整标识非法',
+    return summary(await this.requireVerifiedAdjustment(id));
+  }
+
+  /** Treasury 只在同一可信身份上下文内读取已锁定正向差额，不暴露密文或更正输入。 */
+  async getLockedSupplementSource(
+    id: string,
+    expectedVersion: number,
+    session?: ClientSession,
+  ): Promise<LockedPayrollSupplementSource> {
+    this.assertScope('erp:treasury:adjustment:source:read');
+    const record = await this.requireVerifiedAdjustment(id, session);
+    if (
+      record.status !== 'locked' ||
+      record.version !== expectedVersion ||
+      record.type !== 'supplement' ||
+      record.cashSettlementStatus !== 'pending' ||
+      record.payableMinor < 1 ||
+      record.receivableMinor !== 0 ||
+      record.lockedBy === null
+    ) throw new ConflictException({
+      code: 'PAYROLL_ADJUSTMENT_SUPPLEMENT_SOURCE_INVALID',
+      message: '只有已锁定且版本一致的正向工资调整可进入补发链',
     });
-    const record = await this.adjustments.findOne({
-      tenantId: this.tenantId(), id,
-    }).lean().exec();
-    if (record === null) throw new NotFoundException({
-      code: 'PAYROLL_ADJUSTMENT_NOT_FOUND', message: '工资调整不存在',
+    const actors = [
+      record.preparedBy,
+      record.requestedBy,
+      record.approvalDecidedBy,
+      record.lockedBy,
+    ].filter((value): value is string => typeof value === 'string');
+    return Object.freeze({
+      adjustmentId: record.id,
+      adjustmentHash: record.adjustmentHash,
+      periodId: record.periodId,
+      period: record.period,
+      payrollRunId: record.originalRunId,
+      originalCalculationLineId: record.originalCalculationLineId,
+      employeeId: record.employeeId,
+      correctedResultHash: record.correctedResultHash,
+      payableMinor: record.payableMinor,
+      adjustmentVersion: record.version,
+      controlActorIds: Object.freeze([...new Set(actors)]),
+      lockedBy: record.lockedBy,
     });
-    const bundle = z.object({ adjustment: adjustmentSchema }).passthrough().parse(
+  }
+
+  /** 应收服务只在同一事务中读取已锁定负向差额，不暴露更正输入或密文。 */
+  async getLockedReversalSource(
+    id: string,
+    expectedVersion: number,
+    session: ClientSession,
+  ): Promise<LockedPayrollReversalSource> {
+    this.assertScope('erp:payroll:adjustment:receivable:source:read');
+    const record = await this.requireVerifiedAdjustment(id, session);
+    if (
+      record.status !== 'locked' ||
+      record.version !== expectedVersion ||
+      record.type !== 'reversal' ||
+      record.cashSettlementStatus !== 'pending' ||
+      record.cashSettlementReferenceType !== null ||
+      record.cashSettlementReferenceId !== null ||
+      record.receivableMinor < 1 ||
+      record.payableMinor !== 0
+    ) throw new ConflictException({
+      code: 'PAYROLL_ADJUSTMENT_RECEIVABLE_SOURCE_INVALID',
+      message: '只有已锁定、未建应收且版本一致的负向工资调整可进入员工应收链',
+    });
+    const actors = [
+      record.preparedBy,
+      record.requestedBy,
+      record.approvalDecidedBy,
+      record.lockedBy,
+    ].filter((value): value is string => typeof value === 'string');
+    return Object.freeze({
+      adjustmentId: record.id,
+      adjustmentHash: record.adjustmentHash,
+      period: record.period,
+      employeeId: record.employeeId,
+      receivableMinor: record.receivableMinor,
+      adjustmentVersion: record.version,
+      controlActorIds: Object.freeze([...new Set(actors)]),
+    });
+  }
+
+  /** 税务服务只在同一事务内读取完整验证后的待更正税额。 */
+  async getLockedTaxCorrectionSource(
+    id: string,
+    expectedVersion: number,
+    session: ClientSession,
+  ): Promise<LockedPayrollTaxCorrectionSource> {
+    this.assertScope('erp:payroll:adjustment:tax_correction:source:read');
+    const { record, bundle } = await this.requireVerifiedAdjustmentBundle(id, session);
+    if (
+      record.status !== 'locked' ||
+      record.version !== expectedVersion ||
+      record.taxCorrectionStatus !== 'pending' ||
+      record.taxCorrectionFilingId !== null
+    ) throw new ConflictException({
+      code: 'PAYROLL_ADJUSTMENT_TAX_CORRECTION_SOURCE_INVALID',
+      message: '只有已锁定、未建更正清单且版本一致的工资调整可进入税务更正链',
+    });
+    const actors = [
+      record.preparedBy,
+      record.requestedBy,
+      record.approvalDecidedBy,
+      record.lockedBy,
+    ].filter((value): value is string => typeof value === 'string');
+    return Object.freeze({
+      adjustmentId: record.id,
+      adjustmentHash: record.adjustmentHash,
+      period: record.period,
+      employeeId: record.employeeId,
+      reasonCode: record.reasonCode,
+      originalResultHash: record.originalResultHash,
+      correctedResultHash: record.correctedResultHash,
+      originalTaxableEarningsMinor: bundle.originalResult.taxableEarningsMinor,
+      correctedTaxableEarningsMinor: bundle.correctedResult.taxableEarningsMinor,
+      originalWithholdingTaxMinor: bundle.originalResult.withholdingTaxMinor,
+      correctedWithholdingTaxMinor: bundle.correctedResult.withholdingTaxMinor,
+      taxableEarningsDeltaMinor: bundle.adjustment.delta.taxableEarningsMinor,
+      withholdingTaxDeltaMinor: bundle.adjustment.delta.withholdingTaxMinor,
+      cumulativeTaxWithheldDeltaMinor:
+        bundle.adjustment.delta.cumulativeAfter.taxWithheldMinor,
+      adjustmentVersion: record.version,
+      controlActorIds: Object.freeze([...new Set(actors)]),
+    });
+  }
+
+  /** 更正清单写入事务内绑定唯一清单标识，状态仍为 pending。 */
+  async recordTaxCorrectionPrepared(
+    input: {
+      readonly adjustmentId: string;
+      readonly adjustmentHash: string;
+      readonly filingId: string;
+      readonly expectedVersion: number;
+    },
+    session: ClientSession,
+  ): Promise<void> {
+    const actor = this.context.getActorRequired();
+    if (
+      actor.actorType !== 'user' ||
+      !actor.scopes.includes('erp:payroll:adjustment:tax_correction:prepare')
+    ) throw new ForbiddenException({
+      code: 'PAYROLL_ADJUSTMENT_TAX_CORRECTION_PREPARER_DENIED',
+      message: '工资调整税务更正只能由受控人工税务制备人绑定',
+    });
+    if (
+      !ULID.test(input.adjustmentId) ||
+      !HASH.test(input.adjustmentHash) ||
+      !ULID.test(input.filingId) ||
+      !Number.isSafeInteger(input.expectedVersion) ||
+      input.expectedVersion < 1
+    ) throw new BadRequestException({
+      code: 'PAYROLL_ADJUSTMENT_TAX_CORRECTION_BINDING_INVALID',
+      message: '工资调整税务更正绑定参数非法',
+    });
+    const record = await this.requireVerifiedAdjustment(input.adjustmentId, session);
+    if (
+      record.status !== 'locked' ||
+      record.version !== input.expectedVersion ||
+      record.adjustmentHash !== input.adjustmentHash ||
+      record.taxCorrectionStatus !== 'pending' ||
+      record.taxCorrectionFilingId !== null
+    ) throw new ConflictException({
+      code: 'PAYROLL_ADJUSTMENT_TAX_CORRECTION_BINDING_CONFLICT',
+      message: '工资调整状态与税务更正清单绑定不一致',
+    });
+    const updated = await this.adjustments.updateOne({
+      tenantId: this.tenantId(),
+      id: record.id,
+      status: 'locked',
+      version: record.version,
+      taxCorrectionStatus: 'pending',
+      taxCorrectionFilingId: null,
+    }, { $set: {
+      taxCorrectionFilingId: input.filingId,
+      version: record.version + 1,
+    } }, { session, runValidators: true });
+    if (updated.modifiedCount !== 1) throw new ConflictException({
+      code: 'PAYROLL_ADJUSTMENT_TAX_CORRECTION_BINDING_WRITE_CONFLICT',
+      message: '工资调整税务更正绑定发生并发冲突',
+    });
+    await this.outbox.append({
+      type: 'payroll.adjustment.tax_correction_prepared',
+      tenantId: this.tenantId(),
+      aggregateId: record.id,
+      version: record.version + 1,
+      occurredAt: new Date().toISOString(),
+      data: adjustmentEventData(record, 'locked'),
+    }, session);
+  }
+
+  /** 税局受理回执落库后回写税务终态；现金未终结时整体仍保持 locked。 */
+  async recordTaxCorrectionSubmitted(
+    input: {
+      readonly adjustmentId: string;
+      readonly adjustmentHash: string;
+      readonly filingId: string;
+    },
+    session: ClientSession,
+  ): Promise<void> {
+    const actor = this.context.getActorRequired();
+    if (
+      !['service', 'system_job'].includes(actor.actorType) ||
+      !actor.scopes.includes('erp:payroll:adjustment:tax_correction:submit')
+    ) throw new ForbiddenException({
+      code: 'PAYROLL_ADJUSTMENT_TAX_CORRECTION_SUBMITTER_DENIED',
+      message: '工资调整税务终态只接受受信任税务连接器',
+    });
+    if (
+      !ULID.test(input.adjustmentId) ||
+      !HASH.test(input.adjustmentHash) ||
+      !ULID.test(input.filingId)
+    ) throw new BadRequestException({
+      code: 'PAYROLL_ADJUSTMENT_TAX_CORRECTION_SUBMISSION_INVALID',
+      message: '工资调整税务更正终态引用非法',
+    });
+    const record = await this.requireVerifiedAdjustment(input.adjustmentId, session);
+    if (
+      record.status !== 'locked' ||
+      record.adjustmentHash !== input.adjustmentHash ||
+      record.taxCorrectionStatus !== 'pending' ||
+      record.taxCorrectionFilingId !== input.filingId
+    ) throw new ConflictException({
+      code: 'PAYROLL_ADJUSTMENT_TAX_CORRECTION_SUBMISSION_CONFLICT',
+      message: '工资调整与税务更正受理终态不一致',
+    });
+    const status = record.cashSettlementStatus === 'pending' ? 'locked' : 'settled';
+    const updated = await this.adjustments.updateOne({
+      tenantId: this.tenantId(),
+      id: record.id,
+      status: 'locked',
+      version: record.version,
+      taxCorrectionStatus: 'pending',
+      taxCorrectionFilingId: input.filingId,
+    }, { $set: {
+      taxCorrectionStatus: 'submitted',
+      status,
+      version: record.version + 1,
+    } }, { session, runValidators: true });
+    if (updated.modifiedCount !== 1) throw new ConflictException({
+      code: 'PAYROLL_ADJUSTMENT_TAX_CORRECTION_SUBMISSION_WRITE_CONFLICT',
+      message: '工资调整税务更正终态写入发生并发冲突',
+    });
+    await this.outbox.append({
+      type: 'payroll.adjustment.tax_correction_submitted',
+      tenantId: this.tenantId(),
+      aggregateId: record.id,
+      version: record.version + 1,
+      occurredAt: new Date().toISOString(),
+      data: adjustmentEventData(record, status),
+    }, session);
+  }
+
+  /** 同一事务内把唯一员工应收绑定回负向调整，但现金仍保持 pending。 */
+  async recordReceivableOpened(
+    input: {
+      readonly adjustmentId: string;
+      readonly adjustmentHash: string;
+      readonly receivableId: string;
+      readonly expectedVersion: number;
+    },
+    session: ClientSession,
+  ): Promise<void> {
+    if (
+      !ULID.test(input.adjustmentId) ||
+      !HASH.test(input.adjustmentHash) ||
+      !ULID.test(input.receivableId) ||
+      !Number.isSafeInteger(input.expectedVersion) ||
+      input.expectedVersion < 1
+    ) throw new BadRequestException({
+      code: 'PAYROLL_ADJUSTMENT_RECEIVABLE_BINDING_INVALID',
+      message: '工资调整应收绑定参数非法',
+    });
+    const record = await this.requireVerifiedAdjustment(input.adjustmentId, session);
+    if (
+      record.status !== 'locked' ||
+      record.version !== input.expectedVersion ||
+      record.type !== 'reversal' ||
+      record.adjustmentHash !== input.adjustmentHash ||
+      record.cashSettlementStatus !== 'pending' ||
+      record.cashSettlementReferenceType !== null ||
+      record.cashSettlementReferenceId !== null ||
+      record.receivableMinor < 1
+    ) throw new ConflictException({
+      code: 'PAYROLL_ADJUSTMENT_RECEIVABLE_BINDING_CONFLICT',
+      message: '工资调整状态与应收绑定不一致',
+    });
+    const updated = await this.adjustments.updateOne({
+      tenantId: this.tenantId(),
+      id: record.id,
+      status: 'locked',
+      version: record.version,
+      cashSettlementStatus: 'pending',
+      cashSettlementReferenceType: null,
+      cashSettlementReferenceId: null,
+    }, { $set: {
+      cashSettlementReferenceType: 'receivable',
+      cashSettlementReferenceId: input.receivableId,
+      version: record.version + 1,
+    } }, { session, runValidators: true });
+    if (updated.modifiedCount !== 1) throw new ConflictException({
+      code: 'PAYROLL_ADJUSTMENT_RECEIVABLE_BINDING_WRITE_CONFLICT',
+      message: '工资调整应收绑定发生并发冲突',
+    });
+    await this.outbox.append({
+      type: 'payroll.adjustment.receivable_opened',
+      tenantId: this.tenantId(),
+      aggregateId: record.id,
+      version: record.version + 1,
+      occurredAt: new Date().toISOString(),
+      data: adjustmentEventData(record, 'locked'),
+    }, session);
+  }
+
+  /** 应收余额归零后回写最终恢复凭证；税务未更正时整体仍保持 locked。 */
+  async recordReceivableSettled(
+    input: {
+      readonly adjustmentId: string;
+      readonly adjustmentHash: string;
+      readonly receivableId: string;
+      readonly recoveryId: string;
+    },
+    session: ClientSession,
+  ): Promise<void> {
+    if (
+      !ULID.test(input.adjustmentId) ||
+      !HASH.test(input.adjustmentHash) ||
+      !ULID.test(input.receivableId) ||
+      !ULID.test(input.recoveryId)
+    ) throw new BadRequestException({
+      code: 'PAYROLL_ADJUSTMENT_RECEIVABLE_SETTLEMENT_INVALID',
+      message: '工资调整应收结算引用非法',
+    });
+    const record = await this.requireVerifiedAdjustment(input.adjustmentId, session);
+    if (
+      record.status !== 'locked' ||
+      record.type !== 'reversal' ||
+      record.adjustmentHash !== input.adjustmentHash ||
+      record.cashSettlementStatus !== 'pending' ||
+      record.cashSettlementReferenceType !== 'receivable' ||
+      record.cashSettlementReferenceId !== input.receivableId ||
+      record.cashSettlementEvidenceId !== null
+    ) throw new ConflictException({
+      code: 'PAYROLL_ADJUSTMENT_RECEIVABLE_SETTLEMENT_CONFLICT',
+      message: '工资调整与员工应收终态不一致',
+    });
+    const status = record.taxCorrectionStatus === 'pending' ? 'locked' : 'settled';
+    const updated = await this.adjustments.updateOne({
+      tenantId: this.tenantId(),
+      id: record.id,
+      status: 'locked',
+      version: record.version,
+      cashSettlementStatus: 'pending',
+      cashSettlementReferenceType: 'receivable',
+      cashSettlementReferenceId: input.receivableId,
+      cashSettlementEvidenceId: null,
+    }, { $set: {
+      cashSettlementStatus: 'settled',
+      cashSettlementEvidenceId: input.recoveryId,
+      status,
+      version: record.version + 1,
+    } }, { session, runValidators: true });
+    if (updated.modifiedCount !== 1) throw new ConflictException({
+      code: 'PAYROLL_ADJUSTMENT_RECEIVABLE_SETTLEMENT_WRITE_CONFLICT',
+      message: '工资调整应收结算发生并发冲突',
+    });
+    await this.outbox.append({
+      type: 'payroll.adjustment.cash_settled',
+      tenantId: this.tenantId(),
+      aggregateId: record.id,
+      version: record.version + 1,
+      occurredAt: new Date().toISOString(),
+      data: adjustmentEventData(record, status),
+    }, session);
+  }
+
+  /**
+   * Treasury 回盘事务内回写正向现金结算证据。
+   * 税务更正未提交时只完成现金侧，不把整个调整伪记为 settled。
+   */
+  async recordSupplementBankReturn(
+    input: {
+      readonly adjustmentId: string;
+      readonly adjustmentHash: string;
+      readonly batchId: string;
+      readonly returnId: string;
+      readonly successfulMinor: number;
+    },
+    session: ClientSession,
+  ): Promise<void> {
+    const actor = this.context.getActorRequired();
+    if (
+      !['service', 'system_job'].includes(actor.actorType) ||
+      !actor.scopes.includes('erp:treasury:return:ingest')
+    ) throw new ForbiddenException({
+      code: 'PAYROLL_ADJUSTMENT_SETTLEMENT_WRITER_DENIED',
+      message: '工资调整现金结算只接受受信任 Treasury 回盘服务',
+    });
+    if (
+      !ULID.test(input.adjustmentId) ||
+      !HASH.test(input.adjustmentHash) ||
+      !ULID.test(input.batchId) ||
+      !ULID.test(input.returnId) ||
+      !Number.isSafeInteger(input.successfulMinor) ||
+      input.successfulMinor < 1
+    ) throw new BadRequestException({
+      code: 'PAYROLL_ADJUSTMENT_SETTLEMENT_INPUT_INVALID',
+      message: '工资调整现金结算引用或金额非法',
+    });
+    const record = await this.requireVerifiedAdjustment(input.adjustmentId, session);
+    if (
+      record.status !== 'locked' ||
+      record.type !== 'supplement' ||
+      record.adjustmentHash !== input.adjustmentHash ||
+      record.cashSettlementStatus !== 'pending' ||
+      record.payableMinor !== input.successfulMinor ||
+      record.receivableMinor !== 0
+    ) throw new ConflictException({
+      code: 'PAYROLL_ADJUSTMENT_SETTLEMENT_STATE_INVALID',
+      message: '工资调整与补发终态回盘不一致',
+    });
+    const status = record.taxCorrectionStatus === 'pending' ? 'locked' : 'settled';
+    const updated = await this.adjustments.updateOne({
+      tenantId: this.tenantId(),
+      id: record.id,
+      status: 'locked',
+      version: record.version,
+      cashSettlementStatus: 'pending',
+    }, { $set: {
+      cashSettlementStatus: 'settled',
+      cashSettlementReferenceType: 'treasury_batch',
+      cashSettlementReferenceId: input.batchId,
+      cashSettlementEvidenceId: input.returnId,
+      status,
+      version: record.version + 1,
+    } }, { session, runValidators: true });
+    if (updated.modifiedCount !== 1) throw new ConflictException({
+      code: 'PAYROLL_ADJUSTMENT_SETTLEMENT_WRITE_CONFLICT',
+      message: '工资调整现金结算发生并发冲突',
+    });
+    await this.outbox.append({
+      type: 'payroll.adjustment.cash_settled',
+      tenantId: this.tenantId(),
+      aggregateId: record.id,
+      version: record.version + 1,
+      occurredAt: new Date().toISOString(),
+      data: adjustmentEventData(record, status),
+    }, session);
+  }
+
+  private async requireVerifiedAdjustment(
+    id: string,
+    session?: ClientSession,
+  ): Promise<PayrollAdjustmentRecord> {
+    return (await this.requireVerifiedAdjustmentBundle(id, session)).record;
+  }
+
+  private async requireVerifiedAdjustmentBundle(
+    id: string,
+    session?: ClientSession,
+  ): Promise<{
+    readonly record: PayrollAdjustmentRecord;
+    readonly bundle: z.infer<typeof adjustmentBundleSchema>;
+  }> {
+    const record = await this.requireAdjustment(id, session);
+    const bundle = adjustmentBundleSchema.parse(
       this.crypto.unprotect({
         tenantId: this.tenantId(), resourceType: 'payroll_adjustment',
         resourceId: record.id, version: 1,
@@ -468,6 +1022,8 @@ export class PayrollAdjustmentService {
       bundle.adjustment.originalResultHash !== record.originalResultHash ||
       bundle.adjustment.correctedInputHash !== record.correctedInputHash ||
       bundle.adjustment.correctedResultHash !== record.correctedResultHash ||
+      bundle.originalResult.resultHash !== record.originalResultHash ||
+      bundle.correctedResult.resultHash !== record.correctedResultHash ||
       bundle.adjustment.delta.grossPayMinor !== record.grossDeltaMinor ||
       bundle.adjustment.delta.withholdingTaxMinor !== record.taxDeltaMinor ||
       bundle.adjustment.delta.netPayMinor !== record.netDeltaMinor ||
@@ -477,7 +1033,7 @@ export class PayrollAdjustmentService {
       code: 'PAYROLL_ADJUSTMENT_RECORD_INTEGRITY_FAILED',
       message: '工资调整控制字段与密文不一致',
     });
-    return summary(record);
+    return Object.freeze({ record, bundle });
   }
 
   /** AI/控制面只读脱敏摘要；先执行完整密文一致性验证再删去人员与金额。 */
@@ -487,6 +1043,8 @@ export class PayrollAdjustmentService {
       id: value.id, period: value.period,
       adjustmentNumber: value.adjustmentNumber, type: value.type,
       reasonCode: value.reasonCode, status: value.status,
+      cashSettlementStatus: value.cashSettlementStatus,
+      taxCorrectionStatus: value.taxCorrectionStatus,
       version: value.version, adjustmentHash: value.adjustmentHash,
     });
   }
@@ -628,6 +1186,8 @@ function summary(record: PayrollAdjustmentRecord): PayrollAdjustmentSummary {
     netDeltaMinor: record.netDeltaMinor, payableMinor: record.payableMinor,
     receivableMinor: record.receivableMinor,
     approvalInstanceId: record.approvalInstanceId ?? null,
+    cashSettlementStatus: record.cashSettlementStatus,
+    taxCorrectionStatus: record.taxCorrectionStatus,
   });
 }
 
@@ -684,6 +1244,12 @@ function deriveKey(root: string, stage: string): string {
     .update(JSON.stringify([root, stage]), 'utf8')
     .digest('base64url');
   return `payroll-adjustment:${digest}`;
+}
+
+function taxCorrectionRequired(adjustment: PayrollAdjustmentResult): boolean {
+  return adjustment.delta.taxableEarningsMinor !== 0 ||
+    adjustment.delta.withholdingTaxMinor !== 0 ||
+    Object.values(adjustment.delta.cumulativeAfter).some((value) => value !== 0);
 }
 
 function protectedValue(record: {

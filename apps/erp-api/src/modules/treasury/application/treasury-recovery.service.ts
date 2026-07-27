@@ -52,7 +52,8 @@ const instructionSchema = z.object({
   bankAccountId: z.string().regex(ID), payrollCalculationLineId: z.string().regex(ID),
   payrollResultHash: z.string().regex(HASH), creditorName: z.string(),
   creditorAccount: z.string(), creditorAgentClearingCode: z.string(),
-  amountMinor: z.number().int().safe().positive(), purposeCode: z.literal('PAYROLL'),
+  amountMinor: z.number().int().safe().positive(),
+  purposeCode: z.enum(['PAYROLL', 'PAYROLL_ADJUSTMENT']),
 }).strict();
 const accountSchema = z.object({
   accountName: z.string().min(1).max(140), account: z.string().regex(/^[0-9]{8,32}$/),
@@ -279,6 +280,7 @@ export class TreasuryRecoveryService {
       payrollRunId: parent.payrollRunId, payrollResultHash: parent.payrollResultHash,
       payableResultHash, batchSequence: latest.batchSequence + 1, parentBatchId: parent.id,
       recoverySourceBatchId: parent.id,
+      adjustmentSourceId: null, adjustmentSourceHash: null,
       purpose: 'recovery', format: parent.format, fileHash: null,
       lineCount: failed.length, totalMinor: failedMinor, preparedBy: approvedBy,
       payrollLockedBy: parent.payrollLockedBy, exportApprovedBy: null,
@@ -304,7 +306,7 @@ export class TreasuryRecoveryService {
         payrollResultHash: source.payrollResultHash, creditorName: account.data.accountName,
         creditorAccount: account.data.account,
         creditorAgentClearingCode: account.data.clearingCode,
-        amountMinor: source.amountMinor, purposeCode: 'PAYROLL',
+        amountMinor: source.amountMinor, purposeCode: source.purposeCode,
       });
       return {
         id, tenantId: this.tenantId(), batchId, employeeId: source.employeeId,
