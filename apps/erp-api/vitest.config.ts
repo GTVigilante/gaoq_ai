@@ -179,6 +179,12 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/recruitment/application/recruitment-resume.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/integration/recruitment-channel-position-delivery.service.ts': {
           branches: 90,
           functions: 90,
@@ -282,6 +288,12 @@ export default defineConfig({
           statements: 90,
         },
         'src/modules/approval/application/approval-application.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/approval/domain/template.ts': {
           branches: 90,
           functions: 90,
           lines: 90,
