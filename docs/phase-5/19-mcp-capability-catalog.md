@@ -28,6 +28,12 @@ pnpm --silent mcp:catalog:print > /secure/mcp/gaoq-mcp-catalog.json
 
 上线前使用交互式用户 Agent、机器服务 Agent、只读审计 Agent 分别验证初始化协商、OAuth 发现、PKCE 或 Client Credentials、资源指示、Scope、分页、结构化内容、Tool Error、超时、取消、幂等重放、确认过期和审计。每类客户端必须读取同一 `catalogHash`；不按厂商名称做私有兼容分支，任何符合协议与授权标准的 AI 均可接入。
 
+仓库门禁 `pnpm quality:mcp-http-entry-coverage` 覆盖 `/mcp` 与 `/mcp/` 的认证前
+Origin 拒绝、控制器二次 Origin 校验、连接 Scope、浏览器确认 Cookie 会话、
+R1/R2 状态、WebAuthn 仪式与显式可信用户审计。公共确认端点不得依赖 Bearer 请求
+租户上下文；业务拒绝或确认状态推进后的审计异常均不得改变原始决定。三个入口
+目标文件语句、分支、函数和行均不得低于 90%，当前 26 项测试达到四维 100%。
+
 ## 跨系统联调
 
 OP、钉钉、飞书、e签宝、银行、税务、附件和 WORM 只通过应用服务与 Adapter 被 MCP 间接读取或发起受控意图。真实沙箱联调必须证明外部超时/重复/乱序不会绕过确认、租户、幂等、Outbox/Inbox、对账与审计；MCP 服务自身不得持有或返回供应商 Token。银行、税务、真实签署和资金动作只验证沙箱/受控替身，禁止生产副作用。
