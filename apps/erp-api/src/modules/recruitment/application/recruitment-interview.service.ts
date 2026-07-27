@@ -321,7 +321,10 @@ export class RecruitmentInterviewService {
     interviewId: string,
   ): Promise<RecruitmentCalendarProjection> {
     const actor = this.context.getActorRequired();
-    if (!actor.scopes.includes('erp:integration:calendar:deliver')) {
+    if (
+      actor.actorType !== 'system_job' ||
+      !actor.scopes.includes('erp:integration:calendar:deliver')
+    ) {
       throw new ForbiddenException({
         code: 'RECRUITMENT_CALENDAR_PROJECTION_DENIED', message: '无权读取日历投影',
       });
