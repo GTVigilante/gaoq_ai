@@ -4,8 +4,8 @@
 - 审计对象：Phase 0–6、开放 Issue、Draft PR #122 与 GitHub 治理配置
 - 结论：应用、契约、迁移控制面、生产门禁、Helm/Kubernetes 编排和标准 MCP
   已形成仓库实施基线；真实外部联调、目标环境演练、UAT、切换与 Hypercare
-  尚未完成。Phase 0 的 GitHub Project 因最小权限未授权而未配置，全仓覆盖率
-  也尚未达到强制门槛，因此所有 Phase 均不得标记生产完成。
+  尚未完成。Phase 0 的 GitHub Project 因最小权限未授权而未配置，其余关键
+  链路 90% 证据也尚未全部建立，因此所有 Phase 均不得标记生产完成。
 
 本审计只判断“仓库是否已有可执行实现”，不把本地自测、静态校验器或模拟证据
 冒充现场验收。Issue 在外部证据齐全前保持 OPEN。
@@ -23,7 +23,7 @@
 
 | Phase | 仓库实施证据 | 尚缺外部证据 | 结论 |
 |---|---|---|---|
-| 0 | `docs/phase-0/`、Issue 模板、7 个 Milestone、标签及 Draft PR 流程 | Issue #41 的 GitHub Project 需要 `project` 权限；全仓覆盖率未达到 80%，其余关键链路 90% 证据尚未全部建立 | 未满足退出条件 |
+| 0 | `docs/phase-0/`、Issue 模板、7 个 Milestone、标签及 Draft PR 流程 | Issue #41 的 GitHub Project 需要 `project` 权限；全仓覆盖率仅以 6 个分支余量达到 80%，其余关键链路 90% 证据尚未全部建立 | 未满足退出条件 |
 | 1 | `apps/erp-api/src/modules/auth/`、`org/`、`security/`、`integration/`，`deploy/helm/`，Phase 1 工作流 | 境内云 VPC、WAF/KMS、真实 SSO/组织下发、监控告警、备份恢复与 RPO/RTO 演练 | 实施已交付，外部验收待完成 |
 | 2 | `apps/erp-api/src/modules/approval/`、审批前端、通知、迁移与 MCP 能力 | 氚云模板/历史/在途审批真实盘点迁移、三次演练和业务签署 | 实施已交付，外部验收待完成 |
 | 3 | 招聘、eSign、Onboarding、Knowledge、Care、Talent Lifecycle 360 及对应 REST/事件/MCP | 真实渠道、e签宝、对象/WORM、OpenAI/搜索/评分/通知、CRM/校友平台与跨角色 UAT | 实施已交付，外部验收待完成 |
@@ -180,9 +180,9 @@ MCP 确认、MCP 运行时、
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 OAuth 授权控制器已覆盖 45 项预注册回调、PKCE、授权决策、授权码、
-`client_credentials`、协议错误与限流测试。Basic 客户端的限流主体只取自
-Authorization，禁止请求体 `client_id` 绕过真实客户端桶；授权决策提交后的审计
-故障仅记录稳定告警，不再把成功终态反向暴露为失败。覆盖率达到
+`client_credentials`、协议错误与限流测试。Basic 和 `private_key_jwt` 的
+限流主体只取自认证材料，禁止请求体 `client_id` 绕过真实客户端桶；授权决策
+提交后的审计故障仅记录稳定告警，不再把成功终态反向暴露为失败。覆盖率达到
 96.09%/91.51%/100%/99.45%（语句/分支/函数/行），独立四维 90% 门禁已接入
 `pnpm check`。
 
