@@ -13,6 +13,7 @@ const requiredFiles = [
   'templates/deployment-api.yaml',
   'templates/deployment-worker.yaml',
   'templates/deployment-web.yaml',
+  'templates/deployment-website.yaml',
   'templates/services.yaml',
   'templates/pdb.yaml',
   'templates/hpa.yaml',
@@ -64,6 +65,14 @@ for (const [component, markers] of Object.entries({
   api: ['runtime.apiConfigMapName', 'runtime.apiSecretName', '/api/health/ready'],
   worker: ['runtime.workerConfigMapName', 'runtime.workerSecretName', '/health/live'],
   web: ['runtime.webConfigMapName', 'runtime.webSecretName', 'path: /', 'containerPort: 3000'],
+  website: [
+    'runtime.websiteConfigMapName',
+    'runtime.websiteSecretName',
+    'ERP_API_INTERNAL_ORIGIN',
+    'MARKETING_REVALIDATE_SECRET',
+    'path: /zh-CN',
+    'containerPort: 3002',
+  ],
 })) {
   const deployment = contents.get(`templates/deployment-${component}.yaml`);
   assertIncludes(deployment, [
@@ -100,6 +109,15 @@ if (
   webDeployment.includes('runtime.workerSecretName')
 ) throw new Error('KUBERNETES_WEB_BACKEND_SECRET_REUSE_FORBIDDEN');
 
+const websiteDeployment = contents.get('templates/deployment-website.yaml');
+if (
+  websiteDeployment.includes('envFrom:') ||
+  websiteDeployment.includes('NEXT_PUBLIC_') ||
+  websiteDeployment.includes('runtime.apiSecretName') ||
+  websiteDeployment.includes('runtime.workerSecretName') ||
+  websiteDeployment.includes('runtime.webSecretName')
+) throw new Error('KUBERNETES_WEBSITE_RUNTIME_BOUNDARY_INVALID');
+
 const serviceAccount = contents.get('templates/serviceaccount.yaml');
 assertIncludes(serviceAccount, [
   'kind: ServiceAccount',
@@ -113,6 +131,7 @@ assertIncludes(contents.get('templates/services.yaml'), [
   'type: ClusterIP',
   'port: 3001',
   'port: 3000',
+  'port: 3002',
   'port: 9464',
 ], 'KUBERNETES_SERVICES_INCOMPLETE');
 assertIncludes(contents.get('templates/pdb.yaml'), [
@@ -121,6 +140,7 @@ assertIncludes(contents.get('templates/pdb.yaml'), [
   'apiMinAvailable',
   'workerMinAvailable',
   'webMinAvailable',
+  'websiteMinAvailable',
 ], 'KUBERNETES_PDB_INCOMPLETE');
 assertIncludes(contents.get('templates/hpa.yaml'), [
   'apiVersion: autoscaling/v2',
@@ -133,6 +153,7 @@ assertIncludes(contents.get('templates/ingress.yaml'), [
   'tlsSecretName',
   'ingressClassName:',
   'pathType: Prefix',
+  'websiteHost',
 ], 'KUBERNETES_INGRESS_INCOMPLETE');
 assertIncludes(contents.get('templates/networkpolicy.yaml'), [
   'default-deny',
@@ -189,20 +210,20 @@ if (renderedPath !== undefined) {
   const count = (kind) => [...rendered.matchAll(new RegExp(`^kind: ${kind}$`, 'gmu'))].length;
 
   for (const [kind, expected] of Object.entries({
-    Deployment: 3,
-    Service: 3,
+    Deployment: 4,
+    Service: 4,
     ServiceAccount: 1,
-    PodDisruptionBudget: 3,
-    HorizontalPodAutoscaler: 2,
+    PodDisruptionBudget: 4,
+    HorizontalPodAutoscaler: 3,
     Ingress: 1,
-    NetworkPolicy: 8,
+    NetworkPolicy: 9,
   })) {
     if (count(kind) !== expected) throw new Error(`KUBERNETES_RENDERED_${kind.toUpperCase()}_COUNT_INVALID`);
   }
 
   const namespaces = [...rendered.matchAll(/^\s{2}namespace:\s*([^\s]+)\s*$/gmu)]
     .map((match) => match[1]);
-  if (namespaces.length !== 21 || new Set(namespaces).size !== 1) {
+  if (namespaces.length !== 26 || new Set(namespaces).size !== 1) {
     throw new Error('KUBERNETES_RENDERED_TARGET_NAMESPACE_INVALID');
   }
 

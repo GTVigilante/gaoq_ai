@@ -10,6 +10,7 @@ RUN corepack enable && corepack prepare pnpm@10.29.2 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY apps/erp-api/package.json apps/erp-api/package.json
 COPY apps/erp-web/package.json apps/erp-web/package.json
+COPY apps/website/package.json apps/website/package.json
 COPY packages/platform-contracts/package.json packages/platform-contracts/package.json
 COPY packages/shared-types/package.json packages/shared-types/package.json
 COPY packages/shared-utils/package.json packages/shared-utils/package.json
@@ -32,6 +33,18 @@ ENV ERP_MOBILE_FRAME_ANCESTORS=${ERP_MOBILE_FRAME_ANCESTORS}
 COPY apps/erp-web apps/erp-web
 RUN node -e "const endpoint = new URL(process.env.NEXT_PUBLIC_ERP_API_ORIGIN); if (endpoint.protocol !== 'https:' || endpoint.pathname !== '/' || endpoint.search || endpoint.hash || endpoint.username || endpoint.password) process.exit(1)" && \
     pnpm --filter @gaoq/erp-web build
+
+FROM dependencies AS website-build
+ARG NEXT_PUBLIC_WEBSITE_ORIGIN
+ARG NEXT_PUBLIC_ERP_API_ORIGIN
+ARG NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_ORIGIN
+ARG NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL
+ENV NEXT_PUBLIC_WEBSITE_ORIGIN=${NEXT_PUBLIC_WEBSITE_ORIGIN}
+ENV NEXT_PUBLIC_ERP_API_ORIGIN=${NEXT_PUBLIC_ERP_API_ORIGIN}
+ENV NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_ORIGIN=${NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_ORIGIN}
+ENV NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL=${NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL}
+COPY apps/website apps/website
+RUN pnpm --filter @gaoq/website build
 
 FROM ${NODE_RUNTIME_IMAGE} AS runtime-base
 ARG IMAGE_REVISION=unknown
@@ -72,3 +85,14 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
   CMD ["/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:3000/').then((response)=>{if(!response.ok)process.exit(1)}).catch(()=>process.exit(1))"]
 ENTRYPOINT ["/nodejs/bin/node"]
 CMD ["apps/erp-web/server.js"]
+
+FROM runtime-base AS erp-website
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3002
+COPY --from=website-build --chown=65532:65532 /workspace/apps/website/.next/standalone/ ./
+COPY --from=website-build --chown=65532:65532 /workspace/apps/website/.next/static/ ./apps/website/.next/static/
+EXPOSE 3002
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
+  CMD ["/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:3002/zh-CN').then((response)=>{if(!response.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+ENTRYPOINT ["/nodejs/bin/node"]
+CMD ["apps/website/server.js"]

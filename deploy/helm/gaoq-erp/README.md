@@ -9,7 +9,10 @@
 - `release.commitSha`：与发布证据一致的 40 位 Git commit。
 - `release.deploymentManifestHash`：发布系统生成的不可变部署包清单摘要，不对包含本字段的渲染 YAML 做自引用哈希。
 - `release.rolloutId`：本次发布窗口的唯一标识。
-- `runtime.*`：平台预创建且可独立轮换的 API、Worker、ERP Web、Website ConfigMap 与 Secret 名称。Web Secret 只允许保存招聘门户 BFF 的最小 OAuth 客户端凭据；Website Secret 只保存缓存失效密钥，禁止相互复用。
+- `runtime.*`：平台预创建且可独立轮换的 API、Worker、ERP Web、Website ConfigMap 与 Secret 名称。Web Secret 只允许保存招聘门户 BFF 的最小 OAuth 客户端凭据；Website ConfigMap 只提供 `ERP_API_INTERNAL_ORIGIN`，Website Secret 只提供 `MARKETING_REVALIDATE_SECRET`，禁止相互复用。
+- Website 的 `NEXT_PUBLIC_WEBSITE_ORIGIN`、`NEXT_PUBLIC_ERP_API_ORIGIN`、
+  `NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_ORIGIN` 和 Widget URL 必须在生产镜像
+  构建时固化并进入镜像供应链证据，禁止把构建期公开变量当成 Pod 运行时配置。
 - `networkPolicy.*Labels`：经平台负责人确认的入口网关、监控和 DNS 工作负载标签。
 - `networkPolicy.httpsEgressCidrs`：统一 HTTPS 出站网关的私网 CIDR；ERP、钉钉、飞书、电子签、银行、税务、WORM 等外联只能经该网关。
 - `networkPolicy.mongodbCidrs`、`networkPolicy.redisCidrs`：托管 MongoDB Replica Set 和 Redis 的独立私网 CIDR。

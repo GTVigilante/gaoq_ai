@@ -55,9 +55,17 @@ spec:
           imagePullPolicy: {{ .Values.images.pullPolicy }}
           ports:
             - { name: http, containerPort: 3002, protocol: TCP }
-          envFrom:
-            - configMapRef: { name: {{ required "runtime.websiteConfigMapName 必填" .Values.runtime.websiteConfigMapName }} }
-            - secretRef: { name: {{ required "runtime.websiteSecretName 必填" .Values.runtime.websiteSecretName }} }
+          env:
+            - name: ERP_API_INTERNAL_ORIGIN
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ required "runtime.websiteConfigMapName 必填" .Values.runtime.websiteConfigMapName }}
+                  key: ERP_API_INTERNAL_ORIGIN
+            - name: MARKETING_REVALIDATE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "runtime.websiteSecretName 必填" .Values.runtime.websiteSecretName }}
+                  key: MARKETING_REVALIDATE_SECRET
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

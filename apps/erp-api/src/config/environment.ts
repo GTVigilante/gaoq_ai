@@ -1,5 +1,13 @@
 import { z } from 'zod';
 
+const isLoopbackHostname = (hostname: string): boolean => {
+  const normalized = hostname.toLowerCase().replace(/\.$/u, '');
+  return normalized === 'localhost' ||
+    normalized === '127.0.0.1' ||
+    normalized === '::1' ||
+    normalized.endsWith('.localhost');
+};
+
 const environmentSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   RUNTIME_ROLE: z.enum(['api', 'worker']).default('api'),
@@ -312,6 +320,52 @@ const environmentSchema = z.object({
   const issuer = new URL(environment.AUTH_ISSUER);
   const authorizationServer = new URL(environment.MCP_AUTHORIZATION_SERVER);
   const resource = new URL(environment.AUTH_RESOURCE);
+  if (
+    environment.NODE_ENV === 'production' &&
+    environment.MARKETING_WEBSITE_ORIGIN === undefined
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['MARKETING_WEBSITE_ORIGIN'],
+      message: '生产环境必须配置营销官网精确 HTTPS Origin',
+    });
+  }
+  if (environment.MARKETING_WEBSITE_ORIGIN !== undefined) {
+    const websiteOrigin = new URL(environment.MARKETING_WEBSITE_ORIGIN);
+    const productionInvalid = environment.NODE_ENV === 'production' && (
+      websiteOrigin.protocol !== 'https:' ||
+      (websiteOrigin.port !== '' && websiteOrigin.port !== '443') ||
+      isLoopbackHostname(websiteOrigin.hostname)
+    );
+    if (
+      websiteOrigin.pathname !== '/' ||
+      websiteOrigin.search !== '' ||
+      websiteOrigin.hash !== '' ||
+      websiteOrigin.username !== '' ||
+      websiteOrigin.password !== '' ||
+      productionInvalid ||
+      websiteOrigin.origin === new URL(environment.WEB_ORIGIN).origin
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['MARKETING_WEBSITE_ORIGIN'],
+        message: '营销官网必须为独立精确 Origin；生产仅允许标准 HTTPS 且禁止本地地址',
+      });
+    }
+  }
+  if (
+    environment.NODE_ENV === 'production' &&
+    (
+      environment.MARKETING_CAPTCHA_VERIFY_ENDPOINT === undefined ||
+      environment.MARKETING_CAPTCHA_BEARER_TOKEN === undefined
+    )
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['MARKETING_CAPTCHA_VERIFY_ENDPOINT'],
+      message: '生产环境营销官网必须配置验证码校验端点与独立凭据',
+    });
+  }
   if (environment.NODE_ENV === 'production' && environment.PAYROLL_SYSTEM_MODE !== 'external') {
     context.addIssue({
       code: 'custom',

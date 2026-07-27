@@ -27,6 +27,10 @@
   真实附件网关、OpenAI Secret/数据保留控制、代表性简历评测与招聘 UAT 待现场验收。
 - 2026-07-27 已交付双语营销官网、ERP 工作台 CMS、受控内容发布协议与加密预约
   线索入口；对象存储、通知、验证码、AI 网关和正式域名仍待现场配置与验收。
+- 2026-07-27 已补齐 Website 生产失败关闭构建、安全响应头、精确 CORS/验证码
+  协议、独立非 root 镜像与供应链扫描，以及 Deployment、Service、Ingress、
+  NetworkPolicy、HPA、PDB、探针和构建/运行配置边界静态门禁；真实域名、证书、
+  WAF、验证码和对象存储仍需目标环境证据。
 - GitHub PR #103 的 Hosted Actions 当前在任何步骤执行前被账户付款或 Spending
   limit 拦截；这是外部门禁未执行，不得记为代码测试失败或门禁通过。
 
@@ -56,6 +60,10 @@
 pnpm install --frozen-lockfile
 pnpm audit
 pnpm check
+NEXT_PUBLIC_WEBSITE_ORIGIN=https://www.example.invalid \
+NEXT_PUBLIC_ERP_API_ORIGIN=https://erp.example.invalid \
+NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_ORIGIN=https://captcha.example.invalid \
+NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL=https://captcha.example.invalid/widget \
 pnpm build
 ```
 
