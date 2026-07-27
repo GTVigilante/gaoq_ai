@@ -72,6 +72,9 @@ describe('MCP Streamable HTTP 协议集成', () => {
         content: [{ type: 'text' as const, text: '{"templates":[]}' }],
         structuredContent: { templates: [] },
       }),
+      getApprovalInbox: vi.fn(),
+      getApprovalInstance: vi.fn(),
+      getApprovalTimeline: vi.fn(),
       getApprovalDelegations: vi.fn().mockResolvedValue({
         content: [{ type: 'text' as const, text: '{"delegations":[]}' }],
         structuredContent: { delegations: [] },
@@ -550,6 +553,14 @@ describe('MCP Streamable HTTP 协议集成', () => {
     expect(client.getServerCapabilities()?.extensions).toMatchObject({
       'io.modelcontextprotocol/oauth-client-credentials': {},
     });
+    const runtime = app.get(McpRuntimeService);
+    expect(runtime.isOriginAllowed(undefined)).toBe(true);
+    expect(runtime.isOriginAllowed('https://trusted-ai.example.com')).toBe(true);
+    expect(runtime.isOriginAllowed('https://untrusted-ai.example.com')).toBe(false);
+    await expect(runtime.handle(
+      {} as ErpRequest,
+      {} as Response,
+    )).rejects.toThrow('MCP 认证上下文未建立');
 
     let listedTools;
     try {
@@ -677,6 +688,37 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ name: 'data_migration_report_review_guide' }),
       expect.objectContaining({ name: 'marketing_side_effect_triage_guide' }),
     ]));
+    const validId = '01J8ZQK7V0A2M4N6P8R0T2W4Y6';
+    const promptCases = [
+      ['approval_submission_guide', { templateCode: 'LEAVE_REQUEST' }],
+      ['marketing_side_effect_triage_guide', {
+        eventId: '01J8ZQK7V0A2M4N6P8R0T2W4Y0',
+      }],
+      ['op_approval_bridge_review_guide', { externalEventId: 'approval-event-001' }],
+      ['management_dashboard_review_guide', { asOf: '2026-07-22' }],
+      ['data_migration_report_review_guide', { runId: validId }],
+      ['recruitment_offer_send_guide', { offerId: validId }],
+      ['onboarding_progress_guide', { onboardingId: validId }],
+      ['knowledge_training_progress_guide', { assignmentId: validId }],
+      ['knowledge_exam_run_status_guide', { examRunId: validId }],
+      ['knowledge_search_guide', { query: '信息安全' }],
+      ['care_offboarding_progress_guide', { careCaseId: validId }],
+      ['care_occasion_summary_guide', {}],
+      ['care_alumni_cleanup_status_guide', { consentId: validId }],
+      ['talent_lifecycle_follow_up_guide', { candidateId: validId }],
+      ['attendance_month_review_guide', { month: '2026-07' }],
+      ['payroll_period_review_guide', { periodId: validId }],
+      ['payroll_payslip_review_guide', { period: '2026-07' }],
+      ['payroll_tax_filing_review_guide', { filingId: validId }],
+      ['payroll_reconciliation_review_guide', { reconciliationId: validId }],
+      ['payroll_shadow_cycle_review_guide', { cycleId: validId }],
+      ['payroll_cutover_readiness_review_guide', { readinessId: validId }],
+      ['op_operating_summary_review_guide', { date: '2026-07-22' }],
+    ] as const;
+    for (const [name, args] of promptCases) {
+      const prompt = await client.getPrompt({ name, arguments: args });
+      expect(prompt.messages).toHaveLength(1);
+    }
 
     const result = await client.callTool({ name: 'get_org_chart', arguments: {} });
     expect(result.structuredContent).toEqual({ departments: [], employees: [] });
@@ -904,5 +946,171 @@ describe('MCP Streamable HTTP 协议集成', () => {
     });
     expect(migrationText).not.toMatch(/payload|displayName|attachmentContent|tenantId/iu);
     expect(tools.getDataMigrationReport).toHaveBeenCalledOnce();
+
+    const confirmationArguments = {
+      operationId: validId,
+      confirmationCredential: `mcpc_${'a'.repeat(43)}`,
+    };
+    const toolCases = [
+      ['get_my_permissions', {}],
+      ['approval_get_inbox', {}],
+      ['approval_get', { instanceId: validId }],
+      ['approval_timeline_get', { instanceId: validId }],
+      ['approval_submit_prepare', {
+        instanceId: validId, expectedVersion: 1, prepareKey: 'prepare-submit-001',
+      }],
+      ['approval_submit_execute', confirmationArguments],
+      ['approval_withdraw_prepare', {
+        instanceId: validId, expectedVersion: 1, prepareKey: 'prepare-withdraw-001',
+      }],
+      ['approval_withdraw_execute', confirmationArguments],
+      ['approval_decide_prepare', {
+        instanceId: validId,
+        expectedVersion: 1,
+        prepareKey: 'prepare-decide-001',
+        principalApproverId: 'approver-001',
+        outcome: 'approved',
+      }],
+      ['approval_decide_execute', confirmationArguments],
+      ['recruitment_application_get', { id: validId }],
+      ['recruitment_requisition_get', { id: validId }],
+      ['recruitment_position_get', { id: validId }],
+      ['recruitment_interview_get', { id: validId }],
+      ['attendance_month_get', { month: '2026-07' }],
+      ['payroll_period_get', { id: validId }],
+      ['payroll_payslip_get_self', { period: '2026-07' }],
+      ['payroll_tax_filing_get', { id: validId }],
+      ['payroll_reconciliation_get', { id: validId }],
+      ['payroll_shadow_cycle_get', { id: validId }],
+      ['payroll_cutover_readiness_get', { id: validId }],
+      ['op_operating_summary_get', { date: '2026-07-22' }],
+      ['data_migration_report_get', { runId: validId }],
+      ['management_dashboard_export_prepare', {
+        asOf: '2026-07-22', prepareKey: 'prepare-export-001',
+      }],
+      ['management_dashboard_export_execute', confirmationArguments],
+      ['attendance_correction_prepare', {
+        sourceFactId: validId,
+        workedMinutes: 480,
+        leaveMinutes: 0,
+        overtimeMinutes: 30,
+        absentMinutes: 0,
+        reasonCode: 'SOURCE_CORRECTION',
+        prepareKey: 'prepare-attendance-001',
+      }],
+      ['attendance_correction_execute', confirmationArguments],
+      ['recruitment_requisition_submit_prepare', {
+        requisitionId: validId, expectedVersion: 1, prepareKey: 'prepare-hc-001',
+      }],
+      ['recruitment_requisition_submit_execute', confirmationArguments],
+      ['recruitment_position_transition_prepare', {
+        positionId: validId,
+        expectedVersion: 1,
+        targetStatus: 'open',
+        prepareKey: 'prepare-position-001',
+      }],
+      ['recruitment_position_transition_execute', confirmationArguments],
+      ['recruitment_offer_send_prepare', {
+        offerId: validId, expectedVersion: 1, prepareKey: 'prepare-offer-001',
+      }],
+      ['recruitment_offer_send_execute', confirmationArguments],
+    ] as const;
+    for (const [name, args] of toolCases) {
+      const toolResult = await client.callTool({ name, arguments: args });
+      expect(toolResult).toBeDefined();
+    }
+
+    const optionalSearch = await client.callTool({
+      name: 'knowledge_search',
+      arguments: {
+        query: '制度规范',
+        cursor: 'cursor_0123456789',
+      },
+    });
+    const optionalContent = optionalSearch.structuredContent as
+      | { readonly items?: unknown }
+      | undefined;
+    expect(Array.isArray(optionalContent?.items)).toBe(true);
+    expect(tools.searchKnowledge).toHaveBeenLastCalledWith(
+      {
+        query: '制度规范',
+        cursor: 'cursor_0123456789',
+      },
+      expect.anything(),
+    );
+
+    type FlexibleMock = {
+      mockResolvedValueOnce(value: unknown): FlexibleMock;
+    };
+    const resourceTools = tools as unknown as Record<string, FlexibleMock | undefined>;
+    const resourceCases = [
+      ['getApprovalInbox', 'erp://approval/pending'],
+      ['getApprovalTemplateCatalog', 'erp://approval/templates/published'],
+      ['getApprovalDelegations', 'erp://approval/delegations/mine'],
+      ['getRecruitmentApplication', 'erp://recruitment/applications/01J8ZQK7V0A2M4N6P8R0T2W4Y1'],
+      ['getRecruitmentOffer', 'erp://recruitment/offers/01J8ZQK7V0A2M4N6P8R0T2W4Y6'],
+      ['getOnboarding', 'erp://onboarding/instances/01J8ZQK7V0A2M4N6P8R0T2W4Y6'],
+      ['getKnowledgeCourse', 'erp://knowledge/courses/01J8ZQK7V0A2M4N6P8R0T2W4A1'],
+      ['getKnowledgeAssignment', 'erp://knowledge/assignments/01J8ZQK7V0A2M4N6P8R0T2W4A2'],
+      ['getKnowledgeExamRun', 'erp://knowledge/exam-runs/01J8ZQK7V0A2M4N6P8R0T2W4A3'],
+      ['searchKnowledge', `erp://knowledge/search/${encodeURIComponent('信息安全')}`],
+      ['getCareCase', 'erp://care/cases/01J8ZQK7V0A2M4N6P8R0T2W4C1'],
+      ['getMyCareOccasionSummary', 'erp://care/occasions/mine'],
+      [
+        'getCareAlumniCleanupStatus',
+        'erp://care/alumni-consents/01J8ZQK7V0A2M4N6P8R0T2W4C4/cleanup',
+      ],
+      ['getTalentLifecycle', 'erp://talent-lifecycle/people/01J8ZQK7V0A2M4N6P8R0T2W4E1'],
+      ['getMyAttendanceMonth', 'erp://attendance/months/2026-07/me'],
+      ['getPayrollPeriod', 'erp://payroll/periods/01J8ZQK7V0A2M4N6P8R0T2W4P1'],
+      ['getMyPayrollPayslip', 'erp://payroll/payslips/2026-07/me'],
+      ['getPayrollTaxFiling', 'erp://payroll/tax-filings/01J8ZQK7V0A2M4N6P8R0T2W4P2'],
+      [
+        'getPayrollReconciliation',
+        'erp://payroll/reconciliations/01J8ZQK7V0A2M4N6P8R0T2W4P3',
+      ],
+      ['getPayrollShadowCycle', 'erp://payroll/shadow-cycles/01J8ZQK7V0A2M4N6P8R0T2W4P4'],
+      [
+        'getPayrollCutoverReadiness',
+        'erp://payroll/cutover-readiness/01J8ZQK7V0A2M4N6P8R0T2W4P5',
+      ],
+      ['getOpOperatingSummary', 'erp://op/operating-summaries/2026-07-22'],
+      ['getOpApprovalBridge', 'erp://op/approval-bridges/approval-event-001'],
+      ['getManagementDashboard', 'erp://analytics/management-dashboard/2026-07-22'],
+      ['getAnalyticsExport', 'erp://analytics/exports/01J8ZQK7V0A2M4N6P8R0T2W4E1'],
+      [
+        'getDataMigrationReport',
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/report',
+      ],
+      ['getMarketingSideEffect', 'erp://marketing/side-effects/01J8ZQK7V0A2M4N6P8R0T2W4Y0'],
+    ] as const;
+
+    for (const [toolName, uri] of resourceCases) {
+      const mock = resourceTools[toolName];
+      if (mock === undefined) throw new Error(`测试夹具缺少 ${toolName}`);
+      mock.mockResolvedValueOnce({ structuredContent: undefined });
+      const fallback = await client.readResource({ uri });
+      expect(fallback.contents).toHaveLength(1);
+    }
+
+    for (const [toolName, uri] of resourceCases) {
+      const mock = resourceTools[toolName];
+      if (mock === undefined) throw new Error(`测试夹具缺少 ${toolName}`);
+      mock.mockResolvedValueOnce({ isError: true });
+      await expect(client.readResource({ uri })).rejects.toThrow();
+    }
+
+    for (const uri of [
+      'erp://recruitment/applications/invalid',
+      'erp://knowledge/search/a',
+      'erp://knowledge/search/a%20%3F',
+      'erp://attendance/months/2026-13/me',
+      'erp://payroll/payslips/invalid/me',
+      'erp://op/operating-summaries/invalid',
+      'erp://op/approval-bridges/short',
+      'erp://marketing/side-effects/invalid',
+    ]) {
+      await expect(client.readResource({ uri })).rejects.toThrow();
+    }
   });
 });
