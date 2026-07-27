@@ -22,6 +22,7 @@
     "migrate:phase3:care-indexes": "node dist/migrations/phase-3-care-indexes.js",
     "migrate:phase3:recruitment-channel-indexes": "node dist/migrations/phase-3-recruitment-channel-indexes.js",
     "migrate:phase3:recruitment-resume-indexes": "node dist/migrations/phase-3-recruitment-resume-indexes.js",
+    "migrate:phase3:talent-lifecycle-indexes": "node dist/migrations/phase-3-talent-lifecycle-indexes.js",
     "migrate:phase4:attendance-indexes": "node dist/migrations/phase-4-attendance-indexes.js",
     "migrate:phase4:attendance-provider-indexes": "node dist/migrations/phase-4-attendance-provider-indexes.js",
     "migrate:phase4:payroll-core-indexes": "node dist/migrations/phase-4-payroll-core-indexes.js",

@@ -158,6 +158,22 @@ describe('MCP Streamable HTTP 协议集成', () => {
           }, version: 5,
         } },
       }),
+      getTalentLifecycle: vi.fn().mockResolvedValue({
+        content: [{ type: 'text' as const, text: JSON.stringify({ lifecycle: {
+          candidateId: '01J8ZQK7V0A2M4N6P8R0T2W4E1',
+          stage: 'recruiting', currentApplicationStage: 'interview',
+          employeeStatus: null, openFollowUpCount: 1,
+          nextActionAt: '2026-07-28T08:00:00.000Z',
+          updatedAt: '2026-07-27T08:00:00.000Z',
+        } }) }],
+        structuredContent: { lifecycle: {
+          candidateId: '01J8ZQK7V0A2M4N6P8R0T2W4E1',
+          stage: 'recruiting', currentApplicationStage: 'interview',
+          employeeStatus: null, openFollowUpCount: 1,
+          nextActionAt: '2026-07-28T08:00:00.000Z',
+          updatedAt: '2026-07-27T08:00:00.000Z',
+        } },
+      }),
       getMyAttendanceMonth: vi.fn(),
       getPayrollPeriod: vi.fn(),
       getMyPayrollPayslip: vi.fn(),
@@ -393,6 +409,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       'knowledge_course_get',
       'knowledge_assignment_get',
       'care_case_get',
+      'talent_lifecycle_get',
       'attendance_month_get',
       'payroll_period_get',
       'payroll_payslip_get_self',
@@ -440,6 +457,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ uriTemplate: 'erp://knowledge/courses/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://knowledge/assignments/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://care/cases/{id}' }),
+      expect.objectContaining({ uriTemplate: 'erp://talent-lifecycle/people/{candidateId}' }),
       expect.objectContaining({ uriTemplate: 'erp://attendance/months/{month}/me' }),
       expect.objectContaining({ uriTemplate: 'erp://payroll/periods/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://payroll/payslips/{period}/me' }),
@@ -460,6 +478,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ name: 'onboarding_progress_guide' }),
       expect.objectContaining({ name: 'knowledge_training_progress_guide' }),
       expect.objectContaining({ name: 'care_offboarding_progress_guide' }),
+      expect.objectContaining({ name: 'talent_lifecycle_follow_up_guide' }),
       expect.objectContaining({ name: 'attendance_month_review_guide' }),
       expect.objectContaining({ name: 'payroll_period_review_guide' }),
       expect.objectContaining({ name: 'payroll_payslip_review_guide' }),
@@ -552,6 +571,21 @@ describe('MCP Streamable HTTP 协议集成', () => {
       /reasonCode|separationType|approvalInstanceId|EvidenceId|execution/iu,
     );
     expect(tools.getCareCase).toHaveBeenCalledTimes(2);
+
+    const lifecycleResult = await client.callTool({
+      name: 'talent_lifecycle_get',
+      arguments: { candidateId: '01J8ZQK7V0A2M4N6P8R0T2W4E1' },
+    });
+    expect(lifecycleResult.structuredContent).toMatchObject({
+      lifecycle: { stage: 'recruiting', openFollowUpCount: 1 },
+    });
+    const lifecycleResource = await client.readResource({
+      uri: 'erp://talent-lifecycle/people/01J8ZQK7V0A2M4N6P8R0T2W4E1',
+    });
+    expect(JSON.stringify([lifecycleResult, lifecycleResource])).not.toMatch(
+      /displayName|phone|email|note|reasonCode|EvidenceId/iu,
+    );
+    expect(tools.getTalentLifecycle).toHaveBeenCalledTimes(2);
 
     const bridgeResult = await client.callTool({
       name: 'op_approval_bridge_get', arguments: { externalEventId: 'approval-event-001' },

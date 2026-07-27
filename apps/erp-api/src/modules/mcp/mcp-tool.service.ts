@@ -28,6 +28,7 @@ import { OpApprovalBridgeService } from '../op/application/op-approval-bridge.se
 import { ManagementDashboardService } from '../analytics/application/management-dashboard.service.js';
 import { AnalyticsExportService } from '../analytics/application/analytics-export.service.js';
 import { DataMigrationService } from '../data-migration/application/data-migration.service.js';
+import { TalentLifecycleService } from '../talent-lifecycle/application/talent-lifecycle.service.js';
 import { parseMcpIdentity, type McpIdentity } from './mcp-auth-context.js';
 import {
   McpConfirmationService,
@@ -81,6 +82,7 @@ export class McpToolService {
     private readonly managementDashboard: ManagementDashboardService,
     private readonly analyticsExports: AnalyticsExportService,
     private readonly dataMigrations: DataMigrationService,
+    private readonly talentLifecycle: TalentLifecycleService,
     private readonly confirmations: McpConfirmationService,
   ) {}
 
@@ -152,6 +154,19 @@ export class McpToolService {
       const careCase = await this.care.getForMcp(id);
       await this.auditTool(identity, 'care_case_get', 'R0', 'success');
       return structuredResult({ careCase });
+    });
+  }
+
+  async getTalentLifecycle(candidateId: string, extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:talent-lifecycle:read')) {
+        await this.auditTool(identity, 'talent_lifecycle_get', 'R0', 'denied');
+        return scopeError('erp:talent-lifecycle:read');
+      }
+      const lifecycle = await this.talentLifecycle.getForMcp(candidateId);
+      await this.auditTool(identity, 'talent_lifecycle_get', 'R0', 'success');
+      return structuredResult({ lifecycle });
     });
   }
 

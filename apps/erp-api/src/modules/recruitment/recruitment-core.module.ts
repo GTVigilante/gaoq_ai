@@ -16,6 +16,7 @@ import { RecruitmentInterviewService } from './application/recruitment-interview
 import { RecruitmentOfferService } from './application/recruitment-offer.service.js';
 import { RecruitmentOnboardingBridgeService } from './application/recruitment-onboarding-bridge.service.js';
 import { RecruitmentResumeService } from './application/recruitment-resume.service.js';
+import { RecruitmentTalentSourceService } from './application/recruitment-talent-source.service.js';
 import {
   RecruitmentResumeAiAnalyzer,
   RecruitmentResumeSourceGateway,
@@ -116,6 +117,7 @@ import {
     RecruitmentOfferService,
     RecruitmentOnboardingBridgeService,
     RecruitmentResumeService,
+    RecruitmentTalentSourceService,
     HttpRecruitmentResumeSourceGateway,
     OpenAiRecruitmentResumeAnalyzer,
     {
@@ -143,6 +145,7 @@ import {
     RecruitmentOfferService,
     RecruitmentOnboardingBridgeService,
     RecruitmentResumeService,
+    RecruitmentTalentSourceService,
   ],
 })
 export class RecruitmentCoreModule {}

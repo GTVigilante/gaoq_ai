@@ -2,7 +2,7 @@
 
 ## 变更边界
 
-- 招聘/eSign/组织/入职迁移标识固定为 `phase-3-indexes-v1`；Knowledge 使用 `phase-3-knowledge-indexes-v1`，Care 与 Employment 终止引用使用 `phase-3-care-indexes-v1`，招聘渠道使用 `phase-3-recruitment-channel-indexes-v1`，智能简历库使用 `phase-3-recruitment-resume-indexes-v1`。已发布清单不得通过追加 Schema 改写 checksum。
+- 招聘/eSign/组织/入职迁移标识固定为 `phase-3-indexes-v1`；Knowledge 使用 `phase-3-knowledge-indexes-v1`，Care 与 Employment 终止引用使用 `phase-3-care-indexes-v1`，招聘渠道使用 `phase-3-recruitment-channel-indexes-v1`，智能简历库使用 `phase-3-recruitment-resume-indexes-v1`，人才全周期使用 `phase-3-talent-lifecycle-indexes-v1`。已发布清单不得通过追加 Schema 改写 checksum。
 - 只创建缺失索引，不删除未知索引；同名或同键异配置立即失败关闭。
 - apply 使用 30 分钟数据库租约，完成后重新读取并复验全部索引。
 - 唯一索引创建前必须先在影子库检查重复数据并保留快照；本脚本不会自动删除或合并业务数据。
@@ -56,6 +56,14 @@
    ```
 
 13. 验证同一候选人、简历证据和 Prompt 版本只生成一份分析；`tags.code/tags.status` 查询只命中租户内已确认标签，过期候选人不能新建或继续处理分析。
+14. 对人才全周期服务触点追加清单执行 dry-run 和变更审核：
+
+   ```bash
+   pnpm --filter @gaoq/erp-api migrate:phase3:talent-lifecycle-indexes -- --dry-run
+   pnpm --filter @gaoq/erp-api migrate:phase3:talent-lifecycle-indexes
+   ```
+
+15. 验证同租户触点标识唯一，候选人时间线按发生时间可检索，开放跟进可按状态、下一行动时间和责任人检索；确认集合、索引、Outbox、审计和日志均不含服务备注明文，并执行候选人授权过期、校友授权撤回、目的不匹配和渠道不匹配的失败关闭测试。
 
 ## 失败处理
 

@@ -14,6 +14,7 @@ import { PayrollModule } from '../payroll/payroll.module.js';
 import { OpModule } from '../op/op.module.js';
 import { AnalyticsModule } from '../analytics/analytics.module.js';
 import { DataMigrationModule } from '../data-migration/data-migration.module.js';
+import { TalentLifecycleModule } from '../talent-lifecycle/talent-lifecycle.module.js';
 import { McpConfirmationController } from './mcp-confirmation.controller.js';
 import {
   McpConfirmationRecord,
@@ -41,6 +42,7 @@ import { McpToolService } from './mcp-tool.service.js';
     OpModule,
     AnalyticsModule,
     DataMigrationModule,
+    TalentLifecycleModule,
     MongooseModule.forFeature([
       { name: McpConfirmationRecord.name, schema: McpConfirmationRecordSchema },
     ]),

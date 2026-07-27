@@ -34,6 +34,15 @@ export class OnboardingInstanceRepository {
     return this.findOne({ tenantId: this.tenantId(), offerId }, session);
   }
 
+  async findByCandidateId(candidateId: string): Promise<readonly OnboardingInstance[]> {
+    const records = await this.records
+      .find({ tenantId: this.tenantId(), candidateId })
+      .sort({ createdAt: -1, id: 1 })
+      .lean()
+      .exec();
+    return records.map((record) => this.toDomain(record));
+  }
+
   async insert(instance: OnboardingInstance, session: ClientSession): Promise<void> {
     this.assertTenant(instance.tenantId);
     await this.records.create([this.toRecord(instance)], { session });

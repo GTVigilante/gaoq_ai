@@ -11,6 +11,7 @@ const RISK = Object.freeze({
     'recruitment_application_get', 'recruitment_requisition_get', 'recruitment_position_get',
     'recruitment_interview_get', 'recruitment_offer_get', 'onboarding_get',
     'knowledge_course_get', 'knowledge_assignment_get', 'care_case_get',
+    'talent_lifecycle_get',
     'attendance_month_get', 'payroll_period_get', 'op_operating_summary_get',
     'op_approval_bridge_get',
   ],
@@ -72,7 +73,7 @@ function buildCatalog(runtimeSource, toolServiceSource) {
   });
   const riskByName = new Map(Object.entries(RISK).flatMap(([risk, names]) =>
     names.map((name) => [name, risk])));
-  if (riskByName.size !== 41 || registrations.length !== 41) fail('PHASE5_MCP_TOOL_COUNT_INVALID');
+  if (riskByName.size !== 42 || registrations.length !== 42) fail('PHASE5_MCP_TOOL_COUNT_INVALID');
   const names = registrations.map((item) => item.name);
   if (new Set(names).size !== names.length || names.some((name) => !riskByName.has(name))) {
     fail('PHASE5_MCP_RISK_CATALOG_INCOMPLETE');
@@ -104,7 +105,7 @@ function buildCatalog(runtimeSource, toolServiceSource) {
     protocolVersion: '2025-11-25',
     transport: 'streamable-http',
     oauthProfile: 'oauth-2.1',
-    counts: { total: 41, R0: 18, R1: 15, R2: 8, R3: 0 },
+    counts: { total: 42, R0: 19, R1: 15, R2: 8, R3: 0 },
     tools,
   };
   return { ...core, catalogHash: digest(canonical(core)) };
@@ -141,6 +142,7 @@ function domain(name) {
   if (name.startsWith('data_migration_')) return 'migration';
   if (name.startsWith('knowledge_')) return 'knowledge';
   if (name.startsWith('care_')) return 'care';
+  if (name.startsWith('talent_lifecycle_')) return 'talent-lifecycle';
   if (name.startsWith('onboarding_')) return 'onboarding';
   if (name === 'get_org_chart') return 'org';
   return 'identity';

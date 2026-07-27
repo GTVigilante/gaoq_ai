@@ -4,6 +4,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { IdempotencyModule } from '../../core/idempotency/idempotency.module.js';
 import { IdentityPersistenceModule } from '../identity/identity-persistence.module.js';
 import { OrgApplicationService } from './application/org-application.service.js';
+import { OrgTalentSourceService } from './application/org-talent-source.service.js';
 
 import {
   OrgDepartmentRecord,
@@ -53,6 +54,7 @@ import { OrgOutboxWriter } from './persistence/outbox.writer.js';
   ],
   providers: [
     OrgApplicationService,
+    OrgTalentSourceService,
     DepartmentRepository,
     EmployeeRepository,
     PositionRepository,
@@ -64,6 +66,7 @@ import { OrgOutboxWriter } from './persistence/outbox.writer.js';
   ],
   exports: [
     OrgApplicationService,
+    OrgTalentSourceService,
     DepartmentRepository,
     EmployeeRepository,
     PositionRepository,

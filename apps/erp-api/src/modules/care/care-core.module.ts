@@ -7,6 +7,7 @@ import { ApprovalCoreModule } from '../approval/approval-core.module.js';
 import { OrgCoreModule } from '../org/org-core.module.js';
 import { OutboxRecord, OutboxRecordSchema } from '../org/persistence/outbox.schema.js';
 import { CareApplicationService } from './application/care-application.service.js';
+import { CareTalentSourceService } from './application/care-talent-source.service.js';
 import { CARE_EXECUTION_QUEUE } from './care-execution.queue.js';
 import { CareExecutionQueueService } from './care-execution-queue.service.js';
 import {
@@ -45,6 +46,7 @@ import {
   ],
   providers: [
     CareApplicationService,
+    CareTalentSourceService,
     CareCaseRepository,
     CareTaskEvidenceRepository,
     CareAlumniConsentRepository,
@@ -55,6 +57,6 @@ import {
     UnconfiguredAlumniConsentVerifier,
     { provide: AlumniConsentVerificationPort, useExisting: UnconfiguredAlumniConsentVerifier },
   ],
-  exports: [CareApplicationService],
+  exports: [CareApplicationService, CareTalentSourceService],
 })
 export class CareCoreModule {}

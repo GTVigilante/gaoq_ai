@@ -216,6 +216,18 @@ const careCaseSchema = z.object({
   }),
   version: z.number().int().positive(),
 });
+const talentLifecycleSchema = z.object({
+  candidateId: recruitmentIdSchema,
+  stage: z.enum([
+    'talent_pool', 'recruiting', 'offer', 'onboarding', 'employed',
+    'offboarding', 'alumni', 'former_employee', 'inactive',
+  ]),
+  currentApplicationStage: z.string().nullable(),
+  employeeStatus: z.string().nullable(),
+  openFollowUpCount: z.number().int().nonnegative(),
+  nextActionAt: z.string().nullable(),
+  updatedAt: z.string(),
+});
 const attendanceMonthSchema = z.object({
   id: z.string(), employeeId: z.string(), month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
   snapshotVersion: z.number().int().positive(), rulesetVersion: z.string(),
@@ -733,6 +745,27 @@ export class McpRuntimeService {
     );
 
     server.registerResource(
+      'talent-lifecycle',
+      new ResourceTemplate('erp://talent-lifecycle/people/{candidateId}', { list: undefined }),
+      {
+        title: '人才全周期脱敏摘要',
+        description: '读取生命周期阶段和跟进状态；不返回姓名、联系方式、服务备注或证据。',
+        mimeType: 'application/json',
+      },
+      async (uri, { candidateId }, extra) => {
+        const result = await this.tools.getTalentLifecycle(
+          requiredResourceId(candidateId),
+          extra,
+        );
+        if (result.isError === true) throw new Error('无权读取人才全周期摘要');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
+    server.registerResource(
       'my-attendance-month',
       new ResourceTemplate('erp://attendance/months/{month}/me', { list: undefined }),
       {
@@ -1076,6 +1109,24 @@ export class McpRuntimeService {
           content: {
             type: 'text',
             text: `请读取离职案件 ${careCaseId} 的脱敏任务状态，列出待办和计划生效时间。不要索取离职原因、审批正文、交接材料或证据；不要代报清算完成，也不要执行劳动关系关闭或身份停用。`,
+          },
+        }],
+      }),
+    );
+
+    server.registerPrompt(
+      'talent_lifecycle_follow_up_guide',
+      {
+        title: '人才全周期跟进检查清单',
+        description: '只读取脱敏阶段与待跟进状态；AI 不读取备注、不代替联系或改变业务状态。',
+        argsSchema: { candidateId: recruitmentIdSchema },
+      },
+      ({ candidateId }) => ({
+        messages: [{
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `请读取候选人 ${candidateId} 的人才全周期脱敏摘要，说明当前阶段、待跟进数量和下一行动时间。不要索取姓名、联系方式、服务备注、面试评价、Offer 条款或离职原因；不要代替员工联系候选人，也不要创建或关闭跟进。`,
           },
         }],
       }),
@@ -1439,6 +1490,18 @@ export class McpRuntimeService {
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
       },
       async ({ id }, extra) => this.tools.getCareCase(id, extra),
+    );
+
+    server.registerTool(
+      'talent_lifecycle_get',
+      {
+        title: '查询人才全周期脱敏摘要',
+        description: '返回生命周期阶段、待跟进数量和下一行动时间，不返回身份或备注。风险等级 R0。',
+        inputSchema: { candidateId: recruitmentIdSchema },
+        outputSchema: z.object({ lifecycle: talentLifecycleSchema }),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      },
+      async ({ candidateId }, extra) => this.tools.getTalentLifecycle(candidateId, extra),
     );
 
     server.registerTool(

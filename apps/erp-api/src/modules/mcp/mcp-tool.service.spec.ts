@@ -26,6 +26,7 @@ import type { OpApprovalBridgeService } from '../op/application/op-approval-brid
 import type { ManagementDashboardService } from '../analytics/application/management-dashboard.service.js';
 import type { AnalyticsExportService } from '../analytics/application/analytics-export.service.js';
 import type { DataMigrationService } from '../data-migration/application/data-migration.service.js';
+import type { TalentLifecycleService } from '../talent-lifecycle/application/talent-lifecycle.service.js';
 import { McpToolService } from './mcp-tool.service.js';
 import type { McpConfirmationService } from './mcp-confirmation.service.js';
 
@@ -103,6 +104,7 @@ function assemble() {
   const managementDashboard = { get: vi.fn() };
   const analyticsExports = { get: vi.fn(), request: vi.fn() };
   const dataMigrations = { report: vi.fn() };
+  const talentLifecycle = { getForMcp: vi.fn() };
   const service = new McpToolService(
     context,
     audit as unknown as AuditService,
@@ -126,6 +128,7 @@ function assemble() {
     managementDashboard as unknown as ManagementDashboardService,
     analyticsExports as unknown as AnalyticsExportService,
     dataMigrations as unknown as DataMigrationService,
+    talentLifecycle as unknown as TalentLifecycleService,
     confirmations as unknown as McpConfirmationService,
   );
   return {
@@ -133,6 +136,7 @@ function assemble() {
     recruitmentInterviews, recruitmentManagement, recruitmentOffers, confirmations, service,
     onboarding, knowledge, care, attendance, payroll, payslips, taxFilings, reconciliations, shadows,
     opSummaries, opApprovalBridges, managementDashboard, analyticsExports, dataMigrations,
+    talentLifecycle,
   };
 }
 
@@ -465,6 +469,36 @@ describe('McpToolService', () => {
     });
     expect(JSON.stringify(result)).not.toMatch(
       /reasonCode|separationType|approvalInstanceId|EvidenceId|execution/iu,
+    );
+  });
+
+  it('人才全周期 MCP 只返回阶段和待办，不返回身份或服务备注', async () => {
+    const store = assemble();
+    const candidateId = '01J8ZQK7V0A2M4N6P8R0T2W4E1';
+    store.talentLifecycle.getForMcp.mockResolvedValue({
+      candidateId,
+      stage: 'recruiting',
+      currentApplicationStage: 'interview',
+      employeeStatus: null,
+      openFollowUpCount: 1,
+      nextActionAt: '2026-07-28T08:00:00.000Z',
+      updatedAt: '2026-07-27T08:00:00.000Z',
+    });
+    const denied = await store.service.getTalentLifecycle(
+      candidateId,
+      extra(['erp:mcp:server:connect']),
+    );
+    expect(denied.isError).toBe(true);
+    expect(store.talentLifecycle.getForMcp).not.toHaveBeenCalled();
+    const result = await store.service.getTalentLifecycle(
+      candidateId,
+      extra(['erp:mcp:server:connect', 'erp:talent-lifecycle:read']),
+    );
+    expect(result.structuredContent).toMatchObject({
+      lifecycle: { stage: 'recruiting', openFollowUpCount: 1 },
+    });
+    expect(JSON.stringify(result)).not.toMatch(
+      /displayName|phone|email|note|reasonCode|EvidenceId/iu,
     );
   });
 

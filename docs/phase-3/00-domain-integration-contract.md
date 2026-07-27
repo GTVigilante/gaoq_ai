@@ -15,6 +15,7 @@
 | `Person` / `Employee` / `Employment` | Org | 自然人、组织视图、劳动关系严格分层；由组织应用服务事务化建立 |
 | `TrainingAssignment` / `ExamAttempt` | Knowledge | 进度由服务端事件计算；学员接口和 MCP 永不返回标准答案 |
 | `CareCase` / `AlumniConsent` | Care | 权限失效与离职日期绑定；校友联系有目的、授权、到期时间和撤回清理 |
+| `TalentLifecycleProjection` / `TalentTouchpoint` | Talent Lifecycle | `candidateId` 是招聘起点；全景只经各域应用服务实时组装，不复制候选人身份、离职原因或证据；服务备注加密且责任人来自可信身份 |
 
 ## 2. 招聘状态机
 
@@ -67,6 +68,14 @@ draft → pending_approval → approved → clearing → ready → scheduled →
 - 交接接受、资产清退、财务清算、数据保留确认分别使用独立可信 Scope 和不可替换证据；证据及校友授权必须由生产 Adapter 校验，Adapter 未装配或无法确认时失败关闭。全部清算完成后才能排期。人工 REST 和 MCP 均不暴露 R3 执行能力。
 - 执行采用 `scheduled → executing → Org terminate → completed` 可恢复 Saga。队列任务按租户与案件唯一，重试读取最新版本；Org 以案件、执行证据和业务日期三元组校验重放。
 - 校友联系必须有明确目的、渠道、授权版本、授予时间和不超过五年的到期时间；撤回后立即停止非必要联系，不得复用员工在职授权。
+
+### 2.2 人才全周期与服务追踪
+
+- Talent Lifecycle 是跨域只读投影和服务触点权威，不改写 Recruitment、Onboarding、Org、Care 的业务事实。`Candidate → Person → Employment` 引用构成人才身份主线；同一候选人的多次申请、复聘和多段劳动关系都保留在同一主线下。
+- 生命周期阶段按 `离职处理中 → 在职 → 入职中 → Offer → 招聘中 → 校友 → 曾任员工 → 人才库 → 停用` 的优先级从权威状态推导，不能由浏览器或 AI 直接设置。
+- 服务触点只保存受控类型、渠道、方向、结果、责任人、发生时间和下一步行动；自由备注使用 Recruitment L3 密钥域、`talent_touchpoint` AAD 加密。索引、日志、审计和 Outbox 均不得包含备注明文。
+- 候选人招聘联系要求候选人仍为 `active`，且联系授权与保留期限均未过期。校友活动和复聘联系还必须存在目的匹配、渠道匹配且未过期的有效 `AlumniConsent`；撤回后只允许记录内部撤回事实，不得继续外呼。
+- 关闭开放跟进要求强 `If-Match`、幂等键和责任人校验；跨责任人关闭仅允许 `erp:talent-lifecycle:touchpoint:write_all`。
 
 ## 3. 身份、隐私与保留
 
@@ -141,6 +150,7 @@ draft → pending_approval → approved → clearing → ready → scheduled →
 | 提交面试评价 | `POST /recruitment/interviews/:id/feedback` | `recruitment.interview.feedback_submitted.v1` | 查询；评价写入不向 AI 开放 | R1 |
 | 形成/发送 Offer | Offer 资源端点 | `recruitment.offer.*.v1` | 脱敏查询 + `recruitment_offer_send_prepare/execute` | R2 |
 | 简历解析与标签复核 | `POST /recruitment/resume-library/candidates/:candidateId/analyses`、`GET /recruitment/resume-library/analyses`、`POST /recruitment/resume-library/analyses/:id/review` | `recruitment.resume_analysis.requested/reviewed.v1` | 不注册 MCP；模型仅在 Worker 内生成建议 | R1/R2 |
+| 人才全景与服务跟进 | `GET /talent-lifecycle/people`、`GET /talent-lifecycle/people/:candidateId`、服务触点创建/关闭端点 | `talent.touchpoint.created/completed/cancelled.v1` | Resource + `talent_lifecycle_get`；不注册写 Tool | R0/R2 |
 
 ### 5.1 招聘门户
 
@@ -204,6 +214,15 @@ draft → pending_approval → approved → clearing → ready → scheduled →
 - H5 本人任务目录由服务端按可信主体映射有效员工授权快照与当前任职关系，不接受客户端 employeeId、onboardingInstanceId 或 tenantId；返回字段与 Knowledge MCP 同样执行内容、题库、答卷和证据脱敏。
 - Care Resource Template 固定为 `erp://care/cases/{id}`，Tool 固定为 `care_case_get`。输出仅含员工/劳动关系引用、最后工作日、计划失效时刻、清算任务状态和版本；离职原因、审批实例与所有证据引用均不进入 MCP。
 - `care_offboarding_progress_guide` 必须明确禁止 AI 审批、代报清算证据、关闭劳动关系或停用身份；Care 不注册写 Tool。
+
+### 5.8 Talent Lifecycle 360
+
+- ERP 管理端 `/workspace/talent-lifecycle` 提供人才列表、阶段筛选、跨域时间线、开放跟进、下一步行动和服务记录；列表只搜索候选人标识、授权可见姓名及职位名称，部门数据范围继续由各权威域应用服务裁剪。
+- 只读端点固定为 `GET /talent-lifecycle/people` 与 `GET /talent-lifecycle/people/:candidateId`，要求 `erp:talent-lifecycle:read`。创建触点固定为 `POST /talent-lifecycle/people/:candidateId/touchpoints`，关闭固定为 `POST /talent-lifecycle/touchpoints/:id/close`，同时要求读 Scope 与 `erp:talent-lifecycle:touchpoint:write`。
+- 创建与关闭分别发布 `cn.gaoq.erp.talent.touchpoint.created.v1`、`cn.gaoq.erp.talent.touchpoint.completed.v1` 或 `cn.gaoq.erp.talent.touchpoint.cancelled.v1`。事件只含候选人引用、受控类型/渠道/结果、状态和版本，不含姓名、联系方式或备注。
+- MCP Resource Template 固定为 `erp://talent-lifecycle/people/{candidateId}`，Tool 固定为 `talent_lifecycle_get`，Prompt 固定为 `talent_lifecycle_follow_up_guide`。输出仅含候选人引用、生命周期阶段、当前申请阶段、员工状态、开放跟进数、下一行动时间和更新时间。
+- MCP 不提供触点创建、关闭、候选人分类、录用、入职、离职或校友联系写能力；AI 只能基于最小只读投影给出人工跟进建议。
+- 当前代码已交付跨域应用服务投影、加密触点、REST、Outbox、MCP、管理页面和独立索引迁移；生产数据迁移、权限角色映射、代表性全周期数据回放及 HR/员工关怀/校友 UAT 仍待现场执行。
 
 ## 6. 发布门禁
 

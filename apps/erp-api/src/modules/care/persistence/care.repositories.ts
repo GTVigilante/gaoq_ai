@@ -42,6 +42,16 @@ export class CareCaseRepository extends TenantRepository {
     return value === null ? null : this.toDomain(value);
   }
 
+  async findByEmploymentIds(employmentIds: readonly string[]): Promise<readonly CareCase[]> {
+    if (employmentIds.length === 0) return [];
+    const values = await this.records
+      .find({ tenantId: this.tenantId(), employmentId: { $in: [...employmentIds] } })
+      .sort({ createdAt: -1, id: 1 })
+      .lean()
+      .exec();
+    return values.map((value) => this.toDomain(value));
+  }
+
   async insert(careCase: CareCase, session: ClientSession): Promise<void> {
     this.assertTenant(careCase.tenantId);
     await this.records.create([{
@@ -123,6 +133,24 @@ export class CareAlumniConsentRepository extends TenantRepository {
       withdrawnAt: value.withdrawnAt?.toISOString() ?? null, status: value.status,
       version: value.version,
     });
+  }
+
+  async findByCareCaseIds(careCaseIds: readonly string[]): Promise<readonly AlumniConsent[]> {
+    if (careCaseIds.length === 0) return [];
+    const values = await this.records
+      .find({ tenantId: this.tenantId(), careCaseId: { $in: [...careCaseIds] } })
+      .sort({ grantedAt: -1, id: 1 })
+      .lean()
+      .exec();
+    return values.map((value) => Object.freeze({
+      id: value.id, tenantId: value.tenantId, personId: value.personId,
+      careCaseId: value.careCaseId, purpose: value.purpose,
+      channels: Object.freeze([...value.channels]), consentVersion: value.consentVersion,
+      consentEvidenceId: value.consentEvidenceId,
+      grantedAt: value.grantedAt.toISOString(), expiresAt: value.expiresAt.toISOString(),
+      withdrawnAt: value.withdrawnAt?.toISOString() ?? null, status: value.status,
+      version: value.version,
+    }));
   }
 
   async insert(consent: AlumniConsent, session: ClientSession): Promise<void> {

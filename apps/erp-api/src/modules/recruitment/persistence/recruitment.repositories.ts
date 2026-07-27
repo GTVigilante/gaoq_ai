@@ -84,6 +84,20 @@ export class RecruitmentCandidateRepository extends TenantBoundRecruitmentReposi
     return record === null ? null : this.toDomain(record);
   }
 
+  /** 人才全景只按更新时间读取受限候选人窗口，身份解密仍留在招聘域。 */
+  async findRecent(limit: number): Promise<readonly Candidate[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) {
+      throw new Error('候选人查询上限无效');
+    }
+    const records = await this.records
+      .find({ tenantId: this.tenantId() })
+      .sort({ updatedAt: -1, id: 1 })
+      .limit(limit)
+      .lean()
+      .exec();
+    return records.map((record) => this.toDomain(record));
+  }
+
   async findByContacts(
     phone: string | null,
     email: string | null,
@@ -399,6 +413,17 @@ export class CandidateApplicationRepository extends TenantBoundRecruitmentReposi
     return record === null ? null : applicationDomain(record);
   }
 
+  async findByCandidateId(
+    candidateId: string,
+    session?: ClientSession,
+  ): Promise<readonly CandidateApplication[]> {
+    const query = this.records
+      .find({ tenantId: this.tenantId(), candidateId })
+      .sort({ appliedAt: -1, id: 1 });
+    if (session !== undefined) query.session(session);
+    return (await query.lean().exec()).map((record) => applicationDomain(record));
+  }
+
   async insert(application: CandidateApplication, session: ClientSession): Promise<void> {
     this.assertTenant(application.tenantId);
     await this.records.create([applicationRecord(application)], { session });
@@ -474,6 +499,27 @@ export class CandidateApplicationStageRepository extends TenantBoundRecruitmentR
       reasonCode: event.reasonCode, evidenceId: event.evidenceId,
       resultingVersion: event.resultingVersion, occurredAt: new Date(event.occurredAt),
     }], { session });
+  }
+
+  async findByApplicationId(
+    applicationId: string,
+  ): Promise<readonly CandidateApplicationStageEvent[]> {
+    const records = await this.records
+      .find({ tenantId: this.tenantId(), applicationId })
+      .sort({ occurredAt: 1, resultingVersion: 1, id: 1 })
+      .lean()
+      .exec();
+    return records.map((record) => Object.freeze({
+      tenantId: record.tenantId,
+      applicationId: record.applicationId,
+      from: record.from,
+      to: record.to,
+      actorId: record.actorId,
+      reasonCode: record.reasonCode,
+      evidenceId: record.evidenceId,
+      resultingVersion: record.resultingVersion,
+      occurredAt: record.occurredAt.toISOString(),
+    }));
   }
 }
 
