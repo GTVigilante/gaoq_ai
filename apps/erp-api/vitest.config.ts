@@ -4,7 +4,12 @@ export default defineConfig({
   test: {
     coverage: {
       provider: 'v8',
+      include: ['src/**/*.ts'],
       thresholds: {
+        branches: 80,
+        functions: 80,
+        lines: 80,
+        statements: 80,
         'src/modules/mcp/mcp-confirmation.service.ts': {
           branches: 90,
           functions: 90,
@@ -36,6 +41,42 @@ export default defineConfig({
           statements: 90,
         },
         'src/modules/op/op-approval-result-delivery.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/op/op-webhook.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/op/op-webhook-crypto.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/op/op-webhook.controller.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/op/op-approval-webhook.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/op/op-approval-webhook-crypto.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/op/op-approval-webhook.controller.ts': {
           branches: 90,
           functions: 90,
           lines: 90,
