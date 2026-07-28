@@ -265,6 +265,20 @@ downloadSignedFile / verifySignedFile`；入站验签由独立 Webhook 边界完
 - 输出仅含任务 `pending/completed` 状态、组织引用、拟入职业务日期、聚合状态、Employment 引用与版本；不得返回合同、身份材料、培训内容或各任务证据标识。
 - `onboarding_progress_guide` 明确提示 AI 不得索取证据原文、代报任务完成或执行劳动关系建档。完成建档属于 R3，永不注册 MCP Tool。
 - 在材料证据注册表、Identity/Knowledge 可信证明接口和相应消费者验收完成前，不注册入职任务写 Tool；不能让 AI 用任意字符串伪造证据引用。
+- Recruitment → Onboarding 只通过窄应用服务桥交互。创建预入职实例要求 Offer
+  已接受且具备候选人接受证据；推进 `hired` 还必须要求 Offer 已签署并具备签署
+  证据，禁止仅凭 `accepted` 状态形成劳动关系终态。
+- 桥接服务必须复核返回 Offer、申请、候选人和职位的可信租户、查询主键，以及
+  Offer → Application → Candidate/Position/Interview/Acceptance Evidence 完整
+  引用闭包；任一错位整体失败关闭并进入人工复核，不能只信任仓储查询条件。
+- `preboarding` 阶段事件的证据引用固定为 Onboarding 实例；`hired` 阶段事件的
+  证据引用固定为 Onboarding 完成证据，Employment ID 作为独立结果引用保存。
+  完成证据与劳动关系标识不得混用。
+- 读取和推进分别只接受受信任服务 Scope
+  `erp:onboarding:recruitment:read` 与
+  `erp:onboarding:recruitment:advance`。该跨域写路径不注册标准 MCP Tool；
+  `pnpm quality:recruitment-onboarding-bridge-coverage` 对桥接服务逐文件强制
+  语句、分支、函数和行四维 90%。
 
 ### 5.7 Knowledge 与 Care MCP
 

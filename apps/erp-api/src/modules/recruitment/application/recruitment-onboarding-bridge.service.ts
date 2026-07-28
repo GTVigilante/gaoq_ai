@@ -7,6 +7,7 @@ import {
   buildCandidateApplicationStageEvent,
   transitionCandidateApplication,
   type CandidateApplication,
+  type RecruitmentOffer,
 } from '../domain/index.js';
 import { RecruitmentOutboxWriter } from '../persistence/recruitment-outbox.writer.js';
 import {
@@ -48,6 +49,7 @@ export class RecruitmentOnboardingBridgeService {
     this.assertScope('erp:onboarding:recruitment:read');
     const offer = await this.offers.findById(offerId);
     if (offer === null) throw this.notFound('Offer');
+    this.assertOfferReference(offer, offerId);
     if (offer.status !== 'accepted' && offer.status !== 'signed') throw new ConflictException({
       code: 'RECRUITMENT_ONBOARDING_OFFER_NOT_ACCEPTED',
       message: '只有候选人已接受的 Offer 可以创建入职实例',
@@ -56,21 +58,27 @@ export class RecruitmentOnboardingBridgeService {
       code: 'RECRUITMENT_ONBOARDING_ACCEPTANCE_EVIDENCE_REQUIRED',
       message: 'Offer 缺少候选人接受证据',
     });
+    if (offer.status === 'signed' && offer.signedEvidenceId === null) {
+      throw this.sourceReferenceInvalid();
+    }
     const [application, candidate, position] = await Promise.all([
       this.applications.findById(offer.applicationId),
       this.candidates.findById(offer.candidateId),
       this.positions.findById(offer.positionId),
     ]);
     if (
-      application === null || application.offerId !== offer.id ||
-      application.candidateId !== offer.candidateId ||
+      application === null ||
       !['offer_accepted', 'preboarding', 'hired'].includes(application.stage)
     ) throw new ConflictException({
       code: 'RECRUITMENT_ONBOARDING_APPLICATION_INVALID',
       message: '候选申请与 Offer 状态不一致',
     });
+    this.assertApplicationReference(application, offer);
     if (
-      candidate === null || candidate.name === null ||
+      candidate === null ||
+      candidate.tenantId !== this.context.getTenantRequired().tenantId ||
+      candidate.id !== offer.candidateId ||
+      candidate.name === null ||
       (application.stage === 'offer_accepted' && candidate.status !== 'active')
     ) {
       throw new ConflictException({
@@ -79,6 +87,12 @@ export class RecruitmentOnboardingBridgeService {
       });
     }
     if (position === null) throw this.notFound('招聘职位');
+    if (
+      position.tenantId !== this.context.getTenantRequired().tenantId ||
+      position.id !== offer.positionId
+    ) {
+      throw this.sourceReferenceInvalid();
+    }
     return Object.freeze({
       offerId: offer.id, applicationId: application.id, candidateId: candidate.id,
       candidateDisplayName: candidate.name,
@@ -98,7 +112,11 @@ export class RecruitmentOnboardingBridgeService {
     return this.idempotency.execute(
       'recruitment.onboarding.mark_preboarding', key, input,
       async (session) => {
-        const application = await this.requireApplicationForOffer(input.offerId, session);
+        const application = await this.requireApplicationForOffer(
+          input.offerId,
+          ['accepted', 'signed'],
+          session,
+        );
         if (application.stage === 'preboarding' || application.stage === 'hired') {
           if (application.onboardingInstanceId !== input.onboardingInstanceId) {
             throw this.onboardingMismatch();
@@ -130,7 +148,11 @@ export class RecruitmentOnboardingBridgeService {
     return this.idempotency.execute(
       'recruitment.onboarding.mark_hired', key, input,
       async (session) => {
-        const application = await this.requireApplicationForOffer(input.offerId, session);
+        const application = await this.requireApplicationForOffer(
+          input.offerId,
+          ['signed'],
+          session,
+        );
         if (application.onboardingInstanceId !== input.onboardingInstanceId) {
           throw this.onboardingMismatch();
         }
@@ -143,7 +165,12 @@ export class RecruitmentOnboardingBridgeService {
         if (application.stage !== 'preboarding') throw new ConflictException({
           code: 'RECRUITMENT_HIRED_TRANSITION_INVALID', message: '候选申请不处于预入职阶段',
         });
-        const transition = this.transition(application, 'hired', input.employmentId);
+        const transition = this.transition(
+          application,
+          'hired',
+          input.onboardingCompletionEvidenceId,
+          input.employmentId,
+        );
         await this.persist(application, transition, session);
         return { applicationId: transition.application.id, stage: 'hired' };
       },
@@ -152,16 +179,26 @@ export class RecruitmentOnboardingBridgeService {
 
   private async requireApplicationForOffer(
     offerId: string,
+    allowedOfferStatuses: readonly RecruitmentOffer['status'][],
     session: ClientSession,
   ): Promise<CandidateApplication> {
     const offer = await this.offers.findById(offerId, session);
-    if (offer === null || !['accepted', 'signed'].includes(offer.status)) throw new ConflictException({
+    if (offer === null) throw new ConflictException({
       code: 'RECRUITMENT_ONBOARDING_OFFER_INVALID', message: 'Offer 不存在或未被接受',
     });
+    this.assertOfferReference(offer, offerId);
+    if (!allowedOfferStatuses.includes(offer.status)) throw new ConflictException({
+      code: 'RECRUITMENT_ONBOARDING_OFFER_INVALID', message: 'Offer 不存在或未被接受',
+    });
+    if (offer.acceptanceEvidenceId === null) throw this.sourceReferenceInvalid();
+    if (offer.status === 'signed' && offer.signedEvidenceId === null) {
+      throw this.sourceReferenceInvalid();
+    }
     const application = await this.applications.findById(offer.applicationId, session);
-    if (application === null || application.offerId !== offer.id) throw new ConflictException({
+    if (application === null) throw new ConflictException({
       code: 'RECRUITMENT_ONBOARDING_APPLICATION_INVALID', message: '候选申请与 Offer 不匹配',
     });
+    this.assertApplicationReference(application, offer);
     return application;
   }
 
@@ -169,6 +206,7 @@ export class RecruitmentOnboardingBridgeService {
     application: CandidateApplication,
     targetStage: 'preboarding' | 'hired',
     evidenceId: string,
+    employmentId?: string,
   ) {
     return transitionCandidateApplication(application, {
       tenantId: this.context.getTenantRequired().tenantId,
@@ -176,6 +214,7 @@ export class RecruitmentOnboardingBridgeService {
       actorId: this.context.getActorRequired().actorId,
       targetStage,
       evidenceId,
+      ...(employmentId === undefined ? {} : { employmentId }),
     }, new Date());
   }
 
@@ -206,6 +245,39 @@ export class RecruitmentOnboardingBridgeService {
     return new ConflictException({
       code: 'RECRUITMENT_ONBOARDING_INSTANCE_MISMATCH',
       message: '候选申请已绑定不同入职实例',
+    });
+  }
+
+  private assertOfferReference(offer: RecruitmentOffer, offerId: string): void {
+    if (
+      offer.tenantId !== this.context.getTenantRequired().tenantId ||
+      offer.id !== offerId
+    ) {
+      throw this.sourceReferenceInvalid();
+    }
+  }
+
+  private assertApplicationReference(
+    application: CandidateApplication,
+    offer: RecruitmentOffer,
+  ): void {
+    if (
+      application.tenantId !== this.context.getTenantRequired().tenantId ||
+      application.id !== offer.applicationId ||
+      application.offerId !== offer.id ||
+      application.candidateId !== offer.candidateId ||
+      application.positionId !== offer.positionId ||
+      application.completedInterviewId !== offer.completedInterviewId ||
+      application.acceptanceEvidenceId !== offer.acceptanceEvidenceId
+    ) {
+      throw this.sourceReferenceInvalid();
+    }
+  }
+
+  private sourceReferenceInvalid(): ConflictException {
+    return new ConflictException({
+      code: 'RECRUITMENT_ONBOARDING_SOURCE_REFERENCE_INVALID',
+      message: '招聘与入职来源引用不一致，必须人工复核',
     });
   }
 }

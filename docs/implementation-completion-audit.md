@@ -62,11 +62,11 @@
 ## 5. 覆盖率边界
 
 2026-07-28 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，380 个测试文件、4,885 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，380 个测试文件、4,914 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-91.09%（28,311/31,079）、分支 88.21%（19,107/21,661）、函数
-91.59%（5,064/5,529）、行 92.35%（25,839/27,978）。全仓四维已达到 Phase 0
+91.16%（28,357/31,105）、分支 88.31%（19,165/21,700）、函数
+91.63%（5,069/5,532）、行 92.39%（25,872/28,001）。全仓四维已达到 Phase 0
 规定的 80% 门槛。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
@@ -167,7 +167,9 @@ OP Webhook 双入口、
 `pnpm quality:recruitment-channel-position-delivery-coverage`、
 `pnpm quality:recruitment-channel-stage-delivery-coverage`、
 `pnpm quality:recruitment-management-coverage`、
+`pnpm quality:recruitment-onboarding-bridge-coverage`、
 `pnpm quality:talent-lifecycle-application-coverage`、
+`pnpm quality:talent-lifecycle-sources-coverage`、
 `pnpm quality:talent-lifecycle-repository-coverage`、
 `pnpm quality:recruitment-offer-coverage`、
 `pnpm quality:care-repositories-coverage` 和
@@ -194,7 +196,7 @@ OP Webhook 双入口、
 `pnpm quality:oauth-controller-coverage`、
 `pnpm quality:strong-auth-coverage`、
 `pnpm quality:onboarding-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。九十七条链路当前覆盖率基线集合为
+`pnpm quality:production-execution-authorization-coverage`。一百条链路当前覆盖率基线集合为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -274,12 +276,13 @@ OP Webhook 双入口、
 99.13%/98.03%/100%/99.02%、99.01%/96.70%/100%/98.87%、
 98.90%/96.15%/100%/98.70%、99.35%/98.57%/100%/99.25%、
 100%/97.77%/100%/100%、96.39%/96.15%/96.42%/97.59%、
+100%/100%/100%/100%、
 99.36%/97.51%/100%/99.76%
 （语句/分支/函数/行）；电子签九个核心文件另达到
 98.01%/95.55%/99.00%/99.51%，审计追加三个核心文件另达到
 96.91%/97.48%/96.66%/99.00%，审计后台七个生产文件另达到
-100%/100%/100%/100%；九十七项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明九十七条关键链路达标，
+100%/100%/100%/100%；一百项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明一百条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 招聘面试日历可靠投递已覆盖 163 项标准命令校验、租户绑定目标去重、不可变事件
@@ -804,6 +807,13 @@ Talent Lifecycle 四域来源完整性已覆盖 10 项组织、招聘、入职�
 四维 90% 门禁已接入 `pnpm check`。REST 与标准 MCP 契约不变，MCP 仍只复用
 `TalentLifecycleService.getForMcp` 返回最小只读投影；真实全周期数据回放、部门
 权限映射和 HR/员工关怀/校友 UAT 仍待现场验收。
+
+Recruitment → Onboarding 桥接已覆盖 31 项受信任服务 Scope、最小入职投影、
+Offer/Application/Candidate/Position 引用闭包、幂等预入职与录用终态测试；
+桥接服务四维覆盖率为 100%，独立 90% 门禁已接入 `pnpm check`。`hired` 只允许
+由已签署 Offer 推进，阶段事件记录 Onboarding 完成证据，Candidate Application
+另存 Employment 引用，避免把业务完成证明与结果标识混用。标准 MCP 不新增该
+跨域写能力；真实 eSign、代表性招聘入职回放及 HR UAT 仍待现场验收。
 
 ## 6. 架构边界
 

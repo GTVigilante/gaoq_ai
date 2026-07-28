@@ -24,6 +24,7 @@ function advance(
   current: ReturnType<typeof application>,
   targetStage: Parameters<typeof transitionCandidateApplication>[1]['targetStage'],
   evidenceId?: string,
+  employmentId?: string,
 ) {
   return transitionCandidateApplication(current, {
     tenantId: 'tenant-001',
@@ -31,6 +32,7 @@ function advance(
     actorId: 'actor-001',
     targetStage,
     ...(evidenceId === undefined ? {} : { evidenceId }),
+    ...(employmentId === undefined ? {} : { employmentId }),
   }, new Date(NOW.getTime() + current.version * 1_000)).application;
 }
 
@@ -53,7 +55,15 @@ describe('CandidateApplication', () => {
     const offerSent = advance(offerApproval, 'offer_sent', 'offer-001');
     const accepted = advance(offerSent, 'offer_accepted', 'acceptance-001');
     const preboarding = advance(accepted, 'preboarding', 'onboarding-001');
-    const hired = advance(preboarding, 'hired', 'employment-001');
+    const hiredTransition = transitionCandidateApplication(preboarding, {
+      tenantId: 'tenant-001',
+      expectedVersion: preboarding.version,
+      actorId: 'actor-001',
+      targetStage: 'hired',
+      evidenceId: 'completion-evidence-001',
+      employmentId: 'employment-001',
+    }, new Date(NOW.getTime() + preboarding.version * 1_000));
+    const hired = hiredTransition.application;
     expect(hired).toMatchObject({
       stage: 'hired',
       completedInterviewId: 'interview-001',
@@ -62,6 +72,10 @@ describe('CandidateApplication', () => {
       onboardingInstanceId: 'onboarding-001',
       employmentId: 'employment-001',
       version: 8,
+    });
+    expect(hiredTransition.event).toMatchObject({
+      evidenceId: 'completion-evidence-001',
+      to: 'hired',
     });
     expect(hired.endedAt).not.toBeNull();
   });
@@ -72,6 +86,26 @@ describe('CandidateApplication', () => {
     const interview = advance(screening, 'interview');
     expect(() => advance(interview, 'offer_approval')).toThrow('缺少受信任证据');
     expect(() => advance(screening, 'applied' as never)).toThrow('阶段迁移无效');
+  });
+
+  it('入职完成证据与劳动关系引用必须分离，且只允许 hired 绑定劳动关系', () => {
+    const screening = advance(application(), 'screening');
+    const interview = advance(screening, 'interview');
+    const offerApproval = advance(interview, 'offer_approval', 'interview-001');
+    const offerSent = advance(offerApproval, 'offer_sent', 'offer-001');
+    const accepted = advance(offerSent, 'offer_accepted', 'acceptance-001');
+    const preboarding = advance(accepted, 'preboarding', 'onboarding-001');
+    expect(() => advance(
+      preboarding,
+      'hired',
+      'completion-evidence-001',
+    )).toThrow('必须绑定劳动关系');
+    expect(() => advance(
+      accepted,
+      'preboarding',
+      'onboarding-001',
+      'employment-001',
+    )).toThrow('非入职阶段禁止绑定劳动关系');
   });
 
   it('淘汰和退出必须使用原因码，终态不可复活', () => {
