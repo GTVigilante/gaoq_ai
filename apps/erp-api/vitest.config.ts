@@ -1000,6 +1000,48 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/integration/org-employee-provisioning.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/integration/org-employee-provisioning.controller.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/integration/org-employee-provisioning.dto.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/integration/org-employee-provisioning.schema.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/integration/org-provisioning-crypto.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/integration/org-platform-credential.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/integration/org-push.adapter.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/core/idempotency/idempotency.service.ts': {
           branches: 90,
           functions: 90,
