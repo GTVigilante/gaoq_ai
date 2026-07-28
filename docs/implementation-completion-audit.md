@@ -62,11 +62,11 @@
 ## 5. 覆盖率边界
 
 2026-07-29 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，399 个测试文件、5,974 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，400 个测试文件、6,052 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-92.15%（30,466/33,059）、分支 89.51%（20,893/23,340）、函数
-92.82%（5,434/5,854）、行 93.35%（27,843/29,825）。全仓四维已达到 Phase 0
+92.25%（30,581/33,150）、分支 89.57%（20,955/23,393）、函数
+92.96%（5,459/5,872）、行 93.45%（27,955/29,914）。全仓四维已达到 Phase 0
 规定的 80% 门槛。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
@@ -227,6 +227,8 @@ OP Webhook 双入口、
 `pnpm quality:recruitment-management-coverage`、
 `pnpm quality:recruitment-onboarding-bridge-coverage`、
 `pnpm quality:talent-lifecycle-application-coverage`、
+`pnpm quality:talent-lifecycle-entry-coverage`、
+`pnpm quality:talent-lifecycle-outbox-boundary-coverage`、
 `pnpm quality:talent-lifecycle-sources-coverage`、
 `pnpm quality:talent-lifecycle-repository-coverage`、
 `pnpm quality:recruitment-offer-coverage`、
@@ -260,7 +262,7 @@ OP Webhook 双入口、
 `pnpm quality:onboarding-outbox-boundary-coverage`、
 `pnpm quality:production-execution-authorization-coverage`、
 `pnpm quality:op-approval-result-operations-coverage` 和
-`pnpm quality:org-person-birthday-entry-coverage`。一百一十七条链路当前覆盖率基线集合为
+`pnpm quality:org-person-birthday-entry-coverage`。一百一十九条链路当前覆盖率基线集合为
 100%/100%/100%/100%、100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -349,12 +351,13 @@ OP Webhook 双入口、
 100%/100%/100%/100%、100%/99.02%/100%/100%、
 100%/100%/100%/100%、98.71%/91.89%/100%/100%、
 95.71%/94.06%/100%/97.42%、100%/98.24%/100%/100%、
-98.27%/96.87%/100%/100%、99.29%/98.43%/100%/100%
+98.27%/96.87%/100%/100%、99.29%/98.43%/100%/100%、
+100%/100%/100%/100%、100%/100%/100%/100%
 （语句/分支/函数/行）；电子签十个核心文件另达到
 98.11%/95.70%/99.04%/99.54%，审计追加三个核心文件另达到
 96.91%/97.48%/96.66%/99.00%，审计后台七个生产文件另达到
-100%/100%/100%/100%、100%/98.07%/100%/100%；一百一十七项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明一百一十七条关键链路达标，
+100%/100%/100%/100%、100%/98.07%/100%/100%；一百一十九项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明一百一十九条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 自然人生日证明入口执行 73 项严格 ULID、强 `If-Match`、白名单幂等键、规范
@@ -789,6 +792,15 @@ Worker 租约。覆盖率达到四维 100%，独立四维 90% 门禁已接入 `p
 解密、候选人时间线、会话绑定、跨租户拒绝、乐观锁和损坏密文失败关闭测试；
 覆盖率达到 100%/97.05%/100%/100%（语句/分支/函数/行），独立四维 90%
 门禁已接入 `pnpm check`。
+
+人才全周期 REST 写入口已对资源 ULID、幂等键、强 `If-Match`、严格请求体和
+未知字段失败关闭；业务异常记录独立 R2 失败审计，事务提交后的成功审计故障仅
+稳定告警，不再把已提交终态暴露为失败。事务 Outbox 仅接受创建、完成和取消三类
+动作，严格闭合触点字段、动作/状态/版本、可信租户、活动 Mongo 事务、最小
+CloudEvent 与数据库回执。80 项专项测试使两个生产文件四维均达到 100%，两个
+独立四维 90% 门禁已接入 `pnpm precheck` 与 `pnpm check`。事件名、REST 与
+标准 MCP 契约不变；MCP 不开放触点写入、Outbox、人工处置或重放。真实事件总线、
+角色映射与 HR/员工关怀/校友跨角色 UAT 仍待现场验收。
 
 Care 离职应用已补齐 36 项可信组织主数据、审批恢复、清算证据、R3 Saga、
 校友授权和异常语义测试，服务覆盖率达到 99.54%/97.43%/100%/100%
