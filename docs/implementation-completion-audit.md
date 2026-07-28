@@ -62,11 +62,11 @@
 ## 5. 覆盖率边界
 
 2026-07-28 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，373 个测试文件、4,245 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，373 个测试文件、4,369 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-90.05%（27,495/30,533）、分支 87.11%（18,364/21,081）、函数
-90.49%（4,925/5,442）、行 91.42%（25,101/27,456）。全仓四维已达到 Phase 0
+90.09%（27,561/30,590）、分支 87.16%（18,415/21,126）、函数
+90.51%（4,934/5,451）、行 91.45%（25,161/27,512）。全仓四维已达到 Phase 0
 规定的 80% 门槛。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
@@ -95,7 +95,7 @@ MCP 确认服务、MCP HTTP 入口、MCP 运行时、MCP Tool 应用层、OP 审
 OP Webhook 双入口、
 薪酬影子周期、薪酬运行、薪酬审批、薪酬主数据、专业算薪主数据快照、薪酬四方对账、薪酬税务申报、薪酬 L4 数据加密、资金支付、Treasury 银行提交出站边界、Treasury 银行回盘、Treasury 银行回盘入站边界、Treasury L4 数据加密、Treasury Outbox、Phase 4 REST 入口、Care 纪念日应用、Care 离职应用、校友授权清理协调、
 数据迁移控制面、数据迁移打包 CLI、Knowledge 考试运行 Relay、Knowledge 搜索索引 Relay、Knowledge REST 入口控制器、Knowledge 应用服务、Knowledge 考试应用与入口、Knowledge 领域模型、Knowledge 持久化 Schema、Knowledge 考试重放 CLI、考勤应用、考勤仓储、Attendance 规则纵切、考勤供应商拉取、考勤供应商入站处理、电子签回调处理、
-招聘渠道拉取、招聘渠道入站处理、招聘渠道职位扇出、招聘渠道阶段扇出、招聘申请、招聘面试、招聘简历、招聘渠道职位投递、招聘渠道阶段回传、招聘管理、人才全周期应用、人才全周期仓储、招聘 Offer、Care 仓储、组织仓储、招聘仓储、知识库仓储、营销 CMS、营销入口与幂等核心、营销副作用可靠投递、审批通知可靠投递、组织主数据外部投递可靠性、组织平台适配器安全边界、身份令牌与 OAuth 授权事务、身份用户会话与签名键轮换、人员 SSO 信任边界、OAuth Client Credentials 服务身份签发、OAuth 授权控制器、WebAuthn 强认证、入职应用与入口控制器、生产执行授权服务和 Phase 5 管理分析已建立
+招聘渠道拉取、招聘渠道入站处理、招聘渠道职位扇出、招聘渠道阶段扇出、招聘申请、招聘面试、招聘简历、招聘渠道职位投递、招聘渠道阶段回传、招聘管理、人才全周期应用、人才全周期仓储、招聘 Offer、Care 仓储、组织仓储、招聘仓储、知识库仓储、营销 CMS、营销入口与幂等核心、营销副作用可靠投递、审批通知可靠投递、组织主数据外部投递可靠性、组织平台适配器安全边界、身份令牌与 OAuth 授权事务、身份用户会话与签名键轮换、人员 SSO 信任边界、OAuth Client Credentials 服务身份签发、OAuth 授权控制器、WebAuthn 强认证、入职应用与入口控制器、生产执行授权服务、Phase 5 管理分析和 Payroll Tax 双出口已建立
 独立不可回退门禁：
 `pnpm quality:tenant-context-coverage`、
 `pnpm quality:runtime-boundary-coverage`、
@@ -124,6 +124,7 @@ OP Webhook 双入口、
 `pnpm quality:payroll-master-data-snapshot-coverage`、
 `pnpm quality:payroll-reconciliation-coverage`、
 `pnpm quality:payroll-tax-filing-coverage`、
+`pnpm quality:payroll-tax-http-coverage`、
 `pnpm quality:payroll-data-crypto-coverage`、
 `pnpm quality:treasury-disbursement-coverage`、
 `pnpm quality:treasury-bank-submission-egress-coverage`、
@@ -188,7 +189,7 @@ OP Webhook 双入口、
 `pnpm quality:oauth-controller-coverage`、
 `pnpm quality:strong-auth-coverage`、
 `pnpm quality:onboarding-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。九十二条链路当前覆盖率基线集合为
+`pnpm quality:production-execution-authorization-coverage`。九十三条链路当前覆盖率基线集合为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -265,12 +266,12 @@ OP Webhook 双入口、
 99.17%/95.97%/100%/99.13%、99.58%/99.20%/100%/100%、
 96.96%/95.60%/100%/98.79%、99.70%/94.44%/100%/99.67%、
 99.13%/98.03%/100%/99.02%、99.01%/96.70%/100%/98.87%、
-98.90%/96.15%/100%/98.70%
+98.90%/96.15%/100%/98.70%、99.35%/98.57%/100%/99.25%
 （语句/分支/函数/行）；电子签九个核心文件另达到
 98.01%/95.55%/99.00%/99.51%，审计追加三个核心文件另达到
 96.91%/97.48%/96.66%/99.00%，审计后台七个生产文件另达到
-100%/100%/100%/100%；九十二项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明九十二条关键链路达标，
+100%/100%/100%/100%；九十三项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明九十三条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 Phase 5 管理分析纵切已覆盖 52 项共享契约、历史审批快照、不可变最终审批动作、
@@ -683,6 +684,17 @@ Scope、旧算薪边界守卫、幂等键、月份格式、强认证令牌、ETa
 已绑定不可变对象证据、审批人和强认证证据。覆盖率达到
 98.88%/98.58%/100%/100%（语句/分支/函数/行），独立四维 90% 门禁已接入
 `pnpm check`。
+
+Payroll Tax 双出口已覆盖 131 项固定标准 HTTPS、运行时凭据、规范清单
+UTF-8/JSON 根绑定、WORM 对象键/摘要/十年保留期、最小税务提交、短时生产授权、
+确定性幂等、非 2xx 正文隔离、Content-Length、16 KiB 流式硬上限、读取清理和
+完整回执 Schema 绑定测试。归档适配器达到四维 100%，提交适配器达到
+98.14%/98.52%/100%/97.82%，共享读取器达到
+100%/96.66%/100%/100%；三个文件合计为
+99.35%/98.57%/100%/99.25%（语句/分支/函数/行）。独立逐文件四维 90% 门禁
+由个税申报总门禁接入 `pnpm check`。REST 与标准 MCP 继续只读脱敏控制摘要，
+不暴露税务正文、WORM 地址、凭据、归档或提交能力；真实税务沙箱、WORM 锁定与
+保留证明、限流、Secret 轮换和生产授权域仍待现场验收。
 
 薪酬 L4 数据加密服务已覆盖 8 项上下文/AAD、密钥轮换、严格密钥环、
 IV/Tag 固定长度、规范 Base64URL、密文篡改、8 MiB 上限和失败关闭测试；

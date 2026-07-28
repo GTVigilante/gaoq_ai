@@ -48,6 +48,16 @@ Treasury 银行回盘 Inbox 入站边界已固定标准 HTTPS
 90% 门禁已由回盘服务门禁接入 `pnpm check`；真实银行签名、恶意样本、WORM、
 限流和断连联调仍待现场验收。
 
+Payroll Tax 双出口已固定标准 HTTPS `POST /v1/objects` 与
+`POST /v1/submissions`、相互隔离的运行时凭据、确定性幂等和最小税务提交；
+WORM 正文在外呼前严格绑定租户、申报 ULID、对象键与摘要，production 税务提交
+二次校验 30 秒至 15 分钟短时独立授权。成功回执执行 16 KiB
+Content-Length/流式双重限长、严格 UTF-8/JSON、完整 Schema 与请求事实绑定，
+非 2xx 不读取正文。131 项专项测试达到 99.35%/98.57%/100%/99.25%
+（语句/分支/函数/行），三个生产文件逐文件四维 90% 门禁已由个税申报门禁接入
+`pnpm check`；真实税务沙箱、WORM 保留证明、限流、Secret 轮换与生产授权域
+仍待现场验收。
+
 ## 强制边界
 
 - ERP Org 的 `Person / Employee / Employment` 是人员、组织归属和劳动关系唯一主数据源；考勤平台和银行不得反写组织事实。

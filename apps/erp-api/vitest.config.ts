@@ -220,6 +220,24 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/payroll/integration/payroll-tax-gateway-http.adapter.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/payroll/integration/payroll-tax-archive-http.adapter.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/payroll/integration/payroll-tax-http.shared.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/payroll/persistence/payroll-data-crypto.service.ts': {
           branches: 90,
           functions: 90,
