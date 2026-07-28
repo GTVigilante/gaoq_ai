@@ -913,5 +913,8 @@ describe('validateEnvironment', () => {
     expect(() => validateEnvironment({
       ...base, AUDIT_WORM_ENDPOINT: 'https://worm.example.net/anchors?token=unsafe',
     })).toThrow('禁止凭据、查询、fragment');
+    expect(() => validateEnvironment({
+      ...base, AUDIT_WORM_ENDPOINT: 'https://worm.example.net:8443/anchors',
+    })).toThrow('非 443 端口');
   });
 });

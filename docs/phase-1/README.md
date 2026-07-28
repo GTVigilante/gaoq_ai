@@ -7,3 +7,8 @@
 - [`03-observability-slo-runbook.md`](./03-observability-slo-runbook.md)：Prometheus 指标、告警、SLO、WORM 回执契约与负载基线。
 - [`04-org-delivery-reliability-runbook.md`](./04-org-delivery-reliability-runbook.md)：ERP 组织主数据向钉钉、飞书和 OP 投递的租约、结果不确定隔离、对账与 MCP 边界。
 - [`05-identity-token-entry-runbook.md`](./05-identity-token-entry-runbook.md)：JWT 可信身份投影、OAuth 授权事务重验、一次性消费与失败关闭边界。
+
+当前审计追加代码已强制规范链载荷与规范 Base64URL，Mongo 事务提交后的会话清理
+故障不会反向诱发重复追加；独立 WORM 连接强制 HTTPS 443、成套凭据、载荷摘要与
+Ed25519 签名绑定、16 KiB 严格 JSON 回执、时钟与保留期校验。HMAC、Mongo Sink
+与 WORM Client 均纳入逐文件四维 90% 门禁；真实 WORM 抽样回读仍是外部验收。

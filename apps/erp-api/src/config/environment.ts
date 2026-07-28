@@ -1361,12 +1361,13 @@ const environmentSchema = z.object({
       const endpoint = new URL(environment.AUDIT_WORM_ENDPOINT);
       if (
         endpoint.username !== '' || endpoint.password !== '' || endpoint.search !== '' ||
-        endpoint.hash !== '' || endpoint.origin === issuer.origin
+        endpoint.hash !== '' || endpoint.origin === issuer.origin ||
+        (endpoint.port !== '' && endpoint.port !== '443')
       ) {
         context.addIssue({
           code: 'custom',
           path: ['AUDIT_WORM_ENDPOINT'],
-          message: 'WORM 锚定端点禁止凭据、查询、fragment，且必须与 ERP 授权域隔离',
+          message: 'WORM 锚定端点禁止凭据、查询、fragment、非 443 端口，且必须与 ERP 授权域隔离',
         });
       }
     }

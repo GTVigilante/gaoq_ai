@@ -628,6 +628,24 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/core/audit/audit-integrity.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/core/audit/audit-worm.client.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/core/audit/mongo-audit-event.sink.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/core/audit/audit-chain-verification.service.ts': {
           branches: 90,
           functions: 90,

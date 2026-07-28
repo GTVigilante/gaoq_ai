@@ -36,10 +36,15 @@ Worker 每六小时选择最久未锚定的租户，先完整验链，再生成�
 1. 使用 `payloadHash` 作为幂等键，对相同键和相同载荷返回同一回执；
 2. 把载荷、签名、签名 key id 写入由另一权限域管理的合规保留/WORM 存储；
 3. 返回 `receiptId`、不可变 `objectVersion`、相同 `payloadHash`、`anchoredAt` 和不早于请求值的 `retainedUntil`；
-4. 禁止重定向；响应体不得超过 16 KiB；网络超时为 10 秒；
-5. 独立保存 Ed25519 公钥和验签程序，定期从 WORM 平台抽样回读并验签。
+4. 请求必须以规范锚点载荷复算 SHA-256，并绑定规范 64 字节 Ed25519 签名、签名
+   key id 与保留期；端点和凭据必须成套配置，凭据不得进入 URL、日志或错误；
+5. 禁止重定向；只接受 HTTPS 443 和 UTF-8 `application/json`，声明长度与流式
+   实际长度均不得超过 16 KiB，网络超时为 10 秒；
+6. 回执 `anchoredAt` 不得超过当前时间五分钟或晚于 `retainedUntil`，回执保留期
+   不得短于请求；非规范对象版本、破损 JSON 和未知字段全部失败关闭；
+7. 独立保存 Ed25519 公钥和验签程序，定期从 WORM 平台抽样回读并验签。
 
-生产 `AUDIT_WORM_ENDPOINT` 必须是 HTTPS、不得带凭据/查询/fragment，且不得与 ERP 授权域同源。专用私钥不得复用 OAuth 签名密钥或审计 HMAC 密钥。
+生产 `AUDIT_WORM_ENDPOINT` 必须是 HTTPS 443、不得带凭据/查询/fragment，且不得与 ERP 授权域同源。专用私钥不得复用 OAuth 签名密钥或审计 HMAC 密钥。
 
 ## 4. 负载基线
 
