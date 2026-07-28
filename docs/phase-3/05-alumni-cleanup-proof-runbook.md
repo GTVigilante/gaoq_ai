@@ -39,19 +39,28 @@ pending → dispatching → completed
 `CARE_ALUMNI_CLEANUP_TARGETS_JSON` 必须整体存放在 Secret Manager/Kubernetes
 Secret，禁止进入 ConfigMap、日志、事件或审计。每个目标必须使用唯一
 `targetCode`、独立标准 HTTPS 根 Origin、独立 Bearer Token、独立 Ed25519 SPKI
-公钥及 `signingKeyId`，并明确 `policyVersion`、`maxAttempts` 和不少于 2,555 天
-的证明保留期。
+公钥及 `signingKeyId`，Origin、Token、Key ID 和公钥任一项均禁止跨目标复用，
+并明确 `policyVersion`、`maxAttempts` 和不少于 2,555 天的证明保留期。运行时
+必须重算任务 ID 与控制摘要，复核 `dispatching` 租约、尝试上限和目标登记，
+禁止仅依赖进程启动时的配置校验。
 
 ERP 固定调用 `POST /v1/alumni-consent-cleanups/execute`，只发送授权不透明标识、
 版本/目的、终止原因/时刻、目标、政策版本、控制摘要及三项指令：删除或匿名化业务
 联系数据、阻止未来处理、保留授权见证与审计。不得发送自然人身份、联系方式、
-授权证明正文或上游 Token。
+授权证明正文或上游 Token。方法、固定路径、`Authorization`、`Accept`、
+`Cache-Control`、`Content-Type`、规范 `Content-Length`、确定性
+`Idempotency-Key`、协议版本及租户/授权/目标/控制摘要 Header 均由 Adapter
+生成，业务调用方不得覆盖。
 
 回执必须逐字绑定请求上下文，声明 `deleted|anonymized|crypto_shredded`、
 `processingBlocked=true`、只保留 `consent_attestation` 与 `audit_log`，存储必须为
 `immutable_worm|append_only_ledger`，并满足政策保留期。响应体 SHA-256 摘要经
-目标独立 Ed25519 密钥签名；Key ID、签名、摘要、上下文、未来时间、可变存储或
-保留期任一不匹配均失败关闭。
+目标独立 Ed25519 密钥签名；只有 200、无重定向、无压缩、严格
+`application/json`、规范且与实际一致的 Content-Length 和 16 KiB 流式硬上限
+可进入验签。原始字节须先验签，再进行 Fatal UTF-8、JSON 与完整 Schema 校验；
+Key ID、签名、摘要、上下文、存储类型/引用、完成时间或保留期任一不匹配均失败
+关闭。非 200 不读取正文；网络、读取、取消和释放异常不得泄漏 cause、Token、
+租户或上游正文。
 
 ## 4. REST、事件、MCP 与审计
 
@@ -81,10 +90,14 @@ pnpm --filter @gaoq/erp-api reconcile:phase3:care-alumni-cleanup
 
 ```bash
 pnpm quality:care-alumni-cleanup-coverage
+pnpm quality:care-alumni-cleanup-egress-coverage
 ```
 
-该门禁覆盖协调器与执行应用服务，语句、分支、函数和行阈值均固定为 90%，并由
-根目录 `pnpm check` 调用；不得排除任一目标生产文件或复用其他报告目录。
+第一项门禁覆盖协调器与执行应用服务；第二项覆盖配置解析器、目标注册表与 HTTP
+适配器。出口门禁执行 3 个测试文件、131 项测试，合计达到
+96.39%/96.15%/96.42%/97.59%（语句/分支/函数/行）。五个目标生产文件的
+语句、分支、函数和行阈值均固定为 90%，两项均由根目录 `pnpm check` 调用；
+不得排除任一目标生产文件或复用其他报告目录。
 
 对账为只读，只输出状态计数、逾期待处理、陈旧锁、状态/证明不一致、重复自然键、
 重复证明摘要、终止授权漏任务和 Outbox TTL 窗口内漏终态事件。`ready=false` 时

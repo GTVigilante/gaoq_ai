@@ -388,6 +388,24 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/care/integration/care-alumni-cleanup-http.adapter.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/care/integration/care-alumni-cleanup-target-registry.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/config/care-alumni-cleanup-targets.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/data-migration/application/data-migration.service.ts': {
           branches: 90,
           functions: 90,
