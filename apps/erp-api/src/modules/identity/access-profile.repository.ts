@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import type { ClientSession, Model } from 'mongoose';
 
+import { ERP_AUTHORIZATION_SCOPE_PATTERN } from './authorization-scope.js';
 import {
   AccessProfile,
   type AccessProfileDocument,
@@ -9,6 +10,7 @@ import {
 } from './access-profile.schema.js';
 
 const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+const MAX_VERSION = 1_000_000_000;
 
 /** 鉴权使用的授权权限快照：不可变普通对象，数组已复制并冻结。 */
 export interface AccessProfileSnapshot {
@@ -53,6 +55,8 @@ export class AccessProfileRepository {
     actorId: string,
     mongoSession?: ClientSession,
   ): Promise<AccessProfileSnapshot | null> {
+    this.assertId(tenantId);
+    this.assertId(actorId);
     const query = this.accessProfiles.findOne({ tenantId, actorId, status: 'active' });
     if (mongoSession !== undefined) {
       query.session(mongoSession);
@@ -64,16 +68,7 @@ export class AccessProfileRepository {
     if (!doc) {
       return null;
     }
-    return Object.freeze({
-      tenantId: doc.tenantId,
-      actorId: doc.actorId,
-      employeeId: doc.employeeId,
-      status: doc.status,
-      roleCodes: Object.freeze([...doc.roleCodes]),
-      scopes: Object.freeze([...doc.scopes]),
-      departmentIds: Object.freeze([...doc.departmentIds]),
-      version: doc.version,
-    });
+    return this.toSnapshot(doc, tenantId, actorId);
   }
 
   /** 审批人解析专用：按固定角色白名单查询有效主体，可选限制在部门交集内。 */
@@ -83,13 +78,15 @@ export class AccessProfileRepository {
     departmentIds: readonly string[] | null,
     mongoSession?: ClientSession,
   ): Promise<readonly AccessProfileSnapshot[]> {
-    this.assertIds(tenantId, tenantId);
+    this.assertId(tenantId);
     if (
       roleCodes.length < 1 || roleCodes.length > 50 ||
       roleCodes.some((code) => !ID_PATTERN.test(code)) ||
+      new Set(roleCodes).size !== roleCodes.length ||
       (departmentIds !== null && (
         departmentIds.length < 1 || departmentIds.length > 500 ||
-        departmentIds.some((id) => !ID_PATTERN.test(id))
+        departmentIds.some((id) => !ID_PATTERN.test(id)) ||
+        new Set(departmentIds).size !== departmentIds.length
       ))
     ) throw new Error('审批角色解析参数非法');
     const filter: Record<string, unknown> = {
@@ -102,7 +99,7 @@ export class AccessProfileRepository {
     if (mongoSession !== undefined) query.session(mongoSession);
     const records = await query.select(SNAPSHOT_PROJECTION).lean().exec();
     if (records.length > 500) throw new Error('审批角色解析结果超过 500 人上限');
-    return Object.freeze(records.map((record) => this.toSnapshot(record)));
+    return Object.freeze(records.map((record) => this.toSnapshot(record, tenantId)));
   }
 
   /**
@@ -111,6 +108,11 @@ export class AccessProfileRepository {
    * 跨租户、非 active 或版本不匹配均返回 false，不产生任何修改。
    */
   async disable(tenantId: string, actorId: string, expectedVersion: number): Promise<boolean> {
+    this.assertId(tenantId);
+    this.assertId(actorId);
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1 || expectedVersion > MAX_VERSION) {
+      throw new Error('授权快照版本非法');
+    }
     const result = await this.accessProfiles.updateOne(
       { tenantId, actorId, status: 'active', version: expectedVersion },
       { $set: { status: 'disabled' }, $inc: { version: 1 } },
@@ -124,7 +126,8 @@ export class AccessProfileRepository {
     employeeId: string,
     mongoSession?: ClientSession,
   ): Promise<string | null> {
-    this.assertIds(tenantId, employeeId);
+    this.assertId(tenantId);
+    this.assertId(employeeId);
     const query = this.accessProfiles
       .findOne({ tenantId, employeeId })
       .select('actorId -_id');
@@ -132,7 +135,9 @@ export class AccessProfileRepository {
     const record = await query
       .lean()
       .exec();
-    return record?.actorId ?? null;
+    if (record === null) return null;
+    this.assertId(record.actorId);
+    return record.actorId;
   }
 
   /** 开户前只读解析员工主体与启停状态，不返回权限数组。 */
@@ -140,15 +145,19 @@ export class AccessProfileRepository {
     tenantId: string,
     employeeId: string,
   ): Promise<EmployeeAccessIdentitySnapshot | null> {
-    this.assertIds(tenantId, employeeId);
+    this.assertId(tenantId);
+    this.assertId(employeeId);
     const record = await this.accessProfiles
       .findOne({ tenantId, employeeId })
       .select('actorId status -_id')
       .lean()
       .exec();
-    return record === null
-      ? null
-      : Object.freeze({ actorId: record.actorId, status: record.status });
+    if (record === null) return null;
+    this.assertId(record.actorId);
+    if (record.status !== 'active' && record.status !== 'disabled') {
+      throw new Error('授权快照持久化记录受损');
+    }
+    return Object.freeze({ actorId: record.actorId, status: record.status });
   }
 
   /** 开户绑定事务内幂等确保最小权限员工主体，既有冲突失败关闭。 */
@@ -159,7 +168,8 @@ export class AccessProfileRepository {
     departmentIds: readonly string[],
     mongoSession: ClientSession,
   ): Promise<void> {
-    this.assertIds(tenantId, employeeId);
+    this.assertId(tenantId);
+    this.assertId(employeeId);
     if (
       !ID_PATTERN.test(actorId) ||
       departmentIds.length < 1 || departmentIds.length > 500 ||
@@ -189,7 +199,8 @@ export class AccessProfileRepository {
     employeeId: string,
     mongoSession: ClientSession,
   ): Promise<boolean> {
-    this.assertIds(tenantId, employeeId);
+    this.assertId(tenantId);
+    this.assertId(employeeId);
     const result = await this.accessProfiles.updateOne(
       { tenantId, employeeId, status: 'active' },
       { $set: { status: 'disabled' }, $inc: { version: 1 } },
@@ -198,13 +209,43 @@ export class AccessProfileRepository {
     return result.modifiedCount === 1;
   }
 
-  private assertIds(tenantId: string, employeeId: string): void {
-    if (!ID_PATTERN.test(tenantId) || !ID_PATTERN.test(employeeId)) {
+  private assertId(value: string): void {
+    if (!ID_PATTERN.test(value)) {
       throw new Error('授权快照生命周期标识非法');
     }
   }
 
-  private toSnapshot(record: AccessProfile): AccessProfileSnapshot {
+  private toSnapshot(
+    record: AccessProfile,
+    expectedTenantId: string,
+    expectedActorId?: string,
+  ): AccessProfileSnapshot {
+    const scalarIds = [record.tenantId, record.actorId, record.employeeId];
+    const validArrays =
+      Array.isArray(record.roleCodes) &&
+      record.roleCodes.length <= 100 &&
+      record.roleCodes.every((value) => ID_PATTERN.test(value)) &&
+      new Set(record.roleCodes).size === record.roleCodes.length &&
+      Array.isArray(record.scopes) &&
+      record.scopes.length <= 200 &&
+      record.scopes.every((value) => ERP_AUTHORIZATION_SCOPE_PATTERN.test(value)) &&
+      new Set(record.scopes).size === record.scopes.length &&
+      Array.isArray(record.departmentIds) &&
+      record.departmentIds.length <= 500 &&
+      record.departmentIds.every((value) => ID_PATTERN.test(value)) &&
+      new Set(record.departmentIds).size === record.departmentIds.length;
+    if (
+      scalarIds.some((value) => !ID_PATTERN.test(value)) ||
+      record.tenantId !== expectedTenantId ||
+      (expectedActorId !== undefined && record.actorId !== expectedActorId) ||
+      record.status !== 'active' ||
+      !validArrays ||
+      !Number.isSafeInteger(record.version) ||
+      record.version < 1 ||
+      record.version > MAX_VERSION
+    ) {
+      throw new Error('授权快照持久化记录受损');
+    }
     return Object.freeze({
       tenantId: record.tenantId,
       actorId: record.actorId,

@@ -28,6 +28,22 @@ Redis 不是授权事实源。服务在以下每个阶段都重新读取当前�
 消费或 PKCE 不匹配都失败关闭。失败响应只返回稳定分类，不回显 Redis 内容、
 客户端机密、签名细节或底层 JOSE 错误。
 
+### 2.1 人员 SSO 信任边界
+
+- 公开 `loginSlug` 只允许规范小写别名并解析启用中的最小租户绑定；钉钉、飞书、
+  OP 适配器必须与注册槽位逐字一致，错槽或重复平台注册时进程启动失败。
+- 每次回调必须同时校验 state 中的平台、外部 tenantId、ERP tenantId，以及适配器
+  返回的平台与外部 tenantId。钉钉在取得 corpId 后、读取用户资料前即拒绝跨企业
+  Token；飞书与 OP 在用户资料返回后再次拒绝租户漂移。
+- 登录映射必须同时命中 provider、externalTenantId、unionId、externalUserId 和
+  `status=bound`。仓储只读取最小投影，随后复核持久化记录并返回冻结对象；不得
+  返回 Mongoose 文档，不得按手机号、邮箱或显示名自动合并。
+- 授权快照只接受当前租户、当前 actor、`status=active`、唯一且格式正确的角色、
+  Scope、部门集合和有效正整数版本。任何数据库污染或跨租户返回都在令牌签发前
+  失败关闭。
+- SSO HTTP 客户端只允许钉钉、飞书固定端点和已安全配置的 OP 根域固定路径；
+  禁止重定向、任意 query、凭据化 URL、非 HTTPS/443 及超过 256 KiB 的响应。
+
 ## 3. 浏览器会话、Refresh Token 与签名密钥轮换
 
 - SSO 登录在单个 Mongo 事务中创建服务端会话与首个 Refresh Token；令牌固定
@@ -75,11 +91,15 @@ Redis 不是授权事实源。服务在以下每个阶段都重新读取当前�
 - `pnpm quality:identity-session-lifecycle-coverage` 固定覆盖签名键环、JWKS、
   Authorization Code 令牌签发、浏览器 Cookie、Refresh Token family、会话仓储、
   登录/刷新服务与两个 HTTP 控制器。
+- `pnpm quality:sso-trust-boundary-coverage` 固定覆盖三平台 SSO 适配器、固定
+  上游 HTTP、适配器注册、公开租户绑定、外部身份双标识映射、授权快照及认证服务。
 - `access-token-verifier.ts` 与 `oauth-authorization-transaction.service.ts` 逐文件
   语句、分支、函数和行覆盖率均不得低于 90%，并由 `pnpm check` 执行。
 - `oauth-client-credentials-grant.service.ts` 同样逐文件四维不得低于 90%；当前专项
   22 项测试达到 97.60%/95.14%/100%/99.07%（语句/分支/函数/行）。
 - 会话生命周期专项 11 个测试文件、82 项测试达到
   99.17%/95.97%/100%/99.13%，十二个生产文件逐文件四维均不得低于 90%。
+- 人员 SSO 信任边界专项 10 个测试文件、99 项测试达到
+  99.45%/99.02%/100%/100%，十二个生产文件逐文件四维均不得低于 90%。
 - 生产仍须验证真实域名、TLS、KMS/Secret Manager、两阶段密钥轮换演练、Redis 故障与恢复、
   浏览器兼容、真实 MCP 客户端以及跨租户拒绝证据；本地测试不替代外部验收。

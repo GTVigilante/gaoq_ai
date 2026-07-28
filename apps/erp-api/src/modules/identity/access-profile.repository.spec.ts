@@ -7,6 +7,7 @@ import type { AccessProfileDocument } from './access-profile.schema.js';
 /** 构造 mock Model：findOne 返回 select/lean/exec 链，updateOne 直接返回结果。 */
 const createModelMock = () => ({
   findOne: vi.fn(),
+  find: vi.fn(),
   updateOne: vi.fn(),
 });
 
@@ -28,7 +29,7 @@ const createDoc = () => ({
   employeeId: 'employee-001',
   status: 'active',
   roleCodes: ['admin'],
-  scopes: ['order:read'],
+  scopes: ['erp:order:sales_order:read'],
   departmentIds: ['dept-001'],
   version: 3,
   createdAt: new Date('2026-01-01T00:00:00Z'),
@@ -76,6 +77,46 @@ describe('AccessProfileRepository', () => {
       expect(result).toBeNull();
     });
 
+    it('查询前拒绝操作符形态租户或主体且不访问数据库', async () => {
+      const model = createModelMock();
+      const repository = createRepository(model);
+
+      await expect(repository.resolveActive('$where', 'actor-001')).rejects.toThrow('标识非法');
+      await expect(repository.resolveActive('tenant-001', '$ne')).rejects.toThrow('标识非法');
+      expect(model.findOne).not.toHaveBeenCalled();
+    });
+
+    it('透传可选事务，并拒绝跨租户或受损授权快照', async () => {
+      const model = createModelMock();
+      const doc = createDoc();
+      const exec = vi.fn().mockResolvedValue({ ...doc, tenantId: 'tenant-attacker' });
+      const lean = vi.fn().mockReturnValue({ exec });
+      const selected = { lean };
+      const query = { select: vi.fn().mockReturnValue(selected), session: vi.fn() };
+      query.session.mockReturnValue(query);
+      model.findOne.mockReturnValue(query);
+
+      await expect(createRepository(model).resolveActive(
+        'tenant-001', 'actor-001', {} as ClientSession,
+      )).rejects.toThrow('持久化记录受损');
+      expect(query.session).toHaveBeenCalledOnce();
+    });
+
+    it.each([
+      { field: 'actorId', value: '$bad' },
+      { field: 'status', value: 'disabled' },
+      { field: 'roleCodes', value: ['admin', 'admin'] },
+      { field: 'scopes', value: ['invalid'] },
+      { field: 'departmentIds', value: ['$bad'] },
+      { field: 'version', value: 0 },
+    ])('拒绝受损字段 $field', async ({ field, value }) => {
+      const model = createModelMock();
+      model.findOne.mockReturnValue(createQueryMock({ ...createDoc(), [field]: value }));
+      await expect(createRepository(model).resolveActive(
+        'tenant-001', 'actor-001',
+      )).rejects.toThrow('持久化记录受损');
+    });
+
     it('命中时返回不可变普通对象，数组为独立副本且已冻结', async () => {
       const model = createModelMock();
       const doc = createDoc();
@@ -105,7 +146,7 @@ describe('AccessProfileRepository', () => {
         employeeId: 'employee-001',
         status: 'active',
         roleCodes: ['admin'],
-        scopes: ['order:read'],
+        scopes: ['erp:order:sales_order:read'],
         departmentIds: ['dept-001'],
         version: 3,
       });
@@ -154,6 +195,91 @@ describe('AccessProfileRepository', () => {
       );
       expect(ok).toBe(false);
     });
+
+    it.each([
+      ['tenant-001', '$ne', 1],
+      ['$where', 'actor-001', 1],
+      ['tenant-001', 'actor-001', 0],
+      ['tenant-001', 'actor-001', 1.5],
+      ['tenant-001', 'actor-001', 1_000_000_001],
+    ])('拒绝非法停用条件且不写库', async (tenantId, actorId, version) => {
+      const model = createModelMock();
+      await expect(createRepository(model).disable(tenantId, actorId, version)).rejects.toThrow();
+      expect(model.updateOne).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('findActiveByRoles', () => {
+    const createListQuery = (records: unknown[]) => {
+      const exec = vi.fn().mockResolvedValue(records);
+      const lean = vi.fn().mockReturnValue({ exec });
+      const select = vi.fn().mockReturnValue({ lean });
+      const limited = { select, session: vi.fn() };
+      limited.session.mockReturnValue(limited);
+      const limit = vi.fn().mockReturnValue(limited);
+      const sort = vi.fn().mockReturnValue({ limit });
+      return { sort, limit, limited };
+    };
+
+    it('按固定角色与部门交集查询、透传事务并冻结结果', async () => {
+      const model = createModelMock();
+      const chain = createListQuery([createDoc()]);
+      model.find.mockReturnValue({ sort: chain.sort });
+      const session = {} as ClientSession;
+      const result = await createRepository(model).findActiveByRoles(
+        'tenant-001', ['approver'], ['dept-001'], session,
+      );
+      expect(model.find).toHaveBeenCalledWith({
+        tenantId: 'tenant-001',
+        status: 'active',
+        roleCodes: { $in: ['approver'] },
+        departmentIds: { $in: ['dept-001'] },
+      });
+      expect(chain.sort).toHaveBeenCalledWith({ actorId: 1 });
+      expect(chain.limited.session).toHaveBeenCalledWith(session);
+      expect(Object.isFrozen(result)).toBe(true);
+      expect(Object.isFrozen(result[0])).toBe(true);
+    });
+
+    it('允许不限制部门，并拒绝重复或非法查询参数', async () => {
+      const model = createModelMock();
+      const chain = createListQuery([]);
+      model.find.mockReturnValue({ sort: chain.sort });
+      const repository = createRepository(model);
+      await repository.findActiveByRoles('tenant-001', ['approver'], null);
+      expect(model.find).toHaveBeenCalledWith({
+        tenantId: 'tenant-001', status: 'active', roleCodes: { $in: ['approver'] },
+      });
+
+      for (const [roles, departments] of [
+        [[], null],
+        [['a', 'a'], null],
+        [['$bad'], null],
+        [['a'], []],
+        [['a'], ['dept-001', 'dept-001']],
+        [['a'], ['$bad']],
+      ] as const) {
+        await expect(repository.findActiveByRoles(
+          'tenant-001', roles, departments,
+        )).rejects.toThrow('参数非法');
+      }
+    });
+
+    it('拒绝超过 500 人以及跨租户持久化结果', async () => {
+      const model = createModelMock();
+      let chain = createListQuery(Array.from({ length: 501 }, createDoc));
+      model.find.mockReturnValueOnce({ sort: chain.sort });
+      const repository = createRepository(model);
+      await expect(repository.findActiveByRoles(
+        'tenant-001', ['approver'], null,
+      )).rejects.toThrow('超过 500');
+
+      chain = createListQuery([{ ...createDoc(), tenantId: 'tenant-attacker' }]);
+      model.find.mockReturnValueOnce({ sort: chain.sort });
+      await expect(repository.findActiveByRoles(
+        'tenant-001', ['approver'], null,
+      )).rejects.toThrow('持久化记录受损');
+    });
   });
 
   it('离职反查使用固定租户/员工投影并透传事务', async () => {
@@ -171,6 +297,20 @@ describe('AccessProfileRepository', () => {
     expect(model.findOne).toHaveBeenCalledWith({ tenantId: 'tenant-001', employeeId: 'employee-001' });
     expect(select).toHaveBeenCalledWith('actorId -_id');
     expect(selectedQuery.session).toHaveBeenCalledWith(mongoSession);
+  });
+
+  it('员工反查未命中返回 null，受损主体失败关闭', async () => {
+    const model = createModelMock();
+    model.findOne
+      .mockReturnValueOnce(createQueryMock(null))
+      .mockReturnValueOnce(createQueryMock({ actorId: '$bad' }));
+    const repository = createRepository(model);
+    await expect(repository.findActorIdByEmployee(
+      'tenant-001', 'employee-001',
+    )).resolves.toBeNull();
+    await expect(repository.findActorIdByEmployee(
+      'tenant-001', 'employee-001',
+    )).rejects.toThrow('标识非法');
   });
 
   it('离职仅停用员工 active 快照、推进版本并返回命中状态', async () => {
@@ -208,6 +348,20 @@ describe('AccessProfileRepository', () => {
     expect(Object.isFrozen(result)).toBe(true);
   });
 
+  it('开户前未命中返回 null，受损状态失败关闭', async () => {
+    const model = createModelMock();
+    model.findOne
+      .mockReturnValueOnce(createQueryMock(null))
+      .mockReturnValueOnce(createQueryMock({ actorId: 'actor-001', status: 'corrupt' }));
+    const repository = createRepository(model);
+    await expect(repository.resolveEmployeeIdentity(
+      'tenant-001', 'employee-001',
+    )).resolves.toBeNull();
+    await expect(repository.resolveEmployeeIdentity(
+      'tenant-001', 'employee-001',
+    )).rejects.toThrow('持久化记录受损');
+  });
+
   it('开户事务幂等创建零权限 active 主体且不覆盖既有快照', async () => {
     const model = createModelMock();
     model.updateOne.mockResolvedValue({ modifiedCount: 0 });
@@ -229,5 +383,21 @@ describe('AccessProfileRepository', () => {
       },
       { upsert: true, session, runValidators: true },
     );
+  });
+
+  it('开户拒绝非法主体、空部门或过量部门且不写库', async () => {
+    const model = createModelMock();
+    const repository = createRepository(model);
+    for (const [actorId, departmentIds] of [
+      ['$bad', ['dept-001']],
+      ['actor-001', []],
+      ['actor-001', ['$bad']],
+      ['actor-001', Array.from({ length: 501 }, (_, index) => `dept-${index}`)],
+    ] as const) {
+      await expect(repository.ensureProvisionedEmployee(
+        'tenant-001', 'employee-001', actorId, departmentIds, {} as ClientSession,
+      )).rejects.toThrow('参数非法');
+    }
+    expect(model.updateOne).not.toHaveBeenCalled();
   });
 });

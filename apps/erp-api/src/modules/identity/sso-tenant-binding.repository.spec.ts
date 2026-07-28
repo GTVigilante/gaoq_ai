@@ -42,4 +42,37 @@ describe('SsoTenantBindingRepository', () => {
     await expect(repository.resolveActive('$ne', 'dingtalk')).rejects.toThrow();
     expect(model.findOne).not.toHaveBeenCalled();
   });
+
+  it('拒绝未知平台且不访问数据库', async () => {
+    const model = createModel(null);
+    const repository = new SsoTenantBindingRepository(
+      model as unknown as Model<SsoTenantBindingDocument>,
+    );
+    await expect(repository.resolveActive(
+      'gaoq-group', 'unknown' as 'feishu',
+    )).rejects.toMatchObject({ response: { code: 'SSO_PROVIDER_INVALID' } });
+    expect(model.findOne).not.toHaveBeenCalled();
+  });
+
+  it('未找到启用绑定时返回 null', async () => {
+    const repository = new SsoTenantBindingRepository(
+      createModel(null) as unknown as Model<SsoTenantBindingDocument>,
+    );
+    await expect(repository.resolveActive('gaoq-group', 'op')).resolves.toBeNull();
+  });
+
+  it.each([
+    { field: 'tenantId', value: '$bad' },
+    { field: 'provider', value: 'dingtalk' },
+    { field: 'externalTenantId', value: '$bad' },
+  ])('拒绝受损租户绑定字段 $field', async ({ field, value }) => {
+    const repository = new SsoTenantBindingRepository(
+      createModel({
+        tenantId: 'tenant-001', provider: 'feishu',
+        externalTenantId: 'external-tenant-001', [field]: value,
+      }) as unknown as Model<SsoTenantBindingDocument>,
+    );
+    await expect(repository.resolveActive('gaoq-group', 'feishu'))
+      .rejects.toThrow('SSO_TENANT_BINDING_CORRUPT');
+  });
 });

@@ -36,6 +36,13 @@ export class SsoAdapterRegistry {
     feishu: FeishuSsoAdapterToken,
     op: OpSsoAdapterToken,
   ) {
+    if (
+      dingtalk.provider !== 'dingtalk' ||
+      feishu.provider !== 'feishu' ||
+      op.provider !== 'op'
+    ) {
+      throw new Error('SSO_ADAPTER_REGISTRATION_INVALID');
+    }
     this.adapters = new Map([
       [dingtalk.provider, dingtalk],
       [feishu.provider, feishu],

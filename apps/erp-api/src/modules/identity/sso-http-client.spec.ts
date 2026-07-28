@@ -58,4 +58,54 @@ describe('FetchSsoHttpClient', () => {
       url: 'https://op.example.test/admin',
     })).rejects.toMatchObject({ response: { code: 'SSO_UPSTREAM_ERROR' } });
   });
+
+  it('POST 固定端点时发送 JSON 与调用方授权头', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"code":"OK"}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await client().postJson({
+      url: 'https://api.dingtalk.com/v1.0/oauth2/userAccessToken',
+      headers: { authorization: 'Bearer opaque' },
+      body: { code: 'one-time-code' },
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.dingtalk.com/v1.0/oauth2/userAccessToken',
+      expect.objectContaining({
+        method: 'POST',
+        headers: {
+          accept: 'application/json',
+          'content-type': 'application/json',
+          authorization: 'Bearer opaque',
+        },
+        body: '{"code":"one-time-code"}',
+      }),
+    );
+  });
+
+  it('拒绝非成功状态、声明超限、空响应体与无效 JSON', async () => {
+    for (const response of [
+      new Response('failed', { status: 500 }),
+      new Response('{}', {
+        status: 200,
+        headers: { 'content-length': String(256 * 1024 + 1) },
+      }),
+      { ok: true, status: 200, headers: new Headers(), body: null } as Response,
+      new Response('not-json', { status: 200 }),
+    ]) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
+      await expect(client().getJson({
+        url: 'https://open.feishu.cn/open-apis/authen/v1/user_info',
+      })).rejects.toMatchObject({ response: { code: 'SSO_UPSTREAM_ERROR' } });
+    }
+  });
+
+  it('拒绝不安全 OP 配置根地址', () => {
+    for (const base of [
+      'http://op.example.test',
+      'https://user@op.example.test',
+      'https://op.example.test#fragment',
+      'https://op.example.test:8443',
+    ]) {
+      expect(() => client(base)).toThrow('SSO_ENDPOINT_INVALID');
+    }
+  });
 });
