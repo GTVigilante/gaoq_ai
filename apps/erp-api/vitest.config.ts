@@ -550,6 +550,30 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/recruitment/recruitment-resume.controller.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/recruitment/recruitment-resume.processor.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/recruitment/recruitment-resume.queue.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/recruitment/integration/recruitment-resume.adapters.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/integration/recruitment-channel-position-delivery.service.ts': {
           branches: 90,
           functions: 90,

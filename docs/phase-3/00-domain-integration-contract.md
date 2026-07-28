@@ -217,13 +217,14 @@ downloadSignedFile / verifySignedFile`；入站验签由独立 Webhook 边界完
 - ERP 管理端 `/workspace/recruitment` 展示候选人简历分析状态、去标识化结构履历、AI 建议标签及置信度；招聘人员可确认、驳回或从受控词表补充标签。只有 `confirmed` 标签进入正式人才检索，`suggested` 不驱动自动化。
 - 分析请求只接受候选人 ULID 与不可解释 `resumeEvidenceId`。租户来自已验证身份；应用服务还会校验候选人处于 `active`、授权未过期且未到保留期限。证据 ID 必须由隔离网关再次校验候选人归属，禁止客户端 URL、对象路径或下载 Token。
 - 招聘渠道 EvidenceVerifier 返回非空 `resumeSnapshotId` 后，渠道 Worker 自动以稳定幂等键创建分析任务；没有简历证据时不创建。门户或人工上传后续也必须复用同一受信任证据窄入口，不能由浏览器伪造“已扫描”状态。
-- `RECRUITMENT_RESUME_SOURCE_ENDPOINT` 对应的独立网关必须先完成归属校验、恶意文件扫描、文本提取与直接身份信息去除，并返回 `malwareScanStatus=clean`、`piiRedacted=true` 和内容 SHA-256 base64url 摘要。正文只存在于 Worker 当前内存，不写 Mongo、审计、Outbox、日志或幂等快照。
-- Worker 通过 OpenAI Responses API 调用部署指定模型，强制 `store:false` 与严格 JSON Schema；模型只能从 `RECRUITMENT_RESUME_TAG_TAXONOMY` 选择标签。生产启用前仍须完成数据处理协议、区域与保留策略评审；如组织已获批 Zero Data Retention，应在对应 API Project 启用。
+- `RECRUITMENT_RESUME_SOURCE_ENDPOINT` 对应的独立网关必须先完成归属校验、恶意文件扫描、文本提取与直接身份信息去除，并逐字回显可信 `tenantId`、`candidateId`、`resumeEvidenceId`，返回 `malwareScanStatus=clean`、`piiRedacted=true` 和内容 SHA-256 base64url 摘要。ERP 只连接无用户信息、查询和片段的 HTTPS 443 端点，禁止重定向；响应必须是 256 KiB 内的 UTF-8 `application/json`。正文经 NFKC 后再次检查直接身份信息，只存在于 Worker 当前内存，不写 Mongo、审计、Outbox、日志或幂等快照。
+- Worker 通过 OpenAI Responses API 调用部署指定模型，强制 `store:false`、`max_output_tokens`、严格 JSON Schema 与基于租户/候选人不可逆摘要的 `safety_identifier`；不得把原始 ERP 标识放入该字段。响应必须是单一 `completed` `output_text`，拒答、未完成、多输出、超大或非 JSON 响应全部失败关闭，本地仍以 Zod、NFKC 后直接标识检查和受控词表二次验证。模型只能从 `RECRUITMENT_RESUME_TAG_TAXONOMY` 选择标签。`store:false` 不等于零保留承诺；生产启用前仍须完成数据处理协议、区域、滥用监控与应用状态保留策略评审，如组织已获批 Zero Data Retention，应在对应 API Project 启用并保存外部验收证据。
 - 模型禁止推断或输出姓名、联系方式、年龄、性别、民族、婚育、宗教、健康、照片和证件信息；禁止输出录用/淘汰、适配度和候选人排序。AI 只生成职业结构摘要与分类建议，不能改变申请阶段或候选人状态。
 - REST 最小 Scope 分离为 `erp:recruitment:resume:analyze`、`erp:recruitment:resume:read` 与 `erp:recruitment:resume:review`。请求分析和标签复核分别强制 `Idempotency-Key`；复核还强制 `If-Match`。Worker 使用 `erp:recruitment:resume:process` 服务身份。
+- BullMQ JobId 使用可信租户与分析 ID 的 SHA-256 base64url 确定性摘要，既实现同一任务去重，也避免跨租户碰撞和业务标识外露；Processor 在进入租户上下文前验证作业名、严格载荷和 JobId。`queued` 及未耗尽五次尝试的 `failed` 分析可恢复入队，处理认领与完成/失败均绑定 `status + version` 租约；租约丢失时禁止覆盖新终态或重放外部模型调用。
 - 集合 `recruitment_resume_analyses` 只保存候选人/证据引用、来源摘要、非 PII 结构结果、标签决策、模型标识、失败码和保留期；不保存简历正文或联系方式。索引通过 `phase-3-recruitment-resume-indexes-v1` 独立追加迁移交付。
 - 请求和复核事务分别发布 `cn.gaoq.erp.recruitment.resume_analysis.requested.v1` 与 `cn.gaoq.erp.recruitment.resume_analysis.reviewed.v1`；事件只含分析、候选人、简历证据引用、状态、版本和已确认标签计数，不含结构履历、标签明细、置信度或正文。AI 完成但尚未人工确认不发布跨域可消费事实。
-- 当前代码已交付 API、BullMQ Worker、OpenAI 适配器、管理页面、受控词表与迁移；真实简历隔离网关、OpenAI API Project/Secret、ZDR 或其他获批保留策略、代表性中文/英文简历评测和招聘 UAT 仍待现场配置与验收。`RECRUITMENT_RESUME_AI_PROVIDER=disabled` 时失败关闭。
+- 当前代码已交付 API、BullMQ Worker、来源/OpenAI 适配器、管理页面、受控词表与迁移；Service、REST Controller、Processor、Queue 和两类外部适配器均建立逐文件四维 90% 不可回退门禁。真实简历隔离网关、OpenAI API Project/Secret、ZDR 或其他获批保留策略、代表性中文/英文简历评测和招聘 UAT 仍待现场配置与验收。`RECRUITMENT_RESUME_AI_PROVIDER=disabled` 时失败关闭。
 
 ### 5.3 HC 审批模板与 Saga 契约
 

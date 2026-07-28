@@ -5,6 +5,7 @@ import {
   Get,
   Headers,
   HttpCode,
+  Logger,
   Param,
   Post,
   Query,
@@ -29,6 +30,8 @@ const IF_MATCH_PATTERN = /^"([1-9][0-9]*)"$/;
 /** 简历库 REST 边界；AI 只产出待审核建议，确认标签必须由独立 Scope 写入。 */
 @Controller('recruitment/resume-library')
 export class RecruitmentResumeController {
+  private readonly logger = new Logger(RecruitmentResumeController.name);
+
   constructor(
     private readonly resumes: RecruitmentResumeService,
     private readonly audit: AuditService,
@@ -46,7 +49,7 @@ export class RecruitmentResumeController {
       this.requireKey(key), candidateId, body,
     );
     this.setVersion(response, result.analysis.version);
-    await this.audit.record({
+    await this.recordAuditAfterBusiness({
       action: 'recruitment.resume.analysis.request',
       resourceType: 'recruitment_resume_analysis',
       resourceId: result.analysis.id,
@@ -92,7 +95,7 @@ export class RecruitmentResumeController {
       this.requireKey(key), id, this.requireVersion(ifMatch), body,
     );
     this.setVersion(response, result.analysis.version);
-    await this.audit.record({
+    await this.recordAuditAfterBusiness({
       action: 'recruitment.resume.analysis.review',
       resourceType: 'recruitment_resume_analysis',
       resourceId: result.analysis.id,
@@ -130,5 +133,19 @@ export class RecruitmentResumeController {
 
   private setVersion(response: Response, version: number): void {
     response.setHeader('ETag', `"${version}"`);
+  }
+
+  private async recordAuditAfterBusiness(
+    input: Parameters<AuditService['record']>[0],
+  ): Promise<void> {
+    try {
+      await this.audit.record(input);
+    } catch {
+      this.logger.error({
+        code: 'RECRUITMENT_RESUME_AUDIT_AFTER_COMMIT_FAILED',
+        action: input.action,
+        resourceId: input.resourceId,
+      });
+    }
   }
 }

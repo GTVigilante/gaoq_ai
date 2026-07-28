@@ -18,6 +18,7 @@ import { TenantContextService } from '../../../core/tenant/tenant-context.servic
 import {
   RECRUITMENT_RESUME_ANALYZE_JOB,
   RECRUITMENT_RESUME_QUEUE,
+  createRecruitmentResumeAnalysisJobId,
   type RecruitmentResumeAnalysisJobData,
 } from '../recruitment-resume.queue.js';
 import {
@@ -143,7 +144,10 @@ export class RecruitmentResumeService {
         return { analysis: this.view(record, null) };
       },
     );
-    if (['queued', 'failed'].includes(result.analysis.status)) {
+    if (
+      result.analysis.status === 'queued' ||
+      (result.analysis.status === 'failed' && result.analysis.attempts < 5)
+    ) {
       await this.enqueue(result.analysis.id);
     }
     return { analysis: withCandidateName(result.analysis, candidate.name) };
@@ -308,7 +312,7 @@ export class RecruitmentResumeService {
     ).lean().exec();
     if (claimed === null) return null;
     try {
-      await this.requireActiveCandidate(claimed.candidateId);
+      const candidate = await this.requireActiveCandidate(claimed.candidateId);
       const source = await this.source.readRedactedText({
         tenantId: claimed.tenantId,
         candidateId: claimed.candidateId,
@@ -317,6 +321,10 @@ export class RecruitmentResumeService {
       const result = await this.ai.analyze({
         redactedText: source.text,
         taxonomy: RECRUITMENT_RESUME_TAG_TAXONOMY,
+        safetyIdentifier: createSafetyIdentifier(
+          claimed.tenantId,
+          claimed.candidateId,
+        ),
       });
       const tags = result.tags.map((item): RecruitmentResumeTagRecord => {
         const definition = recruitmentResumeTag(item.code);
@@ -359,10 +367,12 @@ export class RecruitmentResumeService {
         { returnDocument: 'after', runValidators: true, timestamps: false },
       ).lean().exec();
       if (updated === null) throw new Error('RECRUITMENT_RESUME_PROCESSING_LEASE_LOST');
-      const candidate = await this.candidates.findById(updated.candidateId);
-      return this.view(updated, candidate?.name ?? null);
+      return this.view(updated, candidate.name);
     } catch (error) {
-      await this.markFailed(claimed, failureCode(error));
+      const marked = await this.markFailed(claimed, failureCode(error));
+      if (!marked) {
+        throw new Error('RECRUITMENT_RESUME_PROCESSING_LEASE_LOST', { cause: error });
+      }
       throw error;
     }
   }
@@ -370,8 +380,8 @@ export class RecruitmentResumeService {
   private async markFailed(
     claimed: RecruitmentResumeAnalysisRecord,
     code: string,
-  ): Promise<void> {
-    await this.analyses.updateOne(
+  ): Promise<boolean> {
+    const result = await this.analyses.updateOne(
       {
         tenantId: claimed.tenantId,
         id: claimed.id,
@@ -386,22 +396,20 @@ export class RecruitmentResumeService {
       }, $inc: { version: 1 } },
       { runValidators: true, timestamps: false },
     ).exec();
+    return result.modifiedCount === 1;
   }
 
   private async enqueue(analysisId: string): Promise<void> {
     const tenantId = this.tenantId();
-    const jobId = createHash('sha256')
-      .update(`${tenantId}\0${analysisId}`, 'utf8')
-      .digest('base64url');
     await this.queue.add(
       RECRUITMENT_RESUME_ANALYZE_JOB,
       { tenantId, analysisId },
       {
-        jobId,
+        jobId: createRecruitmentResumeAnalysisJobId(tenantId, analysisId),
         attempts: 5,
         backoff: { type: 'exponential', delay: 2_000 },
         removeOnComplete: 100,
-        removeOnFail: 500,
+        removeOnFail: true,
       },
     );
   }
@@ -525,6 +533,12 @@ function invalidInput(): BadRequestException {
 function failureCode(error: unknown): string {
   if (error instanceof Error && /^[A-Z0-9_]{3,128}$/.test(error.message)) return error.message;
   return 'RECRUITMENT_RESUME_PROCESSING_FAILED';
+}
+
+function createSafetyIdentifier(tenantId: string, candidateId: string): string {
+  return createHash('sha256')
+    .update(JSON.stringify(['recruitment-resume-safety', tenantId, candidateId]), 'utf8')
+    .digest('base64url');
 }
 
 function withCandidateName(

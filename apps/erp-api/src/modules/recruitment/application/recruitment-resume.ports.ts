@@ -44,5 +44,7 @@ export abstract class RecruitmentResumeAiAnalyzer {
   abstract analyze(input: {
     readonly redactedText: string;
     readonly taxonomy: readonly RecruitmentResumeTagDefinition[];
+    /** 租户与候选人引用的单向摘要，不得发送 ERP 标识原文。 */
+    readonly safetyIdentifier: string;
   }): Promise<RecruitmentResumeAiResult>;
 }

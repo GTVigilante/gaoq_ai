@@ -82,7 +82,9 @@ function serviceFixture() {
   const findOne = vi.fn().mockReturnValue(queryResult(null));
   const find = vi.fn().mockReturnValue(listQueryResult([]));
   const findOneAndUpdate = vi.fn().mockReturnValue(queryResult(null));
-  const updateOne = vi.fn().mockReturnValue({ exec: vi.fn().mockResolvedValue(undefined) });
+  const updateOne = vi.fn().mockReturnValue({
+    exec: vi.fn().mockResolvedValue({ modifiedCount: 1 }),
+  });
   const analyses = {
     findOne,
     find,
@@ -291,6 +293,11 @@ describe('RecruitmentResumeService', () => {
     expect(update.$set.tags).toEqual([
       expect.objectContaining({ code: 'role_engineering', status: 'suggested' }),
     ]);
+    const analyzerInput = ai.analyze.mock.calls[0]?.[0] as unknown as {
+      readonly safetyIdentifier?: unknown;
+    };
+    expect(analyzerInput.safetyIdentifier).toBeTypeOf('string');
+    expect(analyzerInput.safetyIdentifier).toMatch(/^[A-Za-z0-9_-]{43}$/);
   });
 
   it('普通用户即使伪造 Worker Scope 也不能执行简历分析', async () => {
@@ -377,6 +384,26 @@ describe('RecruitmentResumeService', () => {
       'request-existing-approved', CANDIDATE_ID, { resumeEvidenceId: 'resume-evidence-001' },
     ));
     expect(approved.queue.add).not.toHaveBeenCalled();
+
+    const retryableFailure = serviceFixture();
+    retryableFailure.analyses.findOne.mockReturnValueOnce(queryResult(analysisRecord({
+      status: 'failed',
+      attempts: 4,
+    })));
+    await trusted(retryableFailure.context, () => retryableFailure.service.requestAnalysis(
+      'request-existing-retryable', CANDIDATE_ID, { resumeEvidenceId: 'resume-evidence-001' },
+    ));
+    expect(retryableFailure.queue.add).toHaveBeenCalledTimes(1);
+
+    const exhaustedFailure = serviceFixture();
+    exhaustedFailure.analyses.findOne.mockReturnValueOnce(queryResult(analysisRecord({
+      status: 'failed',
+      attempts: 5,
+    })));
+    await trusted(exhaustedFailure.context, () => exhaustedFailure.service.requestAnalysis(
+      'request-existing-exhausted', CANDIDATE_ID, { resumeEvidenceId: 'resume-evidence-001' },
+    ));
+    expect(exhaustedFailure.queue.add).not.toHaveBeenCalled();
   });
 
   it('可信证据入口同时限制主体类型和附件链 Scope', async () => {
@@ -635,6 +662,17 @@ describe('RecruitmentResumeService', () => {
       ANALYSIS_ID,
     ))).rejects.toThrow('RECRUITMENT_RESUME_PROCESSING_LEASE_LOST');
     expect(leaseLost.analyses.updateOne).toHaveBeenCalled();
+
+    const failureLeaseLost = serviceFixture();
+    failureLeaseLost.analyses.findOneAndUpdate.mockReturnValueOnce(queryResult(claimed));
+    failureLeaseLost.source.readRedactedText.mockRejectedValueOnce(new Error('source failed'));
+    failureLeaseLost.analyses.updateOne.mockReturnValueOnce({
+      exec: vi.fn().mockResolvedValue({ modifiedCount: 0 }),
+    });
+    await expect(workerTrusted(
+      failureLeaseLost.context,
+      () => failureLeaseLost.service.processAnalysis(ANALYSIS_ID),
+    )).rejects.toThrow('RECRUITMENT_RESUME_PROCESSING_LEASE_LOST');
   });
 
   it('Worker 将非稳定上游异常归一化为处理失败码', async () => {

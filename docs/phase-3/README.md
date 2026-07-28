@@ -10,8 +10,11 @@ Phase 3 以候选人到正式员工的完整证据链为主线，交付招聘、
 
 招聘渠道已交付 Adapter/Normalizer/EvidenceVerifier、加密 Inbox、盲指纹去重、
 加密游标、可靠补拉/重放及状态回传；智能简历库已交付隔离网关契约、OpenAI
-严格结构化输出、受控词表、异步分析、人工确认和管理页面。真实招聘渠道、简历
-扫描/对象存储/脱敏网关、OpenAI Secret 与数据保留控制及招聘 UAT 仍待现场验收。
+严格结构化输出、受控词表、异步分析、人工确认和管理页面。来源连接强制 HTTPS、
+租户回显、有界 JSON 与 NFKC 后直接标识检查；模型连接强制 `store:false`、哈希
+`safety_identifier`、拒答/未完成失败关闭，队列使用租户绑定确定性 JobId 与版本
+租约。真实招聘渠道、简历扫描/对象存储/脱敏网关、OpenAI Secret、API Project
+数据控制及招聘 UAT 仍待现场验收。
 
 Knowledge 已交付版本发布、绝对进度、评分摘要、必修证明、可恢复 Onboarding
 回填、严格 HTTPS 证据网关和只读 MCP。Care 已交付离职审批、四类清算证据、
