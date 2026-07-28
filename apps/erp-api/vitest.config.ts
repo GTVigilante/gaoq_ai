@@ -724,6 +724,18 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/identity/access-token-verifier.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/identity/oauth-authorization-transaction.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/identity/oauth.controller.ts': {
           branches: 90,
           functions: 90,

@@ -124,20 +124,34 @@ export const parseAndValidateClaims = (
   if (claims.azp !== claims.client_id) {
     throw new UnauthorizedException({ code: 'AUTH_CLIENT_MISMATCH', message: '令牌客户端不匹配' });
   }
+  if (claims.sub !== `${claims.tenant_id}:${claims.actor_id}`) {
+    throw new UnauthorizedException({ code: 'AUTH_SUBJECT_MISMATCH', message: '令牌主体绑定不匹配' });
+  }
+  if (
+    hasDuplicates(typeof claims.aud === 'string' ? [claims.aud] : claims.aud) ||
+    hasDuplicates(resources) ||
+    hasDuplicates(claims.roles) ||
+    hasDuplicates(claims.department_ids)
+  ) {
+    throw new UnauthorizedException({ code: 'AUTH_DUPLICATE_CLAIMS', message: '令牌声明存在重复值' });
+  }
 
-  return {
+  return Object.freeze({
     issuer: claims.iss,
     subject: claims.sub,
-    audience: typeof claims.aud === 'string' ? [claims.aud] : claims.aud,
-    resource: resources,
+    audience: Object.freeze(typeof claims.aud === 'string' ? [claims.aud] : [...claims.aud]),
+    resource: Object.freeze([...resources]),
     tenantId: claims.tenant_id,
     actorId: claims.actor_id,
     actorType: claims.actor_type,
     clientId: claims.client_id,
-    roleCodes: claims.roles,
-    scopes,
-    departmentIds: claims.department_ids,
+    roleCodes: Object.freeze([...claims.roles]),
+    scopes: Object.freeze([...scopes]),
+    departmentIds: Object.freeze([...claims.department_ids]),
     sessionId: claims.sid,
     expiresAt: claims.exp,
-  };
+  });
 };
+
+const hasDuplicates = (values: readonly string[]): boolean =>
+  new Set(values).size !== values.length;
