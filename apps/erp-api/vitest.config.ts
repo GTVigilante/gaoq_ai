@@ -538,6 +538,18 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/knowledge/persistence/knowledge-exam-run.repository.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/knowledge/persistence/knowledge-outbox.writer.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/knowledge/knowledge.controller.ts': {
           branches: 90,
           functions: 90,
