@@ -89,3 +89,9 @@ ApprovalNotificationRecordSchema.index(
 );
 ApprovalNotificationRecordSchema.index({ status: 1, nextAttemptAt: 1, createdAt: 1 });
 ApprovalNotificationRecordSchema.index({ tenantId: 1, status: 1, updatedAt: 1 });
+ApprovalNotificationRecordSchema.index({
+  tenantId: 1,
+  status: 1,
+  notificationId: -1,
+  channel: 1,
+});

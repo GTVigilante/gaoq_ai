@@ -67,4 +67,14 @@ describe('ApprovalNotificationRecordSchema', () => {
     );
     expect(index?.[1]?.unique).toBe(true);
   });
+
+  it('死信运维游标查询具有租户状态前缀索引', () => {
+    const index = ApprovalNotificationRecordSchema.indexes().find(([spec]) =>
+      spec.tenantId === 1 &&
+      spec.status === 1 &&
+      spec.notificationId === -1 &&
+      spec.channel === 1,
+    );
+    expect(index).toBeDefined();
+  });
 });

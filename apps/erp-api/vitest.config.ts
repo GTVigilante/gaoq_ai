@@ -1072,6 +1072,12 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/approval/approval-notification-operations.controller.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/approval/notification/approval-notification-operations.service.ts': {
           branches: 90,
           functions: 90,

@@ -32,6 +32,14 @@ Phase 2 当前已交付审批模板、受限条件 DSL、模板快照、实例�
   `state_unavailable` 并保持原执行租约，禁止通用失败处理把成功发送改写为重试或
   死信。结果不确定的钉钉通知只有在平台对账后，才可用 R2
   `approved_exception` 原因执行幂等人工恢复。
+- `GET /approvals/notifications/dead` 和
+  `GET /approvals/notifications/reconciliation` 只返回可信租户内脱敏投影；
+  `POST /approvals/notifications/:notificationId/retries` 严格拒绝未知正文、
+  非规范 ULID、分页和幂等键，并在应用服务再次校验读/操作 Scope。人工恢复按
+  `credentials_fixed`、`identity_bound`、`provider_recovered` 和
+  `approved_exception` 精确匹配对应错误类别，最多执行 100 次；业务失败后的
+  审计故障不得覆盖原始异常，事务提交后的成功审计故障不得改变成功响应。
+  这些运维入口不注册为 MCP Tool、Resource 或 Prompt。
 - R1 使用 `prepare → ERP 页面确认 → execute`；R2 使用与操作、租户、主体、浏览器会话绑定的一次性 WebAuthn challenge，要求认证器 UV 成功和独立审批人；R3 不注册工具。
 - Passkey 登记、清单和撤销要求 `erp:identity:passkey:manage`，生产 `WEB_ORIGIN` 必须为 HTTPS；服务端仅保存公钥、计数器、传输方式和备份状态。
 

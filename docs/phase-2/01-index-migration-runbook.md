@@ -19,7 +19,7 @@
 
 1. 目标必须是 MongoDB Replica Set，已验证多数派写关注和事务能力。
 2. 为目标数据库创建可恢复快照，并记录快照 ID、时间和恢复演练证据。
-3. 检查 `system_migration_locks` 中不存在未过期的 `phase-2-indexes-v2:lock`。
+3. 检查 `system_migration_locks` 中不存在未过期的 `phase-2-indexes-v3:lock`。
 4. 检查唯一索引字段是否存在重复数据；发现重复必须转人工清理，禁止让脚本覆盖。
 5. 使用与生产构建完全相同的镜像运行迁移，禁止本机源码直连生产。
 6. `approval_delegations` 既有记录必须已由批准的数据变更补齐规范 `coverageDays`；任一缺失或空数组都会失败关闭，禁止绕过后创建唯一索引。
@@ -35,7 +35,7 @@ pnpm --filter @gaoq/erp-api migrate:phase2:indexes -- --dry-run
 
 dry-run 输出必须满足：
 
-- `migrationId` 为 `phase-2-indexes-v2`；
+- `migrationId` 为 `phase-2-indexes-v3`；
 - `checksum` 与变更单记录一致；
 - `missing` 数量与预期一致；
 - 无 `PHASE2_INDEX_CONFLICT`。
@@ -47,6 +47,10 @@ pnpm --filter @gaoq/erp-api migrate:phase2:indexes
 ```
 
 执行完成后再次 dry-run，必须得到 `missing: 0`。同时检查 `system_migration_runs` 中状态为 `completed`，集合数、索引数和清单一致。
+
+v3 是在 v2 基础上的追加迁移：为审批通知死信运维查询增加
+`tenantId + status + notificationId(desc) + channel` 复合索引。不得修改或删除
+既有 v2 运行记录；v3 使用独立迁移 ID、锁和校验和，仅创建目标环境中缺失的索引。
 
 ## 失败处理
 
