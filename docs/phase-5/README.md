@@ -8,7 +8,7 @@ Phase 5 在已验收的组织、审批、招聘入职、考勤薪酬底座之上
    - [OP 索引迁移运行手册](./01-op-index-migration-runbook.md)
 2. [OP 组织与人员下发管线](./02-op-organization-delivery-contract.md)（代码已交付，OP 沙箱联调待验收）
 3. [OP 身份联合](./03-op-identity-federation-contract.md)（运行时代码已交付，初始绑定迁移与实体 UAT 待验收）
-4. [OP 审批桥契约](./04-op-approval-bridge-contract.md)（运行时代码与出站连接信任边界已交付，OP 沙箱联调待验收）
+4. [OP 审批桥契约](./04-op-approval-bridge-contract.md)（运行时代码、可信读取与出站连接信任边界已交付，OP 沙箱联调待验收）
    - [OP 审批桥索引迁移运行手册](./05-op-approval-index-migration-runbook.md)
 5. [移动工作台契约](./06-mobile-workbench-contract.md)（H5 首页、审批待办/详情/时间线、R1 决策/转交/加签、限期委托、模板驱动发起、本人培训任务与容器安全策略已交付；真实内容/评分服务、平台容器及实体 UAT 待续）
 6. [管理驾驶舱与受控分析导出契约](./07-management-dashboard-contract.md)（Web、REST、MCP 与 R2 异步导出代码已交付，生产数据与管理层 UAT 待验收）

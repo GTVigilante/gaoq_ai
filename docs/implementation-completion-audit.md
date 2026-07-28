@@ -62,14 +62,20 @@
 ## 5. 覆盖率边界
 
 2026-07-29 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，389 个测试文件、5,366 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，389 个测试文件、5,400 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-91.52%（29,542/32,279）、分支 88.90%（20,208/22,730）、函数
-92.03%（5,271/5,727）、行 92.72%（26,978/29,095）。全仓四维已达到 Phase 0
+91.53%（29,566/32,300）、分支 88.92%（20,231/22,750）、函数
+92.03%（5,272/5,728）、行 92.73%（27,000/29,115）。全仓四维已达到 Phase 0
 规定的 80% 门槛。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
+
+2026-07-29 OP 审批桥读取边界已在 REST 与标准 MCP 共用的应用服务中二次校验
+可信 Scope，固定租户查询和最小投影，并对租户/eventId、标识、状态、版本和时间
+关系做严格运行时反向绑定；终态 Relay 同步写入完成与更新时间。35 项读取专项
+测试达到 100%/100%/100%/100%，结果 Relay/Delivery 70 项测试继续保持四维
+100%；该证据不替代 OP 沙箱双向联调、真实身份目录与 UAT。
 
 2026-07-28 智能简历门禁已从仅统计应用 Service 扩展到 Service、REST
 Controller、BullMQ Processor、确定性 Queue JobId 与来源/OpenAI 适配器五个生产
@@ -112,6 +118,7 @@ OP Webhook 双入口、
 `pnpm quality:mcp-runtime-coverage`、
 `pnpm quality:mcp-tool-coverage`、
 `pnpm quality:op-approval-request-coverage`、
+`pnpm quality:op-approval-bridge-read-coverage`、
 `pnpm quality:op-approval-result-coverage`、
 `pnpm quality:op-approval-egress-coverage`、
 `pnpm quality:op-webhook-ingress-coverage`、
@@ -204,8 +211,8 @@ OP Webhook 双入口、
 `pnpm quality:oauth-controller-coverage`、
 `pnpm quality:strong-auth-coverage`、
 `pnpm quality:onboarding-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。一百零八条链路当前覆盖率基线集合为
-100%/100%/100%/100%、100%/100%/100%/100%、
+`pnpm quality:production-execution-authorization-coverage`。一百零九条链路当前覆盖率基线集合为
+100%/100%/100%/100%、100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
 100%/100%/100%/100%、
@@ -294,8 +301,8 @@ OP Webhook 双入口、
 （语句/分支/函数/行）；电子签十个核心文件另达到
 98.11%/95.70%/99.04%/99.54%，审计追加三个核心文件另达到
 96.91%/97.48%/96.66%/99.00%，审计后台七个生产文件另达到
-100%/100%/100%/100%；一百零八项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明一百零八条关键链路达标，
+100%/100%/100%/100%；一百零九项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明一百零九条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 关怀跨域来源门禁执行 43 项可信主体、查询主键、租户、Employee、当前

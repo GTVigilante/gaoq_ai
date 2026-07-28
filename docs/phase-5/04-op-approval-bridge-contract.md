@@ -90,6 +90,15 @@ timestamp\nnonce\nPUT\npath\nexternalTenantId\nidempotencyKey\nSHA256_BASE64URL(
 | MCP 查询 | Tool `op_approval_bridge_get` / Resource `erp://op/approval-bridges/{externalEventId}` | `erp:op:approval_bridge:read` | 只读、幂等、复用应用服务 |
 | MCP 引导 | Prompt `op_approval_bridge_review_guide` | 同上 | 禁止决策、重试、回推和读取正文 |
 
+REST、MCP Tool 与 MCP Resource 必须复用同一个 `OpApprovalBridgeService`。应用
+服务不得依赖入口层已经鉴权的假设，必须从可信身份上下文二次校验读取 Scope，以
+可信租户和规范外部 eventId 执行固定最小投影，并对投影中的租户、eventId、
+标识格式、状态、版本和时间关系做运行时反向绑定。`processing` 只允许版本 0，
+`running` 只允许版本不低于 2，二者不得有完成时间；终态只允许版本不低于 3，
+且完成时间不得晚于更新时间。未知字段、跨租户/跨事件错绑、未来更新时间或非法
+状态组合必须整体失败关闭，禁止返回部分数据。终态 Relay 在禁用 Mongoose 自动
+时间戳的事务更新中必须同时写入 `completedAt` 与同值 `updatedAt`。
+
 必须审计：验签成败、审批创建提交成败、结果外呼成败、人工重试成败和桥接查询。审计元数据只允许控制标识、状态、版本和失败码。
 
 ## 6. SLO、监控与退出门禁
@@ -101,6 +110,10 @@ timestamp\nnonce\nPUT\npath\nexternalTenantId\nidempotencyKey\nSHA256_BASE64URL(
 - 仓库门禁 `pnpm quality:op-approval-request-coverage` 必须覆盖任务参数、载荷摘要与
   时间、路由、来源唯一桥接、租约、永久/瞬时失败分类和成功/失败审计故障，目标
   文件的语句、分支、函数和行覆盖率均不得低于 90%。
+- 仓库门禁 `pnpm quality:op-approval-bridge-read-coverage` 必须覆盖应用层
+  Scope 二次校验、可信租户查询、固定最小投影、反向绑定、全部状态/版本/时间
+  组合、受损记录与数据库故障；读取服务目标文件四维均不得低于 90%，并由
+  `pnpm precheck` 与 `pnpm check` 独立执行。
 - 仓库门禁 `pnpm quality:op-approval-result-coverage` 必须覆盖 Outbox/信封身份
   绑定、非终态跳过、桥接版本单调推进、投递内容幂等校验、事务与租约竞争、退避/
   死信、HMAC 最小载荷、响应回显、错误分类与成功/失败审计故障；Relay 与 Delivery

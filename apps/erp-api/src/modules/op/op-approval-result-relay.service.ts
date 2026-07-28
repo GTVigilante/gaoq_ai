@@ -103,7 +103,7 @@ export class OpApprovalResultRelayService {
               approvalVersion: bridge.approvalVersion,
             }, { $set: {
               approvalStatus: terminal.result, approvalVersion: terminal.version,
-              completedAt: terminal.occurredAt,
+              completedAt: terminal.occurredAt, updatedAt: terminal.occurredAt,
             } }, { session, timestamps: false, runValidators: true });
             if (updated.matchedCount !== 1) {
               throw new Error('OP_APPROVAL_BRIDGE_VERSION_CONFLICT');

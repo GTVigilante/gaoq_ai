@@ -254,7 +254,12 @@ describe('OpApprovalResultRelayService', () => {
     });
     await expect(store.service.relayBatch('worker-001', 1)).resolves.toBe(1);
     expect(store.bridges.updateOne.mock.calls[0]?.[1]).toMatchObject({
-      $set: { approvalStatus: result, approvalVersion: 3 },
+      $set: {
+        approvalStatus: result,
+        approvalVersion: 3,
+        completedAt: OCCURRED_AT,
+        updatedAt: OCCURRED_AT,
+      },
     });
   });
 
