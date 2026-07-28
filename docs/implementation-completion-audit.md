@@ -62,11 +62,11 @@
 ## 5. 覆盖率边界
 
 2026-07-29 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，388 个测试文件、5,317 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，389 个测试文件、5,366 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-91.47%（29,485/32,233）、分支 88.86%（20,186/22,716）、函数
-91.98%（5,259/5,717）、行 92.67%（26,923/29,050）。全仓四维已达到 Phase 0
+91.52%（29,542/32,279）、分支 88.90%（20,208/22,730）、函数
+92.03%（5,271/5,727）、行 92.72%（26,978/29,095）。全仓四维已达到 Phase 0
 规定的 80% 门槛。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
@@ -90,7 +90,7 @@ HTTPS Client 三个生产文件。专用命令执行 3 个测试文件、74 项�
 注册失败时启动失败关闭；失败由五次指数退避和低基数 failed 队列指标观测。
 
 租户上下文、生产运行入口与可观测性边界、审计追加与 WORM 运输、审计后台执行与队列观测、审计链锚定、审计链验证、组织主数据应用、组织主数据入口、身份授权、审批数据加密、审批仓储、
-审批应用状态机、审批主体解析、审批入口控制器、审批模板领域、
+审批应用状态机、审批主体解析、审批入口控制器、审批模板领域、审批 Outbox 运行时边界、
 MCP 确认服务、MCP HTTP 入口、MCP 运行时、MCP Tool 应用层、OP 审批桥入站申请、OP 审批结果回传、
 OP Webhook 双入口、
 薪酬影子周期、薪酬运行、薪酬审批、薪酬主数据、专业算薪主数据快照、薪酬四方对账、薪酬税务申报、薪酬 L4 数据加密、资金支付、Treasury 银行提交出站边界、Treasury 银行回盘、Treasury 银行回盘入站边界、Treasury L4 数据加密、Treasury Outbox、Phase 4 REST 入口、Care 纪念日应用、Care 通知网关信任边界、Care 离职应用、校友授权清理协调、
@@ -192,6 +192,7 @@ OP Webhook 双入口、
 `pnpm quality:org-platform-adapters-coverage`、
 `pnpm quality:org-provisioning-coverage`、
 `pnpm quality:approval-repositories-coverage` 和
+`pnpm quality:approval-outbox-boundary-coverage`、
 `pnpm quality:approval-application-coverage`、
 `pnpm quality:approval-actor-resolution-coverage`、
 `pnpm quality:approval-controller-coverage`、
@@ -203,7 +204,7 @@ OP Webhook 双入口、
 `pnpm quality:oauth-controller-coverage`、
 `pnpm quality:strong-auth-coverage`、
 `pnpm quality:onboarding-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。一百零七条链路当前覆盖率基线集合为
+`pnpm quality:production-execution-authorization-coverage`。一百零八条链路当前覆盖率基线集合为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -288,12 +289,13 @@ OP Webhook 双入口、
 100%/100%/100%/100%、
 99.16%/97.79%/100%/99.76%、
 92.17%/91.90%/98.00%/93.33%、
-94.96%/93.51%/92.85%/96.00%、100%/100%/100%/100%
+94.96%/93.51%/92.85%/96.00%、100%/100%/100%/100%、
+100%/100%/100%/100%
 （语句/分支/函数/行）；电子签十个核心文件另达到
 98.11%/95.70%/99.04%/99.54%，审计追加三个核心文件另达到
 96.91%/97.48%/96.66%/99.00%，审计后台七个生产文件另达到
-100%/100%/100%/100%；一百零七项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明一百零七条关键链路达标，
+100%/100%/100%/100%；一百零八项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明一百零八条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 关怀跨域来源门禁执行 43 项可信主体、查询主键、租户、Employee、当前
@@ -728,6 +730,15 @@ OP 审批结果回传已覆盖 70 项 Outbox 身份绑定、终态筛选、桥�
 成功或失败终态后的审计故障只形成稳定告警，非规范外部错误码统一收敛为固定领域
 错误。两个目标文件合计覆盖率达到四维 100%，独立四维 90% 门禁已接入
 `pnpm check`。
+
+审批 Outbox 运行时边界已覆盖 49 项十五类模板、历史、实例与委托事件、严格外层
+信封、逐类型 payload、可信租户、标识、正安全版本、规范 UTC 时间、摘要、迁移
+状态/动作数、决策结果/终态/代理关系、转交差异、撤回唯一收件人、三十天委托和
+持久化失败测试。payload 先规范复制，再由权威租户、聚合与版本字段覆盖；任何
+未知字段、保留字段覆盖、表单正文或状态组合错位均以
+`APPROVAL_OUTBOX_EVENT_INVALID` 在写入前失败关闭。目标生产文件覆盖率达到四维
+100%，独立逐文件 90% 门禁已接入 `pnpm precheck` 与 `pnpm check`。该边界直接
+保护 OP 审批终态 Relay 的输入，未新增或放宽任何 MCP Tool、Resource 或 Prompt。
 
 OP 经营摘要与审批请求 Webhook 双入口已覆盖 125 项控制器 query 禁止、六认证
 头、HMAC 原始字节、时间窗、可信 clientId 租户绑定、受控路由、防重放、Inbox

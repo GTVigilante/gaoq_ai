@@ -40,6 +40,15 @@
 | 组织浏览与创建 | `OrgApplicationService` | 组织版本事件进入 Outbox，下发钉钉/飞书/OP | 复用组织 R0/R1 工具 | `org.department.create`、`org.employee.create` |
 | 身份摘要与会话吊销 | 可信身份上下文与 `TokenGrantService` | 吊销不依赖外部平台成功 | OAuth/MCP 继续使用同一 Scope 模型 | `identity.profile.read`、`identity.session.revoke` |
 
+审批 Outbox 对上述模板、历史、实例和委托的十五类事件执行独立严格运行时契约。
+外层只接受 `type/tenantId/aggregateId/version/occurredAt/payload`，payload 按
+事件类型逐字段白名单；可信租户、聚合与版本在组装 CloudEvent data 时最后覆盖，
+因此调用方不能通过 payload 改写路由身份。事件时间必须为不晚于当前时刻的规范
+UTC ISO instant；决策结果与终态、代理标记、迁移状态与动作数、转交双方、撤回
+收件人及委托时段必须形成合法组合。任何受损事实都在事务 Outbox 写入和 OP 结果
+桥消费前失败关闭，稳定错误码为 `APPROVAL_OUTBOX_EVENT_INVALID` 或
+`APPROVAL_OUTBOX_TENANT_MISMATCH`。
+
 MCP 不得调用页面、读取浏览器令牌或直接访问数据库。页面新增呈现能力不得改变 MCP 风险分级，R3 始终不注册工具。
 
 已发布模板目录最多返回 200 个模板、每个模板最多 100 个字段，只包含模板标识、编码、名称、修订、风险级别、定义摘要、字段白名单和版本；不得返回 `tenantId`、流程节点、审批人解析器或发布审批人。MCP Resource 与 REST 使用同一应用服务投影。当前 MCP 确认记录不承载审批表单正文，避免 L3/L4 表单值进入明文命令；AI 可读取结构并辅助用户填写，但实例草稿必须由 ERP UI 创建，之后才可用既有 prepare/execute 提交。
