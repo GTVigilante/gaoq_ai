@@ -39,4 +39,7 @@ Phase 2 当前已交付审批模板、受限条件 DSL、模板快照、实例�
 3. 部署并验证 [SLO 与告警](./03-observability-slo-runbook.md)。
 4. 完成 [平台与 MCP 兼容矩阵](./04-platform-mcp-compatibility.md)。
 5. 按 [PC 工作台契约](./05-web-console-contract.md) 验证浏览器会话、版本控制、风险边界与四类契约一致性。
-6. R2 实体认证器兼容、真实平台沙箱和 Sev1/Sev2 演练全部通过后，方可提交生产变更审批。
+6. 按 [审批主体解析与组织主数据完整性运行手册](./06-approval-actor-resolution-runbook.md)
+   验证发起员工在职状态、授权映射、部门字段类型、单节点人数上限，以及
+   REST、OP、MCP 对同一应用服务的复用。
+7. R2 实体认证器兼容、真实平台沙箱和 Sev1/Sev2 演练全部通过后，方可提交生产变更审批。

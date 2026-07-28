@@ -62,11 +62,11 @@
 ## 5. 覆盖率边界
 
 2026-07-28 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，366 个测试文件、4,024 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，366 个测试文件、4,035 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-89.55%（27,138/30,303）、分支 86.52%（18,062/20,876）、函数
-89.97%（4,856/5,397）、行 90.97%（24,789/27,247）。全仓四维已达到 Phase 0
+89.60%（27,194/30,349）、分支 86.62%（18,129/20,929）、函数
+90.03%（4,868/5,407）、行 91.01%（24,835/27,288）。全仓四维已达到 Phase 0
 规定的 80% 门槛。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
@@ -90,7 +90,7 @@ HTTPS Client 三个生产文件。专用命令执行 3 个测试文件、74 项�
 注册失败时启动失败关闭；失败由五次指数退避和低基数 failed 队列指标观测。
 
 租户上下文、审计追加与 WORM 运输、审计后台执行与队列观测、审计链锚定、审计链验证、组织主数据应用、组织主数据入口、身份授权、审批数据加密、审批仓储、
-审批应用状态机、审批入口控制器、审批模板领域、
+审批应用状态机、审批主体解析、审批入口控制器、审批模板领域、
 MCP 确认服务、MCP HTTP 入口、MCP 运行时、MCP Tool 应用层、OP 审批桥入站申请、OP 审批结果回传、
 OP Webhook 双入口、
 薪酬影子周期、薪酬运行、薪酬审批、薪酬主数据、专业算薪主数据快照、薪酬四方对账、薪酬税务申报、薪酬 L4 数据加密、资金支付、Treasury 银行回盘、Treasury L4 数据加密、Treasury Outbox、Phase 4 REST 入口、Care 纪念日应用、Care 离职应用、校友授权清理协调、
@@ -174,6 +174,7 @@ OP Webhook 双入口、
 `pnpm quality:org-platform-adapters-coverage`、
 `pnpm quality:approval-repositories-coverage` 和
 `pnpm quality:approval-application-coverage`、
+`pnpm quality:approval-actor-resolution-coverage`、
 `pnpm quality:approval-controller-coverage`、
 `pnpm quality:approval-template-domain-coverage`、
 `pnpm quality:identity-token-entry-coverage`、
@@ -183,7 +184,7 @@ OP Webhook 双入口、
 `pnpm quality:oauth-controller-coverage`、
 `pnpm quality:strong-auth-coverage`、
 `pnpm quality:onboarding-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。八十七条链路当前覆盖率基线集合为
+`pnpm quality:production-execution-authorization-coverage`。八十八条链路当前覆盖率基线集合为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -257,12 +258,13 @@ OP Webhook 双入口、
 97.18%/95.18%/100%/97.99%、98.61%/95.04%/100%/99.07%、
 98.23%/97.43%/98.24%/98.85%、97.80%/93.10%/100%/100%、
 99.59%/98.23%/100%/99.56%、97.60%/95.14%/100%/99.07%、
-99.17%/95.97%/100%/99.13%、99.58%/99.20%/100%/100%
+99.17%/95.97%/100%/99.13%、99.58%/99.20%/100%/100%、
+96.96%/95.60%/100%/98.79%
 （语句/分支/函数/行）；电子签九个核心文件另达到
 98.01%/95.55%/99.00%/99.51%，审计追加三个核心文件另达到
 96.91%/97.48%/96.66%/99.00%，审计后台七个生产文件另达到
-100%/100%/100%/100%；八十七项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明八十七条关键链路达标，
+100%/100%/100%/100%；八十八项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明八十八条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 Phase 5 管理分析纵切已覆盖 52 项共享契约、历史审批快照、不可变最终审批动作、
@@ -343,6 +345,14 @@ Header、重复同名值、异常摘要与跨 Origin 回调，所有回调结果
 只对规范 state 执行 GETDEL，并稳定区分无效状态与基础设施故障。十五个目标
 生产文件合计达到 99.58%/99.20%/100%/100%（语句/分支/函数/行），逐文件四维 90% 门禁已接入
 `pnpm precheck`；真实企业租户权限、平台限流、生产域名和端到端 UAT 仍待外部验收。
+
+审批主体解析已覆盖 13 项发起主体、在职状态、固定员工、租户/部门角色、部门
+负责人、重复映射、人数上限和持久化污染测试。发起人 active 授权快照必须再次
+绑定 ERP active/probation 员工；角色、员工和部门返回值逐项复核可信租户与查询
+标识，`department_manager` 只允许引用 department 类型字段。目标生产文件达到
+96.96%/95.60%/100%/98.79%（语句/分支/函数/行），独立逐文件四维 90% 门禁已
+接入 `pnpm precheck`。REST、OP 和 MCP 继续复用审批应用服务，本切片未新增 AI
+写能力；真实组织角色数据、历史模板和审批 UAT 仍待现场验收。
 
 OAuth 授权控制器已覆盖 45 项预注册回调、PKCE、授权决策、授权码、
 `client_credentials`、协议错误与限流测试。Basic 和 `private_key_jwt` 的
