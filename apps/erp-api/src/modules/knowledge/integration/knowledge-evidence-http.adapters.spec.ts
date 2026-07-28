@@ -9,6 +9,8 @@ import type { CourseVersion } from '../domain/index.js';
 import {
   HttpKnowledgeContentVerificationAdapter,
   HttpKnowledgeExamOrchestrationAdapter,
+  HttpKnowledgeSearchAdapter,
+  HttpKnowledgeSearchIndexAdapter,
   KnowledgeEvidenceHttpClient,
 } from './knowledge-evidence-http.adapters.js';
 
@@ -190,6 +192,13 @@ describe('Knowledge 证据 HTTPS Adapters', () => {
       contentRef: COURSE.contentRef, questionBankRef: COURSE.questionBankRef,
       questionBankDigest: COURSE.questionBankDigest,
     });
+    expect(headers['idempotency-key']).toBe(createHash('sha256')
+      .update(JSON.stringify([
+        'knowledge-gateway-request-v1',
+        '/v1/courses/verify',
+        JSON.stringify(body),
+      ]), 'utf8')
+      .digest('base64url'));
     expect(JSON.stringify(body)).not.toMatch(/answer|答案|标准答案/iu);
   });
 
@@ -385,6 +394,7 @@ describe('Knowledge 证据 HTTPS Adapters', () => {
           scoreBps: 8_600,
           passed: true,
           gradingEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4C3',
+          reviewEvidenceId,
           gradedAt: '2026-07-27T01:04:00.000Z',
         },
       })));
@@ -447,6 +457,7 @@ describe('Knowledge 证据 HTTPS Adapters', () => {
           scoreBps: 7_000,
           passed: true,
           gradingEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4D4',
+          reviewEvidenceId: null,
           gradedAt: '2026-07-27T01:04:00.000Z',
         },
       })));
@@ -615,6 +626,279 @@ describe('Knowledge 证据 HTTPS Adapters', () => {
     await expect(new KnowledgeEvidenceHttpClient(config()).applySearchIndex(
       SEARCH_INDEX_INPUT,
     )).rejects.toThrow('KNOWLEDGE_SEARCH_INDEX_RECEIPT_MISMATCH');
+  });
+
+  it('考试请求严格拒绝额外答案字段和策略错位，且不会调用外部网关', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const adapter = new HttpKnowledgeExamOrchestrationAdapter(
+      new KnowledgeEvidenceHttpClient(config()),
+    );
+    await expect(adapter.start({
+      ...EXAM_INPUT,
+      answers: ['forbidden'],
+    } as unknown as KnowledgeExamOrchestrationInput)).rejects.toThrow(
+      'KNOWLEDGE_EXAM_START_REQUEST_INVALID',
+    );
+    await expect(adapter.start({
+      ...EXAM_INPUT,
+      manualReviewRequired: false,
+    })).rejects.toThrow('KNOWLEDGE_EXAM_START_REQUEST_INVALID');
+    await expect(adapter.timeout({
+      ...EXAM_INPUT,
+      gatewaySessionRef: 'gateway-session-001',
+      questionSetDigest: 'b'.repeat(43),
+      deadlineAt: '2026-07-27T01:00:00.000Z',
+      accessToken: 'forbidden',
+    } as unknown as Parameters<
+      HttpKnowledgeExamOrchestrationAdapter['timeout']
+    >[0])).rejects.toThrow('KNOWLEDGE_EXAM_TIMEOUT_REQUEST_INVALID');
+    await expect(adapter.finalize({
+      ...EXAM_INPUT,
+      gatewaySessionRef: 'gateway-session-001',
+      questionSetDigest: 'b'.repeat(43),
+      submissionRef: 'submission-001',
+      timedOut: false,
+      submittedAt: '2026-07-27T01:00:00.000Z',
+      correctAnswers: ['forbidden'],
+    } as unknown as Parameters<
+      HttpKnowledgeExamOrchestrationAdapter['finalize']
+    >[0])).rejects.toThrow('KNOWLEDGE_EXAM_FINALIZATION_REQUEST_INVALID');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('客观题最终评分必须显式声明无人工复核绑定', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-27T01:05:00.000Z'));
+    const binding = {
+      ...EXAM_RUN_INPUT,
+      gatewaySessionRef: 'gateway-session-001',
+      questionSetDigest: 'b'.repeat(43),
+      submissionRef: 'submission-001',
+      timedOut: false,
+      submittedAt: '2026-07-27T01:00:00.000Z',
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({
+      ...binding,
+      result: {
+        status: 'graded',
+        scoreBps: 9_000,
+        passed: true,
+        gradingEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4D4',
+        reviewEvidenceId: null,
+        gradedAt: '2026-07-27T01:04:00.000Z',
+      },
+    })));
+    const adapter = new HttpKnowledgeExamOrchestrationAdapter(
+      new KnowledgeEvidenceHttpClient(config()),
+    );
+    await expect(adapter.finalize(binding)).resolves.toEqual({
+      status: 'graded',
+      scoreBps: 9_000,
+      passed: true,
+      gradingEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4D4',
+      gradedAt: '2026-07-27T01:04:00.000Z',
+    });
+  });
+
+  it('主观题不得绕过人工复核直接返回评分', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-27T01:05:00.000Z'));
+    const binding = {
+      ...EXAM_INPUT,
+      gatewaySessionRef: 'gateway-session-001',
+      questionSetDigest: 'b'.repeat(43),
+      submissionRef: 'submission-001',
+      timedOut: false,
+      submittedAt: '2026-07-27T01:00:00.000Z',
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({
+      ...binding,
+      result: {
+        status: 'graded',
+        scoreBps: 9_000,
+        passed: true,
+        gradingEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4D4',
+        reviewEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4B2',
+        gradedAt: '2026-07-27T01:04:00.000Z',
+      },
+    })));
+    await expect(new KnowledgeEvidenceHttpClient(config()).finalizeExam(binding))
+      .rejects.toThrow('KNOWLEDGE_EXAM_REVIEW_POLICY_MISMATCH');
+  });
+
+  it('运行时拒绝无效凭据、公钥、端点和跨网关信任域复用', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    for (const [overrides, code] of [
+      [{
+        KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN: 'short',
+      }, 'KNOWLEDGE_EVIDENCE_GATEWAY_CREDENTIAL_INVALID'],
+      [{
+        KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_KEY_ID: 'bad key',
+      }, 'KNOWLEDGE_EVIDENCE_SIGNING_KEY_INVALID'],
+      [{
+        KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_PUBLIC_KEY_BASE64: 'AAAA',
+      }, 'KNOWLEDGE_EVIDENCE_SIGNING_KEY_INVALID'],
+      [{
+        KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT: 'not-a-url',
+      }, 'KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT_INVALID'],
+      [{
+        KNOWLEDGE_SEARCH_GATEWAY_ENDPOINT:
+          'https://knowledge-evidence.example.internal',
+      }, 'KNOWLEDGE_EVIDENCE_GATEWAY_TRUST_DOMAIN_INVALID'],
+      [{
+        KNOWLEDGE_SEARCH_GATEWAY_BEARER_TOKEN:
+          'knowledge-evidence-token-at-least-32-characters',
+      }, 'KNOWLEDGE_EVIDENCE_GATEWAY_TRUST_DOMAIN_INVALID'],
+      [{
+        KNOWLEDGE_SEARCH_GATEWAY_SIGNING_PUBLIC_KEY_BASE64:
+          SIGNING_PUBLIC_KEY_BASE64,
+      }, 'KNOWLEDGE_EVIDENCE_GATEWAY_TRUST_DOMAIN_INVALID'],
+      [{
+        KNOWLEDGE_SEARCH_GATEWAY_SIGNING_KEY_ID: SIGNING_KEY_ID,
+      }, 'KNOWLEDGE_EVIDENCE_GATEWAY_TRUST_DOMAIN_INVALID'],
+    ] satisfies ReadonlyArray<
+      readonly [Readonly<Record<string, string>>, string]
+    >) {
+      await expect(new KnowledgeEvidenceHttpClient(config(overrides)).verify(COURSE))
+        .rejects.toThrow(code);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('非 200、伪 JSON Content-Type 和非规范签名均失败关闭', async () => {
+    const invalidContentType = response({}, 200);
+    invalidContentType.headers.set('content-type', 'application/jsonp');
+    const compressed = response({}, 200);
+    compressed.headers.set('content-encoding', 'gzip');
+    const nonCanonicalSignature = response({
+      tenantId: COURSE.tenantId,
+      courseVersionId: COURSE.id,
+      contentRef: COURSE.contentRef,
+      questionBankRef: COURSE.questionBankRef,
+      questionBankDigest: COURSE.questionBankDigest,
+      contentVerified: true,
+      questionBankVerified: true,
+      verificationEvidenceId: '01J8ZQK7V0A2M4N6P8R0T2W4K1',
+    });
+    const signature = nonCanonicalSignature.headers.get(
+      'x-knowledge-evidence-signature',
+    );
+    if (signature === null) throw new Error('测试签名缺失');
+    nonCanonicalSignature.headers.set(
+      'x-knowledge-evidence-signature',
+      `${signature.slice(0, -1)}B`,
+    );
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(new Response('unauthorized', { status: 401 }))
+      .mockResolvedValueOnce(invalidContentType)
+      .mockResolvedValueOnce(compressed)
+      .mockResolvedValueOnce(nonCanonicalSignature));
+    const client = new KnowledgeEvidenceHttpClient(config());
+    await expect(client.verify(COURSE))
+      .rejects.toThrow('KNOWLEDGE_EVIDENCE_GATEWAY_HTTP_401');
+    await expect(client.verify(COURSE))
+      .rejects.toThrow('KNOWLEDGE_EVIDENCE_RECEIPT_INVALID');
+    await expect(client.verify(COURSE))
+      .rejects.toThrow('KNOWLEDGE_EVIDENCE_RECEIPT_INVALID');
+    await expect(client.verify(COURSE))
+      .rejects.toThrow('KNOWLEDGE_EVIDENCE_RECEIPT_SIGNATURE_INVALID');
+  });
+
+  it('响应长度声明、截断和流读取故障均映射为稳定错误码', async () => {
+    const invalidLength = response({});
+    invalidLength.headers.set('content-length', '01');
+    const tooLarge = response({});
+    tooLarge.headers.set('content-length', String(16 * 1024 + 1));
+    const truncated = response({});
+    truncated.headers.set(
+      'content-length',
+      String(Buffer.byteLength('{}', 'utf8') + 1),
+    );
+    const brokenStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new Error('upstream read failed'));
+      },
+    });
+    const broken = new Response(brokenStream, {
+      status: 200,
+      headers: {
+        'content-type': 'application/json',
+        'x-knowledge-evidence-key-id': SIGNING_KEY_ID,
+        'x-knowledge-evidence-signature': 'A'.repeat(86),
+      },
+    });
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(invalidLength)
+      .mockResolvedValueOnce(tooLarge)
+      .mockResolvedValueOnce(truncated)
+      .mockResolvedValueOnce(broken));
+    const client = new KnowledgeEvidenceHttpClient(config());
+    await expect(client.verify(COURSE))
+      .rejects.toThrow('KNOWLEDGE_EVIDENCE_RESPONSE_LENGTH_INVALID');
+    await expect(client.verify(COURSE))
+      .rejects.toThrow('KNOWLEDGE_EVIDENCE_RECEIPT_TOO_LARGE');
+    await expect(client.verify(COURSE))
+      .rejects.toThrow('KNOWLEDGE_EVIDENCE_RESPONSE_LENGTH_INVALID');
+    await expect(client.verify(COURSE))
+      .rejects.toThrow('KNOWLEDGE_EVIDENCE_RESPONSE_READ_ERROR');
+  });
+
+  it('搜索请求拒绝非规范查询、重复授权和非法受众组合', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new KnowledgeEvidenceHttpClient(config());
+    await expect(client.search({
+      ...SEARCH_INPUT,
+      queryText: '信息  安全',
+    })).rejects.toThrow('KNOWLEDGE_SEARCH_REQUEST_INVALID');
+    await expect(client.search({
+      ...SEARCH_INPUT,
+      departmentIds: ['department-001', 'department-001'],
+    })).rejects.toThrow('KNOWLEDGE_SEARCH_REQUEST_INVALID');
+    await expect(client.applySearchIndex({
+      ...SEARCH_INDEX_INPUT,
+      audienceMode: 'assigned_only',
+    })).rejects.toThrow('KNOWLEDGE_SEARCH_INDEX_REQUEST_INVALID');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('搜索与索引 Port Adapter 复用同一严格客户端', async () => {
+    const queryDigest = createHash('sha256')
+      .update(JSON.stringify(['search-query', SEARCH_INPUT.queryText]), 'utf8')
+      .digest('base64url');
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(response({
+        tenantId: SEARCH_INPUT.tenantId,
+        employeeId: SEARCH_INPUT.employeeId,
+        authorizationDigest: SEARCH_INPUT.authorizationDigest,
+        queryDigest,
+        items: [],
+        nextCursor: null,
+        partial: false,
+      }, 200, 'search'))
+      .mockResolvedValueOnce(response({
+        eventId: SEARCH_INDEX_INPUT.eventId,
+        tenantId: SEARCH_INDEX_INPUT.tenantId,
+        courseVersionId: SEARCH_INDEX_INPUT.courseVersionId,
+        courseVersion: SEARCH_INDEX_INPUT.courseVersion,
+        operation: SEARCH_INDEX_INPUT.operation,
+        receiptId: 'search-index-receipt-001',
+        indexedContentDigest: 'd'.repeat(43),
+        indexedAt: '2026-07-27T00:00:00.000Z',
+        partial: false,
+      }, 200, 'search')));
+    const client = new KnowledgeEvidenceHttpClient(config());
+    await expect(new HttpKnowledgeSearchAdapter(client).search(SEARCH_INPUT))
+      .resolves.toEqual({ items: [], nextCursor: null });
+    await expect(new HttpKnowledgeSearchIndexAdapter(client).apply(
+      SEARCH_INDEX_INPUT,
+    )).resolves.toEqual({
+      receiptId: 'search-index-receipt-001',
+      indexedContentDigest: 'd'.repeat(43),
+      indexedAt: '2026-07-27T00:00:00.000Z',
+    });
   });
 });
 

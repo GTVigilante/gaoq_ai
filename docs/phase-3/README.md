@@ -77,6 +77,15 @@ Knowledge 授权全文检索代码已交付：可信任职及部门/岗位裁剪
 
 Knowledge 可靠考试编排代码已交付：版本化题型/时限/次数/评分与通过策略、超时自动提交、人工复核、Mongo 权威状态机、Worker 退避/死信/熔断、事务 Outbox、低基数 SLA 指标、追加索引、只读对账、显式重放和本人只读 MCP。运行规范见 [考试编排与评分运行手册](./03-knowledge-exam-orchestration-runbook.md)。真实评分沙箱、代表题集和业务 UAT 仍待现场验收。
 
+Knowledge 评分证据与搜索网关信任边界已进一步加固：所有考试外呼先经严格请求
+Schema，答案、Token、未知字段和题型/人工复核策略错位在网络调用前失败关闭；
+人工复核状态与最终评分必须回显同一 `reviewEvidenceId`。评分与搜索 Adapter
+运行时复核独立 Origin、凭据、Ed25519 公钥和 Key ID，执行请求体上限、严格
+JSON Content-Type、Content-Length、流式 16 KiB 上限、Fatal UTF-8、规范
+Base64 和异常正文取消。20 项专项测试使目标生产文件达到
+92.17%/91.90%/98.00%/93.33%（语句/分支/函数/行），逐文件四维 90% 门禁
+已接入 `pnpm precheck`；REST、事件和标准 MCP 契约不新增写能力。
+
 ## 强制边界
 
 - ERP Recruitment 是候选人、申请和 Offer 的权威源；渠道只提供原始投递及参考状态。

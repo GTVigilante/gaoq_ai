@@ -484,6 +484,12 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/knowledge/integration/knowledge-evidence-http.adapters.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/knowledge/knowledge.controller.ts': {
           branches: 90,
           functions: 90,
