@@ -12,9 +12,14 @@ import {
 } from './treasury-bank-submission.ports.js';
 
 const RESPONSE_LIMIT_BYTES = 16 * 1024;
+const REQUEST_LIMIT_BYTES = 16 * 1024;
+const SUBMISSION_PATH = '/v1/submissions';
 const HASH_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const OBJECT_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9/._:-]{0,511}$/;
+const TOKEN_PATTERN = /^[\x21-\x7e]{32,512}$/;
+const JSON_CONTENT_TYPE_PATTERN =
+  /^application\/(?:[a-z0-9!#$&^_.+-]+\+)?json(?:\s*;\s*charset=utf-8)?$/iu;
 const receiptBase = {
   submissionId: z.string().regex(ID_PATTERN), evidenceId: z.string().regex(ID_PATTERN),
   accepted: z.literal(true), batchId: z.string().regex(ID_PATTERN),
@@ -51,6 +56,9 @@ export class HttpTreasuryBankSubmissionGateway extends TreasuryBankSubmissionGat
     if (endpoint === undefined || token === undefined) {
       throw new Error('TREASURY_BANK_SUBMISSION_UNAVAILABLE');
     }
+    if (!TOKEN_PATTERN.test(token)) {
+      throw new Error('TREASURY_BANK_SUBMISSION_CREDENTIAL_INVALID');
+    }
     if (submissionMode !== 'sandbox' && submissionMode !== 'production') {
       throw new Error('TREASURY_BANK_SUBMISSION_MODE_INVALID');
     }
@@ -59,6 +67,9 @@ export class HttpTreasuryBankSubmissionGateway extends TreasuryBankSubmissionGat
     const body = JSON.stringify(submissionMode === 'sandbox'
       ? { ...submission, submissionMode }
       : { ...submission, submissionMode, productionAuthorization });
+    if (Buffer.byteLength(body) > REQUEST_LIMIT_BYTES) {
+      throw new Error('TREASURY_BANK_SUBMISSION_REQUEST_TOO_LARGE');
+    }
     const response = await safeFetch(safeEndpoint(endpoint), {
       method: 'POST', redirect: 'error', signal: AbortSignal.timeout(60_000),
       headers: {
@@ -106,12 +117,15 @@ function assertAuthorization(
     return;
   }
   const expiresAt = authorization === null ? Number.NaN : Date.parse(authorization.expiresAt);
+  const now = Date.now();
   if (
     authorization === null || !ID_PATTERN.test(authorization.authorizationId) ||
     !ID_PATTERN.test(authorization.evidenceId) ||
+    authorization.authorizationId === authorization.evidenceId ||
     !/^[a-f0-9]{40}$/u.test(authorization.releaseCommitSha) ||
     !/^sha256:[a-f0-9]{64}$/u.test(authorization.deploymentManifestHash) ||
-    !Number.isFinite(expiresAt) || expiresAt <= Date.now() + 10_000
+    !Number.isFinite(expiresAt) || expiresAt <= now + 30_000 ||
+    expiresAt > now + 15 * 60_000
   ) throw new Error('TREASURY_BANK_PRODUCTION_AUTHORIZATION_INVALID');
 }
 
@@ -133,9 +147,10 @@ async function safeFetch(endpoint: string, init: RequestInit): Promise<Response>
     throw new Error('TREASURY_BANK_SUBMISSION_UNAVAILABLE');
   }
   if (!response.ok) throw new Error(`TREASURY_BANK_SUBMISSION_HTTP_${response.status}`);
-  if (!response.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
+  if (!JSON_CONTENT_TYPE_PATTERN.test(response.headers.get('content-type')?.trim() ?? '')) {
     throw new Error('TREASURY_BANK_SUBMISSION_RECEIPT_INVALID');
   }
+  assertResponseLength(response.headers.get('content-length'));
   return response;
 }
 
@@ -146,17 +161,31 @@ async function readJson(response: Response): Promise<unknown> {
   let total = 0;
   try {
     while (true) {
-      const part = await reader.read();
+      let part: { readonly done: boolean; readonly value?: Uint8Array };
+      try {
+        part = await reader.read();
+      } catch {
+        cancelReader(reader);
+        throw new Error('TREASURY_BANK_SUBMISSION_RESPONSE_READ_ERROR');
+      }
       if (part.done) break;
       const value: unknown = part.value;
       if (!(value instanceof Uint8Array)) {
-        throw new Error('TREASURY_BANK_SUBMISSION_RECEIPT_INVALID');
+        cancelReader(reader);
+        throw new Error('TREASURY_BANK_SUBMISSION_RESPONSE_READ_ERROR');
       }
       total += value.byteLength;
-      if (total > RESPONSE_LIMIT_BYTES) throw new Error('TREASURY_BANK_SUBMISSION_RESPONSE_TOO_LARGE');
+      if (total > RESPONSE_LIMIT_BYTES) {
+        cancelReader(reader);
+        throw new Error('TREASURY_BANK_SUBMISSION_RESPONSE_TOO_LARGE');
+      }
       chunks.push(value);
     }
-  } finally { reader.releaseLock(); }
+  } finally {
+    try { reader.releaseLock(); } catch {
+      // 读取器清理为尽力操作，不得覆盖已经确定的银行提交结果。
+    }
+  }
   const bytes = new Uint8Array(total);
   let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
@@ -166,13 +195,38 @@ async function readJson(response: Response): Promise<unknown> {
 }
 
 function safeEndpoint(value: string): string {
-  const endpoint = new URL(value);
+  let endpoint: URL;
+  try {
+    endpoint = new URL(value);
+  } catch {
+    throw new Error('TREASURY_BANK_SUBMISSION_ENDPOINT_INVALID');
+  }
   if (
     endpoint.protocol !== 'https:' || endpoint.username !== '' || endpoint.password !== '' ||
     endpoint.search !== '' || endpoint.hash !== '' ||
-    (endpoint.port !== '' && endpoint.port !== '443')
+    (endpoint.port !== '' && endpoint.port !== '443') ||
+    endpoint.pathname !== SUBMISSION_PATH
   ) throw new Error('TREASURY_BANK_SUBMISSION_ENDPOINT_INVALID');
   return endpoint.toString();
+}
+
+function assertResponseLength(value: string | null): void {
+  if (value === null) return;
+  if (!/^(?:0|[1-9][0-9]*)$/u.test(value)) {
+    throw new Error('TREASURY_BANK_SUBMISSION_RESPONSE_LENGTH_INVALID');
+  }
+  const length = Number(value);
+  if (!Number.isSafeInteger(length) || length > RESPONSE_LIMIT_BYTES) {
+    throw new Error('TREASURY_BANK_SUBMISSION_RESPONSE_TOO_LARGE');
+  }
+}
+
+function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): void {
+  try {
+    void reader.cancel().catch(() => undefined);
+  } catch {
+    // 取消为尽力操作，禁止上游异常覆盖本域稳定错误码。
+  }
 }
 
 function digest(parts: readonly string[]): string {

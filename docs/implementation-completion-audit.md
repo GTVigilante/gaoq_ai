@@ -62,11 +62,11 @@
 ## 5. 覆盖率边界
 
 2026-07-28 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，373 个测试文件、4,116 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，373 个测试文件、4,183 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-89.99%（27,425/30,475）、分支 87.05%（18,324/21,048）、函数
-90.48%（4,919/5,436）、行 91.37%（25,039/27,402）。全仓四维已达到 Phase 0
+90.02%（27,460/30,503）、分支 87.08%（18,345/21,065）、函数
+90.49%（4,922/5,439）、行 91.40%（25,070/27,428）。全仓四维已达到 Phase 0
 规定的 80% 门槛。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
@@ -93,7 +93,7 @@ HTTPS Client 三个生产文件。专用命令执行 3 个测试文件、74 项�
 审批应用状态机、审批主体解析、审批入口控制器、审批模板领域、
 MCP 确认服务、MCP HTTP 入口、MCP 运行时、MCP Tool 应用层、OP 审批桥入站申请、OP 审批结果回传、
 OP Webhook 双入口、
-薪酬影子周期、薪酬运行、薪酬审批、薪酬主数据、专业算薪主数据快照、薪酬四方对账、薪酬税务申报、薪酬 L4 数据加密、资金支付、Treasury 银行回盘、Treasury L4 数据加密、Treasury Outbox、Phase 4 REST 入口、Care 纪念日应用、Care 离职应用、校友授权清理协调、
+薪酬影子周期、薪酬运行、薪酬审批、薪酬主数据、专业算薪主数据快照、薪酬四方对账、薪酬税务申报、薪酬 L4 数据加密、资金支付、Treasury 银行提交出站边界、Treasury 银行回盘、Treasury L4 数据加密、Treasury Outbox、Phase 4 REST 入口、Care 纪念日应用、Care 离职应用、校友授权清理协调、
 数据迁移控制面、数据迁移打包 CLI、Knowledge 考试运行 Relay、Knowledge 搜索索引 Relay、Knowledge REST 入口控制器、Knowledge 应用服务、Knowledge 考试应用与入口、Knowledge 领域模型、Knowledge 持久化 Schema、Knowledge 考试重放 CLI、考勤应用、考勤仓储、Attendance 规则纵切、考勤供应商拉取、考勤供应商入站处理、电子签回调处理、
 招聘渠道拉取、招聘渠道入站处理、招聘渠道职位扇出、招聘渠道阶段扇出、招聘申请、招聘面试、招聘简历、招聘渠道职位投递、招聘渠道阶段回传、招聘管理、人才全周期应用、人才全周期仓储、招聘 Offer、Care 仓储、组织仓储、招聘仓储、知识库仓储、营销 CMS、营销入口与幂等核心、营销副作用可靠投递、审批通知可靠投递、组织主数据外部投递可靠性、组织平台适配器安全边界、身份令牌与 OAuth 授权事务、身份用户会话与签名键轮换、人员 SSO 信任边界、OAuth Client Credentials 服务身份签发、OAuth 授权控制器、WebAuthn 强认证、入职应用与入口控制器、生产执行授权服务和 Phase 5 管理分析已建立
 独立不可回退门禁：
@@ -126,6 +126,7 @@ OP Webhook 双入口、
 `pnpm quality:payroll-tax-filing-coverage`、
 `pnpm quality:payroll-data-crypto-coverage`、
 `pnpm quality:treasury-disbursement-coverage`、
+`pnpm quality:treasury-bank-submission-egress-coverage`、
 `pnpm quality:treasury-bank-return-coverage`、
 `pnpm quality:treasury-data-crypto-coverage`、
 `pnpm quality:treasury-outbox-writer-coverage`、
@@ -186,7 +187,7 @@ OP Webhook 双入口、
 `pnpm quality:oauth-controller-coverage`、
 `pnpm quality:strong-auth-coverage`、
 `pnpm quality:onboarding-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。九十条链路当前覆盖率基线集合为
+`pnpm quality:production-execution-authorization-coverage`。九十一条链路当前覆盖率基线集合为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -262,12 +263,12 @@ OP Webhook 双入口、
 99.59%/98.23%/100%/99.56%、97.60%/95.14%/100%/99.07%、
 99.17%/95.97%/100%/99.13%、99.58%/99.20%/100%/100%、
 96.96%/95.60%/100%/98.79%、99.70%/94.44%/100%/99.67%、
-99.13%/98.03%/100%/99.02%
+99.13%/98.03%/100%/99.02%、99.01%/96.70%/100%/98.87%
 （语句/分支/函数/行）；电子签九个核心文件另达到
 98.01%/95.55%/99.00%/99.51%，审计追加三个核心文件另达到
 96.91%/97.48%/96.66%/99.00%，审计后台七个生产文件另达到
-100%/100%/100%/100%；九十项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明九十条关键链路达标，
+100%/100%/100%/100%；九十一项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明九十一条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 Phase 5 管理分析纵切已覆盖 52 项共享契约、历史审批快照、不可变最终审批动作、
@@ -692,6 +693,15 @@ IV/Tag 固定长度、规范 Base64URL、密文篡改、8 MiB 上限和失败关
 摘要绑定不可变对象证据、批准人与强认证证据，覆盖率达到
 93.88%/93.23%/96.05%/95.77%（语句/分支/函数/行），独立四维 90% 门禁已接入
 `pnpm check`。
+
+ERP→银行支付提交信任边界已覆盖 71 项固定标准 HTTPS
+`/v1/submissions`、POST、固定 Header、独立凭据、sandbox/production 模式、
+短时生产授权、确定性幂等、非 2xx 状态分类、Content-Length、16 KiB 流式硬
+上限、读取取消、严格 UTF-8/JSON、完整回执 Schema 与原批次控制量精确绑定测试。
+网络、读取、取消和释放异常不再泄漏上游 cause 或覆盖已确定结果；目标适配器达到
+99.01%/96.70%/100%/98.87%（语句/分支/函数/行），独立逐文件四维 90% 门禁
+由资金支付门禁接入 `pnpm check`。REST 与标准 MCP 不新增资金执行能力；真实
+银行签名加密、沙箱回执、限流和生产授权域仍待现场验收。
 
 Treasury 银行回盘服务已覆盖 37 项可信连接器、签名与恶意文件证据、密文金额、
 乱序/未来时间、迁移重放、支付指令冻结、乐观锁和失败关闭测试；覆盖率达到

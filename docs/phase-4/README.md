@@ -34,6 +34,12 @@ Phase 4 在 ERP 组织与劳动关系主数据之上，建立可重放的考勤�
 20. [Payroll 影子周期索引迁移 Runbook](./19-payroll-shadow-index-migration-runbook.md)
 21. [Attendance 规则、排班与覆盖证明索引迁移 Runbook](./20-attendance-rules-index-migration-runbook.md)
 
+Treasury 银行提交出站边界已固定标准 HTTPS `POST /v1/submissions`、独立凭据、
+短时生产授权、确定性幂等、16 KiB 严格 UTF-8/JSON 回执及批次控制量精确绑定。
+71 项专项测试达到 99.01%/96.70%/100%/98.87%（语句/分支/函数/行），目标
+生产文件逐文件四维 90% 门禁已由资金支付门禁接入 `pnpm check`；真实银行
+签名加密、沙箱联调、限流和生产授权域仍待现场验收。
+
 ## 强制边界
 
 - ERP Org 的 `Person / Employee / Employment` 是人员、组织归属和劳动关系唯一主数据源；考勤平台和银行不得反写组织事实。
