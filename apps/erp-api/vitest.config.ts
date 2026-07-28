@@ -388,6 +388,24 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/org/application/org-person-birthday.dto.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/org/application/org-person-birthday.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/org/org-person-birthday.controller.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/org/application/org-care-occasion-source.service.ts': {
           branches: 90,
           functions: 90,

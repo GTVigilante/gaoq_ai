@@ -36,13 +36,20 @@ API 的 Secret/ConfigMap 必须注入生日盲索引密钥环和租户策略；W
    `verified` 等于清单总数且迁移记录为 `completed`。
 3. 先以一个非生产租户注入策略、盲索引密钥和通知沙箱配置，再启动 API 与 Worker。
 4. 身份服务通过 `POST /org/persons/:id/birthday-attestations` 登记证明；请求必须
-   使用服务身份、强 `If-Match` 和 `Idempotency-Key`，任何响应/审计不得出现月日。
+   使用服务身份、强 `If-Match` 和白名单 `Idempotency-Key`，请求体只接受规范
+   `MM-DD`、身份核验证据 ULID 与生日证明 ULID，未知字段、无效日历日期和非规范
+   标识均失败关闭。应用服务必须二次复核服务主体、Scope、租户、版本、幂等键和
+   幂等结果反向绑定；任何响应、日志和审计不得出现月日或证据标识。业务失败审计
+   故障不得覆盖原异常，业务提交后的成功审计故障不得把成功终态改写为失败。
 5. 员工本人创建偏好后，确认 `scheduled` 事件与任务同事务形成，BullMQ 投递只含
    `tenantId/occasionTaskId`，空载荷周期对账存在且无重复业务任务。
-6. 执行 `pnpm quality:org-care-occasion-source-coverage`，确认内部窄口只接受同租户
+6. 执行 `pnpm quality:org-person-birthday-entry-coverage`，确认 73 项严格请求、
+   可信服务身份、幂等结果闭包、隐私及提交后审计隔离测试通过，DTO、应用服务和
+   控制器三个生产文件的语句、分支、函数和行覆盖率均不低于 90%。
+7. 执行 `pnpm quality:org-care-occasion-source-coverage`，确认内部窄口只接受同租户
    `service/system_job`，且 Employee、当前 Employment、Person、唯一开放关系、
    复聘历史和生日证明三元组的完整性门禁四维覆盖率均不低于 90%。
-7. 执行 `pnpm quality:care-occasion-notification-boundary-coverage`，确认 25 项
+8. 执行 `pnpm quality:care-occasion-notification-boundary-coverage`，确认 25 项
    通知信任边界测试通过，目标 Adapter 的语句、分支、函数和行覆盖率均不低于 90%。
 
 ## 沙箱验收矩阵
