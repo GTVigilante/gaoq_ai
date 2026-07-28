@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
 
@@ -52,6 +54,14 @@ export abstract class AttendanceProviderEvidenceVerifier {
   abstract verify(payload: unknown, transportRequestId: string): boolean;
 }
 
+const TENANT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{8,256}$/;
+const MAX_CLOCK_SKEW_MS = 5 * 60_000;
+const PULL_INPUT_KEYS =
+  'externalEmployeeIds,fromDate,tenantId,timeZone,toDate';
+const providerIdSchema = z.string().min(1).max(256)
+  .refine((value) => isProviderId(value));
+
 @Injectable()
 export class AttendanceProviderRegistry {
   private readonly adapters: ReadonlyMap<string, AttendanceProviderAdapter>;
@@ -88,10 +98,10 @@ export class AttendanceProviderRegistry {
 
 const dingtalkResponseSchema = z.object({
   errcode: z.number().int(),
-  request_id: z.string().min(8).max(256).optional(),
+  request_id: z.string().regex(REQUEST_ID_PATTERN).optional(),
   recordresult: z.array(z.object({
-    id: z.union([z.string(), z.number()]),
-    userId: z.string().min(1).max(256),
+    id: z.union([providerIdSchema, z.number().int().nonnegative()]),
+    userId: providerIdSchema,
     userCheckTime: z.union([z.number().int().nonnegative(), z.string().regex(/^\d+$/)]),
     checkType: z.enum(['OnDuty', 'OffDuty']),
   }).passthrough()).max(10_000).optional(),
@@ -99,17 +109,21 @@ const dingtalkResponseSchema = z.object({
 
 const dingtalkEnvelopeSchema = z.object({
   providerCode: z.literal('dingtalk'),
-  externalEventId: z.string().min(1).max(256),
+  externalEventId: providerIdSchema,
   pulledAt: z.string().datetime({ offset: true }),
   record: dingtalkResponseSchema.shape.recordresult.unwrap().element,
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (String(value.record.id) !== value.externalEventId) {
+    context.addIssue({ code: 'custom', message: '钉钉事件标识与原始记录不一致' });
+  }
+});
 
 /** 钉钉实际打卡记录适配器：单批最多 50 人、单窗口最多 7 个自然日。 */
 @Injectable()
 export class DingTalkAttendanceProvider extends AttendanceProviderAdapter
   implements AttendanceProviderNormalizer, AttendanceProviderEvidenceVerifier {
   readonly providerCode = 'dingtalk' as const;
-  readonly schemaVersion = 'dingtalk-list-record-v1';
+  readonly schemaVersion = 'dingtalk-list-record-v2';
 
   constructor(
     private readonly tokens: OrgPlatformTokenService,
@@ -133,11 +147,24 @@ export class DingTalkAttendanceProvider extends AttendanceProviderAdapter
     }
     const requestId = requireRequestId(response.requestId ?? parsed.data.request_id);
     const pulledAt = new Date().toISOString();
+    const requestedEmployeeIds = new Set(input.externalEmployeeIds);
+    const seenEventIds = new Set<string>();
     return Object.freeze((parsed.data.recordresult ?? []).map((record) => {
       const externalEventId = String(record.id);
+      const occurredAt = epochMillis(record.userCheckTime);
+      assertPulledEvent({
+        externalEmployeeId: record.userId,
+        externalEventId,
+        occurredAt,
+        requestedEmployeeIds,
+        seenEventIds,
+        fromDate: input.fromDate,
+        toDate: input.toDate,
+        timeZone: input.timeZone,
+      });
       return Object.freeze({
         externalEventId,
-        occurredAt: epochMillis(record.userCheckTime).toISOString(),
+        occurredAt: occurredAt.toISOString(),
         transportRequestId: requestId,
         payload: Object.freeze({ providerCode: this.providerCode, externalEventId, pulledAt, record }),
       });
@@ -145,6 +172,7 @@ export class DingTalkAttendanceProvider extends AttendanceProviderAdapter
   }
 
   normalize(payload: unknown, timeZone: string): NormalizedAttendanceProviderFact {
+    assertTimeZone(timeZone);
     const envelope = dingtalkEnvelopeSchema.parse(payload);
     const occurredAt = epochMillis(envelope.record.userCheckTime).toISOString();
     return normalized({
@@ -156,7 +184,17 @@ export class DingTalkAttendanceProvider extends AttendanceProviderAdapter
   }
 
   verify(payload: unknown, transportRequestId: string): boolean {
-    return transportRequestId.length >= 8 && dingtalkEnvelopeSchema.safeParse(payload).success;
+    if (!REQUEST_ID_PATTERN.test(transportRequestId)) return false;
+    const envelope = dingtalkEnvelopeSchema.safeParse(payload);
+    if (!envelope.success) return false;
+    try {
+      return evidenceTimelineIsValid(
+        epochMillis(envelope.data.record.userCheckTime),
+        envelope.data.pulledAt,
+      );
+    } catch {
+      return false;
+    }
   }
 
   private async call(
@@ -181,42 +219,64 @@ export class DingTalkAttendanceProvider extends AttendanceProviderAdapter
 }
 
 const feishuRecordSchema = z.object({
-  user_id: z.string().min(1).max(256),
-  check_time: z.string().regex(/^\d+$/),
-  record_id: z.string().min(1).max(256).optional(),
+  user_id: providerIdSchema,
+  check_time: z.string().regex(/^\d{1,12}$/),
+  record_id: providerIdSchema.optional(),
 }).passthrough();
 const feishuResponseSchema = z.object({
   code: z.number().int(),
-  request_id: z.string().min(8).max(256).optional(),
+  request_id: z.string().regex(REQUEST_ID_PATTERN).optional(),
   data: z.object({
     user_task_results: z.array(z.object({
-      result_id: z.string().min(1).max(256),
-      user_id: z.string().min(1).max(256),
+      result_id: providerIdSchema,
+      user_id: providerIdSchema,
       records: z.array(z.object({
-        check_in_record_id: z.string(),
+        check_in_record_id: z.string().max(256),
         check_in_record: feishuRecordSchema.optional(),
-        check_out_record_id: z.string(),
+        check_out_record_id: z.string().max(256),
         check_out_record: feishuRecordSchema.optional(),
       }).passthrough()).max(32),
     }).passthrough()).max(10_000).optional(),
-    invalid_user_ids: z.array(z.string()).max(50).optional(),
-    unauthorized_user_ids: z.array(z.string()).max(50).optional(),
+    invalid_user_ids: z.array(providerIdSchema).max(50).optional(),
+    unauthorized_user_ids: z.array(providerIdSchema).max(50).optional(),
   }).passthrough().optional(),
 }).passthrough();
 const feishuEnvelopeSchema = z.object({
   providerCode: z.literal('feishu'),
-  externalEventId: z.string().min(1).max(256),
+  externalEventId: providerIdSchema,
   direction: z.enum(['in', 'out']),
   pulledAt: z.string().datetime({ offset: true }),
   record: feishuRecordSchema,
-}).strict();
+  source: z.object({
+    resultId: providerIdSchema,
+    slotIndex: z.number().int().min(0).max(31),
+    providerRecordId: z.string().max(256),
+  }).strict(),
+}).strict().superRefine((value, context) => {
+  let expected: string;
+  try {
+    expected = feishuEventId(
+      value.record,
+      value.source.providerRecordId,
+      value.source.resultId,
+      value.direction,
+      value.source.slotIndex,
+    );
+  } catch {
+    context.addIssue({ code: 'custom', message: '飞书原始记录标识互相冲突' });
+    return;
+  }
+  if (expected !== value.externalEventId) {
+    context.addIssue({ code: 'custom', message: '飞书事件标识与原始记录不一致' });
+  }
+});
 
 /** 飞书打卡结果适配器：只读取自建应用授权范围内员工，未授权员工导致整批失败关闭。 */
 @Injectable()
 export class FeishuAttendanceProvider extends AttendanceProviderAdapter
   implements AttendanceProviderNormalizer, AttendanceProviderEvidenceVerifier {
   readonly providerCode = 'feishu' as const;
-  readonly schemaVersion = 'feishu-user-task-v1';
+  readonly schemaVersion = 'feishu-user-task-v2';
 
   constructor(
     private readonly tokens: OrgPlatformTokenService,
@@ -242,22 +302,59 @@ export class FeishuAttendanceProvider extends AttendanceProviderAdapter
     const requestId = requireRequestId(response.requestId ?? parsed.data.request_id);
     const pulledAt = new Date().toISOString();
     const events: AttendanceProviderRawEvent[] = [];
+    const requestedEmployeeIds = new Set(input.externalEmployeeIds);
+    const seenEventIds = new Set<string>();
+    const seenTaskIds = new Set<string>();
     for (const task of parsed.data.data.user_task_results ?? []) {
+      if (!requestedEmployeeIds.has(task.user_id)) {
+        throw new Error('ATTENDANCE_PROVIDER_EMPLOYEE_SCOPE_MISMATCH');
+      }
+      if (seenTaskIds.has(task.result_id)) {
+        throw new Error('ATTENDANCE_FEISHU_TASK_DUPLICATE');
+      }
+      seenTaskIds.add(task.result_id);
       task.records.forEach((slot, slotIndex) => {
         for (const [direction, record, recordId] of [
           ['in', slot.check_in_record, slot.check_in_record_id],
           ['out', slot.check_out_record, slot.check_out_record_id],
         ] as const) {
           if (record === undefined) continue;
-          const externalEventId = record.record_id ?? (
-            recordId.length > 0 ? recordId : `${task.result_id}:${direction}:${slotIndex}`
+          if (record.user_id !== task.user_id) {
+            throw new Error('ATTENDANCE_PROVIDER_EMPLOYEE_SCOPE_MISMATCH');
+          }
+          const externalEventId = feishuEventId(
+            record,
+            recordId,
+            task.result_id,
+            direction,
+            slotIndex,
           );
+          const occurredAt = epochSeconds(record.check_time);
+          assertPulledEvent({
+            externalEmployeeId: record.user_id,
+            externalEventId,
+            occurredAt,
+            requestedEmployeeIds,
+            seenEventIds,
+            fromDate: input.fromDate,
+            toDate: input.toDate,
+            timeZone: input.timeZone,
+          });
           events.push(Object.freeze({
             externalEventId,
-            occurredAt: epochSeconds(record.check_time).toISOString(),
+            occurredAt: occurredAt.toISOString(),
             transportRequestId: requestId,
             payload: Object.freeze({
-              providerCode: this.providerCode, externalEventId, direction, pulledAt, record,
+              providerCode: this.providerCode,
+              externalEventId,
+              direction,
+              pulledAt,
+              record,
+              source: Object.freeze({
+                resultId: task.result_id,
+                slotIndex,
+                providerRecordId: recordId,
+              }),
             }),
           }));
         }
@@ -267,6 +364,7 @@ export class FeishuAttendanceProvider extends AttendanceProviderAdapter
   }
 
   normalize(payload: unknown, timeZone: string): NormalizedAttendanceProviderFact {
+    assertTimeZone(timeZone);
     const envelope = feishuEnvelopeSchema.parse(payload);
     return normalized({
       externalEmployeeId: envelope.record.user_id,
@@ -278,7 +376,17 @@ export class FeishuAttendanceProvider extends AttendanceProviderAdapter
   }
 
   verify(payload: unknown, transportRequestId: string): boolean {
-    return transportRequestId.length >= 8 && feishuEnvelopeSchema.safeParse(payload).success;
+    if (!REQUEST_ID_PATTERN.test(transportRequestId)) return false;
+    const envelope = feishuEnvelopeSchema.safeParse(payload);
+    if (!envelope.success) return false;
+    try {
+      return evidenceTimelineIsValid(
+        epochSeconds(envelope.data.record.check_time),
+        envelope.data.pulledAt,
+      );
+    } catch {
+      return false;
+    }
   }
 
   private async call(
@@ -313,7 +421,15 @@ function normalized(
 }
 
 function assertPullInput(input: AttendanceProviderPullInput): void {
-  if (input.externalEmployeeIds.length < 1 || input.externalEmployeeIds.length > 50) {
+  if (
+    Object.keys(input).sort().join(',') !== PULL_INPUT_KEYS ||
+    !TENANT_ID_PATTERN.test(input.tenantId) ||
+    !Array.isArray(input.externalEmployeeIds) ||
+    input.externalEmployeeIds.length < 1 ||
+    input.externalEmployeeIds.length > 50 ||
+    input.externalEmployeeIds.some((id) => !isProviderId(id)) ||
+    new Set(input.externalEmployeeIds).size !== input.externalEmployeeIds.length
+  ) {
     throw new Error('ATTENDANCE_PROVIDER_EMPLOYEE_BATCH_INVALID');
   }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.fromDate) || !/^\d{4}-\d{2}-\d{2}$/.test(input.toDate)) {
@@ -325,14 +441,9 @@ function assertPullInput(input: AttendanceProviderPullInput): void {
     !Number.isFinite(from) || !Number.isFinite(to) || to < from ||
     to - from > 6 * 24 * 60 * 60 * 1_000 ||
     new Date(from).toISOString().slice(0, 10) !== input.fromDate ||
-    new Date(to).toISOString().slice(0, 10) !== input.toDate ||
-    input.externalEmployeeIds.some((id) => id.length < 1 || id.length > 256)
+    new Date(to).toISOString().slice(0, 10) !== input.toDate
   ) throw new Error('ATTENDANCE_PROVIDER_WINDOW_INVALID');
-  try {
-    new Intl.DateTimeFormat('en', { timeZone: input.timeZone }).format();
-  } catch {
-    throw new Error('ATTENDANCE_PROVIDER_TIME_ZONE_INVALID');
-  }
+  assertTimeZone(input.timeZone);
 }
 
 function localBoundary(date: string, end: boolean): string {
@@ -350,10 +461,106 @@ function epochSeconds(value: string): Date {
 }
 
 function requireRequestId(value: string | undefined): string {
-  if (value === undefined || !/^[A-Za-z0-9._:-]{8,256}$/.test(value)) {
+  if (value === undefined || !REQUEST_ID_PATTERN.test(value)) {
     throw new Error('ATTENDANCE_PROVIDER_REQUEST_ID_MISSING');
   }
   return value;
+}
+
+function isProviderId(value: unknown): value is string {
+  return typeof value === 'string' &&
+    value.length >= 1 &&
+    value.length <= 256 &&
+    value.normalize('NFKC') === value &&
+    !/[\p{Cc}\p{Cf}\p{Z}]/u.test(value);
+}
+
+function assertTimeZone(timeZone: string): void {
+  if (
+    typeof timeZone !== 'string' ||
+    timeZone.length < 1 ||
+    timeZone.length > 128 ||
+    /[\p{Cc}\p{Cf}\p{Z}]/u.test(timeZone)
+  ) throw new Error('ATTENDANCE_PROVIDER_TIME_ZONE_INVALID');
+  try {
+    new Intl.DateTimeFormat('en', { timeZone }).format();
+  } catch {
+    throw new Error('ATTENDANCE_PROVIDER_TIME_ZONE_INVALID');
+  }
+}
+
+function assertPulledEvent(input: {
+  readonly externalEmployeeId: string;
+  readonly externalEventId: string;
+  readonly occurredAt: Date;
+  readonly requestedEmployeeIds: ReadonlySet<string>;
+  readonly seenEventIds: Set<string>;
+  readonly fromDate: string;
+  readonly toDate: string;
+  readonly timeZone: string;
+}): void {
+  if (!input.requestedEmployeeIds.has(input.externalEmployeeId)) {
+    throw new Error('ATTENDANCE_PROVIDER_EMPLOYEE_SCOPE_MISMATCH');
+  }
+  if (!isProviderId(input.externalEventId)) {
+    throw new Error('ATTENDANCE_PROVIDER_EVENT_ID_INVALID');
+  }
+  if (input.seenEventIds.has(input.externalEventId)) {
+    throw new Error('ATTENDANCE_PROVIDER_EVENT_DUPLICATE');
+  }
+  const localDate = dateInTimeZone(input.occurredAt, input.timeZone);
+  if (localDate < input.fromDate || localDate > input.toDate) {
+    throw new Error('ATTENDANCE_PROVIDER_EVENT_WINDOW_MISMATCH');
+  }
+  input.seenEventIds.add(input.externalEventId);
+}
+
+function dateInTimeZone(instant: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(instant);
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value['year']}-${value['month']}-${value['day']}`;
+}
+
+function evidenceTimelineIsValid(occurredAt: Date, pulledAtValue: string): boolean {
+  const pulledAt = new Date(pulledAtValue);
+  const now = Date.now();
+  return Number.isFinite(occurredAt.getTime()) &&
+    Number.isFinite(pulledAt.getTime()) &&
+    pulledAt.toISOString() === pulledAtValue &&
+    pulledAt.getTime() <= now + MAX_CLOCK_SKEW_MS &&
+    occurredAt.getTime() <= pulledAt.getTime() + MAX_CLOCK_SKEW_MS;
+}
+
+function feishuEventId(
+  record: z.infer<typeof feishuRecordSchema>,
+  providerRecordId: string,
+  resultId: string,
+  direction: 'in' | 'out',
+  slotIndex: number,
+): string {
+  if (
+    record.record_id !== undefined &&
+    providerRecordId.length > 0 &&
+    record.record_id !== providerRecordId
+  ) throw new Error('ATTENDANCE_FEISHU_RECORD_ID_MISMATCH');
+  if (record.record_id !== undefined) return record.record_id;
+  if (providerRecordId.length > 0) {
+    if (!isProviderId(providerRecordId)) {
+      throw new Error('ATTENDANCE_PROVIDER_EVENT_ID_INVALID');
+    }
+    return providerRecordId;
+  }
+  return `derived:${createHash('sha256').update(JSON.stringify([
+    'feishu-attendance-event-v1',
+    resultId,
+    direction,
+    slotIndex,
+  ])).digest('base64url')}`;
 }
 
 function uniqueByCode<T extends { readonly providerCode: string }>(

@@ -18,6 +18,11 @@
    必须完整覆盖月末、不得停在员工分页中，且 Provider 时区下次月首日前不得存在
    非 `completed` Inbox；随后按活动员工映射分页调用 Attendance 应用服务，生成
    不含外部员工 ID 和游标的确定性覆盖证明。
+9. 拉取适配器对请求与响应执行完整闭包：租户、员工批次、日期、时区和对象键
+   必须精确，员工 ID 不得重复或含控制、格式、空白字符；平台返回的任务员工、
+   嵌套记录员工、事件 ID 与事实本地日期必须逐项属于原请求。请求外员工、重复
+   任务/事件、记录 ID 冲突、窗口外事实或不可信证据时间线会使整批失败，禁止
+   进入 Inbox。
 
 ## Provider 契约
 
@@ -28,7 +33,7 @@
 | 鉴权 | `access_token` 敏感查询参数 | `Authorization: Bearer tenant_access_token` |
 | 单批员工上限 | 50 | 50 |
 | 时间窗口 | 最多 7 个自然日，当前只支持 `Asia/Shanghai` | 最多 7 个自然日，显式 IANA 时区用于 ERP 业务日 |
-| Normalizer 版本 | `dingtalk-list-record-v1` | `feishu-user-task-v1` |
+| Normalizer 版本 | `dingtalk-list-record-v2` | `feishu-user-task-v2` |
 | 事实类型 | `OnDuty -> punch_in`，`OffDuty -> punch_out` | `check_in_record -> punch_in`，`check_out_record -> punch_out` |
 
 飞书契约以官方 Node SDK 的 `attendance.userTask.query` 类型和官方考勤文档为准：[官方 Node SDK](https://github.com/larksuite/node-sdk)、[飞书考勤统计说明](https://open.feishu.cn/document/server-docs/attendance-v1/user_stats_data/attendance-statistic-reference)。钉钉当前实际打卡接口由官方开放平台契约约束：[钉钉 API 文档](https://developer.alibaba.com/docs/api.htm?apiId=37094)。上线时必须使用 API 调试台为目标企业重新导出并归档响应 fixture，禁止只依赖本文档。
@@ -40,6 +45,10 @@ Provider 的拉取响应不提供可验证的业务数字签名，因此这里�
 - `tenantId` 只来自队列记录对应的受信任系统上下文；队列载荷会以固定 Schema 校验，但不作为授权来源。
 - 员工映射必须由平台开户事务创建，禁止按手机号、邮箱、姓名或工号模糊关联。
 - Provider 原始位置、Wi-Fi、设备、照片、备注等字段只存在加密 Inbox，Normalizer 不复制到 Attendance 源事实、Outbox、日志或 MCP。
+- v2 EvidenceVerifier 使用固定格式请求 ID，并把事件 ID 反向绑定到钉钉原始记录
+  ID，或绑定到飞书 `record_id`、槽位记录 ID、`result_id + direction +
+  slotIndex` 的确定性摘要；`pulledAt` 不得超出五分钟时钟偏差，事实时间不得晚于
+  拉取时间。只验证字符串长度或 Envelope 外形不构成合格证据。
 - 单条 `punch_in/punch_out` 的分钟影响固定为零。工时、迟到、早退、跨天和缺勤必须由后续版本化规则集结合班次计算，禁止在 Provider Adapter 中写死薪资口径。
 - Registry 要求钉钉和飞书的 Adapter、Normalizer、EvidenceVerifier 三者同时存在；缺一即应用启动失败。
 - MCP 不暴露 Provider 补拉、游标、员工映射或 Inbox 工具；AI 只能使用 Attendance 应用服务提供的本人汇总与标准修订申请。
@@ -47,6 +56,18 @@ Provider 的拉取响应不提供可验证的业务数字签名，因此这里�
   `POST /integrations/attendance-provider-coverages/reconcile`，每页最多 500 条，
   必须提供 `Idempotency-Key`；部分成功可使用 `nextAfterMappingId` 安全续跑，
   每名员工使用父键与状态/映射/月/水位/截止时间派生的子幂等键。
+
+## 发布与自动化门禁
+
+- 部署 v2 前必须暂停拉取并确认旧版本 `pending` / `processing` Inbox 已清零；
+  已进入人工复核的旧证据保持不可变，禁止原地改写或伪装成 v2。恢复后先以单租户、
+  单日、单员工 Canary 验证，再逐租户激活。
+- `pnpm quality:attendance-provider-adapter-coverage` 固定执行 49 项请求、响应、
+  证据、令牌恢复与 Registry 测试，对
+  `attendance-provider.adapter.ts` 逐文件强制语句、分支、函数和行均不低于
+  90%。当前基线为 95.21% / 92.02% / 100% / 95.42%。
+- 标准 MCP 边界不变：不得注册 Provider 拉取、游标、映射、Inbox、凭据、重放或
+  人工复核写 Tool；AI 只能复用 Attendance 应用服务的本人汇总和标准修订申请。
 
 ## 生产 Go/No-Go
 
@@ -60,3 +81,6 @@ Provider 的拉取响应不提供可验证的业务数字签名，因此这里�
 6. 完成来源数量/时间水位线/人工复核队列的日对账和告警后，才可把对应状态从 `disabled` 改为 `active`。
 7. 使用活动状态执行完整月份覆盖对账，证明中途故障重试不会重复生成覆盖证明，
    未决 Inbox、未完成员工分页、缺少映射和不足月末的水位线均稳定失败关闭。
+8. 分别注入请求外员工、任务/记录员工错位、重复任务/事件、记录 ID 冲突、窗口外
+   事实、未来拉取时间和第二次 401，证明整批不推进游标、不写入 Inbox，且令牌只
+   刷新一次。

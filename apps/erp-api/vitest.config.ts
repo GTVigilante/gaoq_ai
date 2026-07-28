@@ -562,6 +562,12 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/integration/attendance-provider.adapter.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/integration/attendance-provider.processor.ts': {
           branches: 90,
           functions: 90,

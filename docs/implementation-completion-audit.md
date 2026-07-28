@@ -62,11 +62,11 @@
 ## 5. 覆盖率边界
 
 2026-07-28 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，380 个测试文件、4,954 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，380 个测试文件、4,999 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-91.18%（28,403/31,149）、分支 88.37%（19,233/21,764）、函数
-91.64%（5,077/5,540）、行 92.41%（25,911/28,038）。全仓四维已达到 Phase 0
+91.25%（28,494/31,224）、分支 88.50%（19,305/21,813）、函数
+91.74%（5,091/5,549）、行 92.48%（25,994/28,107）。全仓四维已达到 Phase 0
 规定的 80% 门槛。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
@@ -94,7 +94,7 @@ HTTPS Client 三个生产文件。专用命令执行 3 个测试文件、74 项�
 MCP 确认服务、MCP HTTP 入口、MCP 运行时、MCP Tool 应用层、OP 审批桥入站申请、OP 审批结果回传、
 OP Webhook 双入口、
 薪酬影子周期、薪酬运行、薪酬审批、薪酬主数据、专业算薪主数据快照、薪酬四方对账、薪酬税务申报、薪酬 L4 数据加密、资金支付、Treasury 银行提交出站边界、Treasury 银行回盘、Treasury 银行回盘入站边界、Treasury L4 数据加密、Treasury Outbox、Phase 4 REST 入口、Care 纪念日应用、Care 离职应用、校友授权清理协调、
-校友授权清理证明出口、数据迁移控制面、数据迁移打包 CLI、Knowledge 考试运行 Relay、Knowledge 搜索索引 Relay、Knowledge REST 入口控制器、Knowledge 应用服务、Knowledge 考试应用与入口、Knowledge 领域模型、Knowledge 持久化 Schema、Knowledge 考试重放 CLI、考勤应用、考勤仓储、Attendance 规则纵切、考勤供应商拉取、考勤供应商入站处理、电子签回调处理、
+校友授权清理证明出口、数据迁移控制面、数据迁移打包 CLI、Knowledge 考试运行 Relay、Knowledge 搜索索引 Relay、Knowledge REST 入口控制器、Knowledge 应用服务、Knowledge 考试应用与入口、Knowledge 领域模型、Knowledge 持久化 Schema、Knowledge 考试重放 CLI、考勤应用、考勤仓储、Attendance 规则纵切、考勤供应商拉取、考勤 Provider 外部响应闭包、考勤供应商入站处理、电子签回调处理、
 招聘渠道拉取、招聘渠道入站处理、招聘渠道职位扇出、招聘渠道阶段扇出、招聘申请、招聘面试、招聘简历、招聘渠道职位投递、招聘渠道阶段回传、招聘管理、招聘面试日历可靠投递、人才全周期应用、人才全周期仓储、招聘 Offer、Care 仓储、组织仓储、招聘仓储、知识库仓储、营销 CMS、营销入口与幂等核心、营销副作用可靠投递、审批通知可靠投递、组织主数据外部投递可靠性、组织平台适配器安全边界、组织首次平台开户、身份令牌与 OAuth 授权事务、身份用户会话与签名键轮换、人员 SSO 信任边界、OAuth Client Credentials 服务身份签发、OAuth 授权控制器、WebAuthn 强认证、入职应用与入口控制器、生产执行授权服务、Phase 5 管理分析和 Payroll Tax 双出口已建立
 独立不可回退门禁：
 `pnpm quality:tenant-context-coverage`、
@@ -155,6 +155,7 @@ OP Webhook 双入口、
 `pnpm quality:attendance-core-coverage`、
 `pnpm quality:attendance-rules-coverage`、
 `pnpm quality:attendance-provider-pull-coverage`、
+`pnpm quality:attendance-provider-adapter-coverage`、
 `pnpm quality:attendance-provider-processor-coverage`、
 `pnpm quality:esign-webhook-processor-coverage`、
 `pnpm quality:esign-integration-coverage`、
@@ -532,6 +533,15 @@ Attendance 规则纵切已覆盖 85 项不可变规则/排班构造、`Employmen
 幂等、租约竞争、载荷规范化和失败关闭测试；部分游标密文字段不再被误判为首次
 同步。覆盖率达到 98.61%/97.00%/100%/99.21%（语句/分支/函数/行），独立
 四维 90% 门禁已接入 `pnpm check`。
+
+考勤 Provider 外部响应闭包已覆盖 49 项请求、响应、传输证据、Normalizer、
+单次令牌刷新和 Registry 测试。请求只接受规范租户、唯一员工集合、七日日期窗口
+和 IANA 时区；钉钉/飞书返回的任务员工、嵌套员工、事件 ID 与本地事实日期逐项
+反向绑定原请求，重复任务/事件、记录 ID 冲突、窗口外事实、未来拉取时间和第二次
+401 整批失败关闭。Normalizer/EvidenceVerifier 已提升为 v2，目标生产文件覆盖率
+达到 95.21%/92.02%/100%/95.42%（语句/分支/函数/行），独立四维 90% 门禁
+已接入 `pnpm check`。标准 MCP 仍不开放 Provider 拉取、Inbox、凭据、重放或
+人工处置；真实平台 fixture、旧 Inbox 清空、Canary 与沙箱限流仍待现场验收。
 
 考勤供应商入站处理已覆盖 30 项任务分派、可信系统身份、加密信封、传输证据、
 标准化器版本、员工盲索引映射、检查点与租约竞争测试；业务成功、人工复核及
