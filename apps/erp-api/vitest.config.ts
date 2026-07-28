@@ -646,6 +646,48 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/core/audit/audit-anchor.processor.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/core/audit/audit-anchor.scheduler.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/core/audit/audit-maintenance.queue.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/core/audit/audit-queue-metrics.poller.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/core/audit/audit-worker.module.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/core/audit/audit.module.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/core/observability/queue-metrics.poller.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/core/audit/audit-chain-verification.service.ts': {
           branches: 90,
           functions: 90,

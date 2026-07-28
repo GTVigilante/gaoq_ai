@@ -31,6 +31,12 @@ Prometheus 规则位于 `deploy/observability/phase-1-alerts.yml`。生产导入
 
 Worker 每六小时选择最久未锚定的租户，先完整验链，再生成固定字段顺序的 `gaoq.audit.anchor.v1` 载荷。载荷包含租户、序号、链头哈希、审计 HMAC key id、链更新时间和请求保留期；随后由独立 Ed25519 密钥签名。
 
+调度器固定为 `audit-maintenance:anchor-pending`，任务名固定为 `anchor-pending`，
+每批最多 100 个租户，失败最多五次并从 60 秒开始指数退避。Processor 不解析任何
+业务载荷；任务名或空载荷契约不匹配时使用稳定错误码失败。`audit-maintenance`
+队列在启动时立即、随后每十五秒采集 waiting/active/delayed/failed，前一次采集
+未结束时禁止并发访问 Redis。
+
 外部端点必须：
 
 1. 使用 `payloadHash` 作为幂等键，对相同键和相同载荷返回同一回执；
@@ -63,6 +69,9 @@ node scripts/load/phase-1-http-load.mjs
 
 - 审计追加或验链失败：立即停止 R2/R3 写入发布，保全 MongoDB 快照，禁止修链或删除事件。
 - WORM 失败：确认外部端点、凭据、保留策略与幂等回执；在 24 小时窗口内恢复并重新运行待锚定任务。
+- `audit-maintenance` 出现 failed 或连续队列采集失败：冻结新增 R2/R3 发布，
+  先确认 WORM、Redis 和审计链完整性；禁止修改任务载荷、直接删除失败任务或经
+  MCP/AI 触发重放。
 - HTTP 错误率/延迟超限：按控制器和方法聚合定位；不得临时加入租户标签排查，使用 trace 日志做租户级诊断。
 - 指标端点鉴权失败：检查 Secret Manager 版本与 Prometheus 抓取配置，禁止把 token 写入 URL、日志或告警注释。
 - 组织投递 `state_unavailable`：立即冻结同聚合后续版本，按

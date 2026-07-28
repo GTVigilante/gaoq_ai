@@ -62,11 +62,11 @@
 ## 5. 覆盖率边界
 
 2026-07-28 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，355 个测试文件、3,870 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，359 个测试文件、3,887 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-89.00%（26,751/30,057）、分支 86.06%（17,813/20,696）、函数
-89.43%（4,808/5,376）、行 90.48%（24,442/27,013）。全仓四维已达到 Phase 0
+89.17%（26,809/30,065）、分支 86.11%（17,831/20,706）、函数
+89.62%（4,819/5,377）、行 90.62%（24,488/27,021）。全仓四维已达到 Phase 0
 规定的 80% 门槛。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
@@ -83,7 +83,13 @@ HTTPS Client 三个生产文件。专用命令执行 3 个测试文件、74 项�
 代码已拒绝非规范链哈希、请求摘要/签名错位、非 443/不成套 WORM 配置、超大或
 时钟异常回执，并隔离事务提交后的会话清理故障；真实 WORM 回读验签仍是外部证据。
 
-租户上下文、审计追加与 WORM 运输、审计链锚定、审计链验证、组织主数据应用、组织主数据入口、身份授权、审批数据加密、审批仓储、
+2026-07-28 审计后台执行门禁已覆盖锚定 Processor、Scheduler、固定队列契约、
+队列指标 Poller、共享无重入采集器和 API/Worker 模块隔离。专用命令执行 4 个
+测试文件、17 项测试，七个生产文件逐文件语句、分支、函数、行均为 100%。
+任务只接受固定任务名与严格空载荷；WORM 未启用不注册调度，配置损坏或 Redis
+注册失败时启动失败关闭；失败由五次指数退避和低基数 failed 队列指标观测。
+
+租户上下文、审计追加与 WORM 运输、审计后台执行与队列观测、审计链锚定、审计链验证、组织主数据应用、组织主数据入口、身份授权、审批数据加密、审批仓储、
 审批应用状态机、审批入口控制器、审批模板领域、
 MCP 确认服务、MCP HTTP 入口、MCP 运行时、MCP Tool 应用层、OP 审批桥入站申请、OP 审批结果回传、
 OP Webhook 双入口、
@@ -93,6 +99,7 @@ OP Webhook 双入口、
 独立不可回退门禁：
 `pnpm quality:tenant-context-coverage`、
 `pnpm quality:audit-append-coverage`、
+`pnpm quality:audit-worker-coverage`、
 `pnpm quality:audit-anchor-coverage`、
 `pnpm quality:audit-chain-verification-coverage`、
 `pnpm quality:org-application-coverage`、
@@ -173,7 +180,7 @@ OP Webhook 双入口、
 `pnpm quality:oauth-controller-coverage`、
 `pnpm quality:strong-auth-coverage`、
 `pnpm quality:onboarding-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。八十三条链路当前覆盖率基线集合为
+`pnpm quality:production-execution-authorization-coverage`。八十四条链路当前覆盖率基线集合为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -249,8 +256,9 @@ OP Webhook 双入口、
 99.59%/98.23%/100%/99.56%
 （语句/分支/函数/行）；电子签九个核心文件另达到
 98.01%/95.55%/99.00%/99.51%，审计追加三个核心文件另达到
-96.91%/97.48%/96.66%/99.00%；八十三项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明八十三条关键链路达标，
+96.91%/97.48%/96.66%/99.00%，审计后台七个生产文件另达到
+100%/100%/100%/100%；八十四项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明八十四条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 Phase 5 管理分析纵切已覆盖 52 项共享契约、历史审批快照、不可变最终审批动作、
