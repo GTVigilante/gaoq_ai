@@ -18,6 +18,9 @@ const KEY_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 const BASE64URL_256_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 const MAX_PLAINTEXT_BYTES = 256 * 1024;
+const IV_BASE64URL_LENGTH = 16;
+const AUTH_TAG_BASE64URL_LENGTH = 22;
+const MAX_CIPHERTEXT_BASE64URL_LENGTH = Math.ceil(MAX_PLAINTEXT_BYTES * 4 / 3);
 
 const encryptionRingSchema = z.object({
   activeKeyId: z.string().regex(KEY_PATTERN),
@@ -108,7 +111,11 @@ export class AttendanceDataCryptoService {
     this.assertContext(context);
     if (
       !KEY_PATTERN.test(value.keyId) || !BASE64URL_PATTERN.test(value.iv) ||
-      !BASE64URL_PATTERN.test(value.ciphertext) || !BASE64URL_PATTERN.test(value.authTag)
+      value.iv.length !== IV_BASE64URL_LENGTH ||
+      !BASE64URL_PATTERN.test(value.ciphertext) ||
+      value.ciphertext.length > MAX_CIPHERTEXT_BASE64URL_LENGTH ||
+      !BASE64URL_PATTERN.test(value.authTag) ||
+      value.authTag.length !== AUTH_TAG_BASE64URL_LENGTH
     ) throw this.invalidCiphertext();
     const ring = this.loadEncryptionRing();
     const configured = ring.keys.find((key) => key.keyId === value.keyId);
@@ -122,7 +129,7 @@ export class AttendanceDataCryptoService {
     const tag = this.decode(value.authTag);
     let plaintext: Buffer | undefined;
     try {
-      if (iv.length !== 12 || tag.length !== 16 || ciphertext.length > MAX_PLAINTEXT_BYTES + 16) {
+      if (iv.length !== 12 || tag.length !== 16 || ciphertext.length > MAX_PLAINTEXT_BYTES) {
         throw this.invalidCiphertext();
       }
       const decipher = createDecipheriv('aes-256-gcm', key, iv, { authTagLength: 16 });

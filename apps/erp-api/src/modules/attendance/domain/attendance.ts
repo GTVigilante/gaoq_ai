@@ -107,12 +107,15 @@ export function createAttendanceSourceFact(
   assertFactType(input.factType);
   const sourceObservedAt = parseInstant(input.sourceObservedAt, 'ATTENDANCE_SOURCE_TIME_INVALID');
   const occurredAt = parseInstant(input.occurredAt, 'ATTENDANCE_OCCURRED_AT_INVALID');
-  if (sourceObservedAt.getTime() < occurredAt.getTime()) {
-    fail('ATTENDANCE_SOURCE_TIME_INVALID', '源系统观测时间不得早于事实发生时间');
+  if (!Number.isFinite(now.getTime())) fail('ATTENDANCE_NOW_INVALID', '当前时间非法');
+  if (
+    sourceObservedAt.getTime() < occurredAt.getTime() ||
+    sourceObservedAt.getTime() > now.getTime()
+  ) {
+    fail('ATTENDANCE_SOURCE_TIME_INVALID', '源系统观测时间必须位于事实发生与 ERP 登记之间');
   }
   const businessDate = businessDateAt(input.occurredAt, input.timeZone);
   assertImpact(input.impact);
-  if (!Number.isFinite(now.getTime())) fail('ATTENDANCE_NOW_INVALID', '当前时间非法');
   return Object.freeze({
     ...input,
     impact: freezeImpact(input.impact),
@@ -162,7 +165,7 @@ export function createAttendanceCorrection(
     fail('ATTENDANCE_CORRECTION_APPROVAL_REFERENCE_INVALID', '考勤修订审批引用类型或证据绑定无效');
   }
   assertId(approvalReferenceId, 'ATTENDANCE_CORRECTION_REFERENCE_INVALID');
-  if (!DATE_PATTERN.test(input.businessDate)) {
+  if (!isStrictDate(input.businessDate)) {
     fail('ATTENDANCE_BUSINESS_DATE_INVALID', '考勤业务日期非法');
   }
   if (!/^[A-Z][A-Z0-9_]{1,63}$/.test(input.reasonCode)) {
@@ -356,7 +359,7 @@ function validateEvaluatedDailySummaries(
   let resolvedCorrectionCount = 0;
   const normalized = summaries.map((summary) => {
     if (
-      !DATE_PATTERN.test(summary.businessDate) ||
+      !isStrictDate(summary.businessDate) ||
       !summary.businessDate.startsWith(`${month}-`) ||
       dates.has(summary.businessDate)
     ) fail('ATTENDANCE_RULE_EVALUATION_DATE_INVALID', '规则计算日摘要日期非法或重复');
@@ -404,6 +407,7 @@ function assertSnapshotFact(
   if (
     fact.tenantId !== snapshot.tenantId ||
     fact.employeeId !== snapshot.employeeId ||
+    !isStrictDate(fact.businessDate) ||
     !fact.businessDate.startsWith(`${snapshot.month}-`)
   ) fail('ATTENDANCE_FACT_OUT_OF_SCOPE', '源事实不属于当前租户、员工或月份');
   if (Date.parse(fact.sourceObservedAt) > cutoff.getTime()) {
@@ -496,10 +500,23 @@ function assertTimeZone(value: string): void {
 
 function parseInstant(value: string, code: string): Date {
   const parsed = new Date(value);
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value) || !Number.isFinite(parsed.getTime())) {
+  const canonical = value.endsWith('Z') && !value.includes('.')
+    ? value.replace(/Z$/, '.000Z')
+    : value;
+  if (
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value) ||
+    !Number.isFinite(parsed.getTime()) ||
+    parsed.toISOString() !== canonical
+  ) {
     fail(code, '时间必须为 UTC ISO-8601 instant');
   }
   return parsed;
+}
+
+function isStrictDate(value: string): boolean {
+  if (!DATE_PATTERN.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
 function strictMigrationInstant(value: string): string {

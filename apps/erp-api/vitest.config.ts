@@ -184,6 +184,18 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/attendance/domain/attendance.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/attendance/persistence/attendance-data-crypto.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/attendance/domain/attendance-rules.ts': {
           branches: 90,
           functions: 90,

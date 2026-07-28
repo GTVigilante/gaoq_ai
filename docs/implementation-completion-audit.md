@@ -62,12 +62,12 @@
 ## 5. 覆盖率边界
 
 2026-07-28 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，344 个测试文件、3,413 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，346 个测试文件、3,502 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-87.48%（25,965/29,680）、分支 84.25%（17,172/20,380）、函数
-88.29%（4,705/5,329）、行 89.18%（23,767/26,648）。全仓四维已达到 Phase 0
-规定的 80% 门槛，分支高于最低命中数 867 个。全量命令通过
+87.61%（26,012/29,688）、分支 84.45%（17,225/20,395）、函数
+88.33%（4,708/5,330）、行 89.30%（23,803/26,655）。全仓四维已达到 Phase 0
+规定的 80% 门槛，分支高于最低命中数 909 个。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
 
@@ -121,6 +121,7 @@ OP Webhook 双入口、
 `pnpm quality:knowledge-exam-replay-coverage`、
 `pnpm quality:attendance-application-coverage`、
 `pnpm quality:attendance-repositories-coverage`、
+`pnpm quality:attendance-core-coverage`、
 `pnpm quality:attendance-rules-coverage`、
 `pnpm quality:attendance-provider-pull-coverage`、
 `pnpm quality:attendance-provider-processor-coverage`、
@@ -155,7 +156,7 @@ OP Webhook 双入口、
 `pnpm quality:oauth-controller-coverage`、
 `pnpm quality:strong-auth-coverage`、
 `pnpm quality:onboarding-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。七十七条链路当前覆盖率分别为
+`pnpm quality:production-execution-authorization-coverage`。七十八条链路当前覆盖率基线集合为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -225,9 +226,10 @@ OP Webhook 双入口、
 100%/100%/100%/100%、
 100%/98.23%/100%/100% 和
 100%/100%/100%/100%、98.02%/97.43%/95.83%/98.13%、
-97.18%/95.18%/100%/97.99%、98.61%/95.04%/100%/99.07%
-（语句/分支/函数/行）；七十七项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明七十七条关键链路达标，
+97.18%/95.18%/100%/97.99%、98.61%/95.04%/100%/99.07%、
+98.23%/97.43%/98.24%/98.85%
+（语句/分支/函数/行）；七十八项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明七十八条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 营销副作用可靠投递已覆盖 68 项路由身份、运行时受损记录、Outbox 抢占与释放、
@@ -350,6 +352,12 @@ dead 记录失败关闭测试；重放前会验证引用链、题型、次数和
 考勤仓储已覆盖 17 项可信租户、源事实/修订/月快照密文读写、盲索引、迁移证据、
 会话绑定、并发冲突和失败关闭测试，目标生产文件达到四维 100%，独立四维 90%
 门禁已接入 `pnpm check`。
+
+Attendance 核心领域与 L4 加密已覆盖 99 项事实/修订/月结不变量、严格日历时间、
+规则日摘要、迁移时间线、密钥轮换、盲索引命名空间、AAD、认证篡改和解码前
+长度上限测试；两个生产文件合计覆盖率达到
+98.23%/97.43%/98.24%/98.85%（语句/分支/函数/行），且各自四维均不低于
+90%。独立门禁已接入 `pnpm precheck`，全量覆盖门禁已接入 `pnpm check`。
 
 Attendance 规则纵切已覆盖 85 项不可变规则/排班构造、`Employment` 完整有效期、
 员工级事务并发守卫、Provider 月末水位线与未决 Inbox 对账、跨天归属、REST、仓储、Schema、Outbox
