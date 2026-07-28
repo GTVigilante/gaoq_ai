@@ -13,10 +13,10 @@
 | 领域 | 指标 | 固定定义 | 权威来源 |
 | --- | --- | --- | --- |
 | 组织 | 在职、试用、停职人数 | 截至查询时点按员工状态计数 | `org_employees` |
-| 审批 | 进行中 | 状态为 `running` | `approval_instances` |
-| 审批 | 超 48 小时 | 历史口径日按日终、当日按查询时点，`running` 且提交时间早于 48 小时界线 | `approval_instances` |
-| 审批 | 30 日完成量 | 窗口内状态为 `approved` 或 `rejected` 且有完成时间 | `approval_instances` |
-| 审批 | 通过率 | 窗口内通过量 ÷ 完成量，整数基点；分母为零返回 `null` | `approval_instances` |
+| 审批 | 进行中 | 按 `submittedAt < cutoff` 且 `completedAt` 为空或不早于 cutoff 重建；历史口径日 cutoff 为日终，当日为查询时点，不能使用当前可变状态冒充历史状态 | `approval_instances` |
+| 审批 | 超 48 小时 | 在上述历史进行中集合内，提交时间早于 cutoff 48 小时 | `approval_instances` |
+| 审批 | 30 日完成量 | 窗口内追加式 `instance.decided` 动作的 `resultingStatus` 为 `approved` 或 `rejected`；审批归档后仍保持原最终结果 | `approval_actions` |
+| 审批 | 通过率 | 上述最终动作中 `approved` 数 ÷ 完成量，整数基点；分母为零返回 `null` | `approval_actions` |
 | 招聘 | 开放职位/HC | 状态为 `open` 的职位数及其 `headcount` 总和 | `recruitment_positions` |
 | 招聘 | 活跃申请 | `active=true` 的申请数 | `recruitment_applications` |
 | 招聘 | 30 日入职 | 窗口内阶段为 `hired` 且有结束时间 | `recruitment_applications` |
@@ -29,13 +29,19 @@
 
 - REST：`GET /api/analytics/management-dashboard?asOf=YYYY-MM-DD`
 - Scope：`erp:analytics:management:read`
+- 查询参数严格限定为唯一字符串 `asOf`；缺失、数组、重复解析结果或任何未知字段
+  均以 `ANALYTICS_QUERY_INVALID` 失败关闭。
 - 审计：`analytics.management_dashboard.read`，R1，只记录口径日与来源数量。
 - MCP Tool：`management_dashboard_get`，R1、只读、幂等、封闭世界，直接复用 `ManagementDashboardService`。
 - MCP Resource：`erp://analytics/management-dashboard/{asOf}`。
 - MCP Prompt：`management_dashboard_review_guide`，要求先核对时间窗与覆盖日期，不推断个人表现或因果。
 - MCP 导出：`management_dashboard_export_prepare` 固化口径并生成 R2 确认单；`management_dashboard_export_execute` 只消费经 Passkey 确认的一次性凭据，返回 `erp://analytics/exports/{id}` Resource Link。
 
-REST 与 MCP 输出使用同一应用服务和同一固定口径。调用方不得传 tenantId、字段名、Mongo 条件、排序或任意聚合表达式；租户只能来自服务端已验证身份。
+REST、MCP 与异步导出复用 `analytics.contract.ts` 中同一组递归严格 Zod
+Schema 和同一应用服务；来源数组的值与顺序固定，包含
+`approval_instances` 与 `approval_actions`。应用服务会再次验证最小 Scope，
+不能依赖 REST 装饰器或 MCP 注册元数据代替业务授权。调用方不得传 tenantId、
+字段名、Mongo 条件、排序或任意聚合表达式；租户只能来自服务端已验证身份。
 
 ## 4. 数据分级、展示与新鲜度
 
@@ -46,11 +52,33 @@ REST 与 MCP 输出使用同一应用服务和同一固定口径。调用方不�
 
 ## 5. 受控导出边界
 
-分析导出属于 R2，采用“准备 → Passkey 人工确认 → 异步生成 → 有时效资源链接”的状态机：固定字段、固定口径日、固定 JSON 格式、一次性幂等键、服务端可信租户和全链路审计。BullMQ Worker 生成 `management-dashboard-export.v1` 聚合产物及 SHA-256 内容摘要；任务具有重试与五分钟执行租约，Worker 崩溃后可接管陈旧租约。资源按可信租户、发起人及 `erp:analytics:management:export` Scope 再次鉴权，24 小时绝对过期，不在 URI 中放置 Token、tenantId 或个人字段。首版前端不直接暴露导出按钮，AI 必须使用上述标准 MCP 两阶段工具。
+分析导出属于 R2，采用“准备 → Passkey 人工确认 → 异步生成 → 有时效资源链接”
+的状态机：固定字段、固定口径日、固定 JSON 格式、一次性幂等键、服务端可信租户
+和全链路审计。prepare 只做日期与权限校验，不提前读取完整管理聚合；execute
+进入应用服务后再次要求当前主体为 `user`，并同时具备 read/export Scope。
+
+BullMQ Worker 生成严格的 `management-dashboard-export.v1` 聚合产物及 SHA-256
+内容摘要。任务载荷包含 `tenantId + requestedBy + exportId + generation`，
+确定性 JobId 对四者做 SHA-256 绑定；失败后重新请求必须原子递增 generation，
+不能被 BullMQ 保留的旧失败 Job 去重。Worker 使用最小读取 Scope 的
+`system_job` 身份，不模拟发起用户；五分钟执行租约同时绑定 generation、JobId
+和随机 token，同一任务恢复或陈旧租约接管后，旧 Worker 无权写入终态。
+
+ready/failed 终态先以完整 fencing 条件提交，再执行最佳努力系统审计；提交后的
+审计故障只记录稳定告警，不得把已成功产物反向写成失败。持久化和资源读取都会
+校验 URI/ULID、状态—租约—失败码组合、64KiB 上限、严格 JSON Schema 与摘要，
+嵌套额外字段或个人字段失败关闭。资源按可信租户、发起人及
+`erp:analytics:management:export` Scope 再次鉴权，24 小时绝对过期，不在 URI
+中放置 Token、tenantId 或个人字段。首版前端不直接暴露导出按钮，AI 必须使用
+上述标准 MCP 两阶段工具。
 
 ## 6. 性能、索引与验收
 
 - API 目标：正常租户数据规模下 P95 ≤ 2 秒、P99 ≤ 5 秒；失败必须关闭，禁止返回部分旧缓存冒充完整结果。
 - 固定查询使用租户前缀索引；新增索引按 [管理分析索引迁移运行手册](./08-analytics-index-migration-runbook.md) 追加上线并核对 explain。
 - 验收包括：跨租户隔离、非法日期、零分母、缺数据、新鲜度、字段泄漏、官方 MCP Client 发现/调用、375px/768px/桌面可用性、键盘与读屏、性能预算和审计证据。
+- 独立门禁 `pnpm quality:analytics-management-coverage` 覆盖共享契约、看板应用
+  服务、导出服务、Worker 入口、REST 入口、持久化组合约束和 v2 索引清单；当前
+  52 项测试达到 99.59%/98.23%/100%/99.56%（语句/分支/函数/行），七个目标
+  生产文件逐文件四维均不低于 90%。
 - OP 沙箱数据覆盖、生产规模压测与管理层指标签字完成前，本切片保持“内部预验收”，不得宣称生产验收完成。

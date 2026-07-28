@@ -124,6 +124,48 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/analytics/analytics.contract.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/analytics/application/management-dashboard.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/analytics/application/analytics-export.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/analytics/analytics-export.processor.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/analytics/analytics-export.queue.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/analytics/analytics.controller.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/analytics/persistence/analytics.schemas.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/payroll/application/payroll-shadow.service.ts': {
           branches: 90,
           functions: 90,

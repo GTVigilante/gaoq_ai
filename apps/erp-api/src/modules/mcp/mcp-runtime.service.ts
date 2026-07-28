@@ -8,6 +8,10 @@ import { z } from 'zod';
 
 import type { AppEnvironment } from '../../config/environment.js';
 import type { ErpRequest } from '../../core/http/request-context.js';
+import {
+  analyticsExportViewSchema,
+  managementDashboardSchema,
+} from '../analytics/analytics.contract.js';
 import { DATA_MIGRATION_SCOPES } from '../data-migration/data-migration-contract.js';
 import { McpToolService } from './mcp-tool.service.js';
 
@@ -453,67 +457,6 @@ const opApprovalBridgeSchema = z.object({
   approvalStatus: z.enum(['processing', 'running', 'approved', 'rejected', 'withdrawn']),
   approvalVersion: z.number().int().nonnegative(), completedAt: z.string().nullable(),
   updatedAt: z.string(),
-});
-const managementDashboardSchema = z.object({
-  asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  window: z.object({
-    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), timezone: z.literal('Asia/Shanghai'),
-  }),
-  generatedAt: z.string().datetime(),
-  freshness: z.object({
-    transactional: z.literal('live'),
-    operatingSummaryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
-    payrollPeriod: z.string().regex(/^\d{4}-\d{2}$/).nullable(),
-  }),
-  workforce: z.object({
-    activeHeadcount: z.number().int().nonnegative(),
-    probationHeadcount: z.number().int().nonnegative(),
-    suspendedHeadcount: z.number().int().nonnegative(),
-  }),
-  approvals: z.object({
-    running: z.number().int().nonnegative(), overdue48h: z.number().int().nonnegative(),
-    completed30d: z.number().int().nonnegative(),
-    approvalRateBps: z.number().int().min(0).max(10_000).nullable(),
-  }),
-  recruitment: z.object({
-    openPositionCount: z.number().int().nonnegative(),
-    openHeadcount: z.number().int().nonnegative(),
-    activeApplicationCount: z.number().int().nonnegative(),
-    hired30d: z.number().int().nonnegative(),
-  }),
-  learning: z.object({
-    mandatoryAssignments: z.number().int().nonnegative(),
-    completedMandatoryAssignments: z.number().int().nonnegative(),
-    expiredMandatoryAssignments: z.number().int().nonnegative(),
-    completionRateBps: z.number().int().min(0).max(10_000).nullable(),
-  }),
-  payroll: z.object({
-    period: z.string().regex(/^\d{4}-\d{2}$/).nullable(),
-    status: z.enum([
-      'draft', 'collecting', 'review', 'pending_approval', 'approved',
-      'locked', 'disbursing', 'reconciling', 'reconciled',
-    ]).nullable(),
-    employeeCount: z.number().int().nonnegative().nullable(),
-  }),
-  operating: z.object({
-    summaryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
-    revision: z.number().int().positive().nullable(), currency: z.literal('CNY').nullable(),
-    gmvMinor: z.number().int().nonnegative().nullable(),
-    paidOrderCount: z.number().int().nonnegative().nullable(),
-    refundMinor: z.number().int().nonnegative().nullable(),
-  }),
-  sources: z.array(z.string()).max(16),
-});
-const analyticsExportSchema = z.object({
-  id: recruitmentIdSchema,
-  asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  format: z.literal('json'),
-  status: z.enum(['queued', 'processing', 'ready', 'failed']),
-  resourceUri: z.string().regex(/^erp:\/\/analytics\/exports\/[0-7][0-9A-HJKMNP-TV-Z]{25}$/),
-  contentHash: z.string().length(43).nullable(),
-  artifact: z.record(z.string(), z.unknown()).nullable(),
-  expiresAt: z.string().datetime(),
 });
 const dataMigrationReportSchema = z.object({
   runId: recruitmentIdSchema, sourceSystem: z.string(),
@@ -2035,7 +1978,7 @@ export class McpRuntimeService {
         title: '执行管理驾驶舱导出',
         description: '消费经 Passkey 强认证的一次性凭据并创建异步任务，返回可轮询资源链接。风险等级 R2。',
         inputSchema: confirmationExecuteInputSchema,
-        outputSchema: z.object({ export: analyticsExportSchema }),
+        outputSchema: z.object({ export: analyticsExportViewSchema }),
         annotations: {
           readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false,
         },

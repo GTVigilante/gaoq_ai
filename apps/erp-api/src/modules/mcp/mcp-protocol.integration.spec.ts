@@ -405,7 +405,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
             gmvMinor: 123_456, paidOrderCount: 12, refundMinor: 500,
           },
           sources: [
-            'org_employees', 'approval_instances', 'recruitment_positions',
+            'org_employees', 'approval_instances', 'approval_actions', 'recruitment_positions',
             'recruitment_applications', 'knowledge_training_assignments',
             'payroll_periods', 'op_operating_summaries',
           ],
@@ -432,7 +432,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
             gmvMinor: 123_456, paidOrderCount: 12, refundMinor: 500,
           },
           sources: [
-            'org_employees', 'approval_instances', 'recruitment_positions',
+            'org_employees', 'approval_instances', 'approval_actions', 'recruitment_positions',
             'recruitment_applications', 'knowledge_training_assignments',
             'payroll_periods', 'op_operating_summaries',
           ],

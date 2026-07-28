@@ -485,7 +485,7 @@ export class McpToolService {
         await this.auditTool(identity, 'management_dashboard_export_prepare', 'R2', 'denied');
         return scopeError(missing);
       }
-      await this.managementDashboard.get(asOf);
+      this.managementDashboard.validateAsOf(asOf);
       const command: AnalyticsMcpCommand = {
         operation: 'analytics.management_dashboard.export', asOf,
         format: 'json', expectedVersion: 1,

@@ -4,7 +4,12 @@ import { MongooseModule } from '@nestjs/mongoose';
 
 import { AuditModule } from '../../core/audit/audit.module.js';
 import { TenantContextModule } from '../../core/tenant/tenant-context.module.js';
-import { ApprovalInstanceRecord, ApprovalInstanceRecordSchema } from '../approval/persistence/approval.schemas.js';
+import {
+  ApprovalActionRecord,
+  ApprovalActionRecordSchema,
+  ApprovalInstanceRecord,
+  ApprovalInstanceRecordSchema,
+} from '../approval/persistence/approval.schemas.js';
 import { KnowledgeTrainingAssignmentRecord, KnowledgeTrainingAssignmentRecordSchema } from '../knowledge/persistence/knowledge.schemas.js';
 import { OpOperatingSummaryRecord, OpOperatingSummaryRecordSchema } from '../op/persistence/op.schemas.js';
 import { OrgEmployeeRecord, OrgEmployeeRecordSchema } from '../org/persistence/org.schemas.js';
@@ -28,6 +33,7 @@ import {
     MongooseModule.forFeature([
       { name: OrgEmployeeRecord.name, schema: OrgEmployeeRecordSchema },
       { name: ApprovalInstanceRecord.name, schema: ApprovalInstanceRecordSchema },
+      { name: ApprovalActionRecord.name, schema: ApprovalActionRecordSchema },
       { name: RecruitmentPositionRecord.name, schema: RecruitmentPositionRecordSchema },
       { name: CandidateApplicationRecord.name, schema: CandidateApplicationRecordSchema },
       { name: KnowledgeTrainingAssignmentRecord.name, schema: KnowledgeTrainingAssignmentRecordSchema },

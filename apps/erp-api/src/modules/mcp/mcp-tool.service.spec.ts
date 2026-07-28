@@ -115,7 +115,7 @@ function assemble() {
   const shadows = { getCycle: vi.fn(), getReadiness: vi.fn() };
   const opSummaries = { getLatest: vi.fn() };
   const opApprovalBridges = { get: vi.fn() };
-  const managementDashboard = { get: vi.fn() };
+  const managementDashboard = { get: vi.fn(), validateAsOf: vi.fn() };
   const analyticsExports = { get: vi.fn(), request: vi.fn() };
   const dataMigrations = { report: vi.fn() };
   const talentLifecycle = { getForMcp: vi.fn() };
@@ -962,7 +962,6 @@ describe('McpToolService', () => {
 
   it('管理驾驶舱导出必须经 R2 确认并返回异步资源链接', async () => {
     const store = assemble();
-    store.managementDashboard.get.mockResolvedValue({ asOf: '2026-07-22' });
     store.confirmations.prepare.mockResolvedValueOnce({
       operationId: '01J8ZQK7V0A2M4N6P8R0T2W4E1', digest: 'b'.repeat(43), riskLevel: 'R2',
       expiresAt: '2026-07-22T00:10:00.000Z',
@@ -972,6 +971,8 @@ describe('McpToolService', () => {
     const prepared = await store.service.prepareManagementDashboardExport(
       '2026-07-22', 'export-key-001', extra(scopes),
     );
+    expect(store.managementDashboard.validateAsOf).toHaveBeenCalledWith('2026-07-22');
+    expect(store.managementDashboard.get).not.toHaveBeenCalled();
     expect(prepared.structuredContent).toMatchObject({ riskLevel: 'R2' });
     expect(store.confirmations.prepare).toHaveBeenCalledWith(
       expect.objectContaining({ tenantId: 'tenant-001' }),
