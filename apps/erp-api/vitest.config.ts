@@ -454,6 +454,12 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/document/application/business-attachment.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/data-migration/integration/data-migration-attachment-http.adapter.ts': {
           branches: 90,
           functions: 90,

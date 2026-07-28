@@ -73,7 +73,8 @@
 - `payroll_reconciliations` 只接收上述链路中已平衡的常规首批四方对账。来源只提交批次、银行回盘、已提交个税清单和对账员工来源引用，固定期望 v6、批次 v5、历史对账时间与唯一 L4 WORM；不接受来源差异、目标摘要、actorId、金额明细或账号。对账员工必须通过 ERP 身份映射，且不得与工资锁定人、代发制备人或导出批准人重合。
 - 目标重新读取 Payroll 运行、个税清单、Treasury 指令与银行回盘，复用确定性四方对账内核；仅零差异才把周期从 locked v6 历史恢复为 reconciled v9、批次从 reconciling v5 恢复为 reconciled v6。目标 `evidenceHash` 只代表重算事实，来源对账材料由 `migration_reconciliation_evidence` WORM 独立保真。全事务只发布 `payroll.reconciliation.migrated` 与 `treasury.reconciliation.migrated`，不发布普通中间状态、不调用外部系统，不开放 MCP 迁移写工具。
 - `business_attachments` 必须在全部归属实体和员工映射完成后最后执行。归属类型与用途采用一一固定白名单：审批实例/审批附件、审批历史/历史附件、候选人/简历、申请/申请附件、面试/面试附件、Offer/Offer 附件、劳动关系/劳动关系文件。payload 只接收归属来源 ID、可选上传员工来源 ID、固定用途、历史创建时间、checksum 和本条唯一附件；拒绝 tenantId、actorId、附件正文、原文件名、路径、MIME 与来源访问凭据。
-- 目标应用服务先登记 `migration_pending` 元数据，不伪造对象地址或 WORM 回执；隔离附件网关完成拉取、checksum、恶意文件扫描与不可变归档后，Worker 才调用同一应用服务，在 Mongo 事务内把附件激活为 available v2 并发布 `business.attachment.migrated`，随后才能把迁移附件账本标记为 verified。账本更新失败可幂等重试，不会重复发布事件；正文、对象定位符、checksum、上传员工标识和原文件名均不得进入 Outbox 或 MCP。
+- 目标应用服务只接受无未知字段的严格迁移输入并先登记 `migration_pending` 元数据，不伪造对象地址或 WORM 回执。每次读取只取最小投影，并在运行时反向校验可信租户、迁移引用、归属类型/用途、内容与迁移 checksum、状态、版本、对象证据和可用时间组合；受损记录以稳定 `BUSINESS_ATTACHMENT_MIGRATION_STATE_INVALID` 失败关闭，不得进入更新或 Outbox。
+- 隔离附件网关完成拉取、checksum、恶意文件扫描与不可变归档后，Worker 才能提交严格回执并调用同一应用服务，在 Mongo 事务内把附件从 `migration_pending` v1 激活为 available v2 并发布一次 `business.attachment.migrated`，随后才能把迁移附件账本标记为 verified。available 重放只有在目标证据完全相同时才视为幂等；账本更新失败可重试且不会重复发布事件。正文、对象定位符、checksum、上传员工标识和原文件名均不得进入 Outbox 或 MCP。
 
 `sourceFactHash` 的规范对象固定为 `sourceRecordId`、`sourceVersion`、`entityType`、`payloadHash`、按字典序排列的 `associationSourceIds`，以及按 `sourceAttachmentId` 排列且仅含 ID 与 checksum 的附件数组。滚动来源校验和初值为 `base64url(SHA-256(""))`，第 N 条为 `base64url(SHA-256(previous + "\\n" + sequence + ":" + sourceFactHash))`。来源导出程序必须使用相同算法，并固定 UTF-8、对象键字典序与数组规则。
 
