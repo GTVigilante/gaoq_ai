@@ -62,11 +62,11 @@
 ## 5. 覆盖率边界
 
 2026-07-28 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，380 个测试文件、4,914 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，380 个测试文件、4,954 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-91.16%（28,357/31,105）、分支 88.31%（19,165/21,700）、函数
-91.63%（5,069/5,532）、行 92.39%（25,872/28,001）。全仓四维已达到 Phase 0
+91.18%（28,403/31,149）、分支 88.37%（19,233/21,764）、函数
+91.64%（5,077/5,540）、行 92.41%（25,911/28,038）。全仓四维已达到 Phase 0
 规定的 80% 门槛。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
@@ -135,6 +135,7 @@ OP Webhook 双入口、
 `pnpm quality:treasury-outbox-writer-coverage`、
 `pnpm quality:phase4-entry-controllers-coverage`、
 `pnpm quality:care-occasion-application-coverage`、
+`pnpm quality:org-care-occasion-source-coverage`、
 `pnpm quality:care-application-coverage`、
 `pnpm quality:care-alumni-cleanup-coverage`、
 `pnpm quality:care-alumni-cleanup-egress-coverage`、
@@ -196,7 +197,7 @@ OP Webhook 双入口、
 `pnpm quality:oauth-controller-coverage`、
 `pnpm quality:strong-auth-coverage`、
 `pnpm quality:onboarding-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。一百条链路当前覆盖率基线集合为
+`pnpm quality:production-execution-authorization-coverage`。一百零一条链路当前覆盖率基线集合为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -232,6 +233,7 @@ OP Webhook 双入口、
 93.37%/90.19%/97.97%/95.29%、
 95.26%/91.55%/92.30%/95.69%、
 98.06%/94.04%/100%/100%、
+98.52%/98.83%/100%/100%、
 100%/100%/100%/100%、
 100%/100%/100%/100%、
 99.16%/93.93%/98.18%/99.05%、
@@ -281,9 +283,15 @@ OP Webhook 双入口、
 （语句/分支/函数/行）；电子签九个核心文件另达到
 98.01%/95.55%/99.00%/99.51%，审计追加三个核心文件另达到
 96.91%/97.48%/96.66%/99.00%，审计后台七个生产文件另达到
-100%/100%/100%/100%；一百项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明一百条关键链路达标，
+100%/100%/100%/100%；一百零一项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明一百零一条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
+
+关怀跨域来源门禁执行 43 项可信主体、查询主键、租户、Employee、当前
+Employment、Person、唯一开放关系、复聘历史和生日证明三元组测试，目标生产文件
+达到 98.52%/98.83%/100%/100%（语句/分支/函数/行）。损坏引用整体失败关闭，
+不会被误判为正常不具备资格后静默取消任务；标准 MCP 继续只读取 Care 应用服务
+的本人脱敏汇总，不直连 Org 来源服务。
 
 招聘面试日历可靠投递已覆盖 163 项标准命令校验、租户绑定目标去重、不可变事件
 版本、外部身份、令牌单次刷新、平台错误分类、飞书多步部分提交、钉钉/飞书结果

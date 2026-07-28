@@ -72,13 +72,14 @@ draft → pending_approval → approved → clearing → ready → scheduled →
 
 ### 2.2 生日与入职周年关怀
 
-- `Person` 生日继续按 L4 管理：身份服务专用入口只提交 `MM-DD` 与证明引用，在内存中用独立 `ORG_PERSON_BIRTHDAY_BLIND_INDEX_KEYS` 密钥环生成最多五个 HMAC 轮换指纹；组织集合、索引、事件、审计和响应均不保存生日明文。Care 只能经 `OrgCareOccasionSourceService` 窄口解析在职员工、当前/历史 Employment 与月日，普通用户不得获得内部主数据读取 Scope。
+- `Person` 生日继续按 L4 管理：身份服务专用入口只提交 `MM-DD` 与证明引用，在内存中用独立 `ORG_PERSON_BIRTHDAY_BLIND_INDEX_KEYS` 密钥环生成最多五个 HMAC 轮换指纹；组织集合、索引、事件、审计和响应均不保存生日明文。Care 只能经 `OrgCareOccasionSourceService` 窄口解析在职员工、当前/历史 Employment 与月日；窄口只接受同租户 `service/system_job` 与内部 Scope，并二次闭合校验 Employee 查询主键、当前 Employment、Person、唯一开放关系、全部复聘历史和生日证明三元组。普通用户即使获得同名 Scope、任一租户或引用错位、历史损坏、证明与盲索引不成套或密钥环无法解析时均失败关闭。
 - 本人 REST 固定为 `GET/POST/PUT /care/occasion-preferences/me` 与 `POST /care/occasion-preferences/me/unsubscribe`；员工、租户和当前劳动关系只从 Access Profile 与权威组织事实解析。未创建偏好时默认不启用任何关怀，所有写入强制 `Idempotency-Key`，更新/退订另强制 `If-Match`；全局退订同事务关闭两类关怀、清空渠道并取消全部待发送任务。
 - 租户策略只从 `CARE_OCCASION_POLICIES_JSON` 控制面读取，必须显式版本化 IANA 时区、发送本地时间、静默时段、闰日口径、复聘周年口径、受控模板和最大重试次数。发送时间落入静默时段、策略缺失、主数据摘要变化、模板变化、已离职、已退订或类型关闭均失败关闭。
 - MongoDB 是偏好与投递任务唯一事实源；同租户、员工、关怀类型和发生年度唯一。BullMQ 投递任务只携带可信租户与任务 ID，周期对账任务为空载荷；不得携带生日、联系方式、通知正文、模板内容或证据。Worker 抢占锁 15 分钟后可恢复，稳定幂等键覆盖“外部已送达但本地事务失败”，达到策略上限进入 `dead`，只能由运维 Scope 显式重放。
 - 外部通知端点固定为 `/v1/employee-care/dispatch`。ERP 只发送员工引用、关怀类型、目的 `employee_care`、模板编码、策略版本、计划时刻、偏好渠道和控制摘要；网关负责最新渠道授权、地址解析和正文渲染。回执必须绑定租户、任务与控制摘要，并使用 Ed25519 签名；未配置、非标准 HTTPS、签名/Key ID/上下文/渠道错配、超时或未来时间回执均失败关闭。
 - 事件固定为 `care.occasion.preference_updated/unsubscribed/scheduled/delivered/cancelled/dead/replayed` v1 CloudEvent，只含目的、类型、状态、策略版本、尝试次数、受控拒绝码或重放原因码；不含员工、生日、具体联系方式、通知正文或送达证据。审计同样只记录开关、类型、状态、版本与计数。
 - 指标固定为 `gaoq_care_occasion_transition_total{operation,outcome}`、`gaoq_care_occasion_dispatch_duration_seconds{outcome}`、`gaoq_care_occasion_backlog{status}` 和 `gaoq_care_occasion_oldest_age_seconds{status}`，禁止使用租户、员工、任务或渠道地址标签。
+- `pnpm quality:org-care-occasion-source-coverage` 对关怀跨域来源服务逐文件强制语句、分支、函数和行覆盖率均不低于 90%。标准 MCP 继续只复用 Care 应用服务的本人脱敏汇总，不得直接调用该来源窄口，也不得暴露生日、盲索引、Employee/Employment/Person 引用或新增关怀写能力。
 
 ### 2.3 校友授权终止后的下游清理
 
