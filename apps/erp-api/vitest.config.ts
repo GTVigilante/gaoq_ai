@@ -370,6 +370,12 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/care/integration/care-occasion-notification-http.adapter.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/org/application/org-care-occasion-source.service.ts': {
           branches: 90,
           functions: 90,

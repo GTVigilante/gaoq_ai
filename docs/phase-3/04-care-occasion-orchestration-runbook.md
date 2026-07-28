@@ -16,6 +16,13 @@ Outbox、BullMQ 周期对账和投递、Ed25519 签名回执、锁恢复、退�
 - `CARE_OCCASION_NOTIFICATION_ENDPOINT`、独立 Bearer Token、Ed25519 SPKI DER
   base64 公钥和 Key ID 必须成套配置。端点必须是独立标准 HTTPS 域名根地址。
 
+Adapter 每次调用均二次校验严格请求、唯一偏好渠道、可见 ASCII Token、规范
+Key ID 和 Ed25519 公钥；请求固定 `POST /v1/employee-care/dispatch`，显式声明
+`Accept-Encoding: identity`，正文不超过 128 KiB。成功回执只接受严格 JSON
+Content-Type、规范 Content-Length、16 KiB 有界流和 Fatal UTF-8，按原始字节
+验签后再校验租户、任务、控制摘要、允许渠道及 `scheduledAt..now+5m` 时间窗。
+非成功、压缩、超限、截断、流故障和签名错位均取消正文且不得记录上游内容。
+
 生产 Secret 只由 Secret Manager 注入，禁止进入仓库、日志、证据包或 MCP。
 API 的 Secret/ConfigMap 必须注入生日盲索引密钥环和租户策略；Worker 另须注入
 通知网关全套配置。通知网关解析出的已审批公网 CIDR 还必须加入 Helm
@@ -35,6 +42,8 @@ API 的 Secret/ConfigMap 必须注入生日盲索引密钥环和租户策略；W
 6. 执行 `pnpm quality:org-care-occasion-source-coverage`，确认内部窄口只接受同租户
    `service/system_job`，且 Employee、当前 Employment、Person、唯一开放关系、
    复聘历史和生日证明三元组的完整性门禁四维覆盖率均不低于 90%。
+7. 执行 `pnpm quality:care-occasion-notification-boundary-coverage`，确认 25 项
+   通知信任边界测试通过，目标 Adapter 的语句、分支、函数和行覆盖率均不低于 90%。
 
 ## 沙箱验收矩阵
 
