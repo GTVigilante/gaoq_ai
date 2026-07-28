@@ -45,6 +45,8 @@ describe('RecruitmentCalendarOperationsController', () => {
     ['渠道', () => fixture().controller.list('dead', 'op', undefined, undefined)],
     ['游标', () => fixture().controller.list('dead', undefined, 'bad-id', undefined)],
     ['数量', () => fixture().controller.list('dead', undefined, undefined, '101')],
+    ['前导零数量', () => fixture().controller.list('dead', undefined, undefined, '01')],
+    ['指数数量', () => fixture().controller.list('dead', undefined, undefined, '1e2')],
   ])('%s非法时在控制器边界拒绝', (_label, invoke) => {
     expect(invoke).toThrow(BadRequestException);
   });
@@ -100,6 +102,21 @@ describe('RecruitmentCalendarOperationsController', () => {
         externalEventId: 'bad id',
       },
     )).rejects.toBeInstanceOf(BadRequestException);
+    await expect(store.controller.resolve(
+      EVENT_ID,
+      'feishu',
+      'calendar-accept-002',
+      {
+        externalCalendarId: 'calendar-001',
+        decision: 'accept_succeeded',
+        reason: 'approved_exception',
+        externalEventId: 'external-event-001',
+      },
+    )).resolves.toMatchObject({ delivery: { status: 'pending' } });
+    expect(store.resolve).toHaveBeenLastCalledWith(expect.objectContaining({
+      decision: 'accept_succeeded',
+      externalEventId: 'external-event-001',
+    }));
   });
 
   it.each([
@@ -120,6 +137,13 @@ describe('RecruitmentCalendarOperationsController', () => {
     }],
     ['idempotency', EVENT_ID, 'feishu', 'bad', {
       externalCalendarId: 'calendar-001', decision: 'retry', reason: 'identity_fixed',
+    }],
+    ['body 缺失', EVENT_ID, 'feishu', 'calendar-key-001', null],
+    ['body 额外字段', EVENT_ID, 'feishu', 'calendar-key-001', {
+      externalCalendarId: 'calendar-001',
+      decision: 'retry',
+      reason: 'identity_fixed',
+      accessToken: 'forbidden',
     }],
   ])('%s 写入参数非法时失败关闭', async (_label, eventId, channel, key, body) => {
     const store = fixture();
@@ -142,5 +166,42 @@ describe('RecruitmentCalendarOperationsController', () => {
     )).rejects.toThrow('无法处置');
     expect(store.record).toHaveBeenCalledOnce();
     expect(store.record).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'failure' }));
+  });
+
+  it('业务处置失败时审计故障不得覆盖原始异常', async () => {
+    const store = fixture();
+    const businessError = new Error('日历处置失败');
+    store.resolve.mockRejectedValueOnce(businessError);
+    store.record.mockRejectedValueOnce(new Error('审计不可用'));
+
+    await expect(store.controller.resolve(
+      EVENT_ID,
+      'dingtalk',
+      'calendar-retry-004',
+      {
+        externalCalendarId: 'calendar-001',
+        decision: 'retry',
+        reason: 'credentials_fixed',
+      },
+    )).rejects.toBe(businessError);
+    expect(store.record).toHaveBeenCalledOnce();
+  });
+
+  it('业务已提交后的成功审计故障不得改变处置结果', async () => {
+    const store = fixture();
+    store.record.mockRejectedValueOnce(new Error('审计不可用'));
+
+    await expect(store.controller.resolve(
+      EVENT_ID,
+      'feishu',
+      'calendar-retry-005',
+      {
+        externalCalendarId: 'calendar-001',
+        decision: 'retry',
+        reason: 'provider_recovered',
+      },
+    )).resolves.toMatchObject({ delivery: { status: 'pending' } });
+    expect(store.resolve).toHaveBeenCalledOnce();
+    expect(store.record).toHaveBeenCalledOnce();
   });
 });

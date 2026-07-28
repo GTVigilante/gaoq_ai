@@ -62,7 +62,7 @@ describe('OrgEmployeeProvisioningController', () => {
     expect(JSON.stringify(record.mock.calls)).not.toContain('private@example.com');
   });
 
-  it('业务已成功但持久审计失败时不得追加虚假的业务失败审计', async () => {
+  it('业务已成功但持久审计失败时仍返回已提交结果', async () => {
     const submit = vi.fn().mockResolvedValue({
       requestId: '01K00000000000000000000000',
       status: 'pending',
@@ -74,9 +74,26 @@ describe('OrgEmployeeProvisioningController', () => {
       { record } as unknown as AuditService,
     );
 
-    await expect(controller.submit('idempotency-key-001', body)).rejects.toThrow('审计不可用');
+    await expect(controller.submit('idempotency-key-001', body)).resolves.toMatchObject({
+      requestId: '01K00000000000000000000000',
+      status: 'pending',
+    });
     expect(record).toHaveBeenCalledOnce();
     expect(record).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'success' }));
+  });
+
+  it('业务失败后的审计故障不得覆盖原始业务异常', async () => {
+    const businessError = new Error('员工不允许开户');
+    const submit = vi.fn().mockRejectedValue(businessError);
+    const record = vi.fn().mockRejectedValue(new Error('审计不可用'));
+    const controller = new OrgEmployeeProvisioningController(
+      { submit } as unknown as OrgEmployeeProvisioningService,
+      { record } as unknown as AuditService,
+    );
+
+    await expect(controller.submit('idempotency-key-001', body))
+      .rejects.toBe(businessError);
+    expect(record).toHaveBeenCalledOnce();
   });
 
   it('缺失 Idempotency-Key 时传入空串并由领域服务统一失败关闭', async () => {

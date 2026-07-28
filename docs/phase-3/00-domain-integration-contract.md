@@ -165,7 +165,7 @@ draft → pending_approval → approved → clearing → ready → scheduled →
 - Worker 只能自动认领 `pending`。超过五分钟仍为 `processing` 的记录代表平台结果不确定，必须转入 `manual_review`，禁止仅凭锁超时自动重放；平台成功后的本地终态或审计故障必须与普通失败隔离，禁止将已提交副作用回写为失败。
 - 不可变事件版本必须与当前 Recruitment 投影精确核对：投影版本更新则旧任务以 `superseded` 结束，投影版本落后或身份事实损坏则人工复核，禁止用旧幂等键把当前排期写入平台。
 - 飞书“创建事件后添加参与人”等多步写入一旦出现部分提交，必须保存经校验的外部事件标识并标记结果不确定；钉钉/飞书成功响应中的事件标识、请求标识和全部标准命令必须在适配器边界重新验证。
-- `GET /integrations/recruitment-calendar-deliveries` 只返回租户内脱敏终态摘要；`POST /integrations/recruitment-calendar-deliveries/:eventId/:channel/resolutions` 以 `Idempotency-Key` 和 R2 审计执行 `retry` 或 `accept_succeeded`。结果不确定类记录只有完成平台核验后的 `approved_exception` 才可处置。
+- `GET /integrations/recruitment-calendar-deliveries` 只返回租户内脱敏终态摘要，`limit` 只接受规范十进制 `1..100`；`POST /integrations/recruitment-calendar-deliveries/:eventId/:channel/resolutions` 以 `Idempotency-Key` 和 R2 审计执行 `retry` 或 `accept_succeeded`，严格拒绝未知正文、Token、平台回执或状态覆盖字段。结果不确定类记录只有完成平台核验后的 `approved_exception` 才可处置。业务失败后的审计故障不得覆盖原始异常，处置事务已提交后的审计故障不得改变成功响应。
 - 标准 MCP 只保留 `recruitment_interview_get` 等应用服务只读能力；永久不注册日历创建、更新、取消、重试、人工处置、对账、外部事件标识或平台凭据能力。
 - 外部事件标题固定为无候选人信息的“招聘面试”；仅在业务必要范围向日历平台发送时间、时区、地点和已验证面试官外部 ID，审计、日志和 Outbox 均不得记录地点明文。
 

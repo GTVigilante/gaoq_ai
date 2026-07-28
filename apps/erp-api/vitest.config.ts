@@ -1126,6 +1126,12 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/integration/integration.controller.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/integration/op-org-http.client.ts': {
           branches: 90,
           functions: 90,

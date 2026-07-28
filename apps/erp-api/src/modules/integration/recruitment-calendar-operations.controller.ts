@@ -5,11 +5,13 @@ import {
   Get,
   Headers,
   HttpCode,
+  Logger,
   Param,
   Post,
   Query,
 } from '@nestjs/common';
 import { ULID_PATTERN } from '@gaoq/shared-utils';
+import { z } from 'zod';
 
 import { AuditService } from '../../core/audit/audit.service.js';
 import { RequiredScopes } from '../identity/auth.decorators.js';
@@ -31,10 +33,18 @@ const REASONS: readonly RecruitmentCalendarResolutionReason[] = [
 const DECISIONS: readonly RecruitmentCalendarResolutionDecision[] = [
   'retry', 'accept_succeeded',
 ];
+const resolutionRequestSchema = z.object({
+  externalCalendarId: z.string(),
+  decision: z.string(),
+  reason: z.string(),
+  externalEventId: z.string().optional(),
+}).strict();
 
 /** 招聘日历人工核验接口；明确不注册为 MCP Tool。 */
 @Controller('integrations/recruitment-calendar-deliveries')
 export class RecruitmentCalendarOperationsController {
+  private readonly logger = new Logger(RecruitmentCalendarOperationsController.name);
+
   constructor(
     private readonly operations: RecruitmentCalendarOperationsService,
     private readonly audit: AuditService,
@@ -63,21 +73,17 @@ export class RecruitmentCalendarOperationsController {
     @Param('eventId') eventId: string,
     @Param('channel') channel: string,
     @Headers('idempotency-key') idempotencyKey: string | undefined,
-    @Body() body: {
-      readonly externalCalendarId?: string;
-      readonly decision?: string;
-      readonly reason?: string;
-      readonly externalEventId?: string;
-    },
+    @Body() body: unknown,
   ) {
+    const request = this.requireResolutionRequest(body);
     const parsedEventId = this.requireUlid(eventId);
     const parsedChannel = this.requireChannel(channel);
-    const externalCalendarId = this.requireCalendarId(body.externalCalendarId);
-    const decision = this.requireDecision(body.decision);
-    const reason = this.requireReason(body.reason);
+    const externalCalendarId = this.requireCalendarId(request.externalCalendarId);
+    const decision = this.requireDecision(request.decision);
+    const reason = this.requireReason(request.reason);
     const parsedExternalEventId = this.requireExternalEventId(
       decision,
-      body.externalEventId,
+      request.externalEventId,
     );
     const parsedIdempotencyKey = this.requireIdempotencyKey(idempotencyKey);
     const metadata = { decision, reason };
@@ -95,25 +101,64 @@ export class RecruitmentCalendarOperationsController {
         idempotencyKey: parsedIdempotencyKey,
       });
     } catch (error) {
+      try {
+        await this.audit.record({
+          action: 'integration.recruitment_calendar.resolve',
+          resourceType: 'recruitment_calendar_delivery',
+          resourceId: `${parsedEventId}:${parsedChannel}`,
+          riskLevel: 'R2',
+          outcome: 'failure',
+          metadata,
+        });
+      } catch {
+        this.logger.error({
+          code: 'RECRUITMENT_CALENDAR_RESOLUTION_FAILURE_AUDIT_FAILED',
+          eventId: parsedEventId,
+          channel: parsedChannel,
+        });
+      }
+      throw error;
+    }
+    try {
       await this.audit.record({
         action: 'integration.recruitment_calendar.resolve',
         resourceType: 'recruitment_calendar_delivery',
         resourceId: `${parsedEventId}:${parsedChannel}`,
         riskLevel: 'R2',
-        outcome: 'failure',
+        outcome: 'success',
         metadata,
       });
-      throw error;
+    } catch {
+      this.logger.error({
+        code: 'RECRUITMENT_CALENDAR_RESOLUTION_AUDIT_AFTER_COMMIT_FAILED',
+        eventId: parsedEventId,
+        channel: parsedChannel,
+      });
     }
-    await this.audit.record({
-      action: 'integration.recruitment_calendar.resolve',
-      resourceType: 'recruitment_calendar_delivery',
-      resourceId: `${parsedEventId}:${parsedChannel}`,
-      riskLevel: 'R2',
-      outcome: 'success',
-      metadata,
-    });
     return result;
+  }
+
+  private requireResolutionRequest(value: unknown): {
+    readonly externalCalendarId: string;
+    readonly decision: string;
+    readonly reason: string;
+    readonly externalEventId?: string;
+  } {
+    const parsed = resolutionRequestSchema.safeParse(value);
+    if (parsed.success) {
+      return {
+        externalCalendarId: parsed.data.externalCalendarId,
+        decision: parsed.data.decision,
+        reason: parsed.data.reason,
+        ...(parsed.data.externalEventId === undefined
+          ? {}
+          : { externalEventId: parsed.data.externalEventId }),
+      };
+    }
+    throw new BadRequestException({
+      code: 'RECRUITMENT_CALENDAR_RESOLUTION_REQUEST_INVALID',
+      message: '日历处置请求结构无效',
+    });
   }
 
   private requireStatus(value: string | undefined): 'manual_review' | 'dead' {
@@ -192,8 +237,8 @@ export class RecruitmentCalendarOperationsController {
   }
 
   private requireLimit(value: string | undefined): number {
-    const parsed = value === undefined ? 50 : Number(value);
-    if (Number.isInteger(parsed) && parsed >= 1 && parsed <= 100) return parsed;
+    if (value === undefined) return 50;
+    if (/^(?:[1-9]|[1-9][0-9]|100)$/u.test(value)) return Number(value);
     throw new BadRequestException({
       code: 'RECRUITMENT_CALENDAR_LIMIT_INVALID',
       message: 'limit 必须为 1..100',
