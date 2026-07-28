@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
+import { ULID_PATTERN } from '@gaoq/shared-utils';
 import type { ClientSession, Connection, Model } from 'mongoose';
 
 import { OutboxRecord, type OutboxDocument } from '../org/persistence/outbox.schema.js';
@@ -22,6 +23,12 @@ import {
 const LOCK_TIMEOUT_MS = 5 * 60 * 1_000;
 const MAX_RELAY_ATTEMPTS = 6;
 const WORKER_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const CALENDAR_ID_PATTERN = /^[\x21-\x7E]{1,256}$/;
+const EVENT_TYPE_PATTERN = /^cn\.gaoq\.erp\.recruitment\.interview\.(scheduled|cancelled|completed|migrated)\.v1$/;
+
+/** Outbox 事务可能已经提交；禁止再释放为 pending 或重复扇出。 */
+class RecruitmentCalendarRelayPostCommitError extends Error {}
 
 interface ClaimedInterviewEvent {
   readonly eventId: string;
@@ -60,9 +67,11 @@ export class RecruitmentCalendarOutboxRelayService {
       const event = await this.claimNext(workerId, new Date());
       if (event === null) break;
       try {
+        this.assertEvent(event);
         await this.fanOut(event, workerId);
         relayed += 1;
-      } catch {
+      } catch (error) {
+        if (error instanceof RecruitmentCalendarRelayPostCommitError) throw error;
         this.logger.warn({ code: 'RECRUITMENT_CALENDAR_RELAY_FAILED', eventId: event.eventId });
         await this.releaseAfterFailure(event, workerId, new Date());
       }
@@ -97,6 +106,8 @@ export class RecruitmentCalendarOutboxRelayService {
     const targets = action === null ? [] : await this.targetsFor(event, action);
     if (action === 'upsert' && targets.length === 0) throw new Error('CALENDAR_BINDING_MISSING');
     const session = await this.connection.startSession();
+    let transactionFailed = false;
+    let transactionError: unknown;
     try {
       await session.withTransaction(async () => {
         if (action !== null) {
@@ -112,8 +123,19 @@ export class RecruitmentCalendarOutboxRelayService {
         );
         if (updated.matchedCount !== 1) throw new Error('OUTBOX_CLAIM_LOST');
       });
-    } finally {
+    } catch (error) {
+      transactionFailed = true;
+      transactionError = error;
+    }
+    let cleanupFailed = false;
+    try {
       await session.endSession();
+    } catch {
+      cleanupFailed = true;
+    }
+    if (transactionFailed) throw transactionError;
+    if (cleanupFailed) {
+      throw new RecruitmentCalendarRelayPostCommitError('日历 Relay 已提交但会话清理失败');
     }
   }
 
@@ -128,6 +150,7 @@ export class RecruitmentCalendarOutboxRelayService {
     ).lean().exec();
     const unique = new Map<string, ActiveCalendarTarget>();
     for (const record of records) {
+      this.assertTarget(record.channel, record.externalCalendarId);
       const key = `${record.channel}:${record.externalCalendarId}`;
       unique.set(key, Object.freeze({
         channel: record.channel,
@@ -150,12 +173,20 @@ export class RecruitmentCalendarOutboxRelayService {
       ).lean().exec(),
     ]);
     const enabledPlatforms = new Set(platformRecords.map((record) => record.channel));
-    return Object.freeze(calendarRecords
-      .filter((record) => enabledPlatforms.has(record.channel))
-      .map((record) => Object.freeze({
+    const targets: ActiveCalendarTarget[] = [];
+    for (const record of calendarRecords) {
+      if (!enabledPlatforms.has(record.channel)) continue;
+      this.assertTarget(record.channel, record.externalCalendarId);
+      targets.push(Object.freeze({
         channel: record.channel,
         externalCalendarId: record.externalCalendarId,
-      }))
+      }));
+    }
+    const unique = new Map(targets.map((target) => [
+      `${target.channel}:${target.externalCalendarId}`,
+      target,
+    ]));
+    return Object.freeze([...unique.values()]
       .sort((left, right) => left.channel.localeCompare(right.channel)));
   }
 
@@ -165,7 +196,7 @@ export class RecruitmentCalendarOutboxRelayService {
     action: RecruitmentCalendarDeliveryAction,
     session: ClientSession,
   ): Promise<void> {
-    await this.deliveries.updateOne(
+    const result = await this.deliveries.updateOne(
       {
         tenantId: event.tenantId,
         eventId: event.eventId,
@@ -184,6 +215,7 @@ export class RecruitmentCalendarOutboxRelayService {
         upsert: true, session, timestamps: false, runValidators: true, setDefaultsOnInsert: true,
       },
     );
+    if (!result.acknowledged) throw new Error('CALENDAR_DELIVERY_CREATE_UNACKNOWLEDGED');
   }
 
   private action(eventType: string): RecruitmentCalendarDeliveryAction | null {
@@ -199,9 +231,13 @@ export class RecruitmentCalendarOutboxRelayService {
     workerId: string,
     now: Date,
   ): Promise<void> {
-    const attempts = event.attempts + 1;
+    const attempts = Number.isInteger(event.attempts) &&
+      event.attempts >= 0 &&
+      event.attempts < MAX_RELAY_ATTEMPTS
+      ? event.attempts + 1
+      : MAX_RELAY_ATTEMPTS;
     const exhausted = attempts >= MAX_RELAY_ATTEMPTS;
-    await this.outbox.updateOne(
+    const result = await this.outbox.updateOne(
       { eventId: event.eventId, status: 'dispatching', lockedBy: workerId },
       { $set: {
         status: exhausted ? 'dead' : 'pending', attempts,
@@ -210,6 +246,32 @@ export class RecruitmentCalendarOutboxRelayService {
       } },
       { timestamps: false },
     );
+    if (result.matchedCount !== 1) throw new Error('RECRUITMENT_CALENDAR_RELAY_CLAIM_LOST');
+  }
+
+  private assertEvent(event: ClaimedInterviewEvent): void {
+    if (
+      !ULID_PATTERN.test(event.eventId) ||
+      !ID_PATTERN.test(event.tenantId) ||
+      !ULID_PATTERN.test(event.aggregateId) ||
+      !Number.isSafeInteger(event.aggregateVersion) ||
+      event.aggregateVersion < 1 ||
+      !EVENT_TYPE_PATTERN.test(event.eventType) ||
+      !Number.isInteger(event.attempts) ||
+      event.attempts < 0 ||
+      event.attempts >= MAX_RELAY_ATTEMPTS
+    ) {
+      throw new Error('RECRUITMENT_CALENDAR_OUTBOX_INVALID');
+    }
+  }
+
+  private assertTarget(channel: string, externalCalendarId: string): void {
+    if (
+      (channel !== 'dingtalk' && channel !== 'feishu') ||
+      !CALENDAR_ID_PATTERN.test(externalCalendarId)
+    ) {
+      throw new Error('RECRUITMENT_CALENDAR_BINDING_INVALID');
+    }
   }
 
   private assertWorker(workerId: string, limit: number): void {

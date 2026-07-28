@@ -145,6 +145,11 @@ draft → pending_approval → approved → clearing → ready → scheduled →
 - Relay 创建投递轨迹时固化 `externalCalendarId`，后续即使租户切换默认日历，重试、更新和取消仍只操作原目标日历；轨迹禁止保存地点、参与人、Token 或候选人资料。
 - 钉钉使用 Calendar 1.0 的 `x-client-token` 原子创建/更新日程与参与人；飞书使用 Calendar v4 `idempotency_key` 创建日程，并通过参与人接口补齐 `user_id`。两个适配器都只能通过统一令牌服务取短期访问令牌，401 最多刷新一次。
 - Worker 任务分为 `relay:calendar`、`deliver:calendar:dingtalk` 和 `deliver:calendar:feishu`；平台限流、网络错误和外部身份尚未就绪按指数退避重试，业务错误、冲突或耗尽重试进入人工介入，不反写 Recruitment 状态。
+- Worker 只能自动认领 `pending`。超过五分钟仍为 `processing` 的记录代表平台结果不确定，必须转入 `manual_review`，禁止仅凭锁超时自动重放；平台成功后的本地终态或审计故障必须与普通失败隔离，禁止将已提交副作用回写为失败。
+- 不可变事件版本必须与当前 Recruitment 投影精确核对：投影版本更新则旧任务以 `superseded` 结束，投影版本落后或身份事实损坏则人工复核，禁止用旧幂等键把当前排期写入平台。
+- 飞书“创建事件后添加参与人”等多步写入一旦出现部分提交，必须保存经校验的外部事件标识并标记结果不确定；钉钉/飞书成功响应中的事件标识、请求标识和全部标准命令必须在适配器边界重新验证。
+- `GET /integrations/recruitment-calendar-deliveries` 只返回租户内脱敏终态摘要；`POST /integrations/recruitment-calendar-deliveries/:eventId/:channel/resolutions` 以 `Idempotency-Key` 和 R2 审计执行 `retry` 或 `accept_succeeded`。结果不确定类记录只有完成平台核验后的 `approved_exception` 才可处置。
+- 标准 MCP 只保留 `recruitment_interview_get` 等应用服务只读能力；永久不注册日历创建、更新、取消、重试、人工处置、对账、外部事件标识或平台凭据能力。
 - 外部事件标题固定为无候选人信息的“招聘面试”；仅在业务必要范围向日历平台发送时间、时区、地点和已验证面试官外部 ID，审计、日志和 Outbox 均不得记录地点明文。
 
 ### 4.3 e签宝

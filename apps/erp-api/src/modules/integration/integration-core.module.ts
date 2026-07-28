@@ -96,6 +96,7 @@ import {
   RecruitmentCalendarBindingSchema,
 } from './recruitment-calendar-binding.schema.js';
 import { RecruitmentCalendarDeliveryService } from './recruitment-calendar-delivery.service.js';
+import { RecruitmentCalendarOperationsService } from './recruitment-calendar-operations.service.js';
 import { DingTalkRecruitmentCalendarAdapter } from './dingtalk-recruitment-calendar.adapter.js';
 import { FeishuRecruitmentCalendarAdapter } from './feishu-recruitment-calendar.adapter.js';
 import {
@@ -229,6 +230,7 @@ import { PayrollMasterDataSnapshotService } from './payroll-master-data-snapshot
     OrgOutboxRelayService,
     RecruitmentCalendarOutboxRelayService,
     RecruitmentCalendarDeliveryService,
+    RecruitmentCalendarOperationsService,
     OrgDeliveryService,
     OrgDeliveryOperationsService,
     OrgExternalIdentityResolver,
@@ -336,6 +338,7 @@ import { PayrollMasterDataSnapshotService } from './payroll-master-data-snapshot
     OrgOutboxRelayService,
     RecruitmentCalendarOutboxRelayService,
     RecruitmentCalendarDeliveryService,
+    RecruitmentCalendarOperationsService,
     OrgDeliveryService,
     OrgDeliveryOperationsService,
     OrgReconciliationService,

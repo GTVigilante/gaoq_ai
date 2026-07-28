@@ -6,6 +6,9 @@ import { IntegrationController } from './integration.controller.js';
 import { OrgEmployeeProvisioningController } from './org-employee-provisioning.controller.js';
 import { PayrollMasterDataSnapshotController } from './payroll-master-data-snapshot.controller.js';
 import { AttendanceProviderCoverageController } from './attendance-provider-coverage.controller.js';
+import {
+  RecruitmentCalendarOperationsController,
+} from './recruitment-calendar-operations.controller.js';
 
 /** 集成 HTTP/Webhook 外壳；后台消费者只导入 IntegrationCoreModule。 */
 @Module({
@@ -16,6 +19,7 @@ import { AttendanceProviderCoverageController } from './attendance-provider-cove
     ESignWebhookController,
     PayrollMasterDataSnapshotController,
     AttendanceProviderCoverageController,
+    RecruitmentCalendarOperationsController,
   ],
   exports: [IntegrationCoreModule],
 })
