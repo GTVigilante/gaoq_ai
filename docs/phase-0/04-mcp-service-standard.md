@@ -20,6 +20,12 @@ MCP 是 GaoQ-OS 的标准 AI 接入面，不是独立业务实现。Web、REST�
 - 访问令牌必须校验 `iss/aud/resource/sub/tenant_id/scope/exp/jti`。
 - MCP令牌只用于ERP MCP资源；禁止原样透传给OP、钉钉、飞书或其他上游。
 - 废弃长期明文 MCP API Key；客户端凭据只保存哈希或非对称公钥材料并支持吊销、轮换和有效期。
+- Client Credentials 的限流、失败审计和租户归属只能从实际呈现的规范 Basic
+  凭据或已验签断言主体派生；请求体 `client_id` 只能作一致性约束，不能建立身份。
+  `private_key_jwt` 必须绑定固定 token endpoint/issuer audience、`iss=sub`、短时
+  `iat/exp`、唯一 `jti` 和 Redis 原子防重放；Redis 不可用时失败关闭。
+- 客户端认证通过后的 resource 或 Scope 越权必须在签发前拒绝，并记录不含资源
+  正文、Scope 明细、密钥、断言或 Token 的稳定 R1 失败审计。
 
 ### 2.2 Scope与数据范围
 

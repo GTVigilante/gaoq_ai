@@ -62,11 +62,11 @@
 ## 5. 覆盖率边界
 
 2026-07-28 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，359 个测试文件、3,887 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，359 个测试文件、3,899 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-89.17%（26,809/30,065）、分支 86.11%（17,831/20,706）、函数
-89.62%（4,819/5,377）、行 90.62%（24,488/27,021）。全仓四维已达到 Phase 0
+89.22%（26,832/30,073）、分支 86.17%（17,844/20,707）、函数
+89.62%（4,820/5,378）、行 90.66%（24,503/27,027）。全仓四维已达到 Phase 0
 规定的 80% 门槛。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
@@ -95,7 +95,7 @@ MCP 确认服务、MCP HTTP 入口、MCP 运行时、MCP Tool 应用层、OP 审
 OP Webhook 双入口、
 薪酬影子周期、薪酬运行、薪酬审批、薪酬主数据、专业算薪主数据快照、薪酬四方对账、薪酬税务申报、薪酬 L4 数据加密、资金支付、Treasury 银行回盘、Treasury L4 数据加密、Treasury Outbox、Phase 4 REST 入口、Care 纪念日应用、Care 离职应用、校友授权清理协调、
 数据迁移控制面、数据迁移打包 CLI、Knowledge 考试运行 Relay、Knowledge 搜索索引 Relay、Knowledge REST 入口控制器、Knowledge 应用服务、Knowledge 考试应用与入口、Knowledge 领域模型、Knowledge 持久化 Schema、Knowledge 考试重放 CLI、考勤应用、考勤仓储、Attendance 规则纵切、考勤供应商拉取、考勤供应商入站处理、电子签回调处理、
-招聘渠道拉取、招聘渠道入站处理、招聘渠道职位扇出、招聘渠道阶段扇出、招聘申请、招聘面试、招聘简历、招聘渠道职位投递、招聘渠道阶段回传、招聘管理、人才全周期应用、人才全周期仓储、招聘 Offer、Care 仓储、组织仓储、招聘仓储、知识库仓储、营销 CMS、营销入口与幂等核心、营销副作用可靠投递、审批通知可靠投递、组织主数据外部投递可靠性、组织平台适配器安全边界、身份令牌与 OAuth 授权事务、OAuth 授权控制器、WebAuthn 强认证、入职应用与入口控制器、生产执行授权服务和 Phase 5 管理分析已建立
+招聘渠道拉取、招聘渠道入站处理、招聘渠道职位扇出、招聘渠道阶段扇出、招聘申请、招聘面试、招聘简历、招聘渠道职位投递、招聘渠道阶段回传、招聘管理、人才全周期应用、人才全周期仓储、招聘 Offer、Care 仓储、组织仓储、招聘仓储、知识库仓储、营销 CMS、营销入口与幂等核心、营销副作用可靠投递、审批通知可靠投递、组织主数据外部投递可靠性、组织平台适配器安全边界、身份令牌与 OAuth 授权事务、OAuth Client Credentials 服务身份签发、OAuth 授权控制器、WebAuthn 强认证、入职应用与入口控制器、生产执行授权服务和 Phase 5 管理分析已建立
 独立不可回退门禁：
 `pnpm quality:tenant-context-coverage`、
 `pnpm quality:audit-append-coverage`、
@@ -177,10 +177,11 @@ OP Webhook 双入口、
 `pnpm quality:approval-controller-coverage`、
 `pnpm quality:approval-template-domain-coverage`、
 `pnpm quality:identity-token-entry-coverage`、
+`pnpm quality:oauth-client-credentials-coverage`、
 `pnpm quality:oauth-controller-coverage`、
 `pnpm quality:strong-auth-coverage`、
 `pnpm quality:onboarding-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。八十四条链路当前覆盖率基线集合为
+`pnpm quality:production-execution-authorization-coverage`。八十五条链路当前覆盖率基线集合为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -253,12 +254,12 @@ OP Webhook 双入口、
 100%/100%/100%/100%、98.02%/97.43%/95.83%/98.13%、
 97.18%/95.18%/100%/97.99%、98.61%/95.04%/100%/99.07%、
 98.23%/97.43%/98.24%/98.85%、97.80%/93.10%/100%/100%、
-99.59%/98.23%/100%/99.56%
+99.59%/98.23%/100%/99.56%、97.60%/95.14%/100%/99.07%
 （语句/分支/函数/行）；电子签九个核心文件另达到
 98.01%/95.55%/99.00%/99.51%，审计追加三个核心文件另达到
 96.91%/97.48%/96.66%/99.00%，审计后台七个生产文件另达到
-100%/100%/100%/100%；八十四项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明八十四条关键链路达标，
+100%/100%/100%/100%；八十五项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明八十五条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 Phase 5 管理分析纵切已覆盖 52 项共享契约、历史审批快照、不可变最终审批动作、
@@ -312,6 +313,13 @@ HTTP/平台错误分类及敏感正文不泄露。五个目标文件合计覆盖
 97.80%/93.10%/100%/100%（语句/分支/函数/行），且各自四维均不低于 90%。
 独立门禁已接入 `pnpm precheck`。标准 MCP 只消费该可信身份进入应用服务，
 不因 OAuth 成功获得数据库、上游 Token 或 R3 能力。
+
+OAuth Client Credentials 服务身份签发已覆盖 22 项规范 Basic、严格 UTF-8、
+官方 MCP SDK `private_key_jwt`、短时断言、`jti` 原子防重放、资源/Scope 越权、
+签名与 Redis 故障以及失败审计归属测试。正文 `client_id` 不再能把认证失败记到
+其他客户端；认证后的资源和 Scope 拒绝均在签名前形成稳定、最小化 R1 审计。
+目标文件覆盖率达到 97.60%/95.14%/100%/99.07%（语句/分支/函数/行），独立
+四维 90% 门禁已接入 `pnpm precheck`。
 
 OAuth 授权控制器已覆盖 45 项预注册回调、PKCE、授权决策、授权码、
 `client_credentials`、协议错误与限流测试。Basic 和 `private_key_jwt` 的

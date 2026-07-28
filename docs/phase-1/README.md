@@ -14,3 +14,9 @@ Ed25519 签名绑定、16 KiB 严格 JSON 回执、时钟与保留期校验。HM
 与 WORM Client 均纳入逐文件四维 90% 门禁。审计 Worker 另强制固定空载荷任务、
 六小时幂等调度、指数退避、无重入队列观测及 API/Worker 模块隔离，七个生产文件
 逐文件四维均为 100%；真实 WORM 抽样回读仍是外部验收。
+
+OAuth Client Credentials 已强制规范 Basic/UTF-8、RS256/ES256
+`private_key_jwt`、短时断言与 Redis 原子防重放；客户端归属只从实际认证材料
+推导，正文 `client_id` 不能注入失败审计。认证后的 resource/Scope 越权在签名前
+失败关闭并记录最小 R1 审计。22 项专项测试达到
+97.60%/95.14%/100%/99.07%，逐文件四维 90% 门禁已接入 `pnpm precheck`。

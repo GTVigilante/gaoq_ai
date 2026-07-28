@@ -32,6 +32,13 @@ Redis 不是授权事实源。服务在以下每个阶段都重新读取当前�
 
 - 交互式 MCP 客户端走 Authorization Code + PKCE；无人值守 MCP 客户端走已登记
   `client_secret_basic` 或 `private_key_jwt`，两者均受 resource 与 Scope 白名单约束。
+- Basic 只接受 512 字节内、规范 Base64 和严格 UTF-8 的单一
+  `clientId:secret`；`private_key_jwt` 只接受 RS256/ES256、`typ=JWT`、
+  `iss=sub=clientId`、登记 audience、五分钟内有效期和唯一 `jti`。断言在签发前
+  通过 Redis `SET NX EX` 原子消费，防重放设施异常时不降级签发。
+- 限流和失败审计的客户端归属只从呈现的 Basic 凭据或断言 `iss` 推导；正文
+  `client_id` 只作一致性校验。认证后的 resource/Scope 拒绝分别形成
+  `resource_denied`/`scope_denied` 最小 R1 审计，且发生在令牌签名前。
 - OAuth 令牌只授予调用 ERP REST/MCP 应用服务的身份，不授予绕过业务服务访问
   MongoDB、上游 Token、Provider 控制面或 R3 能力的权限。
 - 钉钉、飞书、OP、银行、税务和其他适配器的后台 `service/system_job` 上下文由
@@ -41,7 +48,12 @@ Redis 不是授权事实源。服务在以下每个阶段都重新读取当前�
 
 - `pnpm quality:identity-token-entry-coverage` 固定覆盖 JWT 验签/声明投影、人员会话、
   MCP 凭据撤销、授权请求重验、PKCE、一次性消费、碰撞、并发和受损记录。
+- `pnpm quality:oauth-client-credentials-coverage` 固定覆盖规范 Basic、
+  `private_key_jwt`、官方 MCP SDK 请求形态、凭据轮换、断言防重放、资源/Scope
+  越权、签名故障和可信审计归属。
 - `access-token-verifier.ts` 与 `oauth-authorization-transaction.service.ts` 逐文件
   语句、分支、函数和行覆盖率均不得低于 90%，并由 `pnpm check` 执行。
+- `oauth-client-credentials-grant.service.ts` 同样逐文件四维不得低于 90%；当前专项
+  22 项测试达到 97.60%/95.14%/100%/99.07%（语句/分支/函数/行）。
 - 生产仍须验证真实域名、TLS、KMS/Secret Manager、密钥轮换、Redis 故障与恢复、
   浏览器兼容、真实 MCP 客户端以及跨租户拒绝证据；本地测试不替代外部验收。
