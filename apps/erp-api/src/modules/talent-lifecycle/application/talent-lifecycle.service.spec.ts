@@ -70,7 +70,7 @@ function fixture(
   const onboarding = { getByCandidateId: vi.fn().mockResolvedValue([]) };
   const organization = { getByCandidateId: vi.fn().mockResolvedValue(null) };
   const care = {
-    getByEmploymentIds: vi.fn().mockResolvedValue({
+    getByEmployments: vi.fn().mockResolvedValue({
       cases: [],
       alumniConsents,
     }),
@@ -341,7 +341,7 @@ describe('TalentLifecycleService', () => {
 
   it('阶段推导优先级覆盖离职、任职、入职和 Offer', async () => {
     const offboarding = fixture();
-    offboarding.care.getByEmploymentIds.mockResolvedValueOnce({
+    offboarding.care.getByEmployments.mockResolvedValueOnce({
       cases: [{
         id: 'care-active',
         status: 'clearance',
@@ -358,6 +358,7 @@ describe('TalentLifecycleService', () => {
       personId: 'person-001',
       employments: [{
         id: 'employment-active',
+        employeeId: 'employee-active',
         employeeNo: 'E001',
         employeeStatus: 'active',
         effectiveTo: null,
@@ -367,6 +368,10 @@ describe('TalentLifecycleService', () => {
     });
     await expect(employed.run(() => employed.service.get(candidate.candidateId)))
       .resolves.toMatchObject({ stage: 'employed', employeeStatus: 'active' });
+    expect(employed.care.getByEmployments).toHaveBeenCalledWith({
+      personId: 'person-001',
+      employments: [{ id: 'employment-active', employeeId: 'employee-active' }],
+    });
 
     const onboarding = fixture();
     onboarding.onboarding.getByCandidateId.mockResolvedValueOnce([{
@@ -405,7 +410,7 @@ describe('TalentLifecycleService', () => {
 
     const former = fixture();
     former.recruitment.get.mockResolvedValueOnce({ ...candidate, applications: [] });
-    former.care.getByEmploymentIds.mockResolvedValueOnce({
+    former.care.getByEmployments.mockResolvedValueOnce({
       cases: [{
         id: 'care-completed',
         status: 'completed',
@@ -471,6 +476,7 @@ describe('TalentLifecycleService', () => {
       personId: 'person-001',
       employments: [{
         id: 'employment-ended',
+        employeeId: 'employee-ended',
         employeeNo: 'E001',
         employeeStatus: 'terminated',
         effectiveTo: '2026-07-25T00:00:00.000Z',
@@ -478,7 +484,7 @@ describe('TalentLifecycleService', () => {
         updatedAt: '2026-07-25T00:00:00.000Z',
       }],
     });
-    store.care.getByEmploymentIds.mockResolvedValueOnce({
+    store.care.getByEmployments.mockResolvedValueOnce({
       cases: [{
         id: 'care-completed',
         status: 'completed',

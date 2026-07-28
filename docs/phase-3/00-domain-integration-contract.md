@@ -108,6 +108,10 @@ draft → pending_approval → approved → clearing → ready → scheduled →
 - 服务触点只保存受控类型、渠道、方向、结果、责任人、发生时间和下一步行动；自由备注使用 Recruitment L3 密钥域、`talent_touchpoint` AAD 加密。索引、日志、审计、Outbox 和幂等响应快照均不得包含备注明文；关闭操作必须先用候选人引用和责任人非敏感投影完成授权，再解密完整记录。
 - 候选人招聘联系要求候选人仍为 `active`，且联系授权与保留期限均未过期。校友活动和复聘联系还必须存在目的匹配、渠道匹配且未过期的有效 `AlumniConsent`；撤回后只允许记录内部撤回事实，不得继续外呼。
 - 关闭开放跟进要求强 `If-Match`、幂等键和责任人校验；跨责任人关闭仅允许 `erp:talent-lifecycle:touchpoint:write_all`。
+- Recruitment、Onboarding、Org 与 Care 的窄查询口必须在应用边界二次校验可信
+  租户、候选人、申请、职位、阶段事件、自然人、劳动关系、员工、离职案件和校友
+  授权引用闭包；仓储查询条件不能替代返回记录校验。任一跨租户或引用错位必须
+  整体失败关闭，禁止拼成部分可信全景后再交给 REST 或 MCP。
 
 ## 3. 身份、隐私与保留
 
@@ -286,6 +290,9 @@ downloadSignedFile / verifySignedFile`；入站验签由独立 Webhook 边界完
 - 创建与关闭分别发布 `cn.gaoq.erp.talent.touchpoint.created.v1`、`cn.gaoq.erp.talent.touchpoint.completed.v1` 或 `cn.gaoq.erp.talent.touchpoint.cancelled.v1`。事件只含候选人引用、受控类型/渠道/结果、状态和版本，不含姓名、联系方式或备注。
 - MCP Resource Template 固定为 `erp://talent-lifecycle/people/{candidateId}`，Tool 固定为 `talent_lifecycle_get`，Prompt 固定为 `talent_lifecycle_follow_up_guide`。输出仅含候选人引用、生命周期阶段、当前申请阶段、员工状态、开放跟进数、下一行动时间和更新时间。
 - MCP 不提供触点创建、关闭、候选人分类、录用、入职、离职或校友联系写能力；AI 只能基于最小只读投影给出人工跟进建议。
+- 四域来源完整性由 `pnpm quality:talent-lifecycle-sources-coverage` 独立门禁覆盖，
+  四个生产查询口逐文件语句、分支、函数和行均不得低于 90%；MCP 继续只复用
+  `TalentLifecycleService.getForMcp`，不得直接调用四域仓储或绕过引用闭包校验。
 - 当前代码已交付跨域应用服务投影、加密触点、REST、Outbox、MCP、管理页面和独立索引迁移；生产数据迁移、权限角色映射、代表性全周期数据回放及 HR/员工关怀/校友 UAT 仍待现场执行。
 
 ## 6. 发布门禁

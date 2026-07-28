@@ -45,12 +45,25 @@ export class OrgTalentSourceService {
 
   async getByCandidateId(candidateId: string): Promise<OrgTalentSnapshot | null> {
     this.assertScope();
+    const tenantId = this.context.getTenantRequired().tenantId;
     const person = await this.persons.findBySourceCandidateId(candidateId);
     if (person === null) return null;
+    if (person.tenantId !== tenantId || person.sourceCandidateId !== candidateId) {
+      throw new Error('TALENT_LIFECYCLE_PERSON_REFERENCE_INVALID');
+    }
     const employments = await this.employments.findByPersonId(person.id);
     const values = await Promise.all(employments.map(async (employment) => {
+      if (employment.tenantId !== tenantId || employment.personId !== person.id) {
+        throw new Error('TALENT_LIFECYCLE_EMPLOYMENT_REFERENCE_INVALID');
+      }
       const employee = await this.employees.findById(employment.employeeId);
-      if (employee === null) throw new Error('TALENT_LIFECYCLE_EMPLOYEE_REFERENCE_INVALID');
+      if (
+        employee === null ||
+        employee.tenantId !== tenantId ||
+        employee.id !== employment.employeeId
+      ) {
+        throw new Error('TALENT_LIFECYCLE_EMPLOYEE_REFERENCE_INVALID');
+      }
       return Object.freeze({
         id: employment.id,
         employeeId: employee.id,

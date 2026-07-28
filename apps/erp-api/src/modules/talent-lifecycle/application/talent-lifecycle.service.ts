@@ -252,9 +252,13 @@ export class TalentLifecycleService {
           touchpoint.ownerActorId === actor.actorId,
         );
     const employments = organization?.employments ?? [];
-    const care = await this.care.getByEmploymentIds(
-      employments.map((employment) => employment.id),
-    );
+    const care = await this.care.getByEmployments({
+      personId: organization?.personId ?? null,
+      employments: employments.map((employment) => Object.freeze({
+        id: employment.id,
+        employeeId: employment.employeeId,
+      })),
+    });
     const stage = deriveStage(candidate, onboarding, organization, care);
     const currentApplication = selectCurrentApplication(candidate);
     const currentEmployment =

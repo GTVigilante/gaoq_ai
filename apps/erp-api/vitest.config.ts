@@ -706,6 +706,30 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/org/application/org-talent-source.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/recruitment/application/recruitment-talent-source.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/onboarding/application/onboarding-talent-source.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/care/application/care-talent-source.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/talent-lifecycle/persistence/talent-lifecycle.repository.ts': {
           branches: 90,
           functions: 90,

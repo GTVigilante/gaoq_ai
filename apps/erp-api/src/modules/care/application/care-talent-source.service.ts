@@ -42,6 +42,14 @@ export interface CareTalentSnapshot {
   readonly alumniConsents: readonly CareTalentConsent[];
 }
 
+export interface CareTalentQuery {
+  readonly personId: string | null;
+  readonly employments: readonly {
+    readonly id: string;
+    readonly employeeId: string;
+  }[];
+}
+
 /** 人才全景的 Care 窄查询口；原因编码和证据标识不进入跨域视图。 */
 @Injectable()
 export class CareTalentSourceService {
@@ -51,10 +59,34 @@ export class CareTalentSourceService {
     private readonly consents: CareAlumniConsentRepository,
   ) {}
 
-  async getByEmploymentIds(employmentIds: readonly string[]): Promise<CareTalentSnapshot> {
+  async getByEmployments(input: CareTalentQuery): Promise<CareTalentSnapshot> {
     this.assertScope();
-    const cases = await this.cases.findByEmploymentIds(employmentIds);
+    const tenantId = this.context.getTenantRequired().tenantId;
+    const employmentById = new Map(input.employments.map((employment) => [
+      employment.id,
+      employment,
+    ]));
+    const cases = await this.cases.findByEmploymentIds([...employmentById.keys()]);
+    if (cases.some((careCase) => {
+      const employment = employmentById.get(careCase.employmentId);
+      return (
+        careCase.tenantId !== tenantId ||
+        employment === undefined ||
+        careCase.employeeId !== employment.employeeId
+      );
+    })) {
+      throw new Error('TALENT_LIFECYCLE_CARE_CASE_REFERENCE_INVALID');
+    }
     const consents = await this.consents.findByCareCaseIds(cases.map((careCase) => careCase.id));
+    const careCaseIds = new Set(cases.map((careCase) => careCase.id));
+    if (consents.some((consent) =>
+      consent.tenantId !== tenantId ||
+      !careCaseIds.has(consent.careCaseId) ||
+      input.personId === null ||
+      consent.personId !== input.personId
+    )) {
+      throw new Error('TALENT_LIFECYCLE_ALUMNI_CONSENT_REFERENCE_INVALID');
+    }
     return Object.freeze({
       cases: Object.freeze(cases.map((careCase) => Object.freeze({
         id: careCase.id,
