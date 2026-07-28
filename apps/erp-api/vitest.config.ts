@@ -58,6 +58,12 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/op/application/op-approval-result-operations.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/op/op-approval-http.client.ts': {
           branches: 90,
           functions: 90,

@@ -37,7 +37,11 @@ const responseSchema = z.object({
 @Injectable()
 export class OpApprovalOutboundSecretResolver {
   resolve(reference: string): string {
-    if (!SECRET_REF.test(reference)) throw new Error('OP_APPROVAL_SECRET_REF_INVALID');
+    if (!SECRET_REF.test(reference)) throw new OpApprovalDeliveryError(
+      'OP_APPROVAL_SECRET_REF_INVALID',
+      'business',
+      'OP_APPROVAL_SECRET_REF_INVALID: OP 审批结果凭据引用非法',
+    );
     const secret = process.env[reference];
     if (secret === undefined || secret.length < 32 || secret.length > 2_048) {
       throw new ServiceUnavailableException({
@@ -71,17 +75,6 @@ export class OpApprovalResultDeliveryService {
       if (delivery === null) break;
       try {
         await this.deliver(delivery);
-        await this.markSucceeded(delivery, workerId, new Date());
-        succeeded += 1;
-        await this.auditAfterCommit(delivery.tenantId, {
-          action: 'op.approval.result.deliver', resourceType: 'op_approval_result',
-          resourceId: delivery.approvalInstanceId, riskLevel: 'R2', outcome: 'success',
-          traceId: delivery.eventId,
-          metadata: {
-            result: delivery.result, approvalVersion: delivery.approvalVersion,
-            sourceDocumentType: delivery.sourceDocumentType,
-          },
-        });
       } catch (error) {
         await this.markFailed(delivery, workerId, error, new Date());
         await this.auditAfterCommit(delivery.tenantId, {
@@ -89,7 +82,27 @@ export class OpApprovalResultDeliveryService {
           resourceId: delivery.approvalInstanceId, riskLevel: 'R2', outcome: 'failure',
           traceId: delivery.eventId, metadata: { failureCode: failureCode(error) },
         });
+        continue;
       }
+      try {
+        await this.markSucceeded(delivery, workerId, new Date());
+      } catch (error) {
+        this.logger.error({
+          code: 'OP_APPROVAL_RESULT_LOCAL_FINALIZE_FAILED',
+          eventId: delivery.eventId,
+        });
+        throw error;
+      }
+      succeeded += 1;
+      await this.auditAfterCommit(delivery.tenantId, {
+        action: 'op.approval.result.deliver', resourceType: 'op_approval_result',
+        resourceId: delivery.approvalInstanceId, riskLevel: 'R2', outcome: 'success',
+        traceId: delivery.eventId,
+        metadata: {
+          result: delivery.result, approvalVersion: delivery.approvalVersion,
+          sourceDocumentType: delivery.sourceDocumentType,
+        },
+      });
     }
     return succeeded;
   }
@@ -169,7 +182,7 @@ export class OpApprovalResultDeliveryService {
       { eventId: delivery.eventId, status: 'processing', lockedBy: workerId },
       { $set: {
         status: 'succeeded', succeededAt: now, lockedAt: null, lockedBy: null,
-        lastErrorCode: null,
+        lastErrorCode: null, updatedAt: now,
       } },
       { timestamps: false },
     );
@@ -190,7 +203,7 @@ export class OpApprovalResultDeliveryService {
       { $set: {
         status: terminal ? (category === 'retryable' ? 'dead' : 'manual_review') : 'pending',
         attempts, nextAttemptAt: terminal ? now : calculateOpApprovalNextAttemptAt(attempts, now),
-        lockedAt: null, lockedBy: null, lastErrorCode: failureCode(error),
+        lockedAt: null, lockedBy: null, lastErrorCode: failureCode(error), updatedAt: now,
       } },
       { timestamps: false },
     );
