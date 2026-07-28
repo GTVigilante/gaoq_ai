@@ -141,6 +141,7 @@ import {
 } from './recruitment-channel.schemas.js';
 import { RecruitmentChannelPositionRelayService } from './recruitment-channel-position-relay.service.js';
 import { RecruitmentChannelPositionDeliveryService } from './recruitment-channel-position-delivery.service.js';
+import { RecruitmentChannelOperationsService } from './recruitment-channel-operations.service.js';
 import { RecruitmentChannelStageRelayService } from './recruitment-channel-stage-relay.service.js';
 import { RecruitmentChannelStageDeliveryService } from './recruitment-channel-stage-delivery.service.js';
 import {
@@ -249,6 +250,7 @@ import { PayrollMasterDataSnapshotService } from './payroll-master-data-snapshot
     RecruitmentChannelSecretResolver,
     RecruitmentChannelPositionRelayService,
     RecruitmentChannelPositionDeliveryService,
+    RecruitmentChannelOperationsService,
     RecruitmentChannelStageRelayService,
     RecruitmentChannelStageDeliveryService,
     AttendanceProviderPullService,
@@ -356,6 +358,7 @@ import { PayrollMasterDataSnapshotService } from './payroll-master-data-snapshot
     RecruitmentChannelRegistry,
     RecruitmentChannelPositionRelayService,
     RecruitmentChannelPositionDeliveryService,
+    RecruitmentChannelOperationsService,
     RecruitmentChannelStageRelayService,
     RecruitmentChannelStageDeliveryService,
     AttendanceProviderPullService,

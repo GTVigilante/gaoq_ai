@@ -9,6 +9,8 @@ import {
   RecruitmentChannelStageDeliveryRecordSchema,
   type RecruitmentChannelBindingRecord,
   type RecruitmentChannelInboxRecord,
+  type RecruitmentChannelPositionDeliveryRecord,
+  type RecruitmentChannelStageDeliveryRecord,
 } from './recruitment-channel.schemas.js';
 
 const mongoose = new Mongoose();
@@ -17,6 +19,12 @@ const BindingModel = mongoose.model<RecruitmentChannelBindingRecord>(
 );
 const InboxModel = mongoose.model<RecruitmentChannelInboxRecord>(
   'SpecRecruitmentChannelInbox', RecruitmentChannelInboxRecordSchema,
+);
+const PositionDeliveryModel = mongoose.model<RecruitmentChannelPositionDeliveryRecord>(
+  'SpecRecruitmentChannelPositionDelivery', RecruitmentChannelPositionDeliveryRecordSchema,
+);
+const StageDeliveryModel = mongoose.model<RecruitmentChannelStageDeliveryRecord>(
+  'SpecRecruitmentChannelStageDelivery', RecruitmentChannelStageDeliveryRecordSchema,
 );
 const ID = '01J8ZQK7V0A2M4N6P8R0T2W4C1';
 const FINGERPRINT = `blind-key-001.${'A'.repeat(43)}`;
@@ -72,5 +80,31 @@ describe('招聘渠道持久化契约', () => {
       { tenantId: 1, applicationId: 1, applicationVersion: 1 },
       expect.objectContaining({ unique: true }),
     ]);
+  });
+
+  it('职位和阶段结果未知均可进入人工核验且不会落入自动重试状态', async () => {
+    const common = {
+      eventId: ID,
+      tenantId: 'tenant-001',
+      status: 'manual_review',
+      attempts: 1,
+      nextAttemptAt: new Date(),
+      failureCode: 'RECRUITMENT_CHANNEL_OUTCOME_UNKNOWN',
+    };
+    await expect(new PositionDeliveryModel({
+      ...common,
+      bindingId: ID,
+      channelCode: 'sandbox_ats',
+      positionId: ID,
+      positionVersion: 1,
+      action: 'publish',
+      targetStatus: 'open',
+    }).validate()).resolves.toBeUndefined();
+    await expect(new StageDeliveryModel({
+      ...common,
+      applicationId: ID,
+      applicationVersion: 2,
+      stage: 'screening',
+    }).validate()).resolves.toBeUndefined();
   });
 });

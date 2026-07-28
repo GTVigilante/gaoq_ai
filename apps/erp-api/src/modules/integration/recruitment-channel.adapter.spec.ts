@@ -5,6 +5,7 @@ import {
   RecruitmentChannelEvidenceVerifier,
   RecruitmentChannelNormalizer,
   RecruitmentChannelRegistry,
+  RecruitmentChannelTransportError,
 } from './recruitment-channel.adapter.js';
 
 class Adapter extends RecruitmentChannelAdapter {
@@ -31,6 +32,23 @@ class Verifier extends RecruitmentChannelEvidenceVerifier {
 }
 
 describe('RecruitmentChannelRegistry', () => {
+  it('传输错误只接受稳定错误码和显式外部提交结论', () => {
+    const safe = new RecruitmentChannelTransportError(
+      'CHANNEL_RATE_LIMITED',
+      'not_committed',
+    );
+    expect(safe).toMatchObject({
+      name: 'RecruitmentChannelTransportError',
+      message: 'CHANNEL_RATE_LIMITED',
+      code: 'CHANNEL_RATE_LIMITED',
+      outcome: 'not_committed',
+    });
+    expect(() => new RecruitmentChannelTransportError(
+      'temporary failure',
+      'unknown',
+    )).toThrow('传输错误码非法');
+  });
+
   it('只有 Adapter、Normalizer 和 EvidenceVerifier 齐备时才完成渠道装配', () => {
     const adapter = new Adapter();
     const normalizer = new Normalizer();

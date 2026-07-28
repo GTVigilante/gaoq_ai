@@ -9,6 +9,9 @@ import { AttendanceProviderCoverageController } from './attendance-provider-cove
 import {
   RecruitmentCalendarOperationsController,
 } from './recruitment-calendar-operations.controller.js';
+import {
+  RecruitmentChannelOperationsController,
+} from './recruitment-channel-operations.controller.js';
 
 /** 集成 HTTP/Webhook 外壳；后台消费者只导入 IntegrationCoreModule。 */
 @Module({
@@ -20,6 +23,7 @@ import {
     PayrollMasterDataSnapshotController,
     AttendanceProviderCoverageController,
     RecruitmentCalendarOperationsController,
+    RecruitmentChannelOperationsController,
   ],
   exports: [IntegrationCoreModule],
 })

@@ -219,6 +219,9 @@ export class RecruitmentChannelPositionDeliveryRecord {
   @Prop({ type: String, default: null, match: BLIND_INDEX_PATTERN })
   receiptFingerprint!: string | null;
   @Prop({ type: Date, default: null }) succeededAt!: Date | null;
+  @Prop({ type: Number, required: true, default: 0, min: 0, max: 100 })
+  operatorResolutionCount!: number;
+  @Prop({ type: Date, default: null }) operatorResolvedAt!: Date | null;
   createdAt!: Date;
   updatedAt!: Date;
 }
@@ -241,7 +244,7 @@ RecruitmentChannelPositionDeliveryRecordSchema.index(
 );
 
 export type RecruitmentChannelStageDeliveryStatus =
-  'pending' | 'processing' | 'succeeded' | 'skipped' | 'dead';
+  'pending' | 'processing' | 'succeeded' | 'skipped' | 'dead' | 'manual_review';
 
 /** 申请阶段回传轨迹；不复制候选人身份、淘汰原因或招聘内部证据。 */
 @Schema({
@@ -263,7 +266,9 @@ export class RecruitmentChannelStageDeliveryRecord {
   })
   stage!: 'screening' | 'interview' | 'offer' | 'hired' | 'rejected' | 'withdrawn';
   @Prop({
-    type: String, enum: ['pending', 'processing', 'succeeded', 'skipped', 'dead'], required: true,
+    type: String,
+    enum: ['pending', 'processing', 'succeeded', 'skipped', 'dead', 'manual_review'],
+    required: true,
   })
   status!: RecruitmentChannelStageDeliveryStatus;
   @Prop({ type: Number, required: true, min: 0, max: 100 }) attempts!: number;
@@ -275,6 +280,9 @@ export class RecruitmentChannelStageDeliveryRecord {
   @Prop({ type: String, default: null, match: BLIND_INDEX_PATTERN })
   receiptFingerprint!: string | null;
   @Prop({ type: Date, default: null }) succeededAt!: Date | null;
+  @Prop({ type: Number, required: true, default: 0, min: 0, max: 100 })
+  operatorResolutionCount!: number;
+  @Prop({ type: Date, default: null }) operatorResolvedAt!: Date | null;
   createdAt!: Date;
   updatedAt!: Date;
 }
