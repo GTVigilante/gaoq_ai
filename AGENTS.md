@@ -201,3 +201,16 @@
 - [ ] production 税务提交必须二次校验短时独立授权、发布 commit 与部署清单摘要，
   提交标识和证据标识不得混用。MCP 只允许复用应用服务读取脱敏控制摘要，禁止向
   AI 暴露税务正文、WORM 地址、凭据、归档、制备、审批或提交能力。
+
+### 来自 CR #21
+
+- [ ] L4 资金文件写入 WORM 前必须严格验证可信租户、批次 ULID、固定
+  pain.001 Schema、唯一 MsgId/PmtInfId、对象键与内容摘要；禁止仅检查 XML 声明
+  或允许 DOCTYPE/ENTITY。
+- [ ] 资金 WORM 适配器必须固定标准 HTTPS `POST /v1/objects`、独立运行时凭据、
+  十年至一百年保留期和确定性幂等域；URL 凭据、query、fragment、重定向、非
+  443 端口及其他路径全部失败关闭。
+- [ ] WORM 非 2xx 回执不得读取正文；成功回执必须执行严格 JSON Content-Type、
+  规范 Content-Length、16 KiB 流式硬上限、Fatal UTF-8、完整 Schema，以及
+  租户、批次、对象键、摘要和保留期反向绑定。MCP 不得归档、读取或返回资金文件
+  与 WORM 地址。

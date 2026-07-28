@@ -250,6 +250,12 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/treasury/integration/treasury-evidence-http.adapter.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/treasury/integration/treasury-bank-submission-http.adapter.ts': {
           branches: 90,
           functions: 90,

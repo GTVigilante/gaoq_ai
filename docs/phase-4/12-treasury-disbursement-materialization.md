@@ -20,6 +20,25 @@
 - 物化事件只有 `treasury.disbursement.materialization_requested.v1` 与 `treasury.disbursement.prepared.v1`，Writer 精确限制为批次汇总、文件摘要和 WORM 证据字段。
 - REST 只返回批次 ID、工资引用、状态、版本、行数、总额、文件摘要和对象证据。该接口不导出文件、不提交银行；MCP 不注册制备、文件读取或资金写工具。
 
+## WORM HTTPS 出口契约
+
+- Adapter 固定调用标准 HTTPS `POST /v1/objects`，只允许 443、无 URL 凭据、
+  query、fragment 或重定向；独立 Bearer 凭据必须在运行时再次验证为 32–512
+  字节可见 ASCII，保留期只能是 3650–36500 天安全整数。
+- 外呼前必须严格验证可信租户、批次 ULID、L4 分类、固定保留策略、8 MiB 上限、
+  Base64URL SHA-256 和确定性对象键。pain.001 必须为 Fatal UTF-8、固定
+  `pain.001.001.03` 根、唯一且等于批次 ID 的 `MsgId`/`PmtInfId`，并拒绝
+  DOCTYPE、ENTITY、错位闭合或重复绑定。
+- 请求 Header 固定携带租户、批次、对象键、摘要、分类、保留策略和确定性幂等键。
+  非 2xx 只按状态分类，禁止读取或记录正文。成功回执只接受
+  `application/json` 或 `application/*+json`，声明长度与实际流均不超过
+  16 KiB，使用 Fatal UTF-8 和严格 Schema，并逐字段反向绑定租户、批次、对象键、
+  摘要、不可变性与请求保留期；对象引用与证据 ID 不得混用。
+- `pnpm quality:treasury-worm-egress-coverage` 覆盖 98 项协议用例，达到
+  100%/97.77%/100%/100%（语句/分支/函数/行），独立逐文件四维 90% 门禁由
+  资金支付总门禁接入 `pnpm check`。这只证明仓库实现，真实 Object Lock、
+  法定保留回读、Secret 轮换、断连、限流和审计取证仍待现场验收。
+
 ## 导出批准
 
 - `POST /treasury/disbursements/:id/export-approval` 是 R3 人工动作，只接受拥有 `erp:treasury:disbursement:approve` 的已验证用户；WebAuthn 证据必须绑定当前访问令牌的租户、人员、会话及批次 ID。

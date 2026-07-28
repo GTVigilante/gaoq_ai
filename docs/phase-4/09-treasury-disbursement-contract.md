@@ -30,6 +30,14 @@ materializing → prepared → exported → submitting → submitted → reconci
 
 `TREASURY_BANK_SUBMISSION_MODE` 默认且在 Phase 4 必须保持 `sandbox`。sandbox 请求与受理回执必须双向绑定并回显 `submissionMode=sandbox`，外部银行网关必须使用银行沙箱租户与沙箱凭据。Phase 6 的 `production` 模式仍要求独立授权域逐批次绑定租户、摘要、版本、发布 commit 和部署清单，并由银行网关回显授权 WORM 证据；缺少任一项时应用服务与 HTTP Adapter 双重失败关闭。仅有两个工资影子周期 `eligible` 证据不足以打开真实银行提交。
 
+资金 WORM 适配器只允许标准 HTTPS `POST /v1/objects`，运行时复核独立凭据、
+十年至一百年保留期、可信租户、批次 ULID 和确定性幂等域。pain.001 外呼前必须
+完整绑定固定 Schema、唯一 MsgId/PmtInfId、对象键与摘要，并拒绝
+DOCTYPE/ENTITY。非 2xx 不读取正文；成功回执执行严格 JSON、Content-Length、
+16 KiB 流式上限及租户/批次/对象/摘要/保留期反向绑定。98 项专项测试达到
+100%/97.77%/100%/100%（语句/分支/函数/行），独立门禁已接入资金支付总门禁。
+MCP 不得归档、读取或返回资金文件与 WORM 地址。
+
 银行提交适配器只允许标准 HTTPS `POST /v1/submissions`，端点不得包含用户信息、
 query、fragment、非 443 端口或其他路径；Authorization、Accept、Cache-Control、
 Content-Type、Content-Length 与 Idempotency-Key 均由适配器固定生成，业务输入、

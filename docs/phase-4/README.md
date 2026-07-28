@@ -40,6 +40,15 @@ Treasury 银行提交出站边界已固定标准 HTTPS `POST /v1/submissions`、
 生产文件逐文件四维 90% 门禁已由资金支付门禁接入 `pnpm check`；真实银行
 签名加密、沙箱联调、限流和生产授权域仍待现场验收。
 
+Treasury WORM 证据出口已固定标准 HTTPS `POST /v1/objects`、独立凭据、
+十年至一百年保留期和确定性幂等域；外呼前严格绑定租户、批次 ULID、pain.001
+固定 Schema、唯一 MsgId/PmtInfId、对象键与摘要，并禁用 DOCTYPE/ENTITY。
+非 2xx 不读取正文；成功回执执行严格 JSON、Content-Length、16 KiB 流式硬
+上限及租户/批次/对象/摘要/保留期反向绑定。98 项专项测试达到
+100%/97.77%/100%/100%（语句/分支/函数/行），独立逐文件四维 90% 门禁已由
+资金支付总门禁接入 `pnpm check`；真实 WORM Object Lock、保留证明、Secret
+轮换、断连和限流仍待现场验收。
+
 Treasury 银行回盘 Inbox 入站边界已固定标准 HTTPS
 `POST /v1/returns/claim`、独立凭据、最小领取请求、确定性幂等、非 2xx 正文
 隔离、4 MiB Content-Length/流式双重限长、严格 UTF-8/JSON 清单及领取对象精确
