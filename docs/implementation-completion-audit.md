@@ -62,11 +62,11 @@
 ## 5. 覆盖率边界
 
 2026-07-29 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，398 个测试文件、5,891 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，399 个测试文件、5,974 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-92.09%（30,328/32,930）、分支 89.48%（20,830/23,278）、函数
-92.76%（5,408/5,830）、行 93.29%（27,711/29,703）。全仓四维已达到 Phase 0
+92.15%（30,466/33,059）、分支 89.51%（20,893/23,340）、函数
+92.82%（5,434/5,854）、行 93.35%（27,843/29,825）。全仓四维已达到 Phase 0
 规定的 80% 门槛。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
@@ -94,6 +94,15 @@ Outbox 对课程、任务、考试运行、评分与入职证明 15 类事件实
 98.27%/96.87%/100%/100%（语句/分支/函数/行），独立四维 90% 门禁已接入
 `pnpm precheck` 与 `pnpm check`。本证据不替代 Recruitment/eSign/Org
 端到端回放、事件总线和 HR UAT；标准 MCP 仍仅通过应用服务提供部门裁剪只读摘要。
+
+2026-07-29 Recruitment 事务 Outbox 已对申请、候选人、HC、职位、面试、
+Offer 与简历分析 31 类事件建立完整对象与逐类型负载白名单，运行时闭合聚合、
+状态、审批/投递/接受/eSign 证据链、规范时间、可信租户/主体及活动 Mongo
+事务，并反向绑定数据库创建回执中的事件 ULID、聚合版本、完整 CloudEvent 与
+调度时间。83 项专项测试达到 99.29%/98.43%/100%/100%
+（语句/分支/函数/行），独立四维 90% 门禁已接入 `pnpm precheck` 与
+`pnpm check`。本证据不替代真实渠道、日历、eSign、事件总线与招聘 UAT；
+标准 MCP 仍只通过招聘应用服务提供授权裁剪能力，不直连 Outbox。
 
 2026-07-29 OP 审批桥读取边界已在 REST 与标准 MCP 共用的应用服务中二次校验
 可信 Scope，固定租户查询和最小投影，并对租户/eventId、标识、状态、版本和时间
@@ -128,7 +137,7 @@ HTTPS Client 三个生产文件。专用命令执行 3 个测试文件、74 项�
 注册失败时启动失败关闭；失败由五次指数退避和低基数 failed 队列指标观测。
 
 租户上下文、生产运行入口与可观测性边界、审计追加与 WORM 运输、审计后台执行与队列观测、审计链锚定、审计链验证、组织主数据应用、组织主数据入口、身份授权、审批数据加密、审批仓储、
-审批应用状态机、审批主体解析、审批入口控制器、审批模板领域、审批 Outbox 运行时边界、Onboarding Outbox 运行时边界、
+审批应用状态机、审批主体解析、审批入口控制器、审批模板领域、审批 Outbox 运行时边界、Onboarding Outbox 运行时边界、Recruitment Outbox 运行时边界、
 MCP 确认服务、MCP HTTP 入口、MCP 运行时、MCP Tool 应用层、OP 审批桥入站申请、OP 审批结果回传、
 OP Webhook 双入口、
 薪酬影子周期、薪酬运行、薪酬审批、薪酬主数据、专业算薪主数据快照、薪酬四方对账、薪酬税务申报、薪酬 L4 数据加密、资金支付、Treasury 银行提交出站边界、Treasury 银行回盘、Treasury 银行回盘入站边界、Treasury L4 数据加密、Treasury Outbox、Phase 4 REST 入口、Care 纪念日应用、Care 通知网关信任边界、Care Outbox 运行时边界、Care 离职应用、校友授权清理协调、
@@ -209,6 +218,7 @@ OP Webhook 双入口、
 `pnpm quality:recruitment-channel-position-relay-coverage`、
 `pnpm quality:recruitment-channel-stage-relay-coverage`、
 `pnpm quality:recruitment-application-coverage`、
+`pnpm quality:recruitment-outbox-boundary-coverage`、
 `pnpm quality:recruitment-interview-coverage`、
 `pnpm quality:recruitment-resume-coverage`、
 `pnpm quality:recruitment-channel-position-delivery-coverage`、
@@ -250,7 +260,7 @@ OP Webhook 双入口、
 `pnpm quality:onboarding-outbox-boundary-coverage`、
 `pnpm quality:production-execution-authorization-coverage`、
 `pnpm quality:op-approval-result-operations-coverage` 和
-`pnpm quality:org-person-birthday-entry-coverage`。一百一十六条链路当前覆盖率基线集合为
+`pnpm quality:org-person-birthday-entry-coverage`。一百一十七条链路当前覆盖率基线集合为
 100%/100%/100%/100%、100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -339,12 +349,12 @@ OP Webhook 双入口、
 100%/100%/100%/100%、100%/99.02%/100%/100%、
 100%/100%/100%/100%、98.71%/91.89%/100%/100%、
 95.71%/94.06%/100%/97.42%、100%/98.24%/100%/100%、
-98.27%/96.87%/100%/100%
+98.27%/96.87%/100%/100%、99.29%/98.43%/100%/100%
 （语句/分支/函数/行）；电子签十个核心文件另达到
 98.11%/95.70%/99.04%/99.54%，审计追加三个核心文件另达到
 96.91%/97.48%/96.66%/99.00%，审计后台七个生产文件另达到
-100%/100%/100%/100%、100%/98.07%/100%/100%；一百一十六项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明一百一十六条关键链路达标，
+100%/100%/100%/100%、100%/98.07%/100%/100%；一百一十七项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明一百一十七条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 自然人生日证明入口执行 73 项严格 ULID、强 `If-Match`、白名单幂等键、规范
@@ -551,6 +561,12 @@ Onboarding Outbox 运行时边界已覆盖 43 项四类事件负载、可信租�
 测试。目标 Writer 达到 98.27%/96.87%/100%/100%
 （语句/分支/函数/行），独立四维 90% 门禁已接入 `pnpm precheck` 与
 `pnpm check`；事件名与标准 MCP 只读边界不变。
+
+Recruitment Outbox 运行时边界已覆盖 83 项 31 类事件负载、聚合/状态、审批与
+外部证据引用、可信租户/主体、活动事务、调用方并发篡改、数据库异常和完整创建
+回执反向绑定测试。目标 Writer 达到 99.29%/98.43%/100%/100%
+（语句/分支/函数/行），独立四维 90% 门禁已接入 `pnpm precheck` 与
+`pnpm check`；事件名与标准 MCP 授权裁剪边界不变。
 
 校友授权清理协调与执行服务已覆盖 66 项可信系统任务、事件信封与源状态绑定、
 目标政策幂等、事务回调、认领竞争、退避/死信、队列恢复、证明终态和最小 MCP
