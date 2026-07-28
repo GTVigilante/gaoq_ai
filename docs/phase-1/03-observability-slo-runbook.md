@@ -5,7 +5,13 @@
 - API 指标：`GET /api/metrics`；Worker 指标：独立端口 `GET /metrics`，默认 `9464`。
 - 两个端点都只接受 Secret Manager 注入的 `METRICS_BEARER_TOKEN`，不得复用用户、服务或 MCP OAuth Token。
 - Worker 指标端口只承载 `/metrics`，不会装配任何 ERP 业务控制器。生产网络策略仅允许 Prometheus 抓取节点访问。
-- 指标标签只允许 HTTP 方法、编译期控制器/方法、状态码和固定结果枚举；禁止租户、员工、资源 ID、trace ID 或外部响应文本进入标签。
+- 指标标签只允许规范 HTTP Method、编译期控制器/方法、状态码和固定结果枚举；
+  未知 Method 收敛为 `OTHER`，非法状态码收敛为 `500`；禁止租户、员工、资源
+  ID、trace ID 或外部响应文本进入标签。
+- 两类指标响应必须禁止缓存和 MIME 嗅探；Worker 未配置独立凭据时不启动监听，
+  鉴权失败返回标准 Bearer challenge，渲染异常不返回内部正文。健康探针、错误
+  收敛及连接边界详见
+  [`06-runtime-boundary-runbook.md`](./06-runtime-boundary-runbook.md)。
 
 ## 2. Phase 1 指标与 SLO
 

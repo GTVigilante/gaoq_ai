@@ -24,6 +24,7 @@ export class WorkerMetricsServer implements OnApplicationBootstrap, OnApplicatio
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    if (this.server !== undefined) return;
     if (this.authorization.verify(undefined) === 'disabled') return;
     const server = createServer((request, response) => {
       void this.handle(request, response);
@@ -31,9 +32,13 @@ export class WorkerMetricsServer implements OnApplicationBootstrap, OnApplicatio
     this.server = server;
     const port = this.config.get('WORKER_METRICS_PORT', { infer: true });
     await new Promise<void>((resolve, reject) => {
-      server.once('error', reject);
+      const rejectStartup = (error: Error): void => {
+        this.server = undefined;
+        reject(error);
+      };
+      server.once('error', rejectStartup);
       server.listen(port, '0.0.0.0', () => {
-        server.off('error', reject);
+        server.off('error', rejectStartup);
         resolve();
       });
     });
@@ -42,6 +47,7 @@ export class WorkerMetricsServer implements OnApplicationBootstrap, OnApplicatio
 
   async onApplicationShutdown(): Promise<void> {
     const server = this.server;
+    this.server = undefined;
     if (server === undefined || !server.listening) return;
     await new Promise<void>((resolve, reject) => {
       server.close((error) => error === undefined ? resolve() : reject(error));
@@ -60,6 +66,7 @@ export class WorkerMetricsServer implements OnApplicationBootstrap, OnApplicatio
     const rawAuthorization = request.headers.authorization;
     const authorization = Array.isArray(rawAuthorization) ? undefined : rawAuthorization;
     if (this.authorization.verify(authorization) !== 'valid') {
+      response.setHeader('WWW-Authenticate', 'Bearer');
       respond(response, 401, 'Unauthorized');
       return;
     }
@@ -67,6 +74,7 @@ export class WorkerMetricsServer implements OnApplicationBootstrap, OnApplicatio
       response.statusCode = 200;
       response.setHeader('Content-Type', this.metrics.contentType);
       response.setHeader('Cache-Control', 'no-store');
+      response.setHeader('X-Content-Type-Options', 'nosniff');
       response.end(await this.metrics.render());
     } catch {
       respond(response, 500, 'Internal Server Error');
@@ -78,5 +86,6 @@ function respond(response: ServerResponse, statusCode: number, body: string): vo
   response.statusCode = statusCode;
   response.setHeader('Content-Type', 'text/plain; charset=utf-8');
   response.setHeader('Cache-Control', 'no-store');
+  response.setHeader('X-Content-Type-Options', 'nosniff');
   response.end(body);
 }

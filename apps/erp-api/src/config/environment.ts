@@ -39,7 +39,7 @@ const environmentSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65_535).default(3001),
   WORKER_METRICS_PORT: z.coerce.number().int().min(1).max(65_535).default(9464),
   MONGODB_URI: z.string().url().startsWith('mongodb://'),
-  REDIS_URL: z.string().url().startsWith('redis://'),
+  REDIS_URL: z.string().url().regex(/^rediss?:\/\//),
   WEB_ORIGIN: z.string().url(),
   MARKETING_WEBSITE_ORIGIN: z.preprocess(
     (value) => value === '' ? undefined : value,

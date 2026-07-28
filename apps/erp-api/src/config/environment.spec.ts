@@ -35,7 +35,7 @@ describe('validateEnvironment', () => {
       NODE_ENV: 'test',
       PORT: '3001',
       MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0&directConnection=true',
-      REDIS_URL: 'redis://localhost:6379/0',
+      REDIS_URL: 'rediss://localhost:6379/0',
       WEB_ORIGIN: 'http://localhost:3000',
       LOG_LEVEL: 'info',
       AUTH_ISSUER: 'https://auth.example.internal',
@@ -51,6 +51,7 @@ describe('validateEnvironment', () => {
     });
 
     expect(environment.PORT).toBe(3001);
+    expect(environment.REDIS_URL).toBe('rediss://localhost:6379/0');
     expect(environment.AUTH_ACCESS_TOKEN_TTL_SECONDS).toBe(600);
     expect(environment.AUTH_SIGNING_PRIVATE_KEY_BASE64).toBeUndefined();
     expect(environment.AUDIT_INTEGRITY_KEYS).toBeUndefined();

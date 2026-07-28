@@ -29,6 +29,18 @@ type CareAlumniCleanupOutcome =
   | 'deduplicated'
   | 'deferred';
 
+const HTTP_METHOD_LABELS = new Set([
+  'CONNECT',
+  'DELETE',
+  'GET',
+  'HEAD',
+  'OPTIONS',
+  'PATCH',
+  'POST',
+  'PUT',
+  'TRACE',
+]);
+
 /** 低基数 Prometheus 指标注册中心；严禁使用租户、用户、资源 ID 作为标签。 */
 @Injectable()
 export class MetricsService {
@@ -253,10 +265,10 @@ export class MetricsService {
     readonly durationSeconds: number;
   }): void {
     const labels = {
-      method: input.method,
+      method: normalizeHttpMethod(input.method),
       controller: input.controller,
       handler: input.handler,
-      status_code: String(input.statusCode),
+      status_code: normalizeHttpStatus(input.statusCode),
     };
     this.httpRequests.inc(labels);
     this.httpDuration.observe(labels, input.durationSeconds);
@@ -417,6 +429,17 @@ export class MetricsService {
       Math.max(0, oldestAgeSeconds),
     );
   }
+}
+
+function normalizeHttpMethod(method: string): string {
+  const normalized = method.toUpperCase();
+  return HTTP_METHOD_LABELS.has(normalized) ? normalized : 'OTHER';
+}
+
+function normalizeHttpStatus(statusCode: number): string {
+  return Number.isInteger(statusCode) && statusCode >= 100 && statusCode <= 599
+    ? String(statusCode)
+    : '500';
 }
 
 /** 单调时钟耗时，避免系统时间校准导致负值。 */

@@ -7,6 +7,7 @@
 - [`03-observability-slo-runbook.md`](./03-observability-slo-runbook.md)：Prometheus 指标、告警、SLO、WORM 回执契约与负载基线。
 - [`04-org-delivery-reliability-runbook.md`](./04-org-delivery-reliability-runbook.md)：ERP 组织主数据向钉钉、飞书和 OP 投递的租约、结果不确定隔离、对账与 MCP 边界。
 - [`05-identity-token-entry-runbook.md`](./05-identity-token-entry-runbook.md)：人员 SSO 映射、JWT 可信身份投影、OAuth 授权事务重验、一次性消费与失败关闭边界。
+- [`06-runtime-boundary-runbook.md`](./06-runtime-boundary-runbook.md)：公开错误、追踪、健康探针、Prometheus 与 Redis/Rediss 连接参数信任边界。
 
 当前审计追加代码已强制规范链载荷与规范 Base64URL，Mongo 事务提交后的会话清理
 故障不会反向诱发重复追加；独立 WORM 连接强制 HTTPS 443、成套凭据、载荷摘要与
@@ -26,3 +27,9 @@ OAuth Client Credentials 已强制规范 Basic/UTF-8、RS256/ES256
 以及活动/历史 RSA JWKS 两阶段轮换。会话吊销提交后的审计故障不改写业务终态。
 11 个测试文件、82 项测试达到 99.17%/95.97%/100%/99.13%，十二个生产文件逐文件
 四维 90% 门禁已接入 `pnpm precheck`。
+
+生产运行入口已补齐 MongoDB 可写 Replica Set `hello`、Redis `PING`、1.25 秒截止
+与并发单飞探针；HTTP 指标 Method/状态标签收敛、5xx 脱敏、4xx 有界详情、
+Worker 抓取挑战和 Redis/Rediss 规范 URL 均失败关闭。11 个测试文件、40 项测试
+达到 99.70%/94.44%/100%/99.67%，11 个生产文件逐文件四维 90% 门禁已接入
+`pnpm precheck`；真实主节点切换、TLS/ACL、抓取网络与告警仍待现场验收。

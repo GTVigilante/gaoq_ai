@@ -9,6 +9,13 @@ describe('MetricsService', () => {
       method: 'GET', controller: 'HealthController', handler: 'live',
       statusCode: 200, durationSeconds: 0.01,
     });
+    metrics.recordHttpRequest({
+      method: 'client-controlled-method',
+      controller: 'FallbackController',
+      handler: 'handle',
+      statusCode: 9_999,
+      durationSeconds: 0.01,
+    });
     metrics.recordAuditAppend('success', 0.02);
     metrics.recordAuditTransactionRetry();
     metrics.recordAuditVerification('failure', 0.03);
@@ -42,6 +49,10 @@ describe('MetricsService', () => {
     expect(metrics.contentType).toContain('text/plain');
     expect(output).toContain('gaoq_http_requests_total');
     expect(output).toContain('controller="HealthController"');
+    expect(output).toContain(
+      'method="OTHER",controller="FallbackController",handler="handle",status_code="500"',
+    );
+    expect(output).not.toContain('client-controlled-method');
     expect(output).toContain('gaoq_audit_append_total{outcome="success"} 1');
     expect(output).toContain('gaoq_audit_transaction_retries_total 1');
     expect(output).toContain('gaoq_audit_verification_total{outcome="failure"} 1');
