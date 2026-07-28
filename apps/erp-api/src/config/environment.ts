@@ -3,6 +3,7 @@ import { isIP } from 'node:net';
 
 import { z } from 'zod';
 
+import { parseVerifyOnlySigningJwks } from './auth-signing-key-ring.js';
 import { parseCareAlumniCleanupTargets } from './care-alumni-cleanup-targets.js';
 
 const isLoopbackHostname = (hostname: string): boolean => {
@@ -100,6 +101,8 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(8).max(128).regex(/^[A-Za-z0-9._-]+$/).optional(),
   ),
+  /** 访问令牌轮换窗口内仅用于验签的历史 RSA 公钥；禁止私钥材料。 */
+  AUTH_SIGNING_VERIFY_ONLY_JWKS_JSON: z.string().max(32_768).default('[]'),
   /** 审计 HMAC 密钥环，仅由 Secret Manager 注入，仓库内必须保持为空。 */
   AUDIT_INTEGRITY_KEYS: z.preprocess(
     (value) => value === '' ? undefined : value,
@@ -780,6 +783,18 @@ const environmentSchema = z.object({
       code: 'custom',
       path: ['AUTH_JWKS_URI'],
       message: '内建授权服务器的 AUTH_JWKS_URI 必须指向 issuer 的 /.well-known/jwks.json',
+    });
+  }
+  try {
+    parseVerifyOnlySigningJwks(
+      environment.AUTH_SIGNING_VERIFY_ONLY_JWKS_JSON,
+      environment.AUTH_SIGNING_KEY_ID,
+    );
+  } catch (error) {
+    context.addIssue({
+      code: 'custom',
+      path: ['AUTH_SIGNING_VERIFY_ONLY_JWKS_JSON'],
+      message: error instanceof Error ? error.message : '历史签名公钥配置非法',
     });
   }
   if (resource.hash !== '' || resource.username !== '' || resource.password !== '') {

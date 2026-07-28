@@ -28,6 +28,13 @@ const setSessionResult = (
 };
 
 describe('SessionService', () => {
+  it('非法租户或会话标识直接失败关闭且不构造查询', async () => {
+    const model = createModel();
+    await expect(createService(model).isActive('$where', 'session-001', false)).resolves.toBe(false);
+    await expect(createService(model).isActive('tenant-001', 'bad session', false)).resolves.toBe(false);
+    expect(model.findOne).not.toHaveBeenCalled();
+  });
+
   it('人员令牌对应的会话不存在时失败关闭', async () => {
     const model = createModel();
     setSessionResult(model, null);
@@ -67,6 +74,32 @@ describe('SessionService', () => {
     );
   });
 
+  it('活动会话透传事务，受损日期状态失败关闭', async () => {
+    const active = createModel();
+    const session = vi.fn();
+    active.findOne.mockReturnValue({
+      session,
+      lean: () => ({
+        exec: () => Promise.resolve({ expiresAt: new Date(Date.now() + 60_000) }),
+      }),
+    });
+    const mongoSession = {} as ClientSession;
+    await expect(
+      createService(active).isActive('tenant-001', 'session-001', true, mongoSession),
+    ).resolves.toBe(true);
+    expect(session).toHaveBeenCalledWith(mongoSession);
+
+    const damaged = createModel();
+    damaged.findOne.mockReturnValue({
+      lean: () => ({
+        exec: () => Promise.resolve({ expiresAt: 'not-a-date' }),
+      }),
+    });
+    await expect(
+      createService(damaged).isActive('tenant-001', 'session-001', true),
+    ).resolves.toBe(false);
+  });
+
   it('创建会话与吊销都强制携带租户', async () => {
     const model = createModel();
     model.create.mockResolvedValue({});
@@ -103,6 +136,36 @@ describe('SessionService', () => {
     expect(revokedAt.getTime()).toBeGreaterThanOrEqual(revokeStartedAt);
     expect(revokedAt.getTime()).toBeLessThanOrEqual(revokeFinishedAt);
     expect(model.updateOne.mock.calls[0]?.[2]).toEqual({});
+  });
+
+  it('创建会话拒绝操作符标识、非法日期和过期时间', async () => {
+    const model = createModel();
+    const service = createService(model);
+    await expect(service.open({
+      tenantId: '$where',
+      sessionId: 'session-001',
+      actorId: 'actor-001',
+      expiresAt: new Date(Date.now() + 60_000),
+    })).rejects.toThrow('会话创建参数非法');
+    await expect(service.open({
+      tenantId: 'tenant-001',
+      sessionId: 'session-001',
+      actorId: 'actor-001',
+      expiresAt: new Date(Date.now() - 1),
+    })).rejects.toThrow('会话创建参数非法');
+    expect(model.create).not.toHaveBeenCalled();
+  });
+
+  it('非法会话吊销不查询，未命中返回 false，事务会话透传', async () => {
+    const model = createModel();
+    const service = createService(model);
+    await expect(service.revoke('tenant-001', '$ne')).resolves.toBe(false);
+    expect(model.updateOne).not.toHaveBeenCalled();
+
+    model.updateOne.mockResolvedValue({ modifiedCount: 0 });
+    const mongoSession = {} as ClientSession;
+    await expect(service.revoke('tenant-001', 'session-001', mongoSession)).resolves.toBe(false);
+    expect(model.updateOne.mock.calls[0]?.[2]).toEqual({ session: mongoSession });
   });
 
   it('离职批量吊销强制租户、去重主体、未吊销过滤与事务透传', async () => {

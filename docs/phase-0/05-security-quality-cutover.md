@@ -11,12 +11,20 @@
 
 - 人员登录优先使用钉钉/飞书SSO和企业身份；外部主体使用可验证的手机号/邮箱流程。
 - Access Token短期有效，Refresh Token轮换并支持会话级吊销；高风险操作需要近期二次认证。
+- 浏览器 Refresh Token 只进入 `HttpOnly + SameSite=Strict` Cookie，数据库只保存
+  SHA-256 摘要；每次刷新都原子消费旧令牌、创建同 family 下一代并以 CAS 绑定
+  前驱/后继，且新 Access Token 必须在该轮换事务提交前完成签名；签名失败必须
+  回滚令牌代次。任一旧令牌重放必须吊销整个 family 与服务端会话。
 - Access Token 必须校验签名、`typ=at+jwt`、issuer、audience、resource、会话或
   服务凭据活动状态，并强制 `sub = tenant_id:actor_id`；角色、Scope、部门、
   audience 和 resource 集合不得重复，解析后的可信身份投影必须深冻结。
 - OAuth Authorization Code + PKCE 的请求与授权码只保存随机值摘要、短时且
   一次性；每次展示、决策和交换都必须按当前客户端注册表重新校验精确回调、
   resource、租户与 Scope。进程重启或配置收紧后，Redis 中的旧请求不得沿用旧授权。
+- JWKS 必须同时发布活动签名公钥和轮换窗口内的历史验签公钥；历史集合只接受
+  至少 2048 位 RSA 公钥、唯一 `kid` 和 RS256 验签用途，禁止私钥字段、重复公钥
+  材料或与活动 `kid` 冲突。旧公钥须保留至最后一枚旧 Token 过期并越过 JWKS
+  缓存窗口后才能移除。
 - 权限必须在服务端按菜单、操作、字段、数据范围四层执行；默认拒绝。
 - 生产密钥、证书、外部凭据和数据密钥只存KMS/Secret Manager；禁止进入代码、Issue、日志、镜像和CI输出。
 - break-glass权限默认关闭、双人批准、限时、全程审计并在使用后复盘。

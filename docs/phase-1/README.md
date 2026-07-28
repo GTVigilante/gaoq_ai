@@ -20,3 +20,9 @@ OAuth Client Credentials 已强制规范 Basic/UTF-8、RS256/ES256
 推导，正文 `client_id` 不能注入失败审计。认证后的 resource/Scope 越权在签名前
 失败关闭并记录最小 R1 审计。22 项专项测试达到
 97.60%/95.14%/100%/99.07%，逐文件四维 90% 门禁已接入 `pnpm precheck`。
+
+浏览器与交互式 OAuth 会话已补齐 Refresh Token family 原子轮换、前驱 CAS、
+重放后整族/会话吊销、单一 Cookie 与 8 KiB 头边界、受损持久化状态失败关闭，
+以及活动/历史 RSA JWKS 两阶段轮换。会话吊销提交后的审计故障不改写业务终态。
+11 个测试文件、82 项测试达到 99.17%/95.97%/100%/99.13%，十二个生产文件逐文件
+四维 90% 门禁已接入 `pnpm precheck`。

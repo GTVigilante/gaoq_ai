@@ -102,44 +102,47 @@ export class TokenGrantService {
 
   /** 轮换刷新令牌并在同一事务中重新读取授权快照；重放会提交整族吊销。 */
   async refresh(presentedToken: string): Promise<BrowserTokenGrant> {
-    const resolved = await this.rotateAndResolveBrowserSession(presentedToken);
-    const signed = await this.signer.sign({
-      tenantId: resolved.tenantId,
-      actorId: resolved.actorId,
-      actorType: 'user',
-      sessionId: resolved.sessionId,
-      clientId: resolved.clientId,
-      roleCodes: resolved.profile.roleCodes,
-      scopes: resolved.profile.scopes,
-      departmentIds: resolved.profile.departmentIds,
-      employeeId: resolved.profile.employeeId,
+    return this.withRotatedBrowserSession(presentedToken, async (resolved) => {
+      const signed = await this.signer.sign({
+        tenantId: resolved.tenantId,
+        actorId: resolved.actorId,
+        actorType: 'user',
+        sessionId: resolved.sessionId,
+        clientId: resolved.clientId,
+        roleCodes: resolved.profile.roleCodes,
+        scopes: resolved.profile.scopes,
+        departmentIds: resolved.profile.departmentIds,
+        employeeId: resolved.profile.employeeId,
+      });
+      const result = { ...resolved, signed } satisfies RefreshGrantContext;
+      return {
+        ...result.signed,
+        refreshToken: result.refreshToken,
+        scope: result.profile.scopes.join(' '),
+        returnPath: '/',
+      };
     });
-    const result = { ...resolved, signed } satisfies RefreshGrantContext;
-    return {
-      ...result.signed,
-      refreshToken: result.refreshToken,
-      scope: result.profile.scopes.join(' '),
-      returnPath: '/',
-    };
   }
 
   /** OAuth 同意页通过轮换浏览器 Refresh Token 取得可信主体，禁止从同意请求读取租户。 */
   async authenticateBrowserForOAuth(presentedToken: string): Promise<BrowserOAuthIdentity> {
-    const resolved = await this.rotateAndResolveBrowserSession(presentedToken);
-    return Object.freeze({
-      refreshToken: resolved.refreshToken,
-      tenantId: resolved.tenantId,
-      actorId: resolved.actorId,
-      sessionId: resolved.sessionId,
-      roleCodes: Object.freeze([...resolved.profile.roleCodes]),
-      scopes: Object.freeze([...resolved.profile.scopes]),
-      departmentIds: Object.freeze([...resolved.profile.departmentIds]),
-    });
+    return this.withRotatedBrowserSession(presentedToken, (resolved) =>
+      Object.freeze({
+        refreshToken: resolved.refreshToken,
+        tenantId: resolved.tenantId,
+        actorId: resolved.actorId,
+        sessionId: resolved.sessionId,
+        roleCodes: Object.freeze([...resolved.profile.roleCodes]),
+        scopes: Object.freeze([...resolved.profile.scopes]),
+        departmentIds: Object.freeze([...resolved.profile.departmentIds]),
+      }),
+    );
   }
 
-  private async rotateAndResolveBrowserSession(
+  private async withRotatedBrowserSession<TResult>(
     presentedToken: string,
-  ): Promise<ResolvedBrowserSession> {
+    onResolved: (resolved: ResolvedBrowserSession) => TResult | Promise<TResult>,
+  ): Promise<TResult> {
     const result = await this.connection.transaction(async (mongoSession) => {
       const rotation = await this.refreshTokens.rotate(presentedToken, 'gaoq-web', mongoSession);
       if (rotation.status !== 'rotated') {
@@ -161,12 +164,16 @@ export class TokenGrantService {
         await this.sessions.revoke(rotation.tenantId, rotation.sessionId, mongoSession);
         return { status: 'inactive' as const };
       }
-      return { ...rotation, profile } satisfies ResolvedBrowserSession;
+      const resolved = { ...rotation, profile } satisfies ResolvedBrowserSession;
+      return {
+        status: 'granted' as const,
+        value: await onResolved(resolved),
+      };
     });
-    if (result.status !== 'rotated') {
+    if (result.status !== 'granted') {
       throw this.invalidGrant();
     }
-    return result;
+    return result.value;
   }
 
   /** 吊销会话与全部刷新令牌，事务提交后当前 access token 立即因会话校验失效。 */
