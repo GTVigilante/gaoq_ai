@@ -1558,6 +1558,12 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/onboarding/persistence/onboarding.repositories.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/onboarding/persistence/onboarding-outbox.writer.ts': {
           branches: 90,
           functions: 90,

@@ -62,11 +62,11 @@
 ## 5. 覆盖率边界
 
 2026-07-29 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，400 个测试文件、6,052 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，401 个测试文件、6,156 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-92.25%（30,581/33,150）、分支 89.57%（20,955/23,393）、函数
-92.96%（5,459/5,872）、行 93.45%（27,955/29,914）。全仓四维已达到 Phase 0
+92.37%（30,782/33,323）、分支 89.67%（21,099/23,528）、函数
+93.23%（5,498/5,897）、行 93.56%（28,138/30,073）。全仓四维已达到 Phase 0
 规定的 80% 门槛。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
@@ -137,7 +137,7 @@ HTTPS Client 三个生产文件。专用命令执行 3 个测试文件、74 项�
 注册失败时启动失败关闭；失败由五次指数退避和低基数 failed 队列指标观测。
 
 租户上下文、生产运行入口与可观测性边界、审计追加与 WORM 运输、审计后台执行与队列观测、审计链锚定、审计链验证、组织主数据应用、组织主数据入口、身份授权、审批数据加密、审批仓储、
-审批应用状态机、审批主体解析、审批入口控制器、审批模板领域、审批 Outbox 运行时边界、Onboarding Outbox 运行时边界、Recruitment Outbox 运行时边界、
+审批应用状态机、审批主体解析、审批入口控制器、审批模板领域、审批 Outbox 运行时边界、Onboarding 仓储运行时边界、Onboarding Outbox 运行时边界、Recruitment Outbox 运行时边界、
 MCP 确认服务、MCP HTTP 入口、MCP 运行时、MCP Tool 应用层、OP 审批桥入站申请、OP 审批结果回传、
 OP Webhook 双入口、
 薪酬影子周期、薪酬运行、薪酬审批、薪酬主数据、专业算薪主数据快照、薪酬四方对账、薪酬税务申报、薪酬 L4 数据加密、资金支付、Treasury 银行提交出站边界、Treasury 银行回盘、Treasury 银行回盘入站边界、Treasury L4 数据加密、Treasury Outbox、Phase 4 REST 入口、Care 纪念日应用、Care 通知网关信任边界、Care Outbox 运行时边界、Care 离职应用、校友授权清理协调、
@@ -259,10 +259,11 @@ OP Webhook 双入口、
 `pnpm quality:oauth-controller-coverage`、
 `pnpm quality:strong-auth-coverage`、
 `pnpm quality:onboarding-application-coverage`、
+`pnpm quality:onboarding-repositories-coverage`、
 `pnpm quality:onboarding-outbox-boundary-coverage`、
 `pnpm quality:production-execution-authorization-coverage`、
 `pnpm quality:op-approval-result-operations-coverage` 和
-`pnpm quality:org-person-birthday-entry-coverage`。一百一十九条链路当前覆盖率基线集合为
+`pnpm quality:org-person-birthday-entry-coverage`。一百二十条链路当前覆盖率基线集合为
 100%/100%/100%/100%、100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -356,8 +357,8 @@ OP Webhook 双入口、
 （语句/分支/函数/行）；电子签十个核心文件另达到
 98.11%/95.70%/99.04%/99.54%，审计追加三个核心文件另达到
 96.91%/97.48%/96.66%/99.00%，审计后台七个生产文件另达到
-100%/100%/100%/100%、100%/98.07%/100%/100%；一百一十九项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明一百一十九条关键链路达标，
+100%/100%/100%/100%、100%/100%/100%/100%、100%/98.07%/100%/100%；一百二十项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明一百二十条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 自然人生日证明入口执行 73 项严格 ULID、强 `If-Match`、白名单幂等键、规范
@@ -1010,6 +1011,14 @@ Offer/Application/Candidate/Position 引用闭包、幂等预入职与录用终�
 由已签署 Offer 推进，阶段事件记录 Onboarding 完成证据，Candidate Application
 另存 Employment 引用，避免把业务完成证明与结果标识混用。标准 MCP 不新增该
 跨域写能力；真实 eSign、代表性招聘入职回放及 HR UAT 仍待现场验收。
+
+Onboarding 聚合与任务证明仓储已覆盖 104 项可信租户、实例/Offer/候选人查询
+绑定、固定最小投影、状态/版本/时间/证明闭包、有界稳定时间线、活动事务、创建
+回执和乐观锁更新结果测试。受损或错位记录在进入应用服务前整体失败关闭，聚合
+插入、更新和证明追加不得在非事务会话中执行；目标仓储文件四维覆盖率为 100%，
+独立 90% 门禁已接入 `pnpm precheck` 与 `pnpm check`。REST、事件与标准 MCP
+契约不变，MCP 仍只复用入职应用服务返回部门裁剪摘要，不读取任务证明或执行
+R3 建档；真实 eSign/Recruitment/Org 端到端回放和 HR UAT 仍待现场验收。
 
 ## 6. 架构边界
 

@@ -317,6 +317,11 @@ downloadSignedFile / verifySignedFile`；入站验签由独立 Webhook 边界完
   `erp:onboarding:recruitment:advance`。该跨域写路径不注册标准 MCP Tool；
   `pnpm quality:recruitment-onboarding-bridge-coverage` 对桥接服务逐文件强制
   语句、分支、函数和行四维 90%。
+- Onboarding 仓储使用固定最小投影反向绑定可信租户、实例/Offer/候选人查询
+  主键、任务证明、状态、版本和时间闭包；候选人时间线最多返回 100 条，并验证
+  稳定顺序和唯一标识。聚合与证明写入必须使用活动 Mongo 事务，创建及更新回执
+  须反向绑定不可变引用和目标终态；`pnpm quality:onboarding-repositories-coverage`
+  对该边界逐文件强制语句、分支、函数和行四维 90%。
 
 ### 5.7 Knowledge 与 Care MCP
 
