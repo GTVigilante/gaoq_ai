@@ -22,6 +22,8 @@ const validInput: IssueSsoStateInput = {
   externalTenantId: 'corp-001',
   returnPath: '/dashboard',
 };
+const validOpaqueState = 'S'.repeat(43);
+const validCodeVerifier = 'V'.repeat(43);
 
 const sha256Hex = (value: string): string => createHash('sha256').update(value).digest('hex');
 
@@ -132,6 +134,8 @@ describe('SsoStateService', () => {
       codeVerifier: readStoredPayload(redis).codeVerifier,
       returnPath: validInput.returnPath,
     });
+    expect(Object.isFrozen(consumed)).toBe(true);
+    expect(Object.isFrozen(issued)).toBe(true);
   });
 
   it('同一 state 只能消费一次，第二次抛 SSO_STATE_INVALID', async () => {
@@ -170,7 +174,7 @@ describe('SsoStateService', () => {
     const redis = createRedis();
     redis.getdel.mockResolvedValue('{broken json');
 
-    await expectInvalidState(() => createService(redis).consume('any-state', 'dingtalk'));
+    await expectInvalidState(() => createService(redis).consume(validOpaqueState, 'dingtalk'));
   });
 
   it('Redis 中缺少必需字段或多出字段抛 SSO_STATE_INVALID', async () => {
@@ -180,16 +184,16 @@ describe('SsoStateService', () => {
         tenantId: 'tenant-001',
         provider: 'dingtalk',
         externalTenantId: 'corp-001',
-        codeVerifier: 'verifier',
+        codeVerifier: validCodeVerifier,
         returnPath: '/dashboard',
         injected: 'extra',
       }),
     );
 
-    await expectInvalidState(() => createService(redis).consume('any-state', 'dingtalk'));
+    await expectInvalidState(() => createService(redis).consume(validOpaqueState, 'dingtalk'));
   });
 
-  it.each(['//evil.com', 'https://evil.com/x', '/a\\b', 'relative/path'])(
+  it.each(['//evil.com', 'https://evil.com/x', '/a\\b', 'relative/path', '/path\ninjected'])(
     '恶意或非法 returnPath %s 在签发时被拒绝',
     async (returnPath) => {
       const redis = createRedis();
@@ -207,22 +211,59 @@ describe('SsoStateService', () => {
         tenantId: 'tenant-001',
         provider: 'dingtalk',
         externalTenantId: 'corp-001',
-        codeVerifier: 'verifier',
+        codeVerifier: validCodeVerifier,
         returnPath: '//evil.com',
       }),
     );
 
-    await expectInvalidState(() => createService(redis).consume('any-state', 'dingtalk'));
+    await expectInvalidState(() => createService(redis).consume(validOpaqueState, 'dingtalk'));
   });
 
   it('报错信息不泄露 state 原文与存储内容', async () => {
     const redis = createRedis();
-    const secret = 'raw-state-secret-value';
-    redis.getdel.mockResolvedValue(JSON.stringify({ secret }));
+    const secret = validOpaqueState;
+    redis.getdel.mockResolvedValue(JSON.stringify({ secret: 'stored-secret-value' }));
 
     const error = await captureError(() => createService(redis).consume(secret, 'dingtalk'));
 
     const response = (error as UnauthorizedException).getResponse();
     expect(JSON.stringify(response)).not.toContain(secret);
+  });
+
+  it('签发前拒绝操作符形态标识、未知平台与超长外部租户', async () => {
+    for (const input of [
+      { ...validInput, tenantId: '$where' },
+      { ...validInput, provider: 'unknown' as 'op' },
+      { ...validInput, externalTenantId: '$ne' },
+      { ...validInput, externalTenantId: 'A'.repeat(257) },
+    ]) {
+      const redis = createRedis();
+      await expectInvalidState(() => createService(redis).issue(input));
+      expect(redis.set).not.toHaveBeenCalled();
+    }
+  });
+
+  it('消费前拒绝非规范 state 与未知平台且不访问 Redis', async () => {
+    const redis = createRedis();
+    const service = createService(redis);
+    await expectInvalidState(() => service.consume('short', 'dingtalk'));
+    await expectInvalidState(() => service.consume(
+      validOpaqueState, 'unknown' as 'op',
+    ));
+    expect(redis.getdel).not.toHaveBeenCalled();
+  });
+
+  it('Redis 签发或消费不可用时返回稳定服务异常', async () => {
+    const issueRedis = createRedis();
+    issueRedis.set.mockRejectedValue(new Error('redis secret'));
+    await expect(createService(issueRedis).issue(validInput)).rejects.toMatchObject({
+      response: { code: 'SSO_STATE_UNAVAILABLE' },
+    });
+
+    const consumeRedis = createRedis();
+    consumeRedis.getdel.mockRejectedValue(new Error('redis secret'));
+    await expect(createService(consumeRedis).consume(
+      validOpaqueState, 'dingtalk',
+    )).rejects.toMatchObject({ response: { code: 'SSO_STATE_UNAVAILABLE' } });
   });
 });

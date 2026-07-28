@@ -994,6 +994,24 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/identity/browser-sso-state-cookie.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/identity/sso-state.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/identity/sso.controller.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/identity/access-token-verifier.ts': {
           branches: 90,
           functions: 90,

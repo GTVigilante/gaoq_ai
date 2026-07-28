@@ -6,6 +6,9 @@ import type { Request, Response } from 'express';
 
 import type { AppEnvironment } from '../../config/environment.js';
 
+const MAX_COOKIE_HEADER_BYTES = 8 * 1024;
+const STATE_DIGEST_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+
 @Injectable()
 export class BrowserSsoStateCookieService {
   constructor(private readonly config: ConfigService<AppEnvironment, true>) {}
@@ -27,6 +30,7 @@ export class BrowserSsoStateCookieService {
     const actual = this.readCookie(request);
     if (
       actual === undefined ||
+      !STATE_DIGEST_PATTERN.test(actual) ||
       actual.length !== expected.length ||
       !timingSafeEqual(Buffer.from(actual), Buffer.from(expected))
     ) {
@@ -45,11 +49,16 @@ export class BrowserSsoStateCookieService {
 
   private readCookie(request: Request): string | undefined {
     const name = this.cookieName();
-    return (request.header('cookie') ?? '')
+    const header = request.header('cookie');
+    if (header === undefined || Buffer.byteLength(header, 'utf8') > MAX_COOKIE_HEADER_BYTES) {
+      return undefined;
+    }
+    const matches = header
       .split(';')
       .map((part) => part.trim())
-      .find((part) => part.startsWith(`${name}=`))
-      ?.slice(name.length + 1);
+      .filter((part) => part.startsWith(`${name}=`));
+    if (matches.length !== 1) return undefined;
+    return matches[0]?.slice(name.length + 1);
   }
 
   private digest(state: string): string {
