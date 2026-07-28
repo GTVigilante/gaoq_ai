@@ -8,13 +8,25 @@
 
 Return Inbox 与 ERP、WORM、银行提交网关必须使用不同 HTTPS Origin 和独立凭据。配置缺项、凭据复用、非 443 端口、URL 凭据、查询参数或重定向全部失败关闭。
 
+ERP 适配器固定调用标准 HTTPS `POST /v1/returns/claim`，禁止尾斜杠和其他路径；
+Authorization、Accept、Cache-Control、Content-Type、Content-Length 与
+Idempotency-Key 由适配器生成，业务调用方不可覆盖。运行时必须二次校验 Inbox
+凭据为 32–512 字节可见 ASCII；配置层校验不能替代该失败关闭边界。
+
 ## 领取与绑定契约
 
 - `POST /treasury/disbursements/:id/returns` 只允许拥有 `erp:treasury:return:ingest` 的受信任 `service` 或 `system_job` 调用；普通用户与 MCP 均不可调用。
 - ERP 仅向 Inbox 发送可信租户、批次 ID 和银行提交 ID。确定性幂等键绑定三者，不发送账户、员工、金额或文件内容。
 - Inbox 清单必须严格绑定同一租户、ULID 批次和银行提交回执；回盘 ID 为 ULID，接收时间不得超前服务器时间五分钟。
 - 当前状态机只接收一份终态回盘，因此序号必须为 1；乱序或增量清单失败关闭且不推进、不冻结批次。未来支持多阶段回盘时必须先扩展显式序列状态机，禁止仅放宽校验。
-- 清单必须关联回盘 SHA-256、WORM 对象及证据、签名证据、恶意文件扫描证据。响应出现额外字段、原始正文、错批次、错提交、非法 JSON 或超限时拒绝处理。
+- 清单必须关联回盘 SHA-256、WORM 对象及证据、签名证据、恶意文件扫描证据，
+  三类证据 ID 必须互异。响应出现额外字段、原始正文、错批次、错提交、非法
+  JSON 或超限时拒绝处理。
+- 非 2xx 仅按状态码分类且不得读取错误正文。成功清单必须同时通过规范
+  Content-Length 和 4 MiB 实际流式硬上限，只接受严格 UTF-8、
+  `application/json` 或 `application/*+json` 与完整严格 Schema；读取、取消和
+  释放异常统一收敛为本域稳定错误，不泄漏上游 cause。验签失败或恶意文件标志
+  不在适配器层丢弃，必须交由 ERP 状态机冻结整个批次。
 
 ## ERP 逐行复核与冻结
 
@@ -30,6 +42,15 @@ Return Inbox 与 ERP、WORM、银行提交网关必须使用不同 HTTPS Origin 
 - 回盘记录以可信租户为所有唯一索引首字段，并按租户+回盘摘要、租户+批次+序号防重。幂等重放只允许在批次仍处于本次产生的 `reconciling` 或 `frozen` 状态时返回原汇总。
 - `treasury.bank_return.applied.v1` 事件执行精确字段白名单，只发布汇总、冻结原因、摘要和证据 ID，不发布支付指令、银行行引用、员工或账户数据。
 - R3 审计只记录聚合摘要。原始回盘、密文解密、冻结解除、失败子批次和银行重发不注册 MCP Tool。
+
+## 自动化门禁与外部验收
+
+`pnpm quality:treasury-bank-return-ingress-coverage` 执行 65 项固定端点、凭据、
+请求最小化、幂等、非 2xx 正文隔离、Content-Length、流式限长、读取取消、
+UTF-8/JSON、完整 Schema、领取对象绑定与负面证据保留测试；目标适配器达到
+98.90%/96.15%/100%/98.70%（语句/分支/函数/行），逐文件四维 90% 门禁由
+银行回盘服务门禁接入 `pnpm check`。该本地代码证据不替代真实银行签名、
+恶意样本、WORM 回读、限流、断连和超大响应现场联调。
 
 ## 失败行恢复子批次
 

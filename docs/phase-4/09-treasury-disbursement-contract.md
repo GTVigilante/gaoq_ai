@@ -48,3 +48,20 @@ REST、事件或 MCP 不得覆盖。请求只含 WORM 对象引用、Base64URL �
 （语句/分支/函数/行），逐文件四维均不得低于 90%，并由资金支付门禁在
 `pnpm check` 中联动执行。标准 MCP 继续只读脱敏控制摘要，禁止注册发薪、银行
 提交、文件导出或生产授权 Tool。
+
+回盘 Inbox 适配器只允许标准 HTTPS `POST /v1/returns/claim`，端点不得包含
+用户信息、query、fragment、非 443 端口或其他路径；Authorization、Accept、
+Cache-Control、Content-Type、Content-Length 与 Idempotency-Key 均由适配器
+固定生成。请求只含可信租户、ULID 批次和银行提交 ID，禁止账户、员工、金额、
+文件正文、Inbox 凭据或调用方 Header 进入请求。
+
+非 2xx 回盘响应只按状态码分类且禁止读取正文。成功清单声明长度与实际流式读取
+均不得超过 4 MiB，必须为严格 UTF-8 和 `application/json` 或
+`application/*+json`，通过完整严格 Schema 并精确绑定领取租户、批次和银行
+提交 ID；读取、取消或释放异常不得携带上游 cause 或覆盖稳定结果。验签失败、
+恶意文件等负面证据必须原样进入应用服务的整批冻结状态机，不得由适配器丢弃。
+
+仓库门禁 `pnpm quality:treasury-bank-return-ingress-coverage` 以 65 项测试覆盖
+上述边界，目标生产文件达到 98.90%/96.15%/100%/98.70%
+（语句/分支/函数/行），逐文件四维均不得低于 90%，并由银行回盘服务门禁在
+`pnpm check` 中联动执行。标准 MCP 禁止领取、上传或处理银行回盘正文。
