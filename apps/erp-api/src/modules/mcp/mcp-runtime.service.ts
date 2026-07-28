@@ -436,7 +436,6 @@ const payrollCutoverReadinessSchema = z.object({
   version: z.number().int().positive(),
 });
 const opOperatingSummarySchema = z.object({
-  id: recruitmentIdSchema,
   summaryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   revision: z.number().int().positive(),
   currency: z.literal('CNY'),
@@ -447,9 +446,6 @@ const opOperatingSummarySchema = z.object({
     refundOrderCount: z.number().int().nonnegative(),
     activeCustomerCount: z.number().int().nonnegative(),
   }),
-  payloadHash: z.string().length(43),
-  occurredAt: z.string().datetime(),
-  receivedAt: z.string().datetime(),
 });
 const opApprovalBridgeSchema = z.object({
   externalEventId: z.string(), sourceDocumentType: z.string(), sourceDocumentId: z.string(),

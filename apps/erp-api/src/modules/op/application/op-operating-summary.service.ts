@@ -1,4 +1,10 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { createEventId } from '@gaoq/shared-utils';
 import type { Connection, Model } from 'mongoose';
@@ -12,7 +18,6 @@ import {
 } from '../persistence/op.schemas.js';
 
 export interface OpOperatingSummaryView {
-  readonly id: string;
   readonly summaryDate: string;
   readonly revision: number;
   readonly currency: 'CNY';
@@ -23,6 +28,10 @@ export interface OpOperatingSummaryView {
     readonly refundOrderCount: number;
     readonly activeCustomerCount: number;
   };
+}
+
+export interface AppliedOpOperatingSummary extends OpOperatingSummaryView {
+  readonly id: string;
   readonly payloadHash: string;
   readonly occurredAt: string;
   readonly receivedAt: string;
@@ -50,6 +59,7 @@ export class OpOperatingSummaryService {
   ) {}
 
   async getLatest(summaryDate: string): Promise<OpOperatingSummaryView> {
+    this.assertScope('erp:op:operating_summary:read', 'OP_OPERATING_SUMMARY_READ_DENIED');
     this.assertDate(summaryDate);
     const tenantId = this.context.getTenantRequired().tenantId;
     const record = await this.summaries.findOne({ tenantId, summaryDate })
@@ -57,12 +67,25 @@ export class OpOperatingSummaryService {
     if (record === null) throw new NotFoundException({
       code: 'OP_OPERATING_SUMMARY_NOT_FOUND', message: '未找到该日期的 OP 经营摘要',
     });
-    return this.view(record);
+    return this.publicView(record);
   }
 
-  async apply(input: ApplyOpOperatingSummaryInput): Promise<OpOperatingSummaryView> {
+  async apply(input: ApplyOpOperatingSummaryInput): Promise<AppliedOpOperatingSummary> {
+    const actor = this.context.getActorRequired();
+    if (
+      actor.actorType !== 'system_job' ||
+      !actor.scopes.includes('erp:op:operating_summary:ingest')
+    ) {
+      throw new ForbiddenException({
+        code: 'OP_OPERATING_SUMMARY_INGEST_DENIED',
+        message: '仅允许可信 OP 入站 Worker 写入经营摘要',
+      });
+    }
     if (input.tenantId !== this.context.getTenantRequired().tenantId) {
-      throw new Error('OP_OPERATING_SUMMARY_CROSS_TENANT_DENIED');
+      throw new ForbiddenException({
+        code: 'OP_OPERATING_SUMMARY_CROSS_TENANT_DENIED',
+        message: '禁止跨租户写入 OP 经营摘要',
+      });
     }
     this.assertDate(input.envelope.data.summaryDate);
     this.assertBusinessDate(input.envelope.data.summaryDate, input.envelope.occurredAt);
@@ -76,10 +99,10 @@ export class OpOperatingSummaryService {
           code: 'OP_EVENT_PAYLOAD_CONFLICT', message: '同一 OP 事件标识对应不同载荷',
         });
       }
-      return this.view(existingEvent);
+      return this.internalView(existingEvent);
     }
     const session = await this.connection.startSession();
-    let result: OpOperatingSummaryView | undefined;
+    let result: AppliedOpOperatingSummary | undefined;
     try {
       await session.withTransaction(async () => {
         const latest = await this.summaries.findOne({
@@ -115,7 +138,7 @@ export class OpOperatingSummaryService {
             ...metrics, payloadHash: input.payloadHash,
           },
         }, session);
-        result = this.view(record.toObject());
+        result = this.internalView(record.toObject());
       });
     } finally {
       await session.endSession();
@@ -146,15 +169,28 @@ export class OpOperatingSummaryService {
     });
   }
 
-  private view(record: OpOperatingSummaryRecord): OpOperatingSummaryView {
+  private assertScope(scope: string, code: string): void {
+    if (!this.context.getActorRequired().scopes.includes(scope)) {
+      throw new ForbiddenException({ code, message: '无权读取 OP 经营摘要' });
+    }
+  }
+
+  private publicView(record: OpOperatingSummaryRecord): OpOperatingSummaryView {
     return Object.freeze({
-      id: record.id, summaryDate: record.summaryDate, revision: record.revision,
+      summaryDate: record.summaryDate, revision: record.revision,
       currency: record.currency,
       metrics: Object.freeze({
         gmvMinor: record.gmvMinor, paidOrderCount: record.paidOrderCount,
         refundMinor: record.refundMinor, refundOrderCount: record.refundOrderCount,
         activeCustomerCount: record.activeCustomerCount,
       }),
+    });
+  }
+
+  private internalView(record: OpOperatingSummaryRecord): AppliedOpOperatingSummary {
+    return Object.freeze({
+      ...this.publicView(record),
+      id: record.id,
       payloadHash: record.payloadHash, occurredAt: record.occurredAt.toISOString(),
       receivedAt: record.receivedAt.toISOString(),
     });

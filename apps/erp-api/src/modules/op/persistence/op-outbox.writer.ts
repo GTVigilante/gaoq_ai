@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import type { CloudEvent } from '@gaoq/shared-types';
-import { createEventId } from '@gaoq/shared-utils';
+import { createEventId, ULID_PATTERN } from '@gaoq/shared-utils';
 import type { ClientSession, Model } from 'mongoose';
 
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
@@ -63,8 +63,13 @@ export class OpOutboxWriter {
     const data = event.data;
     if (Object.keys(data).sort().join(',') !==
       'activeCustomerCount,currency,gmvMinor,paidOrderCount,payloadHash,refundMinor,refundOrderCount,revision,summaryDate' ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(event.tenantId) ||
+      !ULID_PATTERN.test(event.aggregateId) ||
+      !Number.isSafeInteger(event.version) || event.version < 1 ||
+      event.version !== data.revision ||
+      Number.isNaN(Date.parse(event.occurredAt)) ||
       !/^[A-Za-z0-9_-]{43}$/.test(data.payloadHash) || data.currency !== 'CNY' ||
-      !/^\d{4}-\d{2}-\d{2}$/.test(data.summaryDate) ||
+      !isRealDate(data.summaryDate) ||
       !Number.isSafeInteger(data.revision) || data.revision < 1 ||
       ![data.gmvMinor, data.paidOrderCount, data.refundMinor, data.refundOrderCount,
         data.activeCustomerCount].every((value) => Number.isSafeInteger(value) && value >= 0)) {
@@ -72,3 +77,9 @@ export class OpOutboxWriter {
     }
   }
 }
+
+const isRealDate = (value: string): boolean => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+};

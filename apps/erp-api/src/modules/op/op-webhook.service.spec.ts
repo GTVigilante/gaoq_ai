@@ -104,16 +104,21 @@ describe('OpWebhookService', () => {
     expect(record).toMatchObject({
       id: result.inboxId, tenantId: 'tenant-001', clientId: CLIENT_ID,
       externalEventId: EVENT_ID, status: 'pending', attempts: 0,
+      processingJobId: null, processingToken: null,
     });
     expect(JSON.stringify(record)).not.toMatch(/gmvMinor|summaryDate/u);
     expect(typeof record.payloadCiphertext).toBe('string');
     expect(new Date(record.expiresAt as Date).getTime() - NOW.getTime())
       .toBe(90 * 24 * 60 * 60 * 1_000);
-    expect(store.queue.add).toHaveBeenCalledWith(
-      'op.process-operating-summary',
-      { inboxId: result.inboxId, tenantId: 'tenant-001' },
-      expect.objectContaining({ attempts: 12 }),
-    );
+    const queued = store.queue.add.mock.calls[0] as unknown as [
+      string,
+      Readonly<Record<string, unknown>>,
+      { readonly attempts: number; readonly jobId: string },
+    ];
+    expect(queued[0]).toBe('op.process-operating-summary');
+    expect(queued[1]).toEqual({ inboxId: result.inboxId, tenantId: 'tenant-001' });
+    expect(queued[2].attempts).toBe(12);
+    expect(queued[2].jobId).toMatch(/^op_summary_[A-Za-z0-9_-]{43}$/);
     expect(store.audit.recordTrustedExternalService).toHaveBeenCalledWith(
       'tenant-001', expect.objectContaining({
         actorId: `op:${CLIENT_ID}`, action: 'integration.op.webhook.verify', outcome: 'success',
@@ -147,6 +152,28 @@ describe('OpWebhookService', () => {
     });
     expect(store.redis.set).not.toHaveBeenCalled();
     expect(store.inbox.create).not.toHaveBeenCalled();
+  });
+
+  it('队列 JobId 同时绑定租户、Inbox 与载荷，避免跨租户相同正文碰撞', async () => {
+    const raw = body();
+    const payloadHash = (await import('./op-operating-summary.contract.js')).hashOpPayload(raw);
+    const first = fixture({
+      id: '01K00000000000000000000001', tenantId: 'tenant-001', payloadHash,
+    });
+    const second = fixture({
+      id: '01K00000000000000000000002', tenantId: 'tenant-002', payloadHash,
+    });
+    second.bindings.findOne.mockReturnValueOnce(query({
+      tenantId: 'tenant-002', clientId: CLIENT_ID, credentialSecretRef: SECRET_REF,
+    }));
+
+    await first.service.accept(headers(raw), raw);
+    await second.service.accept(headers(raw), raw);
+    const firstOptions = first.queue.add.mock.calls[0]?.[2] as { readonly jobId: string };
+    const secondOptions = second.queue.add.mock.calls[0]?.[2] as { readonly jobId: string };
+    expect(firstOptions.jobId).not.toBe(secondOptions.jobId);
+    expect(firstOptions.jobId).toMatch(/^op_summary_[A-Za-z0-9_-]{43}$/);
+    expect(secondOptions.jobId).toMatch(/^op_summary_[A-Za-z0-9_-]{43}$/);
   });
 
   it('超过 1 MiB 的原始正文以 413 失败关闭', async () => {
@@ -358,11 +385,14 @@ describe('OpWebhookService', () => {
       inboxId: raced.id,
       duplicate: true,
     });
-    expect(store.queue.add).toHaveBeenCalledWith(
-      'op.process-operating-summary',
-      { inboxId: raced.id, tenantId: raced.tenantId },
-      expect.objectContaining({ jobId: `op_summary_${payloadHash}` }),
-    );
+    const queued = store.queue.add.mock.calls[0] as unknown as [
+      string,
+      Readonly<Record<string, unknown>>,
+      { readonly jobId: string },
+    ];
+    expect(queued[0]).toBe('op.process-operating-summary');
+    expect(queued[1]).toEqual({ inboxId: raced.id, tenantId: raced.tenantId });
+    expect(queued[2].jobId).toMatch(/^op_summary_[A-Za-z0-9_-]{43}$/);
   });
 
   it.each([

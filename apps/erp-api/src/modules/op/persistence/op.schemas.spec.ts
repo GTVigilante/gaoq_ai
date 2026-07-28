@@ -65,6 +65,8 @@ describe('OP 持久化约束', () => {
       status: 'pending', attempts: 0,
     }).validate();
     expect(OpOperatingSummaryInboxRecordSchema.path('rawBody')).toBeUndefined();
+    expect(OpOperatingSummaryInboxRecordSchema.path('processingJobId')).toBeDefined();
+    expect(OpOperatingSummaryInboxRecordSchema.path('processingToken')).toBeDefined();
     expect(OpOperatingSummaryInboxRecordSchema.indexes()).toContainEqual([
       { tenantId: 1, clientId: 1, externalEventId: 1 }, { unique: true },
     ]);

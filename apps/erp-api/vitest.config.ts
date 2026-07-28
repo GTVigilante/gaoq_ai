@@ -82,6 +82,30 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/op/application/op-operating-summary.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/op/op-operating-summary.processor.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/op/op.controller.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/op/persistence/op-outbox.writer.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/op/op-approval-webhook.service.ts': {
           branches: 90,
           functions: 90,

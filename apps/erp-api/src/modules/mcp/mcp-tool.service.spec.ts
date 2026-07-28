@@ -903,8 +903,11 @@ describe('McpToolService', () => {
   it('OP 经营摘要 Tool 仅凭 Scope 复用只读应用服务', async () => {
     const store = assemble();
     store.opSummaries.getLatest.mockResolvedValue({
-      id: '01J8ZQK7V0A2M4N6P8R0T2W4D1', summaryDate: '2026-07-22', revision: 2,
-      payloadHash: 'o'.repeat(43), metrics: { gmvMinor: 100 },
+      summaryDate: '2026-07-22', revision: 2, currency: 'CNY',
+      metrics: {
+        gmvMinor: 100, paidOrderCount: 2, refundMinor: 1,
+        refundOrderCount: 1, activeCustomerCount: 2,
+      },
     });
     const denied = await store.service.getOpOperatingSummary('2026-07-22', extra([]));
     expect(denied.isError).toBe(true);

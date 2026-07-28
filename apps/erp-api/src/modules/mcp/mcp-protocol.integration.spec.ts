@@ -354,20 +354,18 @@ describe('MCP Streamable HTTP 协议集成', () => {
       getPayrollCutoverReadiness: vi.fn(),
       getOpOperatingSummary: vi.fn().mockResolvedValue({
         content: [{ type: 'text' as const, text: JSON.stringify({ operatingSummary: {
-          id: '01J8ZQK7V0A2M4N6P8R0T2W4D1', summaryDate: '2026-07-22', revision: 1,
+          summaryDate: '2026-07-22', revision: 1,
           currency: 'CNY', metrics: {
             gmvMinor: 123_456, paidOrderCount: 12, refundMinor: 500,
             refundOrderCount: 1, activeCustomerCount: 8,
-          }, payloadHash: 'o'.repeat(43), occurredAt: '2026-07-22T08:00:00.000Z',
-          receivedAt: '2026-07-22T08:00:01.000Z',
+          },
         } }) }],
         structuredContent: { operatingSummary: {
-          id: '01J8ZQK7V0A2M4N6P8R0T2W4D1', summaryDate: '2026-07-22', revision: 1,
+          summaryDate: '2026-07-22', revision: 1,
           currency: 'CNY', metrics: {
             gmvMinor: 123_456, paidOrderCount: 12, refundMinor: 500,
             refundOrderCount: 1, activeCustomerCount: 8,
-          }, payloadHash: 'o'.repeat(43), occurredAt: '2026-07-22T08:00:00.000Z',
-          receivedAt: '2026-07-22T08:00:01.000Z',
+          },
         } },
       }),
       getOpApprovalBridge: vi.fn().mockResolvedValue({

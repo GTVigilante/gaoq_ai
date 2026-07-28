@@ -35,6 +35,13 @@ ERP 是组织与员工的**唯一主数据源**；OP 永远是外部系统，即
 - 原始报文保留 90 天用于争议排查与对账，到期 TTL 清理。
 - 单请求 body 最大 1 MiB，超限返回 413 并计数；压缩、分块或拼接绕过大小限制一律失败关闭。
 - Worker 对暂时性错误最多重试 12 次并指数退避；永久契约错误直接把 Inbox 标记为 failed。失败作业保留供告警与排查；人工重新入队/标记处理控制面属于 Phase 5 加固切片，交付前不得宣称生产闭环完成。
+- BullMQ JobId 必须同时绑定可信 `tenantId`、Inbox ID 与载荷摘要；禁止只使用
+  `payloadHash`，避免不同租户相同正文互相占用全局队列键。Worker 认领同时写入
+  JobId 与随机处理令牌，完成、失败和重试状态更新均按令牌围栏；同一 Job 重试可
+  立即恢复，其他 Job 只能在 15 分钟租约过期后接管。
+- 暂时性错误在最后一次重试前保持可恢复 `processing`，永久错误或重试耗尽才形成
+  `failed`；业务事务和 Inbox `completed` 已提交后的审计异常只记录稳定告警，
+  禁止通用 catch 把成功修订反写为失败或重复生成 Outbox。
 
 ## 4. 幂等
 
@@ -77,7 +84,9 @@ ERP 是组织与员工的**唯一主数据源**；OP 永远是外部系统，即
 | `POST /webhooks/op/operating-summaries` | OP 推送入口，202 表示已加密入箱并确保排队 | 仅 OP HMAC 服务身份，不挂用户 scope |
 | `GET /op/operating-summaries/:date` | 按统计日读取最新 revision | `erp:op:operating_summary:read` |
 
-REST 响应只含白名单指标、版本号与统计日，不含原始报文、Inbox 内部字段或其他租户数据；无写端点，摘要不提供任何 REST 修改/删除入口。
+REST 响应只含 `summaryDate`、`revision`、`currency` 与五项白名单指标，不含摘要
+内部 ID、`payloadHash`、供应商发生/接收时间、原始报文、Inbox 字段或其他租户
+数据；无写端点，摘要不提供任何 REST 修改/删除入口。
 
 ## 9. 事件契约
 
@@ -91,7 +100,8 @@ CloudEvents 1.0 信封（遵循集成规范 §9.1）：
 
 ## 10. MCP 契约
 
-- **Resource（只读）**：`erp://op/operating-summaries/{date}`，读取指定统计日最新修订。
+- **Resource（只读）**：`erp://op/operating-summaries/{date}`，读取指定统计日最新
+  修订，输出与 REST 使用相同最小白名单，不暴露内部 ID、载荷摘要或接收时间。
 - **Tool**：`op_operating_summary_get`（R0），唯一参数 `date`；声明中文 title/description、input/output Schema 和只读幂等注解。
 - **Prompt**：`op_operating_summary_review_guide`，仅指导经营摘要解读，不产生写操作。
 - **禁止注册任何经营摘要写 Tool**：接收、修订、删除摘要均无 MCP 入口；写入路径只认 §2 webhook。未标注风险等级的 Tool 默认按 R3 处理。
@@ -112,6 +122,13 @@ Webhook 在租户解析后的验证拒绝、重放拒绝和成功入箱均尝试
 `OP_WEBHOOK_AUDIT_AFTER_DECISION_FAILED` 告警，不得覆盖原始 4xx 决策，也不得
 把已加密入箱并确保排队的 202 成功反向暴露为失败。告警不得包含签名、nonce 或
 原始正文。
+
+Worker 只有在摘要与 Outbox 事务提交、Inbox 终态按处理令牌成功写入后才记录成功
+审计；审计失败只记录
+`OP_OPERATING_SUMMARY_AUDIT_AFTER_COMMIT_FAILED`。永久失败与暂时失败决定形成后
+的审计异常只记录 `OP_OPERATING_SUMMARY_FAILURE_AUDIT_AFTER_DECISION_FAILED`，
+不得覆盖原错误或改变重试分类。OP 结果投递的 R2 人工重试同样不得因提交后审计
+异常向调用方反向暴露失败。
 
 ## 13. 数据分级
 
@@ -155,10 +172,15 @@ Webhook 在租户解析后的验证拒绝、重放拒绝和成功入箱均尝试
 - [ ] 审计链完整且不含原始报文与密钥；
 - [ ] 关键模块单测覆盖率 ≥90%。
 
-仓库自动化证据：`pnpm quality:op-webhook-ingress-coverage` 同时覆盖经营摘要与
-审批请求两个 Controller、入口服务和独立 AES-256-GCM 服务，要求每个目标文件
-语句、分支、函数和行均不低于 90%。当前 124 项测试合计达到
-98.34%/96.13%/100%/100%。
+仓库自动化证据：
+
+- `pnpm quality:op-webhook-ingress-coverage` 同时覆盖经营摘要与审批请求两个
+  Webhook Controller、入口服务和独立 AES-256-GCM 服务，要求每个目标文件
+  语句、分支、函数和行均不低于 90%。当前 125 项测试合计达到
+  98.34%/96.13%/100%/100%。
+- `pnpm quality:op-operating-summary-coverage` 覆盖经营摘要入箱 JobId、应用服务、
+  Worker、REST 控制面和事务 Outbox。当前 114 项测试合计达到
+  99.34%/97.35%/100%/100%，五个生产目标文件逐文件四维均不低于 90%。
 
 ## 17. 退出门禁
 

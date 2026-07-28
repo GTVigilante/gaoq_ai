@@ -62,12 +62,12 @@
 ## 5. 覆盖率边界
 
 2026-07-28 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，347 个测试文件、3,528 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，350 个测试文件、3,602 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-87.78%（26,075/29,704）、分支 84.60%（17,260/20,401）、函数
-88.44%（4,716/5,332）、行 89.43%（23,854/26,672）。全仓四维已达到 Phase 0
-规定的 80% 门槛，分支高于最低命中数 939 个。全量命令通过
+88.21%（26,238/29,743）、分支 85.01%（17,368/20,429）、函数
+88.89%（4,745/5,338）、行 89.84%（23,997/26,709）。全仓四维已达到 Phase 0
+规定的 80% 门槛，分支高于最低命中数 1,024 个。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
 
@@ -92,7 +92,8 @@ OP Webhook 双入口、
 `pnpm quality:mcp-tool-coverage`、
 `pnpm quality:op-approval-request-coverage`、
 `pnpm quality:op-approval-result-coverage`、
-`pnpm quality:op-webhook-ingress-coverage` 和
+`pnpm quality:op-webhook-ingress-coverage`、
+`pnpm quality:op-operating-summary-coverage` 和
 `pnpm quality:payroll-shadow-coverage`、
 `pnpm quality:payroll-run-coverage`、
 `pnpm quality:payroll-approval-coverage`、
@@ -157,7 +158,7 @@ OP Webhook 双入口、
 `pnpm quality:oauth-controller-coverage`、
 `pnpm quality:strong-auth-coverage`、
 `pnpm quality:onboarding-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。七十九条链路当前覆盖率基线集合为
+`pnpm quality:production-execution-authorization-coverage`。八十条链路当前覆盖率基线集合为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -174,6 +175,7 @@ OP Webhook 双入口、
 100%/100%/100%/100%、
 100%/100%/100%/100%、
 98.34%/96.13%/100%/100%、
+99.34%/97.35%/100%/100%、
 99.00%/97.24%/97.29%/98.84%、92.18%/90.20%/96.10%/93.18%、
 100%/100%/100%/100%、
 100%/100%/100%/100%、
@@ -229,8 +231,8 @@ OP Webhook 双入口、
 100%/100%/100%/100%、98.02%/97.43%/95.83%/98.13%、
 97.18%/95.18%/100%/97.99%、98.61%/95.04%/100%/99.07%、
 98.23%/97.43%/98.24%/98.85%、97.80%/93.10%/100%/100%
-（语句/分支/函数/行）；七十九项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明七十九条关键链路达标，
+（语句/分支/函数/行）；八十项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明八十条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 营销副作用可靠投递已覆盖 68 项路由身份、运行时受损记录、Outbox 抢占与释放、
@@ -507,13 +509,24 @@ OP 审批结果回传已覆盖 70 项 Outbox 身份绑定、终态筛选、桥�
 错误。两个目标文件合计覆盖率达到四维 100%，独立四维 90% 门禁已接入
 `pnpm check`。
 
-OP 经营摘要与审批请求 Webhook 双入口已覆盖 124 项控制器 query 禁止、六认证
+OP 经营摘要与审批请求 Webhook 双入口已覆盖 125 项控制器 query 禁止、六认证
 头、HMAC 原始字节、时间窗、可信 clientId 租户绑定、受控路由、防重放、Inbox
 唯一键竞态、AES-256-GCM 独立密钥域/轮换/AAD/篡改、正文上限及审计故障测试。
 无法归属租户的认证头仍统一拒绝；租户解析后的失败审计异常不覆盖稳定 HTTP
 错误，成功入箱和排队后的审计异常也不反向暴露为失败。两个控制器、两个入口服务
 和两个独立加密服务合计覆盖率达到 98.34%/96.13%/100%/100%
 （语句/分支/函数/行），独立四维 90% 门禁已接入 `pnpm check`。
+
+OP 经营摘要可靠处理链路已覆盖 114 项入箱排队、可信 Worker 上下文、任务与
+租户隔离、认领栅栏、租约恢复、4xx/5xx 分类、重试耗尽、事务 Outbox、最小
+REST/MCP 投影和提交后审计隔离测试。BullMQ JobId 绑定租户、Inbox 与载荷摘要，
+Worker 通过任务标识、随机令牌及 15 分钟租约栅栏推进状态；同任务可立即恢复未
+完成终态，其他任务只能在租约过期后接管。业务事务提交后的终态或审计异常不得
+反向登记业务失败或重复执行副作用；OP 审批结果 R2 重试的决策审计同样采用提交
+后隔离。五个目标生产文件合计覆盖率达到 99.34%/97.35%/100%/100%
+（语句/分支/函数/行），逐文件四维 90% 门禁已接入 `pnpm check`。REST 与标准
+MCP 只返回日期、修订、币种和五项经营指标，不暴露内部标识、载荷摘要或接收时间，
+也不开放重试、对账和运维写能力。
 
 Treasury Outbox 已覆盖 13 项可信租户、精确事件字段、状态、强认证方法、
 文件摘要、回盘与对账最小载荷测试；覆盖率达到 98.48%/98.67%/100%/98.46%

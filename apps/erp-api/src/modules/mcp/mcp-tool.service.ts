@@ -404,7 +404,6 @@ export class McpToolService {
       const operatingSummary = await this.opSummaries.getLatest(date);
       await this.auditTool(identity, 'op_operating_summary_get', 'R0', 'success', {
         summaryDate: operatingSummary.summaryDate, revision: operatingSummary.revision,
-        payloadHash: operatingSummary.payloadHash,
       });
       return structuredResult({ operatingSummary });
     });
