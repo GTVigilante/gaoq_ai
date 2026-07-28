@@ -187,6 +187,24 @@ downloadSignedFile / verifySignedFile`；入站验签由独立 Webhook 边界完
   一致校验。免登录链接固定调用
   `POST /v3/sign-flow/{signFlowId}/sign-url`，只接受官方 eSign HTTPS 页面，
   禁止任意跳转、用户信息、凭据和非标准端口。
+- ERP 用户发起签署必须先通过 `POST /integrations/esign/issuance-requests`
+  持久化意图，再由 `issue:esign:flow` Worker 执行。请求强制
+  `Idempotency-Key`、`erp:integration:esign:initiate` Scope 和 R2 审计；Mongo
+  记录只保存加密供应商文件标识、Offer/版本及调度控制字段，不保存签署主体、
+  Offer 条款、签署链接或 Token。
+- 发起意图状态为
+  `pending → processing → local_finalize → succeeded`，异常终态为
+  `manual_review/dead`。供应商结果未知时不得自动重放；已有加密外部 flowId 时
+  只能补本地 `ESignFlow` 登记。过期租约无回执转人工核验，有回执转
+  `local_finalize`。
+- `GET /integrations/esign/issuance-requests?status=manual_review|dead` 只返回
+  本租户脱敏摘要；`POST
+  /integrations/esign/issuance-requests/:requestId/resolutions` 只允许专用运维
+  Scope、幂等键和 R2 审计。重新外呼要求 `approved_exception` 与供应商确认
+  未创建；人工绑定要求供应商确认 flowId 与原请求一致，且不得直接写成功终态。
+- eSign 发起、重试、人工处置、供应商文件、外部 flowId 和签署主体永久不注册
+  MCP Tool、Resource 或 Prompt。标准 MCP 只能复用应用服务读取既有脱敏业务
+  状态，不能调用本状态机或供应商适配器。
 - 补拉调用 `GET /v3/sign-flow/{id}/detail`；下载地址使用官方推荐的 `POST /v3/sign-flow/{id}/file-download-url`，有效期固定 300 秒；每个 PDF 再调用 `POST /v3/files/{fileId}/verify`。下载客户端禁止跳转，限定 eSign HTTPS 域名、50 MiB 上限和 `%PDF-` 魔数。
 - `integration_esign_evidence` 仅保存供应商文件 ID 摘要、PDF SHA-256、大小、扫描证据、验签结果摘要、WORM 对象引用与回执；不保存 PDF、文件名、下载短链、证书或签署人原文。WORM `objectKey` 必须幂等；扫描或归档 Adapter 未装配时必须失败关闭。
 - 扫描与 WORM 网关必须成套配置在独立 HTTPS 权限域。Adapter 出站前复算 PDF SHA-256，响应限制为 16 KiB 严格 JSON；扫描回执绑定摘要，WORM 回执同时绑定摘要、对象键、不可变标志和不少于十年的保留期。任一错位均不得推进 Offer `signed`。

@@ -436,7 +436,7 @@ describe('AttendanceApplicationService', () => {
     );
     const event = store.outbox.append.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
     expect(event).toMatchObject({ type: 'attendance.source_fact.migrated' });
-    expect(JSON.stringify(event)).not.toMatch(/workedMinutes|480|legacy-event-001/u);
+    expect(JSON.stringify(event.data)).not.toMatch(/workedMinutes|480|legacy-event-001/u);
     expect(result.fact).toMatchObject({ version: 1, businessDate: '2026-04-01' });
   });
 

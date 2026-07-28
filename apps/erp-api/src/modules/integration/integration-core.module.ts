@@ -44,6 +44,11 @@ import {
 import { ESignFlowRecord, ESignFlowRecordSchema } from './esign-flow.schema.js';
 import { ESignFlowService } from './esign-flow.service.js';
 import { ESignHttpClient, FetchESignHttpClient } from './esign-http.client.js';
+import {
+  ESignIssuanceRequestRecord,
+  ESignIssuanceRequestRecordSchema,
+} from './esign-issuance.schema.js';
+import { ESignIssuanceService } from './esign-issuance.service.js';
 import { ESignReconciliationService } from './esign-reconciliation.service.js';
 import { ESignWebhookCryptoService } from './esign-webhook-crypto.service.js';
 import {
@@ -197,6 +202,10 @@ import { PayrollMasterDataSnapshotService } from './payroll-master-data-snapshot
       { name: ESignBinding.name, schema: ESignBindingSchema },
       { name: ESignEvidenceRecord.name, schema: ESignEvidenceRecordSchema },
       { name: ESignFlowRecord.name, schema: ESignFlowRecordSchema },
+      {
+        name: ESignIssuanceRequestRecord.name,
+        schema: ESignIssuanceRequestRecordSchema,
+      },
       { name: ESignWebhookInboxRecord.name, schema: ESignWebhookInboxRecordSchema },
       {
         name: RecruitmentChannelBindingRecord.name,
@@ -242,6 +251,7 @@ import { PayrollMasterDataSnapshotService } from './payroll-master-data-snapshot
     OrgProvisioningCryptoService,
     ESignSecretResolver,
     ESignFlowService,
+    ESignIssuanceService,
     ESignEvidenceService,
     ESignReconciliationService,
     ESignWebhookCryptoService,
@@ -350,6 +360,7 @@ import { PayrollMasterDataSnapshotService } from './payroll-master-data-snapshot
     ESignWebhookService,
     ESignWebhookCryptoService,
     ESignFlowService,
+    ESignIssuanceService,
     ESignEvidenceService,
     ESignReconciliationService,
     ESignAdapter,

@@ -628,6 +628,30 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/integration/esign-issuance.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/integration/esign-issuance.controller.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/integration/esign-issuance.schema.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/integration/esign-webhook.queue.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/integration/recruitment-channel.adapter.ts': {
           branches: 90,
           functions: 90,
@@ -659,6 +683,12 @@ export default defineConfig({
           statements: 90,
         },
         'src/modules/recruitment/application/recruitment-application.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/recruitment/application/recruitment-esign-source.service.ts': {
           branches: 90,
           functions: 90,
           lines: 90,

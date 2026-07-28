@@ -215,6 +215,32 @@ AWAITING_SIGNATURE → PARTIAL_SIGNED → PROVIDER_COMPLETED → COMPLETED
 - 状态迁移只允许由两类输入驱动：适配器回传（webhook/拉单）或 ERP 用户显式操作（发起、撤销）。
 - 外部状态与内部状态的映射表由适配器维护；外部新增未知状态必须设置 `REVIEW_REQUIRED` 并告警，保持当前状态，禁止把未知值伪造成业务状态或静默忽略。
 
+发起动作使用独立持久化状态机
+`pending → processing → local_finalize → succeeded`，异常终态为
+`manual_review/dead`：
+
+- `POST /integrations/esign/issuance-requests` 只接受已验证 ERP 用户、可信租户、
+  `erp:integration:esign:initiate` Scope、`Idempotency-Key`、已接受且未签署的
+  Offer、供应商文件标识、规范到期时间及有界签署坐标；响应为 202。
+- 外呼前必须先提交发起意图；意图只保存加密供应商文件标识、Offer 引用和控制
+  字段，不保存候选人姓名、账号、Offer 条款、签署链接或供应商 Token。Worker
+  只能通过 Recruitment 专用窄口临时取得最小签署主体，禁止绕过应用服务读取
+  数据库。
+- 供应商调用一旦可能已提交但本地没有可验证回执，必须进入 `manual_review`，
+  禁止由 BullMQ、租约恢复或调度器自动重放。已加密保存外部 flowId 后，只允许
+  重试本地流程登记，不得再次调用供应商创建接口。
+- `GET /integrations/esign/issuance-requests` 只允许查询本租户
+  `manual_review/dead` 脱敏摘要；`POST
+  /integrations/esign/issuance-requests/:requestId/resolutions` 必须使用运维
+  Scope、幂等键和 R2 审计。重新外呼仅限 `approved_exception` 且供应商明确
+  确认未创建；人工绑定外部 flowId 必须确认与原请求一致，并且只能进入
+  `local_finalize`，不能直接伪造成功。
+- 发起 JobId 必须绑定租户和请求标识，载荷不得含文件、姓名或账号；完成 Job
+  立即删除，使人工处置可安全复用确定性 JobId。过期 `processing` 无外部回执时
+  转人工核验，有回执时只补本地终态。
+- 发起、重试、人工处置、外部 flowId、供应商文件和签署主体永久不注册 MCP
+  Tool、Resource 或 Prompt；AI 不得执行或代替供应商核验。
+
 ### 6.3 Webhook 处理
 
 - 入口：`POST /webhooks/esign`，回调 URL 固定不带 query。经网关来源限制后，按 e签宝 V3 规则对 `X-Tsign-Open-Timestamp + raw body bytes` 执行 HMAC-SHA256，请求时间戳窗口为 ±5 分钟。事件发生时间可因供应商重试早于请求时间，不用它代替请求防重放。租户只能在验签后根据唯一 `appId` 绑定解析，禁止信任 URL、query、header 或 body 中的 `tenantId`。

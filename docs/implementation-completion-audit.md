@@ -62,11 +62,11 @@
 ## 5. 覆盖率边界
 
 2026-07-28 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，380 个测试文件、5,047 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，387 个测试文件、5,196 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-91.28%（28,636/31,371）、分支 88.55%（19,447/21,961）、函数
-91.77%（5,110/5,568）、行 92.50%（26,121/28,238）。全仓四维已达到 Phase 0
+91.31%（29,185/31,960）、分支 88.61%（19,986/22,554）、函数
+91.86%（5,228/5,691）、行 92.54%（26,642/28,788）。全仓四维已达到 Phase 0
 规定的 80% 门槛。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
@@ -159,6 +159,7 @@ OP Webhook 双入口、
 `pnpm quality:attendance-provider-processor-coverage`、
 `pnpm quality:esign-webhook-processor-coverage`、
 `pnpm quality:esign-integration-coverage`、
+`pnpm quality:esign-issuance-coverage`、
 `pnpm quality:recruitment-channel-pull-coverage`、
 `pnpm quality:recruitment-channel-processor-coverage`、
 `pnpm quality:recruitment-channel-position-relay-coverage`、
@@ -199,7 +200,7 @@ OP Webhook 双入口、
 `pnpm quality:oauth-controller-coverage`、
 `pnpm quality:strong-auth-coverage`、
 `pnpm quality:onboarding-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。一百零二条链路当前覆盖率基线集合为
+`pnpm quality:production-execution-authorization-coverage`。一百零三条链路当前覆盖率基线集合为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -556,6 +557,15 @@ fencing、失败任务重建、审计故障隔离和唯一键竞态测试。九�
 达到 98.01%/95.55%/99.00%/99.51%（语句/分支/函数/行），各文件四维
 均不低于 90%，独立门禁已接入 `pnpm check`。真实 eSign 租户、实名认证、
 免登签署、拒签/过期/撤销回调和 WORM 网关仍属于外部验收边界。
+
+eSign 发起运行时门禁已覆盖 139 项可信租户、专用 Scope、持久化加密意图、Offer/
+候选人引用闭包、确定性 JobId、租约、外部结果未知隔离、仅本地终结、人工重试/
+绑定和 R2 审计测试，追加索引清单另有独立测试。供应商可能已提交时禁止自动重放；人工重试必须
+同时具备批准例外和供应商确认未创建，人工绑定不能直接伪造成功；完成 Job 立即
+删除以允许人工处置后复用确定性标识。五个目标生产文件合计达到
+97.95%/94.98%/100%/98.74%（语句/分支/函数/行），逐文件四维均不低于 90%，
+独立门禁已接入 `pnpm check`。标准 MCP 永久不开放发起、重试、人工处置、外部
+标识或签署主体；真实 eSign 租户、实名认证、人工核验和招聘 UAT 仍待外部验收。
 
 招聘渠道补拉边界已覆盖 85 项 Registry 装配、系统任务授权、Mongo 绑定回读闭包、
 凭据命名空间、加密游标完整性/前进、精确批量与投递 Envelope、规范事件 ID/UTC

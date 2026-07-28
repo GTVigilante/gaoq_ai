@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AuditService } from '../../core/audit/audit.service.js';
 import type { TenantContextService } from '../../core/tenant/tenant-context.service.js';
 import type { ESignEvidenceService } from './esign-evidence.service.js';
+import type { ESignIssuanceService } from './esign-issuance.service.js';
 import { projectESignFlow } from './esign-flow-projection.js';
 import type { ESignReconciliationService } from './esign-reconciliation.service.js';
 import type { ESignFlowDocument } from './esign-flow.schema.js';
@@ -15,7 +16,9 @@ import {
   ESIGN_ARCHIVE_EVIDENCE_JOB,
   ESIGN_PROCESS_WEBHOOK_JOB,
   ESIGN_RECONCILE_FLOWS_JOB,
+  ESIGN_ISSUE_FLOW_JOB,
   createESignEvidenceJobId,
+  createESignIssuanceJobId,
   createESignWebhookJobId,
   type ESignQueueJobData,
 } from './esign-webhook.queue.js';
@@ -81,6 +84,8 @@ function fixture() {
   const recordSystem = vi.fn().mockResolvedValue(undefined);
   const archiveCompletedFlow = vi.fn().mockResolvedValue({ evidenceId: 'evidence-001' });
   const runStaleBatch = vi.fn().mockResolvedValue(4);
+  const recoverAndEnqueue = vi.fn().mockResolvedValue(2);
+  const processIssuance = vi.fn().mockResolvedValue(1);
   const trustedContexts: unknown[] = [];
   const run = vi.fn().mockImplementation(
     (trusted: unknown, callback: () => Promise<unknown>) => {
@@ -95,6 +100,10 @@ function fixture() {
     { unprotect } as unknown as ESignWebhookCryptoService,
     { recordSystem } as unknown as AuditService,
     { archiveCompletedFlow } as unknown as ESignEvidenceService,
+    {
+      recoverAndEnqueue,
+      process: processIssuance,
+    } as unknown as ESignIssuanceService,
     { runStaleBatch } as unknown as ESignReconciliationService,
     { run } as unknown as TenantContextService,
     { add: queueAdd } as unknown as Queue<ESignQueueJobData>,
@@ -109,6 +118,8 @@ function fixture() {
     recordSystem,
     archiveCompletedFlow,
     runStaleBatch,
+    recoverAndEnqueue,
+    processIssuance,
     trustedContexts,
     run,
     queueAdd,
@@ -132,11 +143,42 @@ describe('ESignWebhookProcessor', () => {
     const store = fixture();
     await expect(store.processor.process(
       job(ESIGN_RECONCILE_FLOWS_JOB),
-    )).resolves.toBe(4);
+    )).resolves.toBe(6);
     expect(store.runStaleBatch).toHaveBeenCalledOnce();
+    expect(store.recoverAndEnqueue).toHaveBeenCalledOnce();
     await expect(store.processor.process(
       job(ESIGN_RECONCILE_FLOWS_JOB, { tenantId: TENANT_ID }),
     )).rejects.toThrow();
+  });
+
+  it('发起任务校验确定性 JobId 并只在最小系统 Scope 下执行', async () => {
+    const store = fixture();
+    const requestId = '01K00000000000000000000009';
+    await expect(store.processor.process(job(ESIGN_ISSUE_FLOW_JOB, {
+      requestId,
+      tenantId: TENANT_ID,
+    }, createESignIssuanceJobId(TENANT_ID, requestId)))).resolves.toBe(1);
+    expect(store.processIssuance).toHaveBeenCalledWith(requestId);
+    const trusted = store.trustedContexts[0] as {
+      readonly actor: {
+        readonly actorId: string;
+        readonly scopes: readonly string[];
+        readonly traceId: string;
+      };
+    };
+    expect(trusted.actor).toMatchObject({
+      actorId: 'system:esign-issuance',
+      traceId: requestId,
+      scopes: [
+        'erp:integration:esign:create',
+        'erp:recruitment:offer:read_all',
+      ],
+    });
+
+    await expect(store.processor.process(job(ESIGN_ISSUE_FLOW_JOB, {
+      requestId,
+      tenantId: TENANT_ID,
+    }, 'forged'))).rejects.toThrow('ESIGN_ISSUANCE_JOB_ID_MISMATCH');
   });
 
   it('证据归档任务只在显式最小系统 Scope 下调用应用服务', async () => {

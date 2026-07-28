@@ -14,6 +14,7 @@ import {
 } from '../../core/audit/audit.service.js';
 import { TenantContextService } from '../../core/tenant/tenant-context.service.js';
 import { ESignEvidenceService } from './esign-evidence.service.js';
+import { ESignIssuanceService } from './esign-issuance.service.js';
 import { ESignReconciliationService } from './esign-reconciliation.service.js';
 import { projectESignFlow } from './esign-flow-projection.js';
 import { ESignFlowRecord, type ESignFlowDocument } from './esign-flow.schema.js';
@@ -27,10 +28,13 @@ import {
   ESIGN_PROCESS_WEBHOOK_JOB,
   ESIGN_ARCHIVE_EVIDENCE_JOB,
   ESIGN_RECONCILE_FLOWS_JOB,
+  ESIGN_ISSUE_FLOW_JOB,
   ESIGN_WEBHOOK_QUEUE,
   createESignEvidenceJobId,
+  createESignIssuanceJobId,
   createESignWebhookJobId,
   type ESignEvidenceArchiveJobData,
+  type ESignIssuanceJobData,
   type ESignQueueJobData,
   type ESignWebhookJobData,
 } from './esign-webhook.queue.js';
@@ -55,6 +59,9 @@ const evidenceJobSchema = z.object({
   flowId: z.string().regex(ULID_PATTERN), tenantId: tenantIdSchema,
 }).strict();
 const reconciliationJobSchema = z.object({}).strict();
+const issuanceJobSchema = z.object({
+  requestId: z.string().regex(ULID_PATTERN), tenantId: tenantIdSchema,
+}).strict();
 const PROCESSING_LEASE_MS = 15 * 60 * 1_000;
 
 /** eSign 回调 Worker；仅投影供应商状态，不在未归档签署文件时标记 Offer 已签。 */
@@ -70,6 +77,7 @@ export class ESignWebhookProcessor extends WorkerHost {
     private readonly crypto: ESignWebhookCryptoService,
     private readonly audit: AuditService,
     private readonly evidence: ESignEvidenceService,
+    private readonly issuance: ESignIssuanceService,
     private readonly reconciliation: ESignReconciliationService,
     private readonly context: TenantContextService,
     @InjectQueue(ESIGN_WEBHOOK_QUEUE)
@@ -81,7 +89,35 @@ export class ESignWebhookProcessor extends WorkerHost {
   override async process(job: Job<ESignQueueJobData>): Promise<number> {
     if (job.name === ESIGN_RECONCILE_FLOWS_JOB) {
       reconciliationJobSchema.parse(job.data);
-      return this.reconciliation.runStaleBatch();
+      const [reconciled, recovered] = await Promise.all([
+        this.reconciliation.runStaleBatch(),
+        this.issuance.recoverAndEnqueue(),
+      ]);
+      return reconciled + recovered;
+    }
+    if (job.name === ESIGN_ISSUE_FLOW_JOB) {
+      const data: ESignIssuanceJobData = issuanceJobSchema.parse(job.data);
+      if (
+        String(job.id ?? '') !== createESignIssuanceJobId(
+          data.tenantId,
+          data.requestId,
+        )
+      ) throw new Error('ESIGN_ISSUANCE_JOB_ID_MISMATCH');
+      return this.context.run({
+        tenant: { tenantId: data.tenantId, source: 'service_identity' },
+        actor: {
+          actorType: 'system_job',
+          actorId: 'system:esign-issuance',
+          tenantId: data.tenantId,
+          roleCodes: ['INTEGRATION_WORKER'],
+          scopes: [
+            'erp:integration:esign:create',
+            'erp:recruitment:offer:read_all',
+          ],
+          departmentIds: [],
+          traceId: data.requestId,
+        },
+      }, async () => this.issuance.process(data.requestId));
     }
     if (job.name === ESIGN_ARCHIVE_EVIDENCE_JOB) {
       const data: ESignEvidenceArchiveJobData = evidenceJobSchema.parse(job.data);

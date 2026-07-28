@@ -12,6 +12,7 @@ import {
 import {
   RecruitmentChannelOperationsController,
 } from './recruitment-channel-operations.controller.js';
+import { ESignIssuanceController } from './esign-issuance.controller.js';
 
 /** 集成 HTTP/Webhook 外壳；后台消费者只导入 IntegrationCoreModule。 */
 @Module({
@@ -24,6 +25,7 @@ import {
     AttendanceProviderCoverageController,
     RecruitmentCalendarOperationsController,
     RecruitmentChannelOperationsController,
+    ESignIssuanceController,
   ],
   exports: [IntegrationCoreModule],
 })
