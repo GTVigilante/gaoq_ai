@@ -97,6 +97,16 @@ ULID、聚合、完整 CloudEvent 和调度时间，避免受损数据库结果�
 `pnpm check`；事件名、REST 和标准 MCP 契约不变，MCP 仍不开放发送、重放、
 证明或联系方式能力。
 
+Onboarding 事务 Outbox 发布边界已进一步加固：创建、任务完成、建档开始和完成
+四类事件采用严格对象与逐类型负载白名单，状态、任务代码、Employment 引用、
+规范时间、可信租户/主体和活动 Mongo 事务必须完整闭合；未知字段、敏感证据、
+Token、跨租户事件及分裂身份上下文均在写入前失败关闭。数据库创建结果还须反向
+绑定事件 ULID、聚合版本、完整 CloudEvent 和调度时间。43 项专项测试使目标
+Writer 达到 98.27%/96.87%/100%/100%（语句/分支/函数/行），逐文件四维
+90% 门禁已接入 `pnpm precheck` 与 `pnpm check`。REST、事件名和标准 MCP
+契约不变；MCP 仍经入职应用服务只读部门裁剪摘要，不开放任务、建档、Outbox、
+重放或证据读取能力。真实招聘/eSign/Org 端到端回放与 HR UAT 仍待现场验收。
+
 Talent Lifecycle 360 已交付 `Candidate → Person → Employment` 跨域投影、
 生命周期推导、加密服务触点、授权门禁、Outbox、只读 MCP 和管理页面。eSign V3
 Adapter 已覆盖流程补拉、已签 PDF 短时下载、供应商验签、证据账本及 Offer
