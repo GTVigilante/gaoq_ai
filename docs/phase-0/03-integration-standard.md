@@ -158,7 +158,18 @@
 
 ### 6.1 适配器抽象
 
-`ESignAdapter` 接口：`createFlow / getFlow / signUrl / downloadFile`；Webhook 验签是入站边界能力，不与出站 Adapter 请求混用。首发仅 `esign-adapter`（e签宝）；`fadada-adapter` 作为后续适配器按同一接口实现，切换经 ADR 评审。
+`ESignAdapter` 接口：`createFlow / getFlow / signUrl / listSignedFiles /
+downloadSignedFile / verifySignedFile`；Webhook 验签是入站边界能力，不与出站
+Adapter 请求混用。首发仅 `esign-adapter`（e签宝）；`fadada-adapter` 作为后续
+适配器按同一接口实现，切换经 ADR 评审。
+
+- `createFlow` 固定调用 V3 `POST /v3/sign-flow/create-by-file`，只接受受控文件
+  标识、个人签署账号、姓名、5 分钟至 90 天的到期时间及有界坐标；强制
+  `autoStart/autoFinish/identityVerify=true`，不得把客户端任意 JSON 透传给
+  供应商。
+- `signUrl` 固定调用 V3 `POST /v3/sign-flow/{id}/sign-url`，使用已核验的个人
+  账号、`needLogin=false`、`urlType=2`；只返回无凭据、标准 443 端口的
+  `https://*.esign.cn` 页面。候选人免登录不等于跳过身份一致校验。
 
 ### 6.2 签署流程状态机（ERP 侧权威）
 
@@ -179,12 +190,20 @@ AWAITING_SIGNATURE → PARTIAL_SIGNED → PROVIDER_COMPLETED → COMPLETED
 - 入箱只保存 AES-256-GCM 密文，AAD 绑定租户和 Inbox ID；外部 flowId 同样加密，只用 SHA-256 摘要作精确关联。
 - 重放：以 `appId + raw body` 的 SHA-256 事件标识幂等；同一 flowId 只应用不早于已提交时间的事件，乱序事件标记 `ignored` 并保留审计。
 - 只白名单处理官方 action `SIGN_MISSON_COMPLETE` 和 `SIGN_FLOW_COMPLETE`（保留供应商官方拼写）；流程状态 `2/3/5/7` 分别投影为供应商完成/撤销/过期/拒签。未知 action 仅入箱告警，未知状态仅转人工复核，都不推进业务终态。
+- BullMQ 任务标识必须绑定租户、Inbox 和供应商事件摘要；Worker 认领时写入随机
+  `processingToken`、确定性 `processingJobId` 与递增 `attempts`。成功、忽略和
+  失败终态更新必须同时匹配这三项租约证据，旧 Worker 丢失租约后不得覆盖新
+  Worker 的终态。
 
 ### 6.4 兜底对账
 
 - 每 15 分钟对 `SENT/PARTIAL_SIGNED` 且超过 10 分钟未更新的流程主动调 `getFlow` 拉单，防止 webhook 丢失。
 - `SIGN_FLOW_COMPLETE + signFlowStatus=2` 只进入 `PROVIDER_COMPLETED`，不等于 ERP `COMPLETED`。已签 PDF 必须下载、验签、病毒扫描、记录 SHA-256 并进入不可变对象存储；证据归档成功后 ERP 才进入 `COMPLETED` 并允许 Offer 进入 `signed`。
 - 已签文件获取使用 V3 推荐的 POST 下载地址接口，短链有效期不超过 300 秒。只允许 eSign HTTPS 域名，禁止 HTTP 跳转；文件最大 50 MiB，必须通过 PDF 魔数、病毒扫描和供应商签名有效性核验。
+- 对账范围同时包含滞留的 `PROVIDER_COMPLETED`。证据任务使用租户与流程绑定的
+  确定性 ID，耗尽失败后移除失败 Job；下一轮对账重建任务。供应商补拉、流程
+  投影或归档已经提交后的审计故障只形成独立告警，不得把已成功业务终态回写为
+  失败或重复执行外部副作用。
 
 ---
 

@@ -61,6 +61,117 @@ describe('signESignRequest', () => {
 });
 
 describe('ESignCnAdapter', () => {
+  it('按严格个人签署契约创建流程并强制身份一致校验', async () => {
+    const { adapter, http } = fixture();
+    http.response = {
+      status: 200,
+      headers: {},
+      body: Buffer.from('{"code":0,"data":{"signFlowId":"flow-created-001"}}'),
+    };
+    const expiresAtEpochMs = Date.now() + 24 * 60 * 60 * 1_000;
+    await expect(adapter.createFlow(CREDENTIAL, {
+      providerFileId: 'file-001',
+      signerAccount: 'candidate@example.com',
+      signerName: '候选人',
+      expiresAtEpochMs,
+      signaturePosition: { page: 3, x: 120.5, y: 640 },
+    })).resolves.toBe('flow-created-001');
+    const request = http.requests[0]!;
+    expect(request).toMatchObject({
+      method: 'POST',
+      url: 'https://smlopenapi.esign.cn/v3/sign-flow/create-by-file',
+    });
+    const payload = JSON.parse(request.body!.toString('utf8')) as {
+      readonly docs: readonly Readonly<Record<string, unknown>>[];
+      readonly signFlowConfig: Readonly<Record<string, unknown>>;
+      readonly signers: readonly {
+        readonly psnSignerInfo: Readonly<Record<string, unknown>>;
+        readonly signFields: readonly {
+          readonly normalSignFieldConfig: {
+            readonly signFieldPosition: Readonly<Record<string, unknown>>;
+          };
+        }[];
+      }[];
+    };
+    expect(payload.docs).toEqual([{ fileId: 'file-001', fileName: '劳动合同.pdf' }]);
+    expect(payload.signFlowConfig).toMatchObject({
+      signFlowTitle: '员工劳动合同签署',
+      signFlowExpireTime: expiresAtEpochMs,
+      autoStart: true,
+      autoFinish: true,
+      identityVerify: true,
+      noticeTypes: '',
+    });
+    expect(payload.signers[0]?.psnSignerInfo).toEqual({
+      psnAccount: 'candidate@example.com',
+      psnInfo: { psnName: '候选人' },
+    });
+    expect(payload.signers[0]?.signFields[0]?.normalSignFieldConfig.signFieldPosition)
+      .toEqual({ positionPage: '3', positionX: 120.5, positionY: 640 });
+  });
+
+  it('只返回 eSign HTTPS 域名的免登录签署页面', async () => {
+    const { adapter, http } = fixture();
+    http.response = {
+      status: 200,
+      headers: {},
+      body: Buffer.from(JSON.stringify({
+        code: 0,
+        data: { url: 'https://h5.esign.cn/mesign/guide?context=opaque' },
+      })),
+    };
+    await expect(adapter.signUrl(
+      CREDENTIAL,
+      'flow-001',
+      '+8613800138000',
+    )).resolves.toBe('https://h5.esign.cn/mesign/guide?context=opaque');
+    expect(JSON.parse(http.requests[0]!.body!.toString('utf8'))).toEqual({
+      clientType: 'ALL',
+      needLogin: false,
+      operator: { psnAccount: '+8613800138000' },
+      urlType: 2,
+    });
+    expect(http.requests[0]?.url).toBe(
+      'https://smlopenapi.esign.cn/v3/sign-flow/flow-001/sign-url',
+    );
+  });
+
+  it('拒绝供应商返回的非官方签署链接', async () => {
+    const { adapter, http } = fixture();
+    http.response = {
+      status: 200,
+      headers: {},
+      body: Buffer.from('{"code":0,"data":{"url":"https://attacker.example/sign"}}'),
+    };
+    await expect(adapter.signUrl(
+      CREDENTIAL,
+      'flow-001',
+      'candidate@example.com',
+    )).rejects.toThrow('ESIGN_SIGN_URL_INVALID');
+  });
+
+  it.each([
+    [{ providerFileId: '../file', signerAccount: 'candidate@example.com',
+      signerName: '候选人', expiresAtEpochMs: Date.now() + 86_400_000,
+      signaturePosition: { page: 1, x: 1, y: 1 } }, 'ESIGN_EXTERNAL_ID_INVALID'],
+    [{ providerFileId: 'file-001', signerAccount: 'invalid account',
+      signerName: '候选人', expiresAtEpochMs: Date.now() + 86_400_000,
+      signaturePosition: { page: 1, x: 1, y: 1 } }, 'ESIGN_SIGNER_ACCOUNT_INVALID'],
+    [{ providerFileId: 'file-001', signerAccount: 'candidate@example.com',
+      signerName: ' 候选人', expiresAtEpochMs: Date.now() + 86_400_000,
+      signaturePosition: { page: 1, x: 1, y: 1 } }, 'ESIGN_SIGNER_NAME_INVALID'],
+    [{ providerFileId: 'file-001', signerAccount: 'candidate@example.com',
+      signerName: '候选人', expiresAtEpochMs: Date.now() + 1_000,
+      signaturePosition: { page: 1, x: 1, y: 1 } }, 'ESIGN_FLOW_EXPIRY_INVALID'],
+    [{ providerFileId: 'file-001', signerAccount: 'candidate@example.com',
+      signerName: '候选人', expiresAtEpochMs: Date.now() + 86_400_000,
+      signaturePosition: { page: 0, x: 1, y: 1 } }, 'ESIGN_SIGNATURE_POSITION_INVALID'],
+  ])('创建流程在外部调用前拒绝非法输入：%s', async (input, code) => {
+    const { adapter, http } = fixture();
+    await expect(adapter.createFlow(CREDENTIAL, input)).rejects.toThrow(code);
+    expect(http.requests).toHaveLength(0);
+  });
+
   it('查询流程只依赖 code 和结构化状态', async () => {
     const { adapter, http } = fixture();
     await expect(adapter.getFlow(CREDENTIAL, 'flow-001')).resolves.toBe(2);

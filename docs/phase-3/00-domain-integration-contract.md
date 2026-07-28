@@ -149,16 +149,32 @@ draft → pending_approval → approved → clearing → ready → scheduled →
 
 ### 4.3 e签宝
 
-统一出站 `ESignAdapter`：`createFlow / getFlow / signUrl / downloadFile`；入站验签由独立 Webhook 边界完成。`POST /webhooks/esign` 禁止 query，对请求时间戳与 raw body 执行 HMAC-SHA256，只在验签后以唯一 appId 绑定解析租户；原文加密写 inbox 后原样返回供应商 200 契约。
+统一出站 `ESignAdapter`：`createFlow / getFlow / signUrl / listSignedFiles /
+downloadSignedFile / verifySignedFile`；入站验签由独立 Webhook 边界完成。
+`POST /webhooks/esign` 禁止 query，对请求时间戳与 raw body 执行 HMAC-SHA256，
+只在验签后以唯一 appId 绑定解析租户；原文加密写 inbox 后原样返回供应商
+200 契约。
 
 内部状态为 `awaiting_signature → partial_signed → provider_completed → completed`，分支为 `rejected/expired/cancelled`。官方 action 白名单为 `SIGN_MISSON_COMPLETE` 和 `SIGN_FLOW_COMPLETE`，完成回调的 `signFlowStatus=2/3/5/7` 分别映射 `provider_completed/cancelled/expired/rejected`。未知 action 标记 Inbox `ignored`，未知状态或冲突终态设置 `reviewRequired`，均禁止自动前进或回退。
 
 每 15 分钟补拉长期未更新流程。`provider_completed` 后仍必须下载 PDF、校验内容摘要和供应商签署结果、病毒扫描、存入不可变对象存储并写入证据账本。只有该证据交易成功后才进入 `completed` 并调用 Recruitment 应用服务标记 Offer `signed`。
 
 - OpenAPI 只允许官方 `https://smlopenapi.esign.cn` 和 `https://openapi.esign.cn`，生产强制后者。请求按官方七段式字符串计算 Content-MD5 和 HmacSHA256；MD5 仅用于供应商协议兼容，ERP 证据统一使用 SHA-256。
+- 创建流程固定调用 `POST /v3/sign-flow/create-by-file`，使用受控供应商文件 ID、
+  个人账号、姓名、到期时间和有界签署坐标；强制自动启动、签署后自动结束和身份
+  一致校验。免登录链接固定调用
+  `POST /v3/sign-flow/{signFlowId}/sign-url`，只接受官方 eSign HTTPS 页面，
+  禁止任意跳转、用户信息、凭据和非标准端口。
 - 补拉调用 `GET /v3/sign-flow/{id}/detail`；下载地址使用官方推荐的 `POST /v3/sign-flow/{id}/file-download-url`，有效期固定 300 秒；每个 PDF 再调用 `POST /v3/files/{fileId}/verify`。下载客户端禁止跳转，限定 eSign HTTPS 域名、50 MiB 上限和 `%PDF-` 魔数。
 - `integration_esign_evidence` 仅保存供应商文件 ID 摘要、PDF SHA-256、大小、扫描证据、验签结果摘要、WORM 对象引用与回执；不保存 PDF、文件名、下载短链、证书或签署人原文。WORM `objectKey` 必须幂等；扫描或归档 Adapter 未装配时必须失败关闭。
 - 扫描与 WORM 网关必须成套配置在独立 HTTPS 权限域。Adapter 出站前复算 PDF SHA-256，响应限制为 16 KiB 严格 JSON；扫描回执绑定摘要，WORM 回执同时绑定摘要、对象键、不可变标志和不少于十年的保留期。任一错位均不得推进 Offer `signed`。
+- Webhook 任务 ID 绑定租户、Inbox 与事件摘要；认领租约同时绑定随机令牌、任务
+  ID 和尝试次数，旧 Worker 不能关闭新 Worker 的处理记录。证据任务耗尽后删除
+  失败 Job，长期停留 `provider_completed` 的流程由十五分钟对账重新投递；重复
+  文件描述符在下载和 WORM 写入前即拒绝。
+- 流程投影、证据投递、Offer/Flow 终态已提交后的审计异常只作独立安全告警；
+  业务失败审计本身异常也不得中止整批对账。此规则不降低审计要求，值班人员仍须
+  按告警补录或恢复审计基础设施。
 
 ## 5. REST、事件与 MCP 同步交付
 

@@ -35,7 +35,7 @@ export class ESignFlowService {
     private readonly flows: Model<ESignFlowDocument>,
   ) {}
 
-  /** 供未来 eSign Adapter 在发起成功后登记；同一 Offer 只允许一个活跃流程。 */
+  /** 供受信任 eSign 发起编排在供应商成功回执后登记；同一 Offer 只允许一个活跃流程。 */
   async registerForOffer(offerId: string, externalFlowId: string): Promise<ESignFlowSummary> {
     this.requireScope('erp:integration:esign:create');
     if (!EXTERNAL_FLOW_ID_PATTERN.test(externalFlowId)) throw new ConflictException({

@@ -62,12 +62,12 @@
 ## 5. 覆盖率边界
 
 2026-07-28 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，352 个测试文件、3,643 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，353 个测试文件、3,747 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-88.38%（26,375/29,841）、分支 85.27%（17,488/20,507）、函数
-89.00%（4,762/5,350）、行 89.98%（24,119/26,803）。全仓四维已达到 Phase 0
-规定的 80% 门槛，分支高于最低命中数 1,082 个。全量命令通过
+88.71%（26,547/29,924）、分支 85.75%（17,650/20,581）、函数
+89.13%（4,784/5,367）、行 90.22%（24,254/26,883）。全仓四维已达到 Phase 0
+规定的 80% 门槛，分支高于最低命中数 1,185 个。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
 
@@ -128,6 +128,7 @@ OP Webhook 双入口、
 `pnpm quality:attendance-provider-pull-coverage`、
 `pnpm quality:attendance-provider-processor-coverage`、
 `pnpm quality:esign-webhook-processor-coverage`、
+`pnpm quality:esign-integration-coverage`、
 `pnpm quality:recruitment-channel-pull-coverage`、
 `pnpm quality:recruitment-channel-processor-coverage`、
 `pnpm quality:recruitment-channel-position-relay-coverage`、
@@ -159,7 +160,7 @@ OP Webhook 双入口、
 `pnpm quality:oauth-controller-coverage`、
 `pnpm quality:strong-auth-coverage`、
 `pnpm quality:onboarding-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。八十一条链路当前覆盖率基线集合为
+`pnpm quality:production-execution-authorization-coverage`。八十二条链路当前覆盖率基线集合为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -233,8 +234,9 @@ OP Webhook 双入口、
 97.18%/95.18%/100%/97.99%、98.61%/95.04%/100%/99.07%、
 98.23%/97.43%/98.24%/98.85%、97.80%/93.10%/100%/100%、
 99.59%/98.23%/100%/99.56%
-（语句/分支/函数/行）；八十一项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明八十一条关键链路达标，
+（语句/分支/函数/行）；电子签九个核心文件另达到
+98.01%/95.55%/99.00%/99.51%，八十二项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明八十二条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 Phase 5 管理分析纵切已覆盖 52 项共享契约、历史审批快照、不可变最终审批动作、
@@ -397,10 +399,12 @@ Attendance 规则纵切已覆盖 85 项不可变规则/排班构造、`Employmen
 失败终态后的审计故障均只作独立告警。覆盖率达到四维 100%，独立四维 90%
 门禁已接入 `pnpm check`。
 
-电子签回调处理已覆盖 25 项任务分派、可信归档身份、加密信封、乱序事件、
-流程乐观锁、证据归档队列和 Inbox 租约竞争测试；处理中任务仅在租约过期后
-才能重领，流程投影后的审计故障不再误写业务失败。覆盖率达到四维 100%，
-独立四维 90% 门禁已接入 `pnpm check`。
+电子签纵切已覆盖 164 项 V3 创建流程、官方免登录签署链接、请求签名、HTTPS
+边界、加密信封、状态投影、证据扫描/WORM、重复与乱序回调、Webhook 三元租约
+fencing、失败任务重建、审计故障隔离和唯一键竞态测试。九个核心文件聚合覆盖率
+达到 98.01%/95.55%/99.00%/99.51%（语句/分支/函数/行），各文件四维
+均不低于 90%，独立门禁已接入 `pnpm check`。真实 eSign 租户、实名认证、
+免登签署、拒签/过期/撤销回调和 WORM 网关仍属于外部验收边界。
 
 招聘渠道拉取已覆盖 34 项系统任务授权、凭据命名空间、加密游标完整性、渠道响应
 上限、Inbox 唯一键竞争、确定性任务恢复和租约失败关闭测试；凭据不可用也会回写

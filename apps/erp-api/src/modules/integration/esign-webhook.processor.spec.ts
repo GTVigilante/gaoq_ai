@@ -15,6 +15,8 @@ import {
   ESIGN_ARCHIVE_EVIDENCE_JOB,
   ESIGN_PROCESS_WEBHOOK_JOB,
   ESIGN_RECONCILE_FLOWS_JOB,
+  createESignEvidenceJobId,
+  createESignWebhookJobId,
   type ESignQueueJobData,
 } from './esign-webhook.queue.js';
 
@@ -23,6 +25,7 @@ const FLOW_ID = '01K00000000000000000000001';
 const TENANT_ID = 'tenant-001';
 const APP_ID = 'app12345';
 const OCCURRED_AT = new Date('2026-07-21T08:00:00.000Z');
+const PROVIDER_EVENT_ID = 'A'.repeat(43);
 
 function query<T>(value: T) {
   const chain = {
@@ -37,8 +40,10 @@ function fixture() {
     id: INBOX_ID,
     tenantId: TENANT_ID,
     appId: APP_ID,
+    providerEventId: PROVIDER_EVENT_ID,
     action: 'SIGN_FLOW_COMPLETE',
     providerOccurredAt: OCCURRED_AT,
+    attempts: 0,
   };
   const flow = {
     id: FLOW_ID,
@@ -52,7 +57,16 @@ function fixture() {
     version: 2,
   };
   const inbox = {
-    findOneAndUpdate: vi.fn().mockReturnValue(query(claimed)),
+    findOneAndUpdate: vi.fn().mockImplementation(
+      (_filter: unknown, update: {
+        readonly $set: Readonly<Record<string, unknown>>;
+        readonly $inc: { readonly attempts: number };
+      }) => query({
+        ...claimed,
+        ...update.$set,
+        attempts: claimed.attempts + update.$inc.attempts,
+      }),
+    ),
     updateOne: vi.fn().mockResolvedValue({ modifiedCount: 1 }),
   };
   const flows = {
@@ -101,15 +115,16 @@ function fixture() {
   };
 }
 
-function job(name: string, data: unknown = {}): Job<ESignQueueJobData> {
-  return { name, data } as Job<ESignQueueJobData>;
+function job(name: string, data: unknown = {}, id?: string): Job<ESignQueueJobData> {
+  return { name, data, ...(id === undefined ? {} : { id }) } as Job<ESignQueueJobData>;
 }
 
 function webhookJob(): Job<ESignQueueJobData> {
   return job(ESIGN_PROCESS_WEBHOOK_JOB, {
     inboxId: INBOX_ID,
     tenantId: TENANT_ID,
-  });
+    providerEventId: PROVIDER_EVENT_ID,
+  }, createESignWebhookJobId(TENANT_ID, INBOX_ID, PROVIDER_EVENT_ID));
 }
 
 describe('ESignWebhookProcessor', () => {
@@ -129,7 +144,7 @@ describe('ESignWebhookProcessor', () => {
     await expect(store.processor.process(job(ESIGN_ARCHIVE_EVIDENCE_JOB, {
       flowId: FLOW_ID,
       tenantId: TENANT_ID,
-    }))).resolves.toBe(1);
+    }, createESignEvidenceJobId(TENANT_ID, FLOW_ID)))).resolves.toBe(1);
     const trusted = store.trustedContexts[0] as {
       readonly tenant: Readonly<Record<string, unknown>>;
       readonly actor: { readonly scopes: readonly string[] } & Readonly<Record<string, unknown>>;
@@ -164,6 +179,16 @@ describe('ESignWebhookProcessor', () => {
       tenantId: TENANT_ID,
       extra: true,
     }))).rejects.toThrow();
+    await expect(store.processor.process(job(ESIGN_ARCHIVE_EVIDENCE_JOB, {
+      flowId: FLOW_ID,
+      tenantId: TENANT_ID,
+    }, 'forged-evidence-job'))).rejects.toThrow('ESIGN_EVIDENCE_JOB_ID_MISMATCH');
+    await expect(store.processor.process(job(ESIGN_PROCESS_WEBHOOK_JOB, {
+      inboxId: INBOX_ID,
+      tenantId: TENANT_ID,
+      providerEventId: PROVIDER_EVENT_ID,
+    }, 'forged-webhook-job'))).rejects.toThrow('ESIGN_WEBHOOK_JOB_ID_MISMATCH');
+    expect(store.inbox.findOneAndUpdate).not.toHaveBeenCalled();
   });
 
   it('只领取待处理、失败或租约过期的 Inbox', async () => {
@@ -179,6 +204,53 @@ describe('ESignWebhookProcessor', () => {
         processingStartedAt: { $lte: expect.any(Date) as Date },
       },
     ]);
+    const claimUpdate = store.inbox.findOneAndUpdate.mock.calls[0]?.[1] as {
+      readonly $set: {
+        readonly processingToken: string;
+        readonly processingJobId: string;
+      };
+      readonly $inc: { readonly attempts: number };
+    };
+    const finishFilter = store.inbox.updateOne.mock.calls[0]?.[0] as
+      Readonly<Record<string, unknown>>;
+    expect(claimUpdate.$set.processingToken).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    expect(claimUpdate.$set.processingJobId).toBe(
+      createESignWebhookJobId(TENANT_ID, INBOX_ID, PROVIDER_EVENT_ID),
+    );
+    expect(claimUpdate.$inc).toEqual({ attempts: 1 });
+    expect(finishFilter).toMatchObject({
+      tenantId: TENANT_ID,
+      id: INBOX_ID,
+      status: 'processing',
+      attempts: 1,
+      processingToken: claimUpdate.$set.processingToken,
+      processingJobId: claimUpdate.$set.processingJobId,
+    });
+  });
+
+  it('领取结果的供应商事件或租约证据错位时停止处理', async () => {
+    const eventMismatch = fixture();
+    eventMismatch.claimed.providerEventId = 'B'.repeat(43);
+    await expect(eventMismatch.processor.process(webhookJob()))
+      .rejects.toThrow('ESIGN_WEBHOOK_CLAIM_INTEGRITY_INVALID');
+    expect(eventMismatch.unprotect).not.toHaveBeenCalled();
+    expect(eventMismatch.inbox.updateOne).not.toHaveBeenCalled();
+
+    const tokenMismatch = fixture();
+    tokenMismatch.inbox.findOneAndUpdate.mockImplementationOnce(
+      (_filter: unknown, update: {
+        readonly $set: Readonly<Record<string, unknown>>;
+        readonly $inc: { readonly attempts: number };
+      }) => query({
+        ...tokenMismatch.claimed,
+        ...update.$set,
+        processingToken: 'B'.repeat(22),
+        attempts: tokenMismatch.claimed.attempts + update.$inc.attempts,
+      }),
+    );
+    await expect(tokenMismatch.processor.process(webhookJob()))
+      .rejects.toThrow('ESIGN_WEBHOOK_CLAIM_INTEGRITY_INVALID');
+    expect(tokenMismatch.unprotect).not.toHaveBeenCalled();
   });
 
   it('没有可领取 Inbox 时幂等返回零', async () => {
@@ -227,11 +299,11 @@ describe('ESignWebhookProcessor', () => {
       ESIGN_ARCHIVE_EVIDENCE_JOB,
       { flowId: FLOW_ID, tenantId: TENANT_ID },
       {
-        jobId: `esign_evidence_${FLOW_ID}`,
+        jobId: createESignEvidenceJobId(TENANT_ID, FLOW_ID),
         attempts: 12,
         backoff: { type: 'exponential', delay: 10_000 },
         removeOnComplete: 1_000,
-        removeOnFail: 10_000,
+        removeOnFail: true,
       },
     );
   });
@@ -382,6 +454,7 @@ describe('ESignWebhookProcessor', () => {
     await expect(store.processor.process(webhookJob())).rejects.toThrow(
       'ESIGN_WEBHOOK_INBOX_LEASE_LOST',
     );
+    expect(store.inbox.updateOne).toHaveBeenCalledOnce();
   });
 
   it('失败 Inbox 也丢失租约时停止覆盖', async () => {

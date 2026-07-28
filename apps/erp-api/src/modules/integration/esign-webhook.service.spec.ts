@@ -9,7 +9,10 @@ import type { AppEnvironment } from '../../config/environment.js';
 import type { ESignBindingDocument } from './esign-binding.schema.js';
 import { ESignWebhookCryptoService } from './esign-webhook-crypto.service.js';
 import type { ESignWebhookInboxDocument } from './esign-webhook-inbox.schema.js';
-import type { ESignWebhookJobData } from './esign-webhook.queue.js';
+import {
+  createESignWebhookJobId,
+  type ESignWebhookJobData,
+} from './esign-webhook.queue.js';
 import { ESignSecretResolver, ESignWebhookService } from './esign-webhook.service.js';
 
 const NOW = new Date('2026-07-21T08:00:00.000Z');
@@ -101,9 +104,23 @@ describe('ESignWebhookService', () => {
       Readonly<Record<string, unknown>>,
     ];
     expect(queued[0]).toBe('process:esign:webhook');
-    expect(queued[1]).toEqual({ inboxId: result.inboxId, tenantId: 'tenant-001' });
+    expect(queued[1]).toEqual({
+      inboxId: result.inboxId,
+      tenantId: 'tenant-001',
+      providerEventId: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) as string,
+    });
     expect(queued[2]).toMatchObject({ attempts: 12 });
-    expect(queued[2].jobId).toMatch(/^esign_[A-Za-z0-9_-]{43}$/);
+    expect(queued[2]).toEqual({
+      jobId: createESignWebhookJobId(
+        'tenant-001',
+        result.inboxId,
+        queued[1].providerEventId as string,
+      ),
+      attempts: 12,
+      backoff: { type: 'exponential', delay: 2_000 },
+      removeOnComplete: 1_000,
+      removeOnFail: true,
+    });
   });
 
   it('同一原始事件重试复用 Inbox 且不重复写入', async () => {
@@ -143,5 +160,129 @@ describe('ESignWebhookService', () => {
     await expect(store.service.accept(headers(body), body)).resolves.toMatchObject({
       duplicate: false,
     });
+  });
+
+  it('受控 Secret Resolver 拒绝越权命名空间和缺失密钥', () => {
+    const resolver = new ESignSecretResolver();
+    expect(() => resolver.resolve('DATABASE_URL'))
+      .toThrow('eSign 回调验证失败');
+    delete process.env[SECRET_REF];
+    expect(() => resolver.resolve(SECRET_REF))
+      .toThrow('eSign 回调验证暂不可用');
+  });
+
+  it.each([
+    [undefined],
+    [Buffer.from('x')],
+    [Buffer.alloc(1024 * 1024 + 1)],
+  ])('拒绝无效 raw body：%s', async (body) => {
+    const store = fixture();
+    const signed = rawBody();
+    await expect(store.service.accept(headers(signed), body))
+      .rejects.toMatchObject({ response: { code: 'ESIGN_WEBHOOK_RAW_BODY_REQUIRED' } });
+    expect(store.bindings.findOne).not.toHaveBeenCalled();
+  });
+
+  it('未绑定 appId 与签名错位均不泄露差异', async () => {
+    const store = fixture();
+    store.bindings.findOne.mockReturnValueOnce(query(null));
+    const body = rawBody();
+    await expect(store.service.accept(headers(body), body))
+      .rejects.toMatchObject({ response: { code: 'ESIGN_WEBHOOK_VERIFICATION_FAILED' } });
+    expect(store.inbox.create).not.toHaveBeenCalled();
+
+    const mismatched = fixture();
+    await expect(mismatched.service.accept(headers(body, '0'.repeat(62)), body))
+      .rejects.toMatchObject({ response: { code: 'ESIGN_WEBHOOK_VERIFICATION_FAILED' } });
+    expect(mismatched.inbox.create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ appId: undefined }],
+    [{ appId: 'x' }],
+    [{ timestamp: undefined }],
+    [{ timestamp: '1' }],
+    [{ signature: undefined }],
+    [{ signature: 'Z'.repeat(64) }],
+    [{ algorithm: undefined }],
+  ])('请求头失败关闭：%s', async (override) => {
+    const store = fixture();
+    const body = rawBody();
+    await expect(store.service.accept({ ...headers(body), ...override }, body))
+      .rejects.toMatchObject({ response: { code: 'ESIGN_WEBHOOK_VERIFICATION_FAILED' } });
+    expect(store.bindings.findOne).not.toHaveBeenCalled();
+  });
+
+  it('请求时间戳超窗和事件发生时间越界均失败关闭', async () => {
+    const body = rawBody();
+    const requestStale = fixture();
+    await expect(requestStale.service.accept({
+      ...headers(body),
+      timestamp: String(NOW.getTime() - 5 * 60 * 1_000 - 1),
+    }, body)).rejects.toMatchObject({
+      response: { code: 'ESIGN_WEBHOOK_VERIFICATION_FAILED' },
+    });
+
+    const future = fixture();
+    const futureBody = rawBody(
+      'SIGN_FLOW_COMPLETE',
+      new Date(NOW.getTime() + 5 * 60 * 1_000 + 1),
+    );
+    await expect(future.service.accept(headers(futureBody), futureBody))
+      .rejects.toMatchObject({ response: { code: 'ESIGN_WEBHOOK_VERIFICATION_FAILED' } });
+
+    const expired = fixture();
+    const expiredBody = rawBody(
+      'SIGN_FLOW_COMPLETE',
+      new Date(NOW.getTime() - 30 * 24 * 60 * 60 * 1_000 - 1),
+    );
+    await expect(expired.service.accept(headers(expiredBody), expiredBody))
+      .rejects.toMatchObject({ response: { code: 'ESIGN_WEBHOOK_VERIFICATION_FAILED' } });
+  });
+
+  it('非法 JSON 或协议结构不写 Inbox', async () => {
+    const store = fixture();
+    const body = Buffer.from('{x');
+    await expect(store.service.accept(headers(body), body))
+      .rejects.toMatchObject({ response: { code: 'ESIGN_WEBHOOK_BODY_INVALID' } });
+    expect(store.inbox.create).not.toHaveBeenCalled();
+  });
+
+  it('唯一键竞态回读同一 Inbox 并使用确定性任务恢复', async () => {
+    const store = fixture();
+    const raced = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4Y6',
+      tenantId: 'tenant-001',
+      status: 'pending',
+    };
+    store.inbox.create.mockRejectedValueOnce({ code: 11_000 });
+    store.inbox.findOne
+      .mockReturnValueOnce(query(null))
+      .mockReturnValueOnce(query(raced));
+    const body = rawBody();
+    await expect(store.service.accept(headers(body), body)).resolves.toEqual({
+      inboxId: raced.id,
+      duplicate: true,
+    });
+    expect(store.queue.add).toHaveBeenCalledOnce();
+  });
+
+  it('非唯一键写入错误原样抛出，唯一键后回读缺失也失败关闭', async () => {
+    const storageError = new Error('MONGO_UNAVAILABLE');
+    const store = fixture();
+    store.inbox.create.mockRejectedValueOnce(storageError);
+    await expect(store.service.accept(headers(rawBody()), rawBody()))
+      .rejects.toBe(storageError);
+    expect(store.queue.add).not.toHaveBeenCalled();
+
+    const race = fixture();
+    const duplicate = { code: 11_000 };
+    race.inbox.create.mockRejectedValueOnce(duplicate);
+    race.inbox.findOne
+      .mockReturnValueOnce(query(null))
+      .mockReturnValueOnce(query(null));
+    const body = rawBody();
+    await expect(race.service.accept(headers(body), body)).rejects.toBe(duplicate);
+    expect(race.queue.add).not.toHaveBeenCalled();
   });
 });
