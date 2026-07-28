@@ -59,6 +59,13 @@ Worker 必须先持久化 Inbox 的 `completed|failed` 终态，再写本切片�
 
 固定端点：`PUT /erp/v1/approval-results/{externalEventId}`。目标根地址必须是无用户信息、query、fragment 和非 443 端口的 HTTPS origin；禁止重定向，超时 8 秒，响应上限 256 KiB。审批结果使用独立 `GAOQ_OP_APPROVAL_OUTBOUND_*` 凭据，不得复用入站、组织下发或 SSO Secret。
 
+出站客户端只接受 `content-type`、clientId、externalTenantId、13 位时间戳、
+16 字节 Base64URL nonce、Outbox eventId 幂等键、固定签名算法和 64 位小写十六
+进制签名八个协议 Header；名称按大小写归一后必须精确唯一，禁止额外 Header、
+控制字符和超长值。客户端自行注入固定 `Accept: application/json`，调用方不得
+覆盖。签名正文在发送前必须是最大 16 KiB 的有效 JSON 对象，禁止数组、标量、
+畸形 JSON 或无界受损持久化数据进入外呼。
+
 签名原文为：
 
 ```text
@@ -66,6 +73,12 @@ timestamp\nnonce\nPUT\npath\nexternalTenantId\nidempotencyKey\nSHA256_BASE64URL(
 ```
 
 正文只含 `externalEventId/sourceDocumentType/sourceDocumentId/approvalInstanceId/approvalVersion/result/occurredAt`，禁止发送表单、审批意见、人员隐私或密钥。OP 必须用幂等键去重，并精确回显外部 eventId、审批实例和版本。409/412 进入人工复核；408/425/429/5xx 与网络错误可自动重试；其他 4xx 进入人工复核。外呼成功或失败终态落库后，审计设施失败只记录稳定告警，不得把投递改回失败、覆盖原始终态、中断剩余批次或触发重复外呼。持久化与审计中的连接器错误码只接受 `^[A-Z0-9_]{3,128}$`，否则收敛为 `OP_APPROVAL_DELIVERY_UNEXPECTED`。
+
+响应 Content-Length 缺失时仍须流式限长；非法、负数、超大或超出安全整数范围的
+声明均失败关闭。成功正文必须是严格 UTF-8，且 Content-Type 为
+`application/json` 或 `application/*+json`；上游 requestId 只保留最多 128
+字符的可见 ASCII。非 2xx 只按状态码分类，错误正文不参与分类、错误对象、日志、
+审计或 MCP；网络、读取、取消和解析异常不得保留上游 cause。
 
 ## 5. REST、MCP、Scope 与审计
 
@@ -92,6 +105,10 @@ timestamp\nnonce\nPUT\npath\nexternalTenantId\nidempotencyKey\nSHA256_BASE64URL(
   绑定、非终态跳过、桥接版本单调推进、投递内容幂等校验、事务与租约竞争、退避/
   死信、HMAC 最小载荷、响应回显、错误分类与成功/失败审计故障；Relay 与 Delivery
   两个目标文件的语句、分支、函数和行覆盖率均不得低于 90%。
+- 仓库门禁 `pnpm quality:op-approval-egress-coverage` 独立覆盖固定目标、协议
+  Header 白名单、有界请求、禁重定向、超时、Content-Length、流式读取、严格
+  UTF-8/JSON、HTTP 分类和敏感错误隔离；HTTP 客户端生产文件四维均不得低于
+  90%，并由 OP 审批结果门禁在 `pnpm check` 中联动执行。
 - 仓库门禁 `pnpm quality:op-webhook-ingress-coverage` 同时覆盖审批请求与经营
   摘要两个公网 Controller、入口服务和独立 AES-256-GCM 服务，必须验证 query
   禁止、六认证头、HMAC 原始字节、时间窗、clientId 租户绑定、路由、防重放、
