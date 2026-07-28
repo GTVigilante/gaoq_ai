@@ -48,6 +48,10 @@ WORM 请求同样使用原始 PDF 正文，并携带 `x-object-key`、`x-content
 8. 人为暂停旧 Worker 超过十五分钟并启动新 Worker 重领同一 Inbox；旧 Worker
    恢复后必须因 `attempts + processingToken + processingJobId` 不匹配而报
    `ESIGN_WEBHOOK_INBOX_LEASE_LOST`，不得覆盖新 Worker 终态。
+9. 对同一 Flow 重放三次未知供应商状态和三次冲突终态；第一次只设置受控人工
+   复核，后续投影必须 `changed=false`，不得重复增加 Flow 版本。已 `completed`
+   Flow 收到正常完成回执时必须保留既有 `reviewCode`，未知/冲突状态不得覆盖
+   已可信的终态 `providerStatus`。
 
 ## 4. Go/No-Go 与恢复
 

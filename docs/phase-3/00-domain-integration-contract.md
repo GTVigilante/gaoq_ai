@@ -177,7 +177,7 @@ downloadSignedFile / verifySignedFile`；入站验签由独立 Webhook 边界完
 只在验签后以唯一 appId 绑定解析租户；原文加密写 inbox 后原样返回供应商
 200 契约。
 
-内部状态为 `awaiting_signature → partial_signed → provider_completed → completed`，分支为 `rejected/expired/cancelled`。官方 action 白名单为 `SIGN_MISSON_COMPLETE` 和 `SIGN_FLOW_COMPLETE`，完成回调的 `signFlowStatus=2/3/5/7` 分别映射 `provider_completed/cancelled/expired/rejected`。未知 action 标记 Inbox `ignored`，未知状态或冲突终态设置 `reviewRequired`，均禁止自动前进或回退。
+内部状态为 `awaiting_signature → partial_signed → provider_completed → completed`，分支为 `rejected/expired/cancelled`。官方 action 白名单为 `SIGN_MISSON_COMPLETE` 和 `SIGN_FLOW_COMPLETE`，完成回调的 `signFlowStatus=2/3/5/7` 分别映射 `provider_completed/cancelled/expired/rejected`。未知 action 标记 Inbox `ignored`，未知状态或冲突终态设置 `reviewRequired`，均禁止自动前进或回退。投影前必须严格校验当前状态、供应商状态和 `reviewRequired/reviewCode` 成套关系；终态收到未知或冲突状态时保留已有可信供应商状态，本地 `completed` 收到正常完成回执时不得清空既有复核原因。`changed` 必须比较完整下一投影，重复未知状态或终态冲突不得再次增版。
 
 每 15 分钟补拉长期未更新流程。`provider_completed` 后仍必须下载 PDF、校验内容摘要和供应商签署结果、病毒扫描、存入不可变对象存储并写入证据账本。只有该证据交易成功后才进入 `completed` 并调用 Recruitment 应用服务标记 Offer `signed`。
 

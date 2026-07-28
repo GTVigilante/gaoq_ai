@@ -640,6 +640,12 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/integration/esign-flow-projection.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/integration/esign-issuance.service.ts': {
           branches: 90,
           functions: 90,
