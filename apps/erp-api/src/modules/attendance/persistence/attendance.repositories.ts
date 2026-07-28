@@ -89,6 +89,26 @@ export class AttendanceSourceFactRepository extends TenantRepository {
     return Object.freeze(records.map((record) => this.toDomain(record)));
   }
 
+  /**
+   * 在线规则计算额外读取次月首日签退，以支持跨天班次归属；领域层会拒绝或忽略
+   * 不能归属当前月的事实，迁移路径继续使用严格月内查询。
+   */
+  async findForRuleEvaluation(
+    employeeId: string,
+    month: string,
+    cutoffAt: Date,
+    session: ClientSession,
+  ): Promise<readonly AttendanceSourceFact[]> {
+    const records = await this.records.find({
+      tenantId: this.tenantId(),
+      employeeId,
+      businessDate: { $gte: `${month}-01`, $lte: nextMonthFirst(month) },
+      sourceObservedAt: { $lte: cutoffAt },
+      createdAt: { $lte: cutoffAt },
+    }).sort({ businessDate: 1, id: 1 }).session(session).lean().exec();
+    return Object.freeze(records.map((record) => this.toDomain(record)));
+  }
+
   async insert(
     fact: AttendanceSourceFact,
     sourceEventBlindIndexes: readonly string[],
@@ -224,6 +244,22 @@ export class AttendanceCorrectionRepository extends TenantRepository {
     const records = await this.records.find({
       tenantId: this.tenantId(), employeeId,
       businessDate: { $gte: `${month}-01`, $lte: `${month}-31` },
+      approvedAt: { $lte: cutoffAt },
+      createdAt: { $lte: cutoffAt },
+    }).sort({ businessDate: 1, id: 1 }).session(session).lean().exec();
+    return Object.freeze(records.map((record) => this.toDomain(record)));
+  }
+
+  async findForRuleEvaluation(
+    employeeId: string,
+    month: string,
+    cutoffAt: Date,
+    session: ClientSession,
+  ): Promise<readonly AttendanceCorrection[]> {
+    const records = await this.records.find({
+      tenantId: this.tenantId(),
+      employeeId,
+      businessDate: { $gte: `${month}-01`, $lte: nextMonthFirst(month) },
       approvedAt: { $lte: cutoffAt },
       createdAt: { $lte: cutoffAt },
     }).sort({ businessDate: 1, id: 1 }).session(session).lean().exec();
@@ -437,4 +473,11 @@ interface ProtectedRecordShape {
   readonly dataIv: string;
   readonly dataCiphertext: string;
   readonly dataAuthTag: string;
+}
+
+function nextMonthFirst(month: string): string {
+  const [yearValue, monthValue] = month.split('-');
+  return new Date(Date.UTC(Number(yearValue), Number(monthValue), 1))
+    .toISOString()
+    .slice(0, 10);
 }

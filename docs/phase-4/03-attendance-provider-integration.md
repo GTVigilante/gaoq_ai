@@ -13,6 +13,11 @@
 5. 补拉游标使用密文保存。整批所有员工、所有 Inbox 写入成功后才推进；任一员工无权限、映射缺失、响应缺少请求 ID或 Schema 漂移均失败关闭。
 6. 首次平台开户成功时，在同一 MongoDB 事务中建立 ERP 员工到平台员工 ID 的加密映射，并创建默认 `disabled` 的 Provider 同步状态。运维完成时区、权限和沙箱验收后才可激活。
 7. 每分钟扫描到期状态，5 分钟轮询；日期窗口保留一天重叠，通过 Inbox 和 Attendance 双层幂等抵御重放。失败任务指数退避，证据/标准化/员工映射异常进入人工复核。
+8. 月末覆盖对账只接受同时持有 `erp:attendance:provider:reconcile` 与
+   `erp:attendance:coverage:attest` 的 `service/system_job`。活动状态的解密游标
+   必须完整覆盖月末、不得停在员工分页中，且 Provider 时区下次月首日前不得存在
+   非 `completed` Inbox；随后按活动员工映射分页调用 Attendance 应用服务，生成
+   不含外部员工 ID 和游标的确定性覆盖证明。
 
 ## Provider 契约
 
@@ -38,6 +43,10 @@ Provider 的拉取响应不提供可验证的业务数字签名，因此这里�
 - 单条 `punch_in/punch_out` 的分钟影响固定为零。工时、迟到、早退、跨天和缺勤必须由后续版本化规则集结合班次计算，禁止在 Provider Adapter 中写死薪资口径。
 - Registry 要求钉钉和飞书的 Adapter、Normalizer、EvidenceVerifier 三者同时存在；缺一即应用启动失败。
 - MCP 不暴露 Provider 补拉、游标、员工映射或 Inbox 工具；AI 只能使用 Attendance 应用服务提供的本人汇总与标准修订申请。
+- 覆盖对账入口固定为
+  `POST /integrations/attendance-provider-coverages/reconcile`，每页最多 500 条，
+  必须提供 `Idempotency-Key`；部分成功可使用 `nextAfterMappingId` 安全续跑，
+  每名员工使用父键与状态/映射/月/水位/截止时间派生的子幂等键。
 
 ## 生产 Go/No-Go
 
@@ -49,3 +58,5 @@ Provider 的拉取响应不提供可验证的业务数字签名，因此这里�
 4. 对同一日期执行首次补拉、重叠补拉、失败重试和 Worker 崩溃恢复，证明不重复形成源事实且游标不越过失败批次。
 5. 核对平台员工 ID 与 ERP 员工映射抽样，任何一对多、多对一或未绑定均不得激活。
 6. 完成来源数量/时间水位线/人工复核队列的日对账和告警后，才可把对应状态从 `disabled` 改为 `active`。
+7. 使用活动状态执行完整月份覆盖对账，证明中途故障重试不会重复生成覆盖证明，
+   未决 Inbox、未完成员工分页、缺少映射和不足月末的水位线均稳定失败关闭。

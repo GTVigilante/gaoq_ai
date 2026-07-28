@@ -27,7 +27,7 @@
 | 1 | `apps/erp-api/src/modules/auth/`、`org/`、`security/`、`integration/`，`deploy/helm/`，Phase 1 工作流 | 境内云 VPC、WAF/KMS、真实 SSO/组织下发、监控告警、备份恢复与 RPO/RTO 演练 | 实施已交付，外部验收待完成 |
 | 2 | `apps/erp-api/src/modules/approval/`、审批前端、通知、迁移与 MCP 能力 | 氚云模板/历史/在途审批真实盘点迁移、三次演练和业务签署 | 实施已交付，外部验收待完成 |
 | 3 | 招聘、eSign、Onboarding、Knowledge、Care、Talent Lifecycle 360 及对应 REST/事件/MCP | 真实渠道、e签宝、对象/WORM、OpenAI/搜索/评分/通知、CRM/校友平台与跨角色 UAT | 实施已交付，外部验收待完成 |
-| 4 | 考勤、版本化薪酬、审批、银行/税务、对账、影子周期控制面及 MCP | 专业算薪真实联调、银行/税务沙箱、两个完整影子周期、差异清零和财务签署 | 实施已交付，外部验收待完成 |
+| 4 | 考勤事实、规则/排班、Provider 覆盖对账、版本化薪酬、审批、银行/税务、对账、影子周期控制面及 MCP | 真实考勤/专业算薪联调、银行/税务沙箱、两个完整影子周期、差异清零和财务签署 | 实施已交付，外部验收待完成 |
 | 5 | OP、移动端、分析、迁移控制面、性能/安全/容灾/供应链/MCP/Go-No-Go 校验器 | 三轮生产等价实测、真实外部连接、DAST/ASVS、业务 UAT 和十方签署 | 实施已交付，外部验收待完成 |
 | 6 | 切换、回滚、部署、平台准入、Hypercare 证据契约和受保护工作流 | 三次全量演练、生产级回滚、统一切换、四周 Hypercare 与旧系统归档批准 | 实施已交付，外部验收待完成 |
 
@@ -62,12 +62,12 @@
 ## 5. 覆盖率边界
 
 2026-07-28 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，335 个测试文件、3,326 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，344 个测试文件、3,413 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-87.28%（25,341/29,034）、分支 84.11%（16,828/20,005）、函数
-88.11%（4,596/5,216）、行 89.00%（23,178/26,042）。全仓四维已达到 Phase 0
-规定的 80% 门槛，分支高于最低命中数 824 个。全量命令通过
+87.48%（25,965/29,680）、分支 84.25%（17,172/20,380）、函数
+88.29%（4,705/5,329）、行 89.18%（23,767/26,648）。全仓四维已达到 Phase 0
+规定的 80% 门槛，分支高于最低命中数 867 个。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
 
@@ -76,7 +76,7 @@
 MCP 确认服务、MCP HTTP 入口、MCP 运行时、MCP Tool 应用层、OP 审批桥入站申请、OP 审批结果回传、
 OP Webhook 双入口、
 薪酬影子周期、薪酬运行、薪酬审批、薪酬主数据、专业算薪主数据快照、薪酬四方对账、薪酬税务申报、薪酬 L4 数据加密、资金支付、Treasury 银行回盘、Treasury L4 数据加密、Treasury Outbox、Phase 4 REST 入口、Care 纪念日应用、Care 离职应用、校友授权清理协调、
-数据迁移控制面、数据迁移打包 CLI、Knowledge 考试运行 Relay、Knowledge 搜索索引 Relay、Knowledge REST 入口控制器、Knowledge 应用服务、Knowledge 考试应用与入口、Knowledge 领域模型、Knowledge 持久化 Schema、Knowledge 考试重放 CLI、考勤应用、考勤仓储、考勤供应商拉取、考勤供应商入站处理、电子签回调处理、
+数据迁移控制面、数据迁移打包 CLI、Knowledge 考试运行 Relay、Knowledge 搜索索引 Relay、Knowledge REST 入口控制器、Knowledge 应用服务、Knowledge 考试应用与入口、Knowledge 领域模型、Knowledge 持久化 Schema、Knowledge 考试重放 CLI、考勤应用、考勤仓储、Attendance 规则纵切、考勤供应商拉取、考勤供应商入站处理、电子签回调处理、
 招聘渠道拉取、招聘渠道入站处理、招聘渠道职位扇出、招聘渠道阶段扇出、招聘申请、招聘面试、招聘简历、招聘渠道职位投递、招聘渠道阶段回传、招聘管理、人才全周期应用、人才全周期仓储、招聘 Offer、Care 仓储、组织仓储、招聘仓储、知识库仓储、营销 CMS、营销入口与幂等核心、营销副作用可靠投递、审批通知可靠投递、组织主数据外部投递可靠性、组织平台适配器安全边界、OAuth 授权控制器、WebAuthn 强认证、入职应用与入口控制器和生产执行授权服务已建立
 独立不可回退门禁：
 `pnpm quality:tenant-context-coverage`、
@@ -121,6 +121,7 @@ OP Webhook 双入口、
 `pnpm quality:knowledge-exam-replay-coverage`、
 `pnpm quality:attendance-application-coverage`、
 `pnpm quality:attendance-repositories-coverage`、
+`pnpm quality:attendance-rules-coverage`、
 `pnpm quality:attendance-provider-pull-coverage`、
 `pnpm quality:attendance-provider-processor-coverage`、
 `pnpm quality:esign-webhook-processor-coverage`、
@@ -154,7 +155,7 @@ OP Webhook 双入口、
 `pnpm quality:oauth-controller-coverage`、
 `pnpm quality:strong-auth-coverage`、
 `pnpm quality:onboarding-application-coverage`、
-`pnpm quality:production-execution-authorization-coverage`。七十六条链路当前覆盖率分别为
+`pnpm quality:production-execution-authorization-coverage`。七十七条链路当前覆盖率分别为
 100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -224,9 +225,9 @@ OP Webhook 双入口、
 100%/100%/100%/100%、
 100%/98.23%/100%/100% 和
 100%/100%/100%/100%、98.02%/97.43%/95.83%/98.13%、
-97.18%/95.18%/100%/97.99%
-（语句/分支/函数/行）；七十六项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明七十六条关键链路达标，
+97.18%/95.18%/100%/97.99%、98.61%/95.04%/100%/99.07%
+（语句/分支/函数/行）；七十七项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明七十七条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 营销副作用可靠投递已覆盖 68 项路由身份、运行时受损记录、Outbox 抢占与释放、
@@ -349,6 +350,12 @@ dead 记录失败关闭测试；重放前会验证引用链、题型、次数和
 考勤仓储已覆盖 17 项可信租户、源事实/修订/月快照密文读写、盲索引、迁移证据、
 会话绑定、并发冲突和失败关闭测试，目标生产文件达到四维 100%，独立四维 90%
 门禁已接入 `pnpm check`。
+
+Attendance 规则纵切已覆盖 85 项不可变规则/排班构造、`Employment` 完整有效期、
+员工级事务并发守卫、Provider 月末水位线与未决 Inbox 对账、跨天归属、REST、仓储、Schema、Outbox
+最终 CloudEvent 名和失败关闭测试；八个目标文件合计覆盖率达到
+98.61%/95.04%/100%/99.07%（语句/分支/函数/行），每个文件四维均不低于
+90%。独立门禁已接入 `pnpm precheck`，全量覆盖门禁已接入 `pnpm check`。
 
 考勤供应商拉取已覆盖 50 项系统任务授权、加密游标、员工分页、小批拉取、Inbox
 幂等、租约竞争、载荷规范化和失败关闭测试；部分游标密文字段不再被误判为首次

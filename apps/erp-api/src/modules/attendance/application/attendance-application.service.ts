@@ -41,6 +41,7 @@ import type {
   RegisterAttendanceCorrectionDto,
   RequestAttendanceCorrectionDto,
 } from './attendance.dto.js';
+import { AttendanceRuleApplicationService } from './attendance-rule-application.service.js';
 
 export interface AttendanceFactSummary extends Record<string, unknown> {
   readonly id: string;
@@ -138,6 +139,7 @@ export class AttendanceApplicationService {
     private readonly profiles: AccessProfileRepository,
     private readonly employees: EmployeeRepository,
     private readonly approvals: ApprovalApplicationService,
+    private readonly rules: AttendanceRuleApplicationService,
     private readonly crypto: AttendanceDataCryptoService,
     private readonly facts: AttendanceSourceFactRepository,
     private readonly corrections: AttendanceCorrectionRepository,
@@ -628,19 +630,30 @@ export class AttendanceApplicationService {
           code: 'ATTENDANCE_MONTH_CHANGED', message: '考勤月结状态已变化，请重新读取',
         });
         const cutoffAt = new Date(normalizeInstant(input.sourceCutoffAt));
-        const facts = await this.facts.findForMonth(
+        const facts = await this.facts.findForRuleEvaluation(
           input.employeeId, input.month, cutoffAt, session,
         );
-        const corrections = await this.corrections.findForMonth(
+        const corrections = await this.corrections.findForRuleEvaluation(
           input.employeeId, input.month, cutoffAt, session,
         );
+        const evaluated = await this.rules.evaluateMonth({
+          employeeId: input.employeeId,
+          month: input.month,
+          rulesetVersion: input.rulesetVersion,
+          sourceCutoffAt: cutoffAt.toISOString(),
+          facts,
+          corrections,
+        }, session);
         const now = new Date();
         const snapshot = closeAttendanceMonth({
           id: createEventId(now), tenantId: this.context.getTenantRequired().tenantId,
           employeeId: input.employeeId, month: input.month,
           snapshotVersion: (active?.snapshotVersion ?? 0) + 1,
           rulesetVersion: input.rulesetVersion, sourceCutoffAt: cutoffAt.toISOString(),
-          facts, corrections, previousSnapshotId: active?.id ?? null,
+          facts: evaluated.facts,
+          corrections: evaluated.corrections,
+          evaluatedDailySummaries: evaluated.dailySummaries,
+          previousSnapshotId: active?.id ?? null,
           supersessionEvidenceId,
         }, now);
         await this.snapshots.activate(snapshot, active, session);

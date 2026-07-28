@@ -16,7 +16,10 @@ export interface AttendanceEvent {
     | 'attendance.correction.migrated'
     | 'attendance.month.closed'
     | 'attendance.month.migrated'
-    | 'attendance.month.superseded';
+    | 'attendance.month.superseded'
+    | 'attendance.shift_rule.attested'
+    | 'attendance.shift_assignment.attested'
+    | 'attendance.provider_coverage.reconciled';
   readonly tenantId: string;
   readonly aggregateId: string;
   readonly version: number;

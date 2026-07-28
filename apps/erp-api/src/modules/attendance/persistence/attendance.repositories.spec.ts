@@ -252,6 +252,18 @@ describe('Attendance 仓储读写与租户边界', () => {
       tenantId: 'tenant-001', employeeId: fact.employeeId,
       businessDate: { $gte: '2026-04-01', $lte: '2026-04-31' },
     }));
+    const ruleEvaluation = await repository.findForRuleEvaluation(
+      fact.employeeId,
+      '2026-04',
+      new Date('2026-05-01T00:30:00.000Z'),
+      session,
+    );
+    expect(ruleEvaluation).toEqual([fact]);
+    expect(harness.model.find).toHaveBeenLastCalledWith(expect.objectContaining({
+      tenantId: 'tenant-001',
+      employeeId: fact.employeeId,
+      businessDate: { $gte: '2026-04-01', $lte: '2026-05-01' },
+    }));
 
     harness.setOne(null);
     await expect(repository.findById('missing')).resolves.toBeNull();
@@ -329,6 +341,18 @@ describe('Attendance 仓储读写与租户边界', () => {
     );
     expect(monthly).toEqual([value]);
     expect(Object.isFrozen(monthly)).toBe(true);
+    const ruleEvaluation = await repository.findForRuleEvaluation(
+      value.employeeId,
+      '2026-04',
+      new Date('2026-05-01T00:30:00.000Z'),
+      session,
+    );
+    expect(ruleEvaluation).toEqual([value]);
+    expect(harness.model.find).toHaveBeenLastCalledWith(expect.objectContaining({
+      tenantId: 'tenant-001',
+      employeeId: value.employeeId,
+      businessDate: { $gte: '2026-04-01', $lte: '2026-05-01' },
+    }));
 
     harness.setOne({
       migrationEvidenceRef: 'erp://migration/correction',

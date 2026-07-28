@@ -210,6 +210,7 @@ export function closeAttendanceMonth(input: {
   readonly sourceCutoffAt: string;
   readonly facts: readonly AttendanceSourceFact[];
   readonly corrections: readonly AttendanceCorrection[];
+  readonly evaluatedDailySummaries?: readonly AttendanceDailySummary[];
   readonly previousSnapshotId: string | null;
   readonly supersessionEvidenceId: string | null;
 }, now: Date): AttendanceMonthlySnapshot {
@@ -254,47 +255,14 @@ export function closeAttendanceMonth(input: {
     correctionByFact.set(correction.sourceFactId, correction);
   }
 
-  const days = new Map<string, {
-    impact: AttendanceImpact;
-    facts: number;
-    corrections: number;
-    inputs: string[];
-  }>();
-  for (const fact of [...input.facts].sort(compareFacts)) {
-    const correction = correctionByFact.get(fact.id);
-    const impact = correction?.replacementImpact ?? fact.impact;
-    const day = days.get(fact.businessDate) ?? {
-      impact: zeroImpact(), facts: 0, corrections: 0, inputs: [],
-    };
-    day.impact = addImpact(day.impact, impact);
-    day.facts += 1;
-    day.corrections += correction === undefined ? 0 : 1;
-    day.inputs.push(hashCanonical([
-      fact.id,
-      fact.factType,
-      fact.occurredAt,
-      fact.impact,
-      correction === undefined ? null : [
-        correction.id,
-        correction.replacementImpact,
-        correction.approvalReferenceType,
-        correction.approvalInstanceId,
-        correction.approvalHistoryId,
-        correction.approvalEvidenceId,
-      ],
-    ]));
-    days.set(fact.businessDate, day);
-  }
-
-  const dailySummaries = Object.freeze([...days.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([businessDate, day]) => Object.freeze({
-      businessDate,
-      ...day.impact,
-      sourceFactCount: day.facts,
-      correctionCount: day.corrections,
-      digest: hashCanonical([businessDate, ...day.inputs]),
-    })));
+  const dailySummaries = input.evaluatedDailySummaries === undefined
+    ? summarizeLegacyFacts(input.facts, correctionByFact)
+    : validateEvaluatedDailySummaries(
+        input.month,
+        input.facts.length,
+        input.corrections.length,
+        input.evaluatedDailySummaries,
+      );
   const totals = dailySummaries.reduce<AttendanceImpact>(
     (value, day) => addImpact(value, day),
     zeroImpact(),
@@ -329,6 +297,87 @@ export function closeAttendanceMonth(input: {
     supersessionEvidenceId: input.supersessionEvidenceId,
     closedAt: now.toISOString(),
   });
+}
+
+function summarizeLegacyFacts(
+  facts: readonly AttendanceSourceFact[],
+  correctionByFact: ReadonlyMap<string, AttendanceCorrection>,
+): readonly AttendanceDailySummary[] {
+  const days = new Map<string, {
+    impact: AttendanceImpact;
+    facts: number;
+    corrections: number;
+    inputs: string[];
+  }>();
+  for (const fact of [...facts].sort(compareFacts)) {
+    const correction = correctionByFact.get(fact.id);
+    const impact = correction?.replacementImpact ?? fact.impact;
+    const day = days.get(fact.businessDate) ?? {
+      impact: zeroImpact(), facts: 0, corrections: 0, inputs: [],
+    };
+    day.impact = addImpact(day.impact, impact);
+    day.facts += 1;
+    day.corrections += correction === undefined ? 0 : 1;
+    day.inputs.push(hashCanonical([
+      fact.id,
+      fact.factType,
+      fact.occurredAt,
+      fact.impact,
+      correction === undefined ? null : [
+        correction.id,
+        correction.replacementImpact,
+        correction.approvalReferenceType,
+        correction.approvalInstanceId,
+        correction.approvalHistoryId,
+        correction.approvalEvidenceId,
+      ],
+    ]));
+    days.set(fact.businessDate, day);
+  }
+  return Object.freeze([...days.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([businessDate, day]) => Object.freeze({
+      businessDate,
+      ...day.impact,
+      sourceFactCount: day.facts,
+      correctionCount: day.corrections,
+      digest: hashCanonical([businessDate, ...day.inputs]),
+    })));
+}
+
+function validateEvaluatedDailySummaries(
+  month: string,
+  factCount: number,
+  correctionCount: number,
+  summaries: readonly AttendanceDailySummary[],
+): readonly AttendanceDailySummary[] {
+  const dates = new Set<string>();
+  let resolvedFactCount = 0;
+  let resolvedCorrectionCount = 0;
+  const normalized = summaries.map((summary) => {
+    if (
+      !DATE_PATTERN.test(summary.businessDate) ||
+      !summary.businessDate.startsWith(`${month}-`) ||
+      dates.has(summary.businessDate)
+    ) fail('ATTENDANCE_RULE_EVALUATION_DATE_INVALID', '规则计算日摘要日期非法或重复');
+    dates.add(summary.businessDate);
+    assertImpact(summary);
+    if (
+      !Number.isSafeInteger(summary.sourceFactCount) ||
+      summary.sourceFactCount < 0 ||
+      !Number.isSafeInteger(summary.correctionCount) ||
+      summary.correctionCount < 0 ||
+      !/^[A-Za-z0-9_-]{43}$/.test(summary.digest)
+    ) fail('ATTENDANCE_RULE_EVALUATION_INVALID', '规则计算日摘要计数或摘要非法');
+    resolvedFactCount += summary.sourceFactCount;
+    resolvedCorrectionCount += summary.correctionCount;
+    return Object.freeze({ ...summary });
+  });
+  if (resolvedFactCount !== factCount || resolvedCorrectionCount !== correctionCount) {
+    fail('ATTENDANCE_RULE_EVALUATION_COUNT_MISMATCH', '规则计算日摘要与源事实或修订计数不一致');
+  }
+  return Object.freeze(normalized.sort((left, right) =>
+    left.businessDate.localeCompare(right.businessDate)));
 }
 
 /** 数据迁移专用：使用现有算法重算快照，并保留严格历史关账时间。 */

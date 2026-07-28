@@ -173,17 +173,38 @@ function assemble() {
     verifyAttendanceMonthReopenMigrationReference: vi.fn(),
     createInstance: vi.fn(), submitInstance: vi.fn(),
   };
+  const rules = {
+    evaluateMonth: vi.fn((input: {
+      readonly facts: readonly AttendanceSourceFact[];
+      readonly corrections: readonly AttendanceCorrection[];
+    }) => Promise.resolve({
+      facts: input.facts,
+      corrections: input.corrections,
+      dailySummaries: [{
+        businessDate: '2026-04-01',
+        workedMinutes: 480,
+        leaveMinutes: 0,
+        overtimeMinutes: 0,
+        absentMinutes: 0,
+        sourceFactCount: input.facts.length,
+        correctionCount: input.corrections.length,
+        digest: 'd'.repeat(43),
+      }],
+    })),
+  };
   const crypto = { sourceEventFingerprints: vi.fn().mockReturnValue(['key.digest']) };
   const facts = {
     findByEventFingerprints: vi.fn().mockResolvedValue(null),
     findById: vi.fn().mockResolvedValue(sourceFact()),
     findForMonth: vi.fn().mockResolvedValue([sourceFact()]),
+    findForRuleEvaluation: vi.fn().mockResolvedValue([sourceFact()]),
     insert: vi.fn().mockResolvedValue(undefined),
     insertMigrated: vi.fn().mockResolvedValue(undefined),
     findMigrationEvidenceById: vi.fn().mockResolvedValue(null),
   };
   const corrections = {
     findForMonth: vi.fn().mockResolvedValue([]), findBySourceFactId: vi.fn().mockResolvedValue(null),
+    findForRuleEvaluation: vi.fn().mockResolvedValue([]),
     findById: vi.fn().mockResolvedValue(null),
     findMigrationEvidenceById: vi.fn().mockResolvedValue(null),
     insert: vi.fn().mockResolvedValue(undefined), insertMigrated: vi.fn().mockResolvedValue(undefined),
@@ -196,10 +217,11 @@ function assemble() {
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
   const service = new AttendanceApplicationService(
     idempotency as never, context, profiles as never, employees as never, approvals as never,
-    crypto as never, facts as never, corrections as never, snapshots as never, outbox as never,
+    rules as never, crypto as never, facts as never, corrections as never,
+    snapshots as never, outbox as never,
   );
   return {
-    service, context, idempotency, profiles, employees, approvals, crypto,
+    service, context, idempotency, profiles, employees, approvals, rules, crypto,
     facts, corrections, snapshots, outbox,
   };
 }
@@ -1266,7 +1288,7 @@ describe('AttendanceApplicationService', () => {
 
   it('月结将越界事实与截止时间领域异常映射为冲突', async () => {
     const outOfScope = assemble();
-    outOfScope.facts.findForMonth.mockResolvedValue([{
+    outOfScope.facts.findForRuleEvaluation.mockResolvedValue([{
       ...sourceFact(),
       employeeId: 'employee-999',
     }]);
@@ -1277,7 +1299,7 @@ describe('AttendanceApplicationService', () => {
     )).rejects.toBeInstanceOf(ForbiddenException);
 
     const afterCutoff = assemble();
-    afterCutoff.facts.findForMonth.mockResolvedValue([{
+    afterCutoff.facts.findForRuleEvaluation.mockResolvedValue([{
       ...sourceFact(),
       sourceObservedAt: '2026-06-01T00:00:00.000Z',
     }]);

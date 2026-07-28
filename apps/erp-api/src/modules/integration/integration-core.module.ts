@@ -148,6 +148,7 @@ import {
   FeishuAttendanceProvider,
 } from './attendance-provider.adapter.js';
 import { AttendanceProviderPullService } from './attendance-provider-pull.service.js';
+import { AttendanceProviderCoverageService } from './attendance-provider-coverage.service.js';
 import { AttendanceProviderMappingRepository } from './attendance-provider-mapping.repository.js';
 import { ATTENDANCE_PROVIDER_QUEUE } from './attendance-provider.queue.js';
 import {
@@ -249,6 +250,7 @@ import { PayrollMasterDataSnapshotService } from './payroll-master-data-snapshot
     RecruitmentChannelStageRelayService,
     RecruitmentChannelStageDeliveryService,
     AttendanceProviderPullService,
+    AttendanceProviderCoverageService,
     AttendanceProviderMappingRepository,
     ESignCnAdapter,
     { provide: ESignAdapter, useExisting: ESignCnAdapter },
@@ -354,6 +356,7 @@ import { PayrollMasterDataSnapshotService } from './payroll-master-data-snapshot
     RecruitmentChannelStageRelayService,
     RecruitmentChannelStageDeliveryService,
     AttendanceProviderPullService,
+    AttendanceProviderCoverageService,
     AttendanceProviderRegistry,
   ],
 })
