@@ -62,11 +62,11 @@
 ## 5. 覆盖率边界
 
 2026-07-29 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，396 个测试文件、5,801 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，397 个测试文件、5,848 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-92.02%（30,202/32,819）、分支 89.43%（20,742/23,193）、函数
-92.66%（5,382/5,808）、行 93.21%（27,591/29,598）。全仓四维已达到 Phase 0
+92.06%（30,273/32,883）、分支 89.46%（20,799/23,248）、函数
+92.71%（5,398/5,822）、行 93.25%（27,660/29,660）。全仓四维已达到 Phase 0
 规定的 80% 门槛。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
@@ -79,6 +79,13 @@ Outbox 对课程、任务、考试运行、评分与入职证明 15 类事件实
 达到 95.71%/94.06%/100%/97.42%（语句/分支/函数/行），逐文件四维均不低于
 90%；该证据不替代真实评分服务、事件总线和 UAT，标准 MCP 仍不新增评分或重放
 写能力。
+
+2026-07-29 Knowledge 搜索索引事务任务 Writer 已对事件 ULID、可信租户、课程
+版本、内容引用、课程状态与 `upsert/delete` 操作建立运行时闭包；部门/岗位授权
+集合要求安全、唯一、规范排序且有界。写入强制活动 Mongo 事务，并对数据库创建
+回执中的全部索引投影、调度时间和初始状态反向绑定。47 项专项测试使目标生产文件
+达到 100%/98.24%/100%/100%（语句/分支/函数/行），逐文件四维均不低于
+90%；REST、事件和标准 MCP 契约不变，MCP 仍只经应用服务读取授权裁剪结果。
 
 2026-07-29 OP 审批桥读取边界已在 REST 与标准 MCP 共用的应用服务中二次校验
 可信 Scope，固定租户查询和最小投影，并对租户/eventId、标识、状态、版本和时间
@@ -170,6 +177,7 @@ OP Webhook 双入口、
 `pnpm quality:data-migration-package-coverage`、
 `pnpm quality:knowledge-exam-run-relay-coverage`、
 `pnpm quality:knowledge-search-index-relay-coverage`、
+`pnpm quality:knowledge-search-persistence-boundary-coverage`、
 `pnpm quality:knowledge-exam-persistence-boundary-coverage`、
 `pnpm quality:knowledge-gateway-boundary-coverage`、
 `pnpm quality:knowledge-controller-coverage`、
@@ -233,7 +241,7 @@ OP Webhook 双入口、
 `pnpm quality:onboarding-application-coverage`、
 `pnpm quality:production-execution-authorization-coverage`、
 `pnpm quality:op-approval-result-operations-coverage` 和
-`pnpm quality:org-person-birthday-entry-coverage`。一百一十四条链路当前覆盖率基线集合为
+`pnpm quality:org-person-birthday-entry-coverage`。一百一十五条链路当前覆盖率基线集合为
 100%/100%/100%/100%、100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -321,12 +329,12 @@ OP Webhook 双入口、
 95.59%/94.44%/92.85%/96.66%、100%/100%/100%/100%、
 100%/100%/100%/100%、100%/99.02%/100%/100%、
 100%/100%/100%/100%、98.71%/91.89%/100%/100%、
-95.71%/94.06%/100%/97.42%
+95.71%/94.06%/100%/97.42%、100%/98.24%/100%/100%
 （语句/分支/函数/行）；电子签十个核心文件另达到
 98.11%/95.70%/99.04%/99.54%，审计追加三个核心文件另达到
 96.91%/97.48%/96.66%/99.00%，审计后台七个生产文件另达到
-100%/100%/100%/100%、100%/98.07%/100%/100%；一百一十四项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明一百一十四条关键链路达标，
+100%/100%/100%/100%、100%/98.07%/100%/100%；一百一十五项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明一百一十五条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 自然人生日证明入口执行 73 项严格 ULID、强 `If-Match`、白名单幂等键、规范
@@ -553,6 +561,12 @@ Knowledge 考试运行 Relay 已补齐 24 项隔离网关、超时封存、自�
 Knowledge 搜索索引 Relay 已补齐 5 项幂等回执、时间边界、参数约束、认领竞争、
 指数退避与死信测试，服务覆盖率达到四维 100%，独立四维 90% 门禁已接入
 `pnpm check`。
+
+Knowledge 搜索索引事务任务 Writer 已覆盖 47 项规范发布/下架映射、可信租户、
+活动事务、授权集合闭包、数据库回执反向绑定、Mongoose 文档回执、异常透传及
+调用方并发篡改测试，覆盖率达到 100%/98.24%/100%/100%（语句/分支/函数/行），
+逐文件四维 90% 门禁经 Knowledge 持久化组合门禁接入 `pnpm precheck` 与
+`pnpm check`。标准 MCP 仍不开放索引写入、重放、任务集合或搜索凭据。
 
 Knowledge 评分证据与搜索网关边界已覆盖 20 项严格考试请求、人工复核证据绑定、
 独立 Origin/凭据/Ed25519 公钥/Key ID、规范 Base64、严格 JSON Content-Type、
