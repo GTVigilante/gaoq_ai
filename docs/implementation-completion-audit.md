@@ -62,11 +62,11 @@
 ## 5. 覆盖率边界
 
 2026-07-29 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，393 个测试文件、5,617 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，394 个测试文件、5,677 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-91.86%（29,885/32,531）、分支 89.27%（20,486/22,946）、函数
-92.38%（5,324/5,763）、行 93.05%（27,296/29,333）。全仓四维已达到 Phase 0
+91.91%（29,961/32,598）、分支 89.29%（20,521/22,981）、函数
+92.43%（5,340/5,777）、行 93.10%（27,367/29,395）。全仓四维已达到 Phase 0
 规定的 80% 门槛。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
@@ -76,6 +76,14 @@
 关系做严格运行时反向绑定；终态 Relay 同步写入完成与更新时间。35 项读取专项
 测试达到 100%/100%/100%/100%，结果 Relay/Delivery 70 项测试继续保持四维
 100%；该证据不替代 OP 沙箱双向联调、真实身份目录与 UAT。
+
+2026-07-29 Care 事务 Outbox 已对离职案件、校友授权、授权终止清理及生日/周年
+关怀共 22 类事件建立完整对象与逐类型负载白名单，运行时绑定状态、版本、规范
+时间、可信租户/主体和活动 Mongo 事务，并对创建结果反向绑定事件 ULID、聚合、
+完整 CloudEvent 与调度时间。60 项专项测试达到
+98.71%/91.89%/100%/100%（语句/分支/函数/行），独立四维 90% 门禁已接入
+`pnpm precheck` 与 `pnpm check`。本证据不替代真实 CRM、校友平台、通知平台
+和事件总线联调；标准 MCP 未新增发送、重放、证明或联系方式能力。
 
 2026-07-28 智能简历门禁已从仅统计应用 Service 扩展到 Service、REST
 Controller、BullMQ Processor、确定性 Queue JobId 与来源/OpenAI 适配器五个生产
@@ -99,7 +107,7 @@ HTTPS Client 三个生产文件。专用命令执行 3 个测试文件、74 项�
 审批应用状态机、审批主体解析、审批入口控制器、审批模板领域、审批 Outbox 运行时边界、
 MCP 确认服务、MCP HTTP 入口、MCP 运行时、MCP Tool 应用层、OP 审批桥入站申请、OP 审批结果回传、
 OP Webhook 双入口、
-薪酬影子周期、薪酬运行、薪酬审批、薪酬主数据、专业算薪主数据快照、薪酬四方对账、薪酬税务申报、薪酬 L4 数据加密、资金支付、Treasury 银行提交出站边界、Treasury 银行回盘、Treasury 银行回盘入站边界、Treasury L4 数据加密、Treasury Outbox、Phase 4 REST 入口、Care 纪念日应用、Care 通知网关信任边界、Care 离职应用、校友授权清理协调、
+薪酬影子周期、薪酬运行、薪酬审批、薪酬主数据、专业算薪主数据快照、薪酬四方对账、薪酬税务申报、薪酬 L4 数据加密、资金支付、Treasury 银行提交出站边界、Treasury 银行回盘、Treasury 银行回盘入站边界、Treasury L4 数据加密、Treasury Outbox、Phase 4 REST 入口、Care 纪念日应用、Care 通知网关信任边界、Care Outbox 运行时边界、Care 离职应用、校友授权清理协调、
 校友授权清理证明出口、数据迁移控制面、数据迁移打包 CLI、Knowledge 考试运行 Relay、Knowledge 搜索索引 Relay、Knowledge 评分证据与搜索网关边界、Knowledge REST 入口控制器、Knowledge 应用服务、Knowledge 考试应用与入口、Knowledge 领域模型、Knowledge 持久化 Schema、Knowledge 考试重放 CLI、考勤应用、考勤仓储、Attendance 规则纵切、考勤供应商拉取、考勤 Provider 外部响应闭包、考勤供应商入站处理、电子签回调处理、电子签发起状态机、
 招聘渠道拉取、招聘渠道入站处理、招聘渠道职位扇出、招聘渠道阶段扇出、招聘申请、招聘面试、招聘简历、招聘渠道职位投递、招聘渠道阶段回传、招聘管理、招聘面试日历可靠投递、人才全周期应用、人才全周期仓储、招聘 Offer、Care 仓储、组织仓储、招聘仓储、知识库仓储、营销 CMS、营销入口与幂等核心、营销副作用可靠投递、审批通知可靠投递、审批通知运维边界、组织主数据外部投递可靠性、组织外部身份解析边界、组织平台适配器安全边界、组织首次平台开户、身份令牌与 OAuth 授权事务、身份用户会话与签名键轮换、人员 SSO 信任边界、OAuth Client Credentials 服务身份签发、OAuth 授权控制器、WebAuthn 强认证、入职应用与入口控制器、生产执行授权服务、Phase 5 管理分析、Payroll Tax 双出口和自然人生日证明入口已建立
 独立不可回退门禁：
@@ -143,6 +151,7 @@ OP Webhook 双入口、
 `pnpm quality:phase4-entry-controllers-coverage`、
 `pnpm quality:care-occasion-application-coverage`、
 `pnpm quality:care-occasion-notification-boundary-coverage`、
+`pnpm quality:care-outbox-boundary-coverage`、
 `pnpm quality:org-care-occasion-source-coverage`、
 `pnpm quality:care-application-coverage`、
 `pnpm quality:care-alumni-cleanup-coverage`、
@@ -214,7 +223,7 @@ OP Webhook 双入口、
 `pnpm quality:onboarding-application-coverage`、
 `pnpm quality:production-execution-authorization-coverage`、
 `pnpm quality:op-approval-result-operations-coverage` 和
-`pnpm quality:org-person-birthday-entry-coverage`。一百一十二条链路当前覆盖率基线集合为
+`pnpm quality:org-person-birthday-entry-coverage`。一百一十三条链路当前覆盖率基线集合为
 100%/100%/100%/100%、100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -299,14 +308,14 @@ OP Webhook 双入口、
 100%/100%/100%/100%、
 99.16%/97.79%/100%/99.76%、
 92.17%/91.90%/98.00%/93.33%、
-94.96%/93.51%/92.85%/96.00%、100%/100%/100%/100%、
+95.59%/94.44%/92.85%/96.66%、100%/100%/100%/100%、
 100%/100%/100%/100%、100%/99.02%/100%/100%、
-100%/100%/100%/100%
+100%/100%/100%/100%、98.71%/91.89%/100%/100%
 （语句/分支/函数/行）；电子签十个核心文件另达到
 98.11%/95.70%/99.04%/99.54%，审计追加三个核心文件另达到
 96.91%/97.48%/96.66%/99.00%，审计后台七个生产文件另达到
-100%/100%/100%/100%、100%/98.07%/100%/100%；一百一十二项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明一百一十二条关键链路达标，
+100%/100%/100%/100%、100%/98.07%/100%/100%；一百一十三项阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明一百一十三条关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 自然人生日证明入口执行 73 项严格 ULID、强 `If-Match`、白名单幂等键、规范
@@ -326,7 +335,7 @@ Care 关怀通知网关边界已覆盖 25 项严格请求、唯一渠道、运�
 Ed25519 公钥、固定 HTTPS 根地址、最小 Header/正文、严格 JSON Content-Type、
 Content-Length、16 KiB 流式限长、读取取消、Fatal UTF-8、规范 Base64、
 原始字节验签、上下文/渠道/送达时间闭包和稳定错误码测试。目标生产文件达到
-94.96%/93.51%/92.85%/96.00%（语句/分支/函数/行），独立逐文件四维 90%
+95.59%/94.44%/92.85%/96.66%（语句/分支/函数/行），独立逐文件四维 90%
 门禁已接入 `pnpm precheck`。该证据不替代真实通知沙箱、渠道授权目录、限流、
 密钥轮换和员工 UAT；标准 MCP 不新增通知发送、联系方式、正文或证据读取能力。
 

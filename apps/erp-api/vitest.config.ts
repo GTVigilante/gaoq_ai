@@ -388,6 +388,12 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/care/persistence/care-outbox.writer.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/org/application/org-person-birthday.dto.ts': {
           branches: 90,
           functions: 90,
