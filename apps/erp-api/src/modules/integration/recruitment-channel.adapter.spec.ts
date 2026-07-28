@@ -8,7 +8,7 @@ import {
 } from './recruitment-channel.adapter.js';
 
 class Adapter extends RecruitmentChannelAdapter {
-  readonly channelCode = 'sandbox_ats';
+  constructor(readonly channelCode = 'sandbox_ats') { super(); }
   publishPosition() { return Promise.resolve({ externalPositionId: 'p-1', receiptId: 'r-1' }); }
   closePosition() { return Promise.resolve({ receiptId: 'r-2' }); }
   pullApplications() {
@@ -18,13 +18,13 @@ class Adapter extends RecruitmentChannelAdapter {
 }
 
 class Normalizer extends RecruitmentChannelNormalizer {
-  readonly channelCode = 'sandbox_ats';
+  constructor(readonly channelCode = 'sandbox_ats') { super(); }
   readonly schemaVersion = 'v1';
   normalize() { return Promise.reject(new Error('本测试不执行标准化')); }
 }
 
 class Verifier extends RecruitmentChannelEvidenceVerifier {
-  readonly channelCode = 'sandbox_ats';
+  constructor(readonly channelCode = 'sandbox_ats') { super(); }
   verify() {
     return Promise.resolve({ verified: true, consentEvidenceId: 'consent-1', resumeSnapshotId: null });
   }
@@ -46,13 +46,43 @@ describe('RecruitmentChannelRegistry', () => {
     expect(() => new RecruitmentChannelRegistry(
       [new Adapter()], [new Normalizer()], [],
     )).toThrow('装配不完整');
+    expect(() => new RecruitmentChannelRegistry(
+      [], [new Normalizer()], [new Verifier()],
+    )).toThrow('装配不完整');
+    expect(() => new RecruitmentChannelRegistry(
+      [new Adapter()], [], [new Verifier()],
+    )).toThrow('装配不完整');
     const empty = new RecruitmentChannelRegistry([], [], []);
     expect(() => empty.adapter('unknown')).toThrow('未完整装配');
+    expect(() => empty.normalizer('unknown')).toThrow('未完整装配');
+    expect(() => empty.verifier('unknown')).toThrow('未完整装配');
+    expect(empty.supports('unknown')).toBe(false);
   });
 
-  it('拒绝重复或非白名单渠道编码', () => {
+  it.each([
+    {
+      adapters: [new Adapter(), new Adapter()],
+      normalizers: [new Normalizer()],
+      verifiers: [new Verifier()],
+    },
+    {
+      adapters: [new Adapter()],
+      normalizers: [new Normalizer(), new Normalizer()],
+      verifiers: [new Verifier()],
+    },
+    {
+      adapters: [new Adapter()],
+      normalizers: [new Normalizer()],
+      verifiers: [new Verifier(), new Verifier()],
+    },
+    {
+      adapters: [new Adapter('Bad-Code')],
+      normalizers: [new Normalizer('Bad-Code')],
+      verifiers: [new Verifier('Bad-Code')],
+    },
+  ])('拒绝重复或非白名单渠道编码：$adapters', ({ adapters, normalizers, verifiers }) => {
     expect(() => new RecruitmentChannelRegistry(
-      [new Adapter(), new Adapter()], [new Normalizer()], [new Verifier()],
+      adapters, normalizers, verifiers,
     )).toThrow('编码非法或重复');
   });
 });

@@ -628,6 +628,12 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/integration/recruitment-channel.adapter.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/integration/recruitment-channel-pull.service.ts': {
           branches: 90,
           functions: 90,

@@ -133,10 +133,22 @@ draft → pending_approval → approved → clearing → ready → scheduled →
 
 - 每个渠道必须同时装配传输 Adapter、带版本 Normalizer 和 EvidenceVerifier；缺失任意一项即在启动或调用时失败关闭。
 - 渠道绑定只保存 `GAOQ_RECRUITMENT_CHANNEL_*` 受控凭据引用；补拉游标、原始投递和外部标识使用不同 AAD 的 AES-256-GCM 密文。去重和查找使用可轮换 HMAC 盲指纹，禁止存储可枚举的明文 SHA-256。
+- 补拉前必须复核 Mongo 回读绑定与可信租户、绑定 ULID、活动状态、渠道装配及
+  Secret 引用闭合。渠道批量结果和每条投递 Envelope 只接受精确普通对象；事件
+  ID 使用规范直接标识，`occurredAt` 使用毫秒精度 UTC，重复事件、未来漂移或
+  多余字段均在任何 Inbox 写入前整批失败。
+- 原始投递只接受可规范往返的纯 JSON 对象：禁止存取器、Symbol、危险键、非有限
+  数值、负零、自定义原型、稀疏数组和 NFKC 漂移。单条明文不超过 512 KiB，
+  单批不超过 4 MiB，深度不超过 16、节点不超过 20,000、数组不超过 1,000 项、
+  对象不超过 256 键；通过后使用规范深冻结副本加密入箱。
+- `hasMore=true` 必须返回已前进的可见 ASCII 游标；缺失或等于当前游标会失败
+  关闭，禁止形成一秒级空转热循环。游标仍只以独立 AAD 密文保存。
 - Worker 只从队列的租户与 Inbox ULID 建立系统身份；Normalizer 输出不合约进入人工复核，证据校验、职位映射、领域写入或回执失败则保留 Inbox 并重试。
 - 通用 REST 创建申请禁止自报 `consent.source=channel`；只有具备 `erp:recruitment:channel:ingest` 的 `system_job` 可调用渠道窄接口。回执使用稳定幂等键，成功回执只保存盲指纹证明。
 - EvidenceVerifier 形成的同意证据 ULID 必须先固化为 Inbox 检查点，再原样贯穿 Candidate、ConsentEvidence 与 Application；崩溃重试复用检查点，不得重复生成或由领域写入层另造“可信证据”。失败 BullMQ 确定性任务必须显式 `retry`，不能依赖重复 `add`。
 - 职位开放/暂停/关闭及申请阶段变化分别由事务 Outbox 投影为独立投递轨迹。申请阶段按聚合版本顺序映射为 `screening/interview/offer/hired/rejected/withdrawn`，回执 Worker 仅用 `erp:recruitment:channel:ack` 读取来源渠道窄投影；渠道只接收阶段，不接收淘汰原因、评价、Offer 条款或证据正文。
+- 标准 MCP 只读取 Recruitment 应用服务的最小脱敏投影，不注册渠道补拉、游标、
+  原始 Inbox、凭据、EvidenceVerifier 处置或重放 Tool。
 
 ### 4.2 日历与通知
 

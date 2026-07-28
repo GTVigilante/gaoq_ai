@@ -10,6 +10,7 @@ import {
   RecruitmentChannelEvidenceVerifier,
   RecruitmentChannelNormalizer,
   RecruitmentChannelRegistry,
+  type RecruitmentChannelPullResult,
 } from './recruitment-channel.adapter.js';
 import {
   RecruitmentChannelPullService,
@@ -123,6 +124,29 @@ function pull(store: ReturnType<typeof fixture>) {
     store.trusted,
     () => store.service.pullBinding(BINDING_ID),
   );
+}
+
+function delivery(
+  overrides: Partial<RecruitmentChannelPullResult['deliveries'][number]> = {},
+): RecruitmentChannelPullResult['deliveries'][number] {
+  return {
+    externalEventId: 'event-external-001',
+    occurredAt: '2026-07-21T00:00:00.000Z',
+    payload: { candidate: '原始候选人数据' },
+    ...overrides,
+  };
+}
+
+async function expectRejectedBatch(
+  result: unknown,
+  code: string,
+): Promise<ReturnType<typeof fixture>> {
+  const store = fixture();
+  store.adapter.pullApplications.mockResolvedValueOnce(result);
+  await expect(pull(store)).rejects.toThrow(code);
+  expect(store.inbox.create).not.toHaveBeenCalled();
+  expect(store.crypto.protect).not.toHaveBeenCalled();
+  return store;
 }
 
 function duplicateKeyError(): Error & { code: number } {
@@ -279,6 +303,35 @@ describe('RecruitmentChannelPullService', () => {
     expect(store.queue.add).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { tenantId: 'other-tenant' },
+    { id: '01J8ZQK7V0A2M4N6P8R0T2W4C2' },
+    { status: 'disabled' as const },
+    { channelCode: 'unknown_ats' },
+    { credentialSecretRef: 'OTHER_SECRET' },
+  ])('Mongo 回读绑定与可信请求不闭合时不得解析凭据：%j', async (mutation) => {
+    const store = fixture();
+    Object.assign(store.binding, mutation);
+    await expect(pull(store)).rejects.toThrow('RECRUITMENT_CHANNEL_BINDING_INVALID');
+    expect(store.secrets.resolve).not.toHaveBeenCalled();
+    expect(store.adapter.pullApplications).not.toHaveBeenCalled();
+    expect(store.bindings.updateOne).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { tenantId: 'bad tenant' },
+    { id: 'not-a-ulid' },
+    { status: 'disabled' as const },
+    { channelCode: 'unknown_ats' },
+  ])('跨租户调度拒绝损坏或未装配绑定：%j', async (mutation) => {
+    const store = fixture();
+    Object.assign(store.binding, mutation);
+    await expect(store.service.enqueueDueBindings()).rejects.toThrow(
+      'RECRUITMENT_CHANNEL_BINDING_INVALID',
+    );
+    expect(store.queue.add).not.toHaveBeenCalled();
+  });
+
   it('非系统任务身份或缺少拉取 Scope 时失败关闭', async () => {
     const store = fixture();
     const denied = {
@@ -383,6 +436,86 @@ describe('RecruitmentChannelPullService', () => {
     await expect(pull(store)).rejects.toThrow('RECRUITMENT_CHANNEL_PULL_RESULT_INVALID');
   });
 
+  it('有更多数据时下一游标必须前进，禁止空转热循环', async () => {
+    const store = fixture();
+    Object.assign(store.binding, {
+      cursorKeyId: 'cursor-key', cursorIv: 'cursor-iv',
+      cursorCiphertext: 'cursor-cipher', cursorAuthTag: 'cursor-tag',
+    });
+    store.adapter.pullApplications.mockResolvedValueOnce({
+      deliveries: [],
+      nextCursor: 'cursor-current-001',
+      hasMore: true,
+    });
+    await expect(pull(store)).rejects.toThrow('RECRUITMENT_CHANNEL_CURSOR_STALLED');
+    expect(store.inbox.create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    null,
+    [],
+    { deliveries: [], nextCursor: null },
+    { deliveries: {}, nextCursor: null, hasMore: false },
+    { deliveries: [], nextCursor: null, hasMore: 'false' },
+    { deliveries: [], nextCursor: 1, hasMore: false },
+    { deliveries: [], nextCursor: null, hasMore: false, tenantId: 'other-tenant' },
+  ])('第三方批量结果必须是精确封闭对象：%j', async (result) => {
+    await expectRejectedBatch(result, 'RECRUITMENT_CHANNEL_PULL_RESULT_INVALID');
+  });
+
+  it('批量结果和投递 Envelope 不接受 Symbol、隐藏字段或存取器', async () => {
+    const hiddenResult = {
+      deliveries: [],
+      nextCursor: null,
+      hasMore: false,
+    };
+    Object.defineProperty(hiddenResult, 'tenantId', {
+      value: 'other-tenant',
+      enumerable: false,
+    });
+    await expectRejectedBatch(
+      hiddenResult,
+      'RECRUITMENT_CHANNEL_PULL_RESULT_INVALID',
+    );
+
+    const symbolResult = Object.assign({
+      deliveries: [],
+      nextCursor: null,
+      hasMore: false,
+    }, { [Symbol('tenant')]: 'other-tenant' });
+    await expectRejectedBatch(
+      symbolResult,
+      'RECRUITMENT_CHANNEL_PULL_RESULT_INVALID',
+    );
+
+    const sparseDeliveries = Array<RecruitmentChannelPullResult['deliveries'][number]>(1);
+    await expectRejectedBatch({
+      deliveries: sparseDeliveries,
+      nextCursor: null,
+      hasMore: false,
+    }, 'RECRUITMENT_CHANNEL_PULL_RESULT_INVALID');
+
+    const extendedDeliveries = [delivery()] as
+      RecruitmentChannelPullResult['deliveries'][number][] & { tenantId?: string };
+    extendedDeliveries.tenantId = 'other-tenant';
+    await expectRejectedBatch({
+      deliveries: extendedDeliveries,
+      nextCursor: null,
+      hasMore: false,
+    }, 'RECRUITMENT_CHANNEL_PULL_RESULT_INVALID');
+
+    const accessorDelivery = delivery();
+    Object.defineProperty(accessorDelivery, 'payload', {
+      enumerable: true,
+      get: () => ({ candidate: 'unsafe' }),
+    });
+    await expectRejectedBatch({
+      deliveries: [accessorDelivery],
+      nextCursor: 'cursor-next',
+      hasMore: false,
+    }, 'RECRUITMENT_CHANNEL_DELIVERY_INVALID');
+  });
+
   it('单次渠道投递数量不得超过协议上限', async () => {
     const store = fixture();
     const delivery = {
@@ -395,10 +528,23 @@ describe('RecruitmentChannelPullService', () => {
     await expect(pull(store)).rejects.toThrow('RECRUITMENT_CHANNEL_PULL_RESULT_INVALID');
   });
 
+  it('同一批次外部事件标识重复时整批失败，不静默去重', async () => {
+    await expectRejectedBatch({
+      deliveries: [delivery(), delivery()],
+      nextCursor: 'cursor-next',
+      hasMore: false,
+    }, 'RECRUITMENT_CHANNEL_EVENT_DUPLICATE');
+  });
+
   it.each([
     { externalEventId: '', occurredAt: '2026-07-21T00:00:00.000Z' },
     { externalEventId: 'x'.repeat(257), occurredAt: '2026-07-21T00:00:00.000Z' },
+    { externalEventId: 'event with space', occurredAt: '2026-07-21T00:00:00.000Z' },
+    { externalEventId: 'ｅvent-001', occurredAt: '2026-07-21T00:00:00.000Z' },
     { externalEventId: 'event-001', occurredAt: 'invalid-date' },
+    { externalEventId: 'event-001', occurredAt: '2026-07-21T08:00:00.000+08:00' },
+    { externalEventId: 'event-001', occurredAt: '2026-07-21T00:00:00Z' },
+    { externalEventId: 'event-001', occurredAt: '2026-02-30T00:00:00.000Z' },
     {
       externalEventId: 'event-001',
       occurredAt: new Date(Date.now() + 6 * 60 * 1_000).toISOString(),
@@ -410,6 +556,113 @@ describe('RecruitmentChannelPullService', () => {
       nextCursor: 'cursor-next', hasMore: false,
     });
     await expect(pull(store)).rejects.toThrow('RECRUITMENT_CHANNEL_DELIVERY_INVALID');
+  });
+
+  it('投递 Envelope 多余字段导致整批失败，不能丢弃未绑定证据', async () => {
+    await expectRejectedBatch({
+      deliveries: [{
+        ...delivery(),
+        tenantId: 'other-tenant',
+      }],
+      nextCursor: 'cursor-next',
+      hasMore: false,
+    }, 'RECRUITMENT_CHANNEL_DELIVERY_INVALID');
+  });
+
+  it.each([
+    ['null', null],
+    ['数组根', []],
+    ['字符串根', 'raw'],
+    ['日期对象', { value: new Date('2026-07-21T00:00:00.000Z') }],
+    ['非有限数字', { value: Number.NaN }],
+    ['负零', { value: -0 }],
+    ['BigInt', { value: BigInt(1) }],
+    ['函数', { value: () => 'unsafe' }],
+    ['undefined', { value: undefined }],
+  ])('原始载荷只接受有界纯 JSON 对象：%s', async (_label, payload) => {
+    await expectRejectedBatch({
+      deliveries: [delivery({ payload })],
+      nextCursor: 'cursor-next',
+      hasMore: false,
+    }, 'RECRUITMENT_CHANNEL_PAYLOAD_INVALID');
+  });
+
+  it.each([
+    ['危险键', JSON.parse('{"__proto__":{"polluted":true}}') as unknown],
+    ['非规范键', { 'ｎame': 'candidate' }],
+    ['控制字符键', { 'name\n': 'candidate' }],
+    ['稀疏数组', { values: Array(2) }],
+    ['数组额外属性', (() => {
+      const values = [1] as number[] & { extra?: number };
+      values.extra = 2;
+      return { values };
+    })()],
+    ['自定义原型', Object.create({ inherited: true }) as unknown],
+    ['存取器', (() => {
+      const payload = {};
+      Object.defineProperty(payload, 'name', { enumerable: true, get: () => 'candidate' });
+      return payload;
+    })()],
+    ['Symbol 键', { value: Object.assign({ name: 'candidate' }, { [Symbol('x')]: 1 }) }],
+  ])('拒绝不可规范化或可能产生语义漂移的 JSON：%s', async (_label, payload) => {
+    await expectRejectedBatch({
+      deliveries: [delivery({ payload })],
+      nextCursor: 'cursor-next',
+      hasMore: false,
+    }, 'RECRUITMENT_CHANNEL_PAYLOAD_INVALID');
+  });
+
+  it('拒绝超过深度、节点、数组或对象键预算的载荷', async () => {
+    let deep: Record<string, unknown> = {};
+    for (let index = 0; index < 18; index += 1) deep = { child: deep };
+    const cases: unknown[] = [
+      deep,
+      { values: Array.from({ length: 1_001 }, () => 1) },
+      Object.fromEntries(Array.from({ length: 257 }, (_, index) => [`k${index}`, index])),
+      { values: Array.from({ length: 1_000 }, () => Array.from({ length: 21 }, () => true)) },
+    ];
+    for (const payload of cases) {
+      await expectRejectedBatch({
+        deliveries: [delivery({ payload })],
+        nextCursor: 'cursor-next',
+        hasMore: false,
+      }, 'RECRUITMENT_CHANNEL_PAYLOAD_TOO_COMPLEX');
+    }
+  });
+
+  it('单条及整批明文超过资源上限时在任何入箱前失败', async () => {
+    await expectRejectedBatch({
+      deliveries: [delivery({ payload: { text: 'x'.repeat(256 * 1_024 + 1) } })],
+      nextCursor: 'cursor-next',
+      hasMore: false,
+    }, 'RECRUITMENT_CHANNEL_PAYLOAD_TOO_LARGE');
+
+    await expectRejectedBatch({
+      deliveries: Array.from({ length: 9 }, (_, index) => delivery({
+        externalEventId: `event-${index}`,
+        payload: { left: 'x'.repeat(250_000), right: 'y'.repeat(250_000) },
+      })),
+      nextCursor: 'cursor-next',
+      hasMore: false,
+    }, 'RECRUITMENT_CHANNEL_PULL_RESULT_TOO_LARGE');
+  });
+
+  it('通过校验的载荷使用规范深冻结副本入箱，隔离 Adapter 后续引用', async () => {
+    const store = fixture();
+    const raw = { candidate: { name: '候选人' }, scores: [1, 2] };
+    store.adapter.pullApplications.mockResolvedValueOnce({
+      deliveries: [delivery({ payload: raw })],
+      nextCursor: 'cursor-next',
+      hasMore: false,
+    });
+    await expect(pull(store)).resolves.toBe(1);
+    const protectedPayload = store.crypto.protect.mock.calls[0]?.[1] as {
+      candidate?: unknown; scores?: unknown;
+    } | undefined;
+    expect(protectedPayload).not.toBe(raw);
+    expect(Object.isFrozen(protectedPayload)).toBe(true);
+    expect(Object.isFrozen(protectedPayload?.candidate)).toBe(true);
+    expect(Object.isFrozen(protectedPayload?.scores)).toBe(true);
   });
 
   it('已入箱事件只恢复确定性处理任务，不重复保存密文', async () => {
