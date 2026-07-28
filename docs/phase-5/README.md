@@ -13,7 +13,7 @@ Phase 5 在已验收的组织、审批、招聘入职、考勤薪酬底座之上
 5. [移动工作台契约](./06-mobile-workbench-contract.md)（H5 首页、审批待办/详情/时间线、R1 决策/转交/加签、限期委托、模板驱动发起、本人培训任务与容器安全策略已交付；真实内容/评分服务、平台容器及实体 UAT 待续）
 6. [管理驾驶舱与受控分析导出契约](./07-management-dashboard-contract.md)（Web、REST、MCP 与 R2 异步导出代码已交付，生产数据与管理层 UAT 待验收）
    - [管理分析索引迁移运行手册](./08-analytics-index-migration-runbook.md)
-7. [全量/增量迁移控制面契约](./09-data-migration-control-plane.md)（二十六个本地历史适配器已全部交付，含组织、审批、招聘、考勤、薪资、资金、四方对账与通用业务附件；三次真实全量演练、签署和实体 UAT 待续）
+7. [全量/增量迁移控制面契约](./09-data-migration-control-plane.md)（二十六个本地历史适配器已全部交付；REST 最小权限、提交后审计隔离、附件 Job/租约栅栏及网关上下文绑定已加固，标准 MCP 保持只读；三次真实全量演练、签署和实体 UAT 待续）
    - [数据迁移控制面索引运行手册](./10-data-migration-index-runbook.md)
    - [旧审批历史索引运行手册](./10a-approval-history-index-runbook.md)
    - [Payroll 迁移证据索引运行手册](./10b-payroll-migration-index-runbook.md)
@@ -42,6 +42,13 @@ OP 审批结果出站连接已固定 HTTPS origin、PUT 路径和八个签名协
 99.13%/98.03%/100%/99.02%（语句/分支/函数/行），目标生产文件逐文件四维
 90% 门禁已由 OP 审批结果门禁接入 `pnpm check`；真实 OP TLS、限流、幂等、
 Secret 轮换与断连追赶仍待现场验收。
+
+数据迁移控制面入口与附件链路的 132 项专项测试已覆盖 REST 最小静态 Scope、
+应用服务动态业务域授权、提交后审计隔离、确定性 JobId、原租约 fencing、严格
+HTTPS/UTF-8/JSON 回执及租户、运行、来源系统和附件反向绑定。八个目标生产文件
+合计达到 99.44%/98.26%/100%/99.39%（语句/分支/函数/行），且逐文件四维均
+不低于 90%；门禁已接入 `pnpm precheck` 与 `pnpm check`。标准 MCP 继续只读，
+真实附件网关、对象证据、恶意文件扫描、断连追赶和三次迁移演练仍待现场验收。
 
 ## 强制边界
 

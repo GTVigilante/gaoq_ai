@@ -62,11 +62,11 @@
 ## 5. 覆盖率边界
 
 2026-07-28 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，376 个测试文件、4,757 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，379 个测试文件、4,875 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-90.54%（28,043/30,972）、分支 87.87%（18,928/21,539）、函数
-90.83%（5,008/5,513）、行 91.83%（25,597/27,872）。全仓四维已达到 Phase 0
+90.82%（28,200/31,050）、分支 88.03%（19,032/21,618）、函数
+91.09%（5,031/5,523）、行 92.08%（25,738/27,949）。全仓四维已达到 Phase 0
 规定的 80% 门槛。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
@@ -139,6 +139,7 @@ OP Webhook 双入口、
 `pnpm quality:care-alumni-cleanup-coverage`、
 `pnpm quality:care-alumni-cleanup-egress-coverage`、
 `pnpm quality:data-migration-coverage`、
+`pnpm quality:data-migration-entry-coverage`、
 `pnpm quality:data-migration-package-coverage`、
 `pnpm quality:knowledge-exam-run-relay-coverage`、
 `pnpm quality:knowledge-search-index-relay-coverage`、
@@ -787,6 +788,15 @@ Phase 6 生产执行授权服务已覆盖 10 项发布物/主体精确绑定、H
 一次性 WORM 证据、响应体上限、严格 JSON、短时窗口与上游失败关闭测试，
 并将非法 URL 统一映射为稳定领域错误；覆盖率达到四维 100%，独立四维 90%
 门禁已接入 `pnpm check`。
+
+数据迁移控制面入口与附件链路已覆盖 132 项 REST 最小静态 Scope、应用服务动态
+业务域授权、`sourceVersion` 规范字符、提交后审计隔离、确定性 JobId、
+原租约 fencing、严格运行时载荷、固定标准 HTTPS、16 KiB 流式响应上限、Fatal
+UTF-8、严格 JSON 回执和租户/运行/来源/附件完整反向绑定测试。八个目标生产文件
+合计覆盖率达到 99.44%/98.26%/100%/99.39%（语句/分支/函数/行），且每个文件
+四维均不低于 90%；独立门禁已接入 `pnpm precheck` 与 `pnpm check`。标准 MCP
+继续只读并复用迁移应用服务，不开放迁移写入或附件执行能力；真实来源系统、
+对象存储、恶意文件扫描、断连追赶与三次迁移演练仍待现场验收。
 
 ## 6. 架构边界
 
