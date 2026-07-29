@@ -1,10 +1,17 @@
-import { createHash } from 'node:crypto';
+import {
+  createHash,
+  createPublicKey,
+  generateKeyPairSync,
+  sign,
+  verify,
+} from 'node:crypto';
 import { lstat, readFile } from 'node:fs/promises';
 
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
 const COMMIT = /^[a-f0-9]{40}$/u;
 const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/u;
 const RELEASE = /^rc-[0-9]{8}-[0-9]{2}$/u;
+const SIGNATURE = /^[A-Za-z0-9_-]{86}$/u;
 const STEPS = [
   'incident-command-open', 'legacy-write-freeze', 'final-incremental-migration',
   'data-reconciliation', 'identity-switch', 'gateway-switch', 'integration-switch',
@@ -22,6 +29,7 @@ const PRODUCTION_EXECUTION_ACTIONS = [
 const SIGNOFF_ROLES = [
   'business_owner', 'change_manager', 'data_owner', 'security_owner', 'sre_owner',
 ];
+const SIGNOFF_SIGNATURE_SUITE = 'gaoq.phase6.cutover.signoff.v1';
 const HARNESS_FILES = [
   ['./validate-phase-6-cutover-evidence.mjs', new URL(import.meta.url)],
   ['../../.github/workflows/phase-6-cutover.yml',
@@ -35,6 +43,32 @@ const argumentsList = process.argv.slice(2);
 if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
   runSelfTest();
   process.stdout.write('Phase 6 统一切换证据门禁自测通过。\n');
+} else if (argumentsList.length === 1 && argumentsList[0] === '--print-contract') {
+  process.stdout.write(`${JSON.stringify({
+    formatVersion: 2,
+    suite: 'gaoq.phase6.cutover.v2',
+    harnessSha256: HARNESS_DIGEST,
+    signoffRoles: SIGNOFF_ROLES,
+    signatureSuite: SIGNOFF_SIGNATURE_SUITE,
+    signatureAlgorithm: 'Ed25519',
+    signatureEncoding: 'base64url-unpadded',
+    publicKeyEncoding: 'base64-spki-der',
+    keyId: 'sha256:<lowercase-hex-of-spki-der>',
+    canonicalization: 'RFC8785-compatible-finite-number-subset',
+    signerKeysetCanonicalFields: ['role', 'keyId'],
+    signerKeysetOrder: 'role-ascending',
+    cutoverPayloadFields: [
+      'formatVersion', 'suite', 'releaseId', 'source', 'environment', 'phase5Decision',
+      'rehearsals', 'rollbackRehearsal', 'window', 'steps', 'connections', 'acceptance',
+      'productionExecution', 'legacySystem', 'signoffs', 'signerKeysetHash',
+    ],
+    cutoverSignoffFields: [
+      'role', 'actorHash', 'decision', 'evidenceId', 'evidenceHash', 'acceptedAt',
+    ],
+    signoffPayloadFields: [
+      'suite', 'cutoverPayloadHash', 'role', 'keyId', 'signedAt',
+    ],
+  }, null, 2)}\n`);
 } else {
   const enforceEnvironment = argumentsList[0] === '--enforce-environment';
   const evidencePath = argumentsList[enforceEnvironment ? 1 : 0];
@@ -51,24 +85,31 @@ if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
     enforceEnvironment,
   );
   process.stdout.write(`${JSON.stringify({
-    formatVersion: 1,
+    formatVersion: 2,
     suite: 'gaoq.phase6.cutover.verdict',
     releaseId: summary.releaseId,
     outcome: 'CUTOVER_COMPLETED',
     commitSha: summary.commitSha,
+    signerKeysetHash: summary.signerKeysetHash,
+    cutoverPayloadHash: summary.cutoverPayloadHash,
     evidenceChecksum: digest(canonical(summary)),
   }, null, 2)}\n`);
 }
 
 /** 校验统一切换证据；只返回脱敏摘要。 */
-function validateEvidence(document, enforceEnvironment = false) {
+function validateEvidence(
+  document,
+  enforceEnvironment = false,
+  now = Date.now(),
+  expectedSignerKeysetHash,
+) {
   object(document, [
     'formatVersion', 'suite', 'releaseId', 'source', 'environment', 'phase5Decision',
     'rehearsals', 'rollbackRehearsal', 'window', 'steps', 'connections', 'acceptance',
-    'productionExecution', 'legacySystem', 'signoffs',
+    'productionExecution', 'legacySystem', 'signingAuthorities', 'signoffs',
   ], 'PHASE6_CUTOVER_DOCUMENT_INVALID');
-  equal(document.formatVersion, 1, 'PHASE6_CUTOVER_FORMAT_INVALID');
-  equal(document.suite, 'gaoq.phase6.cutover.v1', 'PHASE6_CUTOVER_SUITE_INVALID');
+  equal(document.formatVersion, 2, 'PHASE6_CUTOVER_FORMAT_INVALID');
+  equal(document.suite, 'gaoq.phase6.cutover.v2', 'PHASE6_CUTOVER_SUITE_INVALID');
   pattern(document.releaseId, ULID, 'PHASE6_CUTOVER_RELEASE_ID_INVALID');
   const source = validateSource(document.source, enforceEnvironment);
   const environment = validateEnvironment(document.environment, enforceEnvironment);
@@ -83,7 +124,31 @@ function validateEvidence(document, enforceEnvironment = false) {
   );
   validateAcceptance(document.acceptance);
   validateLegacySystem(document.legacySystem, steps);
-  const signoffEvidenceIds = validateSignoffs(document.signoffs, environment.endedAt);
+  const authorities = validateSigningAuthorities(document.signingAuthorities);
+  const expectedKeyset = expectedSignerKeysetHash ??
+    (enforceEnvironment ? process.env.PHASE6_CUTOVER_SIGNER_KEYSET_SHA256 : undefined);
+  if (expectedKeyset !== undefined) {
+    pattern(expectedKeyset, SHA256, 'PHASE6_CUTOVER_EXPECTED_SIGNER_KEYSET_REQUIRED');
+    equal(
+      authorities.keysetHash,
+      expectedKeyset,
+      'PHASE6_CUTOVER_SIGNER_KEYSET_MISMATCH',
+    );
+  }
+  const signoffEvidenceIds = validateSignoffMetadata(
+    document.signoffs,
+    environment.endedAt,
+    now,
+  );
+  const cutoverPayloadHash = digest(
+    cutoverPayload(document, authorities.keysetHash),
+  );
+  validateSignoffSignatures(
+    document.signoffs,
+    authorities.byRole,
+    cutoverPayloadHash,
+    now,
+  );
   return Object.freeze({
     releaseId: document.releaseId,
     commitSha: source.commitSha,
@@ -95,6 +160,8 @@ function validateEvidence(document, enforceEnvironment = false) {
     stepEvidenceHashes: steps.map((step) => step.evidenceHash),
     productionExecutionEvidence,
     signoffEvidenceIds,
+    signerKeysetHash: authorities.keysetHash,
+    cutoverPayloadHash,
   });
 }
 
@@ -422,36 +489,176 @@ function validateLegacySystem(legacy, steps) {
   equal(steps.at(-2)?.name, 'legacy-read-only', 'PHASE6_CUTOVER_LEGACY_INVALID');
 }
 
-function validateSignoffs(signoffs, completedAt) {
+function validateSigningAuthorities(authorities) {
+  if (!Array.isArray(authorities) || authorities.length !== SIGNOFF_ROLES.length) {
+    fail('PHASE6_CUTOVER_SIGNING_AUTHORITIES_INCOMPLETE');
+  }
+  const roles = [];
+  const keyIds = new Set();
+  const byRole = new Map();
+  const keyset = [];
+  for (const authority of authorities) {
+    object(
+      authority,
+      ['role', 'algorithm', 'keyId', 'publicKeySpkiBase64'],
+      'PHASE6_CUTOVER_SIGNING_AUTHORITY_INVALID',
+    );
+    if (!SIGNOFF_ROLES.includes(authority.role)) {
+      fail('PHASE6_CUTOVER_SIGNING_AUTHORITY_INVALID');
+    }
+    equal(authority.algorithm, 'Ed25519', 'PHASE6_CUTOVER_SIGNING_AUTHORITY_INVALID');
+    pattern(authority.keyId, SHA256, 'PHASE6_CUTOVER_SIGNING_AUTHORITY_INVALID');
+    const publicKey = publicKeyFromSpkiBase64(authority.publicKeySpkiBase64);
+    equal(
+      authority.keyId,
+      publicKeyHash(publicKey),
+      'PHASE6_CUTOVER_SIGNING_AUTHORITY_KEY_MISMATCH',
+    );
+    roles.push(authority.role);
+    keyIds.add(authority.keyId);
+    byRole.set(authority.role, Object.freeze({ keyId: authority.keyId, publicKey }));
+    keyset.push(Object.freeze({ role: authority.role, keyId: authority.keyId }));
+  }
+  exactStringSet(roles, SIGNOFF_ROLES, 'PHASE6_CUTOVER_SIGNING_AUTHORITIES_INCOMPLETE');
+  if (keyIds.size !== SIGNOFF_ROLES.length || byRole.size !== SIGNOFF_ROLES.length) {
+    fail('PHASE6_CUTOVER_SIGNING_AUTHORITIES_NOT_INDEPENDENT');
+  }
+  return Object.freeze({ byRole, keysetHash: signerKeysetHash(keyset) });
+}
+
+function validateSignoffMetadata(signoffs, completedAt, now) {
   if (!Array.isArray(signoffs) || signoffs.length !== SIGNOFF_ROLES.length) {
     fail('PHASE6_CUTOVER_SIGNOFFS_INCOMPLETE');
   }
   const roles = [];
+  const actors = new Set();
   const ids = new Set();
+  const hashes = new Set();
   for (const signoff of signoffs) {
-    object(signoff, ['role', 'decision', 'evidenceId', 'evidenceHash', 'signedAt'],
-      'PHASE6_CUTOVER_SIGNOFF_INVALID');
+    object(signoff, [
+      'role', 'actorHash', 'decision', 'evidenceId', 'evidenceHash', 'acceptedAt',
+      'signedAt', 'algorithm', 'keyId', 'signedPayloadSha256', 'signature',
+    ], 'PHASE6_CUTOVER_SIGNOFF_INVALID');
+    if (!SIGNOFF_ROLES.includes(signoff.role)) fail('PHASE6_CUTOVER_SIGNOFF_INVALID');
+    pattern(signoff.actorHash, SHA256, 'PHASE6_CUTOVER_SIGNOFF_INVALID');
     equal(signoff.decision, 'accepted', 'PHASE6_CUTOVER_SIGNOFF_REJECTED');
     pattern(signoff.evidenceId, ULID, 'PHASE6_CUTOVER_SIGNOFF_INVALID');
     pattern(signoff.evidenceHash, SHA256, 'PHASE6_CUTOVER_SIGNOFF_INVALID');
-    if (timestamp(signoff.signedAt) < completedAt) fail('PHASE6_CUTOVER_SIGNOFF_TOO_EARLY');
+    const acceptedAt = timestamp(signoff.acceptedAt);
+    if (
+      acceptedAt < completedAt ||
+      acceptedAt - completedAt > 24 * 60 * 60_000 ||
+      acceptedAt > now + 5 * 60_000
+    ) fail('PHASE6_CUTOVER_SIGNOFF_TIME_INVALID');
     roles.push(signoff.role);
+    actors.add(signoff.actorHash);
     ids.add(signoff.evidenceId);
+    hashes.add(signoff.evidenceHash);
   }
   exactStringSet(roles, SIGNOFF_ROLES, 'PHASE6_CUTOVER_SIGNOFFS_INCOMPLETE');
-  if (ids.size !== SIGNOFF_ROLES.length) fail('PHASE6_CUTOVER_SIGNOFF_EVIDENCE_REUSED');
+  if (
+    actors.size !== SIGNOFF_ROLES.length ||
+    ids.size !== SIGNOFF_ROLES.length ||
+    hashes.size !== SIGNOFF_ROLES.length
+  ) fail('PHASE6_CUTOVER_SIGNOFF_EVIDENCE_REUSED');
   return [...ids];
 }
 
-function fixture() {
+function validateSignoffSignatures(signoffs, authorities, cutoverPayloadHash, now) {
+  const signatures = new Set();
+  for (const signoff of signoffs) {
+    equal(signoff.algorithm, 'Ed25519', 'PHASE6_CUTOVER_SIGNOFF_PROOF_INVALID');
+    pattern(signoff.keyId, SHA256, 'PHASE6_CUTOVER_SIGNOFF_PROOF_INVALID');
+    pattern(
+      signoff.signedPayloadSha256,
+      SHA256,
+      'PHASE6_CUTOVER_SIGNOFF_PROOF_INVALID',
+    );
+    pattern(signoff.signature, SIGNATURE, 'PHASE6_CUTOVER_SIGNOFF_PROOF_INVALID');
+    const acceptedAt = timestamp(signoff.acceptedAt);
+    const signedAt = timestamp(signoff.signedAt);
+    if (
+      signedAt < acceptedAt ||
+      signedAt - acceptedAt > 24 * 60 * 60_000 ||
+      signedAt > now + 5 * 60_000
+    ) fail('PHASE6_CUTOVER_SIGNOFF_SIGNATURE_TIME_INVALID');
+    const authority = authorities.get(signoff.role);
+    if (authority === undefined) fail('PHASE6_CUTOVER_SIGNOFF_AUTHORITY_INVALID');
+    equal(signoff.keyId, authority.keyId, 'PHASE6_CUTOVER_SIGNOFF_KEY_MISMATCH');
+    const payload = signoffSignaturePayload(cutoverPayloadHash, signoff);
+    equal(
+      signoff.signedPayloadSha256,
+      digest(payload),
+      'PHASE6_CUTOVER_SIGNOFF_PAYLOAD_MISMATCH',
+    );
+    const signature = decodeSignature(signoff.signature);
+    if (!verify(null, Buffer.from(payload, 'utf8'), authority.publicKey, signature)) {
+      fail('PHASE6_CUTOVER_SIGNOFF_SIGNATURE_INVALID');
+    }
+    signatures.add(signoff.signature);
+  }
+  if (signatures.size !== SIGNOFF_ROLES.length) fail('PHASE6_CUTOVER_SIGNOFFS_INCOMPLETE');
+}
+
+function cutoverPayload(document, signerKeysetHashValue) {
+  return signatureCanonical({
+    formatVersion: document.formatVersion,
+    suite: document.suite,
+    releaseId: document.releaseId,
+    source: document.source,
+    environment: document.environment,
+    phase5Decision: document.phase5Decision,
+    rehearsals: document.rehearsals,
+    rollbackRehearsal: document.rollbackRehearsal,
+    window: document.window,
+    steps: document.steps,
+    connections: document.connections,
+    acceptance: document.acceptance,
+    productionExecution: document.productionExecution,
+    legacySystem: document.legacySystem,
+    signoffs: document.signoffs.map((signoff) => ({
+      role: signoff.role,
+      actorHash: signoff.actorHash,
+      decision: signoff.decision,
+      evidenceId: signoff.evidenceId,
+      evidenceHash: signoff.evidenceHash,
+      acceptedAt: signoff.acceptedAt,
+    })),
+    signerKeysetHash: signerKeysetHashValue,
+  });
+}
+
+function signoffSignaturePayload(cutoverPayloadHash, signoff) {
+  return signatureCanonical({
+    suite: SIGNOFF_SIGNATURE_SUITE,
+    cutoverPayloadHash,
+    role: signoff.role,
+    keyId: signoff.keyId,
+    signedAt: signoff.signedAt,
+  });
+}
+
+function createFixture() {
   const hash = (character) => `sha256:${character.repeat(64)}`;
   const id = (suffix) => `01J8ZQK7V0A2M4N6P8R0T2W4${suffix.toString(16).toUpperCase().padStart(2, '0')}`;
   const commitSha = 'a'.repeat(40);
   const start = Date.parse('2026-07-19T00:00:00.000Z');
   const end = start + 6 * 60 * 60 * 1_000;
-  return {
-    formatVersion: 1,
-    suite: 'gaoq.phase6.cutover.v1',
+  const privateKeys = new Map();
+  const signingAuthorities = SIGNOFF_ROLES.map((role) => {
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    const keyId = publicKeyHash(publicKey);
+    privateKeys.set(role, privateKey);
+    return {
+      role,
+      algorithm: 'Ed25519',
+      keyId,
+      publicKeySpkiBase64: publicKey.export({ format: 'der', type: 'spki' }).toString('base64'),
+    };
+  });
+  const evidence = {
+    formatVersion: 2,
+    suite: 'gaoq.phase6.cutover.v2',
     releaseId: id(1),
     source: {
       commitSha, releaseCandidate: 'rc-20260719-01',
@@ -534,15 +741,30 @@ function fixture() {
       writeFrozen: true, readOnly: true, dataPreserved: true, auditPreserved: true,
       writeProbeRejected: true, evidenceHash: hash('9'),
     },
+    signingAuthorities,
     signoffs: SIGNOFF_ROLES.map((role, index) => ({
-      role, decision: 'accepted', evidenceId: id(40 + index), evidenceHash: hash('8'),
-      signedAt: new Date(end + (index + 1) * 60 * 1_000).toISOString(),
+      role,
+      actorHash: hash(String.fromCharCode(97 + index)),
+      decision: 'accepted',
+      evidenceId: id(40 + index),
+      evidenceHash: hash(String.fromCharCode(49 + index)),
+      acceptedAt: new Date(end + (index + 1) * 60 * 1_000).toISOString(),
+      signedAt: new Date(end + (index + 6) * 60 * 1_000).toISOString(),
+      algorithm: 'Ed25519',
+      keyId: signingAuthorities[index].keyId,
+      signedPayloadSha256: hash('0'),
+      signature: 'A'.repeat(86),
     })),
   };
+  signFixtureSignoffs(evidence, privateKeys);
+  return Object.freeze({ evidence, privateKeys });
 }
 
 function runSelfTest() {
-  validateEvidence(fixture());
+  const now = Date.parse('2026-07-20T00:00:00.000Z');
+  const { evidence, privateKeys } = createFixture();
+  const expectedKeysetHash = signerKeysetHash(evidence.signingAuthorities);
+  validateEvidence(evidence, false, now, expectedKeysetHash);
   const cases = [
     [(value) => { value.rehearsals.pop(); }, 'PHASE6_CUTOVER_REHEARSALS_INCOMPLETE'],
     [(value) => { value.rollbackRehearsal.durationSeconds = 14_401; },
@@ -563,12 +785,129 @@ function runSelfTest() {
       value.productionExecution.actions[1].evidenceHash =
         value.productionExecution.actions[0].evidenceHash;
     }, 'PHASE6_PRODUCTION_EXECUTION_EVIDENCE_REUSED'],
+    [(value) => { value.signoffs[1].actorHash = value.signoffs[0].actorHash; },
+      'PHASE6_CUTOVER_SIGNOFF_EVIDENCE_REUSED'],
+    [(value) => {
+      value.signoffs[0].signature =
+        `${value.signoffs[0].signature[0] === 'A' ? 'B' : 'A'}${value.signoffs[0].signature.slice(1)}`;
+    }, 'PHASE6_CUTOVER_SIGNOFF_SIGNATURE_INVALID'],
+    [(value) => {
+      value.signingAuthorities[1].keyId = value.signingAuthorities[0].keyId;
+      value.signingAuthorities[1].publicKeySpkiBase64 =
+        value.signingAuthorities[0].publicKeySpkiBase64;
+    }, 'PHASE6_CUTOVER_SIGNING_AUTHORITIES_NOT_INDEPENDENT'],
+    [(value) => {
+      const firstKeyId = value.signoffs[0].keyId;
+      value.signoffs[0].keyId = value.signoffs[1].keyId;
+      value.signoffs[1].keyId = firstKeyId;
+    }, 'PHASE6_CUTOVER_SIGNOFF_KEY_MISMATCH'],
+    [(value) => { value.signoffs[0].evidenceHash = `sha256:${'f'.repeat(64)}`; },
+      'PHASE6_CUTOVER_SIGNOFF_PAYLOAD_MISMATCH'],
   ];
   for (const [mutate, code] of cases) {
-    const value = structuredClone(fixture());
+    const value = structuredClone(evidence);
     mutate(value);
-    expectFailure(() => validateEvidence(value), code);
+    expectFailure(() => validateEvidence(value, false, now), code);
   }
+  expectFailure(
+    () => validateEvidence(evidence, false, now, `sha256:${'f'.repeat(64)}`),
+    'PHASE6_CUTOVER_SIGNER_KEYSET_MISMATCH',
+  );
+  const futureSignature = structuredClone(evidence);
+  futureSignature.signoffs[0].signedAt = '2026-07-21T00:10:00.000Z';
+  signFixtureSignoffs(futureSignature, privateKeys);
+  expectFailure(
+    () => validateEvidence(futureSignature, false, now),
+    'PHASE6_CUTOVER_SIGNOFF_SIGNATURE_TIME_INVALID',
+  );
+}
+
+function signFixtureSignoffs(evidence, privateKeys) {
+  const keysetHash = signerKeysetHash(evidence.signingAuthorities);
+  const payloadHash = digest(cutoverPayload(evidence, keysetHash));
+  for (const signoff of evidence.signoffs) {
+    const payload = signoffSignaturePayload(payloadHash, signoff);
+    signoff.signedPayloadSha256 = digest(payload);
+    signoff.signature = sign(
+      null,
+      Buffer.from(payload, 'utf8'),
+      privateKeys.get(signoff.role),
+    ).toString('base64url');
+  }
+}
+
+function publicKeyFromSpkiBase64(value) {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/u.test(value)) {
+    fail('PHASE6_CUTOVER_SIGNING_AUTHORITY_INVALID');
+  }
+  let der;
+  try {
+    der = Buffer.from(value, 'base64');
+  } catch {
+    fail('PHASE6_CUTOVER_SIGNING_AUTHORITY_INVALID');
+  }
+  if (
+    der.length < 32 ||
+    der.length > 256 ||
+    der.toString('base64') !== value
+  ) fail('PHASE6_CUTOVER_SIGNING_AUTHORITY_INVALID');
+  let publicKey;
+  try {
+    publicKey = createPublicKey({ key: der, format: 'der', type: 'spki' });
+  } catch {
+    fail('PHASE6_CUTOVER_SIGNING_AUTHORITY_INVALID');
+  }
+  if (publicKey.asymmetricKeyType !== 'ed25519') {
+    fail('PHASE6_CUTOVER_SIGNING_AUTHORITY_INVALID');
+  }
+  return publicKey;
+}
+
+function publicKeyHash(publicKey) {
+  return digest(publicKey.export({ format: 'der', type: 'spki' }));
+}
+
+function signerKeysetHash(authorities) {
+  return digest(signatureCanonical(
+    authorities
+      .map(({ role, keyId }) => ({ role, keyId }))
+      .sort((left, right) => left.role.localeCompare(right.role)),
+  ));
+}
+
+function decodeSignature(value) {
+  let signature;
+  try {
+    signature = Buffer.from(value, 'base64url');
+  } catch {
+    fail('PHASE6_CUTOVER_SIGNOFF_SIGNATURE_INVALID');
+  }
+  if (signature.length !== 64 || signature.toString('base64url') !== value) {
+    fail('PHASE6_CUTOVER_SIGNOFF_SIGNATURE_INVALID');
+  }
+  return signature;
+}
+
+function signatureCanonical(value) {
+  if (
+    value === null ||
+    typeof value === 'boolean' ||
+    typeof value === 'string'
+  ) return JSON.stringify(value);
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) fail('PHASE6_CUTOVER_NUMBER_INVALID');
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => signatureCanonical(item)).join(',')}]`;
+  }
+  if (typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${signatureCanonical(value[key])}`)
+      .join(',')}}`;
+  }
+  return fail('PHASE6_CUTOVER_VALUE_INVALID');
 }
 
 function parseDocument(content) {

@@ -110,6 +110,17 @@ SRE 六个角色分别以不同 Ed25519 密钥签署同一最终准入 payload�
 公钥、URL、audience、摘要、CA 和资源名可以放 Repository Variables；Token、
 私钥、连接串和长期云凭据不得进入 Variables、Secrets、仓库或命令行。
 
+统一切换与 Hypercare 使用同一信任原则但使用互不混用的角色 keyset：
+
+- `gaoq.phase6.cutover.v2` 由业务、变更、数据、安全和 SRE 五方分别签署，
+  `PHASE6_CUTOVER_SIGNER_KEYSET_SHA256` 固定批准角色/keyId 集合；
+- `gaoq.phase6.hypercare-archive.v2` 由数据、财务和法务三方分别签署，
+  `PHASE6_HYPERCARE_SIGNER_KEYSET_SHA256` 固定批准角色/keyId 集合。
+
+两个工作流都只验签和输出脱敏 verdict，不执行切流、回滚、归档或删除。即使同一
+自然人在不同治理流程中任职，也不得跨角色或跨流程复用私钥；密钥轮换必须先更新
+企业批准记录和对应 keyset 摘要，再生成新证据。
+
 ## 6. 验收与产品限制
 
 本地失败关闭自测：
@@ -119,6 +130,8 @@ pnpm github:oidc-input:self-test
 pnpm github:oidc-kubernetes:self-test
 pnpm github:oidc-kubeconfig:self-test
 pnpm release:phase6:deployment-authorization:self-test
+pnpm release:phase6:cutover:self-test
+pnpm release:phase6:hypercare:self-test
 pnpm security:validate
 pnpm release:phase6:workflows:validate
 ```

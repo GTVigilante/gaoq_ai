@@ -125,6 +125,17 @@
   和最终 `READY` 决定；伪签名、复用公钥、角色换签、签后篡改或 keyset 漂移
   均失败关闭，Plan 与 Apply 都重复验收。仓库自测只使用临时密钥；真实六方人员、
   IAM/KMS 角色密钥和 WORM 审计仍待现场验收。
+- 2026-07-30 已关闭统一切换五方验收及 Hypercare 归档三方批准仅校验角色、
+  证据 ID、摘要和时间，无法证明职责主体真实签署的缺口：切换证据升级为
+  `gaoq.phase6.cutover.v2`，业务、变更、数据、安全和 SRE 五方分别使用不同
+  Ed25519 公钥签署同一完整切换终态；归档证据升级为
+  `gaoq.phase6.hypercare-archive.v2`，数据、财务和法务三方分别签署完整 28 日
+  稳定期及归档批准 payload。两条证据链都要求 keyId 等于 SPKI DER 摘要，
+  角色/keyId 集合与各自 Repository Variable 的批准 keyset 摘要匹配，并拒绝
+  主体/公钥/证据复用、角色换钥、签后篡改、伪签名、未来签名和 keyset 漂移。
+  归档实际结果保持在批准 payload 之外，并单独强制发生在全部有效签名之后、
+  只读、不可变且不授权删除。仓库自测只生成临时密钥；真实人员、IAM/KMS
+  角色密钥、现场签署、WORM、切换和连续 28 日运行仍待外部验收。
 - 2026-07-29 已把覆盖率门禁本身纳入失败关闭治理：
   `scripts/validate-critical-coverage-policy.mjs` 从 `precheck/check` 解析 134 个
   ERP API 专项脚本，展开其 `--coverage.include` 后要求 336 个生产文件逐一具有

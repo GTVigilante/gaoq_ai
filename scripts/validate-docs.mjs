@@ -42,6 +42,8 @@ const requiredDocuments = [
   'scripts/github/fetch-oidc-protected-input.mjs',
   'scripts/github/github-oidc-kubernetes-credential.mjs',
   'scripts/github/write-oidc-kubeconfig.mjs',
+  'scripts/release/validate-phase-6-cutover-evidence.mjs',
+  'scripts/release/validate-phase-6-hypercare-evidence.mjs',
   'scripts/release/validate-phase-6-deployment-authorization.mjs',
   'scripts/release/validate-phase-6-platform-intake.mjs',
   'scripts/mcp/validate-kimi-mcp-client.mjs',
@@ -218,6 +220,28 @@ const requiredHostedOidcMarkers = new Map([
     ],
   ],
   [
+    'scripts/release/validate-phase-6-cutover-evidence.mjs',
+    [
+      'gaoq.phase6.cutover.v2',
+      'signerKeysetHash',
+      'Ed25519',
+      'business_owner',
+      'change_manager',
+      'PHASE6_CUTOVER_SIGNER_KEYSET_SHA256',
+    ],
+  ],
+  [
+    'scripts/release/validate-phase-6-hypercare-evidence.mjs',
+    [
+      'gaoq.phase6.hypercare-archive.v2',
+      'signerKeysetHash',
+      'Ed25519',
+      'finance_owner',
+      'legal_owner',
+      'PHASE6_HYPERCARE_SIGNER_KEYSET_SHA256',
+    ],
+  ],
+  [
     'scripts/release/validate-phase-6-deployment-authorization.mjs',
     [
       'gaoq.phase6.deployment-authorization.v2',
@@ -248,6 +272,27 @@ const requiredHostedOidcMarkers = new Map([
       'Apply 专用 OIDC audience',
       '管理员 kubeconfig',
       'PHASE6_DEPLOYMENT_PLATFORM_INTAKE_SIGNER_KEYSET_SHA256',
+    ],
+  ],
+  [
+    'docs/phase-6/00-unified-cutover-contract.md',
+    [
+      'gaoq.phase6.cutover.v2',
+      '五个不同主体',
+      '五个不同 Ed25519',
+      'signerKeysetHash',
+      'PHASE6_CUTOVER_SIGNER_KEYSET_SHA256',
+    ],
+  ],
+  [
+    'docs/phase-6/01-hypercare-archive-contract.md',
+    [
+      'gaoq.phase6.hypercare-archive.v2',
+      '三个不同主体',
+      '三个不同 Ed25519',
+      'signerKeysetHash',
+      'PHASE6_HYPERCARE_SIGNER_KEYSET_SHA256',
+      '`deletionAuthorized=false`',
     ],
   ],
   [

@@ -30,7 +30,7 @@
 | 3 | 招聘、eSign、Onboarding、Knowledge、Care、Talent Lifecycle 360 及对应 REST/事件/MCP | 真实渠道、e签宝、对象/WORM、OpenAI/搜索/评分/通知、CRM/校友平台与跨角色 UAT | 实施已交付，外部验收待完成 |
 | 4 | 考勤事实、规则/排班、Provider 覆盖对账、版本化薪酬、审批、银行/税务、对账、影子周期控制面及 MCP | 真实考勤/专业算薪联调、银行/税务沙箱、两个完整影子周期、差异清零和财务签署 | 实施已交付，外部验收待完成 |
 | 5 | OP、移动端、分析、迁移控制面、性能/安全/容灾/供应链/MCP/Go-No-Go 校验器 | 三轮生产等价实测、真实外部连接、DAST/ASVS、业务 UAT 和十方签署 | 实施已交付，外部验收待完成 |
-| 6 | 切换、回滚、部署、平台准入六方独立 Ed25519 签名、Hypercare 证据契约和受保护工作流 | 三次全量演练、生产级回滚、真实平台六方角色密钥与签署、统一切换、四周 Hypercare 与旧系统归档批准 | 实施已交付，外部验收待完成 |
+| 6 | 切换、回滚、部署、平台准入六方、统一切换五方及 Hypercare 归档三方独立 Ed25519 签名证据契约和受保护工作流 | 三次全量演练、生产级回滚、真实平台/切换/归档角色密钥与签署、统一切换、四周 Hypercare 与旧系统归档 | 实施已交付，外部验收待完成 |
 
 ## 3. 未完成 Issue 的实施证据
 
@@ -44,8 +44,8 @@
 | #31 两个薪资影子周期 | `apps/erp-api/src/modules/payroll/application/payroll-shadow.service.ts` 及对应测试、`docs/phase-5/20-readiness-verdicts.md` | 两个真实完整周期、100% 覆盖、零未解释差异、薪酬与财务签署 |
 | #37 三次全量迁移演练 | `docs/phase-5/12-data-migration-rehearsal-gate.md`、`scripts/migration/validate-phase-5-migration-rehearsal-evidence.mjs`、`.github/workflows/phase-5-migration-rehearsal.yml` | 三份独立生产等价证据、8 小时窗口和四方签署 |
 | #38 回滚与 Go/No-Go | `docs/phase-5/18-go-no-go-evidence-gate.md`、`scripts/release/validate-phase-5-go-no-go-evidence.mjs`、`scripts/resilience/validate-phase-5-resilience-evidence.mjs` | 生产级回滚、零 Sev1/Sev2/高危漏洞与跨职能签署 |
-| #39 统一切换 | `docs/phase-6/00-unified-cutover-contract.md`、`docs/phase-6/02-production-execution-runbook.md`、`scripts/release/validate-phase-6-cutover-evidence.mjs` | 批准窗口内的真实冻结、增量迁移、连接切换、双人复核与旧系统只读 |
-| #40 四周 Hypercare | `docs/phase-6/01-hypercare-archive-contract.md`、`scripts/release/validate-phase-6-hypercare-evidence.mjs`、`.github/workflows/phase-6-hypercare.yml` | 连续四周 SLO、每日真实对账、差异闭环和归档批准 |
+| #39 统一切换 | `docs/phase-6/00-unified-cutover-contract.md`、`docs/phase-6/02-production-execution-runbook.md`、`scripts/release/validate-phase-6-cutover-evidence.mjs` | 批准窗口内的真实冻结、增量迁移、连接切换、双人复核、旧系统只读、五方真实角色密钥与签署 |
+| #40 四周 Hypercare | `docs/phase-6/01-hypercare-archive-contract.md`、`scripts/release/validate-phase-6-hypercare-evidence.mjs`、`.github/workflows/phase-6-hypercare.yml` | 连续四周 SLO、每日真实对账、差异闭环、三方真实角色密钥与归档批准 |
 
 ## 4. GitHub 与 CI 边界
 

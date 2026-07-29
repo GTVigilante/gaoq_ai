@@ -52,6 +52,7 @@ validateEvidenceWorkflow(cutover, {
     'PHASE6_CUTOVER_EXPECTED_WEB_IMAGE: ${{ vars.PHASE6_CUTOVER_WEB_IMAGE_DIGEST }}',
     'PHASE6_CUTOVER_EXPECTED_WEBSITE_IMAGE: ${{ vars.PHASE6_CUTOVER_WEBSITE_IMAGE_DIGEST }}',
     'PHASE6_CUTOVER_EXPECTED_DEPLOYMENT_MANIFEST: ${{ vars.PHASE6_CUTOVER_DEPLOYMENT_MANIFEST_SHA256 }}',
+    'PHASE6_CUTOVER_SIGNER_KEYSET_SHA256: ${{ vars.PHASE6_CUTOVER_SIGNER_KEYSET_SHA256 }}',
   ],
 });
 
@@ -72,6 +73,7 @@ validateEvidenceWorkflow(hypercare, {
     'PHASE6_HYPERCARE_EXPECTED_COMMIT: ${{ github.sha }}',
     'PHASE6_HYPERCARE_EXPECTED_RELEASE: ${{ vars.PHASE6_HYPERCARE_RELEASE_CANDIDATE }}',
     'PHASE6_HYPERCARE_EXPECTED_CUTOVER_EVIDENCE: ${{ vars.PHASE6_HYPERCARE_CUTOVER_EVIDENCE_SHA256 }}',
+    'PHASE6_HYPERCARE_SIGNER_KEYSET_SHA256: ${{ vars.PHASE6_HYPERCARE_SIGNER_KEYSET_SHA256 }}',
   ],
 });
 
@@ -146,10 +148,14 @@ const expectedScripts = {
     'node scripts/release/validate-phase-6-cutover-evidence.mjs',
   'release:phase6:cutover:self-test':
     'node scripts/release/validate-phase-6-cutover-evidence.mjs --self-test',
+  'release:phase6:cutover:print-contract':
+    'node scripts/release/validate-phase-6-cutover-evidence.mjs --print-contract',
   'release:phase6:hypercare:validate-evidence':
     'node scripts/release/validate-phase-6-hypercare-evidence.mjs',
   'release:phase6:hypercare:self-test':
     'node scripts/release/validate-phase-6-hypercare-evidence.mjs --self-test',
+  'release:phase6:hypercare:print-contract':
+    'node scripts/release/validate-phase-6-hypercare-evidence.mjs --print-contract',
   'release:phase6:deployment:validate-plan':
     'node scripts/release/validate-phase-6-deployment-plan.mjs',
   'release:phase6:deployment:self-test':

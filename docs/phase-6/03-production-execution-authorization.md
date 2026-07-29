@@ -51,4 +51,4 @@ PHASE6_DEPLOYMENT_MANIFEST_SHA256
 - Outbox 在生产提交事件中记录脱敏授权证据标识，不记录 Token、授权正文或业务敏感字段；
 - MCP 能力目录继续保持 R3 数量为零。
 
-统一切换的 `gaoq.phase6.cutover.v1` 证据还必须包含独立 `productionExecution` 节。它按同一发布 commit 和部署清单核验策略启用时间、900 秒最大有效期、六项强绑定、凭据隔离，以及银行/税务各自的成功、重放拒绝和错绑定拒绝证据；该节未通过时不得生成 `CUTOVER_COMPLETED`。
+统一切换的 `gaoq.phase6.cutover.v2` 证据还必须包含独立 `productionExecution` 节。它按同一发布 commit 和部署清单核验策略启用时间、900 秒最大有效期、六项强绑定、凭据隔离，以及银行/税务各自的成功、重放拒绝和错绑定拒绝证据；该节未通过时不得生成 `CUTOVER_COMPLETED`。
