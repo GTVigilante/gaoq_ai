@@ -58,6 +58,7 @@ jobs:
       PERFORMANCE_EXPECTED_WEB_IMAGE: ${{ vars.PERFORMANCE_WEB_IMAGE_DIGEST }}
       PERFORMANCE_EXPECTED_WEBSITE_IMAGE: ${{ vars.PERFORMANCE_WEBSITE_IMAGE_DIGEST }}
       PERFORMANCE_EXPECTED_DEPLOYMENT_MANIFEST: ${{ vars.PERFORMANCE_DEPLOYMENT_MANIFEST_SHA256 }}
+      PERFORMANCE_EXPECTED_SIGNER_KEYSET_SHA256: ${{ vars.PERFORMANCE_SIGNER_KEYSET_SHA256 }}
     steps:
       - name: 检出受信任代码
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -106,7 +107,7 @@ jobs:
             --max-bytes 262144 \
             --media-type application/json
 
-      - name: 验证环境绑定与三次独立容量证据
+      - name: 验证环境、发布候选、受信 keyset 与三次独立容量证据
         env:
           PERFORMANCE_VERDICT_PATH: ${{ runner.temp }}/phase-5-performance-verdict.json
         run: >-

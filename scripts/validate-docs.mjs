@@ -24,6 +24,7 @@ const requiredDocuments = [
   'docs/phase-4/README.md',
   'docs/phase-5/README.md',
   'docs/phase-5/12-data-migration-rehearsal-gate.md',
+  'docs/phase-5/15-performance-capacity-gate.md',
   'docs/phase-5/16-dast-asvs-gate.md',
   'docs/phase-5/17-resilience-rehearsal-gate.md',
   'docs/phase-5/18-go-no-go-evidence-gate.md',
@@ -45,6 +46,7 @@ const requiredDocuments = [
   'scripts/github/fetch-oidc-protected-input.mjs',
   'scripts/github/github-oidc-kubernetes-credential.mjs',
   'scripts/github/write-oidc-kubeconfig.mjs',
+  'scripts/performance/validate-phase-5-capacity.mjs',
   'scripts/migration/validate-phase-5-migration-rehearsal-evidence.mjs',
   'scripts/mcp/validate-phase-5-mcp-integration-evidence.mjs',
   'scripts/security/validate-phase-5-dast-evidence.mjs',
@@ -58,6 +60,7 @@ const requiredDocuments = [
   'apps/erp-api/scripts/mcp-catalog-stdio-fixture.mjs',
   'tools/mcp-inspector-client/package.json',
   '.github/workflows/github-governance.yml',
+  '.github/workflows/phase-5-performance.yml',
   '.github/workflows/phase-5-dast-evidence.yml',
 ];
 
@@ -236,6 +239,32 @@ const requiredHostedOidcMarkers = new Map([
       'staticCredentialWritten: false',
       'certificate-authority-data',
       'github-oidc-kubernetes-credential.mjs',
+    ],
+  ],
+  [
+    'scripts/performance/validate-phase-5-capacity.mjs',
+    [
+      'gaoq.phase5.capacity.v2',
+      'gaoq.phase5.capacity.contract',
+      'gaoq.phase5.capacity.signoff.v1',
+      'signerKeysetHash',
+      'approvalPayloadHash',
+      'Ed25519',
+      'performance_owner',
+      'security_owner',
+      'PERFORMANCE_EXPECTED_SIGNER_KEYSET_SHA256',
+    ],
+  ],
+  [
+    'docs/phase-5/15-performance-capacity-gate.md',
+    [
+      'gaoq.phase5.capacity.v2',
+      '不同 Ed25519 公钥',
+      'PERFORMANCE_SIGNER_KEYSET_SHA256',
+      '72 小时内',
+      'KMS/HSM',
+      'performance:print-contract',
+      'phase-5-performance',
     ],
   ],
   [

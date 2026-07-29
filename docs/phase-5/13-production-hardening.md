@@ -17,7 +17,12 @@ Dependabot 每周分别检查 pnpm/npm 依赖与 GitHub Actions。许可证门�
 
 API、Worker、ERP Web、Website 已有固定摘要、distroless、nonroot 的生产镜像目标；每个 PR 分别构建最终镜像、生成 SPDX JSON SBOM 并以 Trivy 阻断 High/Critical 漏洞。构建和验证细则见[生产镜像构建与验证运行手册](./14-production-images-runbook.md)。正式仓库推送、镜像签名、SLSA provenance 与准入策略仍待 CD 平台接入。
 
-1000 并发只读 API、1000 人工资计算和三次可比证据的脚本与校验契约见[性能容量三次实测门禁](./15-performance-capacity-gate.md)。现场脱敏摘要只能由 `phase-5-performance` workflow policy 通过 GitHub Hosted Runner 和单次 OIDC 身份验收；工具交付不代替生产等价环境的三次真实执行。
+1000 并发只读 API、1000 人工资计算和三次可比证据的脚本与校验契约见
+[性能容量三次实测门禁](./15-performance-capacity-gate.md)。v2 证据要求性能、
+平台、安全三方分别使用独立 Ed25519 密钥逐次签署，并把同一受信 keyset 与
+三次运行和当前发布候选绑定。现场脱敏摘要只能由 `phase-5-performance`
+workflow policy 通过 GitHub Hosted Runner 和单次 OIDC 身份验收；工具交付
+不代替生产等价环境的三次真实执行。
 
 二十六个迁移 Scope、三轮七十八个运行与三类故障演练的聚合证据由[数据迁移三次演练证据门禁](./12-data-migration-rehearsal-gate.md)验收。只有 `phase-5-migration-rehearsal` workflow policy 可以生成供 Go/No-Go 消费的 migration verdict；单 Scope 比较通过不能替代全链路验收。
 

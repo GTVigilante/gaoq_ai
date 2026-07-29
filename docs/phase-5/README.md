@@ -27,6 +27,9 @@ Phase 5 在已验收的组织、审批、招聘入职、考勤薪酬底座之上
 8. [生产加固与 Go/No-Go 证据](./13-production-hardening.md)（供应链、镜像、容量、DAST 及韧性门禁工具已实现，真实实测待续）
    - [生产镜像构建与验证运行手册](./14-production-images-runbook.md)
    - [性能容量三次实测门禁](./15-performance-capacity-gate.md)
+     - 容量 v2 要求性能、平台和安全三方使用独立 Ed25519 密钥逐次签署完整
+       负载、工资、基础设施和观测结果；三次运行复用受信 keyset 与角色主体，
+       但九份批准证据、意见和签名必须全部独立
    - [DAST 与 ASVS 5.0.0 证据门禁](./16-dast-asvs-gate.md)
      - DAST/ASVS v2 要求 AppSec、平台、QA 和风险四方使用独立 Ed25519
        密钥签署完整扫描、ASVS、授权探针和安全隔离结果；独立 OIDC 验收

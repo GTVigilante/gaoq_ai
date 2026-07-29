@@ -175,6 +175,7 @@
     "security:dast:print-contract": "node scripts/security/validate-phase-5-dast-evidence.mjs --print-contract",
     "performance:validate": "node scripts/performance/validate-phase-5-capacity.mjs",
     "performance:self-test": "node scripts/performance/validate-phase-5-capacity.mjs --self-test",
+    "performance:print-contract": "node scripts/performance/validate-phase-5-capacity.mjs --print-contract",
     "migration:rehearsal:validate-evidence": "node scripts/migration/validate-phase-5-migration-rehearsal-evidence.mjs",
     "migration:rehearsal:self-test": "node scripts/migration/validate-phase-5-migration-rehearsal-evidence.mjs --self-test",
     "migration:rehearsal:print-contract": "node scripts/migration/validate-phase-5-migration-rehearsal-evidence.mjs --print-contract",
