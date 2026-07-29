@@ -79,6 +79,7 @@ ValidatingAdmissionPolicy 必须由独立集群管理员预装并通过正反例
 | `PHASE6_DEPLOYMENT_ROLLOUT_ID` | 批准窗口唯一标识 |
 | `PHASE6_DEPLOYMENT_*_CONFIG_MAP`、`PHASE6_DEPLOYMENT_*_SECRET` | 四组件八个外部引用名；Runner 不读取 Secret |
 | `PHASE6_DEPLOYMENT_GO_NO_GO_ENVIRONMENT`、`PHASE6_DEPLOYMENT_GO_NO_GO_REGION` | 目标环境与 Region |
+| `PHASE6_DEPLOYMENT_GO_NO_GO_SIGNER_KEYSET_SHA256` | Phase 5 十方 Ed25519 公钥角色/keyId 规范集合摘要；Plan 与 Apply 都重新绑定 |
 
 ### 3.3 Apply 授权
 
@@ -98,7 +99,8 @@ Apply 还会逐字段验证外部签名文件。
 
 Plan 每次重新读取三份输入并执行：
 
-1. Go/No-Go `GO`、24 小时新鲜度、commit、四镜像和部署包绑定；
+1. Go/No-Go `GO`、24 小时新鲜度、commit、四镜像、部署包、十方独立
+   Ed25519 签名和批准 signer keyset 绑定；
 2. 平台准入 `READY`、当前 policy/workflow、Hosted Runner、audience、RBAC 与六方审批；
 3. Helm strict lint、仓库清单检查和固定 schema Kubeconform；
 4. 四个 Deployment、八个运行时引用、rollout ID 和 Website 公开配置绑定；

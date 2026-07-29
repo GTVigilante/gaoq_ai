@@ -29,7 +29,7 @@ MongoDB 时间点恢复、Redis/BullMQ 重建、对象/WORM 与 KMS 验证、旧
 摘要只能由 `phase-5-resilience` workflow policy 通过 GitHub Hosted Runner 和
 单次 OIDC 身份验收。
 
-工程质量、供应链、生产镜像、权限、业务 UAT、隐私合规和运行保障先由[七类发布就绪 verdict 门禁](./20-readiness-verdicts.md)生成独立证据。全部上线证据的新鲜度、版本绑定、十二类门禁、十方签署和周末八小时切换窗口再由[跨职能 Go/No-Go 证据门禁](./18-go-no-go-evidence-gate.md)统一验收。工作流只生成不可部署的 verdict，不替代人工生产审批。
+工程质量、供应链、生产镜像、权限、业务 UAT、隐私合规和运行保障先由[七类发布就绪 verdict 门禁](./20-readiness-verdicts.md)生成独立证据。全部上线证据的新鲜度、版本绑定、十二类门禁、十方独立 Ed25519 签署和周末八小时切换窗口再由[跨职能 Go/No-Go 证据门禁](./18-go-no-go-evidence-gate.md)统一验收。工作流只生成不可部署的 verdict，不替代人工生产审批。
 
 以下项目尚未完成，因此本文件不构成生产放行：
 

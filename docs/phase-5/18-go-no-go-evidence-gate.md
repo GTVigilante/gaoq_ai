@@ -5,7 +5,7 @@
 
 ## 决策原则
 
-Go/No-Go 是人工治理决定，不是 CI 成功、AI 建议或某个负责人单独批准。门禁只在工程质量、供应链、生产镜像、三次迁移、三次容量、安全、容灾、权限、业务 UAT、隐私合规、外部集成/MCP 和运行保障十二类证据同时通过、未过期且绑定同一发布候选版本时生成 `GO` verdict。Verdict 不触发部署；CD 仍必须校验变更单、冻结窗口和独立生产审批。
+Go/No-Go 是人工治理决定，不是 CI 成功、AI 建议或某个负责人单独批准。门禁只在工程质量、供应链、生产镜像、三次迁移、三次容量、安全、容灾、权限、业务 UAT、隐私合规、外部集成/MCP 和运行保障十二类证据同时通过、未过期且绑定同一发布候选版本时生成 `GO` verdict。输入契约固定为 `gaoq.phase5.go-no-go.v2`；Verdict 不触发部署，CD 仍必须校验变更单、冻结窗口和独立生产审批。
 
 禁止带条件放行。Sev1/Sev2、Critical/High 漏洞、未到期安全例外、未解释数据或金额差异必须为零；`exceptions` 只能为空数组。任何证据过期、版本或环境不一致，必须重新执行相应门禁并重新签署。
 
@@ -58,20 +58,41 @@ R0 23、R1 19、R2 8、R3 0。陈旧哈希、遗漏 Resource Template 或只满�
 
 Repository Variables 配置以下非敏感值：环境名、区域、API/Worker/ERP Web/Website
 镜像 SHA-256、部署清单 SHA-256、证据 HTTPS URL、专用 OIDC audience、预期
-证据 SHA-256，以及专业算薪 resource、授权服务器、镜像、事件契约和 MCP
-目录摘要。工作流把这些值及当前 `main` commit 与证据精确绑定，以单次 GitHub
-OIDC 身份读取最多 1 MiB 的脱敏 JSON，并在 `$RUNNER_TEMP` 以 `0600` 保存到
-作业结束。
+证据 SHA-256，以及专业算薪 resource、授权服务器、镜像、事件契约、MCP
+目录摘要和 `GO_NO_GO_SIGNER_KEYSET_SHA256`。最后一项是十方 Ed25519 公钥按
+角色与 SPKI 摘要组成的规范 keyset 摘要；公钥不是秘密，私钥不得进入 GitHub。
+工作流把这些值及当前 `main` commit 与证据精确绑定，以单次 GitHub OIDC 身份
+读取最多 1 MiB 的脱敏 JSON，并在 `$RUNNER_TEMP` 以 `0600` 保存到作业结束。
 
 ```bash
+pnpm --silent release:go-no-go:print-contract > /secure/release/go-no-go-contract.json
 pnpm release:go-no-go:validate-evidence -- /secure/release/phase-5-go-no-go.json
 ```
 
-GitHub 只保存 decision ID、`GO`、commit 和整体校验和，不上传业务数据、报告正文、签名人姓名、凭据或生产配置。原始报告、个人签署和变更记录留在企业 WORM。
+GitHub 只保存 decision ID、`GO`、commit、签署 keyset 摘要、最终决策 payload
+摘要和整体校验和，不上传业务数据、报告正文、签名人姓名、私钥、凭据或生产
+配置。原始报告、个人签署和变更记录留在企业 WORM。
 
 ## 十方签署与窗口
 
-项目发起人、产品、架构、安全、数据、HR、财务、法务、QA 和 SRE 必须在全部证据评估完成后、最终决定产生前，分别以不同证据 ID 和意见摘要签署 `GO`。任一角色拒绝、缺席或超时，结论都是 No-Go。
+项目发起人、产品、架构、安全、数据、HR、财务、法务、QA 和 SRE 必须在全部
+证据评估完成后、最终决定产生前，分别以不同证据 ID、意见摘要和独立 Ed25519
+密钥签署 `GO`。十把公钥必须逐角色声明且互不复用，`keyId` 必须等于公钥 SPKI
+DER 的 SHA-256；受保护工作流还要把完整 keyset 与 Repository Variable 的批准
+摘要比对。机器可读 contract 固定算法、编码、角色、规范化方法和两层 payload
+字段；签署系统必须消费该 contract，禁止自行猜测字段顺序或序列化形式。
+
+每份签名绑定同一最终决策 payload 摘要，以及该角色、决定、证据 ID、意见摘要
+和签署时间。最终 payload 覆盖环境、commit、四镜像、部署清单、十二门禁、
+全部定量验收结果、十一类外部集成、ERP/专业算薪 MCP、运行保障、切换窗口与
+决定。签名长度、Base64URL 规范形式、payload 摘要、公钥角色映射或密码学验签
+任一失败均为 No-Go；只改 JSON 中一个仍处于允许范围的数值也会使全部既有签名
+失效。任一角色拒绝、缺席、复用密钥或超时，结论同样是 No-Go。
+
+密码学验签只证明批准的角色密钥签署了指定载荷，不单独证明现实人员身份。企业
+IAM/KMS 必须把每把私钥的签署权限绑定到对应在职责任人，启用强认证、密钥轮换、
+职责分离和 WORM 审计；这部分身份发行与托管证据必须在现场验收，不能由仓库自测
+替代。
 
 统一切换窗口固定为 Asia/Shanghai 周末连续 8 小时，必须在最终决定之后且不晚于任何证据有效期。`GO` 决定最长有效 7 天；窗口延期、发布候选 commit/镜像/清单变化、门禁证据更新或发生新的 Sev1/Sev2，均使原决定失效并要求重新评估和签署。
 

@@ -1,10 +1,17 @@
-import { createHash } from 'node:crypto';
+import {
+  createHash,
+  createPublicKey,
+  generateKeyPairSync,
+  sign,
+  verify,
+} from 'node:crypto';
 import { lstat, readFile } from 'node:fs/promises';
 import { catalog } from '../mcp/validate-phase-5-mcp-catalog.mjs';
 
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
 const COMMIT = /^[a-f0-9]{40}$/u;
 const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/u;
+const SIGNATURE = /^[A-Za-z0-9_-]{86}$/u;
 const ENVIRONMENT_NAME = /^[a-z][a-z0-9-]{2,31}$/u;
 const REGION = /^[a-z0-9-]{2,32}$/u;
 const GATE_NAMES = [
@@ -54,6 +61,7 @@ const SIGNOFF_ROLES = [
   'architecture_owner', 'data_owner', 'finance_owner', 'hr_owner', 'legal_owner',
   'product_owner', 'project_sponsor', 'qa_owner', 'security_owner', 'sre_owner',
 ];
+const SIGNOFF_SUITE = 'gaoq.phase5.go-no-go.signoff.v1';
 const HARNESS_FILES = [
   ['./validate-phase-5-go-no-go-evidence.mjs', new URL(import.meta.url)],
   ['../../.github/workflows/phase-5-go-no-go.yml',
@@ -67,6 +75,32 @@ const argumentsList = process.argv.slice(2);
 if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
   runSelfTest();
   process.stdout.write('Phase 5 跨职能 Go-No-Go 证据门禁自测通过。\n');
+} else if (argumentsList.length === 1 && argumentsList[0] === '--print-contract') {
+  process.stdout.write(`${JSON.stringify({
+    formatVersion: 2,
+    suite: 'gaoq.phase5.go-no-go.v2',
+    verdictSuite: 'gaoq.phase5.go-no-go.verdict',
+    signatureSuite: SIGNOFF_SUITE,
+    signatureAlgorithm: 'Ed25519',
+    signatureEncoding: 'base64url-unpadded',
+    publicKeyEncoding: 'base64-spki-der',
+    keyId: 'sha256:<lowercase-hex-of-spki-der>',
+    canonicalization: 'RFC8785-compatible-validated-number-subset',
+    signerKeysetCanonicalFields: ['role', 'keyId'],
+    signerKeysetOrder: 'role-ascending',
+    decisionPayloadFields: [
+      'formatVersion', 'suite', 'decisionId', 'environment', 'source', 'gates',
+      'acceptance', 'integrations', 'mcp', 'operations', 'decision',
+      'signerKeysetHash',
+    ],
+    signoffPayloadFields: [
+      'suite', 'decisionPayloadHash', 'role', 'decision', 'evidenceId',
+      'commentHash', 'signedAt',
+    ],
+    signoffRoles: SIGNOFF_ROLES,
+    maximumDecisionAgeHours: 24,
+    maximumDecisionLifetimeDays: 7,
+  }, null, 2)}\n`);
 } else {
   const enforceEnvironment = argumentsList[0] === '--enforce-environment';
   const evidencePath = argumentsList[enforceEnvironment ? 1 : 0];
@@ -81,11 +115,13 @@ if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
   const summary = validateEvidence(parseDocument(await readFile(evidencePath, 'utf8')),
     enforceEnvironment);
   process.stdout.write(`${JSON.stringify({
-    formatVersion: 1,
+    formatVersion: 2,
     suite: 'gaoq.phase5.go-no-go.verdict',
     decisionId: summary.decisionId,
     outcome: 'GO',
     commitSha: summary.commitSha,
+    signerKeysetHash: summary.signerKeysetHash,
+    decisionPayloadHash: summary.decisionPayloadHash,
     evidenceChecksum: digest(canonical(summary)),
   }, null, 2)}\n`);
 }
@@ -93,10 +129,10 @@ if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
 function validateEvidence(document, enforceEnvironment = false, now = Date.now()) {
   object(document, [
     'formatVersion', 'suite', 'decisionId', 'environment', 'source', 'gates', 'acceptance',
-    'integrations', 'mcp', 'operations', 'signoffs', 'decision',
+    'integrations', 'mcp', 'operations', 'signingAuthorities', 'signoffs', 'decision',
   ], 'PHASE5_GO_NO_GO_DOCUMENT_INVALID');
-  equal(document.formatVersion, 1, 'PHASE5_GO_NO_GO_FORMAT_INVALID');
-  equal(document.suite, 'gaoq.phase5.go-no-go.v1', 'PHASE5_GO_NO_GO_SUITE_INVALID');
+  equal(document.formatVersion, 2, 'PHASE5_GO_NO_GO_FORMAT_INVALID');
+  equal(document.suite, 'gaoq.phase5.go-no-go.v2', 'PHASE5_GO_NO_GO_SUITE_INVALID');
   pattern(document.decisionId, ULID, 'PHASE5_GO_NO_GO_DECISION_ID_INVALID');
   const environment = validateEnvironment(document.environment, enforceEnvironment, now);
   const source = validateSource(document.source, enforceEnvironment);
@@ -111,8 +147,18 @@ function validateEvidence(document, enforceEnvironment = false, now = Date.now()
     gates.minimumExpiresAt,
     now,
   );
+  const signingAuthorities = validateSigningAuthorities(
+    document.signingAuthorities,
+    enforceEnvironment,
+  );
+  const decisionPayloadHash = digest(releaseDecisionPayload(
+    document,
+    signingAuthorities.keysetHash,
+  ));
   const signoffEvidenceIds = validateSignoffs(
     document.signoffs,
+    signingAuthorities.byRole,
+    decisionPayloadHash,
     environment.evaluatedAt,
     decision.decidedAt,
   );
@@ -127,6 +173,8 @@ function validateEvidence(document, enforceEnvironment = false, now = Date.now()
     mcp,
     operations,
     decision: document.decision,
+    signerKeysetHash: signingAuthorities.keysetHash,
+    decisionPayloadHash,
     signoffEvidenceIds,
   });
 }
@@ -640,30 +688,184 @@ function validateDecision(decision, evaluatedAt, minimumGateExpiresAt, now) {
   return Object.freeze({ decidedAt });
 }
 
-function validateSignoffs(signoffs, evaluatedAt, decidedAt) {
+function validateSigningAuthorities(authorities, enforceEnvironment) {
+  if (!Array.isArray(authorities) || authorities.length !== SIGNOFF_ROLES.length) {
+    fail('PHASE5_GO_NO_GO_SIGNING_AUTHORITIES_INCOMPLETE');
+  }
+  const roles = [];
+  const keyIds = new Set();
+  const byRole = new Map();
+  const keyset = [];
+  for (const authority of authorities) {
+    object(
+      authority,
+      ['role', 'algorithm', 'keyId', 'publicKeySpkiBase64'],
+      'PHASE5_GO_NO_GO_SIGNING_AUTHORITY_INVALID',
+    );
+    if (!SIGNOFF_ROLES.includes(authority.role)) {
+      fail('PHASE5_GO_NO_GO_SIGNING_AUTHORITY_INVALID');
+    }
+    equal(authority.algorithm, 'Ed25519', 'PHASE5_GO_NO_GO_SIGNING_AUTHORITY_INVALID');
+    pattern(authority.keyId, SHA256, 'PHASE5_GO_NO_GO_SIGNING_AUTHORITY_INVALID');
+    const publicKey = publicKeyFromSpkiBase64(authority.publicKeySpkiBase64);
+    equal(
+      authority.keyId,
+      publicKeyHash(publicKey),
+      'PHASE5_GO_NO_GO_SIGNING_AUTHORITY_KEY_MISMATCH',
+    );
+    roles.push(authority.role);
+    keyIds.add(authority.keyId);
+    byRole.set(authority.role, Object.freeze({
+      keyId: authority.keyId,
+      publicKey,
+    }));
+    keyset.push(Object.freeze({ role: authority.role, keyId: authority.keyId }));
+  }
+  if (
+    canonical(roles.sort()) !== canonical(SIGNOFF_ROLES) ||
+    keyIds.size !== SIGNOFF_ROLES.length ||
+    byRole.size !== SIGNOFF_ROLES.length
+  ) fail('PHASE5_GO_NO_GO_SIGNING_AUTHORITIES_INCOMPLETE');
+  const keysetHash = signerKeysetHash(keyset);
+  if (enforceEnvironment) {
+    pattern(
+      process.env.GO_NO_GO_EXPECTED_SIGNER_KEYSET,
+      SHA256,
+      'PHASE5_GO_NO_GO_EXPECTED_SIGNER_KEYSET_REQUIRED',
+    );
+    equal(
+      keysetHash,
+      process.env.GO_NO_GO_EXPECTED_SIGNER_KEYSET,
+      'PHASE5_GO_NO_GO_SIGNER_KEYSET_MISMATCH',
+    );
+  }
+  return Object.freeze({ byRole, keysetHash });
+}
+
+function validateSignoffs(signoffs, signingAuthorities, decisionPayloadHash, evaluatedAt, decidedAt) {
   if (!Array.isArray(signoffs) || signoffs.length !== SIGNOFF_ROLES.length) {
     fail('PHASE5_GO_NO_GO_SIGNOFFS_INCOMPLETE');
   }
   const roles = [];
   const evidenceIds = new Set();
   const commentHashes = new Set();
+  const signatures = new Set();
   for (const signoff of signoffs) {
-    object(signoff, ['role', 'decision', 'evidenceId', 'commentHash', 'signedAt'],
-      'PHASE5_GO_NO_GO_SIGNOFF_INVALID');
+    object(
+      signoff,
+      [
+        'role', 'decision', 'evidenceId', 'commentHash', 'signedAt', 'algorithm',
+        'keyId', 'signedPayloadSha256', 'signature',
+      ],
+      'PHASE5_GO_NO_GO_SIGNOFF_INVALID',
+    );
     equal(signoff.decision, 'GO', 'PHASE5_GO_NO_GO_SIGNOFF_REJECTED');
     pattern(signoff.evidenceId, ULID, 'PHASE5_GO_NO_GO_SIGNOFF_EVIDENCE_INVALID');
     pattern(signoff.commentHash, SHA256, 'PHASE5_GO_NO_GO_SIGNOFF_COMMENT_INVALID');
+    equal(signoff.algorithm, 'Ed25519', 'PHASE5_GO_NO_GO_SIGNOFF_PROOF_INVALID');
+    pattern(signoff.keyId, SHA256, 'PHASE5_GO_NO_GO_SIGNOFF_PROOF_INVALID');
+    pattern(
+      signoff.signedPayloadSha256,
+      SHA256,
+      'PHASE5_GO_NO_GO_SIGNOFF_PROOF_INVALID',
+    );
+    pattern(signoff.signature, SIGNATURE, 'PHASE5_GO_NO_GO_SIGNOFF_PROOF_INVALID');
     const signedAt = timestamp(signoff.signedAt);
     if (signedAt < evaluatedAt || signedAt > decidedAt) fail('PHASE5_GO_NO_GO_SIGNOFF_TIME_INVALID');
+    const authority = signingAuthorities.get(signoff.role);
+    if (authority === undefined) fail('PHASE5_GO_NO_GO_SIGNOFF_AUTHORITY_INVALID');
+    equal(signoff.keyId, authority.keyId, 'PHASE5_GO_NO_GO_SIGNOFF_KEY_MISMATCH');
+    const payload = signoffPayload(decisionPayloadHash, signoff);
+    equal(
+      signoff.signedPayloadSha256,
+      digest(payload),
+      'PHASE5_GO_NO_GO_SIGNOFF_PAYLOAD_MISMATCH',
+    );
+    let signature;
+    try {
+      signature = Buffer.from(signoff.signature, 'base64url');
+    } catch {
+      fail('PHASE5_GO_NO_GO_SIGNOFF_SIGNATURE_INVALID');
+    }
+    if (
+      signature.length !== 64 ||
+      signature.toString('base64url') !== signoff.signature ||
+      !verify(null, Buffer.from(payload, 'utf8'), authority.publicKey, signature)
+    ) fail('PHASE5_GO_NO_GO_SIGNOFF_SIGNATURE_INVALID');
     roles.push(signoff.role);
     evidenceIds.add(signoff.evidenceId);
     commentHashes.add(signoff.commentHash);
+    signatures.add(signoff.signature);
   }
   if (
     canonical(roles.sort()) !== canonical(SIGNOFF_ROLES) ||
-    evidenceIds.size !== SIGNOFF_ROLES.length || commentHashes.size !== SIGNOFF_ROLES.length
+    evidenceIds.size !== SIGNOFF_ROLES.length ||
+    commentHashes.size !== SIGNOFF_ROLES.length ||
+    signatures.size !== SIGNOFF_ROLES.length
   ) fail('PHASE5_GO_NO_GO_SIGNOFFS_INCOMPLETE');
   return [...evidenceIds];
+}
+
+function releaseDecisionPayload(document, signerKeysetHash) {
+  return canonical({
+    formatVersion: document.formatVersion,
+    suite: document.suite,
+    decisionId: document.decisionId,
+    environment: document.environment,
+    source: document.source,
+    gates: document.gates,
+    acceptance: document.acceptance,
+    integrations: document.integrations,
+    mcp: document.mcp,
+    operations: document.operations,
+    decision: document.decision,
+    signerKeysetHash,
+  });
+}
+
+function signoffPayload(decisionPayloadHash, signoff) {
+  return canonical({
+    suite: SIGNOFF_SUITE,
+    decisionPayloadHash,
+    role: signoff.role,
+    decision: signoff.decision,
+    evidenceId: signoff.evidenceId,
+    commentHash: signoff.commentHash,
+    signedAt: signoff.signedAt,
+  });
+}
+
+function publicKeyFromSpkiBase64(value) {
+  if (
+    typeof value !== 'string' ||
+    value.length < 56 ||
+    value.length > 256 ||
+    !/^[A-Za-z0-9+/]+={0,2}$/u.test(value)
+  ) fail('PHASE5_GO_NO_GO_SIGNING_AUTHORITY_INVALID');
+  try {
+    const der = Buffer.from(value, 'base64');
+    if (der.toString('base64') !== value) {
+      fail('PHASE5_GO_NO_GO_SIGNING_AUTHORITY_INVALID');
+    }
+    const publicKey = createPublicKey({ key: der, format: 'der', type: 'spki' });
+    if (publicKey.asymmetricKeyType !== 'ed25519') {
+      fail('PHASE5_GO_NO_GO_SIGNING_AUTHORITY_INVALID');
+    }
+    return publicKey;
+  } catch {
+    return fail('PHASE5_GO_NO_GO_SIGNING_AUTHORITY_INVALID');
+  }
+}
+
+function publicKeyHash(publicKey) {
+  return digest(publicKey.export({ type: 'spki', format: 'der' }));
+}
+
+function signerKeysetHash(authorities) {
+  return digest(canonical(authorities.map((authority) => ({
+    role: authority.role,
+    keyId: authority.keyId,
+  })).sort((left, right) => left.role.localeCompare(right.role))));
 }
 
 function runSelfTest() {
@@ -741,6 +943,39 @@ function runSelfTest() {
   missingSignoff.signoffs.pop();
   expectFailure(() => validate(missingSignoff), 'PHASE5_GO_NO_GO_SIGNOFFS_INCOMPLETE');
 
+  const forgedSignature = fixture();
+  forgedSignature.signoffs[0].signature =
+    `${forgedSignature.signoffs[0].signature[0] === 'A' ? 'B' : 'A'}${
+      forgedSignature.signoffs[0].signature.slice(1)
+    }`;
+  expectFailure(
+    () => validate(forgedSignature),
+    'PHASE5_GO_NO_GO_SIGNOFF_SIGNATURE_INVALID',
+  );
+
+  const decisionTamperedAfterSigning = fixture();
+  decisionTamperedAfterSigning.acceptance.performance.maximumApiP95Milliseconds = 321;
+  expectFailure(
+    () => validate(decisionTamperedAfterSigning),
+    'PHASE5_GO_NO_GO_SIGNOFF_PAYLOAD_MISMATCH',
+  );
+
+  const reusedAuthority = fixture();
+  reusedAuthority.signingAuthorities[1].keyId =
+    reusedAuthority.signingAuthorities[0].keyId;
+  reusedAuthority.signingAuthorities[1].publicKeySpkiBase64 =
+    reusedAuthority.signingAuthorities[0].publicKeySpkiBase64;
+  expectFailure(
+    () => validate(reusedAuthority),
+    'PHASE5_GO_NO_GO_SIGNING_AUTHORITIES_INCOMPLETE',
+  );
+
+  const unapprovedKeyset = fixture();
+  expectFailure(
+    () => validate(unapprovedKeyset, true),
+    'PHASE5_GO_NO_GO_SIGNER_KEYSET_MISMATCH',
+  );
+
   process.env.GO_NO_GO_EXPECTED_COMMIT = 'b'.repeat(40);
   expectFailure(() => validate(bound, true), 'PHASE5_GO_NO_GO_COMMIT_MISMATCH');
 }
@@ -764,13 +999,15 @@ function bindExpectedEnvironment(document) {
     document.mcp.professionalPayroll.eventContractHash;
   process.env.GO_NO_GO_EXPECTED_PAYROLL_CATALOG_HASH =
     document.mcp.professionalPayroll.catalogHash;
+  process.env.GO_NO_GO_EXPECTED_SIGNER_KEYSET =
+    signerKeysetHash(document.signingAuthorities);
 }
 
 function fixture() {
   const hash = (label) => digest(label);
-  return {
-    formatVersion: 1,
-    suite: 'gaoq.phase5.go-no-go.v1',
+  const document = {
+    formatVersion: 2,
+    suite: 'gaoq.phase5.go-no-go.v2',
     decisionId: '01J8ZQK7V0A2M4N6P8R0T2W6D1',
     environment: {
       name: 'release-uat', region: 'cn-test-1', productionEquivalent: true,
@@ -885,11 +1122,8 @@ function fixture() {
       slsaProvenanceVerified: true, admissionPolicyEnforced: true,
       wormEvidenceHash: hash('operations-worm'),
     },
-    signoffs: SIGNOFF_ROLES.map((role, index) => ({
-      role, decision: 'GO', evidenceId: `01J8ZQK7V0A2M4N6P8R0T2W8${String(index).padStart(2, '0')}`,
-      commentHash: hash(`signoff-${role}`),
-      signedAt: `2026-07-23T00:${String(5 + index).padStart(2, '0')}:00.000Z`,
-    })),
+    signingAuthorities: [],
+    signoffs: [],
     decision: {
       outcome: 'GO', decidedAt: '2026-07-23T00:20:00.000Z', timezone: 'Asia/Shanghai',
       changeWindowStartAt: '2026-07-25T00:00:00.000Z',
@@ -897,6 +1131,43 @@ function fixture() {
       goNoGoExpiresAt: '2026-07-30T00:20:00.000Z', exceptions: [],
     },
   };
+  const privateKeys = new Map();
+  document.signingAuthorities = SIGNOFF_ROLES.map((role) => {
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    const der = publicKey.export({ type: 'spki', format: 'der' });
+    const keyId = digest(der);
+    privateKeys.set(role, privateKey);
+    return {
+      role,
+      algorithm: 'Ed25519',
+      keyId,
+      publicKeySpkiBase64: der.toString('base64'),
+    };
+  });
+  const decisionPayloadHash = digest(releaseDecisionPayload(
+    document,
+    signerKeysetHash(document.signingAuthorities),
+  ));
+  document.signoffs = SIGNOFF_ROLES.map((role, index) => {
+    const unsigned = {
+      role,
+      decision: 'GO',
+      evidenceId: `01J8ZQK7V0A2M4N6P8R0T2W8${String(index).padStart(2, '0')}`,
+      commentHash: hash(`signoff-${role}`),
+      signedAt: `2026-07-23T00:${String(5 + index).padStart(2, '0')}:00.000Z`,
+    };
+    const payload = signoffPayload(decisionPayloadHash, unsigned);
+    const privateKey = privateKeys.get(role);
+    if (privateKey === undefined) fail('PHASE5_GO_NO_GO_FIXTURE_KEY_MISSING');
+    return {
+      ...unsigned,
+      algorithm: 'Ed25519',
+      keyId: document.signingAuthorities[index].keyId,
+      signedPayloadSha256: digest(payload),
+      signature: sign(null, Buffer.from(payload, 'utf8'), privateKey).toString('base64url'),
+    };
+  });
+  return document;
 }
 
 function parseDocument(content) {

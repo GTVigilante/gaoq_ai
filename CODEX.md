@@ -97,6 +97,16 @@
   受保护工作流只从 Repository Variables 取得非敏感预期值。该门禁不证明专业
   算薪已联调；真实 OAuth、MCP、事件回放、断连恢复、密钥轮换、两个影子周期和
   员工/财务 UAT 仍待外部验收。
+- 2026-07-30 已关闭最终 Go/No-Go 十方批准仅校验角色、证据 ID 与摘要格式，
+  无法验证批准角色密钥的缺口：输入证据升级为 `gaoq.phase5.go-no-go.v2`，
+  架构、数据、财务、HR、法务、产品、项目发起人、QA、安全和 SRE 各使用独立
+  Ed25519 公钥；keyId 必须等于 SPKI DER 摘要，完整角色/keyId 集合再与
+  Repository Variable 的批准 keyset 摘要绑定。每份签名覆盖同一最终决策
+  payload 摘要及自身角色、决定、证据、意见和时间；该 payload 覆盖版本、环境、
+  十二门禁、量化验收、十一类外部集成、双方 MCP、运行保障与切换窗口。签名、
+  payload、角色映射、复用公钥或签后篡改任一异常均失败关闭；Phase 6 Plan/Apply
+  会重新验证相同 keyset。仓库自测生成临时测试密钥，不保存任何私钥；真实十方
+  密钥托管、人员身份与角色密钥绑定、签署和 WORM 归档仍待现场执行。
 - 2026-07-29 已把覆盖率门禁本身纳入失败关闭治理：
   `scripts/validate-critical-coverage-policy.mjs` 从 `precheck/check` 解析 134 个
   ERP API 专项脚本，展开其 `--coverage.include` 后要求 336 个生产文件逐一具有

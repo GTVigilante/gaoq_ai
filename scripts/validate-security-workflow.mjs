@@ -305,6 +305,7 @@ for (const marker of [
   'GO_NO_GO_EXPECTED_PAYROLL_IMAGE: ${{ vars.GO_NO_GO_PAYROLL_IMAGE_DIGEST }}',
   'GO_NO_GO_EXPECTED_PAYROLL_CONTRACT_HASH: ${{ vars.GO_NO_GO_PAYROLL_CONTRACT_HASH }}',
   'GO_NO_GO_EXPECTED_PAYROLL_CATALOG_HASH: ${{ vars.GO_NO_GO_PAYROLL_CATALOG_HASH }}',
+  'GO_NO_GO_EXPECTED_SIGNER_KEYSET: ${{ vars.GO_NO_GO_SIGNER_KEYSET_SHA256 }}',
   '--enforce-environment',
   'phase-5-go-no-go-verdict-${{ github.sha }}',
   'retention-days: 30',
