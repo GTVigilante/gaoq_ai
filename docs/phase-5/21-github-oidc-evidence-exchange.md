@@ -91,12 +91,13 @@ create/patch/delete 均被拒绝。Apply 仅能管理当前 release 所需的 na
 绑定文件。
 
 企业变更系统复核 Plan 后生成
-`gaoq.phase6.deployment-authorization.v1`：
+`gaoq.phase6.deployment-authorization.v2`：
 
 - 精确绑定 Plan run、计划包摘要、commit、输入、渲染清单、目标集群与命名空间；
 - 由 `change_owner` 与 `sre_owner` 两名不同主体批准；
-- 使用 Ed25519 对规范化 payload 签名，公钥及 SPKI SHA-256 放在非敏感
-  Repository Variables；
+- 两个角色使用不同 Ed25519 私钥，分别签署同一规范化授权 payload 摘要及自身
+  角色/keyId/签署时间；证据携带 SPKI DER 公钥，Repository Variable 固定
+  角色/keyId 规范集合摘要；
 - 授权最长两小时，Apply 重新渲染后逐字段验签、验时效和验摘要；
 - 原始签署正文留在 WORM，GitHub Artifact 只保存脱敏授权 verdict。
 

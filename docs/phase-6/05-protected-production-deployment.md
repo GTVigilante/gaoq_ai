@@ -20,7 +20,7 @@ Required Reviewers 当作可用控制。保护链改为：
 1. GitHub Hosted Runner 以 Plan 专用 OIDC policy/audience 取得只读短期身份；
 2. Plan 重新验收输入、渲染、Schema、RBAC 与 diff，输出不可变绑定；
 3. 企业变更系统由变更负责人和 SRE 两名不同主体复核并签署最长两小时的 Ed25519
-   授权；
+   授权；两人必须使用不同的批准密钥；
 4. 独立 Apply Runner 以不同 OIDC policy/audience 重新下载输入、重新渲染、验证
    授权和 server-side dry-run，再执行 Helm 原子发布。
 
@@ -32,7 +32,7 @@ Required Reviewers 当作可用控制。保护链改为：
 | 工作流 | OIDC policy | 集群权限 | 人工授权 |
 |---|---|---|---|
 | Plan | `phase-6-deployment-plan` | release ConfigMap、命名空间和非敏感运行配置只读；禁止 Secret get 与 Deployment create/patch/delete | 平台准入证据已有六方审批；计划产物等待外部复核 |
-| Apply | `phase-6-deployment-apply` | 仅管理当前 release 的 namespaced 非 Secret 资源；禁止 Secret get、ClusterRole、护栏和云账号权限 | `change_owner`、`sre_owner` 两名不同主体的 Ed25519 签名授权 |
+| Apply | `phase-6-deployment-apply` | 仅管理当前 release 的 namespaced 非 Secret 资源；禁止 Secret get、ClusterRole、护栏和云账号权限 | `change_owner`、`sre_owner` 两名不同主体、不同批准密钥的 Ed25519 独立签名 |
 
 每次执行均由 GitHub 分配全新 `ubuntu-latest` Runner，不复用 kubeconfig、工作目录
 或缓存。工作流下载并校验固定摘要的 Helm `v4.2.0+g0646808`、Kubeconform
@@ -86,8 +86,7 @@ ValidatingAdmissionPolicy 必须由独立集群管理员预装并通过正反例
 | 变量 | 约束 |
 |---|---|
 | `PHASE6_DEPLOYMENT_AUTHORIZATION_URL`、`PHASE6_DEPLOYMENT_AUTHORIZATION_SHA256` | 外部签名授权 URL 与文件摘要 |
-| `PHASE6_DEPLOYMENT_AUTHORIZATION_PUBLIC_KEY_PEM_BASE64` | Ed25519 公钥 PEM 的 Base64；公钥不是秘密 |
-| `PHASE6_DEPLOYMENT_AUTHORIZATION_PUBLIC_KEY_SHA256` | Ed25519 SPKI DER SHA-256 |
+| `PHASE6_DEPLOYMENT_AUTHORIZATION_SIGNER_KEYSET_SHA256` | `change_owner`、`sre_owner` 的角色/keyId 规范集合摘要；公钥由授权证据携带并按摘要绑定 |
 | `PHASE6_DEPLOYMENT_AUTHORIZED_PLAN_RUN_ID`、`...RUN_ATTEMPT` | 获批 Plan 的 GitHub run |
 | `PHASE6_DEPLOYMENT_AUTHORIZED_PLAN_ARTIFACT_SHA256` | 企业 WORM 中计划包摘要 |
 | `PHASE6_DEPLOYMENT_CLUSTER_SHA256` | 目标集群不可变身份摘要 |
@@ -114,14 +113,23 @@ ref、run ID/attempt、输入摘要、渲染摘要、部署包摘要和验证器
 
 ## 5. 外部签名授权与 Apply
 
-`gaoq.phase6.deployment-authorization.v1` 必须：
+`gaoq.phase6.deployment-authorization.v2` 必须：
 
 - 绑定上述 Plan run、企业计划包摘要、三份输入、渲染清单、部署包、目标集群、
   环境、Region、release 和两个命名空间；
 - 只允许 `APPROVED`，且含两个不同 actor/evidence 的 `change_owner` 与 `sre_owner`；
-- 使用 Ed25519 对 RFC 8785 兼容的整数子集规范 JSON 签名；
-- `keyId` 等于批准公钥 SPKI 摘要，payload 摘要和文件摘要全部匹配；
+- 两个角色各自使用独立 Ed25519 公钥对同一 RFC 8785 兼容规范授权 payload
+  签名；复用公钥、角色换签或任一签名缺失均失败关闭；
+- 每个 `keyId` 等于对应公钥 SPKI DER 摘要，完整角色/keyId 集合还必须等于
+  Repository Variable 固定的批准 keyset 摘要；
+- 每份签名覆盖公共授权 payload 摘要、角色、keyId 与签署时间，payload 摘要和
+  文件摘要全部匹配；
 - 从签发至过期不超过两小时，Apply 执行时仍有效。
+
+机器可读字段、排序、编码与签名 payload 可通过
+`pnpm --silent release:phase6:deployment-authorization:print-contract` 查询。
+该密码学校验只能证明证据由批准角色的私钥签署；真实人员身份、职责与角色密钥的
+绑定仍必须由企业 IAM/KMS 和 WORM 签署审计证明。
 
 Apply 用独立 OIDC policy 重取四份输入，重新渲染后才验签，以防计划后漂移。通过
 后执行 server-side dry-run，并只运行：

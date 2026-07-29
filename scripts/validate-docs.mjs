@@ -219,7 +219,8 @@ const requiredHostedOidcMarkers = new Map([
   [
     'scripts/release/validate-phase-6-deployment-authorization.mjs',
     [
-      'gaoq.phase6.deployment-authorization.v1',
+      'gaoq.phase6.deployment-authorization.v2',
+      'signerKeysetHash',
       'Ed25519',
       'change_owner',
       'sre_owner',

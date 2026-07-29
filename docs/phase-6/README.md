@@ -4,8 +4,8 @@ Phase 6 只接受真实生产证据，不把 CI 自测、模拟数据或 AI 结�
 
 全部 Phase 6 工作流只使用 GitHub Hosted `ubuntu-latest`。受保护输入和
 Kubernetes 身份按[GitHub Hosted OIDC 证据交换标准](../phase-5/21-github-oidc-evidence-exchange.md)
-通过 workflow/policy 专用 audience 获取；生产 Apply 另需外部双人 Ed25519
-签名授权。禁止 NAS、虚拟机、self-hosted Runner、
+通过 workflow/policy 专用 audience 获取；生产 Apply 另需变更负责人和 SRE
+使用不同批准密钥完成的两份外部 Ed25519 签名授权。禁止 NAS、虚拟机、self-hosted Runner、
 本地证据挂载和长期 kubeconfig。
 
 ## 交付物

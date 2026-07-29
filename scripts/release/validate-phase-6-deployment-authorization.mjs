@@ -16,6 +16,7 @@ const REGION = /^[a-z0-9-]{2,32}$/u;
 const RUN_ID = /^[1-9][0-9]{0,19}$/u;
 const SIGNATURE = /^[A-Za-z0-9_-]{86}$/u;
 const APPROVAL_ROLES = ['change_owner', 'sre_owner'];
+const APPROVAL_SIGNATURE_SUITE = 'gaoq.phase6.deployment-authorization.approval.v1';
 const PLAN_WORKFLOW_REF =
   'GTVigilante/gaoq_ai/.github/workflows/phase-6-deployment-plan.yml@refs/heads/main';
 const FORBIDDEN_KEYS = new Set([
@@ -30,11 +31,28 @@ if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
   process.stdout.write('Phase 6 外部签名部署授权证据门禁自测通过。\n');
 } else if (argumentsList.length === 1 && argumentsList[0] === '--print-contract') {
   process.stdout.write(`${JSON.stringify({
-    formatVersion: 1,
-    suite: 'gaoq.phase6.deployment-authorization.v1',
+    formatVersion: 2,
+    suite: 'gaoq.phase6.deployment-authorization.v2',
     validatorSha256: VALIDATOR_SHA256,
     signatureAlgorithm: 'Ed25519',
-    canonicalization: 'RFC8785-compatible-integer-subset',
+    signatureSuite: APPROVAL_SIGNATURE_SUITE,
+    signatureEncoding: 'base64url-unpadded',
+    publicKeyEncoding: 'base64-spki-der',
+    keyId: 'sha256:<lowercase-hex-of-spki-der>',
+    canonicalization: 'RFC8785-compatible-validated-number-subset',
+    signerKeysetCanonicalFields: ['role', 'keyId'],
+    signerKeysetOrder: 'role-ascending',
+    authorizationPayloadFields: [
+      'formatVersion', 'suite', 'authorizationId', 'issuedAt', 'expiresAt', 'source',
+      'target', 'approvals', 'decision', 'signerKeysetHash',
+    ],
+    authorizationApprovalFields: [
+      'role', 'actorHash', 'status', 'approvedAt', 'evidenceHash',
+    ],
+    authorizationApprovalOrder: 'document-order',
+    approvalPayloadFields: [
+      'suite', 'authorizationPayloadHash', 'role', 'keyId', 'signedAt',
+    ],
     approvalRoles: APPROVAL_ROLES,
     maximumLifetimeMinutes: 120,
     planWorkflowRef: PLAN_WORKFLOW_REF,
@@ -56,10 +74,10 @@ if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
   const raw = await readFile(evidencePath, 'utf8');
   const expected = enforceEnvironment
     ? expectedFromEnvironment(raw)
-    : publicKeyExpectedFromEnvironment();
+    : Object.freeze({ enforceBindings: false });
   const summary = validateEvidence(parseDocument(raw), expected);
   process.stdout.write(`${JSON.stringify({
-    formatVersion: 1,
+    formatVersion: 2,
     suite: 'gaoq.phase6.deployment-authorization.verdict',
     authorizationId: summary.authorizationId,
     outcome: 'APPROVED',
@@ -68,6 +86,8 @@ if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
     planArtifactHash: summary.planArtifactHash,
     renderedManifestHash: summary.renderedManifestHash,
     expiresAt: summary.expiresAt,
+    signerKeysetHash: summary.signerKeysetHash,
+    authorizationPayloadHash: summary.authorizationPayloadHash,
     evidenceChecksum: digest(raw),
   }, null, 2)}\n`);
 }
@@ -155,13 +175,13 @@ function expectedFromEnvironment(raw) {
     releaseName: process.env.PHASE6_DEPLOYMENT_RELEASE_NAME,
     controlNamespace: process.env.PHASE6_DEPLOYMENT_CONTROL_NAMESPACE,
     targetNamespace: process.env.PHASE6_DEPLOYMENT_TARGET_NAMESPACE,
-    publicKeyPemBase64: process.env.PHASE6_DEPLOYMENT_AUTHORIZATION_PUBLIC_KEY_PEM_BASE64,
-    publicKeyHash: process.env.PHASE6_DEPLOYMENT_AUTHORIZATION_PUBLIC_KEY_SHA256,
+    signerKeysetHash:
+      process.env.PHASE6_DEPLOYMENT_AUTHORIZATION_SIGNER_KEYSET_SHA256,
   });
   for (const value of [
     expected.checksum, expected.planArtifactHash, expected.valuesHash, expected.goNoGoHash,
     expected.platformIntakeHash, expected.renderedManifestHash,
-    expected.deploymentManifestHash, expected.clusterHash, expected.publicKeyHash,
+    expected.deploymentManifestHash, expected.clusterHash, expected.signerKeysetHash,
   ]) pattern(value, SHA256, 'PHASE6_DEPLOYMENT_AUTHORIZATION_EXPECTED_INVALID');
   equal(digest(raw), expected.checksum, 'PHASE6_DEPLOYMENT_AUTHORIZATION_CHECKSUM_MISMATCH');
   pattern(expected.repositoryId, /^[1-9][0-9]{3,15}$/u,
@@ -183,40 +203,19 @@ function expectedFromEnvironment(raw) {
   if (expected.controlNamespace === expected.targetNamespace) {
     fail('PHASE6_DEPLOYMENT_AUTHORIZATION_EXPECTED_INVALID');
   }
-  const publicKey = publicKeyFromBase64(expected.publicKeyPemBase64);
-  equal(publicKeyHash(publicKey), expected.publicKeyHash,
-    'PHASE6_DEPLOYMENT_AUTHORIZATION_PUBLIC_KEY_MISMATCH');
-  return Object.freeze({ ...expected, publicKey, enforceBindings: true });
-}
-
-function publicKeyExpectedFromEnvironment() {
-  const publicKey = publicKeyFromBase64(
-    process.env.PHASE6_DEPLOYMENT_AUTHORIZATION_PUBLIC_KEY_PEM_BASE64,
-  );
-  const expectedHash = process.env.PHASE6_DEPLOYMENT_AUTHORIZATION_PUBLIC_KEY_SHA256;
-  pattern(expectedHash, SHA256, 'PHASE6_DEPLOYMENT_AUTHORIZATION_EXPECTED_INVALID');
-  equal(
-    publicKeyHash(publicKey),
-    expectedHash,
-    'PHASE6_DEPLOYMENT_AUTHORIZATION_PUBLIC_KEY_MISMATCH',
-  );
-  return Object.freeze({
-    publicKey,
-    publicKeyHash: expectedHash,
-    enforceBindings: false,
-  });
+  return Object.freeze({ ...expected, enforceBindings: true });
 }
 
 function validateEvidence(document, expected, now = Date.now()) {
   ensureNoSensitiveMaterial(document);
   object(document, [
     'formatVersion', 'suite', 'authorizationId', 'issuedAt', 'expiresAt', 'source',
-    'target', 'approvals', 'decision', 'proof',
+    'target', 'signingAuthorities', 'approvals', 'decision',
   ], 'PHASE6_DEPLOYMENT_AUTHORIZATION_DOCUMENT_INVALID');
-  equal(document.formatVersion, 1, 'PHASE6_DEPLOYMENT_AUTHORIZATION_FORMAT_INVALID');
+  equal(document.formatVersion, 2, 'PHASE6_DEPLOYMENT_AUTHORIZATION_FORMAT_INVALID');
   equal(
     document.suite,
-    'gaoq.phase6.deployment-authorization.v1',
+    'gaoq.phase6.deployment-authorization.v2',
     'PHASE6_DEPLOYMENT_AUTHORIZATION_SUITE_INVALID',
   );
   pattern(document.authorizationId, ULID, 'PHASE6_DEPLOYMENT_AUTHORIZATION_ID_INVALID');
@@ -228,9 +227,26 @@ function validateEvidence(document, expected, now = Date.now()) {
   ) fail('PHASE6_DEPLOYMENT_AUTHORIZATION_TIME_INVALID');
   validateSource(document.source);
   validateTarget(document.target);
-  const latestApproval = validateApprovals(document.approvals, issuedAt, expiresAt);
+  const signingAuthorities = validateSigningAuthorities(document.signingAuthorities);
+  if (expected.enforceBindings) {
+    equal(
+      signingAuthorities.keysetHash,
+      expected.signerKeysetHash,
+      'PHASE6_DEPLOYMENT_AUTHORIZATION_SIGNER_KEYSET_MISMATCH',
+    );
+  }
+  const latestApproval = validateApprovalMetadata(document.approvals, issuedAt, expiresAt);
   validateDecision(document.decision, latestApproval, expiresAt);
-  validateProof(document, document.proof, expected.publicKey, expected.publicKeyHash);
+  const authorizationPayloadHash = digest(
+    authorizationPayload(document, signingAuthorities.keysetHash),
+  );
+  validateApprovalSignatures(
+    document.approvals,
+    signingAuthorities.byRole,
+    authorizationPayloadHash,
+    timestamp(document.decision.decidedAt),
+    expiresAt,
+  );
   if (expected.enforceBindings) validateExpected(document, expected);
   return Object.freeze({
     authorizationId: document.authorizationId,
@@ -239,6 +255,8 @@ function validateEvidence(document, expected, now = Date.now()) {
     planArtifactHash: document.source.planArtifactHash,
     renderedManifestHash: document.source.renderedManifestHash,
     expiresAt: document.expiresAt,
+    signerKeysetHash: signingAuthorities.keysetHash,
+    authorizationPayloadHash,
   });
 }
 
@@ -280,7 +298,53 @@ function validateTarget(target) {
   }
 }
 
-function validateApprovals(approvals, issuedAt, expiresAt) {
+function validateSigningAuthorities(authorities) {
+  if (!Array.isArray(authorities) || authorities.length !== APPROVAL_ROLES.length) {
+    fail('PHASE6_DEPLOYMENT_AUTHORIZATION_SIGNING_AUTHORITIES_INCOMPLETE');
+  }
+  const roles = [];
+  const keyIds = new Set();
+  const byRole = new Map();
+  const keyset = [];
+  for (const authority of authorities) {
+    object(
+      authority,
+      ['role', 'algorithm', 'keyId', 'publicKeySpkiBase64'],
+      'PHASE6_DEPLOYMENT_AUTHORIZATION_SIGNING_AUTHORITY_INVALID',
+    );
+    if (!APPROVAL_ROLES.includes(authority.role)) {
+      fail('PHASE6_DEPLOYMENT_AUTHORIZATION_SIGNING_AUTHORITY_INVALID');
+    }
+    equal(
+      authority.algorithm,
+      'Ed25519',
+      'PHASE6_DEPLOYMENT_AUTHORIZATION_SIGNING_AUTHORITY_INVALID',
+    );
+    pattern(
+      authority.keyId,
+      SHA256,
+      'PHASE6_DEPLOYMENT_AUTHORIZATION_SIGNING_AUTHORITY_INVALID',
+    );
+    const publicKey = publicKeyFromSpkiBase64(authority.publicKeySpkiBase64);
+    equal(
+      authority.keyId,
+      publicKeyHash(publicKey),
+      'PHASE6_DEPLOYMENT_AUTHORIZATION_SIGNING_AUTHORITY_KEY_MISMATCH',
+    );
+    roles.push(authority.role);
+    keyIds.add(authority.keyId);
+    byRole.set(authority.role, Object.freeze({ keyId: authority.keyId, publicKey }));
+    keyset.push(Object.freeze({ role: authority.role, keyId: authority.keyId }));
+  }
+  if (
+    canonicalJson(roles.sort()) !== canonicalJson(APPROVAL_ROLES) ||
+    keyIds.size !== APPROVAL_ROLES.length ||
+    byRole.size !== APPROVAL_ROLES.length
+  ) fail('PHASE6_DEPLOYMENT_AUTHORIZATION_SIGNING_AUTHORITIES_INCOMPLETE');
+  return Object.freeze({ byRole, keysetHash: signerKeysetHash(keyset) });
+}
+
+function validateApprovalMetadata(approvals, issuedAt, expiresAt) {
   if (!Array.isArray(approvals) || approvals.length !== APPROVAL_ROLES.length) {
     fail('PHASE6_DEPLOYMENT_AUTHORIZATION_APPROVALS_INCOMPLETE');
   }
@@ -289,8 +353,17 @@ function validateApprovals(approvals, issuedAt, expiresAt) {
   const evidenceHashes = new Set();
   const times = [];
   for (const approval of approvals) {
-    object(approval, ['role', 'actorHash', 'status', 'approvedAt', 'evidenceHash'],
-      'PHASE6_DEPLOYMENT_AUTHORIZATION_APPROVAL_INVALID');
+    object(
+      approval,
+      [
+        'role', 'actorHash', 'status', 'approvedAt', 'evidenceHash', 'signedAt',
+        'algorithm', 'keyId', 'signedPayloadSha256', 'signature',
+      ],
+      'PHASE6_DEPLOYMENT_AUTHORIZATION_APPROVAL_INVALID',
+    );
+    if (!APPROVAL_ROLES.includes(approval.role)) {
+      fail('PHASE6_DEPLOYMENT_AUTHORIZATION_APPROVAL_INVALID');
+    }
     pattern(approval.actorHash, SHA256, 'PHASE6_DEPLOYMENT_AUTHORIZATION_APPROVAL_INVALID');
     pattern(approval.evidenceHash, SHA256, 'PHASE6_DEPLOYMENT_AUTHORIZATION_APPROVAL_INVALID');
     equal(approval.status, 'approved', 'PHASE6_DEPLOYMENT_AUTHORIZATION_APPROVAL_MISSING');
@@ -322,33 +395,70 @@ function validateDecision(decision, latestApproval, expiresAt) {
   pattern(decision.evidenceHash, SHA256, 'PHASE6_DEPLOYMENT_AUTHORIZATION_DECISION_INVALID');
 }
 
-function validateProofShape(document, proof) {
-  object(proof, ['algorithm', 'keyId', 'signedPayloadSha256', 'signature'],
-    'PHASE6_DEPLOYMENT_AUTHORIZATION_PROOF_INVALID');
-  equal(proof.algorithm, 'Ed25519', 'PHASE6_DEPLOYMENT_AUTHORIZATION_PROOF_INVALID');
-  pattern(proof.keyId, SHA256, 'PHASE6_DEPLOYMENT_AUTHORIZATION_PROOF_INVALID');
-  pattern(proof.signedPayloadSha256, SHA256,
-    'PHASE6_DEPLOYMENT_AUTHORIZATION_PROOF_INVALID');
-  pattern(proof.signature, SIGNATURE, 'PHASE6_DEPLOYMENT_AUTHORIZATION_PROOF_INVALID');
-  const payload = signedPayload(document);
-  equal(digest(payload), proof.signedPayloadSha256,
-    'PHASE6_DEPLOYMENT_AUTHORIZATION_PAYLOAD_MISMATCH');
-  return payload;
-}
-
-function validateProof(document, proof, publicKey, expectedKeyHash) {
-  const payload = validateProofShape(document, proof);
-  equal(proof.keyId, expectedKeyHash, 'PHASE6_DEPLOYMENT_AUTHORIZATION_KEY_ID_MISMATCH');
-  let signature;
-  try {
-    signature = Buffer.from(proof.signature, 'base64url');
-  } catch {
-    return fail('PHASE6_DEPLOYMENT_AUTHORIZATION_SIGNATURE_INVALID');
+function validateApprovalSignatures(
+  approvals,
+  signingAuthorities,
+  authorizationPayloadHash,
+  decidedAt,
+  expiresAt,
+) {
+  const signatures = new Set();
+  for (const approval of approvals) {
+    equal(
+      approval.algorithm,
+      'Ed25519',
+      'PHASE6_DEPLOYMENT_AUTHORIZATION_APPROVAL_PROOF_INVALID',
+    );
+    pattern(
+      approval.keyId,
+      SHA256,
+      'PHASE6_DEPLOYMENT_AUTHORIZATION_APPROVAL_PROOF_INVALID',
+    );
+    pattern(
+      approval.signedPayloadSha256,
+      SHA256,
+      'PHASE6_DEPLOYMENT_AUTHORIZATION_APPROVAL_PROOF_INVALID',
+    );
+    pattern(
+      approval.signature,
+      SIGNATURE,
+      'PHASE6_DEPLOYMENT_AUTHORIZATION_APPROVAL_PROOF_INVALID',
+    );
+    const signedAt = timestamp(approval.signedAt);
+    if (signedAt < decidedAt || signedAt >= expiresAt) {
+      fail('PHASE6_DEPLOYMENT_AUTHORIZATION_APPROVAL_SIGNATURE_TIME_INVALID');
+    }
+    const authority = signingAuthorities.get(approval.role);
+    if (authority === undefined) {
+      fail('PHASE6_DEPLOYMENT_AUTHORIZATION_APPROVAL_AUTHORITY_INVALID');
+    }
+    equal(
+      approval.keyId,
+      authority.keyId,
+      'PHASE6_DEPLOYMENT_AUTHORIZATION_APPROVAL_KEY_MISMATCH',
+    );
+    const payload = approvalSignaturePayload(authorizationPayloadHash, approval);
+    equal(
+      approval.signedPayloadSha256,
+      digest(payload),
+      'PHASE6_DEPLOYMENT_AUTHORIZATION_APPROVAL_PAYLOAD_MISMATCH',
+    );
+    let signature;
+    try {
+      signature = Buffer.from(approval.signature, 'base64url');
+    } catch {
+      fail('PHASE6_DEPLOYMENT_AUTHORIZATION_APPROVAL_SIGNATURE_INVALID');
+    }
+    if (
+      signature.length !== 64 ||
+      signature.toString('base64url') !== approval.signature ||
+      !verify(null, Buffer.from(payload, 'utf8'), authority.publicKey, signature)
+    ) fail('PHASE6_DEPLOYMENT_AUTHORIZATION_APPROVAL_SIGNATURE_INVALID');
+    signatures.add(approval.signature);
   }
-  if (
-    signature.length !== 64 ||
-    !verify(null, Buffer.from(payload, 'utf8'), publicKey, signature)
-  ) fail('PHASE6_DEPLOYMENT_AUTHORIZATION_SIGNATURE_INVALID');
+  if (signatures.size !== APPROVAL_ROLES.length) {
+    fail('PHASE6_DEPLOYMENT_AUTHORIZATION_APPROVALS_INCOMPLETE');
+  }
 }
 
 function validateExpected(document, expected) {
@@ -386,27 +496,54 @@ function validateExpected(document, expected) {
   }
 }
 
-function signedPayload(document) {
-  const payload = { ...document };
-  delete payload.proof;
-  return canonicalJson(payload);
+function authorizationPayload(document, signerKeysetHashValue) {
+  return canonicalJson({
+    formatVersion: document.formatVersion,
+    suite: document.suite,
+    authorizationId: document.authorizationId,
+    issuedAt: document.issuedAt,
+    expiresAt: document.expiresAt,
+    source: document.source,
+    target: document.target,
+    approvals: document.approvals.map((approval) => ({
+      role: approval.role,
+      actorHash: approval.actorHash,
+      status: approval.status,
+      approvedAt: approval.approvedAt,
+      evidenceHash: approval.evidenceHash,
+    })),
+    decision: document.decision,
+    signerKeysetHash: signerKeysetHashValue,
+  });
 }
 
-function publicKeyFromBase64(value) {
+function approvalSignaturePayload(authorizationPayloadHash, approval) {
+  return canonicalJson({
+    suite: APPROVAL_SIGNATURE_SUITE,
+    authorizationPayloadHash,
+    role: approval.role,
+    keyId: approval.keyId,
+    signedAt: approval.signedAt,
+  });
+}
+
+function publicKeyFromSpkiBase64(value) {
   if (
-    typeof value !== 'string' || value.length < 64 || value.length > 8_192 ||
+    typeof value !== 'string' || value.length < 56 || value.length > 256 ||
     !/^[A-Za-z0-9+/]+={0,2}$/u.test(value)
-  ) fail('PHASE6_DEPLOYMENT_AUTHORIZATION_PUBLIC_KEY_INVALID');
-  let pem;
+  ) fail('PHASE6_DEPLOYMENT_AUTHORIZATION_SIGNING_AUTHORITY_INVALID');
   try {
-    pem = Buffer.from(value, 'base64').toString('utf8');
-    const key = createPublicKey(pem);
-    if (key.asymmetricKeyType !== 'ed25519') {
-      fail('PHASE6_DEPLOYMENT_AUTHORIZATION_PUBLIC_KEY_INVALID');
+    const der = Buffer.from(value, 'base64');
+    if (der.toString('base64') !== value) {
+      fail('PHASE6_DEPLOYMENT_AUTHORIZATION_SIGNING_AUTHORITY_INVALID');
     }
-    return key;
+    const publicKey = createPublicKey({ key: der, format: 'der', type: 'spki' });
+    if (publicKey.asymmetricKeyType !== 'ed25519') {
+      fail('PHASE6_DEPLOYMENT_AUTHORIZATION_SIGNING_AUTHORITY_INVALID');
+    }
+    return publicKey;
   } catch {
-    return fail('PHASE6_DEPLOYMENT_AUTHORIZATION_PUBLIC_KEY_INVALID');
+    return fail('PHASE6_DEPLOYMENT_AUTHORIZATION_SIGNING_AUTHORITY_INVALID');
   }
 }
 
@@ -414,13 +551,20 @@ function publicKeyHash(publicKey) {
   return digest(publicKey.export({ type: 'spki', format: 'der' }));
 }
 
+function signerKeysetHash(authorities) {
+  return digest(canonicalJson(authorities.map((authority) => ({
+    role: authority.role,
+    keyId: authority.keyId,
+  })).sort((left, right) => left.role.localeCompare(right.role))));
+}
+
 function runSelfTest() {
   const now = Date.parse('2026-07-29T00:30:00.000Z');
   const hash = (character) => `sha256:${character.repeat(64)}`;
-  const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+  const privateKeys = new Map();
   const evidence = {
-    formatVersion: 1,
-    suite: 'gaoq.phase6.deployment-authorization.v1',
+    formatVersion: 2,
+    suite: 'gaoq.phase6.deployment-authorization.v2',
     authorizationId: '01K00000000000000000000000',
     issuedAt: '2026-07-29T00:00:00.000Z',
     expiresAt: '2026-07-29T02:00:00.000Z',
@@ -446,12 +590,28 @@ function runSelfTest() {
       controlNamespace: 'gaoq-erp-control',
       targetNamespace: 'gaoq-erp-prod',
     },
+    signingAuthorities: APPROVAL_ROLES.map((role) => {
+      const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+      const der = publicKey.export({ type: 'spki', format: 'der' });
+      privateKeys.set(role, privateKey);
+      return {
+        role,
+        algorithm: 'Ed25519',
+        keyId: digest(der),
+        publicKeySpkiBase64: der.toString('base64'),
+      };
+    }),
     approvals: APPROVAL_ROLES.map((role, index) => ({
       role,
       actorHash: hash(String.fromCharCode(97 + index)),
       status: 'approved',
       approvedAt: `2026-07-29T00:1${index}:00.000Z`,
       evidenceHash: hash(String(index + 8)),
+      signedAt: `2026-07-29T00:2${index + 1}:00.000Z`,
+      algorithm: 'Ed25519',
+      keyId: '',
+      signedPayloadSha256: '',
+      signature: '',
     })),
     decision: {
       outcome: 'APPROVED',
@@ -459,13 +619,17 @@ function runSelfTest() {
       evidenceHash: hash('b'),
     },
   };
-  const payload = canonicalJson(evidence);
-  evidence.proof = {
-    algorithm: 'Ed25519',
-    keyId: publicKeyHash(publicKey),
-    signedPayloadSha256: digest(payload),
-    signature: sign(null, Buffer.from(payload, 'utf8'), privateKey).toString('base64url'),
-  };
+  for (const approval of evidence.approvals) {
+    const authority = evidence.signingAuthorities.find(
+      (candidate) => candidate.role === approval.role,
+    );
+    if (authority === undefined) {
+      fail('PHASE6_DEPLOYMENT_AUTHORIZATION_FIXTURE_AUTHORITY_MISSING');
+    }
+    approval.keyId = authority.keyId;
+  }
+  signFixtureApprovals(evidence, privateKeys);
+  const expectedSignerKeysetHash = signerKeysetHash(evidence.signingAuthorities);
   const expected = {
     checksum: digest(JSON.stringify(evidence)),
     repositoryId: evidence.source.repositoryId,
@@ -484,16 +648,11 @@ function runSelfTest() {
     releaseName: evidence.target.releaseName,
     controlNamespace: evidence.target.controlNamespace,
     targetNamespace: evidence.target.targetNamespace,
-    publicKeyHash: evidence.proof.keyId,
-    publicKey,
+    signerKeysetHash: expectedSignerKeysetHash,
     enforceBindings: true,
   };
   validateEvidence(evidence, expected, now);
-  validateEvidence(evidence, {
-    publicKey,
-    publicKeyHash: evidence.proof.keyId,
-    enforceBindings: false,
-  }, now);
+  validateEvidence(evidence, { enforceBindings: false }, now);
   for (const mutate of [
     (copy) => { copy.source.commitSha = 'b'.repeat(40); },
     (copy) => { copy.source.planWorkflowRef = 'GTVigilante/gaoq_ai/other.yml@refs/heads/main'; },
@@ -505,17 +664,51 @@ function runSelfTest() {
     (copy) => { copy.expiresAt = '2026-07-29T03:00:00.000Z'; },
     (copy) => { copy.source.password = 'forbidden'; },
     (copy) => {
-      copy.proof.signature =
-        `${copy.proof.signature[0] === 'A' ? 'B' : 'A'}${copy.proof.signature.slice(1)}`;
+      copy.approvals[0].signature =
+        `${copy.approvals[0].signature[0] === 'A' ? 'B' : 'A'}${
+          copy.approvals[0].signature.slice(1)
+        }`;
     },
   ]) {
     const copy = structuredClone(evidence);
     mutate(copy);
     expectFailure(() => validateEvidence(copy, expected, now));
   }
+  const reusedAuthority = structuredClone(evidence);
+  reusedAuthority.signingAuthorities[1].keyId =
+    reusedAuthority.signingAuthorities[0].keyId;
+  reusedAuthority.signingAuthorities[1].publicKeySpkiBase64 =
+    reusedAuthority.signingAuthorities[0].publicKeySpkiBase64;
+  expectFailure(() => validateEvidence(reusedAuthority, expected, now));
+
+  const roleSwap = structuredClone(evidence);
+  roleSwap.approvals[0].keyId = roleSwap.approvals[1].keyId;
+  expectFailure(() => validateEvidence(roleSwap, expected, now));
+
   const mismatched = structuredClone(expected);
   mismatched.renderedManifestHash = hash('f');
   expectFailure(() => validateEvidence(evidence, mismatched, now));
+
+  const keysetDrift = structuredClone(expected);
+  keysetDrift.signerKeysetHash = hash('f');
+  expectFailure(() => validateEvidence(evidence, keysetDrift, now));
+}
+
+function signFixtureApprovals(document, privateKeys) {
+  const payloadHash = digest(authorizationPayload(
+    document,
+    signerKeysetHash(document.signingAuthorities),
+  ));
+  for (const approval of document.approvals) {
+    const privateKey = privateKeys.get(approval.role);
+    if (privateKey === undefined) {
+      fail('PHASE6_DEPLOYMENT_AUTHORIZATION_FIXTURE_KEY_MISSING');
+    }
+    const payload = approvalSignaturePayload(payloadHash, approval);
+    approval.signedPayloadSha256 = digest(payload);
+    approval.signature =
+      sign(null, Buffer.from(payload, 'utf8'), privateKey).toString('base64url');
+  }
 }
 
 function parseDocument(raw) {

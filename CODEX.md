@@ -107,6 +107,15 @@
   payload、角色映射、复用公钥或签后篡改任一异常均失败关闭；Phase 6 Plan/Apply
   会重新验证相同 keyset。仓库自测生成临时测试密钥，不保存任何私钥；真实十方
   密钥托管、人员身份与角色密钥绑定、签署和 WORM 归档仍待现场执行。
+- 2026-07-30 已关闭 Phase 6 生产 Apply 虽要求变更负责人和 SRE 双人批准、
+  却只使用一个 Ed25519 密钥签署整份文件的职责分离缺口：部署授权升级为
+  `gaoq.phase6.deployment-authorization.v2`，两个角色必须携带不同 SPKI DER
+  公钥并分别签署同一完整授权 payload；keyId 等于公钥摘要，角色/keyId 规范
+  集合还与 Repository Variable 的批准 keyset 摘要绑定。签名共同覆盖 Plan
+  run/产物、commit、输入、渲染清单、目标集群、命名空间、两份批准元数据和最终
+  决定；复用公钥、角色换签、签后篡改或 keyset 漂移均失败关闭。仓库自测只生成
+  临时密钥，不保存私钥；真实人员身份、职责与角色密钥绑定仍须由企业 IAM/KMS
+  和 WORM 签署审计证明。
 - 2026-07-29 已把覆盖率门禁本身纳入失败关闭治理：
   `scripts/validate-critical-coverage-policy.mjs` 从 `precheck/check` 解析 134 个
   ERP API 专项脚本，展开其 `--coverage.include` 后要求 336 个生产文件逐一具有
@@ -456,7 +465,8 @@
   ExecCredential 接入 Kubernetes；Plan/Apply 使用不同 audience 和 RBAC Group。
   仓库为 GitHub Free Private，不能依赖付费 Environment/Required Reviewers；
   生产 Plan/Apply 已拆成不可自动串联的独立工作流，Apply 额外验收变更负责人
-  与 SRE 的 Ed25519 双人签名、Plan run/计划包和两小时有效期。全部 workflow
+  与 SRE 使用不同批准密钥形成的两份 Ed25519 签名、Plan run/计划包和两小时
+  有效期。全部 workflow
   已无 self-hosted 标签。Hosted Actions
   仍在任何步骤执行前被账户付款或 Spending limit 拦截；在免费额度或账号状态
   恢复前，外部门禁保持未执行，不得记为代码测试失败或门禁通过。

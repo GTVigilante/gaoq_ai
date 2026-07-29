@@ -9,7 +9,8 @@
 
 - `phase-6-deployment-plan`：以 Plan 专用 OIDC audience 和最小 Kubernetes
   Group 生成只读计划与 diff；
-- `phase-6-deployment-apply`：验收变更负责人和 SRE 的外部 Ed25519 双人签名后，
+- `phase-6-deployment-apply`：验收变更负责人和 SRE 使用不同批准密钥形成的
+  两份外部 Ed25519 签名后，
   以 Apply 专用 OIDC audience 和独立最小 Group 执行 Helm 原子发布；
 - `phase-6-cutover-acceptance`：通过 OIDC 证据网关读取脱敏 `cutover.json`；
 - `phase-6-hypercare-acceptance`：通过 OIDC 证据网关读取脱敏 `hypercare.json`。
@@ -25,7 +26,8 @@
 
 1. 在默认分支完成 Phase 5 Go/No-Go，并冻结 commit、三份镜像摘要和部署清单。
 2. 按[受保护生产部署工作流](./05-protected-production-deployment.md)运行独立
-   Plan，复核计划包并取得外部双人签名，再手工运行独立 Apply；此步骤不切流。
+   Plan，复核计划包并取得两名职责分离批准者的独立签名，再手工运行独立 Apply；
+   此步骤不切流。
 3. 现场团队执行三次全量演练及生产级回滚演练，将原始证据写入企业 WORM。
 4. 数据负责人导出脱敏的 `cutover.json`；在默认分支手工运行 `Phase 6 统一切换证据验收`。
 5. 现场变更负责人按[生产资金执行授权契约](./03-production-execution-authorization.md)启用独立授权域；每个真实银行或税务对象仍需单独短时授权。

@@ -137,7 +137,8 @@ commit、workflow、policy、audience 与 Hosted Runner claims，并对 HTTPS
 脱敏输入执行无重定向、媒体类型、大小、响应 Header 摘要及实际字节摘要校验。
 Kubernetes kubeconfig 不含静态凭据，ExecCredential 插件只接受最长 15 分钟
 Token；Plan/Apply 使用不同 workflow、audience 与 RBAC Group。生产 Apply 还
-验证外部双人 Ed25519 签名授权和独立 Plan 产物。四个入口的
+验证变更负责人和 SRE 使用不同批准密钥形成的两份外部 Ed25519 签名、批准
+keyset 以及独立 Plan 产物。四个入口的
 专项负向自测已接入根 `test/check`，Phase 5/6 工作流静态门禁会拒绝
 self-hosted 标签、本地挂载、长期 Secret 与未固定工具链。该仓库实现不证明企业
 证据/凭据代理、外部签名服务、目标集群 OIDC 信任或 Hosted Actions 已可用；
