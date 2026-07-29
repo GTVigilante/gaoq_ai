@@ -68,10 +68,10 @@
 ## 5. 覆盖率边界
 
 2026-07-29 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，415 个测试文件、6,784 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，415 个测试文件、6,787 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-93.37%、分支 91.30%、函数 93.52%、行 94.39%。全仓四维已达到 Phase 0
+93.38%、分支 91.31%、函数 93.52%、行 94.40%。全仓四维已达到 Phase 0
 规定的 80% 门槛。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
