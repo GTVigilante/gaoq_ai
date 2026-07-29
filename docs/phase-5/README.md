@@ -30,6 +30,9 @@ Phase 5 在已验收的组织、审批、招聘入职、考勤薪酬底座之上
    - [MCP 完整能力目录与联调门禁](./19-mcp-capability-catalog.md)
    - [MCP stdio 客户端接入手册](./20-mcp-stdio-client-onboarding.md)
    - [七类发布就绪 verdict 门禁](./20-readiness-verdicts.md)
+     - Readiness v2 要求 13 个治理角色使用独立 Ed25519 密钥逐 Gate 签署，并由
+       Repository Variable 绑定完整 signer keyset；同角色跨 Gate 保持同一主体，
+       不同角色不得复用主体或公钥
    - [GitHub Hosted OIDC 证据交换标准](./21-github-oidc-evidence-exchange.md)
    - MCP 联调与 Go/No-Go 已升级为 v2，强制绑定独立专业算薪 OAuth Resource、
      MCP 完整目录、发布镜像和七类共享事件契约；真实算薪环境证据仍待执行

@@ -72,7 +72,18 @@ const forbiddenGovernancePatterns = [
 const requiredGovernanceMarkers = new Map([
   ['AGENTS.md', ['Phase 0–6', '真实联调', '标准 MCP']],
   ['CODEX.md', ['Phase 0–6', 'pnpm check', '生产完成', '.codex/AGENTS.md']],
-  ['.codex/AGENTS.md', ['../AGENTS.md', '../CODEX.md', 'wordpress backup/', 'R3']],
+  [
+    '.codex/AGENTS.md',
+    [
+      '../AGENTS.md',
+      '../CODEX.md',
+      'wordpress backup/',
+      'R3',
+      '50 个 Tool',
+      '27 Resource Template',
+      '25 Prompt',
+    ],
+  ],
 ]);
 
 const deliveryBoundaryDocuments = [
@@ -217,6 +228,29 @@ const requiredHostedOidcMarkers = new Map([
       'staticCredentialWritten: false',
       'certificate-authority-data',
       'github-oidc-kubernetes-credential.mjs',
+    ],
+  ],
+  [
+    'scripts/release/validate-phase-5-readiness-evidence.mjs',
+    [
+      'gaoq.phase5.readiness.v2',
+      'gaoq.phase5.readiness.signoff.v1',
+      'signerKeysetHash',
+      'Ed25519',
+      'architecture_owner',
+      'support_owner',
+      'READINESS_EXPECTED_SIGNER_KEYSET_SHA256',
+    ],
+  ],
+  [
+    'docs/phase-5/20-readiness-verdicts.md',
+    [
+      'gaoq.phase5.readiness.v2',
+      '13 个治理角色',
+      '独立 Ed25519',
+      'READINESS_SIGNER_KEYSET_SHA256',
+      '同一角色跨 Gate',
+      'IAM/KMS',
     ],
   ],
   [

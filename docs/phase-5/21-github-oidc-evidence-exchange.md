@@ -110,6 +110,15 @@ SRE 六个角色分别以不同 Ed25519 密钥签署同一最终准入 payload�
 公钥、URL、audience、摘要、CA 和资源名可以放 Repository Variables；Token、
 私钥、连接串和长期云凭据不得进入 Variables、Secrets、仓库或命令行。
 
+Phase 5 七类 Readiness 证据也使用独立角色 keyset：
+
+- `gaoq.phase5.readiness.v2` 的 13 个治理角色分别使用独立 Ed25519 密钥；
+- 同一角色跨 Gate 保持同一主体和角色密钥，不同角色不得复用主体或公钥；
+- `READINESS_SIGNER_KEYSET_SHA256` 固定完整角色/keyId 集合，签名逐 Gate 覆盖
+  环境、发布候选、完整业务证据、签署元数据和 keyset；
+- 工作流只输出脱敏 verdict bundle；私钥、原始报告、个人签署正文仍留在企业
+  IAM/KMS 与 WORM。
+
 统一切换与 Hypercare 使用同一信任原则但使用互不混用的角色 keyset：
 
 - `gaoq.phase6.cutover.v2` 由业务、变更、数据、安全和 SRE 五方分别签署，
@@ -129,6 +138,7 @@ SRE 六个角色分别以不同 Ed25519 密钥签署同一最终准入 payload�
 pnpm github:oidc-input:self-test
 pnpm github:oidc-kubernetes:self-test
 pnpm github:oidc-kubeconfig:self-test
+pnpm release:readiness:self-test
 pnpm release:phase6:deployment-authorization:self-test
 pnpm release:phase6:cutover:self-test
 pnpm release:phase6:hypercare:self-test

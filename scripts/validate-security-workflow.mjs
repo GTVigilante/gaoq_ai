@@ -254,6 +254,7 @@ for (const marker of [
   'READINESS_EXPECTED_WEB_IMAGE: ${{ vars.READINESS_WEB_IMAGE_DIGEST }}',
   'READINESS_EXPECTED_WEBSITE_IMAGE: ${{ vars.READINESS_WEBSITE_IMAGE_DIGEST }}',
   'READINESS_EXPECTED_DEPLOYMENT_MANIFEST: ${{ vars.READINESS_DEPLOYMENT_MANIFEST_SHA256 }}',
+  'READINESS_EXPECTED_SIGNER_KEYSET_SHA256: ${{ vars.READINESS_SIGNER_KEYSET_SHA256 }}',
   '--enforce-environment', 'phase-5-readiness-verdicts-${{ github.sha }}',
   'retention-days: 30',
 ]) {

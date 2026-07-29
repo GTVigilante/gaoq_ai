@@ -107,6 +107,15 @@
   payload、角色映射、复用公钥或签后篡改任一异常均失败关闭；Phase 6 Plan/Apply
   会重新验证相同 keyset。仓库自测生成临时测试密钥，不保存任何私钥；真实十方
   密钥托管、人员身份与角色密钥绑定、签署和 WORM 归档仍待现场执行。
+- 2026-07-30 已关闭 Phase 5 七类 Readiness verdict 虽要求工程、供应链、镜像、
+  权限、业务 UAT、隐私和运行负责人签署，却只校验角色、证据 ID 和时间的可信根
+  缺口：输入证据升级为 `gaoq.phase5.readiness.v2`，13 个治理角色分别使用唯一
+  Ed25519 公钥逐 Gate 签署完整业务证据、环境、commit、四镜像、部署清单、签署
+  元数据和完整 keyset。同一角色跨 Gate 必须保持同一主体和角色密钥，不同角色
+  不得复用主体、公钥、证据或签名；Repository Variable
+  `READINESS_SIGNER_KEYSET_SHA256` 固定生产批准 keyset。伪签名、角色换钥、签后
+  篡改、主体漂移或 keyset 漂移均失败关闭。仓库自测只生成临时密钥；真实人员、
+  IAM/KMS 角色绑定、签署和 WORM 原始证据仍待现场验收。
 - 2026-07-30 已关闭 Phase 6 生产 Apply 虽要求变更负责人和 SRE 双人批准、
   却只使用一个 Ed25519 密钥签署整份文件的职责分离缺口：部署授权升级为
   `gaoq.phase6.deployment-authorization.v2`，两个角色必须携带不同 SPKI DER
