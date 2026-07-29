@@ -256,6 +256,7 @@ describe('RecruitmentInterviewService', () => {
   });
 
   it('评价提交先将可信 actor 映射为 employeeId，响应和事件不泄漏评价', async () => {
+    vi.setSystemTime(new Date('2026-07-22T08:30:00.000Z'));
     const store = fixture();
     const input = { recommendation: 'hire' as const, score: 4, notes: '候选人经验匹配' };
     const result = await store.service.submitFeedback(
@@ -275,6 +276,7 @@ describe('RecruitmentInterviewService', () => {
   });
 
   it('全部评价证据齐备后原子完成面试和 Outbox', async () => {
+    vi.setSystemTime(new Date('2026-07-22T09:01:00.000Z'));
     const store = fixture();
     const result = await store.service.complete(INTERVIEW_ID, 1, 'interview-complete-key-001');
     expect(store.feedback.findInterviewerIds).toHaveBeenCalledWith(INTERVIEW_ID, SESSION);
@@ -529,6 +531,7 @@ describe('RecruitmentInterviewService', () => {
     )).rejects.toMatchObject({ response: { code: 'RECRUITMENT_VERSION_CONFLICT' } });
 
     const writeConflict = fixture();
+    vi.setSystemTime(new Date('2026-07-22T08:30:00.000Z'));
     writeConflict.interviews.replace.mockRejectedValueOnce(new RecruitmentWriteConflictError());
     await expect(writeConflict.service.submitFeedback(
       INTERVIEW_ID, 1, 'feedback-write-conflict',

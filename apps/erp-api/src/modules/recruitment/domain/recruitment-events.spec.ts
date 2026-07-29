@@ -83,7 +83,7 @@ describe('RecruitmentDomainEvents', () => {
       id: 'feedback-001', tenantId: 'tenant-001', interviewerId: 'employee-001',
       expectedVersion: 1,
       recommendation: 'hire', score: 4, notes: '候选人能力匹配，建议继续',
-    }, now);
+    }, new Date('2026-07-22T08:30:00.000Z'));
     const events = [
       buildRecruitmentInterviewEvent(interview, 'scheduled'),
       buildRecruitmentInterviewFeedbackEvent(feedback.interview, feedback.feedback),

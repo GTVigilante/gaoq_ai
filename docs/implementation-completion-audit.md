@@ -226,6 +226,7 @@ OP Webhook 双入口、
 `pnpm quality:recruitment-channel-operations-coverage`、
 `pnpm quality:recruitment-management-coverage`、
 `pnpm quality:recruitment-management-entry-coverage`、
+`pnpm quality:recruitment-interview-entry-coverage`、
 `pnpm quality:recruitment-onboarding-bridge-coverage`、
 `pnpm quality:talent-lifecycle-application-coverage`、
 `pnpm quality:talent-lifecycle-entry-coverage`、
@@ -1043,6 +1044,17 @@ ETag、精确 DTO/空正文、运行时状态枚举、安全版本、单调时�
 服务执行 HC 提交 R2 与职位迁移 R1，不保存 L3 原文、不直连数据库，也不接受
 AI 上报审批终态。真实 Approval、组织主数据、招聘渠道回放及 HR UAT 仍待现场
 验收。
+
+面试排期、评价、完成与取消入口已覆盖 139 项严格 ULID、白名单幂等键、不会
+上溢的强 ETag、精确 DTO/空正文、规范毫秒级 UTC、真实 IANA 时区、运行时状态、
+面试官证据、安全版本、单调时间、精确迁移评价对象和提交后审计隔离测试。
+Controller 与 DTO 的 73 项测试四维 100%；领域 66 项测试达到
+98.74%/98.64%/100%/100%。应用服务既有 19 项测试保持四维 100%，四个目标
+生产文件逐文件四维均不低于 90%。独立门禁
+`pnpm quality:recruitment-interview-entry-coverage` 已接入 `pnpm precheck`、
+`pnpm check` 与全局覆盖链。REST、事件和标准 MCP 契约不变；MCP 仅复用应用
+服务返回脱敏面试摘要，不开放排期、评价、完成、取消、日历处置、外部标识或 L3
+原文。真实钉钉/飞书沙箱、代表性时区数据、招聘经理流程及 HR UAT 仍待现场验收。
 
 ## 6. 架构边界
 

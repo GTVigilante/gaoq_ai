@@ -161,9 +161,27 @@ draft → pending_approval → approved → clearing → ready → scheduled →
 
 面试和入职日程由 ERP 发出不可变业务标识，经日历适配器创建外部事件；外部编辑只作为回执，不覆盖 ERP 时间与参与人。消息正文不含简历、评价、Offer 条款或签署文件，只发送受保护链接。
 
+- 面试管理固定使用 `POST /recruitment/applications/:id/interviews`、
+  `GET /recruitment/interviews/:id`、`POST /recruitment/interviews/:id/feedback`、
+  `POST /recruitment/interviews/:id/complete` 和
+  `POST /recruitment/interviews/:id/cancel`。资源标识必须为规范 ULID；四个
+  写端点强制 8–128 位白名单 `Idempotency-Key` 和不会导致版本上溢的正安全
+  整数强 `If-Match`。
+- 排期与评价 DTO 严格拒绝未知字段；排期时间只接受规范毫秒级 UTC，时区必须
+  同时满足 IANA 形态并由运行时真实解析，地点和评价原文不得仅含空白。完成与
+  取消只允许缺失正文或精确空普通对象，客户端不得上报终态、评价证据、外部日历
+  标识或租户。
 - 排期必须携带候选申请强 `If-Match`，仅 `interview` 阶段可新建轮次；面试官标识必须逐一解析为 ERP 当前 `probation/active` 员工。
 - 访问令牌的 `actorId` 必须经有效 AccessProfile 映射为 `employeeId`，禁止直接将 actor 标识当作面试官标识。
 - 每位面试官每轮只能追加一份评价；推荐、分数和备注作为单一 L3 载荷整体加密。评价、取消和完成共用面试版本锁，防止取消后并发写入评价。
+- 评价不得早于面试开始，完成不得早于面试结束；状态推进必须再次校验当前状态、
+  聚合版本、面试官证据、单调时间和安全整数上限。迁移评价只能是精确普通数据
+  对象，拒绝存取器、Symbol、代理、自定义原型、额外字段、重复主体和时间倒退，
+  并通过同一领域状态机重建最终闭包。
+- 排期、评价、完成和取消按 R1 写低敏成功或失败审计；审计只含资源标识、版本、
+  状态或评价证据标识，不含地点、推荐、分数、评价原文、幂等键或详细异常。业务
+  失败审计异常保留原异常；事务提交后的成功审计异常只告警，不改变响应、ETag
+  或日历/评价终态。
 - 日历投递由事务 Outbox 触发；事件只含面试标识和时间摘要，Integration Worker 通过专用最小 Scope 读取加密地点投影。日历失败只进入重试/人工介入，不回滚 ERP 排期。
 - 日历投递必须同时存在有效 `OrgPlatformBinding`（凭据引用）与 `RecruitmentCalendarBinding`（可写日历）；绑定只能由受控运维面变更，业务 API 和客户端不得提交外部日历 ID。
 - Relay 创建投递轨迹时固化 `externalCalendarId`，后续即使租户切换默认日历，重试、更新和取消仍只操作原目标日历；轨迹禁止保存地点、参与人、Token 或候选人资料。
