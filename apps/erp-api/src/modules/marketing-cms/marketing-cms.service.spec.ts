@@ -1,5 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
-import { MarketingCmsService } from './marketing-cms.service.js';
+import {
+  MarketingCmsService,
+  marketingAiDraftView,
+  marketingAiReviewView,
+  marketingContentDetailView,
+  marketingContentSummaryView,
+  marketingLeadConsoleView,
+  marketingMediaConsoleView,
+  marketingRevisionListView,
+  marketingUploadTicketView,
+} from './marketing-cms.service.js';
 
 const SESSION = { id: 'session-001' };
 const NOW = '2026-07-27T00:00:00.000Z';
@@ -265,6 +275,150 @@ describe('MarketingCmsService 事务副作用', () => {
       completedAt: '2026-07-27T00:01:00.000Z',
     });
     expect(JSON.stringify(result)).not.toMatch(/tenantId|contactCiphertext/u);
+  });
+});
+
+describe('MarketingCmsService 管理端公开投影', () => {
+  it('内容摘要、详情和历史版本逐字段投影且不泄露租户与维护者', () => {
+    const source = contentRecord({
+      blocks: [{ type: 'hero', data: { title: '首页' } }],
+      seo: { title: '首页' },
+      publishedAt: new Date('2026-07-27T00:00:00.000Z'),
+      scheduledAt: null,
+      secret: 'internal',
+    });
+    const summary = marketingContentSummaryView(source);
+    const detail = marketingContentDetailView(source);
+    const revisions = marketingRevisionListView({
+      items: [{
+        revision: 1,
+        actorId: 'actor-private',
+        createdAt: new Date('2026-07-27T01:00:00.000Z'),
+        snapshot: source,
+      }],
+    });
+
+    expect(summary).toEqual({
+      id: 'content-001',
+      siteId: 'gaoq',
+      type: 'page',
+      locale: 'zh-CN',
+      slug: 'home',
+      title: '首页',
+      summary: '',
+      status: 'draft',
+      revision: 1,
+      version: 1,
+    });
+    expect(detail).toEqual({
+      ...summary,
+      blocks: source.blocks,
+      seo: source.seo,
+      publishedAt: '2026-07-27T00:00:00.000Z',
+      scheduledAt: null,
+    });
+    expect(revisions).toEqual({
+      items: [{
+        revision: 1,
+        createdAt: '2026-07-27T01:00:00.000Z',
+        snapshot: detail,
+      }],
+    });
+    expect(JSON.stringify({ summary, detail, revisions })).not.toMatch(
+      /tenant-001|actor-private|updatedBy|internal/u,
+    );
+    expect(Object.isFrozen(summary)).toBe(true);
+    expect(Object.isFrozen(detail)).toBe(true);
+    expect(Object.isFrozen(revisions.items)).toBe(true);
+  });
+
+  it('线索、媒体、上传票据和 AI 结果仅公开浏览器所需字段', () => {
+    const lead = marketingLeadConsoleView({
+      id: 'lead-001',
+      tenantId: 'tenant-001',
+      audience: 'brand',
+      name: '品牌联系人',
+      contact: 'brand@example.com',
+      requestSummary: '需要完整品牌营销与内容合作方案',
+      status: 'new',
+      version: 1,
+      createdAt: new Date('2026-07-27T00:00:00.000Z'),
+      attribution: { secret: true },
+      notes: [{ body: 'internal-note' }],
+    });
+    const media = marketingMediaConsoleView({
+      id: 'media-001',
+      fileName: 'hero.png',
+      mimeType: 'image/png',
+      status: 'ready',
+      version: 2,
+      variants: {},
+      objectRef: 'private/object',
+      checksum: 'private-checksum',
+      scanEvidenceId: 'private-evidence',
+    });
+    const ticket = marketingUploadTicketView({
+      id: 'media-001',
+      uploadUrl: 'https://upload.example.invalid/signed',
+      expiresAt: new Date('2026-07-27T00:10:00.000Z'),
+      version: 1,
+      objectRef: 'private/object',
+    });
+    const draft = marketingAiDraftView({
+      id: 'generation-001',
+      status: 'pending_review',
+      output: { title: '草稿' },
+      modelId: 'private-model',
+      promptVersion: 'private-prompt',
+    });
+    const review = marketingAiReviewView({
+      id: 'generation-001',
+      contentId: 'content-001',
+      action: 'translate',
+      status: 'accepted',
+      output: { title: '草稿' },
+      modelId: 'private-model',
+      promptVersion: 'private-prompt',
+    });
+
+    expect(lead).toEqual({
+      id: 'lead-001',
+      audience: 'brand',
+      name: '品牌联系人',
+      contact: 'brand@example.com',
+      requestSummary: '需要完整品牌营销与内容合作方案',
+      status: 'new',
+      version: 1,
+      createdAt: '2026-07-27T00:00:00.000Z',
+    });
+    expect(media).toEqual({
+      id: 'media-001',
+      fileName: 'hero.png',
+      mimeType: 'image/png',
+      status: 'ready',
+      version: 2,
+      variants: {},
+    });
+    expect(ticket).toEqual({
+      id: 'media-001',
+      uploadUrl: 'https://upload.example.invalid/signed',
+      expiresAt: '2026-07-27T00:10:00.000Z',
+      version: 1,
+    });
+    expect(draft).toEqual({
+      id: 'generation-001',
+      status: 'pending_review',
+      output: { title: '草稿' },
+    });
+    expect(review).toEqual({
+      id: 'generation-001',
+      contentId: 'content-001',
+      action: 'translate',
+      status: 'accepted',
+    });
+    expect(JSON.stringify({ lead, media, ticket, draft, review })).not.toMatch(
+      /tenant-001|private\/object|private-checksum|private-evidence|private-model|private-prompt|internal-note/u,
+    );
   });
 });
 

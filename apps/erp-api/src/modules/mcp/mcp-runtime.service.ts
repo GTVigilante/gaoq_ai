@@ -124,7 +124,7 @@ const marketingEventIdSchema = z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/)
 const marketingSideEffectSchema = z.object({
   eventId: marketingEventIdSchema,
   kind: z.enum(['lead_notification', 'scheduled_publish']),
-  aggregateId: z.string(),
+  aggregateId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{7,127}$/),
   aggregateVersion: z.number().int().positive(),
   channel: z.enum(['email', 'feishu']).nullable(),
   status: z.enum([
@@ -132,14 +132,14 @@ const marketingSideEffectSchema = z.object({
   ]),
   attempts: z.number().int().nonnegative(),
   deliveryAttempts: z.number().int().nonnegative(),
-  nextAttemptAt: z.string(),
-  dispatchedAt: z.string().nullable(),
-  completedAt: z.string().nullable(),
-  lastErrorCode: z.string().nullable(),
-});
+  nextAttemptAt: z.string().datetime({ offset: true }),
+  dispatchedAt: z.string().datetime({ offset: true }).nullable(),
+  completedAt: z.string().datetime({ offset: true }).nullable(),
+  lastErrorCode: z.string().regex(/^[A-Z][A-Z0-9_]{2,127}$/).nullable(),
+}).strict();
 const marketingSideEffectOutputSchema = z.object({
   sideEffect: marketingSideEffectSchema,
-});
+}).strict();
 const recruitmentApplicationSchema = z.object({
   id: recruitmentIdSchema, candidateId: recruitmentIdSchema, positionId: recruitmentIdSchema,
   stage: z.enum([

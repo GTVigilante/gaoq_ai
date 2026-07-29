@@ -634,6 +634,44 @@ describe('MCP Streamable HTTP 协议集成', () => {
         type: 'object',
       });
     }
+    const marketingTool = listedTools.tools.find(
+      (tool) => tool.name === 'marketing_side_effect_get',
+    );
+    expect(marketingTool?.outputSchema).toMatchObject({
+      type: 'object',
+      additionalProperties: false,
+      required: ['sideEffect'],
+      properties: {
+        sideEffect: {
+          type: 'object',
+          additionalProperties: false,
+          required: [
+            'eventId',
+            'kind',
+            'aggregateId',
+            'aggregateVersion',
+            'channel',
+            'status',
+            'attempts',
+            'deliveryAttempts',
+            'nextAttemptAt',
+            'dispatchedAt',
+            'completedAt',
+            'lastErrorCode',
+          ],
+          properties: {
+            aggregateId: {
+              type: 'string',
+              pattern: '^[A-Za-z0-9][A-Za-z0-9-]{7,127}$',
+            },
+            nextAttemptAt: { type: 'string', format: 'date-time' },
+          },
+        },
+      },
+    });
+    expect(JSON.stringify(marketingTool?.outputSchema)).toContain(
+      '"pattern":"^[A-Z][A-Z0-9_]{2,127}$"',
+    );
     const approvalToolContracts = [
       ['approval_get_inbox', 'R0', 'direct', []],
       ['approval_get', 'R0', 'direct', ['instanceId']],

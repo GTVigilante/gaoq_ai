@@ -128,7 +128,22 @@ export class McpToolService {
         status: String(sideEffect.status),
         kind: String(sideEffect.kind),
       });
-      return structuredResult({ sideEffect });
+      return structuredResult({
+        sideEffect: Object.freeze({
+          eventId: sideEffect.eventId,
+          kind: sideEffect.kind,
+          aggregateId: sideEffect.aggregateId,
+          aggregateVersion: sideEffect.aggregateVersion,
+          channel: sideEffect.channel,
+          status: sideEffect.status,
+          attempts: sideEffect.attempts,
+          deliveryAttempts: sideEffect.deliveryAttempts,
+          nextAttemptAt: sideEffect.nextAttemptAt,
+          dispatchedAt: sideEffect.dispatchedAt,
+          completedAt: sideEffect.completedAt,
+          lastErrorCode: sideEffect.lastErrorCode,
+        }),
+      });
     });
   }
 

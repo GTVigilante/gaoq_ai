@@ -32,8 +32,10 @@ Phase 5 在已验收的组织、审批、招聘入职、考勤薪酬底座之上
    - [七类发布就绪 verdict 门禁](./20-readiness-verdicts.md)
    - [GitHub Hosted OIDC 证据交换标准](./21-github-oidc-evidence-exchange.md)
 9. [双语营销官网与 CMS](../marketing-cms.md)（Website、事务 Outbox、通知幂等、
-   独立镜像与 Kubernetes 门禁代码已交付；正式域名、WAF、验证码、媒体、通知及
-   UAT 仍待外部验收）
+   管理端最小公开投影、可信 Scope 显隐、全部写入口同键弱网重试、AI/媒体有界
+   网关契约、严格只读 MCP、独立镜像与 Kubernetes 门禁代码已交付；正式域名、
+   WAF、验证码、对象存储、AI/通知网关、实体角色矩阵、浏览器故障注入及 UAT
+   仍待外部验收）
    - [Marketing CMS 与副作用 Outbox 索引运行手册](./10e-marketing-cms-index-runbook.md)
 
 后续切片各自拥有独立契约文档；禁止借任何已立项切片隐式扩张范围。

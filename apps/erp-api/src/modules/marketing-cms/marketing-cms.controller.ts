@@ -21,7 +21,18 @@ import type { AuditRecordInput } from '../../core/audit/audit.types.js';
 import { PublicRoute, RawResponse } from '../../core/http/public-route.decorator.js';
 import type { ErpRequest } from '../../core/http/request-context.js';
 import { RequiredScopes } from '../identity/auth.decorators.js';
-import { MarketingCmsService } from './marketing-cms.service.js';
+import {
+  MarketingCmsService,
+  marketingAiDraftView,
+  marketingAiReviewView,
+  marketingContentDetailView,
+  marketingContentSummaryView,
+  marketingLeadConsoleView,
+  marketingLeadStatusView,
+  marketingMediaConsoleView,
+  marketingRevisionListView,
+  marketingUploadTicketView,
+} from './marketing-cms.service.js';
 import { MarketingPublicProtectionService } from './marketing-public-protection.service.js';
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9-]{7,127}$/u;
@@ -44,7 +55,7 @@ export class MarketingCmsController {
     const result = await this.cms.create(requiredKey(key), body);
     setVersionHeader(response, result);
     await this.auditContent('marketing.content.create', result.content);
-    return result;
+    return { content: marketingContentSummaryView(result.content) };
   }
 
   @Get('contents')
@@ -59,7 +70,7 @@ export class MarketingCmsController {
       outcome: 'success',
       metadata: { count: result.items.length },
     });
-    return result;
+    return { items: result.items.map(marketingContentSummaryView) };
   }
 
   @Get('contents/:id')
@@ -78,7 +89,7 @@ export class MarketingCmsController {
         revision: Number(result.revision),
       },
     });
-    return result;
+    return marketingContentDetailView(result);
   }
 
   @Get('contents/:id/revisions')
@@ -94,7 +105,7 @@ export class MarketingCmsController {
       outcome: 'success',
       metadata: { count: result.items.length },
     });
-    return result;
+    return marketingRevisionListView(result);
   }
 
   @Patch('contents/:id')
@@ -107,7 +118,7 @@ export class MarketingCmsController {
     const result = await this.cms.update(requiredId(id), requiredVersion(ifMatch), requiredKey(key), body);
     setVersionHeader(response, result);
     await this.auditContent('marketing.content.update', result.content);
-    return result;
+    return { content: marketingContentSummaryView(result.content) };
   }
 
   @Post('contents/:id/submit')
@@ -162,7 +173,7 @@ export class MarketingCmsController {
     );
     setVersionHeader(response, result);
     await this.auditContent('marketing.content.schedule', result.content);
-    return result;
+    return { content: marketingContentSummaryView(result.content) };
   }
 
   @Post('contents/:id/withdraw')
@@ -205,7 +216,7 @@ export class MarketingCmsController {
     );
     setVersionHeader(response, result);
     await this.auditContent('marketing.content.rollback', result.content);
-    return result;
+    return { content: marketingContentSummaryView(result.content) };
   }
 
   @Get('leads')
@@ -220,7 +231,7 @@ export class MarketingCmsController {
       outcome: 'success',
       metadata: { count: result.items.length },
     });
-    return result;
+    return { items: result.items.map(marketingLeadConsoleView) };
   }
 
   @Get('leads-export.csv')
@@ -258,7 +269,7 @@ export class MarketingCmsController {
       resourceId, riskLevel: 'R1', outcome: 'success',
       metadata: { status, version: Number(result.version) },
     });
-    return result;
+    return marketingLeadStatusView(result);
   }
 
   @Patch('leads/:id/assignee')
@@ -368,7 +379,7 @@ export class MarketingCmsController {
       outcome: 'success',
       metadata: { version: Number(result.version) },
     });
-    return result;
+    return marketingUploadTicketView(result);
   }
 
   @Post('media/:id/verify')
@@ -393,7 +404,7 @@ export class MarketingCmsController {
       outcome: 'success',
       metadata: { status: String(result.status), version: Number(result.version) },
     });
-    return result;
+    return marketingMediaConsoleView(result);
   }
 
   @Get('media')
@@ -408,7 +419,7 @@ export class MarketingCmsController {
       outcome: 'success',
       metadata: { count: result.items.length },
     });
-    return result;
+    return { items: result.items.map(marketingMediaConsoleView) };
   }
 
   @Post('contents/:id/ai-drafts')
@@ -425,7 +436,7 @@ export class MarketingCmsController {
       resourceId, riskLevel: 'R1', outcome: 'success',
       metadata: { generationId: String(result.id), status: String(result.status) },
     });
-    return result;
+    return marketingAiDraftView(result);
   }
 
   @Post('ai-drafts/:id/review')
@@ -445,7 +456,7 @@ export class MarketingCmsController {
       resourceId, riskLevel: 'R1', outcome: 'success',
       metadata: { decision, contentId: String(result.contentId) },
     });
-    return result;
+    return marketingAiReviewView(result);
   }
 
   private async auditContent(action: string, content: Readonly<Record<string, unknown>>) {
@@ -481,7 +492,7 @@ export class MarketingCmsController {
     );
     setVersionHeader(response, result);
     await this.auditContent(`marketing.content.${action}`, result.content);
-    return result;
+    return { content: marketingContentSummaryView(result.content) };
   }
 
 }

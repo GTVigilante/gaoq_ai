@@ -32,7 +32,11 @@ import {
   parseContentInput,
 } from './marketing-cms.types.js';
 import { MarketingLeadCryptoService } from './marketing-lead-crypto.service.js';
-import { MarketingAiGateway, MarketingMediaGateway } from './marketing-gateways.service.js';
+import {
+  MarketingAiGateway,
+  MarketingMediaGateway,
+  safeMarketingAiOutput,
+} from './marketing-gateways.service.js';
 
 export type MarketingContentView = Readonly<Record<string, unknown>>;
 const TRANSITIONS: Readonly<Record<MarketingStatus, readonly MarketingStatus[]>> = {
@@ -900,6 +904,138 @@ function mediaView(record: MarketingMediaRecord): Record<string, unknown> {
     variants: record.variants, altText: record.altText,
     copyrightSource: record.copyrightSource, version: record.version,
   };
+}
+
+/**
+ * 管理端内容列表与写入结果的最小公开视图。
+ * 服务内部仍可使用含 tenantId 的 view() 完成事件和快照处理。
+ */
+export function marketingContentSummaryView(value: unknown): Readonly<Record<string, unknown>> {
+  const source = recordView(value);
+  return Object.freeze({
+    id: source.id,
+    siteId: source.siteId,
+    type: source.type,
+    locale: source.locale,
+    slug: source.slug,
+    title: source.title,
+    summary: source.summary,
+    status: source.status,
+    revision: source.revision,
+    version: source.version,
+  });
+}
+
+/** 管理端内容详情视图，显式排除租户和维护者字段。 */
+export function marketingContentDetailView(value: unknown): Readonly<Record<string, unknown>> {
+  const source = recordView(value);
+  return Object.freeze({
+    ...marketingContentSummaryView(source),
+    blocks: source.blocks,
+    seo: source.seo,
+    publishedAt: isoOrNull(source.publishedAt),
+    scheduledAt: isoOrNull(source.scheduledAt),
+  });
+}
+
+/** 历史版本只公开业务快照，不公开租户和内部维护者。 */
+export function marketingRevisionListView(
+  value: unknown,
+): { readonly items: readonly Readonly<Record<string, unknown>>[] } {
+  const source = recordView(value);
+  const items = Array.isArray(source.items) ? source.items : [];
+  return Object.freeze({
+    items: Object.freeze(items.map((item) => {
+      const revision = recordView(item);
+      return Object.freeze({
+        revision: revision.revision,
+        createdAt: isoOrNull(revision.createdAt),
+        snapshot: marketingContentDetailView(revision.snapshot),
+      });
+    })),
+  });
+}
+
+/** 含联系信息的 R1 线索视图；不公开归因、备注和负责人。 */
+export function marketingLeadConsoleView(value: unknown): Readonly<Record<string, unknown>> {
+  const source = recordView(value);
+  return Object.freeze({
+    id: source.id,
+    audience: source.audience,
+    name: source.name,
+    contact: source.contact,
+    requestSummary: source.requestSummary,
+    status: source.status,
+    version: source.version,
+    createdAt: isoOrNull(source.createdAt),
+  });
+}
+
+/** 线索状态写入只返回目标、状态与新版本。 */
+export function marketingLeadStatusView(value: unknown): Readonly<Record<string, unknown>> {
+  const source = recordView(value);
+  return Object.freeze({ id: source.id, status: source.status, version: source.version });
+}
+
+/** 媒体管理视图；对象引用、摘要和扫描证据只留在服务端。 */
+export function marketingMediaConsoleView(value: unknown): Readonly<Record<string, unknown>> {
+  const source = recordView(value);
+  return Object.freeze({
+    id: source.id,
+    fileName: source.fileName,
+    mimeType: source.mimeType,
+    status: source.status,
+    version: source.version,
+    variants: source.variants,
+  });
+}
+
+/** 上传票据只公开完成直传所需的短期能力。 */
+export function marketingUploadTicketView(value: unknown): Readonly<Record<string, unknown>> {
+  const source = recordView(value);
+  return Object.freeze({
+    id: source.id,
+    uploadUrl: source.uploadUrl,
+    expiresAt: isoOrNull(source.expiresAt),
+    version: source.version,
+  });
+}
+
+/** AI 草稿不公开模型和提示词内部版本。 */
+export function marketingAiDraftView(value: unknown): Readonly<Record<string, unknown>> {
+  const source = recordView(value);
+  return Object.freeze({
+    id: source.id,
+    status: source.status,
+    output: safeMarketingAiOutput(source.output),
+  });
+}
+
+/** AI 人工复核结果不回传原始生成内容和模型元数据。 */
+export function marketingAiReviewView(value: unknown): Readonly<Record<string, unknown>> {
+  const source = recordView(value);
+  return Object.freeze({
+    id: source.id,
+    contentId: source.contentId,
+    action: source.action,
+    status: source.status,
+  });
+}
+
+function recordView(value: unknown): Readonly<Record<string, unknown>> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('MARKETING_VIEW_SOURCE_INVALID');
+  }
+  return value as Readonly<Record<string, unknown>>;
+}
+
+function isoOrNull(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString();
+  if (typeof value === 'string' && !Number.isNaN(Date.parse(value))) {
+    return new Date(value).toISOString();
+  }
+  throw new Error('MARKETING_VIEW_DATE_INVALID');
 }
 
 function leadInvalid(): BadRequestException {

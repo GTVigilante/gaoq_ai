@@ -18,9 +18,39 @@ const IF_MATCH = '"1"';
 const CONTENT_ID = 'content-001';
 const content = {
   id: CONTENT_ID,
+  tenantId: 'tenant-001',
+  siteId: 'gaoq',
+  type: 'page',
+  locale: 'zh-CN',
+  slug: 'home',
+  title: '首页',
+  summary: '首页摘要',
+  blocks: [{ type: 'hero', data: { title: '首页' } }],
+  seo: { title: '首页' },
   status: 'draft',
   revision: 2,
   version: 2,
+  publishedAt: null,
+  scheduledAt: null,
+};
+const contentSummary = {
+  id: CONTENT_ID,
+  siteId: 'gaoq',
+  type: 'page',
+  locale: 'zh-CN',
+  slug: 'home',
+  title: '首页',
+  summary: '首页摘要',
+  status: 'draft',
+  revision: 2,
+  version: 2,
+};
+const contentDetail = {
+  ...contentSummary,
+  blocks: content.blocks,
+  seo: content.seo,
+  publishedAt: null,
+  scheduledAt: null,
 };
 
 function fixture() {
@@ -66,10 +96,10 @@ function fixture() {
     }),
     listMedia: vi.fn().mockResolvedValue({ items: [] }),
     generateAiDraft: vi.fn().mockResolvedValue({
-      id: 'generation-001', status: 'pending_review',
+      id: 'generation-001', status: 'pending_review', output: { title: '草稿' },
     }),
     reviewAiDraft: vi.fn().mockResolvedValue({
-      id: 'generation-001', contentId: CONTENT_ID, status: 'accepted',
+      id: 'generation-001', contentId: CONTENT_ID, action: 'translate', status: 'accepted',
     }),
     publicList: vi.fn().mockResolvedValue({ items: [content] }),
     publicContent: vi.fn().mockResolvedValue(content),
@@ -151,8 +181,8 @@ describe('MarketingCmsController', () => {
     const store = fixture();
 
     await store.controller.create(KEY, { title: '首页' }, store.response);
-    await expect(store.controller.list()).resolves.toEqual({ items: [content] });
-    await expect(store.controller.get(CONTENT_ID)).resolves.toBe(content);
+    await expect(store.controller.list()).resolves.toEqual({ items: [contentSummary] });
+    await expect(store.controller.get(CONTENT_ID)).resolves.toEqual(contentDetail);
     await expect(store.controller.revisions(CONTENT_ID)).resolves.toEqual({ items: [] });
     await store.controller.update(CONTENT_ID, IF_MATCH, KEY, { title: '新首页' }, store.response);
     await store.controller.submit(CONTENT_ID, IF_MATCH, KEY, store.response);
@@ -255,6 +285,128 @@ describe('MarketingCmsController', () => {
     expect(auditPayload).not.toContain('已联系，包含私密讨论');
     expect(auditPayload).not.toContain('私密提示词');
     expect(auditPayload).not.toContain('upload.example.invalid');
+  });
+
+  it('后台 REST 只返回显式公开视图并剥离租户、对象引用和 AI 内部元数据', async () => {
+    const store = fixture();
+    store.cms.listLeads.mockResolvedValue({
+      items: [{
+        id: 'lead-001',
+        tenantId: 'tenant-001',
+        audience: 'brand',
+        name: '品牌联系人',
+        contact: 'brand@example.com',
+        requestSummary: '需要完整品牌营销与内容合作方案',
+        status: 'new',
+        attribution: { utmSource: 'private' },
+        consentedAt: new Date('2026-07-29T00:00:00.000Z'),
+        assigneeId: 'actor-002',
+        notes: [{ body: '内部备注' }],
+        version: 1,
+        createdAt: new Date('2026-07-29T00:00:00.000Z'),
+      }],
+    });
+    store.cms.listMedia.mockResolvedValue({
+      items: [{
+        id: 'media-001',
+        tenantId: 'tenant-001',
+        fileName: 'hero.png',
+        mimeType: 'image/png',
+        status: 'ready',
+        version: 2,
+        variants: { thumb: 'https://cdn.example.invalid/thumb.png' },
+        objectRef: 'private/object',
+        checksum: 'private-checksum',
+        scanEvidenceId: 'private-evidence',
+        altText: { 'zh-CN': '内部文案' },
+        copyrightSource: 'private-source',
+      }],
+    });
+    store.cms.verifyMedia.mockResolvedValue({
+      id: 'media-001',
+      fileName: 'hero.png',
+      mimeType: 'image/png',
+      status: 'ready',
+      version: 2,
+      variants: {},
+      objectRef: 'private/object',
+      checksum: 'private-checksum',
+      scanEvidenceId: 'private-evidence',
+    });
+    store.cms.generateAiDraft.mockResolvedValue({
+      id: 'generation-001',
+      status: 'pending_review',
+      output: { title: '草稿' },
+      modelId: 'private-model',
+      promptVersion: 'private-prompt',
+    });
+    store.cms.reviewAiDraft.mockResolvedValue({
+      id: 'generation-001',
+      contentId: CONTENT_ID,
+      action: 'translate',
+      status: 'accepted',
+      output: { title: '草稿' },
+      modelId: 'private-model',
+      promptVersion: 'private-prompt',
+    });
+
+    const leads = await store.controller.leads();
+    const mediaList = await store.controller.media();
+    const verified = await store.controller.verifyMedia(
+      'media-001', IF_MATCH, KEY, store.response,
+    );
+    const generated = await store.controller.aiDraft(CONTENT_ID, KEY, {});
+    const reviewed = await store.controller.reviewAiDraft(
+      'generation-001', KEY, { decision: 'accepted' },
+    );
+
+    expect(leads).toEqual({ items: [{
+      id: 'lead-001',
+      audience: 'brand',
+      name: '品牌联系人',
+      contact: 'brand@example.com',
+      requestSummary: '需要完整品牌营销与内容合作方案',
+      status: 'new',
+      version: 1,
+      createdAt: '2026-07-29T00:00:00.000Z',
+    }] });
+    expect(mediaList).toEqual({ items: [{
+      id: 'media-001',
+      fileName: 'hero.png',
+      mimeType: 'image/png',
+      status: 'ready',
+      version: 2,
+      variants: { thumb: 'https://cdn.example.invalid/thumb.png' },
+    }] });
+    expect(verified).toEqual({
+      id: 'media-001',
+      fileName: 'hero.png',
+      mimeType: 'image/png',
+      status: 'ready',
+      version: 2,
+      variants: {},
+    });
+    expect(generated).toEqual({
+      id: 'generation-001',
+      status: 'pending_review',
+      output: { title: '草稿' },
+    });
+    expect(reviewed).toEqual({
+      id: 'generation-001',
+      contentId: CONTENT_ID,
+      action: 'translate',
+      status: 'accepted',
+    });
+    const payload = JSON.stringify({ leads, mediaList, verified, generated, reviewed });
+    for (const secret of [
+      'tenant-001',
+      'private/object',
+      'private-checksum',
+      'private-evidence',
+      'private-model',
+      'private-prompt',
+      '内部备注',
+    ]) expect(payload).not.toContain(secret);
   });
 
   it('线索 CSV 导出先审计再发送受控下载响应', async () => {
@@ -379,7 +531,7 @@ describe('MarketingCmsController', () => {
     const error = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
 
     await expect(store.controller.create(KEY, {}, store.response))
-      .resolves.toEqual({ content });
+      .resolves.toEqual({ content: contentSummary });
 
     expect(error).toHaveBeenCalledWith({
       code: 'MARKETING_AUDIT_AFTER_COMMIT_FAILED',

@@ -1226,6 +1226,8 @@ describe('McpToolService', () => {
       dispatchedAt: '2026-07-27T00:00:01.000Z',
       completedAt: '2026-07-27T00:01:00.000Z',
       lastErrorCode: 'MARKETING_NOTIFICATION_GATEWAY_FAILED',
+      tenantId: 'tenant-001',
+      lockedBy: 'worker-secret',
     });
     const denied = await store.service.getMarketingSideEffect(eventId, extra([]));
     expect(denied.isError).toBe(true);
@@ -1236,14 +1238,25 @@ describe('McpToolService', () => {
       extra(['erp:marketing:operations:read']),
     );
     expect(store.marketing.getSideEffectStatus).toHaveBeenCalledWith(eventId);
-    expect(result.structuredContent).toMatchObject({
+    expect(result.structuredContent).toEqual({
       sideEffect: {
         eventId,
+        kind: 'lead_notification',
+        aggregateId: 'lead-001',
+        aggregateVersion: 1,
+        channel: 'email',
         status: 'dead',
+        attempts: 1,
+        deliveryAttempts: 6,
+        nextAttemptAt: '2026-07-27T00:00:00.000Z',
+        dispatchedAt: '2026-07-27T00:00:01.000Z',
+        completedAt: '2026-07-27T00:01:00.000Z',
         lastErrorCode: 'MARKETING_NOTIFICATION_GATEWAY_FAILED',
       },
     });
-    expect(JSON.stringify(result)).not.toMatch(/tenant-001|contact|requestSummary/u);
+    expect(JSON.stringify(result)).not.toMatch(
+      /tenant-001|worker-secret|lockedBy|contact|requestSummary/u,
+    );
   });
 
   it('招聘、考试、考勤与导出只读 Tool 均复用对应应用服务', async () => {

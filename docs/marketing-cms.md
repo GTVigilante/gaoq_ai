@@ -11,6 +11,9 @@
   `ready` 媒体。
 - AI 网关只接收当前编辑内容并返回结构化草稿。生成记录固定为
   `pending_review`，必须由具备审核 Scope 的人员明确接受或拒绝，AI 无发布权限。
+  网关输出按 250 KiB、12 层、5,000 节点、单数组 1,000 项和单对象 256 键
+  预算克隆并冻结；自定义原型、存取器、Symbol、原型污染键和可执行标记均失败
+  关闭。模型标识和提示词版本只留作服务端证据，不进入管理端响应。
 - 预约线索由服务端固定映射租户和站点。浏览器按构建时固化的精确 ERP HTTPS
   Origin 直接跨域提交且不携带 Cookie；API CORS 只接受完整 Origin 白名单命中。
   请求经过蜜罐、验证码、Redis 限流及隐私同意校验；任一保护组件不可用时失败
@@ -45,6 +48,13 @@
 - `erp:marketing:operations:read`（R1，只读副作用状态，不返回联系人或正文）
 - `erp:marketing:operations:replay`（R2，仅允许把当前租户死信恢复为待投递）
 
+PC 管理台先读取 `/api/auth/profile` 的可信主体与 Scope，再按
+`content:read`、`lead:read`、`media:read` 分别加载数据。任何动作入口都同时要求
+对应读取 Scope 与动作 Scope；前端显隐只改善操作体验，服务端仍逐请求强制授权。
+内容、线索、媒体和 AI 响应均经过逐字键集合、枚举、规范 UTC 时间、URL 与大小
+预算校验；Controller 只返回最小公开投影，不返回 `tenantId`、内部维护者、线索
+归因/备注/负责人、对象引用、checksum、扫描证据、模型或提示词版本。
+
 匿名端点仅包含：
 
 - `GET /api/marketing/public/:locale/contents/:type`
@@ -67,6 +77,14 @@
 短时 URL，并校验对象引用不得变化。媒体与 AI 网关接收原
 `Idempotency-Key`，HTTP、网络、JSON 或响应契约异常统一映射为受控不可用错误，
 不得泄露上游响应或凭据。
+
+PC 所有写入在页面内存冻结可信 actorId、所需 Scope、目标、强版本、精确正文和
+`Idempotency-Key`。网络、超时、5xx、429、`IDEMPOTENCY_IN_PROGRESS` 或响应
+契约异常导致结果未知时，只提供“重试原请求”，不得生成新键或切换目标；服务端
+明确拒绝、可信主体变化或授权失效时才清除原请求。线索状态、媒体票据/核验与 AI
+生成/复核同样强制幂等键。媒体直传保留同一文件、对象和创建键；签名 URL
+401/403 时用原创建键重新签发，上传结果未知时复用原 URL，核验阶段复用独立原
+核验键。签名 URL 只允许无凭据、无 fragment 的短期 HTTPS 能力且不写日志。
 
 发布事件固定为 `cn.gaoq.erp.marketing.content.published.v1`，数据只包含站点、内容
 标识、类型、语言、slug 与 revision，不包含正文、联系人或凭据。
@@ -102,6 +120,9 @@ AI 对接同步提供 `marketing_side_effect_get` Tool、
 `erp://marketing/side-effects/{eventId}` Resource Template 和
 `marketing_side_effect_triage_guide` Prompt。三者都复用 `MarketingCmsService`
 并从 OAuth 身份解析租户；不接受租户参数，不暴露联系人/正文，不提供重放 Tool。
+Tool 输出固定十二个字段，标识、枚举、非负计数、带时区 `date-time` 和错误码均
+由严格 JSON Schema 约束，父对象和副作用对象都拒绝未知字段；Tool 防御性重建并
+冻结结果，不能透传应用服务未来新增的租户、锁或内部调度字段。标准 MCP 继续只读。
 
 ## 现场配置与验收
 
