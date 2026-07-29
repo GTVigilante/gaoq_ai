@@ -102,6 +102,11 @@
 ### 4.2 Story
 
 - 用户故事（作为……我希望……以便……）；**验收标准（可测试的 Given/When/Then 至少 1 条）**；涉及模块与租户影响说明；关联 Epic；预估工作量。
+- 正文必须包含 `## REST / 事件 / MCP 契约（仓库基线）`，并以
+  `- REST：`、`- 事件：`、`- MCP：` 三行分别列出契约；某一接入面没有新增
+  能力时必须说明原因，禁止省略或用“统一处理”代替。
+- `scripts/github/validate-repository-governance.mjs` 对全部 Story 失败关闭校验
+  上述结构，错误码为 `GOV-STORY-CONTRACT-SURFACES`。
 
 ### 4.3 Task
 

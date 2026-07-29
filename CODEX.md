@@ -27,7 +27,8 @@
   状态命令，不调用模型、不执行业务 Tool、不依赖数据库或外部系统，结果绑定
   当前 `catalogHash`。这只通过 Kimi 的启动与 Tool 目录发现；正式 Token、
   Resource/Prompt、R0/R1/R2、撤销/重连和业务 UAT 未验收，Kimi 整体以及
-  Claude、Cursor、Inspector 仍保持 No-Go。
+  Claude、Cursor 仍无实体证据。Inspector 后续已完成四类目录实体发现，但其
+  正式 Token、授权业务调用和 UAT 仍保持 No-Go。
 - 2026-07-29 已把 `catalogHash` 从 Tool 摘要升级为四类完整能力目录摘要：
   从同一运行时实时解析 50 Tool、4 Resource、27 Resource Template、25 Prompt，
   并绑定忽略注释/格式差异的 `runtimeContractHash`。锁定且隔离的官方 MCP
@@ -36,6 +37,17 @@
   MCP 联调和总 Go/No-Go 门禁均精确绑定完整摘要及数量，陈旧 30/3/2 示例不再
   可通过。该证据只关闭 Inspector 四类目录兼容缺口；正式 Token、授权读写、
   远程 OAuth、撤销/重连和业务 UAT 未完成，Inspector 整体仍保持 No-Go。
+- 2026-07-30 已落实 Phase 0 字段级映射强制项：
+  `apps/erp-api/src/modules/integration/adapters/` 分别记录钉钉、飞书、OP、
+  e签宝、招聘渠道、银行文件、税务文件和通知服务的 canonical/外部字段、
+  权威方向、幂等回执与敏感性边界；`scripts/validate-docs.mjs` 将映射索引、
+  九个文档和关键契约标记纳入 `pnpm check`。这只关闭仓库映射文档缺口，不
+  代表真实企业租户、银行、税局、e签或通知服务已联调。
+- 2026-07-30 已把 Phase 0 “每个业务 Issue 同步列出 REST、事件、MCP”转成
+  实时 GitHub 治理门禁：27 个 Story 正文全部按三面契约补齐，未新增的接入面
+  也明确安全理由；`GOV-STORY-CONTRACT-SURFACES` 和第 24 个负向自测会拒绝
+  任一缺面。实时治理复核 7 个 Milestone、50 个 Issue、79 个 PR 通过，原外部
+  验收项均保持开放且未被勾选。
 - 2026-07-29 已关闭审批 MCP 的 Schema 方言与机器可读风险分级缺口：锁定的
   `@modelcontextprotocol/sdk 1.29.0` 原本把 Zod Tool Schema 显式发现为
   Draft-07，现通过受控依赖补丁统一输出 JSON Schema 2020-12；9 个审批 Tool

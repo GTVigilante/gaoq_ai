@@ -18,6 +18,15 @@ const requiredDocuments = [
   'docs/phase-0/05-security-quality-cutover.md',
   'docs/phase-0/06-github-governance.md',
   'docs/implementation-completion-audit.md',
+  'apps/erp-api/src/modules/integration/adapters/README.md',
+  'apps/erp-api/src/modules/integration/adapters/dingtalk/mapping.md',
+  'apps/erp-api/src/modules/integration/adapters/feishu/mapping.md',
+  'apps/erp-api/src/modules/integration/adapters/op/mapping.md',
+  'apps/erp-api/src/modules/integration/adapters/esign/mapping.md',
+  'apps/erp-api/src/modules/integration/adapters/recruitment/mapping.md',
+  'apps/erp-api/src/modules/integration/adapters/bank-file/mapping.md',
+  'apps/erp-api/src/modules/integration/adapters/tax-file/mapping.md',
+  'apps/erp-api/src/modules/integration/adapters/notification/mapping.md',
   'docs/phase-1/README.md',
   'docs/phase-2/README.md',
   'docs/phase-3/README.md',
@@ -153,7 +162,46 @@ const requiredRepositoryGovernanceMarkers = new Map([
       'GOV-PR-ISSUE-MISSING',
       'GOV-ISSUE-PHASE-MISMATCH',
       'GOV-EPIC-CHILD-OPEN',
+      'GOV-STORY-CONTRACT-SURFACES',
     ],
+  ],
+]);
+const requiredAdapterMappingMarkers = new Map([
+  [
+    'apps/erp-api/src/modules/integration/adapters/README.md',
+    ['dingtalk/mapping.md', 'feishu/mapping.md', 'op/mapping.md', '外部验收待完成'],
+  ],
+  [
+    'apps/erp-api/src/modules/integration/adapters/dingtalk/mapping.md',
+    ['source_identifier', 'externalEventId', 'x-client-token'],
+  ],
+  [
+    'apps/erp-api/src/modules/integration/adapters/feishu/mapping.md',
+    ['department_id', 'externalEventId', 'idempotency_key'],
+  ],
+  [
+    'apps/erp-api/src/modules/integration/adapters/op/mapping.md',
+    ['schemaVersion="1.0"', 'erpEmployeeId', 'HMAC-SHA-256'],
+  ],
+  [
+    'apps/erp-api/src/modules/integration/adapters/esign/mapping.md',
+    ['signFlowExpireTime', 'PROVIDER_COMPLETED', 'AES-256-GCM'],
+  ],
+  [
+    'apps/erp-api/src/modules/integration/adapters/recruitment/mapping.md',
+    ['externalApplicationId', 'attachmentReferences', 'not_committed'],
+  ],
+  [
+    'apps/erp-api/src/modules/integration/adapters/bank-file/mapping.md',
+    ['productionAuthorization', 'signatureEvidenceId', 'MCP'],
+  ],
+  [
+    'apps/erp-api/src/modules/integration/adapters/tax-file/mapping.md',
+    ['settlementUrl', 'Ed25519', '最小幂等账本'],
+  ],
+  [
+    'apps/erp-api/src/modules/integration/adapters/notification/mapping.md',
+    ['externalMessageId', 'recipientRef', '短信和邮件'],
   ],
 ]);
 const requiredMcpClientCompatibilityMarkers = new Map([
@@ -621,6 +669,19 @@ for (const [relativePath, markers] of requiredRepositoryGovernanceMarkers) {
     for (const marker of markers) {
       if (!content.includes(marker)) {
         errors.push(`${relativePath}: 缺少 GitHub 治理门禁标记 ${marker}`);
+      }
+    }
+  } catch {
+    // 缺失文件已在第一阶段报告。
+  }
+}
+
+for (const [relativePath, markers] of requiredAdapterMappingMarkers) {
+  try {
+    const content = await readFile(resolve(repoRoot, relativePath), 'utf8');
+    for (const marker of markers) {
+      if (!content.includes(marker)) {
+        errors.push(`${relativePath}: 缺少外部适配器映射标记 ${marker}`);
       }
     }
   } catch {

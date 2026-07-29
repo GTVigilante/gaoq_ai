@@ -38,6 +38,8 @@ const VALIDATION_EVIDENCE_PATTERN = /(?:验证|测试|pnpm|npm\s+run|node\s+scri
 const REVIEW_APPROVAL_PATTERN = /## CR 结论[\s\S]*\[OK\]/u;
 const ISSUE_REFERENCE_PATTERN = /(?:^|[^\w])#(\d+)\b/gu;
 const EPIC_CHILD_PATTERN = /-\s*\[[ xX]\]\s*#(\d+)\b/gu;
+const STORY_CONTRACT_SURFACES_PATTERN =
+  /## REST \/ 事件 \/ MCP 契约（仓库基线）[\s\S]*?-\s*REST：[\s\S]*?-\s*事件：[\s\S]*?-\s*MCP：/u;
 
 /**
  * 创建稳定、无外部响应正文的治理错误。
@@ -192,6 +194,19 @@ export function validateRepositoryGovernance(rawSnapshot) {
     if (expectedPrefix === undefined || typeof issue.title !== 'string'
       || !issue.title.startsWith(expectedPrefix)) {
       throw governanceError('GOV-ISSUE-TITLE-PREFIX', resource, '标题前缀与类型不一致');
+    }
+    if (
+      typeLabel === 'type:story' &&
+      (
+        typeof issue.body !== 'string' ||
+        !STORY_CONTRACT_SURFACES_PATTERN.test(issue.body)
+      )
+    ) {
+      throw governanceError(
+        'GOV-STORY-CONTRACT-SURFACES',
+        resource,
+        '缺少 REST、事件或 MCP 三面契约',
+      );
     }
 
     if (labels.includes('status:external-acceptance') && issue.state !== 'open') {
@@ -424,7 +439,15 @@ function createValidFixture() {
       {
         number: 4,
         title: '[Story] 外部验收',
-        body: '等待现场证据。',
+        body: [
+          '等待现场证据。',
+          '',
+          '## REST / 事件 / MCP 契约（仓库基线）',
+          '',
+          '- REST：无新增入口。',
+          '- 事件：无新增事件。',
+          '- MCP：无新增能力。',
+        ].join('\n'),
         state: 'open',
         milestone: phaseZero,
         labels: ['type:story', ...common, 'status:external-acceptance'],
@@ -496,6 +519,9 @@ function runSelfTest() {
     }],
     ['GOV-ISSUE-TITLE-PREFIX', (fixture) => {
       fixture.issues[1].title = '[Story] 错误类型';
+    }],
+    ['GOV-STORY-CONTRACT-SURFACES', (fixture) => {
+      fixture.issues[3].body = '只有 REST 和事件，没有标准三面契约章节。';
     }],
     ['GOV-ISSUE-EXTERNAL-CLOSED', (fixture) => {
       fixture.issues[3].state = 'closed';

@@ -32,8 +32,8 @@ body:
   - type: textarea
     id: contracts
     attributes:
-      label: 接口、事件与MCP契约
-      description: 列出OpenAPI、CloudEvents、Webhook、MCP Resources/Tools及兼容影响；不适用时说明原因。
+      label: REST、事件与MCP契约
+      description: Story 必须按“- REST：”“- 事件：”“- MCP：”分别列出 OpenAPI、CloudEvents、Webhook、MCP Resources/Tools 及兼容影响；不适用时也要说明原因。
     validations:
       required: true
   - type: textarea

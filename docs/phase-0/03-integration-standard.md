@@ -68,7 +68,11 @@
 | `CanonicalCandidate` | candidateId、tenantId、渠道来源、职位、简历快照、阶段 | ERP（渠道仅投递来源） |
 | `CanonicalPayslipFile` | tenantId、批次号、代发文件/回盘文件/税务文件摘要、对账状态 | ERP（薪酬模块） |
 
-字段级映射表按适配器分别维护在 `integration-module/adapters/<name>/mapping.md`（实现期产出），新增字段必须走 ADR。
+字段级映射表按适配器分别维护在
+`apps/erp-api/src/modules/integration/adapters/<name>/mapping.md`，索引见
+[`adapters/README.md`](../../apps/erp-api/src/modules/integration/adapters/README.md)。
+新增外部字段必须在同一 PR 更新映射表、运行时 schema 和协议测试；改变权威方向、
+敏感级别或固定端点必须另行提交 ADR。
 
 ---
 
