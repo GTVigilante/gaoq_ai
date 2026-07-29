@@ -34,6 +34,8 @@ const requiredDocuments = [
   'docs/phase-6/07-production-platform-intake.md',
   'deploy/helm/gaoq-erp/README.md',
   'deploy/helm/gaoq-platform-guardrails/README.md',
+  'scripts/github/validate-repository-governance.mjs',
+  '.github/workflows/github-governance.yml',
 ];
 
 const forbiddenPrdPatterns = [
@@ -74,6 +76,32 @@ const requiredDeliveryBoundaryMarkers = new Map([
     ['仓库实施已交付', '外部验收待完成', '生产完成', 'PAYROLL_SYSTEM_MODE=external']],
   ['docs/phase-3/README.md',
     ['Phase 3 只能标记“代码已交付”', '不得标记生产完成']],
+]);
+const requiredRepositoryGovernanceMarkers = new Map([
+  [
+    'docs/phase-0/06-github-governance.md',
+    [
+      '.github/workflows/github-governance.yml',
+      'github:governance:validate',
+      'GOV-*',
+    ],
+  ],
+  [
+    '.github/workflows/github-governance.yml',
+    [
+      'issues: read',
+      'pull-requests: read',
+      'validate-repository-governance.mjs --self-test',
+    ],
+  ],
+  [
+    'scripts/github/validate-repository-governance.mjs',
+    [
+      'GOV-PR-ISSUE-MISSING',
+      'GOV-ISSUE-PHASE-MISMATCH',
+      'GOV-EPIC-CHILD-OPEN',
+    ],
+  ],
 ]);
 
 /**
@@ -174,6 +202,19 @@ for (const relativePath of deliveryBoundaryDocuments) {
     for (const marker of requiredDeliveryBoundaryMarkers.get(relativePath) ?? []) {
       if (!content.includes(marker)) {
         errors.push(`${relativePath}: 缺少交付边界标记 ${marker}`);
+      }
+    }
+  } catch {
+    // 缺失文件已在第一阶段报告。
+  }
+}
+
+for (const [relativePath, markers] of requiredRepositoryGovernanceMarkers) {
+  try {
+    const content = await readFile(resolve(repoRoot, relativePath), 'utf8');
+    for (const marker of markers) {
+      if (!content.includes(marker)) {
+        errors.push(`${relativePath}: 缺少 GitHub 治理门禁标记 ${marker}`);
       }
     }
   } catch {

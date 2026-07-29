@@ -1,9 +1,9 @@
 # 告趣ERP（GaoQ-OS）GitHub 治理规范
 
 - 文档编号：phase-0/06
-- 版本：v1.1
-- 状态：规范约定；Milestone、Issue、标签和 Draft PR 已配置，Project 看板因最小
-  权限未授权仍待 Issue #41 配置，实时边界见
+- 版本：v1.2
+- 状态：规范约定；Milestone、Issue、标签、Draft PR 和只读治理自动化已配置，
+  Project 看板因最小权限未授权仍待 Issue #41 配置，实时边界见
   [仓库实施完成度审计](../implementation-completion-audit.md)
 - 适用范围：告趣ERP 全部 GitHub 仓库的 Issue、Project、分支、PR、CI 与版本管理
 
@@ -177,6 +177,27 @@ Backlog → Ready → In Progress → In Review → Security Review → UAT → 
 - 必过：lint + 类型检查 + 单元测试 + 安全扫描（依赖漏洞 + 密钥扫描）；
 - PR 合入前 CI 全绿；`main` 红时冻结非 hotfix 合入；
 - hotfix 走 `hotfix/<issue号>-*` 分支，评审不可省略，事后 24h 内补测试。
+
+### 6.5 GitHub 元数据自动门禁
+
+- `.github/workflows/github-governance.yml` 在 Milestone、Issue、PR 元数据变化及
+  治理实现进入 `main` 时运行；仅授予 `contents:read`、`issues:read` 和
+  `pull-requests:read`，不得修改元数据或持有长期 Token。
+- `scripts/github/validate-repository-governance.mjs` 必须失败关闭以下漂移：
+  固定七个 Milestone 缺失或新增未知项；Issue 缺少唯一类型/阶段/优先级、至少
+  一个领域标签、标题类型前缀或阶段/里程碑不一致；外部验收或阻塞 Issue 被错误
+  关闭；阻塞正文缺少“当前阻塞/解除方式”；Epic 缺少真实子 Issue；PR 缺少
+  唯一已知 Milestone、未经 `## CR 结论` 和 `[OK]` 就从 Draft 转 Ready、
+  从 `main` 发起、未关联真实 Issue 或缺少验证证据。
+- Epic 可引用其他阶段的真实依赖 Issue；只有 Epic 自身关闭时，全部勾选框子项
+  才必须已经关闭。跨阶段依赖不得被伪装成同阶段子项，也不得以 PR 编号替代
+  Issue 关联。
+- 本地使用 `pnpm github:governance:self-test` 验证负向场景；已认证 `gh` 环境
+  使用 `pnpm github:governance:validate -- --repository <owner/repo>` 只读校验
+  实时元数据。工作流使用 GitHub 注入的短时 `GITHUB_TOKEN`，错误仅输出稳定
+  `GOV-*` 码与资源编号，禁止输出 Token 或 API 响应正文。
+- Hosted Actions 因账号付费或 Spending limit 在 Runner 分配前被拦截时，只能
+  记录“工作流未执行”；本地实时校验通过不能冒充 Hosted Actions 通过。
 
 ---
 

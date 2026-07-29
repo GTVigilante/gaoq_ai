@@ -344,6 +344,15 @@
   不得接入 NAS；仓库当前为 Private，Hosted Actions 在任何步骤执行前被账户付款
   或 Spending limit 拦截。在免费额度恢复或用户明确批准公开仓库前，外部门禁
   保持未执行，不得记为代码测试失败或门禁通过。
+- 2026-07-29 已把 GitHub 元数据规范转为只读失败关闭门禁：
+  `scripts/github/validate-repository-governance.mjs` 校验固定七个 Milestone、
+  Issue 标签/状态/Epic 子项，以及 PR 唯一 Milestone、Ready 前 CR、真实 Issue
+  关联、验证证据和非 `main` 来源分支；23 个负向自测已接入根 `test/check`。
+  一次性治理收敛为 67 个历史 PR 补齐 Milestone、37 个历史 PR 补齐真实 Issue
+  关联，并为 Issue #12 补齐阻塞与解除章节；本地 `gh` 实时校验 7/50/79
+  （Milestone/Issue/PR）通过。专用 Hosted Actions 工作流只申请 contents、
+  issues、pull-requests 读权限；付费门禁仍在 Runner 分配前拦截，不能记为远端
+  通过。
 - 2026-07-27 已完成开放 Issue 与 Phase 0–6 仓库实施证据审计，并正式定义
   `status:implementation-delivered` 与 `status:external-acceptance` 的并存规则；
   新增 Phase 3 Issue 已归入唯一 Milestone。GitHub Project 仍由 Issue #41 跟踪，
@@ -351,9 +360,8 @@
   `docs/implementation-completion-audit.md`。
 - 2026-07-29 ERP API 覆盖率已修正为显式纳入 `src/**/*.ts` 全部生产源码，
   包括测试未加载的启动、Worker、Controller、迁移和适配器文件，并把全量覆盖
-  命令接入 `pnpm check`。当前真实基线为语句 93.30%（31,631/33,900）、
-  分支 91.29%（21,843/23,925）、函数 93.49%（5,595/5,984）、行
-  94.32%（28,881/30,617），414 个测试文件、6,774 项测试全部通过并达到
+  命令接入 `pnpm check`。当前真实基线为语句 93.37%、分支 91.30%、函数
+  93.52%、行 94.39%，415 个测试文件、6,784 项测试全部通过并达到
   全仓四维 80% 强制门槛。
 - 2026-07-28 已加固 Talent Lifecycle 的 Recruitment、Onboarding、Org 与
   Care 四域来源完整性：每个窄查询口都二次校验可信租户及候选人、申请、职位、

@@ -446,3 +446,15 @@
   另一资源的清理，也不得重新执行外部副作用或输出内部异常。
 - [ ] MCP stdio 进程入口生命周期必须纳入独立逐文件四维 90% 门禁；人工编译冒烟
   不能替代信号竞态、失败关闭和 GitHub Actions 真实执行证据。
+
+### 来自 CR #42
+
+- [ ] GitHub 治理不能停留在文档；Milestone、Issue 标签/状态/Epic 子项和 PR
+  Milestone/Ready 前 CR/真实 Issue 关联/验证证据必须由只读失败关闭校验器
+  持续复核。
+- [ ] PR 正文中的 `#编号` 必须至少命中一个真实 Issue；堆叠 PR 依赖号不能替代
+  业务 Issue。Epic 可以有跨阶段依赖，但关闭时全部勾选框子 Issue 必须已关闭。
+- [ ] 治理工作流只授予 contents、issues、pull-requests 读权限，使用 GitHub
+  短时 Token；稳定错误不得包含 Token、API 响应正文或自由文本外部异常。
+- [ ] 本地 `gh` 实时校验只能证明当前元数据；Hosted Actions 未分配 Runner 时
+  不得把本地结果记为远端门禁通过，也不得为此接入 NAS、自建 Runner 或虚拟机。

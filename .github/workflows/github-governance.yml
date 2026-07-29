@@ -1,0 +1,77 @@
+name: GitHub 仓库治理检查
+
+on:
+  issues:
+    types:
+      - opened
+      - edited
+      - closed
+      - reopened
+      - labeled
+      - unlabeled
+      - milestoned
+      - demilestoned
+  pull_request:
+    types:
+      - opened
+      - edited
+      - closed
+      - reopened
+      - synchronize
+      - converted_to_draft
+      - ready_for_review
+      - labeled
+      - unlabeled
+      - milestoned
+      - demilestoned
+  milestone:
+    types:
+      - created
+      - closed
+      - opened
+      - edited
+      - deleted
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/github-governance.yml"
+      - "scripts/github/validate-repository-governance.mjs"
+      - "docs/phase-0/06-github-governance.md"
+      - "package.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: github-governance-${{ github.repository }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: 校验 Milestone、Issue 与 PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+
+      - name: 证明治理规则失败关闭
+        run: node scripts/github/validate-repository-governance.mjs --self-test
+
+      - name: 只读校验实时 GitHub 元数据
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node scripts/github/validate-repository-governance.mjs
+          --repository "${{ github.repository }}"

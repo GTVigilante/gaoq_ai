@@ -24,7 +24,7 @@
 
 | Phase | 仓库实施证据 | 尚缺外部证据 | 结论 |
 |---|---|---|---|
-| 0 | `docs/phase-0/`、Issue 模板、7 个 Milestone、标签、Draft PR 流程、全量四维 80% 与 325 个生产文件逐文件四维 90% 门禁 | Issue #41 的 GitHub Project 需要 `project` 权限；Hosted Actions 真实执行及架构/安全/业务签署尚未取得 | 仓库实施已交付，外部/治理验收待完成 |
+| 0 | `docs/phase-0/`、Issue 模板、7 个 Milestone、标签、Draft PR、只读治理自动化、全量四维 80% 与 326 个生产文件逐文件四维 90% 门禁 | Issue #41 的 GitHub Project 需要 `project` 权限；Hosted Actions 真实执行及架构/安全/业务签署尚未取得 | 仓库实施已交付，外部/治理验收待完成 |
 | 1 | `apps/erp-api/src/modules/auth/`、`org/`、`security/`、`integration/`，`deploy/helm/`，Phase 1 工作流 | 境内云 VPC、WAF/KMS、真实 SSO/组织下发、监控告警、备份恢复与 RPO/RTO 演练 | 实施已交付，外部验收待完成 |
 | 2 | `apps/erp-api/src/modules/approval/`、审批前端、通知、迁移与 MCP 能力 | 氚云模板/历史/在途审批真实盘点迁移、三次演练和业务签署 | 实施已交付，外部验收待完成 |
 | 3 | 招聘、eSign、Onboarding、Knowledge、Care、Talent Lifecycle 360 及对应 REST/事件/MCP | 真实渠道、e签宝、对象/WORM、OpenAI/搜索/评分/通知、CRM/校友平台与跨角色 UAT | 实施已交付，外部验收待完成 |
@@ -57,26 +57,30 @@
   拦截。该状态既不是代码测试失败，也不是 CI 通过；相同 commit 不重复空跑。
 - Issue #41 需要用户明确授权 `read:project,project` 后才能创建 Project。未获授权
   前保持阻塞，不扩大 OAuth 权限。
-- Phase 3 新增 Issue #123–#126 必须归入 Phase 3 Milestone，维持“一项工作只归属
-  一个 Milestone”的治理要求。
+- 2026-07-29 已对实时 GitHub 元数据完成一次性收敛：67 个历史 PR 补齐唯一
+  Milestone，37 个历史 PR 补齐至少一个真实 Issue 关联，Issue #12 补齐明确的
+  “当前阻塞/解除方式”。`scripts/github/validate-repository-governance.mjs`
+  随后只读验收 7 个 Milestone、50 个 Issue 和 79 个 PR 全部通过。
+- `.github/workflows/github-governance.yml` 已把上述规则转成最小只读权限门禁，
+  23 个负向自测覆盖标签、状态、Epic 子项、PR Ready 前 CR、真实 Issue 关联、
+  验证证据和来源分支；Hosted Actions 尚未分配 Runner，仍不得记为远端通过。
 
 ## 5. 覆盖率边界
 
 2026-07-29 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，414 个测试文件、6,774 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，415 个测试文件、6,784 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-93.30%（31,631/33,900）、分支 91.29%（21,843/23,925）、函数
-93.49%（5,595/5,984）、行 94.32%（28,881/30,617）。全仓四维已达到 Phase 0
+93.37%、分支 91.30%、函数 93.52%、行 94.39%。全仓四维已达到 Phase 0
 规定的 80% 门槛。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
 
 `scripts/validate-critical-coverage-policy.mjs` 进一步从 `precheck/check` 递归
 解析 133 个可达 ERP API 专项脚本，展开全部 `--coverage.include` glob，并要求
-325 个目标生产文件与 `vitest.config.ts` 的显式逐文件四维 90% 阈值一一闭合。
+326 个目标生产文件与 `vitest.config.ts` 的显式逐文件四维 90% 阈值一一闭合。
 租户、Identity、Approval、Payroll、Treasury 与 MCP 六类章程关键域按统一排除
-规则形成 119 个权威生产文件；未来新增关键文件若未进入专项脚本会立即失败。
+规则形成 120 个权威生产文件；未来新增关键文件若未进入专项脚本会立即失败。
 校验器同时拒绝缺失文件、未匹配 glob、重复属性、低阈值、只有阈值没有专项、
 只有专项没有阈值、关键域分类遗漏及未接入 `precheck`，并以六类负向自测证明
 失败关闭。本轮据此补齐 34 个此前仅受全量报告约束的关键文件，以及租户上下文
