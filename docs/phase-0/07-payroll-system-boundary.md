@@ -94,7 +94,7 @@
   用 ERP Token 访问算薪或用算薪 Token 访问 ERP 全部失败，且租户错配全部拒绝；
   禁止任一 MCP 代理另一资源服务器、透传 Token、直接读取对方数据库或复制工资
   明细。专业算薪镜像摘要、OAuth 元数据、完整 `catalogHash`、七类事件契约摘要
-  与回放证据必须进入 Phase 5 `integration-mcp` v2 和最终 Go/No-Go。
+  与回放证据必须进入 Phase 5 `integration-mcp` v3 和最终 Go/No-Go。
 - 专业算薪批量主数据快照是专用服务到服务 REST，不注册 MCP Resource/Tool；
   AI 不得借 MCP 绕过批量导出限制。
 - 真实发薪切换仍必须完成两个完整影子周期、零未解释差异、回滚演练和财务签署。

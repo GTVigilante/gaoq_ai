@@ -193,6 +193,7 @@
     "mcp:client:inspector:run": "node scripts/mcp/validate-mcp-inspector-client.mjs --run",
     "mcp:integration:validate-evidence": "node scripts/mcp/validate-phase-5-mcp-integration-evidence.mjs",
     "mcp:integration:self-test": "node scripts/mcp/validate-phase-5-mcp-integration-evidence.mjs --self-test",
+    "mcp:integration:print-contract": "node scripts/mcp/validate-phase-5-mcp-integration-evidence.mjs --print-contract",
     "release:phase6:cutover:validate-evidence": "node scripts/release/validate-phase-6-cutover-evidence.mjs",
     "release:phase6:cutover:self-test": "node scripts/release/validate-phase-6-cutover-evidence.mjs --self-test",
     "release:phase6:cutover:print-contract": "node scripts/release/validate-phase-6-cutover-evidence.mjs --print-contract",

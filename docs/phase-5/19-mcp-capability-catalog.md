@@ -95,18 +95,32 @@ Resource Template 与两个解释 Prompt，逐项名称见
 
 业务附件迁移固定为 L4，不注册正文、对象定位符、checksum 的迁移 Tool 或 Resource。AI 只能读取聚合迁移报告；未来若增加领域附件状态能力，也必须复用应用服务并返回无正文、无对象地址、无上传人员标识的最小安全投影。
 
-工具自测和本目录不等于联调完成。最终 `integration-mcp` v2 verdict 必须绑定
+工具自测和本目录不等于联调完成。最终 `integration-mcp` v3 verdict 必须绑定
 commit、API/Worker/ERP Web/Website 四类镜像、ERP `catalogHash`、三类客户端
 原始协议记录、九类外部沙箱证据、跨租户拒绝、审计和安全签署；同时精确绑定
 专业算薪的 HTTPS resource、独立授权服务器、镜像摘要、平台契约 `1.0.0`、
 七类事件契约摘要、完整 MCP `catalogHash` 和四类原始证据摘要，随后才能进入
 [跨职能 Go/No-Go 门禁](./18-go-no-go-evidence-gate.md)。
 
+联调结束后 24 小时内，集成、MCP、QA 和安全四方必须以不同主体、不同证据 ID、
+不同意见摘要和不同 Ed25519 公钥完成 `approve` 签署。每个 `keyId` 等于对应
+SPKI DER 公钥的 SHA-256；按角色排序的四方 `{role,keyId}` 规范 JSON 摘要必须
+与 Repository Variable `MCP_INTEGRATION_SIGNER_KEYSET_SHA256` 完全一致。同一
+主体、公钥、证据、意见或签名不得跨角色复用。
+
+四方共同批准 payload 覆盖证据版本、runId、环境、commit、四类 ERP 镜像、
+ERP 完整目录、三类客户端及其原始证据摘要、九类外部沙箱、专业算薪资源/授权
+服务器/镜像/目录/事件契约与四类原始证据、跨租户/Scope/确认拒绝、安全结论、
+全部通用工件、完整 keyset 及四方批准元数据。每位负责人再以职责密钥签署共同
+payload 摘要、自身角色、keyId 和签名时间。任何签后修改、伪造签名、角色换钥、
+主体/证据/意见/公钥复用或受信 keyset 漂移均失败关闭。
+
 `.github/workflows/phase-5-mcp-integration.yml` 只允许 `main` 手工启动，使用
 `phase-5-mcp-integration` workflow policy 和 GitHub Hosted `ubuntu-latest`。
 Repository Variables 配置固定环境名、API/Worker/ERP Web/Website 镜像
 SHA-256、脱敏摘要 HTTPS URL、预期文件 SHA-256、专用 OIDC audience，以及
-专业算薪 resource、授权服务器、镜像摘要、事件契约摘要和 MCP 目录摘要。工作流
+专业算薪 resource、授权服务器、镜像摘要、事件契约摘要、MCP 目录摘要和
+`MCP_INTEGRATION_SIGNER_KEYSET_SHA256`。工作流
 以当前 policy 的单次 GitHub OIDC 身份取得最多 1 MiB 的严格 JSON，把证据与
 当前 commit、ERP 镜像/目录及专业算薪发布候选精确绑定，只上传脱敏 verdict，
 不上传 OAuth Token、协议正文、工资数据或供应商凭据。
@@ -123,6 +137,12 @@ SHA-256、脱敏摘要 HTTPS URL、预期文件 SHA-256、专用 OIDC audience�
 ERP `catalogHash`、专业算薪 `catalogHash`、事件契约摘要和双方目录，陈旧示例
 或仅满足数量下限的目录不得通过。
 
+仓库自测只生成临时 Ed25519 密钥且不保存私钥；真实人员身份、职责与角色密钥
+绑定、KMS/HSM 签署、三类客户端与九类沙箱现场记录及企业 WORM 原始材料必须由
+现场验收，不能用 fixture 或 CI verdict 替代。
+
 ```bash
+pnpm --silent mcp:integration:print-contract \
+  > /secure/mcp/phase-5-mcp-integration-contract.json
 pnpm mcp:integration:validate-evidence -- /secure/mcp/phase-5-mcp-integration.json
 ```

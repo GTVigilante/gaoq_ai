@@ -43,7 +43,9 @@ R0 23、R1 19、R2 8、R3 0。陈旧哈希、遗漏 Resource Template 或只满�
 
 专业算薪必须作为独立 OAuth 2.1 Resource Server 进入同一门禁：resource、
 授权服务器、镜像摘要、平台契约版本、七类事件契约摘要和完整 MCP
-`catalogHash` 均与现场 `integration-mcp` v2 verdict 一致。其最低目录固定为
+`catalogHash` 均与现场 `integration-mcp` v3 verdict 一致，且该 verdict 的
+原始输入已由集成、MCP、QA 和安全四方使用独立 Ed25519 职责密钥签署并绑定
+受信 signer keyset。其最低目录固定为
 四个 Tool、两个 Resource Template、两个 Prompt，三类客户端均完成初始化；
 跨 resource Token 和错误租户各至少 30 次全部拒绝，七类事件至少回放 70 次
 且全部接受当前严格契约。专业算薪与 ERP 任一侧出现 R3 Tool、缺失 Schema、
