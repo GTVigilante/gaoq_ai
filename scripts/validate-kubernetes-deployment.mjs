@@ -54,6 +54,9 @@ assertIncludes(JSON.stringify(schema), [
   'targetNamespace',
   '^[a-f0-9]{40}$',
   '^sha256:[a-f0-9]{64}$',
+  'apiConfigMapHash',
+  'workerConfigMapHash',
+  'contractHash',
   '"minimum":3',
   '"minimum":2',
   'httpsEgressCidrs',
@@ -62,8 +65,20 @@ assertIncludes(JSON.stringify(schema), [
 ], 'KUBERNETES_VALUES_SCHEMA_INCOMPLETE');
 
 for (const [component, markers] of Object.entries({
-  api: ['runtime.apiConfigMapName', 'runtime.apiSecretName', '/api/health/ready'],
-  worker: ['runtime.workerConfigMapName', 'runtime.workerSecretName', '/health/live'],
+  api: [
+    'runtime.apiConfigMapName',
+    'runtime.apiConfigMapHash',
+    'runtime.contractHash',
+    'runtime.apiSecretName',
+    '/api/health/ready',
+  ],
+  worker: [
+    'runtime.workerConfigMapName',
+    'runtime.workerConfigMapHash',
+    'runtime.contractHash',
+    'runtime.workerSecretName',
+    '/health/live',
+  ],
   web: ['runtime.webConfigMapName', 'runtime.webSecretName', 'path: /', 'containerPort: 3000'],
   website: [
     'runtime.websiteConfigMapName',
@@ -96,6 +111,13 @@ for (const [component, markers] of Object.entries({
     'gaoq-erp.targetNamespace',
     ...markers,
   ], `KUBERNETES_${component.toUpperCase()}_DEPLOYMENT_INCOMPLETE`);
+}
+
+for (const component of ['api', 'worker']) {
+  assertIncludes(contents.get(`templates/deployment-${component}.yaml`), [
+    'gaoq.io/runtime-config:',
+    'gaoq.io/runtime-contract:',
+  ], `KUBERNETES_${component.toUpperCase()}_RUNTIME_BINDING_MISSING`);
 }
 
 const webDeployment = contents.get('templates/deployment-web.yaml');
@@ -230,6 +252,19 @@ if (renderedPath !== undefined) {
   if ([...rendered.matchAll(/^\s*image:\s*"?([^"\s]+)"?$/gmu)].some(
     (match) => !/@sha256:[a-f0-9]{64}$/u.test(match[1] ?? ''),
   )) throw new Error('KUBERNETES_RENDERED_IMAGE_NOT_IMMUTABLE');
+
+  for (const annotation of ['runtime-config', 'runtime-contract']) {
+    const values = [...rendered.matchAll(
+      new RegExp(`gaoq\\.io\\/${annotation}:\\s*"?([^"\\s]+)"?`, 'gu'),
+    )].map((match) => match[1]);
+    if (
+      values.length !== 4 ||
+      values.some((value) => !/^sha256:[a-f0-9]{64}$/u.test(value ?? ''))
+    ) throw new Error('KUBERNETES_RENDERED_RUNTIME_BINDING_INVALID');
+    if (annotation === 'runtime-contract' && new Set(values).size !== 1) {
+      throw new Error('KUBERNETES_RENDERED_RUNTIME_BINDING_INVALID');
+    }
+  }
 
   for (const forbidden of [
     /^kind:\s*Secret$/mu,

@@ -76,10 +76,13 @@ ValidatingAdmissionPolicy 必须由独立集群管理员预装并通过正反例
 | `PHASE6_DEPLOYMENT_*_IMAGE_DIGEST` | API、Worker、Web、Website 四个固定镜像摘要 |
 | `PHASE6_DEPLOYMENT_MANIFEST_SHA256` | 非自引用部署包摘要 |
 | `PHASE6_DEPLOYMENT_WEBSITE_PUBLIC_CONFIG_SHA256` | Website 公开配置摘要 |
+| `PHASE6_DEPLOYMENT_API_CONFIG_SHA256`、`PHASE6_DEPLOYMENT_WORKER_CONFIG_SHA256` | 两个不可变非敏感 ConfigMap 的规范 JSON 摘要 |
+| `PHASE6_DEPLOYMENT_RUNTIME_CONTRACT_SHA256` | 绑定两份配置、专业算薪 Resource/事件契约与平台契约版本的规范摘要 |
 | `PHASE6_DEPLOYMENT_ROLLOUT_ID` | 批准窗口唯一标识 |
 | `PHASE6_DEPLOYMENT_*_CONFIG_MAP`、`PHASE6_DEPLOYMENT_*_SECRET` | 四组件八个外部引用名；Runner 不读取 Secret |
 | `PHASE6_DEPLOYMENT_GO_NO_GO_ENVIRONMENT`、`PHASE6_DEPLOYMENT_GO_NO_GO_REGION` | 目标环境与 Region |
 | `PHASE6_DEPLOYMENT_GO_NO_GO_SIGNER_KEYSET_SHA256` | Phase 5 十方 Ed25519 公钥角色/keyId 规范集合摘要；Plan 与 Apply 都重新绑定 |
+| `GO_NO_GO_PAYROLL_RESOURCE`、`GO_NO_GO_PAYROLL_AUTHORIZATION_SERVER`、`GO_NO_GO_PAYROLL_IMAGE_DIGEST`、`GO_NO_GO_PAYROLL_CONTRACT_HASH`、`GO_NO_GO_PAYROLL_CATALOG_HASH` | Phase 5 已批准的独立专业算薪边界；Phase 6 重验时不得缺失或漂移 |
 | `PHASE6_DEPLOYMENT_PLATFORM_INTAKE_SIGNER_KEYSET_SHA256` | Phase 6 平台准入六方 Ed25519 公钥角色/keyId 规范集合摘要；Plan 与 Apply 都重新绑定 |
 
 ### 3.3 Apply 授权
@@ -104,11 +107,14 @@ Plan 每次重新读取三份输入并执行：
 2. 平台准入 `READY`、当前 policy/workflow、Hosted Runner、audience、RBAC、
    六方独立 Ed25519 签名和批准 signer keyset 绑定；
 3. Helm strict lint、仓库清单检查和固定 schema Kubeconform；
-4. 四个 Deployment、八个运行时引用、rollout ID 和 Website 公开配置绑定；
-5. 控制/业务命名空间和四个 ConfigMap 存在；Secret get 与 Deployment 写权限被拒绝；
-6. 当前 Helm manifest 与拟发布 manifest 的本地 diff。
+4. 四个 Deployment、八个运行时引用、rollout ID、Website 公开配置以及
+   API/Worker 配置与运行契约摘要绑定；
+5. API/Worker ConfigMap 必须不可变、无敏感键，显式启用生产和专业算薪外置
+   模式；API OAuth 额外 Resource 必须包含当前 Go/No-Go 专业算薪 Resource；
+6. 控制/业务命名空间和四个 ConfigMap 存在；Secret get 与 Deployment 写权限被拒绝；
+7. 当前 Helm manifest 与拟发布 manifest 的本地 diff。
 
-Artifact 保存脱敏 verdict、渲染清单、diff 和
+Artifact 保存 Go/No-Go、平台准入、运行配置、部署计划等脱敏 verdict、渲染清单、diff 和
 `gaoq.phase6.deployment-plan-binding.v1`。绑定包含仓库 ID、commit、workflow
 ref、run ID/attempt、输入摘要、渲染摘要、部署包摘要和验证器摘要，保存 90 天。
 三份下载输入和 kubeconfig 不上传。
@@ -130,6 +136,11 @@ ref、run ID/attempt、输入摘要、渲染摘要、部署包摘要和验证器
 
 机器可读字段、排序、编码与签名 payload 可通过
 `pnpm --silent release:phase6:deployment-authorization:print-contract` 查询。
+运行配置规范与摘要输入可通过
+`pnpm --silent release:phase6:runtime-config:print-contract` 查询。
+平台负责人可对 `kubectl get configmap --output json` 的两份只读导出执行
+`--calculate` 生成三个摘要，再写入受控 values 与 Repository Variables；计算
+时仍须提供当前 Go/No-Go 的专业算薪 Resource 和事件契约摘要，禁止手工拼接。
 该密码学校验只能证明证据由批准角色的私钥签署；真实人员身份、职责与角色密钥的
 绑定仍必须由企业 IAM/KMS 和 WORM 签署审计证明。
 

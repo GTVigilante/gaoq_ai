@@ -1280,6 +1280,15 @@ Controller 与 DTO 的 73 项测试四维 100%；领域 66 项测试达到
 
 ## 6. 架构边界
 
+2026-07-30 追加完成 Phase 6 生产运行配置绑定：API/Worker ConfigMap 必须
+`immutable: true`，只读校验器对规范 JSON 计算摘要并拒绝敏感键，要求显式生产
+角色和 `PAYROLL_SYSTEM_MODE=external`；API OAuth 额外 Resource 必须包含
+Go/No-Go 批准的独立专业算薪 Resource。组合运行契约摘要覆盖两份配置、专业算薪
+Resource、七类事件契约与 `@gaoq/platform-contracts@1.0.0`，并进入 Helm
+annotation、Plan/Apply 环境绑定和脱敏证据。两条 Phase 6 工作流同时补齐此前
+遗漏的专业算薪 Go/No-Go 五字段，否则严格重验无法运行。该交付只关闭仓库发布
+契约缺口，不证明目标集群对象、OAuth、共享事件或外部连接器已现场验收。
+
 月中多次变更、跨法域自然日拆分、工资调整收付与税务结算闭环、年度工资代扣/
 税表/税局评估核对现均已作为旧 ERP 的迁移与兼容基线交付，并具备独立应用服务、
 REST/事件/MCP 边界、追加式迁移和逐文件四维 90% 门禁。官方个人综合所得申报

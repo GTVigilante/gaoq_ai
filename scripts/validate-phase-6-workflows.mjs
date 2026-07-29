@@ -160,6 +160,12 @@ const expectedScripts = {
     'node scripts/release/validate-phase-6-deployment-plan.mjs',
   'release:phase6:deployment:self-test':
     'node scripts/release/validate-phase-6-deployment-plan.mjs --self-test',
+  'release:phase6:runtime-config:validate':
+    'node scripts/release/validate-phase-6-runtime-config.mjs',
+  'release:phase6:runtime-config:self-test':
+    'node scripts/release/validate-phase-6-runtime-config.mjs --self-test',
+  'release:phase6:runtime-config:print-contract':
+    'node scripts/release/validate-phase-6-runtime-config.mjs --print-contract',
   'release:phase6:deployment-authorization:validate-evidence':
     'node scripts/release/validate-phase-6-deployment-authorization.mjs',
   'release:phase6:deployment-authorization:self-test':
@@ -187,6 +193,7 @@ for (const name of [
   'release:phase6:cutover:self-test',
   'release:phase6:hypercare:self-test',
   'release:phase6:deployment:self-test',
+  'release:phase6:runtime-config:self-test',
   'release:phase6:deployment-authorization:self-test',
   'release:phase6:platform-intake:self-test',
   'release:phase6:workflows:validate',
@@ -252,6 +259,11 @@ function validateDeploymentWorkflow(workflow, contract) {
     'PHASE6_DEPLOYMENT_GO_NO_GO_URL: ${{ vars.PHASE6_DEPLOYMENT_GO_NO_GO_URL }}',
     'PHASE6_DEPLOYMENT_GO_NO_GO_SHA256: ${{ vars.PHASE6_DEPLOYMENT_GO_NO_GO_SHA256 }}',
     'GO_NO_GO_EXPECTED_SIGNER_KEYSET: ${{ vars.PHASE6_DEPLOYMENT_GO_NO_GO_SIGNER_KEYSET_SHA256 }}',
+    'GO_NO_GO_EXPECTED_PAYROLL_RESOURCE: ${{ vars.GO_NO_GO_PAYROLL_RESOURCE }}',
+    'GO_NO_GO_EXPECTED_PAYROLL_AUTHORIZATION_SERVER: ${{ vars.GO_NO_GO_PAYROLL_AUTHORIZATION_SERVER }}',
+    'GO_NO_GO_EXPECTED_PAYROLL_IMAGE: ${{ vars.GO_NO_GO_PAYROLL_IMAGE_DIGEST }}',
+    'GO_NO_GO_EXPECTED_PAYROLL_CONTRACT_HASH: ${{ vars.GO_NO_GO_PAYROLL_CONTRACT_HASH }}',
+    'GO_NO_GO_EXPECTED_PAYROLL_CATALOG_HASH: ${{ vars.GO_NO_GO_PAYROLL_CATALOG_HASH }}',
     'PHASE6_DEPLOYMENT_PLATFORM_INTAKE_URL: ${{ vars.PHASE6_DEPLOYMENT_PLATFORM_INTAKE_URL }}',
     'PHASE6_DEPLOYMENT_PLATFORM_INTAKE_SHA256: ${{ vars.PHASE6_DEPLOYMENT_PLATFORM_INTAKE_SHA256 }}',
     'PHASE6_DEPLOYMENT_PLATFORM_INTAKE_SIGNER_KEYSET_SHA256: ${{ vars.PHASE6_DEPLOYMENT_PLATFORM_INTAKE_SIGNER_KEYSET_SHA256 }}',
@@ -263,6 +275,11 @@ function validateDeploymentWorkflow(workflow, contract) {
     'validate-phase-5-go-no-go-evidence.mjs',
     'validate-phase-6-platform-intake.mjs',
     'validate-phase-6-deployment-plan.mjs',
+    'validate-phase-6-runtime-config.mjs',
+    'PHASE6_DEPLOYMENT_API_CONFIG_SHA256: ${{ vars.PHASE6_DEPLOYMENT_API_CONFIG_SHA256 }}',
+    'PHASE6_DEPLOYMENT_WORKER_CONFIG_SHA256: ${{ vars.PHASE6_DEPLOYMENT_WORKER_CONFIG_SHA256 }}',
+    'PHASE6_DEPLOYMENT_RUNTIME_CONTRACT_SHA256: ${{ vars.PHASE6_DEPLOYMENT_RUNTIME_CONTRACT_SHA256 }}',
+    '$RUNNER_TEMP/runtime-config-verdict.json',
     'validate-phase-6-deployment-authorization.mjs --self-test',
     'validate-kubernetes-deployment.mjs',
     "test \"$(node --version)\" = 'v22.23.1'",

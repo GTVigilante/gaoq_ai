@@ -34,11 +34,26 @@ NetworkPolicy 从默认拒绝开始，再逐条开放精确组件与端口：入
 
 Chart 不创建 Secret。平台负责人必须在发布前创建八个独立对象引用：API、Worker、ERP Web、Website 各自的 ConfigMap 与 Secret。四个 Secret 使用不同身份和轮换周期，禁止跨组件复用；ERP Web 的招聘门户 BFF 只读取最小 OAuth 凭据，Website 只读取缓存失效密钥。浏览器公开 Origin、frame ancestors 和验证码地址在镜像构建时固定，并以 `release.websitePublicConfigHash` 绑定，禁止把服务端凭据写入 `NEXT_PUBLIC_*`。
 
+API 与 Worker ConfigMap 必须设置 `immutable: true`，变更时创建新名称，禁止原地
+漂移。Plan 与 Apply 的最小权限身份只读取这两个非敏感对象的 JSON，拒绝
+`binaryData`、连接串、Token、密码、私钥、加密/盲索引密钥等敏感键，并要求
+双方显式配置 `NODE_ENV=production`、各自 `RUNTIME_ROLE` 和
+`PAYROLL_SYSTEM_MODE=external`。API 的
+`AUTH_ADDITIONAL_RESOURCES_JSON` 必须恰好包含当前 Go/No-Go 绑定的独立专业
+算薪 Resource；不得与 ERP `AUTH_RESOURCE` 相同。校验器只输出对象身份、规范
+摘要和边界结论，不输出配置正文，也不读取 Secret。
+
 Secret Manager 同步器或平台流水线必须满足：工作负载身份最小权限、只读挂载/注入、版本可追溯、轮换有重启策略、回滚不会恢复已吊销凭据。银行、税务、电子签、WORM、OAuth 与审计 HMAC/签名密钥必须分域分 key，禁止复用。
 
 ## 5. 发布绑定与执行顺序
 
-四个镜像都以 `repository@sha256:digest` 部署。`release.commitSha`、四个镜像摘要、`release.deploymentManifestHash`、`release.websitePublicConfigHash` 和 `release.rolloutId` 必须与 Phase 5/6 证据以及资金执行授权完全一致。
+四个镜像都以 `repository@sha256:digest` 部署。`release.commitSha`、四个镜像摘要、`release.deploymentManifestHash`、`release.websitePublicConfigHash`、`runtime.apiConfigMapHash`、`runtime.workerConfigMapHash`、`runtime.contractHash` 和 `release.rolloutId` 必须与 Phase 5/6 证据以及资金执行授权完全一致。
+
+`runtime.contractHash` 是规范 JSON 的 SHA-256，覆盖目标命名空间、API/Worker
+ConfigMap 名称与内容摘要、`PAYROLL_SYSTEM_MODE=external`、专业算薪 Resource、
+七类共享事件契约摘要及平台契约版本 `1.0.0`。API/Worker Deployment 与 Pod
+Template 均携带运行配置和运行契约 annotation，因此配置变更必然改变审批输入并
+触发滚动更新；只改同名对象、跳过 Go/No-Go 或复用陈旧算薪契约均失败关闭。
 
 `deploymentManifestHash` 指发布平台生成的“部署包清单”摘要：其输入包含 Chart 版本、受控 values 摘要、镜像摘要、外部配置版本和平台策略版本，但排除该摘要字段本身，避免自引用。发布平台生成后将它写入 values 和工作负载 annotation，现场验证器再比对证据。
 
@@ -46,7 +61,8 @@ Secret Manager 同步器或平台流水线必须满足：工作负载身份最�
 
 1. 完成镜像供应链、依赖、SAST、Secret、DAST、性能、迁移、韧性、权限、隐私、UAT 和 MCP 证据门禁。
 2. 在隔离环境用目标 values 执行 `helm lint`、`helm template`、仓库渲染检查和 Kubeconform；再由目标集群执行 server-side dry-run 与准入策略。
-3. 人工复核 NetworkPolicy CIDR、外部 ConfigMap/Secret 版本、证书、发布绑定和回滚点。
+3. 自动验证不可变 API/Worker ConfigMap 的脱敏内容摘要和专业算薪边界；人工
+   复核 NetworkPolicy CIDR、外部 Secret 版本、证书、发布绑定和回滚点。
 4. 平台与安全负责人先按[Kubernetes 平台最小权限护栏](./06-kubernetes-platform-guardrails.md)安装并验证双命名空间、OIDC Group RBAC 和失败关闭准入；经 Go/No-Go 和变更审批后，再使用[受保护生产部署工作流](./05-protected-production-deployment.md)完成只读计划、双环境复验和 Helm 原子发布；AI/MCP 只能读取脱敏状态。
 5. 验证 rollout、探针、SLO、队列、审计锚点、外部连接和全域对账；异常立即按 Phase 6 契约回滚并保全证据。
 

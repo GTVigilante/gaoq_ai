@@ -51,9 +51,12 @@ jobs:
       PHASE6_DEPLOYMENT_WEBSITE_PUBLIC_CONFIG_SHA256: ${{ vars.PHASE6_DEPLOYMENT_WEBSITE_PUBLIC_CONFIG_SHA256 }}
       PHASE6_DEPLOYMENT_EXPECTED_ROLLOUT_ID: ${{ vars.PHASE6_DEPLOYMENT_ROLLOUT_ID }}
       PHASE6_DEPLOYMENT_API_CONFIG_MAP: ${{ vars.PHASE6_DEPLOYMENT_API_CONFIG_MAP }}
+      PHASE6_DEPLOYMENT_API_CONFIG_SHA256: ${{ vars.PHASE6_DEPLOYMENT_API_CONFIG_SHA256 }}
       PHASE6_DEPLOYMENT_API_SECRET: ${{ vars.PHASE6_DEPLOYMENT_API_SECRET }}
       PHASE6_DEPLOYMENT_WORKER_CONFIG_MAP: ${{ vars.PHASE6_DEPLOYMENT_WORKER_CONFIG_MAP }}
+      PHASE6_DEPLOYMENT_WORKER_CONFIG_SHA256: ${{ vars.PHASE6_DEPLOYMENT_WORKER_CONFIG_SHA256 }}
       PHASE6_DEPLOYMENT_WORKER_SECRET: ${{ vars.PHASE6_DEPLOYMENT_WORKER_SECRET }}
+      PHASE6_DEPLOYMENT_RUNTIME_CONTRACT_SHA256: ${{ vars.PHASE6_DEPLOYMENT_RUNTIME_CONTRACT_SHA256 }}
       PHASE6_DEPLOYMENT_WEB_CONFIG_MAP: ${{ vars.PHASE6_DEPLOYMENT_WEB_CONFIG_MAP }}
       PHASE6_DEPLOYMENT_WEB_SECRET: ${{ vars.PHASE6_DEPLOYMENT_WEB_SECRET }}
       PHASE6_DEPLOYMENT_WEBSITE_CONFIG_MAP: ${{ vars.PHASE6_DEPLOYMENT_WEBSITE_CONFIG_MAP }}
@@ -67,6 +70,11 @@ jobs:
       GO_NO_GO_EXPECTED_WEBSITE_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_WEBSITE_IMAGE_DIGEST }}
       GO_NO_GO_EXPECTED_DEPLOYMENT_MANIFEST: ${{ vars.PHASE6_DEPLOYMENT_MANIFEST_SHA256 }}
       GO_NO_GO_EXPECTED_SIGNER_KEYSET: ${{ vars.PHASE6_DEPLOYMENT_GO_NO_GO_SIGNER_KEYSET_SHA256 }}
+      GO_NO_GO_EXPECTED_PAYROLL_RESOURCE: ${{ vars.GO_NO_GO_PAYROLL_RESOURCE }}
+      GO_NO_GO_EXPECTED_PAYROLL_AUTHORIZATION_SERVER: ${{ vars.GO_NO_GO_PAYROLL_AUTHORIZATION_SERVER }}
+      GO_NO_GO_EXPECTED_PAYROLL_IMAGE: ${{ vars.GO_NO_GO_PAYROLL_IMAGE_DIGEST }}
+      GO_NO_GO_EXPECTED_PAYROLL_CONTRACT_HASH: ${{ vars.GO_NO_GO_PAYROLL_CONTRACT_HASH }}
+      GO_NO_GO_EXPECTED_PAYROLL_CATALOG_HASH: ${{ vars.GO_NO_GO_PAYROLL_CATALOG_HASH }}
     steps:
       - name: 只允许默认分支执行
         shell: bash
@@ -88,6 +96,7 @@ jobs:
           node scripts/github/github-oidc-kubernetes-credential.mjs --self-test
           node scripts/github/write-oidc-kubeconfig.mjs --self-test
           node scripts/release/validate-phase-6-deployment-plan.mjs --self-test
+          node scripts/release/validate-phase-6-runtime-config.mjs --self-test
           node scripts/release/validate-phase-6-platform-intake.mjs --self-test
           node scripts/release/validate-phase-6-deployment-authorization.mjs --self-test
 
@@ -216,9 +225,18 @@ jobs:
           kubectl get namespace "$PHASE6_DEPLOYMENT_CONTROL_NAMESPACE" > /dev/null
           kubectl get namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE" > /dev/null
           kubectl get configmap "$PHASE6_DEPLOYMENT_API_CONFIG_MAP" \
-            --namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE" > /dev/null
+            --namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE" --output json \
+            > "$RUNNER_TEMP/api-runtime-config.json"
           kubectl get configmap "$PHASE6_DEPLOYMENT_WORKER_CONFIG_MAP" \
-            --namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE" > /dev/null
+            --namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE" --output json \
+            > "$RUNNER_TEMP/worker-runtime-config.json"
+          chmod 0600 "$RUNNER_TEMP/api-runtime-config.json" \
+            "$RUNNER_TEMP/worker-runtime-config.json"
+          node scripts/release/validate-phase-6-runtime-config.mjs \
+            --enforce-environment \
+            "$RUNNER_TEMP/api-runtime-config.json" \
+            "$RUNNER_TEMP/worker-runtime-config.json" \
+            > "$RUNNER_TEMP/runtime-config-verdict.json"
           kubectl get configmap "$PHASE6_DEPLOYMENT_WEB_CONFIG_MAP" \
             --namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE" > /dev/null
           kubectl get configmap "$PHASE6_DEPLOYMENT_WEBSITE_CONFIG_MAP" \
@@ -259,6 +277,7 @@ jobs:
             ${{ runner.temp }}/go-no-go-verdict.json
             ${{ runner.temp }}/platform-intake-verdict.json
             ${{ runner.temp }}/deployment-plan-verdict.json
+            ${{ runner.temp }}/runtime-config-verdict.json
             ${{ runner.temp }}/deployment-plan-binding.json
             ${{ runner.temp }}/production-rendered.yaml
             ${{ runner.temp }}/deployment.diff

@@ -194,6 +194,16 @@
   和最终 `READY` 决定；伪签名、复用公钥、角色换签、签后篡改或 keyset 漂移
   均失败关闭，Plan 与 Apply 都重复验收。仓库自测只使用临时密钥；真实六方人员、
   IAM/KMS 角色密钥和 WORM 审计仍待现场验收。
+- 2026-07-30 已关闭 Phase 6 只绑定 ConfigMap 名称、不能证明生产运行配置内容
+  与专业算薪边界仍为批准版本的缺口：API/Worker ConfigMap 现在必须不可变，
+  Plan 与 Apply 只读规范 JSON 并拒绝敏感键，显式校验
+  `NODE_ENV=production`、各自 `RUNTIME_ROLE` 和
+  `PAYROLL_SYSTEM_MODE=external`。API OAuth 额外 Resource 必须包含同一
+  Go/No-Go 专业算薪 Resource；运行契约摘要同时绑定两份配置摘要、专业算薪
+  Resource、七类事件契约和平台契约 `1.0.0`，并进入 Deployment/Pod annotation、
+  values schema、渲染门禁和脱敏 artifact。Phase 6 还补齐了此前遗漏的五项
+  Go/No-Go 专业算薪环境绑定，否则现场重验会在 Runner 内失败。该仓库门禁不读取
+  Secret，也不替代真实 OAuth、事件回放、连接器部署或目标集群验收。
 - 2026-07-30 已关闭统一切换五方验收及 Hypercare 归档三方批准仅校验角色、
   证据 ID、摘要和时间，无法证明职责主体真实签署的缺口：切换证据升级为
   `gaoq.phase6.cutover.v2`，业务、变更、数据、安全和 SRE 五方分别使用不同

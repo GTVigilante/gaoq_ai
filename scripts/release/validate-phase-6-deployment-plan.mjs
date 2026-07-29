@@ -43,6 +43,7 @@ if (argumentsList.length === 1 && argumentsList[0] === '--validate-environment')
     websitePublicConfigHash: summary.websitePublicConfigHash,
     rolloutId: summary.rolloutId,
     runtimeReferences: summary.runtimeReferences,
+    runtimeConfiguration: summary.runtimeConfiguration,
     renderedManifestSha256: digest(manifest),
   }, null, 2)}\n`);
 }
@@ -68,6 +69,9 @@ function expectedFromEnvironment() {
     webSecret: process.env.PHASE6_DEPLOYMENT_WEB_SECRET,
     websiteConfigMap: process.env.PHASE6_DEPLOYMENT_WEBSITE_CONFIG_MAP,
     websiteSecret: process.env.PHASE6_DEPLOYMENT_WEBSITE_SECRET,
+    apiConfigMapHash: process.env.PHASE6_DEPLOYMENT_API_CONFIG_SHA256,
+    workerConfigMapHash: process.env.PHASE6_DEPLOYMENT_WORKER_CONFIG_SHA256,
+    runtimeContractHash: process.env.PHASE6_DEPLOYMENT_RUNTIME_CONTRACT_SHA256,
   });
   name(expected.releaseName, 53);
   for (const field of [
@@ -108,6 +112,9 @@ function expectedFromEnvironment() {
     'websiteImageDigest',
     'deploymentManifestHash',
     'websitePublicConfigHash',
+    'apiConfigMapHash',
+    'workerConfigMapHash',
+    'runtimeContractHash',
   ]) {
     pattern(expected[field], SHA256, 'PHASE6_DEPLOYMENT_EXPECTED_DIGEST_INVALID');
   }
@@ -136,7 +143,7 @@ function validateManifest(manifest, expected) {
   if (deployments.length !== COMPONENTS.length) fail('PHASE6_DEPLOYMENT_COMPONENTS_INCOMPLETE');
   const targetNamespaces = [...manifest.matchAll(/^\s{2}namespace:\s*([^\s]+)\s*$/gmu)]
     .map((match) => match[1]);
-  if (targetNamespaces.length !== 22 || new Set(targetNamespaces).size !== 1) {
+  if (targetNamespaces.length !== 26 || new Set(targetNamespaces).size !== 1) {
     fail('PHASE6_DEPLOYMENT_TARGET_NAMESPACE_INVALID');
   }
 
@@ -215,12 +222,12 @@ function validateManifest(manifest, expected) {
     ),
     websiteConfigMap: single(
       deployments.find((document) => /component:\s*website\b/u.test(document)),
-      /configMapRef:\s*\{\s*name:\s*([^\s}]+)\s*\}/gu,
+      /configMapKeyRef:\s*\n\s*name:\s*([^\s]+)\s*/gu,
       'PHASE6_DEPLOYMENT_WEBSITE_CONFIG_INVALID',
     ),
     websiteSecret: single(
       deployments.find((document) => /component:\s*website\b/u.test(document)),
-      /secretRef:\s*\{\s*name:\s*([^\s}]+)\s*\}/gu,
+      /secretKeyRef:\s*\n\s*name:\s*([^\s]+)\s*/gu,
       'PHASE6_DEPLOYMENT_WEBSITE_SECRET_INVALID',
     ),
   });
@@ -234,6 +241,30 @@ function validateManifest(manifest, expected) {
     SHA256,
     'PHASE6_DEPLOYMENT_WEBSITE_PUBLIC_CONFIG_INVALID',
   );
+  const apiDeployment = deployments.find((document) => /component:\s*api\b/u.test(document));
+  const workerDeployment = deployments.find(
+    (document) => /component:\s*worker\b/u.test(document),
+  );
+  const runtimeConfiguration = Object.freeze({
+    apiConfigMapHash: uniform(
+      apiDeployment,
+      /gaoq\.io\/runtime-config:\s*"?([^"\s]+)"?/gu,
+      'PHASE6_DEPLOYMENT_API_CONFIG_HASH_INVALID',
+    ),
+    workerConfigMapHash: uniform(
+      workerDeployment,
+      /gaoq\.io\/runtime-config:\s*"?([^"\s]+)"?/gu,
+      'PHASE6_DEPLOYMENT_WORKER_CONFIG_HASH_INVALID',
+    ),
+    runtimeContractHash: uniform(
+      `${apiDeployment}\n${workerDeployment}`,
+      /gaoq\.io\/runtime-contract:\s*"?([^"\s]+)"?/gu,
+      'PHASE6_DEPLOYMENT_RUNTIME_CONTRACT_INVALID',
+    ),
+  });
+  for (const value of Object.values(runtimeConfiguration)) {
+    pattern(value, SHA256, 'PHASE6_DEPLOYMENT_RUNTIME_CONFIGURATION_INVALID');
+  }
 
   const summary = Object.freeze({
     releaseName: summaries.api.releaseName,
@@ -248,6 +279,7 @@ function validateManifest(manifest, expected) {
     websitePublicConfigHash,
     rolloutId: summaries.api.rolloutId,
     runtimeReferences,
+    runtimeConfiguration,
   });
   if (expected !== undefined) validateExpected(summary, summaries, expected);
   return summary;
@@ -283,6 +315,10 @@ function validateExpected(summary, summaries, expected) {
     equal(summary.runtimeReferences[field], expected[field],
       'PHASE6_DEPLOYMENT_RUNTIME_REFERENCE_MISMATCH');
   }
+  for (const field of ['apiConfigMapHash', 'workerConfigMapHash', 'runtimeContractHash']) {
+    equal(summary.runtimeConfiguration[field], expected[field],
+      'PHASE6_DEPLOYMENT_RUNTIME_CONFIGURATION_MISMATCH');
+  }
 }
 
 function single(content, expression, code) {
@@ -304,8 +340,24 @@ function runSelfTest() {
   const sha = (character) => `sha256:${character.repeat(64)}`;
   const commitSha = 'a'.repeat(40);
   const manifestHash = sha('b');
+  const apiConfigMapHash = sha('5');
+  const workerConfigMapHash = sha('6');
+  const runtimeContractHash = sha('7');
   const deploymentDocuments = COMPONENTS.map((component, index) => {
-    const runtime = `          envFrom:
+    const runtime = component === 'website'
+      ? `          env:
+            - name: ERP_API_INTERNAL_ORIGIN
+              valueFrom:
+                configMapKeyRef:
+                  name: website-config
+                  key: ERP_API_INTERNAL_ORIGIN
+            - name: MARKETING_REVALIDATE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: website-secret
+                  key: MARKETING_REVALIDATE_SECRET
+`
+      : `          envFrom:
             - configMapRef: { name: ${component}-config }
             - secretRef: { name: ${component}-secret }
 `;
@@ -313,6 +365,15 @@ function runSelfTest() {
       ? `    gaoq.io/website-public-config: "${sha('c')}"
 `
       : '';
+    const runtimeConfigBinding = component === 'api'
+      ? `    gaoq.io/runtime-config: "${apiConfigMapHash}"
+    gaoq.io/runtime-contract: "${runtimeContractHash}"
+`
+      : component === 'worker'
+        ? `    gaoq.io/runtime-config: "${workerConfigMapHash}"
+    gaoq.io/runtime-contract: "${runtimeContractHash}"
+`
+        : '';
     return `apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -323,6 +384,7 @@ metadata:
   annotations:
     gaoq.io/release-commit: "${commitSha}"
     gaoq.io/deployment-manifest: "${manifestHash}"
+${runtimeConfigBinding}
 ${websitePublicConfig}
 spec:
   template:
@@ -334,6 +396,7 @@ spec:
         gaoq.io/rollout-id: "rollout-001"
         gaoq.io/release-commit: "${commitSha}"
         gaoq.io/deployment-manifest: "${manifestHash}"
+${runtimeConfigBinding}
 ${websitePublicConfig}
     spec:
       containers:
@@ -341,7 +404,7 @@ ${websitePublicConfig}
           image: "registry.example.invalid/gaoq/${component}@${sha(String(index + 1))}"
 ${runtime}`;
   });
-  const supportDocuments = Array.from({ length: 18 }, (_, index) => `apiVersion: v1
+  const supportDocuments = Array.from({ length: 22 }, (_, index) => `apiVersion: v1
 kind: ConfigMap
 metadata:
   name: support-${index}
@@ -357,10 +420,12 @@ metadata:
     workerConfigMap: 'worker-config', workerSecret: 'worker-secret',
     webConfigMap: 'web-config', webSecret: 'web-secret',
     websiteConfigMap: 'website-config', websiteSecret: 'website-secret',
+    apiConfigMapHash, workerConfigMapHash, runtimeContractHash,
   });
   validateManifest(documents, expected);
   expectFailure(() => validateManifest(documents.replace(sha('1'), sha('9')), expected));
   expectFailure(() => validateManifest(documents.replace('api-secret', 'worker-secret'), expected));
+  expectFailure(() => validateManifest(documents.replace(apiConfigMapHash, sha('8')), expected));
   expectFailure(() => validateManifest(documents.replace('registry.example.invalid', 'https://registry.example.invalid'), expected));
   expectFailure(() => validateManifest(`${documents}\n---\nkind: Secret\n`, expected));
   expectFailure(() => name('-option', 53));

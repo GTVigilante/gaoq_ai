@@ -26,9 +26,12 @@ images:
 
 runtime:
   apiConfigMapName: ''
+  apiConfigMapHash: ''
   apiSecretName: ''
   workerConfigMapName: ''
+  workerConfigMapHash: ''
   workerSecretName: ''
+  contractHash: ''
   webConfigMapName: ''
   webSecretName: ''
   websiteConfigMapName: ''
