@@ -382,6 +382,11 @@
   `status:external-acceptance`。同时修正 Phase 4 完成度审计中把已交付的月中
   拆分、工资调整结算和年度核对写成“未实现”的过期表述，并由文档校验器拒绝
   该状态回退；官方个人综合所得申报仍属于外部法定系统职责。
+- 2026-07-29 已补齐 Issue #6 的本地开发运行时：`pnpm dev:up` 自动探测
+  Compose，启动并等待 MongoDB Replica Set、Redis、MinIO 对象存储及存储桶，
+  随后统一监管 API、Worker、ERP Web 与官网；对象存储高熵凭据仅以 `0600`
+  写入 Git 忽略目录，任一应用退出会收敛其余进程。`pnpm dev:down` 只停止
+  容器并保留卷；本地 MinIO 明确不替代 WORM/KMS/扫描、GitHub CI 或生产验收。
 - 2026-07-27 已完成开放 Issue 与 Phase 0–6 仓库实施证据审计，并正式定义
   `status:implementation-delivered` 与 `status:external-acceptance` 的并存规则；
   新增 Phase 3 Issue 已归入唯一 Milestone。GitHub Project 仍由 Issue #41 跟踪，

@@ -8,6 +8,7 @@
 - [`04-org-delivery-reliability-runbook.md`](./04-org-delivery-reliability-runbook.md)：ERP 组织主数据向钉钉、飞书和 OP 投递的租约、结果不确定隔离、对账与 MCP 边界。
 - [`05-identity-token-entry-runbook.md`](./05-identity-token-entry-runbook.md)：人员 SSO 映射、JWT 可信身份投影、OAuth 授权事务重验、一次性消费与失败关闭边界。
 - [`06-runtime-boundary-runbook.md`](./06-runtime-boundary-runbook.md)：公开错误、追踪、健康探针、Prometheus 与 Redis/Rediss 连接参数信任边界。
+- [`07-local-development-runtime.md`](./07-local-development-runtime.md)：本地 MongoDB、Redis、对象存储、API、Worker 与 Web 一键启动、凭据和失败关闭边界。
 
 当前审计追加代码已强制规范链载荷与规范 Base64URL，Mongo 事务提交后的会话清理
 故障不会反向诱发重复追加；独立 WORM 连接强制 HTTPS 443、成套凭据、载荷摘要与
