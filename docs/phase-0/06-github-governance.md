@@ -198,7 +198,7 @@ Backlog → Ready → In Progress → In Review → Security Review → UAT → 
   才必须已经关闭。跨阶段依赖不得被伪装成同阶段子项，也不得以 PR 编号替代
   Issue 关联。
 - 本地使用 `pnpm github:governance:self-test` 验证负向场景；已认证 `gh` 环境
-  使用 `pnpm github:governance:validate -- --repository <owner/repo>` 只读校验
+  使用 `pnpm github:governance:validate --repository <owner/repo>` 只读校验
   实时元数据。工作流使用 GitHub 注入的短时 `GITHUB_TOKEN`，错误仅输出稳定
   `GOV-*` 码与资源编号，禁止输出 Token 或 API 响应正文。
 - Hosted Actions 因账号付费或 Spending limit 在 Runner 分配前被拦截时，只能

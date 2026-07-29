@@ -154,14 +154,14 @@ type `data` 继续由列明的 Zod、TypeScript 和 JSON Schema 约束，禁止�
 - 2026-07-29 已对实时 GitHub 元数据完成一次性收敛：67 个历史 PR 补齐唯一
   Milestone，37 个历史 PR 补齐至少一个真实 Issue 关联，Issue #12 补齐明确的
   “当前阻塞/解除方式”。`scripts/github/validate-repository-governance.mjs`
-  随后只读验收 7 个 Milestone、50 个 Issue 和 79 个 PR 全部通过。
+  随后只读验收 7 个 Milestone、51 个 Issue 和 79 个 PR 全部通过。
 - `.github/workflows/github-governance.yml` 已把上述规则转成最小只读权限门禁，
   24 个负向自测覆盖标签、状态、Epic 子项、Story 三面契约、PR Ready 前 CR、真实 Issue 关联、
   验证证据和来源分支；Hosted Actions 尚未分配 Runner，仍不得记为远端通过。
 - 2026-07-30 已将 27 个 Story 全部补齐
   `REST / 事件 / MCP 契约（仓库基线）`，三行分别说明 REST、事件和 MCP 的实现
   归属或“不新增”的安全理由，不改写原验收项，也不勾选外部证据。治理校验器新增
-  `GOV-STORY-CONTRACT-SURFACES` 并对实时 7 个 Milestone、50 个 Issue、79 个
+  `GOV-STORY-CONTRACT-SURFACES` 并对实时 7 个 Milestone、51 个 Issue、79 个
   PR 验收通过；工作项模板同步要求三面分别填写。
 
 ## 5. 覆盖率边界
