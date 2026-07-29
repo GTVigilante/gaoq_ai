@@ -3,6 +3,7 @@ import type { ClientSession } from 'mongoose';
 import { describe, expect, it, vi } from 'vitest';
 
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
+import type { AccessProfileRepository } from '../../identity/access-profile.repository.js';
 import {
   AnnualPayrollReconciliationError,
   calculatePayroll,
@@ -75,10 +76,18 @@ function assemble(boundary = { assertLegacy: vi.fn() }) {
   const context = new TenantContextService();
   let annualRecord: Record<string, unknown> | null = null;
   let annualBundle: unknown = null;
-  const idempotency = { execute: vi.fn(async (
+  const idempotencySnapshots: Record<string, unknown>[] = [];
+  const idempotency = { executeWithEphemeralResult: vi.fn(async (
     _operation: string, _key: string, _input: unknown,
-    handler: (value: ClientSession) => Promise<Record<string, unknown>>,
-  ) => handler(session)) };
+    handler: (value: ClientSession) => Promise<{
+      readonly stored: Record<string, unknown>;
+      readonly result: Record<string, unknown>;
+    }>,
+  ) => {
+    const executed = await handler(session);
+    idempotencySnapshots.push(executed.stored);
+    return executed.result;
+  }) };
   const periods = { find: vi.fn().mockReturnValue(query([
     {
       id: januaryPeriodId, period: '2026-01', status: 'reconciled',
@@ -147,9 +156,34 @@ function assemble(boundary = { assertLegacy: vi.fn() }) {
     }),
   };
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
+  const profiles = {
+    resolveActive: vi.fn().mockResolvedValue({
+      tenantId: tenant.tenantId,
+      actorId: 'employee-user',
+      employeeId,
+      status: 'active',
+      roleCodes: [],
+      scopes: [],
+      departmentIds: [],
+      version: 1,
+    }),
+  };
+  const assessmentGateway = {
+    resolve: vi.fn().mockResolvedValue({
+      assessmentId: 'assessment-2026',
+      assessmentEvidenceId: 'assessment-evidence-2026',
+      assessedTaxMinor: 21_000,
+      sourceDigest: 's'.repeat(43),
+    }),
+    createSettlementLink: vi.fn().mockResolvedValue({
+      settlementUrl: 'https://tax.example.cn/settlement?token=opaque',
+      expiresAt: '2026-12-31T00:05:00.000Z',
+    }),
+  };
   const service = new PayrollAnnualReconciliationService(
     idempotency as never, context, boundary as never,
     crypto as never, outbox as never,
+    profiles as unknown as AccessProfileRepository, assessmentGateway,
     periods as never, inputs as never, results as never, filings as never,
     annualRecords as never,
   );
@@ -165,7 +199,10 @@ function assemble(boundary = { assertLegacy: vi.fn() }) {
     crypto,
     annualRecords,
     outbox,
+    profiles,
+    assessmentGateway,
     protectedBundles,
+    idempotencySnapshots,
     readAnnualRecord: () => annualRecord,
     writeAnnualRecord: (value: Record<string, unknown> | null) => {
       annualRecord = value;
@@ -201,7 +238,7 @@ describe('PayrollAnnualReconciliationService', () => {
     );
     expect(boundary.assertLegacy).toHaveBeenCalledOnce();
     expect(store.periods.find).not.toHaveBeenCalled();
-    expect(store.idempotency.execute).not.toHaveBeenCalled();
+    expect(store.idempotency.executeWithEphemeralResult).not.toHaveBeenCalled();
   });
 
   it('重放锁定工资并核对逐月已提交税表后追加年度证据', async () => {
@@ -236,31 +273,99 @@ describe('PayrollAnnualReconciliationService', () => {
       readonly data: Readonly<Record<string, unknown>>;
     };
     expect(JSON.stringify(event.data)).not.toMatch(/employee|21000|tax-evidence/u);
+    expect(store.idempotencySnapshots).toEqual([{
+      id: result.id,
+      version: 1,
+      evidenceHash: result.evidenceHash,
+    }]);
+    expect(JSON.stringify(store.idempotencySnapshots)).not.toMatch(
+      /employee|TaxMinor|21000|assessment/u,
+    );
   });
 
   it('绑定税局年度评估并按员工与税年生成追加版本', async () => {
     const store = assemble();
     await prepare(store);
-    const result = await prepare(store, {
-      employeeId,
-      taxYear: '2026',
-      officialAssessment: {
-        assessmentId: 'assessment-2026',
-        assessmentEvidenceId: 'assessment-evidence-2026',
-        assessedTaxMinor: 21_000,
-        sourceDigest: 's'.repeat(43),
-      },
-    });
+    const result = await store.context.run({
+      tenant,
+      actor: actor('service', ['erp:payroll:annual:assessment:resolve']),
+    }, () => store.service.resolveOfficialAssessment(
+      'annual-assessment-001',
+      { employeeId, taxYear: '2026' },
+    ));
     expect(result).toMatchObject({
       version: 2,
       status: 'assessment_matched',
       officialAssessedTaxMinor: 21_000,
     });
+    expect(store.assessmentGateway.resolve).toHaveBeenCalledWith({
+      tenantId: tenant.tenantId,
+      employeeId,
+      taxYear: '2026',
+      idempotencyKey: 'annual-assessment-001',
+    });
+    const idempotencyCall =
+      store.idempotency.executeWithEphemeralResult.mock.calls.at(-1) as
+        unknown[] | undefined;
+    expect(idempotencyCall?.slice(0, 2)).toEqual([
+      'payroll.annual_reconciliation.resolve_assessment',
+      'annual-assessment-001',
+    ]);
+    expect(idempotencyCall?.[2]).toMatchObject({
+      employeeId,
+      taxYear: '2026',
+      officialAssessment: {
+        assessmentEvidenceId: 'assessment-evidence-2026',
+      },
+    });
+    expect(idempotencyCall?.[3]).toEqual(expect.any(Function));
     expect(store.readAnnualRecord()).toMatchObject({
       officialAssessmentId: 'assessment-2026',
       officialAssessmentEvidenceId: 'assessment-evidence-2026',
       officialAssessmentSourceDigest: 's'.repeat(43),
     });
+  });
+
+  it('幂等重放只用控制快照重读密文并拒绝摘要漂移', async () => {
+    const store = assemble();
+    const prepared = await prepare(store);
+    const call = store.idempotency.executeWithEphemeralResult.mock.calls[0] as
+      unknown[] | undefined;
+    const replay = call?.[4];
+    if (typeof replay !== 'function') throw new Error('测试缺少幂等重放函数');
+    await expect(store.context.run({ tenant, actor: actor() }, () =>
+      (replay as (stored: Readonly<Record<string, unknown>>) =>
+        Promise<Record<string, unknown>>)(store.idempotencySnapshots[0]!)))
+      .resolves.toMatchObject({
+        id: prepared.id,
+        evidenceHash: prepared.evidenceHash,
+      });
+    await expect(store.context.run({ tenant, actor: actor() }, () =>
+      (replay as (stored: Readonly<Record<string, unknown>>) =>
+        Promise<Record<string, unknown>>)({
+          ...store.idempotencySnapshots[0],
+          evidenceHash: 'x'.repeat(43),
+        }))).rejects.toMatchObject({
+        response: { code: 'PAYROLL_ANNUAL_REPLAY_INTEGRITY_FAILED' },
+      });
+  });
+
+  it('未经税务网关验签的客户端评估字段不能进入年度核对', async () => {
+    const store = assemble();
+    await expect(prepare(store, {
+      employeeId,
+      taxYear: '2026',
+      officialAssessment: {
+        assessmentId: 'forged',
+        assessmentEvidenceId: 'forged-evidence',
+        assessedTaxMinor: 0,
+        sourceDigest: 'x'.repeat(43),
+      },
+    } as never)).rejects.toMatchObject({
+      response: { code: 'PAYROLL_ANNUAL_INPUT_INVALID' },
+    });
+    expect(store.assessmentGateway.resolve).not.toHaveBeenCalled();
+    expect(store.idempotency.executeWithEphemeralResult).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -277,6 +382,114 @@ describe('PayrollAnnualReconciliationService', () => {
             : 'PAYROLL_ANNUAL_SERVICE_REQUIRED',
         },
       });
+  });
+
+  it.each([
+    actor('user', ['erp:payroll:annual:assessment:resolve']),
+    actor('service', []),
+  ])('税局评估读取在调用网关前校验服务主体与权限：$actorType', async (principal) => {
+    const store = assemble();
+    await expect(store.context.run({ tenant, actor: principal }, () =>
+      store.service.resolveOfficialAssessment(
+        'assessment-denied',
+        { employeeId, taxYear: '2026' },
+      ))).rejects.toMatchObject({
+        response: {
+          code: principal.scopes.length === 0
+            ? 'AUTH_SCOPE_DENIED'
+            : 'PAYROLL_ANNUAL_ASSESSMENT_SERVICE_REQUIRED',
+        },
+      });
+    expect(store.assessmentGateway.resolve).not.toHaveBeenCalled();
+    expect(store.idempotency.executeWithEphemeralResult).not.toHaveBeenCalled();
+  });
+
+  it('员工本人仅能为需要汇算的自身年度记录创建官方短时链接', async () => {
+    const store = assemble();
+    store.assessmentGateway.resolve.mockResolvedValueOnce({
+      assessmentId: 'assessment-payable-2026',
+      assessmentEvidenceId: 'assessment-payable-evidence-2026',
+      assessedTaxMinor: 31_000,
+      sourceDigest: 'p'.repeat(43),
+    });
+    const reconciliation = await store.context.run({
+      tenant,
+      actor: actor('service', ['erp:payroll:annual:assessment:resolve']),
+    }, () => store.service.resolveOfficialAssessment(
+      'assessment-payable',
+      { employeeId, taxYear: '2026' },
+    ));
+    expect(reconciliation.status).toBe('requires_employee_settlement');
+    const employeeActor = actor(
+      'user',
+      ['erp:payroll:annual:settlement:self'],
+    );
+    const link = await store.context.run({
+      tenant,
+      actor: { ...employeeActor, actorId: 'employee-user' },
+    }, () => store.service.createMySettlementLink(
+      'settlement-link-001',
+      reconciliation.id,
+    ));
+    expect(link).toEqual({
+      settlementUrl: 'https://tax.example.cn/settlement?token=opaque',
+      expiresAt: '2026-12-31T00:05:00.000Z',
+    });
+    expect(store.annualRecords.findOne).toHaveBeenLastCalledWith({
+      tenantId: tenant.tenantId,
+      id: reconciliation.id,
+      employeeId,
+    });
+    expect(store.assessmentGateway.createSettlementLink).toHaveBeenCalledWith({
+      tenantId: tenant.tenantId,
+      employeeId,
+      annualReconciliationId: reconciliation.id,
+      taxYear: '2026',
+      evidenceHash: reconciliation.evidenceHash,
+      idempotencyKey: 'settlement-link-001',
+    });
+  });
+
+  it('本人身份、记录状态与完整性均在创建官方链接前失败关闭', async () => {
+    const store = assemble();
+    const prepared = await prepare(store);
+    const user = {
+      ...actor('user', ['erp:payroll:annual:settlement:self']),
+      actorId: 'employee-user',
+    };
+    await expect(store.context.run({ tenant, actor: user }, () =>
+      store.service.createMySettlementLink(
+        'settlement-link-not-required',
+        prepared.id,
+      ))).rejects.toMatchObject({
+        response: { code: 'PAYROLL_ANNUAL_SETTLEMENT_NOT_REQUIRED' },
+      });
+    store.profiles.resolveActive.mockResolvedValueOnce(null);
+    await expect(store.context.run({ tenant, actor: user }, () =>
+      store.service.createMySettlementLink(
+        'settlement-link-no-identity',
+        prepared.id,
+      ))).rejects.toMatchObject({
+        response: { code: 'PAYROLL_EMPLOYEE_IDENTITY_REQUIRED' },
+      });
+    expect(store.assessmentGateway.createSettlementLink).not.toHaveBeenCalled();
+  });
+
+  it('税局外部调用在身份查询和网关前拒绝非法幂等键', async () => {
+    const store = assemble();
+    const user = {
+      ...actor('user', ['erp:payroll:annual:settlement:self']),
+      actorId: 'employee-user',
+    };
+    await expect(store.context.run({ tenant, actor: user }, () =>
+      store.service.createMySettlementLink(
+        'bad key',
+        januaryPeriodId,
+      ))).rejects.toMatchObject({
+        response: { code: 'IDEMPOTENCY_KEY_INVALID' },
+      });
+    expect(store.profiles.resolveActive).not.toHaveBeenCalled();
+    expect(store.assessmentGateway.createSettlementLink).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -468,14 +681,14 @@ describe('PayrollAnnualReconciliationService', () => {
   ])('映射受保护数据、唯一键与领域冲突 %#', async (failure) => {
     const store = assemble();
     if (failure instanceof AnnualPayrollReconciliationError) {
-      store.idempotency.execute.mockRejectedValueOnce(failure);
+      store.idempotency.executeWithEphemeralResult.mockRejectedValueOnce(failure);
       await expect(prepare(store)).rejects.toMatchObject({
         response: { code: 'PAYROLL_ANNUAL_TEST' },
       });
       return;
     }
     if ('code' in failure) {
-      store.idempotency.execute.mockRejectedValueOnce(failure);
+      store.idempotency.executeWithEphemeralResult.mockRejectedValueOnce(failure);
       await expect(prepare(store)).rejects.toMatchObject({
         response: { code: 'PAYROLL_ANNUAL_WRITE_CONFLICT' },
       });

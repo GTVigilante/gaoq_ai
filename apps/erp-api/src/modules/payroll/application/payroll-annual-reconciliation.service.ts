@@ -12,6 +12,7 @@ import { z } from 'zod';
 
 import { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
+import { AccessProfileRepository } from '../../identity/access-profile.repository.js';
 import { LegacyPayrollBoundaryService } from '../legacy-payroll-boundary.service.js';
 import {
   AnnualPayrollReconciliationError,
@@ -21,6 +22,10 @@ import {
   type PayrollCalculationInput,
   type PayrollCalculationResult,
 } from '../domain/index.js';
+import {
+  PayrollAnnualAssessmentGateway,
+  type PayrollAnnualSettlementLink,
+} from '../integration/payroll-tax.ports.js';
 import { PayrollDataCryptoService } from '../persistence/payroll-data-crypto.service.js';
 import { PayrollOutboxWriter } from '../persistence/payroll-outbox.writer.js';
 import {
@@ -40,6 +45,7 @@ const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 const HASH = /^[A-Za-z0-9_-]{43}$/;
 const YEAR = /^\d{4}$/;
+const IDEMPOTENCY_KEY = /^[A-Za-z0-9._:-]{8,128}$/;
 const componentSchema = z.object({
   code: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/),
   amountMinor: z.number().int().safe().nonnegative(),
@@ -126,10 +132,19 @@ const annualResultSchema = z.object({
   ]),
   evidenceHash: z.string().regex(HASH),
 }).strict();
+const annualReplaySchema = z.object({
+  id: z.string().regex(ULID),
+  version: z.number().int().positive(),
+  evidenceHash: z.string().regex(HASH),
+}).strict();
 
 export interface PrepareAnnualPayrollReconciliationInput {
   readonly employeeId: string;
   readonly taxYear: string;
+}
+
+interface TrustedAnnualPayrollReconciliationInput
+  extends PrepareAnnualPayrollReconciliationInput {
   readonly officialAssessment?: OfficialAnnualTaxAssessment;
 }
 
@@ -160,6 +175,8 @@ export class PayrollAnnualReconciliationService {
     private readonly boundary: LegacyPayrollBoundaryService,
     private readonly crypto: PayrollDataCryptoService,
     private readonly outbox: PayrollOutboxWriter,
+    private readonly profiles: AccessProfileRepository,
+    private readonly assessmentGateway: PayrollAnnualAssessmentGateway,
     @InjectModel(PayrollPeriodRecord.name)
     private readonly periods: Model<PayrollPeriodDocument>,
     @InjectModel(PayrollInputSnapshotRecord.name)
@@ -178,9 +195,94 @@ export class PayrollAnnualReconciliationService {
   ): Promise<AnnualPayrollReconciliationSummary> {
     this.assertPrepareActor();
     this.boundary.assertLegacy();
-    assertInput(input);
-    return this.run(() => this.idempotency.execute(
-      'payroll.annual_reconciliation.prepare', key, input, async (session) => {
+    assertPrepareInput(input);
+    return this.executePrepare(
+      'payroll.annual_reconciliation.prepare',
+      key,
+      input,
+    );
+  }
+
+  async resolveOfficialAssessment(
+    key: string,
+    input: PrepareAnnualPayrollReconciliationInput,
+  ): Promise<AnnualPayrollReconciliationSummary> {
+    this.assertAssessmentActor();
+    this.boundary.assertLegacy();
+    assertGatewayKey(key);
+    assertPrepareInput(input);
+    const officialAssessment = await this.assessmentGateway.resolve({
+      tenantId: this.tenantId(),
+      employeeId: input.employeeId,
+      taxYear: input.taxYear,
+      idempotencyKey: key,
+    });
+    return this.executePrepare(
+      'payroll.annual_reconciliation.resolve_assessment',
+      key,
+      { ...input, officialAssessment },
+    );
+  }
+
+  async createMySettlementLink(
+    key: string,
+    id: string,
+  ): Promise<PayrollAnnualSettlementLink> {
+    this.assertScope('erp:payroll:annual:settlement:self');
+    this.boundary.assertLegacy();
+    assertGatewayKey(key);
+    if (!ULID.test(id)) throw new BadRequestException({
+      code: 'PAYROLL_ANNUAL_ID_INVALID', message: '年度工资代扣核对标识非法',
+    });
+    const trusted = this.context.getRequired();
+    if (trusted.actor.actorType !== 'user') throw new ForbiddenException({
+      code: 'PAYROLL_ANNUAL_SETTLEMENT_USER_REQUIRED',
+      message: '年度汇算办理链接只允许员工本人创建',
+    });
+    const profile = await this.profiles.resolveActive(
+      trusted.tenant.tenantId,
+      trusted.actor.actorId,
+    );
+    if (profile === null || !ID.test(profile.employeeId)) {
+      throw new ForbiddenException({
+        code: 'PAYROLL_EMPLOYEE_IDENTITY_REQUIRED',
+        message: '当前主体未绑定有效 ERP 员工身份',
+      });
+    }
+    return this.run(async () => {
+      const record = await this.annualRecords.findOne({
+        tenantId: trusted.tenant.tenantId,
+        id,
+        employeeId: profile.employeeId,
+      }).lean().exec();
+      if (record === null) throw new NotFoundException({
+        code: 'PAYROLL_ANNUAL_NOT_FOUND', message: '年度工资代扣核对不存在',
+      });
+      const bundle = this.readVerifiedBundle(record);
+      if (record.status !== 'requires_employee_settlement') {
+        throw new ConflictException({
+          code: 'PAYROLL_ANNUAL_SETTLEMENT_NOT_REQUIRED',
+          message: '当前年度核对无需员工办理汇算',
+        });
+      }
+      return this.assessmentGateway.createSettlementLink({
+        tenantId: trusted.tenant.tenantId,
+        employeeId: profile.employeeId,
+        annualReconciliationId: record.id,
+        taxYear: bundle.result.taxYear,
+        evidenceHash: bundle.result.evidenceHash,
+        idempotencyKey: key,
+      });
+    });
+  }
+
+  private executePrepare(
+    operation: string,
+    key: string,
+    input: TrustedAnnualPayrollReconciliationInput,
+  ): Promise<AnnualPayrollReconciliationSummary> {
+    return this.run(() => this.idempotency.executeWithEphemeralResult(
+      operation, key, input, async (session) => {
         const periods = await this.periods.find({
           tenantId: this.tenantId(),
           period: { $gte: `${input.taxYear}-01`, $lte: `${input.taxYear}-12` },
@@ -297,7 +399,27 @@ export class PayrollAnnualReconciliationService {
             status: result.status, evidenceHash: result.evidenceHash,
           },
         }, session);
-        return summary(record, result);
+        const value = summary(record, result);
+        return {
+          stored: {
+            id: value.id,
+            version: value.version,
+            evidenceHash: value.evidenceHash,
+          },
+          result: value,
+        };
+      },
+      async (stored) => {
+        const replay = annualReplaySchema.parse(stored);
+        const value = await this.readSummary(replay.id);
+        if (
+          value.version !== replay.version ||
+          value.evidenceHash !== replay.evidenceHash
+        ) throw new ConflictException({
+          code: 'PAYROLL_ANNUAL_REPLAY_INTEGRITY_FAILED',
+          message: '年度核对幂等快照与加密记录不一致',
+        });
+        return value;
       },
     ));
   }
@@ -308,30 +430,7 @@ export class PayrollAnnualReconciliationService {
     if (!ULID.test(id)) throw new BadRequestException({
       code: 'PAYROLL_ANNUAL_ID_INVALID', message: '年度工资代扣核对标识非法',
     });
-    return this.run(async () => {
-      const record = await this.annualRecords.findOne({
-        tenantId: this.tenantId(), id,
-      }).lean().exec();
-      if (record === null) throw new NotFoundException({
-        code: 'PAYROLL_ANNUAL_NOT_FOUND', message: '年度工资代扣核对不存在',
-      });
-      const bundle = z.object({ result: annualResultSchema }).passthrough().parse(
-        this.crypto.unprotect({
-          tenantId: this.tenantId(), resourceType: 'annual_reconciliation',
-          resourceId: record.id, version: record.version,
-        }, protectedValue(record)),
-      );
-      if (bundle.result.evidenceHash !== record.evidenceHash ||
-        bundle.result.taxYear !== record.taxYear ||
-        bundle.result.status !== record.status ||
-        bundle.result.periodCount !== record.periodCount ||
-        bundle.result.firstPeriod !== record.firstPeriod ||
-        bundle.result.lastPeriod !== record.lastPeriod) throw new ConflictException({
-        code: 'PAYROLL_ANNUAL_RECORD_INTEGRITY_FAILED',
-        message: '年度工资代扣核对控制字段与密文不一致',
-      });
-      return summary(record, bundle.result);
-    });
+    return this.run(() => this.readSummary(id));
   }
 
   /** AI/控制面只读脱敏摘要；不返回员工、税额、税表或税局证据标识。 */
@@ -353,6 +452,17 @@ export class PayrollAnnualReconciliationService {
     });
   }
 
+  private assertAssessmentActor(): void {
+    this.assertScope('erp:payroll:annual:assessment:resolve');
+    const actor = this.context.getActorRequired();
+    if (!['service', 'system_job'].includes(actor.actorType)) {
+      throw new ForbiddenException({
+        code: 'PAYROLL_ANNUAL_ASSESSMENT_SERVICE_REQUIRED',
+        message: '税局年度评估只允许受信任薪税同步服务读取',
+      });
+    }
+  }
+
   private assertScope(scope: string): void {
     if (!this.context.getActorRequired().scopes.includes(scope)) throw new ForbiddenException({
       code: 'AUTH_SCOPE_DENIED', message: '缺少年度工资代扣核对权限',
@@ -361,6 +471,38 @@ export class PayrollAnnualReconciliationService {
 
   private tenantId(): string {
     return this.context.getTenantRequired().tenantId;
+  }
+
+  private readVerifiedBundle(record: PayrollAnnualReconciliationRecord) {
+    const bundle = z.object({ result: annualResultSchema }).passthrough().parse(
+      this.crypto.unprotect({
+        tenantId: this.tenantId(), resourceType: 'annual_reconciliation',
+        resourceId: record.id, version: record.version,
+      }, protectedValue(record)),
+    );
+    if (
+      bundle.result.evidenceHash !== record.evidenceHash ||
+      bundle.result.taxYear !== record.taxYear ||
+      bundle.result.status !== record.status ||
+      bundle.result.periodCount !== record.periodCount ||
+      bundle.result.firstPeriod !== record.firstPeriod ||
+      bundle.result.lastPeriod !== record.lastPeriod
+    ) throw new ConflictException({
+      code: 'PAYROLL_ANNUAL_RECORD_INTEGRITY_FAILED',
+      message: '年度工资代扣核对控制字段与密文不一致',
+    });
+    return bundle;
+  }
+
+  private async readSummary(id: string): Promise<AnnualPayrollReconciliationSummary> {
+    const record = await this.annualRecords.findOne({
+      tenantId: this.tenantId(), id,
+    }).lean().exec();
+    if (record === null) throw new NotFoundException({
+      code: 'PAYROLL_ANNUAL_NOT_FOUND', message: '年度工资代扣核对不存在',
+    });
+    const bundle = this.readVerifiedBundle(record);
+    return summary(record, bundle.result);
   }
 
   private async run<T>(operation: () => Promise<T>): Promise<T> {
@@ -385,23 +527,24 @@ export class PayrollAnnualReconciliationService {
   }
 }
 
-function assertInput(input: PrepareAnnualPayrollReconciliationInput): void {
+function assertPrepareInput(input: PrepareAnnualPayrollReconciliationInput): void {
   const keys = Object.keys(input).sort().join(',');
-  const assessment = input.officialAssessment;
-  if (!['employeeId,taxYear', 'employeeId,officialAssessment,taxYear'].includes(keys) ||
-    !ID.test(input.employeeId) || !YEAR.test(input.taxYear) ||
-    (assessment !== undefined && (
-      Object.keys(assessment).sort().join(',') !==
-        'assessedTaxMinor,assessmentEvidenceId,assessmentId,sourceDigest' ||
-      !ID.test(assessment.assessmentId) || !ID.test(assessment.assessmentEvidenceId) ||
-      !HASH.test(assessment.sourceDigest) ||
-      !Number.isSafeInteger(assessment.assessedTaxMinor) ||
-      assessment.assessedTaxMinor < 0
-    ))) {
+  if (
+    keys !== 'employeeId,taxYear' ||
+    !ID.test(input.employeeId) ||
+    !YEAR.test(input.taxYear)
+  ) {
     throw new BadRequestException({
       code: 'PAYROLL_ANNUAL_INPUT_INVALID', message: '年度工资代扣核对引用非法',
     });
   }
+}
+
+function assertGatewayKey(key: string): void {
+  if (!IDEMPOTENCY_KEY.test(key)) throw new BadRequestException({
+    code: 'IDEMPOTENCY_KEY_INVALID',
+    message: '幂等键必须使用 8 到 128 位白名单字符',
+  });
 }
 
 function parseManifest(content: string) {

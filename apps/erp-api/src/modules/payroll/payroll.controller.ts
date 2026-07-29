@@ -8,8 +8,10 @@ import {
   Param,
   Post,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 
 import { AuditService } from '../../core/audit/audit.service.js';
 import type { AuditRecordInput } from '../../core/audit/audit.types.js';
@@ -67,12 +69,14 @@ import {
   PreparePayrollTaxFilingDto,
   PreparePayrollAdjustmentDto,
   PrepareAnnualPayrollReconciliationDto,
+  ResolveAnnualPayrollAssessmentDto,
   StartPayrollCollectionDto,
   SubmitPayrollTaxFilingDto,
   ExplainShadowPayrollDifferenceDto,
   ImportShadowPayrollCycleDto,
   SignShadowPayrollCycleDto,
 } from './application/payroll.dto.js';
+import type { PayrollAnnualSettlementLink } from './integration/payroll-tax.ports.js';
 import { LegacyPayrollBoundaryGuard } from './legacy-payroll-boundary.guard.js';
 
 @Controller('payroll')
@@ -95,7 +99,7 @@ export class PayrollController {
     private readonly audit: AuditService,
   ) {}
 
-  /** R2：受信任薪税服务核对年度工资、已提交清单与税局评估，不执行个人申报。 */
+  /** R2：受信任薪税服务仅准备年度工资与已提交清单核对，不接受外部评估声明。 */
   @Post('annual-reconciliations/prepare')
   @RequiredScopes('erp:payroll:annual:prepare')
   async prepareAnnualReconciliation(
@@ -103,15 +107,8 @@ export class PayrollController {
     @Body() body: PrepareAnnualPayrollReconciliationDto,
   ): Promise<AnnualPayrollReconciliationSummary> {
     const result = await this.annualReconciliations.prepare(this.key(key), {
-      employeeId: body.employeeId, taxYear: body.taxYear,
-      ...(body.officialAssessment === undefined ? {} : {
-        officialAssessment: {
-          assessmentId: body.officialAssessment.assessmentId,
-          assessmentEvidenceId: body.officialAssessment.assessmentEvidenceId,
-          assessedTaxMinor: body.officialAssessment.assessedTaxMinor,
-          sourceDigest: body.officialAssessment.sourceDigest,
-        },
-      }),
+      employeeId: body.employeeId,
+      taxYear: body.taxYear,
     });
     await this.auditAfterCommit({
       action: 'payroll.annual_reconciliation.prepare',
@@ -120,6 +117,58 @@ export class PayrollController {
         taxYear: result.taxYear, periodCount: result.periodCount,
         status: result.status, evidenceHash: result.evidenceHash,
       },
+    });
+    return result;
+  }
+
+  /** R2：由隔离税务网关读取并验签官方年度评估，再生成追加核对版本。 */
+  @Post('annual-reconciliations/resolve-assessment')
+  @RequiredScopes('erp:payroll:annual:assessment:resolve')
+  async resolveAnnualAssessment(
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: ResolveAnnualPayrollAssessmentDto,
+  ): Promise<AnnualPayrollReconciliationSummary> {
+    const result = await this.annualReconciliations.resolveOfficialAssessment(
+      this.key(key),
+      { employeeId: body.employeeId, taxYear: body.taxYear },
+    );
+    await this.auditAfterCommit({
+      action: 'payroll.annual_reconciliation.assessment.resolve',
+      resourceType: 'payroll_annual_reconciliation',
+      resourceId: result.id,
+      riskLevel: 'R2',
+      outcome: 'success',
+      metadata: {
+        taxYear: result.taxYear,
+        periodCount: result.periodCount,
+        status: result.status,
+        evidenceHash: result.evidenceHash,
+      },
+    });
+    return result;
+  }
+
+  /** R2：员工本人获取短时官方汇算入口；ERP 不代理申报，审计不记录 URL。 */
+  @Post('annual-reconciliations/:id/settlement-link')
+  @RequiredScopes('erp:payroll:annual:settlement:self')
+  async createMyAnnualSettlementLink(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<PayrollAnnualSettlementLink> {
+    const result = await this.annualReconciliations.createMySettlementLink(
+      this.key(key),
+      id,
+    );
+    response.setHeader('Cache-Control', 'no-store');
+    response.setHeader('Pragma', 'no-cache');
+    await this.auditAfterCommit({
+      action: 'payroll.annual_reconciliation.settlement_link.create',
+      resourceType: 'payroll_annual_reconciliation',
+      resourceId: id,
+      riskLevel: 'R2',
+      outcome: 'success',
+      metadata: { expiresAt: result.expiresAt },
     });
     return result;
   }

@@ -14,6 +14,18 @@ export async function readBoundedJson(
   response: Response,
   policy: PayrollTaxJsonReadPolicy,
 ): Promise<unknown> {
+  return (await readBoundedJsonDocument(response, policy)).value;
+}
+
+export interface PayrollTaxJsonDocument {
+  readonly value: unknown;
+  readonly bytes: Uint8Array;
+}
+
+export async function readBoundedJsonDocument(
+  response: Response,
+  policy: PayrollTaxJsonReadPolicy,
+): Promise<PayrollTaxJsonDocument> {
   const limitBytes = policy.limitBytes ?? DEFAULT_RESPONSE_LIMIT_BYTES;
   assertContentLength(response.headers.get('content-length'), limitBytes, policy);
   if (response.body === null) throw new Error(policy.invalidCode);
@@ -58,7 +70,12 @@ export async function readBoundedJson(
   let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
   try {
-    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown;
+    return Object.freeze({
+      value: JSON.parse(
+        new TextDecoder('utf-8', { fatal: true }).decode(bytes),
+      ) as unknown,
+      bytes,
+    });
   } catch {
     throw new Error(policy.invalidCode);
   }

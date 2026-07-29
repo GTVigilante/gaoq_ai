@@ -20,9 +20,14 @@ import { PayrollPayslipService } from './application/payroll-payslip.service.js'
 import { PayrollTaxFilingService } from './application/payroll-tax-filing.service.js';
 import { PayrollReconciliationService } from './application/payroll-reconciliation.service.js';
 import { PayrollShadowService } from './application/payroll-shadow.service.js';
+import { HttpPayrollAnnualAssessmentGateway } from './integration/payroll-annual-assessment-http.adapter.js';
 import { HttpPayrollTaxImmutableArchive } from './integration/payroll-tax-archive-http.adapter.js';
 import { HttpPayrollTaxGateway } from './integration/payroll-tax-gateway-http.adapter.js';
-import { PayrollTaxGateway, PayrollTaxImmutableArchive } from './integration/payroll-tax.ports.js';
+import {
+  PayrollAnnualAssessmentGateway,
+  PayrollTaxGateway,
+  PayrollTaxImmutableArchive,
+} from './integration/payroll-tax.ports.js';
 import { PayrollController } from './payroll.controller.js';
 import { PayrollDataCryptoService } from './persistence/payroll-data-crypto.service.js';
 import { PayrollOutboxWriter } from './persistence/payroll-outbox.writer.js';
@@ -136,8 +141,13 @@ import { LegacyPayrollBoundaryService } from './legacy-payroll-boundary.service.
     PayrollOutboxWriter,
     LegacyPayrollBoundaryService,
     LegacyPayrollBoundaryGuard,
+    HttpPayrollAnnualAssessmentGateway,
     HttpPayrollTaxImmutableArchive,
     HttpPayrollTaxGateway,
+    {
+      provide: PayrollAnnualAssessmentGateway,
+      useExisting: HttpPayrollAnnualAssessmentGateway,
+    },
     { provide: PayrollTaxImmutableArchive, useExisting: HttpPayrollTaxImmutableArchive },
     { provide: PayrollTaxGateway, useExisting: HttpPayrollTaxGateway },
   ],

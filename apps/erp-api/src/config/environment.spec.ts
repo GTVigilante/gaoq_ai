@@ -28,6 +28,15 @@ const careOccasionSigning = {
     }).toString('base64'),
   CARE_OCCASION_NOTIFICATION_SIGNING_KEY_ID: 'care-key-001',
 };
+const payrollTaxSigning = {
+  PAYROLL_TAX_GATEWAY_SIGNING_PUBLIC_KEY_BASE64:
+    generateKeyPairSync('ed25519').publicKey.export({
+      format: 'der',
+      type: 'spki',
+    }).toString('base64'),
+  PAYROLL_TAX_GATEWAY_SIGNING_KEY_ID: 'payroll-tax-key-001',
+  PAYROLL_TAX_OFFICIAL_PORTAL_ORIGIN: 'https://official.tax.example.cn',
+};
 
 describe('validateEnvironment', () => {
   it('接受完整且合法的本地配置', () => {
@@ -77,6 +86,8 @@ describe('validateEnvironment', () => {
     expect(environment.TREASURY_BANK_RETURN_INBOX_ENDPOINT).toBeUndefined();
     expect(environment.PAYROLL_TAX_WORM_ARCHIVE_ENDPOINT).toBeUndefined();
     expect(environment.PAYROLL_TAX_GATEWAY_ENDPOINT).toBeUndefined();
+    expect(environment.PAYROLL_TAX_GATEWAY_SIGNING_KEY_ID).toBeUndefined();
+    expect(environment.PAYROLL_TAX_OFFICIAL_PORTAL_ORIGIN).toBeUndefined();
     expect(environment.PAYROLL_TAX_GATEWAY_MODE).toBe('sandbox');
     expect(environment.PHASE6_PRODUCTION_AUTHORIZATION_ENDPOINT).toBeUndefined();
     expect(environment.PHASE6_RELEASE_COMMIT_SHA).toBeUndefined();
@@ -802,6 +813,7 @@ describe('validateEnvironment', () => {
       PAYROLL_TAX_WORM_ARCHIVE_BEARER_TOKEN: 'tax-worm-token-that-is-at-least-32-characters',
       PAYROLL_TAX_GATEWAY_ENDPOINT: 'https://tax-gateway.example.net/v1/submissions',
       PAYROLL_TAX_GATEWAY_BEARER_TOKEN: 'tax-gateway-token-at-least-32-characters',
+      ...payrollTaxSigning,
     };
     expect(validateEnvironment(configured)).toMatchObject({
       PAYROLL_TAX_WORM_RETENTION_DAYS: 3_650,
@@ -822,6 +834,15 @@ describe('validateEnvironment', () => {
       ...configured,
       PAYROLL_TAX_WORM_ARCHIVE_BEARER_TOKEN: 'treasury-worm-token-at-least-32-characters',
     })).toThrow('不得复用');
+    expect(() => validateEnvironment({
+      ...configured,
+      PAYROLL_TAX_GATEWAY_SIGNING_PUBLIC_KEY_BASE64: 'AAAA',
+    })).toThrow('有效 Ed25519');
+    expect(() => validateEnvironment({
+      ...configured,
+      PAYROLL_TAX_OFFICIAL_PORTAL_ORIGIN:
+        'https://official.tax.example.cn/settlement',
+    })).toThrow('不得配置路径');
   });
 
   it('生产资金通道必须完整绑定独立 Phase 6 授权域与发布物', () => {

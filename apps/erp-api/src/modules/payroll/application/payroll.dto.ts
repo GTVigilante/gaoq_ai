@@ -142,19 +142,13 @@ export class PreparePayrollAdjustmentDto {
   correctedLine!: PayrollAdjustmentLineDto;
 }
 
-export class OfficialAnnualTaxAssessmentDto {
-  @Matches(ID) assessmentId!: string;
-  @Matches(ID) assessmentEvidenceId!: string;
-  @IsInt() @Min(0) @Max(Number.MAX_SAFE_INTEGER) assessedTaxMinor!: number;
-  @Matches(/^[A-Za-z0-9_-]{43}$/) sourceDigest!: string;
-}
-
 export class PrepareAnnualPayrollReconciliationDto {
   @Matches(ID) employeeId!: string;
   @Matches(/^\d{4}$/) taxYear!: string;
-  @IsOptional() @ValidateNested() @Type(() => OfficialAnnualTaxAssessmentDto)
-  officialAssessment?: OfficialAnnualTaxAssessmentDto;
 }
+
+export class ResolveAnnualPayrollAssessmentDto
+  extends PrepareAnnualPayrollReconciliationDto {}
 
 export class LegacyShadowPayrollLineDto {
   @Matches(ID) employeeId!: string;

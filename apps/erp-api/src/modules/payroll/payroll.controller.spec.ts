@@ -269,6 +269,11 @@ function fixture() {
   };
   const annualReconciliations = {
     prepare: vi.fn().mockResolvedValue(annualReconciliation),
+    resolveOfficialAssessment: vi.fn().mockResolvedValue(annualReconciliation),
+    createMySettlementLink: vi.fn().mockResolvedValue({
+      settlementUrl: 'https://official.tax.example.cn/settlement?token=opaque',
+      expiresAt: '2026-07-30T05:05:00.000Z',
+    }),
     get: vi.fn().mockResolvedValue(annualReconciliation),
   };
   const controller = new PayrollController(
@@ -304,6 +309,8 @@ function fixture() {
 
 const routeCases = [
   ['prepareAnnualReconciliation', 'annual-reconciliations/prepare', RequestMethod.POST, ['erp:payroll:annual:prepare']],
+  ['resolveAnnualAssessment', 'annual-reconciliations/resolve-assessment', RequestMethod.POST, ['erp:payroll:annual:assessment:resolve']],
+  ['createMyAnnualSettlementLink', 'annual-reconciliations/:id/settlement-link', RequestMethod.POST, ['erp:payroll:annual:settlement:self']],
   ['getAnnualReconciliation', 'annual-reconciliations/:id', RequestMethod.GET, ['erp:payroll:annual:read']],
   ['prepareAdjustment', 'adjustments/prepare', RequestMethod.POST, ['erp:payroll:adjustment:prepare']],
   ['requestAdjustmentApproval', 'adjustments/:id/approval', RequestMethod.POST, ['erp:payroll:adjustment:approval:request']],
@@ -388,15 +395,10 @@ describe('PayrollController', () => {
 
   it('委托年度核对与工资调整审批锁定入口并保持控制摘要审计', async () => {
     const store = fixture();
+    const response = { setHeader: vi.fn() };
     const annualBody = {
       employeeId: 'employee-001',
       taxYear: '2026',
-      officialAssessment: {
-        assessmentId: 'assessment-001',
-        assessmentEvidenceId: 'worm-assessment-001',
-        assessedTaxMinor: 360_000,
-        sourceDigest: 's'.repeat(43),
-      },
     };
     const prepareBody = {
       periodId: adjustment.periodId,
@@ -414,6 +416,14 @@ describe('PayrollController', () => {
 
     await expect(store.controller.prepareAnnualReconciliation(KEY, annualBody))
       .resolves.toBe(annualReconciliation);
+    await expect(store.controller.resolveAnnualAssessment(KEY, annualBody))
+      .resolves.toBe(annualReconciliation);
+    const settlementLink = await store.controller.createMyAnnualSettlementLink(
+      KEY,
+      annualReconciliation.id,
+      response as never,
+    );
+    expect(settlementLink.settlementUrl).toContain('official.tax.example.cn');
     await expect(store.controller.getAnnualReconciliation(annualReconciliation.id))
       .resolves.toBe(annualReconciliation);
     await expect(store.controller.prepareAdjustment(KEY, prepareBody))
@@ -440,6 +450,13 @@ describe('PayrollController', () => {
     await expect(store.controller.getAdjustment(adjustment.id)).resolves.toBe(adjustment);
 
     expect(store.annualReconciliations.prepare).toHaveBeenCalledWith(KEY, annualBody);
+    expect(store.annualReconciliations.resolveOfficialAssessment)
+      .toHaveBeenCalledWith(KEY, annualBody);
+    expect(store.annualReconciliations.createMySettlementLink)
+      .toHaveBeenCalledWith(KEY, annualReconciliation.id);
+    expect(response.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
+    expect(response.setHeader).toHaveBeenCalledWith('Pragma', 'no-cache');
+    expect(JSON.stringify(store.record.mock.calls)).not.toContain('token=opaque');
     expect(store.adjustments.prepare).toHaveBeenCalledWith(KEY, prepareBody);
     expect(store.adjustments.lock).toHaveBeenCalledWith(
       KEY,
