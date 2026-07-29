@@ -44,6 +44,14 @@ const TRANSITIONS: Readonly<Record<MarketingStatus, readonly MarketingStatus[]>>
   scheduled: ['draft', 'published'], published: ['archived'], archived: ['draft'],
 };
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9._:-]{8,128}$/u;
+const PUBLIC_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const PUBLIC_SLUG = /^(?:[a-z0-9]+(?:-[a-z0-9]+)*)$/u;
+const PUBLIC_DANGEROUS =
+  /<\s*(?:script|iframe|object|embed|style)|javascript:|vbscript:|data:text\/html|on[a-z]+\s*=|expression\s*\(/iu;
+const PUBLIC_CONTENT_SUMMARY_FIELDS =
+  'id siteId type locale slug title summary revision publishedAt';
+const PUBLIC_CONTENT_DETAIL_FIELDS =
+  'id siteId type locale slug title summary blocks seo revision publishedAt';
 const DUPLICATE_KEY_CODE = 11000;
 
 @Injectable()
@@ -223,16 +231,23 @@ export class MarketingCmsService {
   ): Promise<MarketingContentView> {
     if (
       !MARKETING_LOCALES.includes(locale as MarketingLocale) ||
-      !MARKETING_CONTENT_TYPES.includes(type as MarketingContentType)
+      !MARKETING_CONTENT_TYPES.includes(type as MarketingContentType) ||
+      !PUBLIC_SLUG.test(slug)
     ) throw new BadRequestException({ code: 'CMS_PUBLIC_QUERY_INVALID', message: '公开内容查询参数无效' });
     const filter = {
       tenantId: this.publicTenantId(), siteId: this.publicSiteId(), locale, type, slug, status: 'published',
     } as never;
-    const record = await this.contents.findOne(filter).lean().exec();
+    const record = await this.contents.findOne(filter)
+      .select(PUBLIC_CONTENT_DETAIL_FIELDS).lean().exec();
     if (record === null) throw new NotFoundException({
       code: 'CMS_PUBLIC_CONTENT_NOT_FOUND', message: '内容不存在',
     });
-    return view(record, true);
+    return marketingPublishedContentView(record, {
+      siteId: this.publicSiteId(),
+      locale: locale as MarketingLocale,
+      type: type as MarketingContentType,
+      slug,
+    });
   }
 
   async publicList(locale: string, type: string): Promise<{ readonly items: readonly MarketingContentView[] }> {
@@ -243,8 +258,21 @@ export class MarketingCmsService {
     const filter = {
       tenantId: this.publicTenantId(), siteId: this.publicSiteId(), locale, type, status: 'published',
     } as never;
-    const items = await this.contents.find(filter).sort({ publishedAt: -1 }).lean().exec();
-    return { items: items.map((item) => view(item, true)) };
+    const items = await this.contents.find(filter)
+      .select(PUBLIC_CONTENT_SUMMARY_FIELDS)
+      .sort({ publishedAt: -1 })
+      .limit(500)
+      .lean()
+      .exec();
+    const expected = {
+      siteId: this.publicSiteId(),
+      locale: locale as MarketingLocale,
+      type: type as MarketingContentType,
+    };
+    return {
+      items: Object.freeze(items.map((item) =>
+        marketingPublishedContentSummaryView(item, expected))),
+    };
   }
 
   async submitLead(idempotencyKey: string, raw: unknown): Promise<{
@@ -906,6 +934,70 @@ function mediaView(record: MarketingMediaRecord): Record<string, unknown> {
   };
 }
 
+interface PublishedContentExpectation {
+  readonly siteId: string;
+  readonly locale: MarketingLocale;
+  readonly type: MarketingContentType;
+  readonly slug?: string;
+}
+
+/**
+ * 官网内容列表只公开建立 URL 和更新时间所需的摘要。
+ * 正文区块与 SEO 必须通过详情接口按 slug 获取。
+ */
+export function marketingPublishedContentSummaryView(
+  value: unknown,
+  expected: PublishedContentExpectation,
+): Readonly<Record<string, unknown>> {
+  const source = recordView(value);
+  const base = publishedContentBase(source, expected);
+  return Object.freeze(base);
+}
+
+/** 官网内容详情在服务端重新校验受控 CMS 契约并深复制区块。 */
+export function marketingPublishedContentView(
+  value: unknown,
+  expected: PublishedContentExpectation,
+): Readonly<Record<string, unknown>> {
+  const source = recordView(value);
+  const base = publishedContentBase(source, expected);
+  let parsed: ReturnType<typeof parseContentInput>;
+  try {
+    parsed = parseContentInput({
+      siteId: source.siteId,
+      type: source.type,
+      locale: source.locale,
+      slug: source.slug,
+      title: source.title,
+      summary: source.summary,
+      blocks: source.blocks,
+      seo: source.seo,
+    });
+  } catch {
+    throw new Error('MARKETING_PUBLIC_CONTENT_RECORD_INVALID');
+  }
+  return Object.freeze({
+    ...base,
+    blocks: parsed.blocks,
+    seo: parsed.seo ?? Object.freeze({}),
+  });
+}
+
+/** 官网线索确认只返回稳定标识与去重结果。 */
+export function marketingPublicLeadSubmissionView(
+  value: unknown,
+): Readonly<{ leadId: string; duplicate: boolean }> {
+  const source = recordView(value);
+  if (
+    typeof source.leadId !== 'string' ||
+    !PUBLIC_ID.test(source.leadId) ||
+    typeof source.duplicate !== 'boolean'
+  ) {
+    throw new Error('MARKETING_PUBLIC_LEAD_RESULT_INVALID');
+  }
+  return Object.freeze({ leadId: source.leadId, duplicate: source.duplicate });
+}
+
 /**
  * 管理端内容列表与写入结果的最小公开视图。
  * 服务内部仍可使用含 tenantId 的 view() 完成事件和快照处理。
@@ -1027,6 +1119,47 @@ function recordView(value: unknown): Readonly<Record<string, unknown>> {
     throw new Error('MARKETING_VIEW_SOURCE_INVALID');
   }
   return value as Readonly<Record<string, unknown>>;
+}
+
+function publishedContentBase(
+  source: Readonly<Record<string, unknown>>,
+  expected: PublishedContentExpectation,
+): Readonly<Record<string, unknown>> {
+  const publishedAt = isoOrNull(source.publishedAt);
+  if (
+    typeof source.id !== 'string' ||
+    !PUBLIC_ID.test(source.id) ||
+    source.siteId !== expected.siteId ||
+    source.locale !== expected.locale ||
+    source.type !== expected.type ||
+    typeof source.slug !== 'string' ||
+    !PUBLIC_SLUG.test(source.slug) ||
+    (expected.slug !== undefined && source.slug !== expected.slug) ||
+    typeof source.title !== 'string' ||
+    source.title.length < 1 ||
+    source.title.length > 160 ||
+    PUBLIC_DANGEROUS.test(source.title) ||
+    typeof source.summary !== 'string' ||
+    source.summary.length > 500 ||
+    PUBLIC_DANGEROUS.test(source.summary) ||
+    typeof source.revision !== 'number' ||
+    !Number.isSafeInteger(source.revision) ||
+    source.revision < 1 ||
+    publishedAt === null
+  ) {
+    throw new Error('MARKETING_PUBLIC_CONTENT_RECORD_INVALID');
+  }
+  return Object.freeze({
+    id: source.id,
+    siteId: source.siteId,
+    type: source.type,
+    locale: source.locale,
+    slug: source.slug,
+    title: source.title,
+    summary: source.summary,
+    revision: source.revision,
+    publishedAt,
+  });
 }
 
 function isoOrNull(value: unknown): string | null {

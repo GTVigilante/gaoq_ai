@@ -52,6 +52,30 @@ const contentDetail = {
   publishedAt: null,
   scheduledAt: null,
 };
+const publishedContent = {
+  id: CONTENT_ID,
+  siteId: 'gaoq',
+  type: 'page',
+  locale: 'zh-CN',
+  slug: 'home',
+  title: '首页',
+  summary: '首页摘要',
+  revision: 2,
+  publishedAt: '2026-07-29T15:00:00.000Z',
+  blocks: content.blocks,
+  seo: content.seo,
+};
+const publishedContentSummary = {
+  id: publishedContent.id,
+  siteId: publishedContent.siteId,
+  type: publishedContent.type,
+  locale: publishedContent.locale,
+  slug: publishedContent.slug,
+  title: publishedContent.title,
+  summary: publishedContent.summary,
+  revision: publishedContent.revision,
+  publishedAt: publishedContent.publishedAt,
+};
 
 function fixture() {
   const cms = {
@@ -101,9 +125,21 @@ function fixture() {
     reviewAiDraft: vi.fn().mockResolvedValue({
       id: 'generation-001', contentId: CONTENT_ID, action: 'translate', status: 'accepted',
     }),
-    publicList: vi.fn().mockResolvedValue({ items: [content] }),
-    publicContent: vi.fn().mockResolvedValue(content),
-    submitLead: vi.fn().mockResolvedValue({ leadId: 'lead-public-001', duplicate: false }),
+    publicList: vi.fn().mockResolvedValue({
+      items: [{ ...publishedContentSummary, tenantId: 'tenant-secret', internalLock: 'locked' }],
+    }),
+    publicContent: vi.fn().mockResolvedValue({
+      ...publishedContent,
+      tenantId: 'tenant-secret',
+      version: 9,
+      updatedBy: 'internal-actor',
+    }),
+    submitLead: vi.fn().mockResolvedValue({
+      leadId: 'lead-public-001',
+      duplicate: false,
+      tenantId: 'tenant-secret',
+      notificationRoutes: ['email'],
+    }),
   };
   const record = vi.fn().mockResolvedValue(undefined);
   const recordSystem = vi.fn().mockResolvedValue(undefined);
@@ -120,7 +156,8 @@ function fixture() {
     protection as unknown as MarketingPublicProtectionService,
     { recordSystem } as unknown as AuditService,
     {
-      get: vi.fn().mockReturnValue('tenant-marketing'),
+      get: vi.fn().mockImplementation((name: string) =>
+        name === 'MARKETING_PUBLIC_SITE_ID' ? 'gaoq' : 'tenant-marketing'),
     } as never,
   );
   return {
@@ -576,9 +613,9 @@ describe('MarketingPublicController', () => {
     } as unknown as ErpRequest;
 
     await expect(store.publicController.list('zh-CN', 'page'))
-      .resolves.toEqual({ items: [content] });
+      .resolves.toEqual({ items: [publishedContentSummary] });
     await expect(store.publicController.get('zh-CN', 'page', 'home'))
-      .resolves.toBe(content);
+      .resolves.toEqual(publishedContent);
     await expect(store.publicController.submitLead(KEY, validRequest, request))
       .resolves.toEqual({ leadId: 'lead-public-001', duplicate: false });
 

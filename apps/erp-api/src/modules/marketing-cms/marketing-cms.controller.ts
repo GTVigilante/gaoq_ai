@@ -30,10 +30,17 @@ import {
   marketingLeadConsoleView,
   marketingLeadStatusView,
   marketingMediaConsoleView,
+  marketingPublishedContentSummaryView,
+  marketingPublishedContentView,
+  marketingPublicLeadSubmissionView,
   marketingRevisionListView,
   marketingUploadTicketView,
 } from './marketing-cms.service.js';
 import { MarketingPublicProtectionService } from './marketing-public-protection.service.js';
+import type {
+  MarketingContentType,
+  MarketingLocale,
+} from './marketing-cms.types.js';
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9-]{7,127}$/u;
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9._:-]{8,128}$/u;
@@ -576,15 +583,31 @@ export class MarketingPublicController {
   ) {}
 
   @Get(':locale/contents/:type')
-  list(@Param('locale') locale: string, @Param('type') type: string) {
-    return this.cms.publicList(locale, type);
+  async list(@Param('locale') locale: string, @Param('type') type: string) {
+    const result = await this.cms.publicList(locale, type);
+    return {
+      items: result.items.map((item) => marketingPublishedContentSummaryView(
+        item,
+        {
+          siteId: this.config.get('MARKETING_PUBLIC_SITE_ID', { infer: true }),
+          locale: locale as MarketingLocale,
+          type: type as MarketingContentType,
+        },
+      )),
+    };
   }
 
   @Get(':locale/contents/:type/:slug')
-  get(
+  async get(
     @Param('locale') locale: string, @Param('type') type: string, @Param('slug') slug: string,
   ) {
-    return this.cms.publicContent(locale, type, slug);
+    const result = await this.cms.publicContent(locale, type, slug);
+    return marketingPublishedContentView(result, {
+      siteId: this.config.get('MARKETING_PUBLIC_SITE_ID', { infer: true }),
+      locale: locale as MarketingLocale,
+      type: type as MarketingContentType,
+      slug,
+    });
   }
 
   @Post('leads')
@@ -617,7 +640,7 @@ export class MarketingPublicController {
         resourceId: result.leadId,
       });
     }
-    return result;
+    return marketingPublicLeadSubmissionView(result);
   }
 }
 

@@ -1,5 +1,6 @@
 import type { MetadataRoute } from 'next';
-import { locales, serviceSlugs } from './lib/content';
+import { getPublishedContentList } from './lib/cms';
+import { locales, serviceSlugs, type Locale } from './lib/content';
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const origin = process.env.NEXT_PUBLIC_WEBSITE_ORIGIN ?? 'http://localhost:3002';
@@ -17,35 +18,24 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     },
   })));
   const dynamicEntries = await Promise.all(locales.flatMap((locale) =>
-    ['article', 'case'].map((type) => publishedEntries(origin, locale, type))));
+    (['article', 'case'] as const)
+      .map((type) => publishedEntries(origin, locale, type))));
   return [...staticEntries, ...dynamicEntries.flat()];
 }
 
 async function publishedEntries(
   origin: string,
-  locale: string,
-  type: string,
+  locale: Locale,
+  type: 'article' | 'case',
 ): Promise<MetadataRoute.Sitemap> {
-  const api = process.env.ERP_API_INTERNAL_ORIGIN ??
-    process.env.NEXT_PUBLIC_ERP_API_ORIGIN ?? 'http://localhost:3001';
-  const response = await fetch(`${api}/api/marketing/public/${locale}/contents/${type}`, {
-    next: { revalidate: 300 },
-  }).catch(() => null);
-  if (response?.ok !== true) return [];
-  const value: unknown = await response.json().catch(() => null);
-  if (!isRecord(value) || !isRecord(value.data) || !Array.isArray(value.data.items)) return [];
-  return value.data.items.flatMap((item): MetadataRoute.Sitemap => {
-    if (!isRecord(item) || typeof item.slug !== 'string') return [];
+  const items = await getPublishedContentList(locale, type);
+  return items.map((item) => {
     const section = type === 'article' ? 'insights' : 'cases';
-    return [{
+    return {
       url: `${origin}/${locale}/${section}/${item.slug}`,
-      lastModified: typeof item.publishedAt === 'string' ? new Date(item.publishedAt) : new Date(),
+      lastModified: new Date(item.publishedAt),
       changeFrequency: 'monthly',
       priority: 0.7,
-    }];
+    };
   });
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

@@ -78,9 +78,18 @@
   标准 MCP `talent_lifecycle_get` 同步使用严格枚举/时间 Schema 和防御性七字段
   只读投影，不新增写 Tool。真实浏览器故障注入、实体角色矩阵、跨责任人关闭及
   HR/员工关怀/校友 UAT 仍待现场验收。
+- 2026-07-29 已加固 Issue #105 的营销官网公开边界：CMS 列表只返回最多
+  500 项最小摘要，详情与路径语言、类型和 slug 反向绑定；API 与 Website 共用
+  严格成功信封和有界纯 JSON 契约。验证码同时绑定精确 Origin 与实际 iframe
+  Window，匿名线索只接受精确结果投影，并在网络、限流、5xx 或响应契约异常时
+  保留原请求与幂等键。发布失效同步清理列表和详情标签，失效 Secret 畸形时失败
+  关闭，并对事件正文执行 16 KiB/Fatal UTF-8/精确 Schema。Website 30 项、
+  营销服务 63 项、营销入口 97 项专项测试通过，目标文件
+  逐文件四维覆盖率均不低于 90%；真实 WAF、验证码、浏览器故障注入、正式域名
+  和营销 UAT 仍待外部验收。标准 MCP 继续只读且复用同一应用服务。
 - 2026-07-29 已把覆盖率门禁本身纳入失败关闭治理：
   `scripts/validate-critical-coverage-policy.mjs` 从 `precheck/check` 解析 134 个
-  ERP API 专项脚本，展开其 `--coverage.include` 后要求 334 个生产文件逐一具有
+  ERP API 专项脚本，展开其 `--coverage.include` 后要求 336 个生产文件逐一具有
   四维 90% 阈值、路径真实存在且专项清单完全闭合；同时把租户、Identity、
   Approval、Payroll、Treasury 与 MCP 六类章程关键域解析为 128 个权威文件，
   新文件不得逃出专项门禁，并锁定全生产源码 `src/**/*.ts` 四维 80% 分母。

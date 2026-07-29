@@ -61,11 +61,23 @@ PC 管理台先读取 `/api/auth/profile` 的可信主体与 Scope，再按
 - `GET /api/marketing/public/:locale/contents/:type/:slug`
 - `POST /api/marketing/public/leads`
 
+匿名内容接口统一返回逐字键集合固定的成功信封
+`code/message/data/traceId/timestamp`。列表只返回标识、类型、语言、slug、
+标题、摘要、修订号和发布时间，按发布时间倒序且最多 500 项，禁止携带区块、
+SEO 或内部字段；详情必须与路径中的语言、类型和 slug 逐项反向绑定。Website
+对信封、时间、ULID、枚举和正文执行严格运行时校验，并按 250 KiB、12 层、
+5,000 节点、单数组 1,000 项和单对象 256 键预算克隆冻结；未知字段、自定义
+原型、存取器、Symbol、原型污染键、非有限数字和可执行标记均失败关闭。
+
 全部后台写接口和匿名线索提交都必须携带符合
 `^[A-Za-z0-9._:-]{8,128}$` 的 `Idempotency-Key`。带版本的内容、线索与媒体写入
 同时必须携带强 `If-Match: "<version>"`，成功响应返回新的强 `ETag`。官网预约
 表单按不含验证码的业务载荷生成一次客户端键；网络失败或验证码刷新后，只要业务
-载荷未改变就复用该键，禁止重试产生重复线索或重复通知。
+载荷未改变就复用该键，禁止重试产生重复线索或重复通知。验证码消息必须同时来自
+构建时固化的精确 Origin 和当前 iframe 的 `Window`，iframe 重新加载即清除旧
+令牌。线索成功响应只接受精确 `{leadId, duplicate}`；网络、超时、408、425、
+429、5xx、处理中冲突或成功响应契约异常均视为结果未知并保留原请求，只有明确
+`IDEMPOTENCY_KEY_REUSED` 或确定性拒绝才清除。
 
 线索使用“可信固定租户 + 幂等键”的 SHA-256 稳定标识，并在同一事务中先裁决
 同键请求；同键同业务载荷返回原线索，同键异载荷返回
@@ -116,6 +128,14 @@ Pod 运行时只有 `ERP_API_INTERNAL_ORIGIN` 从 Website ConfigMap 注入，
 `MARKETING_REVALIDATE_SECRET` 从 Website 专用 Secret 注入；禁止注入
 `NEXT_PUBLIC_*` 或复用 API、Worker、ERP Web Secret。
 
+发布事件触发 Website 缓存失效时，端点必须同时清理
+`marketing:{locale}:{type}:list` 与
+`marketing:{locale}:{type}:{slug}`，防止 Sitemap、列表与详情版本分裂。
+`MARKETING_REVALIDATE_SECRET` 只接受 32–512 位可打印 ASCII；缺失或畸形配置
+返回稳定不可用错误，错误凭据返回未授权。事件正文只接受 `application/json`，
+执行 16 KiB 流式硬上限、Fatal UTF-8、精确事件与 data 键集合、标识和正整数
+修订校验；均不得泄漏 Secret 或内部异常。
+
 AI 对接同步提供 `marketing_side_effect_get` Tool、
 `erp://marketing/side-effects/{eventId}` Resource Template 和
 `marketing_side_effect_triage_guide` Prompt。三者都复用 `MarketingCmsService`
@@ -155,10 +175,13 @@ AI 审核、排期或已发送通知回写为业务失败，告警也不得包�
 或签名 URL。后台草稿、修订、线索、媒体和副作用状态读取采用失败关闭审计；审计
 不可用时不向调用方返回业务数据。
 
-仓库门禁 `pnpm quality:marketing-cms-service-coverage` 覆盖业务服务，
+仓库门禁 `pnpm quality:website-public-contract-coverage` 覆盖 Website 公开
+契约、CMS 客户端和缓存失效端点；
+`pnpm quality:marketing-cms-service-coverage` 覆盖业务服务，
 `pnpm quality:marketing-entry-idempotency-coverage` 覆盖营销后台与公开入口、
-隔离网关和通用幂等核心；`pnpm quality:marketing-side-effect-delivery-coverage`
-覆盖 Outbox Relay、通知 Worker、排期发布 Worker 和送达终态服务。三条门禁均
+验证码保护、隔离网关和通用幂等核心；
+`pnpm quality:marketing-side-effect-delivery-coverage` 覆盖 Outbox Relay、
+通知 Worker、排期发布 Worker 和送达终态服务。四条门禁均
 逐文件强制语句、分支、函数、行不低于 90%。
 
 生产告警必须覆盖 `MARKETING_SIDE_EFFECT_DEAD_LETTERED`、

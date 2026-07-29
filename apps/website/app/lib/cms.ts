@@ -1,22 +1,17 @@
 import type { Locale } from './content';
+import {
+  parsePublishedContentListResponse,
+  parsePublishedContentResponse,
+  type MarketingContentType,
+  type PublishedContent,
+  type PublishedContentSummary,
+} from './marketing-public-contract';
 
-export interface PublishedBlock {
-  readonly type: string;
-  readonly data: Readonly<Record<string, unknown>>;
-}
-export interface PublishedContent {
-  readonly id: string;
-  readonly siteId: string;
-  readonly type: string;
-  readonly locale: Locale;
-  readonly slug: string;
-  readonly title: string;
-  readonly summary: string;
-  readonly blocks: readonly PublishedBlock[];
-  readonly seo: Readonly<Record<string, string>>;
-  readonly revision: number;
-  readonly publishedAt: string;
-}
+export type {
+  PublishedBlock,
+  PublishedContent,
+  PublishedContentSummary,
+} from './marketing-public-contract';
 
 const API_ORIGIN = process.env.ERP_API_INTERNAL_ORIGIN ??
   process.env.NEXT_PUBLIC_ERP_API_ORIGIN ?? 'http://localhost:3001';
@@ -28,35 +23,58 @@ export async function getPublishedPage(
 ): Promise<PublishedContent | null> {
   const response = await fetch(
     `${API_ORIGIN}/api/marketing/public/${encodeURIComponent(locale)}/contents/page/${encodeURIComponent(slug)}`,
-    { next: { revalidate: 300, tags: [`marketing:${locale}:page:${slug}`] } },
+    {
+      headers: { accept: 'application/json' },
+      next: { revalidate: 300, tags: [`marketing:${locale}:page:${slug}`] },
+    },
   ).catch(() => null);
   if (response?.ok !== true) return null;
   const value: unknown = await response.json().catch(() => null);
-  if (!isRecord(value) || !isRecord(value.data) || !isContent(value.data)) return null;
-  return value.data;
+  try {
+    return parsePublishedContentResponse(value, { locale, type: 'page', slug });
+  } catch {
+    return null;
+  }
 }
 
 export async function getPublishedContent(
   locale: Locale,
-  type: 'page' | 'service' | 'article' | 'case',
+  type: Extract<MarketingContentType, 'page' | 'service' | 'article' | 'case'>,
   slug: string,
 ): Promise<PublishedContent | null> {
   const response = await fetch(
     `${API_ORIGIN}/api/marketing/public/${encodeURIComponent(locale)}/contents/${type}/${encodeURIComponent(slug)}`,
-    { next: { revalidate: 300, tags: [`marketing:${locale}:${type}:${slug}`] } },
+    {
+      headers: { accept: 'application/json' },
+      next: { revalidate: 300, tags: [`marketing:${locale}:${type}:${slug}`] },
+    },
   ).catch(() => null);
   if (response?.ok !== true) return null;
   const value: unknown = await response.json().catch(() => null);
-  if (!isRecord(value) || !isRecord(value.data) || !isContent(value.data)) return null;
-  return value.data;
+  try {
+    return parsePublishedContentResponse(value, { locale, type, slug });
+  } catch {
+    return null;
+  }
 }
 
-function isContent(value: Record<string, unknown>): value is Record<string, unknown> & PublishedContent {
-  return typeof value.id === 'string' && typeof value.title === 'string' &&
-    typeof value.slug === 'string' && Array.isArray(value.blocks) &&
-    value.blocks.every((block) => isRecord(block) && typeof block.type === 'string' && isRecord(block.data));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+/** 获取公开内容摘要列表；响应畸形时失败关闭为空列表。 */
+export async function getPublishedContentList(
+  locale: Locale,
+  type: Extract<MarketingContentType, 'article' | 'case'>,
+): Promise<readonly PublishedContentSummary[]> {
+  const response = await fetch(
+    `${API_ORIGIN}/api/marketing/public/${encodeURIComponent(locale)}/contents/${type}`,
+    {
+      headers: { accept: 'application/json' },
+      next: { revalidate: 300, tags: [`marketing:${locale}:${type}:list`] },
+    },
+  ).catch(() => null);
+  if (response?.ok !== true) return [];
+  const value: unknown = await response.json().catch(() => null);
+  try {
+    return parsePublishedContentListResponse(value, { locale, type });
+  } catch {
+    return [];
+  }
 }

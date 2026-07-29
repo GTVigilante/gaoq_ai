@@ -749,9 +749,20 @@ describe('MarketingCmsService 内容生命周期', () => {
       tenantId: 'tenant-marketing',
       publishedAt: new Date(NOW),
       status: 'published',
+      internalSecret: 'must-not-leak',
+    });
+    const listRecord = contentRecord({
+      tenantId: 'tenant-marketing',
+      type: 'article',
+      locale: 'en',
+      slug: 'safe-article',
+      title: 'Safe article',
+      publishedAt: new Date(NOW),
+      status: 'published',
+      internalSecret: 'must-not-leak',
     });
     const oneQuery = chain(publicRecord);
-    const listQuery = chain([publicRecord]);
+    const listQuery = chain([listRecord]);
     const contents = {
       findOne: vi.fn().mockReturnValue(oneQuery),
       find: vi.fn().mockReturnValue(listQuery),
@@ -762,7 +773,12 @@ describe('MarketingCmsService 内容生命周期', () => {
     const listed = await service.publicList('en', 'article');
 
     expect(one).not.toHaveProperty('tenantId');
+    expect(one).not.toHaveProperty('internalSecret');
+    expect(one.publishedAt).toBe(NOW);
     expect(listed.items[0]).not.toHaveProperty('tenantId');
+    expect(listed.items[0]).not.toHaveProperty('internalSecret');
+    expect(listed.items[0]).not.toHaveProperty('blocks');
+    expect(listed.items[0]).not.toHaveProperty('seo');
     expect(contents.findOne).toHaveBeenCalledWith({
       tenantId: 'tenant-marketing',
       siteId: 'gaoq',
@@ -771,7 +787,14 @@ describe('MarketingCmsService 内容生命周期', () => {
       slug: 'home',
       status: 'published',
     });
+    expect(oneQuery.select).toHaveBeenCalledWith(
+      'id siteId type locale slug title summary blocks seo revision publishedAt',
+    );
+    expect(listQuery.select).toHaveBeenCalledWith(
+      'id siteId type locale slug title summary revision publishedAt',
+    );
     expect(listQuery.sort).toHaveBeenCalledWith({ publishedAt: -1 });
+    expect(listQuery.limit).toHaveBeenCalledWith(500);
   });
 
   it('公开查询拒绝非法枚举和不存在内容', async () => {
@@ -783,12 +806,37 @@ describe('MarketingCmsService 内容生命周期', () => {
       .rejects.toMatchObject({ response: { code: 'CMS_PUBLIC_QUERY_INVALID' } });
     await expect(service.publicContent('zh-CN', 'unknown', 'home'))
       .rejects.toMatchObject({ response: { code: 'CMS_PUBLIC_QUERY_INVALID' } });
+    await expect(service.publicContent('zh-CN', 'page', '../secret'))
+      .rejects.toMatchObject({ response: { code: 'CMS_PUBLIC_QUERY_INVALID' } });
     await expect(service.publicList('fr', 'page'))
       .rejects.toMatchObject({ response: { code: 'CMS_PUBLIC_QUERY_INVALID' } });
     await expect(service.publicList('zh-CN', 'unknown'))
       .rejects.toMatchObject({ response: { code: 'CMS_PUBLIC_QUERY_INVALID' } });
     await expect(service.publicContent('zh-CN', 'page', 'missing'))
       .rejects.toMatchObject({ response: { code: 'CMS_PUBLIC_CONTENT_NOT_FOUND' } });
+  });
+
+  it.each([
+    { siteId: 'other-site' },
+    { locale: 'en' },
+    { type: 'article' },
+    { slug: 'other-page' },
+    { title: '<script>alert(1)</script>' },
+    { publishedAt: null },
+    { blocks: [{ type: 'unknown', data: {} }] },
+  ])('公开内容存储记录错配或损坏时按服务端契约失败关闭 %#', async (overrides) => {
+    const record = contentRecord({
+      tenantId: 'tenant-marketing',
+      publishedAt: new Date(NOW),
+      status: 'published',
+      ...overrides,
+    });
+    const service = createService({
+      contents: { findOne: vi.fn().mockReturnValue(chain(record)) },
+    });
+
+    await expect(service.publicContent('zh-CN', 'page', 'home'))
+      .rejects.toThrow('MARKETING_PUBLIC_CONTENT_RECORD_INVALID');
   });
 
   it('列出历史版本并执行排期内容回滚', async () => {

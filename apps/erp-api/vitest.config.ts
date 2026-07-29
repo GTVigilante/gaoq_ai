@@ -1354,6 +1354,12 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/marketing-cms/marketing-public-protection.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/marketing-cms/marketing-side-effect-delivery.service.ts': {
           branches: 90,
           functions: 90,

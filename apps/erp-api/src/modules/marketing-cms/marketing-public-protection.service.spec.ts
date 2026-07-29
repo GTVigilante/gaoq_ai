@@ -43,6 +43,61 @@ describe('MarketingPublicProtectionService', () => {
       });
       await expect(service.assertAllowed('203.0.113.10', 'captcha-token-0001'))
         .rejects.toBeInstanceOf(HttpException);
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue({ success: true, hostname: 'unexpected' }),
+      });
+      await expect(service.assertAllowed('203.0.113.10', 'captcha-token-0001'))
+        .rejects.toBeInstanceOf(HttpException);
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockRejectedValue(new SyntaxError('invalid json secret')),
+      });
+      await expect(service.assertAllowed('203.0.113.10', 'captcha-token-0001'))
+        .rejects.toBeInstanceOf(HttpException);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('仅接受隔离验证码网关的精确成功响应并发送最小请求', async () => {
+    const redis = { eval: vi.fn().mockResolvedValue(1) };
+    const config = {
+      get: vi.fn((name: string) => name.endsWith('_ENDPOINT')
+        ? 'https://captcha.example.net/verify'
+        : 'captcha-gateway-token-at-least-32-characters'),
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({ success: true }),
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock;
+    try {
+      const service = new MarketingPublicProtectionService(
+        redis as never,
+        config as never,
+      );
+
+      await expect(service.assertAllowed(
+        '203.0.113.10',
+        'captcha-token-0001',
+      )).resolves.toBeUndefined();
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://captcha.example.net/verify',
+        expect.objectContaining({
+          method: 'POST',
+          headers: {
+            accept: 'application/json',
+            authorization: 'Bearer captcha-gateway-token-at-least-32-characters',
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            token: 'captcha-token-0001',
+            remoteIp: '203.0.113.10',
+          }),
+        }),
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }
