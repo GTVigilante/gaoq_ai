@@ -10,6 +10,11 @@ import { createEventId } from '@gaoq/shared-utils';
 import { createHash, randomUUID } from 'node:crypto';
 import type { ClientSession, Connection, Model } from 'mongoose';
 import type { AppEnvironment } from '../../config/environment.js';
+import {
+  marketingAiDraftRequestSchema,
+  marketingLeadInputRequestSchema,
+  marketingMediaUploadRequestSchema,
+} from '../../contracts/rest-request-contracts.js';
 import { IdempotencyService } from '../../core/idempotency/idempotency.service.js';
 import { TenantContextService } from '../../core/tenant/tenant-context.service.js';
 import { OutboxRecord } from '../org/persistence/outbox.schema.js';
@@ -835,26 +840,19 @@ function parseLead(value: unknown): {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw leadInvalid();
   const record = value as Record<string, unknown>;
   const allowed = new Set(['audience', 'name', 'contact', 'requestSummary', 'privacyAccepted', 'website', 'utmSource', 'utmCampaign']);
-  const name = typeof record.name === 'string' ? record.name.trim() : '';
-  const contact = typeof record.contact === 'string' ? record.contact.trim() : '';
-  const requestSummary =
-    typeof record.requestSummary === 'string' ? record.requestSummary.trim() : '';
+  const parsed = marketingLeadInputRequestSchema.safeParse(value);
   if (
-    Object.keys(record).some((key) => !allowed.has(key)) || record.website !== '' ||
-    !['creator', 'brand'].includes(String(record.audience)) ||
-    name.length < 1 || name.length > 100 ||
-    contact.length < 5 || contact.length > 254 ||
-    requestSummary.length < 10 || requestSummary.length > 2000 ||
-    record.privacyAccepted !== true ||
+    Object.keys(record).some((key) => !allowed.has(key)) ||
+    !parsed.success ||
     /<\s*script|javascript:|on[a-z]+\s*=/iu.test(JSON.stringify(record))
   ) throw leadInvalid();
   return {
-    audience: record.audience as 'creator' | 'brand',
-    name,
-    contact,
-    requestSummary,
+    audience: parsed.data.audience,
+    name: parsed.data.name,
+    contact: parsed.data.contact,
+    requestSummary: parsed.data.requestSummary,
     attribution: Object.fromEntries(
-      [['utmSource', record.utmSource], ['utmCampaign', record.utmCampaign]]
+      [['utmSource', parsed.data.utmSource], ['utmCampaign', parsed.data.utmCampaign]]
         .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].length <= 128),
     ),
   };
@@ -877,29 +875,19 @@ function parseMediaInput(value: unknown): {
   siteId: string; fileName: string; mimeType: string; sizeBytes: number;
   altText: Record<string, string>; copyrightSource: string;
 } {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw mediaInvalid();
-  const record = value as Record<string, unknown>;
-  const allowed = new Set(['siteId', 'fileName', 'mimeType', 'sizeBytes', 'altText', 'copyrightSource']);
-  const mime = typeof record.mimeType === 'string' ? record.mimeType : '';
-  if (
-    Object.keys(record).some((key) => !allowed.has(key)) ||
-    typeof record.siteId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(record.siteId) ||
-    typeof record.fileName !== 'string' || !/^[^/\\\0]{1,180}$/u.test(record.fileName) ||
-    !['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'application/pdf'].includes(mime) ||
-    typeof record.sizeBytes !== 'number' || !Number.isSafeInteger(record.sizeBytes) ||
-    record.sizeBytes < 1 || record.sizeBytes > 20_971_520 ||
-    typeof record.altText !== 'object' || record.altText === null || Array.isArray(record.altText) ||
-    typeof record.copyrightSource !== 'string' || record.copyrightSource.length > 500
-  ) throw mediaInvalid();
-  const altText = record.altText as Record<string, unknown>;
-  if (
-    Object.keys(altText).some((key) => key !== 'zh-CN' && key !== 'en') ||
-    Object.values(altText).some((item) => typeof item !== 'string' || item.length > 500)
-  ) throw mediaInvalid();
+  const parsed = marketingMediaUploadRequestSchema.safeParse(value);
+  if (!parsed.success) throw mediaInvalid();
+  const altText = Object.fromEntries(
+    Object.entries(parsed.data.altText)
+      .filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+  );
   return {
-    siteId: record.siteId, fileName: record.fileName, mimeType: mime,
-    sizeBytes: record.sizeBytes, altText: altText as Record<string, string>,
-    copyrightSource: record.copyrightSource,
+    siteId: parsed.data.siteId,
+    fileName: parsed.data.fileName,
+    mimeType: parsed.data.mimeType,
+    sizeBytes: parsed.data.sizeBytes,
+    altText,
+    copyrightSource: parsed.data.copyrightSource,
   };
 }
 
@@ -908,20 +896,9 @@ function parseAiInput(value: unknown): {
   targetLocale: 'zh-CN' | 'en';
   instruction: string;
 } {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw aiInvalid();
-  const record = value as Record<string, unknown>;
-  const actions = ['translate', 'rewrite', 'outline', 'seo', 'alt_text'];
-  if (
-    Object.keys(record).some((key) => !['action', 'targetLocale', 'instruction'].includes(key)) ||
-    !actions.includes(String(record.action)) ||
-    !['zh-CN', 'en'].includes(String(record.targetLocale)) ||
-    typeof record.instruction !== 'string' || record.instruction.length > 1000
-  ) throw aiInvalid();
-  return {
-    action: record.action as 'translate' | 'rewrite' | 'outline' | 'seo' | 'alt_text',
-    targetLocale: record.targetLocale as 'zh-CN' | 'en',
-    instruction: record.instruction,
-  };
+  const parsed = marketingAiDraftRequestSchema.safeParse(value);
+  if (!parsed.success) throw aiInvalid();
+  return parsed.data;
 }
 
 function mediaView(record: MarketingMediaRecord): Record<string, unknown> {

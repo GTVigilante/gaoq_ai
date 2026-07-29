@@ -148,6 +148,34 @@ describe('ESignIssuanceController', () => {
     expect(store.resolve).not.toHaveBeenCalled();
   });
 
+  it('处置业务失败保留原始错误并记录失败审计', async () => {
+    const store = fixture();
+    store.resolve.mockRejectedValueOnce(new Error('供应商状态不可用'));
+
+    await expect(store.controller.resolve(
+      REQUEST_ID,
+      'esign-resolution-key-004',
+      {
+        decision: 'retry',
+        reason: 'provider_recovered',
+        providerConfirmedNotCommitted: true,
+        providerConfirmedMatchesRequest: false,
+      },
+    )).rejects.toThrow('供应商状态不可用');
+    expect(store.record).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'integration.esign.issuance.resolve',
+      outcome: 'failure',
+    }));
+  });
+
+  it('缺少幂等键时在业务调用前失败关闭', async () => {
+    const store = fixture();
+
+    await expect(store.controller.request(undefined, REQUEST_BODY))
+      .rejects.toBeInstanceOf(BadRequestException);
+    expect(store.request).not.toHaveBeenCalled();
+  });
+
   it('业务失败审计故障不覆盖原始错误，成功审计故障不反写业务失败', async () => {
     const failed = fixture();
     failed.request.mockRejectedValueOnce(new Error('原始业务错误'));

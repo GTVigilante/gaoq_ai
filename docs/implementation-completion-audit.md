@@ -95,11 +95,16 @@ GitHub Hosted OIDC 和 Phase 0 三方签署要求。该模型不替代真实 DAS
 `pnpm contracts:openapi:self-test` 会验证正负场景，
 `pnpm contracts:openapi:validate` 会重新生成并逐字节拒绝漂移，两者通过
 `pretypecheck` 接入 `pnpm check`。103 个 class-validator DTO 已展开字段级
-Schema，85/116 个 Body 通过组件 `$ref` 绑定；生成器校验必填、nullable、
-继承、嵌套、长度、范围、静态枚举、数组约束及悬空引用。剩余 3 个内联类型和
-28 个 `unknown` Body 由端点专用严格解析器校验，部分响应也仍由 TypeScript
-推断；在这些入口显式化前，不把本契约单独作为全部生产写客户端生成或外部验收
-证据。GitHub Hosted Actions 尚未启动 Runner，远端 CI 仍为 No-Go。
+Schema；116/116 个 Body 全部绑定命名组件，其中 85 个来自 DTO、27 个来自运行时
+Zod 注册表、4 个来自 TypeScript 内联类型，共形成 135 个 Component Schema。
+231/231 个成功响应均有机器契约：229 个显式内容 Schema、1 个 302 跳转和 1 个
+204 无正文。生成器使用 TypeScript Program 展开跨文件接口、类型别名与推断返回
+值，并从 RawResponse 的 `json/send/redirect` 调用提取真实状态码和媒体类型；
+OAuth 表单、CSV、MCP SSE、WebAuthn 与无正文响应不再误报为默认 JSON。生成器
+拒绝未命名/unknown 写请求、顶层 unknown 成功响应、失效运行时来源、悬空引用和
+计数漂移。刻意开放的嵌套 `Record<string, unknown>` 显式标记，不把成功契约或
+仓库测试替代协议专用错误、真实外部联调及 UAT。GitHub Hosted Actions 尚未启动
+Runner，远端 CI 仍为 No-Go。
 
 ### 2.7 AsyncAPI 与 CloudEvents 机器契约
 
@@ -162,10 +167,10 @@ type `data` 继续由列明的 Zod、TypeScript 和 JSON Schema 约束，禁止�
 ## 5. 覆盖率边界
 
 2026-07-30 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，438 个测试文件、7,209 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，439 个测试文件、7,217 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-93.23%、分支 91.02%、函数 93.37%、行 94.25%。全仓四维已达到 Phase 0
+93.24%、分支 90.98%、函数 93.37%、行 94.27%。全仓四维已达到 Phase 0
 规定的 80% 门槛。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。

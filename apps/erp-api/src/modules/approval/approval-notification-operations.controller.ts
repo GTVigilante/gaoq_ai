@@ -10,8 +10,8 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { z } from 'zod';
 
+import { retryReasonSchema as retryRequestSchema } from '../../contracts/rest-request-contracts.js';
 import { AuditService } from '../../core/audit/audit.service.js';
 import { RequiredScopes } from '../identity/auth.decorators.js';
 import {
@@ -25,10 +25,6 @@ const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
 const RETRY_REASONS: readonly ApprovalNotificationRetryReason[] = [
   'credentials_fixed', 'identity_bound', 'provider_recovered', 'approved_exception',
 ];
-const retryRequestSchema = z.object({
-  reason: z.string(),
-}).strict();
-
 /** 审批通知运维接口；只暴露脱敏状态，不暴露平台 Token、响应或消息正文。 */
 @Controller('approvals/notifications')
 export class ApprovalNotificationOperationsController {

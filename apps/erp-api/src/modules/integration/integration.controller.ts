@@ -10,8 +10,8 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { z } from 'zod';
 
+import { retryReasonSchema as retryRequestSchema } from '../../contracts/rest-request-contracts.js';
 import { AuditService } from '../../core/audit/audit.service.js';
 import { RequiredScopes } from '../identity/auth.decorators.js';
 import {
@@ -25,10 +25,6 @@ const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
 const RETRY_REASONS: readonly OrgDeliveryRetryReason[] = [
   'credentials_fixed', 'mapping_fixed', 'provider_recovered', 'approved_exception',
 ];
-const retryRequestSchema = z.object({
-  reason: z.string(),
-}).strict();
-
 /** 多渠道组织同步运维接口；不暴露 Outbox envelope、平台令牌或原始响应。 */
 @Controller('integrations/org-deliveries')
 export class IntegrationController {

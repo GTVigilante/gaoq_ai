@@ -1,11 +1,16 @@
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import ts from 'typescript';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const sourceRoot = resolve(repoRoot, 'apps/erp-api/src');
+const tsconfigPath = resolve(repoRoot, 'apps/erp-api/tsconfig.build.json');
+const requestContractsPath = resolve(
+  sourceRoot,
+  'contracts/rest-request-contracts.ts',
+);
 const outputPath = resolve(repoRoot, 'contracts/openapi/erp-api.openapi.json');
 const args = new Set(process.argv.slice(2));
 const httpDecorators = new Map([
@@ -47,6 +52,24 @@ const validationDecorators = new Set([
   'MinLength',
   'Type',
   'ValidateNested',
+]);
+const inlineRequestSchemaNames = new Map([
+  [
+    'PasskeyRegistrationController.verify',
+    'PasskeyRegistrationVerifyRequest',
+  ],
+  [
+    'RecruitmentChannelOperationsController.retry',
+    'RecruitmentChannelRetryRequest',
+  ],
+  [
+    'McpConfirmationController.strongAuthVerify',
+    'McpStrongAuthVerifyRequest',
+  ],
+  [
+    'OpController.retryApprovalResultDelivery',
+    'OpApprovalResultRetryRequest',
+  ],
 ]);
 
 /** 将文件路径规范化为仓库内跨平台形式。 */
@@ -218,6 +241,211 @@ const schemaForType = (typeText, { required = false, knownSchemaNames = new Set(
     additionalProperties: true,
     ...extension,
     ...(required ? { 'x-runtime-validation': 'ValidationPipe' } : {}),
+  };
+};
+
+/** 创建可解析跨文件接口、类型别名和推断返回值的 TypeScript Program。 */
+const createContractProgram = () => {
+  const config = ts.readConfigFile(tsconfigPath, ts.sys.readFile);
+  if (config.error !== undefined) {
+    throw new Error(
+      `读取 TypeScript 配置失败：${ts.flattenDiagnosticMessageText(config.error.messageText, '\n')}`,
+    );
+  }
+  const parsed = ts.parseJsonConfigFileContent(
+    config.config,
+    ts.sys,
+    dirname(tsconfigPath),
+    undefined,
+    tsconfigPath,
+  );
+  if (parsed.errors.length > 0) {
+    throw new Error(
+      `解析 TypeScript 配置失败：${parsed.errors
+        .map((error) => ts.flattenDiagnosticMessageText(error.messageText, '\n'))
+        .join('; ')}`,
+    );
+  }
+  return ts.createProgram({
+    rootNames: parsed.fileNames,
+    options: parsed.options,
+    projectReferences: parsed.projectReferences,
+  });
+};
+
+/** 判断编译器类型是否包含指定 Flag。 */
+const hasTypeFlag = (type, flag) => (type.flags & flag) !== 0;
+
+/** 将 TypeScript 编译器类型递归转换为严格 JSON Schema。 */
+const schemaForCompilerType = (
+  type,
+  checker,
+  context,
+  { seen = new Set(), depth = 0 } = {},
+) => {
+  const typeText = checker.typeToString(
+    type,
+    undefined,
+    ts.TypeFormatFlags.NoTruncation | ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope,
+  );
+  const extension = { 'x-typescript-type': typeText };
+  if (depth > 24) {
+    throw new Error(`${context} 类型嵌套超过 24 层：${typeText}`);
+  }
+  if (hasTypeFlag(type, ts.TypeFlags.Any) || hasTypeFlag(type, ts.TypeFlags.Unknown)) {
+    if (depth > 0) {
+      return {
+        ...extension,
+        'x-intentionally-untyped': true,
+      };
+    }
+    throw new Error(`${context} 不能生成显式 Schema：${typeText}`);
+  }
+  if (
+    hasTypeFlag(type, ts.TypeFlags.Void) ||
+    hasTypeFlag(type, ts.TypeFlags.Undefined) ||
+    hasTypeFlag(type, ts.TypeFlags.Never)
+  ) {
+    return { ...extension, 'x-no-content': true };
+  }
+  if (hasTypeFlag(type, ts.TypeFlags.Null)) {
+    return { type: 'null', ...extension };
+  }
+  if (hasTypeFlag(type, ts.TypeFlags.StringLiteral)) {
+    return { type: 'string', const: type.value, ...extension };
+  }
+  if (hasTypeFlag(type, ts.TypeFlags.NumberLiteral)) {
+    return { type: 'number', const: type.value, ...extension };
+  }
+  if (typeText === 'true' || typeText === 'false') {
+    return { type: 'boolean', const: typeText === 'true', ...extension };
+  }
+  if (hasTypeFlag(type, ts.TypeFlags.StringLike)) {
+    return { type: 'string', ...extension };
+  }
+  if (hasTypeFlag(type, ts.TypeFlags.NumberLike)) {
+    return { type: 'number', ...extension };
+  }
+  if (hasTypeFlag(type, ts.TypeFlags.BooleanLike)) {
+    return { type: 'boolean', ...extension };
+  }
+  if (hasTypeFlag(type, ts.TypeFlags.BigIntLike)) {
+    return { type: 'integer', format: 'int64', ...extension };
+  }
+  if (type.isUnion()) {
+    const members = type.types.filter(
+      (member) => !hasTypeFlag(member, ts.TypeFlags.Undefined),
+    );
+    if (members.length === 1) {
+      return {
+        ...schemaForCompilerType(members[0], checker, context, { seen, depth: depth + 1 }),
+        ...extension,
+      };
+    }
+    const literalStrings = members.filter((member) =>
+      hasTypeFlag(member, ts.TypeFlags.StringLiteral),
+    );
+    if (literalStrings.length === members.length) {
+      return {
+        type: 'string',
+        enum: literalStrings.map((member) => member.value),
+        ...extension,
+      };
+    }
+    return {
+      anyOf: members.map((member) =>
+        schemaForCompilerType(member, checker, context, { seen, depth: depth + 1 }),
+      ),
+      ...extension,
+    };
+  }
+  if (type.isIntersection()) {
+    return {
+      allOf: type.types.map((member) =>
+        schemaForCompilerType(member, checker, context, { seen, depth: depth + 1 }),
+      ),
+      ...extension,
+    };
+  }
+  if (checker.isTupleType(type)) {
+    const items = checker
+      .getTypeArguments(type)
+      .map((item) =>
+        schemaForCompilerType(item, checker, context, { seen, depth: depth + 1 }),
+      );
+    return {
+      type: 'array',
+      prefixItems: items,
+      minItems: items.length,
+      maxItems: items.length,
+      ...extension,
+    };
+  }
+  if (checker.isArrayType(type)) {
+    const item = checker.getTypeArguments(type)[0];
+    if (item === undefined) {
+      throw new Error(`${context} 数组缺少元素类型：${typeText}`);
+    }
+    return {
+      type: 'array',
+      items: schemaForCompilerType(item, checker, context, { seen, depth: depth + 1 }),
+      ...extension,
+    };
+  }
+  if (!hasTypeFlag(type, ts.TypeFlags.Object)) {
+    throw new Error(`${context} 暂不支持的 TypeScript 类型：${typeText}`);
+  }
+  if (typeText === 'Date') {
+    return { type: 'string', format: 'date-time', ...extension };
+  }
+  if (seen.has(type)) {
+    return {
+      type: 'object',
+      additionalProperties: false,
+      ...extension,
+      'x-recursive-boundary': true,
+    };
+  }
+  const nextSeen = new Set(seen);
+  nextSeen.add(type);
+  const properties = {};
+  const required = [];
+  for (const property of checker.getPropertiesOfType(type)) {
+    const declaration =
+      property.valueDeclaration ??
+      property.declarations?.[0] ??
+      type.aliasSymbol?.declarations?.[0] ??
+      type.symbol?.declarations?.[0];
+    if (declaration === undefined) {
+      continue;
+    }
+    const propertyType = checker.getTypeOfSymbolAtLocation(property, declaration);
+    properties[property.name] = schemaForCompilerType(propertyType, checker, context, {
+      seen: nextSeen,
+      depth: depth + 1,
+    });
+    if ((property.flags & ts.SymbolFlags.Optional) === 0) {
+      required.push(property.name);
+    }
+  }
+  const stringIndex = checker.getIndexTypeOfType(type, ts.IndexKind.String);
+  const numberIndex = checker.getIndexTypeOfType(type, ts.IndexKind.Number);
+  const indexType = stringIndex ?? numberIndex;
+  if (Object.keys(properties).length === 0 && indexType === undefined) {
+    throw new Error(`${context} 空对象类型没有可发布字段：${typeText}`);
+  }
+  return {
+    type: 'object',
+    additionalProperties:
+      indexType === undefined
+        ? false
+        : schemaForCompilerType(indexType, checker, context, {
+            seen: nextSeen,
+            depth: depth + 1,
+          }),
+    properties,
+    ...(required.length === 0 ? {} : { required: required.sort() }),
+    ...extension,
   };
 };
 
@@ -426,13 +654,6 @@ const collectDtoSchemas = async () => {
   return schemas;
 };
 
-/** 解开 Promise 返回类型并去掉多余空白。 */
-const responseTypeOf = (method, sourceFile) => {
-  const raw = method.type?.getText(sourceFile).replace(/\s+/gu, ' ').trim() ?? 'unknown';
-  const promise = raw.match(/^Promise<(.+)>$/u);
-  return promise?.[1] ?? raw;
-};
-
 /** 读取 RequiredScopes、PublicRoute 和 UseGuards 元数据。 */
 const securityMetadata = (decorators, sourceFile) => {
   const scopes = [];
@@ -456,7 +677,7 @@ const securityMetadata = (decorators, sourceFile) => {
 };
 
 /** 把 Controller 方法参数转换为 OpenAPI 参数、请求体和运行时类型扩展。 */
-const requestContractOf = (method, sourceFile, knownSchemaNames) => {
+const requestContractOf = (method, sourceFile, knownSchemaNames, checker) => {
   const parameters = [];
   let requestBody;
   const runtimeParameters = [];
@@ -482,14 +703,22 @@ const requestContractOf = (method, sourceFile, knownSchemaNames) => {
       });
 
       if (call.name === 'Body') {
+        const requestSchema =
+          typeText === 'unknown' || knownSchemaNames.has(typeText)
+            ? schemaForType(typeText, {
+                required: !optional,
+                knownSchemaNames,
+              })
+            : schemaForCompilerType(
+                checker.getTypeAtLocation(parameter),
+                checker,
+                `${relative(repoRoot, sourceFile.fileName)}:${parameterName} 请求体`,
+              );
         requestBody = {
           required: !optional,
           content: {
             'application/json': {
-              schema: schemaForType(typeText, {
-                required: !optional,
-                knownSchemaNames,
-              }),
+              schema: requestSchema,
             },
           },
         };
@@ -554,6 +783,142 @@ const responseStatusOf = (decorators, sourceFile, httpMethod) => {
   return httpMethod === 'post' ? '201' : '200';
 };
 
+/** 从 Express Response 调用链读取显式 status；未调用 status 时采用 200。 */
+const expressResponseStatus = (call, sourceFile) => {
+  const target = call.expression.expression;
+  if (
+    ts.isCallExpression(target) &&
+    ts.isPropertyAccessExpression(target.expression) &&
+    target.expression.name.text === 'status'
+  ) {
+    const value = staticNumber(target.arguments[0], sourceFile);
+    return value === undefined ? undefined : String(value);
+  }
+  return '200';
+};
+
+/** 从 Express Response 调用链读取 type/contentType；缺省按 JSON。 */
+const expressResponseContentType = (call, sourceFile) => {
+  const target = call.expression.expression;
+  if (
+    ts.isCallExpression(target) &&
+    ts.isPropertyAccessExpression(target.expression) &&
+    ['type', 'contentType'].includes(target.expression.name.text)
+  ) {
+    return staticString(target.arguments[0], sourceFile, 'Response content type');
+  }
+  return 'application/json';
+};
+
+/** 合并同一状态码、同一媒体类型的多个返回分支。 */
+const mergeResponseSchema = (current, next) => {
+  if (current === undefined) {
+    return next;
+  }
+  if (JSON.stringify(current) === JSON.stringify(next)) {
+    return current;
+  }
+  const variants = current.anyOf === undefined ? [current] : current.anyOf;
+  if (variants.some((variant) => JSON.stringify(variant) === JSON.stringify(next))) {
+    return current;
+  }
+  return { anyOf: [...variants, next] };
+};
+
+/** 从 RawResponse 控制器内的 json/send/redirect 调用提取真实成功响应。 */
+const rawSuccessResponsesOf = (method, sourceFile, checker, context, operationId) => {
+  if (operationId.startsWith('McpController.handle.')) {
+    return {
+      200: {
+        description: 'MCP Streamable HTTP 协议响应。',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              additionalProperties: true,
+              'x-protocol-schema':
+                'Model Context Protocol 2025-11-25 JSON-RPC response envelope',
+            },
+          },
+          'text/event-stream': {
+            schema: {
+              type: 'string',
+              'x-protocol-schema':
+                'Model Context Protocol 2025-11-25 Streamable HTTP event stream',
+            },
+          },
+        },
+      },
+    };
+  }
+  const collected = new Map();
+  const visit = (node) => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const callName = node.expression.name.text;
+      if (callName === 'redirect') {
+        const status = staticNumber(node.arguments[0], sourceFile);
+        if (status !== undefined && status >= 200 && status < 400) {
+          collected.set(String(status), {
+            description: '请求成功后跳转至可信地址。',
+            headers: {
+              Location: {
+                required: true,
+                schema: { type: 'string', format: 'uri' },
+              },
+            },
+          });
+        }
+      }
+      if (callName === 'json' || callName === 'send') {
+        const status = expressResponseStatus(node, sourceFile);
+        const numericStatus = Number(status);
+        if (
+          status !== undefined &&
+          numericStatus >= 200 &&
+          numericStatus < 400
+        ) {
+          const argument = node.arguments[0];
+          if (argument === undefined) {
+            collected.set(status, {
+              description: '请求成功，无响应体。',
+            });
+          } else {
+            const contentType =
+              operationId === 'MarketingCmsController.exportLeads'
+                ? 'text/csv'
+                : callName === 'json'
+                ? 'application/json'
+                : expressResponseContentType(node, sourceFile);
+            const schema = schemaForCompilerType(
+              checker.getTypeAtLocation(argument),
+              checker,
+              `${context} RawResponse ${status}`,
+            );
+            const existing = collected.get(status);
+            const existingSchema = existing?.content?.[contentType]?.schema;
+            collected.set(status, {
+              description: '请求成功。',
+              content: {
+                ...(existing?.content ?? {}),
+                [contentType]: {
+                  schema: mergeResponseSchema(existingSchema, schema),
+                },
+              },
+            });
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  if (method.body !== undefined) {
+    visit(method.body);
+  }
+  return Object.fromEntries(
+    [...collected.entries()].sort(([left], [right]) => Number(left) - Number(right)),
+  );
+};
+
 /** 构建单个操作并保留无法无损翻译的 Nest 运行时信息。 */
 const buildOperation = ({
   className,
@@ -566,6 +931,7 @@ const buildOperation = ({
   path,
   classSecurity,
   knownSchemaNames,
+  checker,
 }) => {
   const methodDecorators = decoratorsOf(method);
   const methodSecurity = securityMetadata(methodDecorators, sourceFile);
@@ -579,6 +945,7 @@ const buildOperation = ({
     method,
     sourceFile,
     knownSchemaNames,
+    checker,
   );
   const pathVariables = [...path.matchAll(/\{([^}]+)\}/gu)].map((match) => match[1]);
   const declaredPathVariables = parameters
@@ -596,22 +963,52 @@ const buildOperation = ({
     );
   }
 
-  const responseType = responseTypeOf(method, sourceFile);
+  const signature = checker.getSignatureFromDeclaration(method);
+  if (signature === undefined) {
+    throw new Error(`${relative(repoRoot, filePath)}:${methodName} 无法解析方法签名`);
+  }
+  const declaredReturnType = checker.getReturnTypeOfSignature(signature);
+  const responseCompilerType =
+    checker.getPromisedTypeOfPromise(declaredReturnType) ?? declaredReturnType;
   const responseStatus = responseStatusOf(methodDecorators, sourceFile, httpMethod);
   const line = sourceFile.getLineAndCharacterOfPosition(method.getStart(sourceFile)).line + 1;
+  const successContentType =
+    className === 'MetricsController' && methodName === 'scrape'
+      ? 'text/plain; version=0.0.4'
+      : 'application/json';
   const response =
-    responseType === 'void'
+    hasTypeFlag(responseCompilerType, ts.TypeFlags.Void) ||
+    hasTypeFlag(responseCompilerType, ts.TypeFlags.Undefined)
       ? { description: '请求已处理，无结构化响应体。' }
       : {
           description: '请求成功。',
           content: {
-            'application/json': {
-              schema: schemaForType(responseType, { knownSchemaNames }),
+            [successContentType]: {
+              schema: schemaForCompilerType(
+                responseCompilerType,
+                checker,
+                `${relative(repoRoot, filePath)}:${methodName} 成功响应`,
+              ),
             },
           },
         };
   const guardNames = [...new Set([...classSecurity.guards, ...methodSecurity.guards])].sort();
   const operationId = `${className}.${methodName}${nestMethod === 'All' ? `.${httpMethod}` : ''}`;
+  const rawResponses =
+    hasTypeFlag(responseCompilerType, ts.TypeFlags.Void) ||
+    hasTypeFlag(responseCompilerType, ts.TypeFlags.Undefined)
+      ? rawSuccessResponsesOf(
+          method,
+          sourceFile,
+          checker,
+          `${relative(repoRoot, filePath)}:${methodName}`,
+          operationId,
+        )
+      : {};
+  const successResponses =
+    Object.keys(rawResponses).length > 0
+      ? rawResponses
+      : { [responseStatus]: response };
 
   return {
     operationId,
@@ -621,7 +1018,7 @@ const buildOperation = ({
     parameters,
     ...(requestBody === undefined ? {} : { requestBody }),
     responses: {
-      [responseStatus]: response,
+      ...successResponses,
       default: { $ref: '#/components/responses/Problem' },
     },
     'x-source': `${relative(repoRoot, filePath).split(sep).join('/')}:${line}`,
@@ -640,17 +1037,14 @@ const buildOperation = ({
 };
 
 /** 扫描 Controller AST 并生成按路径和方法排序的操作集合。 */
-const collectOperations = async (files, knownSchemaNames) => {
+const collectOperations = async (files, knownSchemaNames, program) => {
+  const checker = program.getTypeChecker();
   const operations = [];
   for (const filePath of files) {
-    const sourceText = await readFile(filePath, 'utf8');
-    const sourceFile = ts.createSourceFile(
-      filePath,
-      sourceText,
-      ts.ScriptTarget.Latest,
-      true,
-      ts.ScriptKind.TS,
-    );
+    const sourceFile = program.getSourceFile(filePath);
+    if (sourceFile === undefined) {
+      throw new Error(`TypeScript Program 未包含 Controller：${relative(repoRoot, filePath)}`);
+    }
     for (const statement of sourceFile.statements) {
       if (!ts.isClassDeclaration(statement) || statement.name === undefined) {
         continue;
@@ -701,6 +1095,7 @@ const collectOperations = async (files, knownSchemaNames) => {
               path,
               classSecurity,
               knownSchemaNames,
+              checker,
             }),
           });
         }
@@ -713,6 +1108,129 @@ const collectOperations = async (files, knownSchemaNames) => {
   );
 };
 
+/** 加载由运行时 Zod 源生成的请求契约，避免 OpenAPI 维护第二套字段规则。 */
+const loadRuntimeRequestContracts = async () => {
+  const moduleUrl = `${pathToFileURL(requestContractsPath).href}?contract=${Date.now()}`;
+  const module = await import(moduleUrl);
+  if (typeof module.openApiRequestContracts !== 'function') {
+    throw new Error('REST 请求契约模块缺少 openApiRequestContracts 导出');
+  }
+  const contracts = module.openApiRequestContracts();
+  for (const [operationId, contract] of Object.entries(contracts)) {
+    let inheritedFilePath;
+    for (const sourceRef of contract.runtimeSource.split('|')) {
+      const [declaredFilePath, declaredFragment] = sourceRef.split('#');
+      const filePath =
+        declaredFragment === undefined ? inheritedFilePath : declaredFilePath;
+      const fragment =
+        declaredFragment === undefined ? declaredFilePath : declaredFragment;
+      if (filePath === undefined || fragment === undefined || fragment.length === 0) {
+        throw new Error(`${operationId} 的运行时 Schema 来源格式无效：${sourceRef}`);
+      }
+      inheritedFilePath = filePath;
+      const source = await readFile(resolve(repoRoot, filePath), 'utf8').catch(() => undefined);
+      if (source === undefined) {
+        throw new Error(`${operationId} 的运行时 Schema 来源文件不存在：${filePath}`);
+      }
+      if (!source.includes(fragment)) {
+        throw new Error(`${operationId} 的运行时 Schema 来源片段不存在：${sourceRef}`);
+      }
+    }
+  }
+  return contracts;
+};
+
+/** 将 unknown 与内联请求体提升为命名组件，并拒绝未登记或失效登记。 */
+const bindNamedRequestSchemas = (operations, runtimeContracts) => {
+  const schemas = {};
+  const consumedRuntimeContracts = new Set();
+  let inlineCount = 0;
+  for (const { operation } of operations) {
+    const content = operation.requestBody?.content;
+    if (content === undefined) {
+      if (runtimeContracts[operation.operationId] !== undefined) {
+        throw new Error(`${operation.operationId} 登记了请求 Schema 但端点没有 Body`);
+      }
+      continue;
+    }
+    const jsonEntry = Object.entries(content)[0];
+    if (jsonEntry === undefined) {
+      throw new Error(`${operation.operationId} 请求体没有 content type`);
+    }
+    const [currentContentType, media] = jsonEntry;
+    const currentSchema = media.schema;
+    if (typeof currentSchema?.$ref === 'string') {
+      continue;
+    }
+    const runtimeContract = runtimeContracts[operation.operationId];
+    if (runtimeContract !== undefined) {
+      if (schemas[runtimeContract.name] !== undefined) {
+        throw new Error(`运行时请求 Schema 名称重复：${runtimeContract.name}`);
+      }
+      schemas[runtimeContract.name] = {
+        ...runtimeContract.schema,
+        'x-runtime-schema-source': runtimeContract.runtimeSource,
+      };
+      operation.requestBody.content = {
+        [runtimeContract.contentType]: {
+          schema: { $ref: `#/components/schemas/${runtimeContract.name}` },
+        },
+      };
+      if (runtimeContract.required !== undefined) {
+        operation.requestBody.required = runtimeContract.required;
+      }
+      operation.requestBody['x-runtime-schema-source'] = runtimeContract.runtimeSource;
+      operation.requestBody['x-original-content-type'] = currentContentType;
+      consumedRuntimeContracts.add(operation.operationId);
+      continue;
+    }
+    const inlineName = inlineRequestSchemaNames.get(operation.operationId);
+    if (inlineName === undefined) {
+      throw new Error(`${operation.operationId} 含未登记的 unknown 或内联请求 Schema`);
+    }
+    if (schemas[inlineName] !== undefined) {
+      throw new Error(`内联请求 Schema 名称重复：${inlineName}`);
+    }
+    schemas[inlineName] = {
+      ...currentSchema,
+      'x-runtime-schema-source': operation['x-source'],
+    };
+    operation.requestBody.content = {
+      [currentContentType]: {
+        schema: { $ref: `#/components/schemas/${inlineName}` },
+      },
+    };
+    operation.requestBody['x-runtime-schema-source'] = operation['x-source'];
+    inlineCount += 1;
+  }
+  const staleContracts = Object.keys(runtimeContracts).filter(
+    (operationId) => !consumedRuntimeContracts.has(operationId),
+  );
+  if (staleContracts.length > 0) {
+    throw new Error(`REST 请求 Schema 存在失效登记：${staleContracts.join(', ')}`);
+  }
+  if (inlineCount !== inlineRequestSchemaNames.size) {
+    throw new Error(
+      `内联请求 Schema 数量不一致：期望 ${inlineRequestSchemaNames.size}，实际 ${inlineCount}`,
+    );
+  }
+  return {
+    schemas,
+    runtimeCount: consumedRuntimeContracts.size,
+    inlineCount,
+  };
+};
+
+/** 判断成功响应是否仍是未声明字段的顶层开放对象。 */
+const isUnboundedTopLevelResponse = (schema) =>
+  schema?.['x-intentionally-untyped'] === true ||
+  (
+    schema?.type === 'object' &&
+    schema?.additionalProperties === true &&
+    schema?.properties === undefined &&
+    schema?.['x-protocol-schema'] === undefined
+  );
+
 /** 校验 OpenAPI 结构、操作唯一性和安全元数据。 */
 const validateDocument = (document) => {
   const errors = [];
@@ -723,6 +1241,10 @@ const validateDocument = (document) => {
   const schemas = document.components?.schemas ?? {};
   let operationCount = 0;
   let dtoRequestRefCount = 0;
+  let requestBodyCount = 0;
+  let namedRequestRefCount = 0;
+  let explicitSuccessResponseCount = 0;
+  let noContentSuccessResponseCount = 0;
   for (const [path, pathItem] of Object.entries(document.paths ?? {})) {
     if (!path.startsWith('/')) {
       errors.push(`路径必须以 / 开头：${path}`);
@@ -743,17 +1265,57 @@ const validateDocument = (document) => {
         errors.push(`${method.toUpperCase()} ${path} 缺少响应定义`);
       }
       const requestSchema = operation.requestBody?.content?.['application/json']?.schema;
+      const requestMedia = Object.values(operation.requestBody?.content ?? {})[0];
+      const namedRequestSchema = requestMedia?.schema;
+      if (operation.requestBody !== undefined) {
+        requestBodyCount += 1;
+      }
+      if (typeof namedRequestSchema?.$ref === 'string') {
+        namedRequestRefCount += 1;
+        const schemaName = namedRequestSchema.$ref.replace('#/components/schemas/', '');
+        if (schemas[schemaName] === undefined) {
+          errors.push(`${method.toUpperCase()} ${path} 引用不存在的请求 Schema ${schemaName}`);
+        }
+      } else if (operation.requestBody !== undefined) {
+        errors.push(`${method.toUpperCase()} ${path} 请求体必须绑定命名组件 Schema`);
+      }
       if (typeof requestSchema?.$ref === 'string') {
         const schemaName = requestSchema.$ref.replace('#/components/schemas/', '');
-        dtoRequestRefCount += 1;
-        if (schemas[schemaName] === undefined) {
-          errors.push(`${method.toUpperCase()} ${path} 引用不存在的 DTO Schema ${schemaName}`);
+        if (schemas[schemaName]?.['x-runtime-schema-source'] === undefined) {
+          dtoRequestRefCount += 1;
         }
-      } else if (
-        typeof requestSchema?.['x-typescript-type'] === 'string' &&
-        requestSchema['x-typescript-type'].endsWith('Dto')
-      ) {
-        errors.push(`${method.toUpperCase()} ${path} 的 DTO 请求体未绑定组件 Schema`);
+      }
+      for (const [status, response] of Object.entries(operation.responses ?? {})) {
+        if (status === 'default') {
+          continue;
+        }
+        const responseContent = response.content;
+        if (responseContent === undefined) {
+          noContentSuccessResponseCount += 1;
+          continue;
+        }
+        const responseMediaEntries = Object.entries(responseContent);
+        if (responseMediaEntries.length === 0) {
+          errors.push(`${method.toUpperCase()} ${path} 成功响应 content 不能为空`);
+          continue;
+        }
+        let operationResponseIsExplicit = true;
+        for (const [contentType, responseMedia] of responseMediaEntries) {
+          const responseSchema = responseMedia?.schema;
+          if (
+            responseSchema === undefined ||
+            responseSchema['x-typescript-type'] === 'unknown' ||
+            isUnboundedTopLevelResponse(responseSchema)
+          ) {
+            operationResponseIsExplicit = false;
+            errors.push(
+              `${method.toUpperCase()} ${path} ${contentType} 成功响应缺少显式 Schema`,
+            );
+          }
+        }
+        if (operationResponseIsExplicit) {
+          explicitSuccessResponseCount += 1;
+        }
       }
     }
   }
@@ -762,11 +1324,23 @@ const validateDocument = (document) => {
       `x-operation-count 不一致：声明 ${document['x-operation-count']}，实际 ${operationCount}`,
     );
   }
-  if (Object.keys(schemas).length - 1 !== document['x-dto-schema-count']) {
-    errors.push('x-dto-schema-count 与 components.schemas 不一致');
+  if (Object.keys(schemas).length !== document['x-component-schema-count']) {
+    errors.push('x-component-schema-count 与 components.schemas 不一致');
   }
   if (dtoRequestRefCount !== document['x-dto-request-ref-count']) {
     errors.push('x-dto-request-ref-count 与请求体引用数量不一致');
+  }
+  if (requestBodyCount !== document['x-request-body-count']) {
+    errors.push('x-request-body-count 与请求体数量不一致');
+  }
+  if (namedRequestRefCount !== document['x-named-request-ref-count']) {
+    errors.push('x-named-request-ref-count 与命名请求引用数量不一致');
+  }
+  if (explicitSuccessResponseCount !== document['x-explicit-success-response-count']) {
+    errors.push('x-explicit-success-response-count 与显式成功响应数量不一致');
+  }
+  if (noContentSuccessResponseCount !== document['x-no-content-success-response-count']) {
+    errors.push('x-no-content-success-response-count 与无体成功响应数量不一致');
   }
   if (errors.length > 0) {
     throw new Error(`OpenAPI 校验失败：\n- ${errors.join('\n- ')}`);
@@ -776,8 +1350,18 @@ const validateDocument = (document) => {
 /** 组装最终 OpenAPI 3.1 文档。 */
 const buildDocument = async () => {
   const controllerFiles = await findControllerFiles(sourceRoot);
+  const program = createContractProgram();
   const dtoSchemas = await collectDtoSchemas();
-  const operations = await collectOperations(controllerFiles, new Set(Object.keys(dtoSchemas)));
+  const operations = await collectOperations(
+    controllerFiles,
+    new Set(Object.keys(dtoSchemas)),
+    program,
+  );
+  const runtimeRequestContracts = await loadRuntimeRequestContracts();
+  const namedRequestSchemas = bindNamedRequestSchemas(
+    operations,
+    runtimeRequestContracts,
+  );
   const paths = {};
   const scopes = new Set();
   for (const { path, httpMethod, operation } of operations) {
@@ -845,6 +1429,7 @@ const buildDocument = async () => {
           },
         },
         ...dtoSchemas,
+        ...namedRequestSchemas.schemas,
       },
       responses: {
         Problem: {
@@ -867,12 +1452,37 @@ const buildDocument = async () => {
     ).length,
     'x-operation-count': operations.length,
     'x-dto-schema-count': Object.keys(dtoSchemas).length,
+    'x-runtime-request-schema-count': namedRequestSchemas.runtimeCount,
+    'x-inline-request-schema-count': namedRequestSchemas.inlineCount,
+    'x-component-schema-count':
+      1 + Object.keys(dtoSchemas).length + Object.keys(namedRequestSchemas.schemas).length,
+    'x-request-body-count': operations.filter(
+      ({ operation }) => operation.requestBody !== undefined,
+    ).length,
+    'x-named-request-ref-count': operations.filter(
+      ({ operation }) => {
+        const media = Object.values(operation.requestBody?.content ?? {})[0];
+        return typeof media?.schema?.$ref === 'string';
+      },
+    ).length,
     'x-dto-request-ref-count': operations.filter(
       ({ operation }) =>
-        typeof operation.requestBody?.content?.['application/json']?.schema?.$ref === 'string',
+        typeof operation.requestBody?.content?.['application/json']?.schema?.$ref === 'string' &&
+        operation.requestBody?.['x-runtime-schema-source'] === undefined,
+    ).length,
+    'x-explicit-success-response-count': operations.filter(({ operation }) =>
+      Object.entries(operation.responses).some(
+        ([status, response]) => status !== 'default' && response.content !== undefined,
+      ),
+    ).length,
+    'x-no-content-success-response-count': operations.filter(({ operation }) =>
+      Object.entries(operation.responses).some(
+        ([status, response]) => status !== 'default' && response.content === undefined,
+      ),
     ).length,
     'x-contract-limitations': [
-      '103 个 class-validator DTO 已展开字段级 Schema；unknown 或控制器内联解析请求继续以 x-typescript-type 和运行时解析器为准。',
+      '全部 Body 均绑定命名组件；DTO 取自 class-validator，特殊请求取自运行时 Zod 注册表或编译器内联类型。',
+      '成功响应由 TypeScript Program 展开；刻意开放的 Record<string, unknown> 字段使用 x-intentionally-untyped 标记。',
       '@All 路由展开为 OpenAPI 支持的七种 HTTP 方法，x-nest-method 保留原始 ALL 语义。',
       '生产域名和 OAuth 客户端注册属于环境配置，不写入仓库。',
     ],
@@ -898,7 +1508,14 @@ const runSelfTest = () => {
     },
     'x-operation-count': 1,
     'x-dto-schema-count': 0,
+    'x-runtime-request-schema-count': 0,
+    'x-inline-request-schema-count': 0,
+    'x-component-schema-count': 1,
+    'x-request-body-count': 0,
+    'x-named-request-ref-count': 0,
     'x-dto-request-ref-count': 0,
+    'x-explicit-success-response-count': 0,
+    'x-no-content-success-response-count': 1,
   };
   validateDocument(fixture);
   const failures = [
@@ -918,6 +1535,81 @@ const runSelfTest = () => {
         },
       },
     ],
+    [
+      '未命名请求体',
+      {
+        ...fixture,
+        paths: {
+          '/api/health': {
+            post: {
+              ...fixture.paths['/api/health'].get,
+              operationId: 'HealthController.post',
+              requestBody: {
+                content: {
+                  'application/json': {
+                    schema: { type: 'object' },
+                  },
+                },
+              },
+            },
+          },
+        },
+        'x-request-body-count': 1,
+      },
+    ],
+    [
+      'unknown 成功响应',
+      {
+        ...fixture,
+        paths: {
+          '/api/health': {
+            get: {
+              ...fixture.paths['/api/health'].get,
+              responses: {
+                200: {
+                  description: 'ok',
+                  content: {
+                    'application/json': {
+                      schema: { 'x-typescript-type': 'unknown' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        'x-explicit-success-response-count': 1,
+        'x-no-content-success-response-count': 0,
+      },
+    ],
+    [
+      '顶层开放成功响应',
+      {
+        ...fixture,
+        paths: {
+          '/api/health': {
+            get: {
+              ...fixture.paths['/api/health'].get,
+              responses: {
+                200: {
+                  description: 'ok',
+                  content: {
+                    'application/json': {
+                      schema: {
+                        type: 'object',
+                        additionalProperties: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        'x-explicit-success-response-count': 1,
+        'x-no-content-success-response-count': 0,
+      },
+    ],
   ];
   for (const [name, candidate] of failures) {
     let rejected = false;
@@ -930,7 +1622,60 @@ const runSelfTest = () => {
       throw new Error(`自测失败：${name} 未被拒绝`);
     }
   }
-  process.stdout.write(`OpenAPI 生成器自测通过：1 个正向场景，${failures.length} 个负向场景。\n`);
+  const bindingFailures = [
+    [
+      '新增 unknown 请求未登记',
+      () =>
+        bindNamedRequestSchemas(
+          [{
+            operation: {
+              operationId: 'FixtureController.write',
+              requestBody: {
+                content: {
+                  'application/json': {
+                    schema: { 'x-typescript-type': 'unknown' },
+                  },
+                },
+              },
+              'x-source': 'fixture.ts:1',
+            },
+          }],
+          {},
+        ),
+    ],
+    [
+      '运行时请求登记失效',
+      () =>
+        bindNamedRequestSchemas(
+          [],
+          {
+            'FixtureController.stale': {
+              name: 'FixtureRequest',
+              contentType: 'application/json',
+              schema: {
+                type: 'object',
+                additionalProperties: false,
+              },
+              runtimeSource: 'fixture.ts#FixtureRequest',
+            },
+          },
+        ),
+    ],
+  ];
+  for (const [name, execute] of bindingFailures) {
+    let rejected = false;
+    try {
+      execute();
+    } catch {
+      rejected = true;
+    }
+    if (!rejected) {
+      throw new Error(`自测失败：${name} 未被拒绝`);
+    }
+  }
+  process.stdout.write(
+    `OpenAPI 生成器自测通过：1 个正向场景，${failures.length + bindingFailures.length} 个负向场景。\n`,
+  );
 };
 
 if (args.has('--self-test')) {

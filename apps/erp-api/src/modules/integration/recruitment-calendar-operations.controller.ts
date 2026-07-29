@@ -11,8 +11,8 @@ import {
   Query,
 } from '@nestjs/common';
 import { ULID_PATTERN } from '@gaoq/shared-utils';
-import { z } from 'zod';
 
+import { recruitmentCalendarResolutionRequestSchema as resolutionRequestSchema } from '../../contracts/rest-request-contracts.js';
 import { AuditService } from '../../core/audit/audit.service.js';
 import { RequiredScopes } from '../identity/auth.decorators.js';
 import {
@@ -33,13 +33,6 @@ const REASONS: readonly RecruitmentCalendarResolutionReason[] = [
 const DECISIONS: readonly RecruitmentCalendarResolutionDecision[] = [
   'retry', 'accept_succeeded',
 ];
-const resolutionRequestSchema = z.object({
-  externalCalendarId: z.string(),
-  decision: z.string(),
-  reason: z.string(),
-  externalEventId: z.string().optional(),
-}).strict();
-
 /** 招聘日历人工核验接口；明确不注册为 MCP Tool。 */
 @Controller('integrations/recruitment-calendar-deliveries')
 export class RecruitmentCalendarOperationsController {

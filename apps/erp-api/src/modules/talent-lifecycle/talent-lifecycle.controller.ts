@@ -12,8 +12,11 @@ import {
   Res,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { z } from 'zod';
 
+import {
+  talentTouchpointCloseRequestSchema as closeTouchpointSchema,
+  talentTouchpointCreateRequestSchema as createTouchpointSchema,
+} from '../../contracts/rest-request-contracts.js';
 import { AuditService } from '../../core/audit/audit.service.js';
 import { RequiredScopes } from '../identity/auth.decorators.js';
 import {
@@ -34,25 +37,6 @@ import {
 const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 const IF_MATCH_PATTERN = /^"([1-9][0-9]*)"$/;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
-const createTouchpointSchema = z.object({
-  kind: z.enum([
-    'candidate_outreach', 'interview_support', 'offer_support', 'onboarding_support',
-    'employee_care', 'offboarding_support', 'alumni_engagement', 'rehire_contact',
-  ]),
-  channel: z.enum(['email', 'phone', 'wechat', 'meeting', 'portal', 'internal']),
-  direction: z.enum(['inbound', 'outbound', 'internal']),
-  outcome: z.enum([
-    'contacted', 'no_response', 'follow_up_required', 'resolved',
-    'declined', 'joined', 'departed', 'consent_withdrawn',
-  ]),
-  occurredAt: z.string().refine(isCanonicalInstant),
-  nextActionAt: z.string().refine(isCanonicalInstant).optional(),
-  note: z.string().max(1_000).optional(),
-}).strict();
-const closeTouchpointSchema = z.object({
-  status: z.enum(['completed', 'cancelled']),
-}).strict();
-
 /** 人才全周期 REST：跨域只读全景，写操作仅限本模块服务触点。 */
 @Controller('talent-lifecycle')
 export class TalentLifecycleController {
@@ -284,9 +268,4 @@ export class TalentLifecycleController {
       });
     }
   }
-}
-
-function isCanonicalInstant(value: string): boolean {
-  const parsed = new Date(value);
-  return Number.isFinite(parsed.getTime()) && parsed.toISOString() === value;
 }

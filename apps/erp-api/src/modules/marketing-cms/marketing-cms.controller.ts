@@ -16,6 +16,15 @@ import { ConfigService } from '@nestjs/config';
 import { createTraceId } from '@gaoq/shared-utils';
 import type { Response } from 'express';
 import type { AppEnvironment } from '../../config/environment.js';
+import {
+  marketingAiReviewRequestSchema,
+  marketingContentRollbackRequestSchema,
+  marketingContentScheduleRequestSchema,
+  marketingLeadAssigneeRequestSchema,
+  marketingLeadNoteRequestSchema,
+  marketingLeadStatusRequestSchema,
+  marketingPublicLeadRequestSchema,
+} from '../../contracts/rest-request-contracts.js';
 import { AuditService } from '../../core/audit/audit.service.js';
 import type { AuditRecordInput } from '../../core/audit/audit.types.js';
 import { PublicRoute, RawResponse } from '../../core/http/public-route.decorator.js';
@@ -174,7 +183,9 @@ export class MarketingCmsController {
     @Body() body: unknown,
     @Res({ passthrough: true }) response: Response,
   ) {
-    const scheduledAt = readString(body, 'scheduledAt');
+    const parsed = marketingContentScheduleRequestSchema.safeParse(body);
+    if (!parsed.success) throw invalidBody();
+    const scheduledAt = parsed.data.scheduledAt;
     const result = await this.cms.schedule(
       requiredId(id), requiredVersion(ifMatch), requiredKey(key), scheduledAt,
     );
@@ -217,7 +228,9 @@ export class MarketingCmsController {
     @Body() body: unknown,
     @Res({ passthrough: true }) response: Response,
   ) {
-    const revision = readPositiveInteger(body, 'revision');
+    const parsed = marketingContentRollbackRequestSchema.safeParse(body);
+    if (!parsed.success) throw invalidBody();
+    const revision = parsed.data.revision;
     const result = await this.cms.rollback(
       requiredId(id), revision, requiredVersion(ifMatch), requiredKey(key),
     );
@@ -265,7 +278,9 @@ export class MarketingCmsController {
     @Body() body: unknown,
     @Res({ passthrough: true }) response: Response,
   ) {
-    const status = readString(body, 'status');
+    const parsed = marketingLeadStatusRequestSchema.safeParse(body);
+    if (!parsed.success) throw invalidBody();
+    const status = parsed.data.status;
     const resourceId = requiredId(id);
     const result = await this.cms.updateLeadStatus(
       requiredKey(key), resourceId, status, requiredVersion(ifMatch),
@@ -289,7 +304,9 @@ export class MarketingCmsController {
     @Res({ passthrough: true }) response: Response,
   ) {
     const resourceId = requiredId(id);
-    const assigneeId = readString(body, 'assigneeId');
+    const parsed = marketingLeadAssigneeRequestSchema.safeParse(body);
+    if (!parsed.success) throw invalidBody();
+    const assigneeId = parsed.data.assigneeId;
     const result = await this.cms.assignLead(
       requiredKey(key), resourceId, assigneeId, requiredVersion(ifMatch),
     );
@@ -315,8 +332,10 @@ export class MarketingCmsController {
     @Res({ passthrough: true }) response: Response,
   ) {
     const resourceId = requiredId(id);
+    const parsed = marketingLeadNoteRequestSchema.safeParse(body);
+    if (!parsed.success) throw invalidBody();
     const result = await this.cms.addLeadNote(
-      requiredKey(key), resourceId, readString(body, 'body'), requiredVersion(ifMatch),
+      requiredKey(key), resourceId, parsed.data.body, requiredVersion(ifMatch),
     );
     setVersionHeader(response, result);
     await this.auditAfterCommit({
@@ -454,8 +473,9 @@ export class MarketingCmsController {
     @Headers('idempotency-key') key: string | undefined,
     @Body() body: unknown,
   ) {
-    const decision = readString(body, 'decision');
-    if (decision !== 'accepted' && decision !== 'rejected') throw invalidBody();
+    const parsed = marketingAiReviewRequestSchema.safeParse(body);
+    if (!parsed.success) throw invalidBody();
+    const decision = parsed.data.decision;
     const resourceId = requiredId(id);
     const result = await this.cms.reviewAiDraft(requiredKey(key), resourceId, decision);
     await this.auditAfterCommit({
@@ -547,25 +567,6 @@ function setVersionHeader(
   response.setHeader('ETag', `"${String(version)}"`);
 }
 
-function readPositiveInteger(value: unknown, field: string): number {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw invalidBody();
-  const record = value as Record<string, unknown>;
-  if (
-    Object.keys(record).length !== 1 ||
-    typeof record[field] !== 'number' ||
-    !Number.isSafeInteger(record[field]) ||
-    record[field] < 1
-  ) throw invalidBody();
-  return record[field];
-}
-
-function readString(value: unknown, field: string): string {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw invalidBody();
-  const record = value as Record<string, unknown>;
-  if (Object.keys(record).length !== 1 || typeof record[field] !== 'string') throw invalidBody();
-  return record[field];
-}
-
 function invalidBody(): BadRequestException {
   return new BadRequestException({ code: 'CMS_REQUEST_INVALID', message: '请求参数无效' });
 }
@@ -648,13 +649,8 @@ function publicLeadRequest(value: unknown): {
   readonly captchaToken: string;
   readonly lead: Record<string, unknown>;
 } {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw invalidBody();
-  const record = value as Record<string, unknown>;
-  if (
-    typeof record.captchaToken !== 'string' ||
-    record.captchaToken.length < 16 ||
-    record.captchaToken.length > 4096
-  ) throw invalidBody();
-  const { captchaToken, ...lead } = record;
+  const parsed = marketingPublicLeadRequestSchema.safeParse(value);
+  if (!parsed.success) throw invalidBody();
+  const { captchaToken, ...lead } = parsed.data;
   return { captchaToken, lead };
 }

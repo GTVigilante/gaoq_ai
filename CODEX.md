@@ -65,14 +65,16 @@
   矩阵、外部密钥轮换和三方签署仍未完成。
 - 2026-07-30 已建立源码确定性生成的 OpenAPI 3.1 REST 基线：47 个
   Controller、225 个 Nest 路由声明、218 个 Path 和 231 个 Operation 均记录
-  精确 OAuth Scope、公开状态、Guard、Header/Query/Path/Body 类型、响应类型
-  与源码位置；103 个 class-validator DTO 已展开字段、必填、nullable、继承、
-  嵌套、长度、范围、枚举和数组约束，85/116 个 Body 绑定组件 Schema。MCP
-  `@All` 的七方法展开保留原始语义。生成器拒绝动态路由/Scope、重复操作、路径
-  参数漂移、公开/Scope 冲突、DTO 名称重复和悬空引用，自测与逐字节漂移校验通过
-  `pretypecheck` 接入 `pnpm check`。其余 3 个内联和 28 个 `unknown` 严格解析
-  Body 及部分推断响应仍需显式化，不能把该基线单独宣称为全部生产客户端的完整
-  Schema；GitHub Hosted Actions 仍受账号付款或 Spending limit 阻塞。
+  精确 OAuth Scope、公开状态、Guard、Header/Query/Path/Body、成功响应与源码
+  位置。103 个 class-validator DTO 已展开字段级约束；116/116 个 Body 全部绑定
+  命名组件（85 个 DTO、27 个运行时 Zod、4 个编译器内联类型），共 135 个
+  Component Schema。231/231 个成功响应包括 229 个显式内容 Schema、1 个 302
+  和 1 个 204；TypeScript Program 展开跨文件/推断返回值，RawResponse 从实际
+  `json/send/redirect` 提取状态码与媒体类型，OAuth 表单、CSV、MCP SSE 和
+  WebAuthn 不再误报。生成器拒绝未命名/unknown 写请求、顶层 unknown 成功响应、
+  失效运行时来源、动态路由/Scope、重复操作、路径参数漂移、公开/Scope 冲突及
+  悬空引用，自测与逐字节漂移校验通过 `pretypecheck` 接入 `pnpm check`；
+  GitHub Hosted Actions 仍受账号付款或 Spending limit 阻塞。
 - 2026-07-30 已建立 AsyncAPI 3.0 / CloudEvents 1.0 机器契约：从固定生产
   Outbox 与专业算薪平台契约确定性收集 184 个现行事件，其中 ERP/平台出站
   180 个、专业算薪入站 4 个；每项声明固定 source、方向、权威系统、分级、
@@ -646,8 +648,8 @@
 - 2026-07-30 ERP API 覆盖率已修正为显式纳入 `src/**/*.ts` 全部生产源码，
   包括测试未加载的启动、Worker、Controller、迁移和适配器文件，并把全量覆盖
   命令接入 `pnpm check`。补齐年度个税可信接入后的当前真实基线为
-  语句 93.23%、分支 91.02%、函数 93.37%、行 94.25%，438 个测试文件、
-  7,209 项测试全部通过并达到全仓四维 80% 强制门槛；完整 `pnpm check`、
+  语句 93.24%、分支 90.98%、函数 93.37%、行 94.27%，439 个测试文件、
+  7,217 项测试全部通过并达到全仓四维 80% 强制门槛；完整 `pnpm check`、
   显式公开 Origin 的 `pnpm build` 与 `pnpm audit --audit-level high` 同日
   通过，依赖审计未发现已知漏洞。
 - 2026-07-28 已加固 Talent Lifecycle 的 Recruitment、Onboarding、Org 与
