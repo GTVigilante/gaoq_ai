@@ -46,6 +46,12 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/mcp/mcp-stdio-process-runner.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/mcp/mcp-runtime.service.ts': {
           branches: 90,
           functions: 90,

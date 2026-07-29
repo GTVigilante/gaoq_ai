@@ -87,11 +87,19 @@ Service、招聘渠道人工运维 Service/Controller 三个组合报告下的�
 2026-07-29 标准 MCP 已新增本地 stdio 入口。入口与远程 `/mcp` 共用运行时能力
 注册和访问令牌验证器；短时 Token 必须具有 `erp:mcp:server:connect`，启动前
 预检且每条消息重新验签，撤销、会话失效、过期或 Scope 缺失均立即关闭连接。
-stdout 只允许 JSON-RPC。18 项专项测试覆盖传输失败关闭和真实字节流协议协商，
+stdout 只允许 JSON-RPC。28 项专项测试覆盖传输失败关闭和真实字节流协议协商，
 官方 TypeScript Client 已发现 47 个 Tool、静态 Resource 与 22 个 Prompt；
-`pnpm quality:mcp-stdio-coverage` 已接入 `precheck/check`，两个目标生产文件
+`pnpm quality:mcp-stdio-coverage` 已接入 `precheck/check`，三个目标生产文件
 逐文件四维均不低于 90%。该仓库证据不替代 Claude、Kimi、Cursor、Inspector
 实体客户端、远程 OAuth 或外部系统联调。
+
+同日 stdio 进程入口已抽成独立失败关闭运行器，环境预检严格先于应用模块动态
+加载，输入结束、信号、连接错误及启动中迟到的应用/协议资源共用按对象身份幂等
+的清理状态机。自动化测试发现并关闭了应用加载与信号并发时重复关闭 Nest 上下文
+的竞态；稳定码写入和资源关闭异常只提升失败退出状态，不泄漏内部详情。扩展后的
+28 项专项测试覆盖三个目标生产文件，语句/分支/函数/行合计达到
+99.25%/95.74%/96.42%/100%，逐文件四维均不低于 90%。由此关闭的是仓库入口
+生命周期缺口，不替代真实 Inspector 与厂商客户端验收。
 
 2026-07-29 本人薪资单边界已下沉到 REST 与标准 MCP 共用的应用服务；
 `PAYROLL_SYSTEM_MODE=external` 在读取身份画像、Mongo 或 L4 密文前稳定失败

@@ -15,11 +15,17 @@
   stdout 仅传输 JSON-RPC。官方 TypeScript Client 已通过真实字节流发现同一套
   47 Tool、Resource 与 22 Prompt；Claude、Kimi、Cursor 和 Inspector 实体
   客户端仍保持 No-Go，待真实联调。
+- 2026-07-29 已把 stdio 进程入口抽成可测试的失败关闭运行器：环境预检先于
+  `AppModule` 动态加载，输入结束、`SIGINT`、`SIGTERM`、连接错误和迟到资源
+  使用同一幂等清理状态机；测试发现并关闭了应用加载与信号并发时重复
+  `close()` 的竞态。28 项专项测试使三个 stdio 生产边界分别达到逐文件四维
+  90%，专项门禁已接入 `precheck/check`；稳定码写入失败和资源关闭失败也只
+  提升退出状态，不泄漏 Token、环境、路径或堆栈。
 - 2026-07-29 已把覆盖率门禁本身纳入失败关闭治理：
   `scripts/validate-critical-coverage-policy.mjs` 从 `precheck/check` 解析 133 个
-  ERP API 专项脚本，展开其 `--coverage.include` 后要求 325 个生产文件逐一具有
+  ERP API 专项脚本，展开其 `--coverage.include` 后要求 326 个生产文件逐一具有
   四维 90% 阈值、路径真实存在且专项清单完全闭合；同时把租户、Identity、
-  Approval、Payroll、Treasury 与 MCP 六类章程关键域解析为 119 个权威文件，
+  Approval、Payroll、Treasury 与 MCP 六类章程关键域解析为 120 个权威文件，
   新文件不得逃出专项门禁，并锁定全生产源码 `src/**/*.ts` 四维 80% 分母。
   本轮补齐了 34 个此前仅在全量报告中的关键文件以及租户上下文、招聘渠道人工
   运维三个组合报告文件，负向自测覆盖分母、阈值、专项遗漏、关键域分类遗漏和
