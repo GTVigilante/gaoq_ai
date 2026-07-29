@@ -19,6 +19,14 @@ const requiredDocuments = [
   'docs/phase-0/06-github-governance.md',
   'docs/phase-0/07-payroll-system-boundary.md',
   'docs/phase-0/08-data-processing-register.md',
+  'docs/phase-0/09-threat-model.md',
+  'docs/adr/README.md',
+  'docs/adr/0001-modular-monolith-and-runtime.md',
+  'docs/adr/0002-erp-master-data-and-platform-adapters.md',
+  'docs/adr/0003-standard-mcp-service-boundary.md',
+  'docs/adr/0004-professional-payroll-system-boundary.md',
+  'docs/adr/0005-github-hosted-oidc-delivery.md',
+  'docs/adr/0006-unified-cutover-and-evidence-gates.md',
   'docs/implementation-completion-audit.md',
   'apps/erp-api/src/modules/integration/adapters/README.md',
   'apps/erp-api/src/modules/integration/adapters/dingtalk/mapping.md',
@@ -219,6 +227,35 @@ const requiredDataProcessingRegisterMarkers = new Map([
       '负责人',
       'MCP/OAuth 调用、确认账本和客户端目录证据',
       '任何未签署活动',
+    ],
+  ],
+]);
+const requiredAdrMarkers = new Map([
+  ['docs/adr/0001-modular-monolith-and-runtime.md',
+    ['状态：accepted', '## 背景', '## 决策', '## 后果', '## 被否决方案', '## 安全与数据影响']],
+  ['docs/adr/0002-erp-master-data-and-platform-adapters.md',
+    ['状态：accepted', 'ERP 是员工', '钉钉和飞书', '## 被否决方案']],
+  ['docs/adr/0003-standard-mcp-service-boundary.md',
+    ['状态：accepted', 'MCP `2025-11-25`', 'R3 永久不注册', '## 被否决方案']],
+  ['docs/adr/0004-professional-payroll-system-boundary.md',
+    ['状态：accepted', '唯一生产事实源', 'PAYROLL_SYSTEM_MODE=external', '## 被否决方案']],
+  ['docs/adr/0005-github-hosted-oidc-delivery.md',
+    ['状态：accepted', 'GitHub Hosted', '相同 commit 不重复空跑', '## 被否决方案']],
+  ['docs/adr/0006-unified-cutover-and-evidence-gates.md',
+    ['状态：accepted', '连续 28 天 Hypercare', 'Ed25519', '## 被否决方案']],
+]);
+const requiredThreatModelMarkers = new Map([
+  [
+    'docs/phase-0/09-threat-model.md',
+    [
+      'STRIDE',
+      '## 2. 关键资产',
+      '## 3. 信任边界',
+      'TM-001',
+      'TM-020',
+      'Prompt injection',
+      'GitHub Hosted OIDC',
+      'Phase 0 退出需要架构、安全和业务',
     ],
   ],
 ]);
@@ -713,6 +750,32 @@ for (const [relativePath, markers] of requiredDataProcessingRegisterMarkers) {
     for (const marker of markers) {
       if (!content.includes(marker)) {
         errors.push(`${relativePath}: 缺少数据处理登记标记 ${marker}`);
+      }
+    }
+  } catch {
+    // 缺失文件已在第一阶段报告。
+  }
+}
+
+for (const [relativePath, markers] of requiredAdrMarkers) {
+  try {
+    const content = await readFile(resolve(repoRoot, relativePath), 'utf8');
+    for (const marker of markers) {
+      if (!content.includes(marker)) {
+        errors.push(`${relativePath}: 缺少 ADR 决策标记 ${marker}`);
+      }
+    }
+  } catch {
+    // 缺失文件已在第一阶段报告。
+  }
+}
+
+for (const [relativePath, markers] of requiredThreatModelMarkers) {
+  try {
+    const content = await readFile(resolve(repoRoot, relativePath), 'utf8');
+    for (const marker of markers) {
+      if (!content.includes(marker)) {
+        errors.push(`${relativePath}: 缺少威胁模型标记 ${marker}`);
       }
     }
   } catch {

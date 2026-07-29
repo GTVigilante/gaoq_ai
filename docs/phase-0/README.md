@@ -15,10 +15,14 @@
 | 06 | [GitHub 治理规范](./06-github-governance.md) | 规定 Milestone、Issue、分支、PR、DoR 和 DoD |
 | 07 | [专业算薪系统边界](./07-payroll-system-boundary.md) | 规定 ERP 主数据、统一身份与独立工资事实源边界 |
 | 08 | [数据处理活动登记册](./08-data-processing-register.md) | 登记目的、依据、来源、共享、存储、保留、删除和负责人 |
+| 09 | [企业威胁模型](./09-threat-model.md) | 登记资产、信任边界、STRIDE 威胁、滥用场景和残余风险 |
 
 跨阶段的仓库实现、外部验收和 GitHub 阻塞边界统一见
 [仓库实施完成度审计](../implementation-completion-audit.md)。该审计是状态索引，
 不降低本目录任何强制规范或阶段退出条件。
+
+已接受的架构决策见 [ADR 索引](../adr/README.md)。规范与 ADR 冲突时必须先新增
+替代 ADR 并完成评审，禁止直接改写已接受记录的历史结论。
 
 当前覆盖率策略由 `scripts/validate-critical-coverage-policy.mjs` 自动复核：
 全生产源码四维 80% 分母及 134 个专项脚本覆盖的 336 个生产文件逐文件四维

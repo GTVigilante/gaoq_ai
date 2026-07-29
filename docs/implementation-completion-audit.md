@@ -24,7 +24,7 @@
 
 | Phase | 仓库实施证据 | 尚缺外部证据 | 结论 |
 |---|---|---|---|
-| 0 | `docs/phase-0/`、数据处理活动登记册、Issue 模板、7 个 Milestone、标签、Draft PR、只读治理自动化、全量四维 80% 与 336 个生产文件逐文件四维 90% 门禁 | Issue #41 的 GitHub Project 需要 `project` 权限；Hosted Actions 真实执行及架构/安全/业务/数据/法务签署尚未取得 | 仓库实施已交付，外部/治理验收待完成 |
+| 0 | `docs/phase-0/`、6 项 accepted ADR、19 类数据处理登记、20 项 STRIDE 威胁登记、Issue 模板、7 个 Milestone、标签、Draft PR、只读治理自动化、全量四维 80% 与 336 个生产文件逐文件四维 90% 门禁 | Issue #41 的 GitHub Project 需要 `project` 权限；Hosted Actions 真实执行及架构/安全/业务/数据/法务签署尚未取得 | 仓库实施已交付，外部/治理验收待完成 |
 | 1 | `apps/erp-api/src/modules/auth/`、`org/`、`security/`、`integration/`，`deploy/helm/`，Phase 1 工作流 | 境内云 VPC、WAF/KMS、真实 SSO/组织下发、监控告警、备份恢复与 RPO/RTO 演练 | 实施已交付，外部验收待完成 |
 | 2 | `apps/erp-api/src/modules/approval/`、审批前端、通知、迁移与 MCP 能力 | 氚云模板/历史/在途审批真实盘点迁移、三次演练和业务签署 | 实施已交付，外部验收待完成 |
 | 3 | 招聘、eSign、Onboarding、Knowledge、Care、Talent Lifecycle 360 及对应 REST/事件/MCP | 真实渠道、e签宝、对象/WORM、OpenAI/搜索/评分/通知、CRM/校友平台与跨角色 UAT | 实施已交付，外部验收待完成 |
@@ -63,6 +63,24 @@ e签或通知服务已联调。
 跨境/用途扩张变更、数据主体请求和备份删除边界；文档门禁会检查全部必需列和
 关键治理声明。法务依据、PIA、真实接收方、具体期限和四方逐行签署仍属于外部
 验收，未签署时 Phase 5 privacy-compliance 与总 Go/No-Go 必须失败。
+
+### 2.4 架构决策记录
+
+2026-07-30 已新增 `docs/adr/`，把仓库此前已经采用、但未正式留档的六项核心决策
+记录为 accepted：模块化单体/运行时、ERP 主数据与双平台适配、标准 MCP/AI 风险、
+独立专业算薪事实源、GitHub Hosted OIDC 发布、统一切换/证据门禁。每份 ADR
+包含背景、决策、后果、被否决方案、安全/数据影响、关联 Issue 和替代关系；
+文档门禁会检查状态及关键决策标记。accepted 仅冻结架构结论，不等于三方签署、
+Hosted Actions、现场联调或生产验收通过；未来改变结论必须新增替代 ADR。
+
+### 2.5 威胁模型
+
+2026-07-30 已新增 `docs/phase-0/09-threat-model.md`，覆盖 8 类关键资产、9 个
+信任边界和 TM-001–TM-020 的 STRIDE 威胁，逐项区分影响、仓库控制和现场残余
+风险；业务滥用场景另覆盖审批确认、招聘/eSign、工资资金税务、MCP/生成式 AI
+及 GitHub 供应链。文档门禁锁定核心章节、威胁编号、Prompt injection、
+GitHub Hosted OIDC 和 Phase 0 三方签署要求。该模型不替代真实 DAST/ASVS、
+角色矩阵、供应商密钥轮换、断连恢复、红队或三方签署，当前仍为 No-Go。
 
 ## 3. 未完成 Issue 的实施证据
 
