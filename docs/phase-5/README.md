@@ -28,6 +28,9 @@ Phase 5 在已验收的组织、审批、招聘入职、考勤薪酬底座之上
    - [生产镜像构建与验证运行手册](./14-production-images-runbook.md)
    - [性能容量三次实测门禁](./15-performance-capacity-gate.md)
    - [DAST 与 ASVS 5.0.0 证据门禁](./16-dast-asvs-gate.md)
+     - DAST/ASVS v2 要求 AppSec、平台、QA 和风险四方使用独立 Ed25519
+       密钥签署完整扫描、ASVS、授权探针和安全隔离结果；独立 OIDC 验收
+       工作流绑定当前 commit、镜像、目标摘要与 Repository Variable keyset
    - [容灾恢复与外部系统断连追赶门禁](./17-resilience-rehearsal-gate.md)
      - Resilience v3 要求业务连续性、数据、集成、平台、QA、安全和 SRE 七方
        使用独立 Ed25519 密钥签署完整恢复、回滚、对账与断连追赶结果，并由

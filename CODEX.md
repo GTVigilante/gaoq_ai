@@ -87,6 +87,17 @@
   营销服务 63 项、营销入口 97 项专项测试通过，目标文件
   逐文件四维覆盖率均不低于 90%；真实 WAF、验证码、浏览器故障注入、正式域名
   和营销 UAT 仍待外部验收。标准 MCP 继续只读且复用同一应用服务。
+- 2026-07-30 已关闭 Phase 5 DAST/ASVS 四方签署只校验角色、证据 ID 和时间，
+  且主动扫描后没有受保护最终证据验收链的缺口：输入证据升级为
+  `gaoq.phase5.dast-asvs.v2`，AppSec、平台、QA 和风险四方分别使用独立
+  Ed25519 公钥签署完整环境、目标摘要、commit、四镜像、ZAP/ASVS 工具链、
+  L2/L3 控制、两轮报告、授权探针、安全断言和工件。keyId 绑定 SPKI DER
+  摘要，完整角色/keyId 集合与 Repository Variable 的 signer keyset 摘要
+  绑定；伪签名、角色换钥、主体/公钥复用、签后篡改、超时签署与 keyset 漂移
+  均失败关闭。独立 `phase-5-dast-evidence` GitHub Hosted 工作流通过 OIDC
+  拉取最终脱敏证据并绑定当前发布候选，只上传 verdict。仓库自测仅生成临时
+  密钥；真实生产等价扫描、人工 ASVS、IAM/KMS/HSM 职责绑定、签署和 WORM
+  原始材料仍待外部验收。
 - 2026-07-30 已关闭最终发布门禁只校验 ERP MCP、却未绑定独立专业算薪资源
   服务器以及四方批准不可验签的缺口：`integration-mcp` 证据升级为 v3，新增
   专业算薪 HTTPS

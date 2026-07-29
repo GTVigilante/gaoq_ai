@@ -29,7 +29,7 @@
 | 2 | `apps/erp-api/src/modules/approval/`、审批前端、通知、迁移与 MCP 能力 | 氚云模板/历史/在途审批真实盘点迁移、三次演练和业务签署 | 实施已交付，外部验收待完成 |
 | 3 | 招聘、eSign、Onboarding、Knowledge、Care、Talent Lifecycle 360 及对应 REST/事件/MCP | 真实渠道、e签宝、对象/WORM、OpenAI/搜索/评分/通知、CRM/校友平台与跨角色 UAT | 实施已交付，外部验收待完成 |
 | 4 | 考勤事实、规则/排班、Provider 覆盖对账、版本化薪酬、审批、银行/税务、对账、影子周期控制面及 MCP | 真实考勤/专业算薪联调、银行/税务沙箱、两个完整影子周期、差异清零和财务签署 | 实施已交付，外部验收待完成 |
-| 5 | OP、移动端、分析、迁移控制面、性能/安全/容灾/供应链/MCP、13 角色 Readiness 逐 Gate 独立 Ed25519 签名及十方 Go-No-Go 签名校验器 | 三轮生产等价实测、真实外部连接、DAST/ASVS、业务 UAT、真实角色密钥与签署 | 实施已交付，外部验收待完成 |
+| 5 | OP、移动端、分析、迁移控制面、性能/安全/容灾/供应链/MCP、DAST/ASVS 四方、13 角色 Readiness 逐 Gate 独立 Ed25519 签名及十方 Go-No-Go 签名校验器 | 三轮生产等价实测、真实外部连接、DAST/ASVS、业务 UAT、真实角色密钥与签署 | 实施已交付，外部验收待完成 |
 | 6 | 切换、回滚、部署、平台准入六方、统一切换五方及 Hypercare 归档三方独立 Ed25519 签名证据契约和受保护工作流 | 三次全量演练、生产级回滚、真实平台/切换/归档角色密钥与签署、统一切换、四周 Hypercare 与旧系统归档 | 实施已交付，外部验收待完成 |
 
 ## 3. 未完成 Issue 的实施证据
@@ -42,6 +42,7 @@
 | #12 云平台、CI/CD、监控与灾备 | `deploy/helm/gaoq-erp/`、`deploy/helm/gaoq-platform-guardrails/`、`scripts/release/validate-phase-6-platform-intake.mjs`、`docs/phase-5/17-resilience-rehearsal-gate.md`、`scripts/resilience/validate-phase-5-resilience-evidence.mjs` | 真实 VPC/WAF/KMS/短期 CI 身份、平台准入六方角色密钥与签署、观测平台、备份恢复及 RPO/RTO |
 | #19 氚云审批模板迁移与 UAT | `apps/erp-api/src/modules/data-migration/`、`docs/phase-5/09-data-migration-control-plane.md`、`docs/phase-5/11-data-migration-package-runbook.md` | 真实模板、历史、在途实例、附件、三轮迁移与业务签署 |
 | #31 两个薪资影子周期 | `apps/erp-api/src/modules/payroll/application/payroll-shadow.service.ts` 及对应测试、`docs/phase-5/20-readiness-verdicts.md` | 两个真实完整周期、100% 覆盖、零未解释差异、薪酬与财务签署 |
+| #35 性能、安全、容灾与供应链 | `scripts/security/validate-phase-5-dast-evidence.mjs`、`.github/workflows/phase-5-dast.yml`、`.github/workflows/phase-5-dast-evidence.yml`、`scripts/resilience/validate-phase-5-resilience-evidence.mjs`；DAST/ASVS v2 要求四方独立 Ed25519 签名并绑定受信 keyset | 三次真实容量实测、生产等价 DAST/ASVS、真实职责密钥和四方签署、容灾现场演练及 WORM 原始证据 |
 | #36 完整 MCP 目录与 AI 客户端兼容 | `docs/phase-5/19-mcp-capability-catalog.md`、`scripts/mcp/validate-phase-5-mcp-integration-evidence.mjs`、`.github/workflows/phase-5-mcp-integration.yml`；v3 联调证据要求四方独立 Ed25519 签名并绑定受信 keyset | Claude、Kimi、Cursor、Inspector 正式 Token 与授权业务调用、九类真实沙箱、专业算薪联调、真实职责密钥和四方签署 |
 | #37 三次全量迁移演练 | `docs/phase-5/12-data-migration-rehearsal-gate.md`、`scripts/migration/validate-phase-5-migration-rehearsal-evidence.mjs`、`.github/workflows/phase-5-migration-rehearsal.yml`；v2 聚合证据要求四方独立 Ed25519 签名并绑定受信 keyset | 三份独立生产等价证据、8 小时窗口、真实职责密钥和四方签署 |
 | #38 回滚与 Go/No-Go | `docs/phase-5/18-go-no-go-evidence-gate.md`、`scripts/release/validate-phase-5-go-no-go-evidence.mjs`、`scripts/resilience/validate-phase-5-resilience-evidence.mjs` | 生产级回滚、零 Sev1/Sev2/高危漏洞与跨职能签署 |

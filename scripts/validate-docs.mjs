@@ -24,6 +24,7 @@ const requiredDocuments = [
   'docs/phase-4/README.md',
   'docs/phase-5/README.md',
   'docs/phase-5/12-data-migration-rehearsal-gate.md',
+  'docs/phase-5/16-dast-asvs-gate.md',
   'docs/phase-5/17-resilience-rehearsal-gate.md',
   'docs/phase-5/18-go-no-go-evidence-gate.md',
   'docs/phase-5/19-mcp-capability-catalog.md',
@@ -46,6 +47,7 @@ const requiredDocuments = [
   'scripts/github/write-oidc-kubeconfig.mjs',
   'scripts/migration/validate-phase-5-migration-rehearsal-evidence.mjs',
   'scripts/mcp/validate-phase-5-mcp-integration-evidence.mjs',
+  'scripts/security/validate-phase-5-dast-evidence.mjs',
   'scripts/resilience/validate-phase-5-resilience-evidence.mjs',
   'scripts/release/validate-phase-6-cutover-evidence.mjs',
   'scripts/release/validate-phase-6-hypercare-evidence.mjs',
@@ -56,6 +58,7 @@ const requiredDocuments = [
   'apps/erp-api/scripts/mcp-catalog-stdio-fixture.mjs',
   'tools/mcp-inspector-client/package.json',
   '.github/workflows/github-governance.yml',
+  '.github/workflows/phase-5-dast-evidence.yml',
 ];
 
 const forbiddenPrdPatterns = [
@@ -255,6 +258,32 @@ const requiredHostedOidcMarkers = new Map([
       'MIGRATION_REHEARSAL_SIGNER_KEYSET_SHA256',
       '24 小时内',
       'KMS/HSM',
+    ],
+  ],
+  [
+    'scripts/security/validate-phase-5-dast-evidence.mjs',
+    [
+      'gaoq.phase5.dast-asvs.v2',
+      'gaoq.phase5.dast-asvs.contract',
+      'gaoq.phase5.dast-asvs.signoff.v1',
+      'signerKeysetHash',
+      'approvalPayloadHash',
+      'Ed25519',
+      'appsec_owner',
+      'risk_owner',
+      'DAST_EXPECTED_SIGNER_KEYSET_SHA256',
+    ],
+  ],
+  [
+    'docs/phase-5/16-dast-asvs-gate.md',
+    [
+      'gaoq.phase5.dast-asvs.v2',
+      '不同 Ed25519 公钥',
+      'DAST_SIGNER_KEYSET_SHA256',
+      '72 小时内',
+      'KMS/HSM',
+      'security:dast:print-contract',
+      'phase-5-dast-evidence',
     ],
   ],
   [

@@ -21,7 +21,12 @@ API、Worker、ERP Web、Website 已有固定摘要、distroless、nonroot 的�
 
 二十六个迁移 Scope、三轮七十八个运行与三类故障演练的聚合证据由[数据迁移三次演练证据门禁](./12-data-migration-rehearsal-gate.md)验收。只有 `phase-5-migration-rehearsal` workflow policy 可以生成供 Go/No-Go 消费的 migration verdict；单 Scope 比较通过不能替代全链路验收。
 
-ZAP 主动扫描、OWASP ASVS 5.0.0 L2/L3 证据与四方签署契约见[DAST 与 ASVS 5.0.0 证据门禁](./16-dast-asvs-gate.md)。工作流只能由 `phase-5-dast` workflow policy 在隔离测试租户执行，短期目标和低权限 Token 经 OIDC 网关取得，不允许扫描生产流量。
+ZAP 主动扫描、OWASP ASVS 5.0.0 L2/L3 证据与四方签署契约见[DAST 与 ASVS
+5.0.0 证据门禁](./16-dast-asvs-gate.md)。主动扫描只能由 `phase-5-dast`
+workflow policy 在隔离测试租户执行，短期目标和低权限 Token 经 OIDC 网关
+取得，不允许扫描生产流量；最终 v2 脱敏证据由独立
+`phase-5-dast-evidence` policy 拉取，四方 Ed25519 验签并绑定当前发布候选和
+受信 keyset 后才形成 verdict。
 
 MongoDB 时间点恢复、Redis/BullMQ 重建、对象/WORM 与 KMS 验证、旧系统回滚及
 九类外部连接（含独立专业算薪）两小时断连追赶契约见

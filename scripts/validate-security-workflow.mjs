@@ -2,6 +2,10 @@ import { readFile } from 'node:fs/promises';
 
 const workflowPath = new URL('../.github/workflows/phase-5-security.yml', import.meta.url);
 const performanceWorkflowPath = new URL('../.github/workflows/phase-5-performance.yml', import.meta.url);
+const dastEvidenceWorkflowPath = new URL(
+  '../.github/workflows/phase-5-dast-evidence.yml',
+  import.meta.url,
+);
 const migrationRehearsalWorkflowPath = new URL(
   '../.github/workflows/phase-5-migration-rehearsal.yml',
   import.meta.url,
@@ -16,6 +20,7 @@ const bearerIgnorePath = new URL('../bearer.ignore', import.meta.url);
 const gitleaksConfigPath = new URL('../.gitleaks.toml', import.meta.url);
 const workflow = await readFile(workflowPath, 'utf8');
 const performanceWorkflow = await readFile(performanceWorkflowPath, 'utf8');
+const dastEvidenceWorkflow = await readFile(dastEvidenceWorkflowPath, 'utf8');
 const migrationRehearsalWorkflow = await readFile(migrationRehearsalWorkflowPath, 'utf8');
 const resilienceWorkflow = await readFile(resilienceWorkflowPath, 'utf8');
 const readinessWorkflow = await readFile(readinessWorkflowPath, 'utf8');
@@ -138,6 +143,52 @@ for (const forbidden of [
 }
 if ((performanceWorkflow.match(/runs-on: ubuntu-latest/gu) ?? []).length !== 2) {
   throw new Error('PHASE5_PERFORMANCE_HOSTED_RUNNER_INVALID');
+}
+
+const dastEvidenceActionReferences = [
+  ...dastEvidenceWorkflow.matchAll(/^\s*uses:\s*([^\s#]+)(?:\s*#.*)?$/gmu),
+].map((match) => match[1]);
+if (
+  dastEvidenceActionReferences.length !== 5 ||
+  dastEvidenceActionReferences.some(
+    (reference) => reference === undefined || !/@[a-f0-9]{40}$/u.test(reference),
+  )
+) throw new Error('PHASE5_DAST_EVIDENCE_ACTION_NOT_PINNED');
+for (const marker of [
+  'workflow_dispatch:', "test \"$GITHUB_REF\" = 'refs/heads/main'",
+  'runs-on: ubuntu-latest', 'id-token: write',
+  'GAOQ_OIDC_POLICY: phase-5-dast-evidence', '--policy "$GAOQ_OIDC_POLICY"',
+  'DAST_EVIDENCE_OIDC_AUDIENCE: ${{ vars.DAST_EVIDENCE_OIDC_AUDIENCE }}',
+  'DAST_EVIDENCE_URL: ${{ vars.DAST_EVIDENCE_URL }}',
+  'DAST_EVIDENCE_SHA256: ${{ vars.DAST_EVIDENCE_SHA256 }}',
+  '$RUNNER_TEMP/phase-5-dast-asvs.json',
+  'scripts/github/fetch-oidc-protected-input.mjs',
+  'DAST_EXPECTED_ENVIRONMENT: ${{ vars.DAST_ENVIRONMENT_NAME }}',
+  'DAST_EXPECTED_REGION: ${{ vars.DAST_REGION }}',
+  'DAST_EXPECTED_TARGET_ORIGIN_SHA256: ${{ vars.DAST_TARGET_ORIGIN_SHA256 }}',
+  'DAST_EXPECTED_COMMIT: ${{ github.sha }}',
+  'DAST_EXPECTED_API_IMAGE: ${{ vars.DAST_API_IMAGE_DIGEST }}',
+  'DAST_EXPECTED_WORKER_IMAGE: ${{ vars.DAST_WORKER_IMAGE_DIGEST }}',
+  'DAST_EXPECTED_WEB_IMAGE: ${{ vars.DAST_WEB_IMAGE_DIGEST }}',
+  'DAST_EXPECTED_WEBSITE_IMAGE: ${{ vars.DAST_WEBSITE_IMAGE_DIGEST }}',
+  'DAST_EXPECTED_SIGNER_KEYSET_SHA256: ${{ vars.DAST_SIGNER_KEYSET_SHA256 }}',
+  '--enforce-environment', 'phase-5-dast-asvs-verdict-${{ github.sha }}',
+  'retention-days: 30',
+]) {
+  if (!dastEvidenceWorkflow.includes(marker)) {
+    throw new Error('PHASE5_DAST_EVIDENCE_WORKFLOW_INCOMPLETE');
+  }
+}
+for (const forbidden of [
+  'pull_request:', 'push:', 'workflow_call:', '${{ inputs.', '${{ secrets.',
+  'self-hosted', '/var/lib/gaoq', 'environment:',
+]) {
+  if (dastEvidenceWorkflow.includes(forbidden)) {
+    throw new Error('PHASE5_DAST_EVIDENCE_WORKFLOW_UNSAFE');
+  }
+}
+if ((dastEvidenceWorkflow.match(/runs-on: ubuntu-latest/gu) ?? []).length !== 2) {
+  throw new Error('PHASE5_DAST_EVIDENCE_HOSTED_RUNNER_INVALID');
 }
 
 const migrationRehearsalActionReferences = [

@@ -172,6 +172,7 @@
     "security:dast:run": "node scripts/security/run-phase-5-dast.mjs --run",
     "security:dast:self-test": "node scripts/security/run-phase-5-dast.mjs --self-test && node scripts/security/validate-phase-5-dast-evidence.mjs --self-test",
     "security:dast:validate-evidence": "node scripts/security/validate-phase-5-dast-evidence.mjs",
+    "security:dast:print-contract": "node scripts/security/validate-phase-5-dast-evidence.mjs --print-contract",
     "performance:validate": "node scripts/performance/validate-phase-5-capacity.mjs",
     "performance:self-test": "node scripts/performance/validate-phase-5-capacity.mjs --self-test",
     "migration:rehearsal:validate-evidence": "node scripts/migration/validate-phase-5-migration-rehearsal-evidence.mjs",
