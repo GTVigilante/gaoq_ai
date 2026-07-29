@@ -31,6 +31,8 @@ Phase 5 在已验收的组织、审批、招聘入职、考勤薪酬底座之上
    - [MCP stdio 客户端接入手册](./20-mcp-stdio-client-onboarding.md)
    - [七类发布就绪 verdict 门禁](./20-readiness-verdicts.md)
    - [GitHub Hosted OIDC 证据交换标准](./21-github-oidc-evidence-exchange.md)
+   - MCP 联调与 Go/No-Go 已升级为 v2，强制绑定独立专业算薪 OAuth Resource、
+     MCP 完整目录、发布镜像和七类共享事件契约；真实算薪环境证据仍待执行
 9. [双语营销官网与 CMS](../marketing-cms.md)（Website、事务 Outbox、通知幂等、
    管理端与匿名端最小公开投影、公开响应严格运行时契约、列表 500 项上限、
    验证码 Origin 与 iframe 来源双绑定、列表/详情同步缓存失效、可信 Scope

@@ -82,6 +82,19 @@
 - 本人工资条由专业算薪系统自己的 OAuth Resource 和标准 MCP 提供；访问令牌中的
   `employee_id` 必须由服务端身份映射产生。ERP 不使用服务令牌加请求体
   `employeeId` 代理 L4 工资条，也不透传用户 Token。
+- 专业算薪标准 MCP 固定采用 `2025-11-25`、Streamable HTTP 和独立 OAuth 2.1
+  Resource Server。最低能力目录包含
+  `payroll_payslip_get_self`、`payroll_period_get`、
+  `payroll_reconciliation_get`、`payroll_tax_filing_get` 四个 Tool，
+  `payroll://payslips/self/{period}`、`payroll://periods/{period}` 两个
+  Resource Template，以及 `payroll_payslip_explain_self`、
+  `payroll_period_status_guide` 两个 Prompt；每个 Tool 必须有输入/输出 Schema、
+  风险级别和封闭世界声明，R3 Tool 永久为零。
+- ERP 与专业算薪的 OAuth resource/audience 必须不同。三类标准客户端均须证明
+  用 ERP Token 访问算薪或用算薪 Token 访问 ERP 全部失败，且租户错配全部拒绝；
+  禁止任一 MCP 代理另一资源服务器、透传 Token、直接读取对方数据库或复制工资
+  明细。专业算薪镜像摘要、OAuth 元数据、完整 `catalogHash`、七类事件契约摘要
+  与回放证据必须进入 Phase 5 `integration-mcp` v2 和最终 Go/No-Go。
 - 专业算薪批量主数据快照是专用服务到服务 REST，不注册 MCP Resource/Tool；
   AI 不得借 MCP 绕过批量导出限制。
 - 真实发薪切换仍必须完成两个完整影子周期、零未解释差异、回滚演练和财务签署。
@@ -91,8 +104,9 @@
 - GaoQ 默认 `PAYROLL_SYSTEM_MODE=external`，旧 Payroll/Treasury REST 写入口停止
   形成工资事实；全部旧 Payroll/Treasury 应用服务同步失败关闭，MCP、迁移、
   Worker、内部续跑或跨域读取不可绕过 REST 守卫。
-- 专业算薪系统已实现权威快照同步、事件 Inbox、字段加密、确定性整数分计算、
-  提交审批、职责分离锁定和本人工资条访问。
+- 目标专业算薪系统必须实现权威快照同步、事件 Inbox、字段加密、确定性整数分
+  计算、提交审批、职责分离锁定和本人工资条访问；这些能力属于外部系统现场
+  验收，不由本 ERP 仓库的静态代码或自测代替。
 - ERP 与专业算薪的七类共享事件现按完整信封、精确字段集、状态、日期、范围、
   摘要和敏感字段递归拒绝规则校验；机器可读契约由共享包统一导出。
 - 生产事实源切换仍受上述两个影子周期门禁约束；代码就绪不等同于批准真实发薪。

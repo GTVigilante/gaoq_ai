@@ -27,13 +27,28 @@ const GATE_SUITES = Object.freeze({
   'supply-chain': 'gaoq.phase5.supply-chain.verdict',
 });
 const INTEGRATION_NAMES = [
-  'attachment', 'bank', 'dingtalk', 'esign', 'feishu', 'mcp', 'messaging', 'op', 'tax', 'worm',
+  'attachment', 'bank', 'dingtalk', 'esign', 'feishu', 'mcp', 'messaging', 'op',
+  'professional-payroll', 'tax', 'worm',
 ];
 const DOMAIN_NAMES = [
   'approval', 'attendance', 'audit', 'migration', 'op', 'org', 'payroll', 'recruitment',
 ];
 const MCP_CLIENT_PROFILES = [
   'interactive-user-agent', 'machine-service-agent', 'read-only-audit-agent',
+];
+const PROFESSIONAL_PAYROLL_TOOLS = [
+  'payroll_payslip_get_self',
+  'payroll_period_get',
+  'payroll_reconciliation_get',
+  'payroll_tax_filing_get',
+];
+const PROFESSIONAL_PAYROLL_RESOURCES = [
+  'payroll://payslips/self/{period}',
+  'payroll://periods/{period}',
+];
+const PROFESSIONAL_PAYROLL_PROMPTS = [
+  'payroll_payslip_explain_self',
+  'payroll_period_status_guide',
 ];
 const SIGNOFF_ROLES = [
   'architecture_owner', 'data_owner', 'finance_owner', 'hr_owner', 'legal_owner',
@@ -88,7 +103,7 @@ function validateEvidence(document, enforceEnvironment = false, now = Date.now()
   const gates = validateGates(document.gates, environment.evaluatedAt, source.commitSha);
   const acceptance = validateAcceptance(document.acceptance);
   const integrations = validateIntegrations(document.integrations);
-  const mcp = validateMcp(document.mcp);
+  const mcp = validateMcp(document.mcp, enforceEnvironment);
   const operations = validateOperations(document.operations);
   const decision = validateDecision(
     document.decision,
@@ -283,7 +298,7 @@ function validateResilience(resilience) {
   ], 'PHASE5_GO_NO_GO_RESILIENCE_INVALID');
   integer(resilience.actualRpoSeconds, 0, 900, 'PHASE5_GO_NO_GO_RPO_EXCEEDED');
   integer(resilience.actualRtoSeconds, 1, 14_400, 'PHASE5_GO_NO_GO_RTO_EXCEEDED');
-  equal(resilience.adaptersRehearsed, 8, 'PHASE5_GO_NO_GO_ADAPTER_REHEARSAL_INCOMPLETE');
+  equal(resilience.adaptersRehearsed, 9, 'PHASE5_GO_NO_GO_ADAPTER_REHEARSAL_INCOMPLETE');
   integer(resilience.minimumOutageSeconds, 7_200, 21_600,
     'PHASE5_GO_NO_GO_OUTAGE_INSUFFICIENT');
   integer(resilience.maximumCatchUpSeconds, 1, 3_600, 'PHASE5_GO_NO_GO_CATCHUP_EXCEEDED');
@@ -375,7 +390,7 @@ function validateIntegrations(integrations) {
   return Object.freeze({ names, evidenceHashes: [...hashes] });
 }
 
-function validateMcp(mcp) {
+function validateMcp(mcp, enforceEnvironment) {
   object(mcp, [
     'protocolVersion', 'transport', 'oauthProfile', 'catalogHash', 'toolCount',
     'resourceCount', 'resourceTemplateCount', 'promptCount', 'r0ToolCount',
@@ -383,6 +398,7 @@ function validateMcp(mcp) {
     'toolsWithoutOutputSchema',
     'toolsWithoutRiskLevel', 'directDatabaseAccessCount', 'upstreamTokenExposureCount',
     'clientProfiles', 'crossTenantAttempts', 'crossTenantDenied', 'auditEvents',
+    'professionalPayroll',
   ], 'PHASE5_GO_NO_GO_MCP_INVALID');
   equal(mcp.protocolVersion, '2025-11-25', 'PHASE5_GO_NO_GO_MCP_PROTOCOL_INVALID');
   equal(mcp.transport, 'streamable-http', 'PHASE5_GO_NO_GO_MCP_TRANSPORT_INVALID');
@@ -414,7 +430,167 @@ function validateMcp(mcp) {
   equal(mcp.crossTenantDenied, mcp.crossTenantAttempts, 'PHASE5_GO_NO_GO_MCP_TENANT_ESCAPE');
   integer(mcp.auditEvents, mcp.toolCount, Number.MAX_SAFE_INTEGER,
     'PHASE5_GO_NO_GO_MCP_AUDIT_INCOMPLETE');
-  return mcp;
+  const professionalPayroll = validateProfessionalPayrollMcp(
+    mcp.professionalPayroll,
+    enforceEnvironment,
+  );
+  return Object.freeze({ ...mcp, professionalPayroll });
+}
+
+function validateProfessionalPayrollMcp(value, enforceEnvironment) {
+  object(value, [
+    'resource', 'mcpEndpoint', 'authorizationServer', 'imageDigest',
+    'platformContractVersion', 'eventContractHash', 'protocolVersion', 'transport',
+    'oauthProfile', 'catalogHash', 'requiredTools', 'requiredResourceTemplates',
+    'requiredPrompts', 'clientProfiles', 'crossResourceTokenAttempts',
+    'crossResourceTokenDenied', 'wrongTenantAttempts', 'wrongTenantDenied',
+    'eventTypesValidated', 'eventReplayAttempts', 'eventReplayAccepted',
+    'r3ToolCount', 'toolsWithoutInputSchema', 'toolsWithoutOutputSchema',
+    'toolsWithoutRiskLevel', 'directDatabaseAccessCount',
+    'upstreamTokenExposureCount', 'evidenceHash',
+  ], 'PHASE5_GO_NO_GO_PAYROLL_MCP_INVALID');
+  const resource = httpsOrigin(
+    value.resource,
+    'PHASE5_GO_NO_GO_PAYROLL_RESOURCE_INVALID',
+  );
+  const authorizationServer = httpsOrigin(
+    value.authorizationServer,
+    'PHASE5_GO_NO_GO_PAYROLL_AUTHORIZATION_SERVER_INVALID',
+  );
+  if (resource === authorizationServer) {
+    fail('PHASE5_GO_NO_GO_PAYROLL_TRUST_DOMAINS_NOT_SEPARATE');
+  }
+  equal(
+    value.mcpEndpoint,
+    `${resource}/mcp`,
+    'PHASE5_GO_NO_GO_PAYROLL_ENDPOINT_INVALID',
+  );
+  pattern(value.imageDigest, SHA256, 'PHASE5_GO_NO_GO_PAYROLL_IMAGE_INVALID');
+  equal(
+    value.platformContractVersion,
+    '1.0.0',
+    'PHASE5_GO_NO_GO_PAYROLL_CONTRACT_VERSION_INVALID',
+  );
+  pattern(value.eventContractHash, SHA256, 'PHASE5_GO_NO_GO_PAYROLL_CONTRACT_INVALID');
+  equal(value.protocolVersion, '2025-11-25', 'PHASE5_GO_NO_GO_PAYROLL_PROTOCOL_INVALID');
+  equal(value.transport, 'streamable-http', 'PHASE5_GO_NO_GO_PAYROLL_TRANSPORT_INVALID');
+  equal(
+    value.oauthProfile,
+    'oauth-2.1-resource-server',
+    'PHASE5_GO_NO_GO_PAYROLL_OAUTH_INVALID',
+  );
+  pattern(value.catalogHash, SHA256, 'PHASE5_GO_NO_GO_PAYROLL_CATALOG_INVALID');
+  exactStringArray(
+    value.requiredTools,
+    PROFESSIONAL_PAYROLL_TOOLS,
+    'PHASE5_GO_NO_GO_PAYROLL_CATALOG_INVALID',
+  );
+  exactStringArray(
+    value.requiredResourceTemplates,
+    PROFESSIONAL_PAYROLL_RESOURCES,
+    'PHASE5_GO_NO_GO_PAYROLL_CATALOG_INVALID',
+  );
+  exactStringArray(
+    value.requiredPrompts,
+    PROFESSIONAL_PAYROLL_PROMPTS,
+    'PHASE5_GO_NO_GO_PAYROLL_CATALOG_INVALID',
+  );
+  exactStringArray(
+    value.clientProfiles,
+    MCP_CLIENT_PROFILES,
+    'PHASE5_GO_NO_GO_PAYROLL_CLIENT_MATRIX_INCOMPLETE',
+  );
+  integer(
+    value.crossResourceTokenAttempts,
+    30,
+    Number.MAX_SAFE_INTEGER,
+    'PHASE5_GO_NO_GO_PAYROLL_COVERAGE',
+  );
+  equal(
+    value.crossResourceTokenDenied,
+    value.crossResourceTokenAttempts,
+    'PHASE5_GO_NO_GO_PAYROLL_AUDIENCE_ESCAPE',
+  );
+  integer(
+    value.wrongTenantAttempts,
+    30,
+    Number.MAX_SAFE_INTEGER,
+    'PHASE5_GO_NO_GO_PAYROLL_COVERAGE',
+  );
+  equal(
+    value.wrongTenantDenied,
+    value.wrongTenantAttempts,
+    'PHASE5_GO_NO_GO_PAYROLL_TENANT_ESCAPE',
+  );
+  equal(value.eventTypesValidated, 7, 'PHASE5_GO_NO_GO_PAYROLL_EVENT_COVERAGE');
+  integer(
+    value.eventReplayAttempts,
+    70,
+    Number.MAX_SAFE_INTEGER,
+    'PHASE5_GO_NO_GO_PAYROLL_EVENT_COVERAGE',
+  );
+  equal(
+    value.eventReplayAccepted,
+    value.eventReplayAttempts,
+    'PHASE5_GO_NO_GO_PAYROLL_EVENT_REPLAY_FAILED',
+  );
+  for (const field of [
+    'r3ToolCount', 'toolsWithoutInputSchema', 'toolsWithoutOutputSchema',
+    'toolsWithoutRiskLevel', 'directDatabaseAccessCount', 'upstreamTokenExposureCount',
+  ]) {
+    equal(value[field], 0, 'PHASE5_GO_NO_GO_PAYROLL_SECURITY_FAILED');
+  }
+  pattern(value.evidenceHash, SHA256, 'PHASE5_GO_NO_GO_PAYROLL_EVIDENCE_INVALID');
+  if (enforceEnvironment) {
+    const expected = {
+      resource: process.env.GO_NO_GO_EXPECTED_PAYROLL_RESOURCE,
+      authorizationServer: process.env.GO_NO_GO_EXPECTED_PAYROLL_AUTHORIZATION_SERVER,
+      imageDigest: process.env.GO_NO_GO_EXPECTED_PAYROLL_IMAGE,
+      eventContractHash: process.env.GO_NO_GO_EXPECTED_PAYROLL_CONTRACT_HASH,
+      catalogHash: process.env.GO_NO_GO_EXPECTED_PAYROLL_CATALOG_HASH,
+    };
+    httpsOrigin(expected.resource, 'PHASE5_GO_NO_GO_EXPECTED_PAYROLL_SOURCE_REQUIRED');
+    httpsOrigin(
+      expected.authorizationServer,
+      'PHASE5_GO_NO_GO_EXPECTED_PAYROLL_SOURCE_REQUIRED',
+    );
+    for (const field of ['imageDigest', 'eventContractHash', 'catalogHash']) {
+      pattern(
+        expected[field],
+        SHA256,
+        'PHASE5_GO_NO_GO_EXPECTED_PAYROLL_SOURCE_REQUIRED',
+      );
+    }
+    equal(value.resource, expected.resource, 'PHASE5_GO_NO_GO_PAYROLL_RESOURCE_MISMATCH');
+    equal(
+      value.authorizationServer,
+      expected.authorizationServer,
+      'PHASE5_GO_NO_GO_PAYROLL_AUTHORIZATION_SERVER_MISMATCH',
+    );
+    equal(
+      value.imageDigest,
+      expected.imageDigest,
+      'PHASE5_GO_NO_GO_PAYROLL_IMAGE_MISMATCH',
+    );
+    equal(
+      value.eventContractHash,
+      expected.eventContractHash,
+      'PHASE5_GO_NO_GO_PAYROLL_CONTRACT_MISMATCH',
+    );
+    equal(
+      value.catalogHash,
+      expected.catalogHash,
+      'PHASE5_GO_NO_GO_PAYROLL_CATALOG_MISMATCH',
+    );
+  }
+  return Object.freeze({
+    resource,
+    authorizationServer,
+    imageDigest: value.imageDigest,
+    eventContractHash: value.eventContractHash,
+    catalogHash: value.catalogHash,
+    evidenceHash: value.evidenceHash,
+  });
 }
 
 function validateOperations(operations) {
@@ -527,6 +703,28 @@ function runSelfTest() {
   staleResourceTemplates.mcp.resourceTemplateCount = 23;
   expectFailure(() => validate(staleResourceTemplates), 'PHASE5_GO_NO_GO_MCP_CATALOG_INVALID');
 
+  const missingPayrollTool = fixture();
+  missingPayrollTool.mcp.professionalPayroll.requiredTools.pop();
+  expectFailure(
+    () => validate(missingPayrollTool),
+    'PHASE5_GO_NO_GO_PAYROLL_CATALOG_INVALID',
+  );
+
+  const payrollAudienceEscape = fixture();
+  payrollAudienceEscape.mcp.professionalPayroll.crossResourceTokenDenied = 29;
+  expectFailure(
+    () => validate(payrollAudienceEscape),
+    'PHASE5_GO_NO_GO_PAYROLL_AUDIENCE_ESCAPE',
+  );
+
+  const stalePayrollContract = fixture();
+  stalePayrollContract.mcp.professionalPayroll.eventContractHash =
+    digest('stale-professional-payroll-contract');
+  expectFailure(
+    () => validate(stalePayrollContract, true),
+    'PHASE5_GO_NO_GO_PAYROLL_CONTRACT_MISMATCH',
+  );
+
   const unsignedImage = fixture();
   unsignedImage.operations.imageSignaturesVerified = false;
   expectFailure(() => validate(unsignedImage), 'PHASE5_GO_NO_GO_OPERATIONS_INCOMPLETE');
@@ -556,6 +754,16 @@ function bindExpectedEnvironment(document) {
   process.env.GO_NO_GO_EXPECTED_WEB_IMAGE = document.source.images.web;
   process.env.GO_NO_GO_EXPECTED_WEBSITE_IMAGE = document.source.images.website;
   process.env.GO_NO_GO_EXPECTED_DEPLOYMENT_MANIFEST = document.source.deploymentManifestHash;
+  process.env.GO_NO_GO_EXPECTED_PAYROLL_RESOURCE =
+    document.mcp.professionalPayroll.resource;
+  process.env.GO_NO_GO_EXPECTED_PAYROLL_AUTHORIZATION_SERVER =
+    document.mcp.professionalPayroll.authorizationServer;
+  process.env.GO_NO_GO_EXPECTED_PAYROLL_IMAGE =
+    document.mcp.professionalPayroll.imageDigest;
+  process.env.GO_NO_GO_EXPECTED_PAYROLL_CONTRACT_HASH =
+    document.mcp.professionalPayroll.eventContractHash;
+  process.env.GO_NO_GO_EXPECTED_PAYROLL_CATALOG_HASH =
+    document.mcp.professionalPayroll.catalogHash;
 }
 
 function fixture() {
@@ -598,7 +806,7 @@ function fixture() {
         amountDifferenceMinor: 0, missingAttachments: 0, checksumMismatches: 0,
       },
       resilience: {
-        actualRpoSeconds: 600, actualRtoSeconds: 7_200, adaptersRehearsed: 8,
+        actualRpoSeconds: 600, actualRtoSeconds: 7_200, adaptersRehearsed: 9,
         minimumOutageSeconds: 7_200, maximumCatchUpSeconds: 1_800, lostEvents: 0,
         duplicateBusinessEffects: 0, unreconciledEvents: 0,
       },
@@ -638,6 +846,36 @@ function fixture() {
       directDatabaseAccessCount: 0, upstreamTokenExposureCount: 0,
       clientProfiles: [...MCP_CLIENT_PROFILES], crossTenantAttempts: 30, crossTenantDenied: 30,
       auditEvents: 60,
+      professionalPayroll: {
+        resource: 'https://payroll.example.invalid',
+        mcpEndpoint: 'https://payroll.example.invalid/mcp',
+        authorizationServer: 'https://identity.example.invalid',
+        imageDigest: hash('professional-payroll-image'),
+        platformContractVersion: '1.0.0',
+        eventContractHash: hash('professional-payroll-event-contract'),
+        protocolVersion: '2025-11-25',
+        transport: 'streamable-http',
+        oauthProfile: 'oauth-2.1-resource-server',
+        catalogHash: hash('professional-payroll-catalog'),
+        requiredTools: [...PROFESSIONAL_PAYROLL_TOOLS],
+        requiredResourceTemplates: [...PROFESSIONAL_PAYROLL_RESOURCES],
+        requiredPrompts: [...PROFESSIONAL_PAYROLL_PROMPTS],
+        clientProfiles: [...MCP_CLIENT_PROFILES],
+        crossResourceTokenAttempts: 30,
+        crossResourceTokenDenied: 30,
+        wrongTenantAttempts: 30,
+        wrongTenantDenied: 30,
+        eventTypesValidated: 7,
+        eventReplayAttempts: 70,
+        eventReplayAccepted: 70,
+        r3ToolCount: 0,
+        toolsWithoutInputSchema: 0,
+        toolsWithoutOutputSchema: 0,
+        toolsWithoutRiskLevel: 0,
+        directDatabaseAccessCount: 0,
+        upstreamTokenExposureCount: 0,
+        evidenceHash: hash('professional-payroll-go-no-go'),
+      },
     },
     operations: {
       monitoringDashboardsApproved: true, alertRoutesTested: true, onCallRosterConfirmed: true,
@@ -684,6 +922,35 @@ function pattern(value, expression, code) {
 
 function integer(value, minimum, maximum, code) {
   if (!Number.isSafeInteger(value) || value < minimum || value > maximum) fail(code);
+}
+
+function exactStringArray(value, expected, code) {
+  if (
+    !Array.isArray(value) ||
+    value.some((item) => typeof item !== 'string') ||
+    canonical([...value].sort()) !== canonical([...expected].sort())
+  ) fail(code);
+}
+
+function httpsOrigin(value, code) {
+  if (typeof value !== 'string' || value.length > 256) fail(code);
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    fail(code);
+  }
+  if (
+    parsed.protocol !== 'https:' ||
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    parsed.port !== '' ||
+    parsed.pathname !== '/' ||
+    parsed.search !== '' ||
+    parsed.hash !== '' ||
+    parsed.origin !== value
+  ) fail(code);
+  return parsed.origin;
 }
 
 function numberRange(value, minimum, maximum, code) {

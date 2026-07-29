@@ -78,7 +78,12 @@ pnpm resilience:validate-evidence -- /secure/resilience/phase-5-resilience.json
 
 ## 证据与签署
 
-`gaoq.phase5.resilience.v1` 证据绑定 commit、API/Worker/ERP Web/Website 镜像摘要、部署清单和当前校验器/工作流摘要；严格拒绝未知字段。八个业务域、Outbox、Inbox、BullMQ、审计链、业务金额、八类外部连接、备份清单、恢复日志、监控、告警、运行手册和回滚决定均以独立 SHA-256 引用，不在 GitHub 复制正文。
+`gaoq.phase5.resilience.v2` 证据绑定 commit、API/Worker/ERP Web/Website 与
+独立专业算薪镜像摘要、部署清单和当前校验器/工作流摘要；严格拒绝未知字段。
+八个业务域、Outbox、Inbox、BullMQ、审计链、业务金额、九类外部连接、备份
+清单、恢复日志、监控、告警、运行手册和回滚决定均以独立 SHA-256 引用，不在
+GitHub 复制正文。专业算薪按双向连接执行至少两小时断连、自动追赶、对账和零
+丢失/零重复业务效果验收，不得用 ERP 旧 Payroll 集合或本地兼容模式代替。
 
 SRE、平台、数据、集成、安全、QA 和业务连续性七类负责人必须在演练结束后以不同证据 ID 作出 `approve` 签署。签署只表示本门禁通过，不替代最终由项目发起人、产品、架构、HR、财务、法务等角色共同完成的 Go/No-Go。
 

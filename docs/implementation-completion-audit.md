@@ -1,6 +1,6 @@
 # 仓库实施完成度审计
 
-- 审计日期：2026-07-29
+- 审计日期：2026-07-30
 - 审计对象：Phase 0–6、开放 Issue、当前堆叠 Draft PR 与 GitHub 治理配置
 - 结论：应用、契约、迁移控制面、生产门禁、Helm/Kubernetes 编排和标准 MCP
   已形成仓库实施基线；真实外部联调、目标环境演练、UAT、切换与 Hypercare
@@ -24,7 +24,7 @@
 
 | Phase | 仓库实施证据 | 尚缺外部证据 | 结论 |
 |---|---|---|---|
-| 0 | `docs/phase-0/`、Issue 模板、7 个 Milestone、标签、Draft PR、只读治理自动化、全量四维 80% 与 334 个生产文件逐文件四维 90% 门禁 | Issue #41 的 GitHub Project 需要 `project` 权限；Hosted Actions 真实执行及架构/安全/业务签署尚未取得 | 仓库实施已交付，外部/治理验收待完成 |
+| 0 | `docs/phase-0/`、Issue 模板、7 个 Milestone、标签、Draft PR、只读治理自动化、全量四维 80% 与 336 个生产文件逐文件四维 90% 门禁 | Issue #41 的 GitHub Project 需要 `project` 权限；Hosted Actions 真实执行及架构/安全/业务签署尚未取得 | 仓库实施已交付，外部/治理验收待完成 |
 | 1 | `apps/erp-api/src/modules/auth/`、`org/`、`security/`、`integration/`，`deploy/helm/`，Phase 1 工作流 | 境内云 VPC、WAF/KMS、真实 SSO/组织下发、监控告警、备份恢复与 RPO/RTO 演练 | 实施已交付，外部验收待完成 |
 | 2 | `apps/erp-api/src/modules/approval/`、审批前端、通知、迁移与 MCP 能力 | 氚云模板/历史/在途审批真实盘点迁移、三次演练和业务签署 | 实施已交付，外部验收待完成 |
 | 3 | 招聘、eSign、Onboarding、Knowledge、Care、Talent Lifecycle 360 及对应 REST/事件/MCP | 真实渠道、e签宝、对象/WORM、OpenAI/搜索/评分/通知、CRM/校友平台与跨角色 UAT | 实施已交付，外部验收待完成 |
@@ -558,6 +558,17 @@ Origin 与实际 iframe Window，线索结果未知时保留原请求和幂等�
 `pnpm quality:website-public-contract-coverage` 已接入 `precheck/check`；
 标准 MCP 继续只读并复用营销应用服务。真实 WAF、验证码、正式域名、浏览器故障
 注入和营销 UAT 仍待外部验收。
+
+Phase 5 MCP 联调证据已升级为 `gaoq.phase5.integration-mcp.v2`，不再允许只凭
+ERP 自身 `catalogHash` 和八类适配器拼出完整 MCP 结论。新门禁同时绑定独立
+专业算薪的 HTTPS resource、独立授权服务器、发布镜像、平台契约 `1.0.0`、
+七类共享事件契约摘要、完整 MCP 目录摘要、四 Tool/两 Resource Template/两
+Prompt、三类标准客户端、跨 resource Token/错误租户拒绝与至少 70 次事件回放；
+专业算薪也作为第九类外部沙箱进入零丢失、零重复、零 Token 暴露判定，并进入
+`gaoq.phase5.resilience.v2` 的两小时断连、自动追赶和对账门禁；韧性证据另绑定
+独立专业算薪镜像。最终 Go/No-Go 同步验证同一组事实，受保护工作流从 Repository
+Variables 精确绑定非敏感预期值。该变更只补齐仓库发布门禁；真实专业算薪
+OAuth/MCP、事件回放、断连恢复、密钥轮换、影子周期和员工/财务 UAT 仍待现场执行。
 
 审批通知可靠投递门禁已覆盖 25 项运行时受损记录、双平台认领、租约竞争、平台
 回执、重试/死信、结果不确定隔离和任务路由测试。平台返回成功后的本地终态故障

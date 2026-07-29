@@ -16,6 +16,7 @@ const INTEGRATION_PROFILES = Object.freeze({
   esign: 'bidirectional',
   feishu: 'bidirectional',
   op: 'bidirectional',
+  'professional-payroll': 'bidirectional',
   tax: 'bidirectional',
   worm: 'request-response',
 });
@@ -51,7 +52,7 @@ if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
   const document = parseDocument(await readFile(evidencePath, 'utf8'));
   const summary = validateEvidence(document, enforceEnvironment);
   process.stdout.write(`${JSON.stringify({
-    formatVersion: 1,
+    formatVersion: 2,
     suite: 'gaoq.phase5.resilience.verdict',
     runId: summary.runId,
     commitSha: summary.commitSha,
@@ -64,8 +65,8 @@ function validateEvidence(document, enforceEnvironment = false) {
     'formatVersion', 'suite', 'runId', 'environment', 'source', 'objectives',
     'disasterRecovery', 'consistency', 'integrations', 'safety', 'artifacts', 'signoffs',
   ], 'PHASE5_RESILIENCE_DOCUMENT_INVALID');
-  equal(document.formatVersion, 1, 'PHASE5_RESILIENCE_FORMAT_INVALID');
-  equal(document.suite, 'gaoq.phase5.resilience.v1', 'PHASE5_RESILIENCE_SUITE_INVALID');
+  equal(document.formatVersion, 2, 'PHASE5_RESILIENCE_FORMAT_INVALID');
+  equal(document.suite, 'gaoq.phase5.resilience.v2', 'PHASE5_RESILIENCE_SUITE_INVALID');
   pattern(document.runId, ULID, 'PHASE5_RESILIENCE_RUN_ID_INVALID');
 
   const environment = validateEnvironment(document.environment, enforceEnvironment);
@@ -134,7 +135,8 @@ function validateEnvironment(environment, enforceEnvironment) {
 
 function validateSource(source, enforceEnvironment) {
   object(source, [
-    'commitSha', 'images', 'rehearsalPlanVersion', 'harnessSha256', 'deploymentManifestHash',
+    'commitSha', 'images', 'professionalPayrollImage', 'rehearsalPlanVersion',
+    'harnessSha256', 'deploymentManifestHash',
   ], 'PHASE5_RESILIENCE_SOURCE_INVALID');
   pattern(source.commitSha, COMMIT, 'PHASE5_RESILIENCE_COMMIT_INVALID');
   object(
@@ -144,10 +146,17 @@ function validateSource(source, enforceEnvironment) {
   );
   const imageDigests = Object.values(source.images);
   for (const image of imageDigests) pattern(image, SHA256, 'PHASE5_RESILIENCE_IMAGE_INVALID');
-  if (new Set(imageDigests).size !== 4) fail('PHASE5_RESILIENCE_IMAGES_NOT_INDEPENDENT');
+  pattern(
+    source.professionalPayrollImage,
+    SHA256,
+    'PHASE5_RESILIENCE_PAYROLL_IMAGE_INVALID',
+  );
+  if (
+    new Set([...imageDigests, source.professionalPayrollImage]).size !== 5
+  ) fail('PHASE5_RESILIENCE_IMAGES_NOT_INDEPENDENT');
   equal(
     source.rehearsalPlanVersion,
-    'phase-5-resilience-v1',
+    'phase-5-resilience-v2',
     'PHASE5_RESILIENCE_PLAN_VERSION_INVALID',
   );
   equal(source.harnessSha256, HARNESS_DIGEST, 'PHASE5_RESILIENCE_HARNESS_INVALID');
@@ -167,10 +176,13 @@ function validateExpectedSource(source) {
     worker: process.env.RESILIENCE_EXPECTED_WORKER_IMAGE,
     web: process.env.RESILIENCE_EXPECTED_WEB_IMAGE,
     website: process.env.RESILIENCE_EXPECTED_WEBSITE_IMAGE,
+    professionalPayroll: process.env.RESILIENCE_EXPECTED_PAYROLL_IMAGE,
     deploymentManifestHash: process.env.RESILIENCE_EXPECTED_DEPLOYMENT_MANIFEST,
   };
   pattern(expected.commitSha, COMMIT, 'PHASE5_RESILIENCE_EXPECTED_SOURCE_REQUIRED');
-  for (const field of ['api', 'worker', 'web', 'website', 'deploymentManifestHash']) {
+  for (const field of [
+    'api', 'worker', 'web', 'website', 'professionalPayroll', 'deploymentManifestHash',
+  ]) {
     pattern(expected[field], SHA256, 'PHASE5_RESILIENCE_EXPECTED_SOURCE_REQUIRED');
   }
   equal(source.commitSha, expected.commitSha, 'PHASE5_RESILIENCE_COMMIT_MISMATCH');
@@ -178,6 +190,11 @@ function validateExpectedSource(source) {
   equal(source.images.worker, expected.worker, 'PHASE5_RESILIENCE_IMAGE_MISMATCH');
   equal(source.images.web, expected.web, 'PHASE5_RESILIENCE_IMAGE_MISMATCH');
   equal(source.images.website, expected.website, 'PHASE5_RESILIENCE_IMAGE_MISMATCH');
+  equal(
+    source.professionalPayrollImage,
+    expected.professionalPayroll,
+    'PHASE5_RESILIENCE_PAYROLL_IMAGE_MISMATCH',
+  );
   equal(
     source.deploymentManifestHash,
     expected.deploymentManifestHash,
@@ -631,6 +648,8 @@ function runSelfTest() {
   process.env.RESILIENCE_EXPECTED_WORKER_IMAGE = environmentBound.source.images.worker;
   process.env.RESILIENCE_EXPECTED_WEB_IMAGE = environmentBound.source.images.web;
   process.env.RESILIENCE_EXPECTED_WEBSITE_IMAGE = environmentBound.source.images.website;
+  process.env.RESILIENCE_EXPECTED_PAYROLL_IMAGE =
+    environmentBound.source.professionalPayrollImage;
   process.env.RESILIENCE_EXPECTED_DEPLOYMENT_MANIFEST =
     environmentBound.source.deploymentManifestHash;
   validateEvidence(environmentBound, true);
@@ -712,8 +731,8 @@ function fixture() {
     auditHash: hash(`integration-${index}-audit`),
   }));
   return {
-    formatVersion: 1,
-    suite: 'gaoq.phase5.resilience.v1',
+    formatVersion: 2,
+    suite: 'gaoq.phase5.resilience.v2',
     runId: '01J8ZQK7V0A2M4N6P8R0T2W6B1',
     environment: {
       name: 'resilience-stage',
@@ -733,7 +752,8 @@ function fixture() {
         web: hash('web'),
         website: hash('website'),
       },
-      rehearsalPlanVersion: 'phase-5-resilience-v1',
+      professionalPayrollImage: hash('professional-payroll-image'),
+      rehearsalPlanVersion: 'phase-5-resilience-v2',
       harnessSha256: HARNESS_DIGEST,
       deploymentManifestHash: hash('deployment-manifest'),
     },

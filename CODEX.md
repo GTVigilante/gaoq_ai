@@ -87,6 +87,16 @@
   营销服务 63 项、营销入口 97 项专项测试通过，目标文件
   逐文件四维覆盖率均不低于 90%；真实 WAF、验证码、浏览器故障注入、正式域名
   和营销 UAT 仍待外部验收。标准 MCP 继续只读且复用同一应用服务。
+- 2026-07-30 已关闭最终发布门禁只校验 ERP MCP、却未绑定独立专业算薪资源
+  服务器的缺口：`integration-mcp` 证据升级为 v2，新增专业算薪 HTTPS
+  resource、独立授权服务器、镜像摘要、平台契约 `1.0.0`、七类事件契约摘要、
+  MCP `catalogHash`、四 Tool/两 Resource Template/两 Prompt、三类客户端、
+  跨 resource Token/错误租户拒绝和事件回放证据；九类外部沙箱均须进入同一
+  verdict。容灾证据同步升级为 v2，把专业算薪作为第九类连接执行两小时断连、
+  自动追赶和零差异对账，并绑定独立镜像；最终 Go/No-Go 精确绑定上述字段。
+  受保护工作流只从 Repository Variables 取得非敏感预期值。该门禁不证明专业
+  算薪已联调；真实 OAuth、MCP、事件回放、断连恢复、密钥轮换、两个影子周期和
+  员工/财务 UAT 仍待外部验收。
 - 2026-07-29 已把覆盖率门禁本身纳入失败关闭治理：
   `scripts/validate-critical-coverage-policy.mjs` 从 `precheck/check` 解析 134 个
   ERP API 专项脚本，展开其 `--coverage.include` 后要求 336 个生产文件逐一具有

@@ -19,11 +19,11 @@ Go/No-Go 是人工治理决定，不是 CI 成功、AI 建议或某个负责人�
 | 数据迁移 | 固定 `gaoq.phase5.migration-rehearsal.verdict`；全部二十六个 Scope、三轮七十八个运行、故障演练、记录、关联、金额、附件和校验和未解释差异为零 |
 | 性能容量 | 三次独立实测；1000 并发、API P95 `<500ms`、错误率 `≤1%`；1000 人工资 `<300s` |
 | DAST/ASVS | ASVS 5.0 L2 与高风险 L3、认证/越权探针、ZAP 主动扫描和四方签署通过 |
-| 容灾韧性 | RPO `≤900s`、RTO `≤14400s`；八类适配器断连 `≥7200s`、追赶 `≤3600s`、零丢失与重复业务效果 |
+| 容灾韧性 | RPO `≤900s`、RTO `≤14400s`；九类适配器（含独立专业算薪）断连 `≥7200s`、追赶 `≤3600s`、零丢失与重复业务效果 |
 | 权限 | 至少 200 个租户/角色/字段/数据范围矩阵用例全部通过；至少 50 次跨租户尝试全部拒绝；MCP R3 Tool 为零 |
 | 业务 UAT | 审批影子至少 28 天、薪酬影子至少 2 个完整周期；八个业务域 UAT 全部通过且零未解释差异 |
 | 隐私合规 | 数据清单、隐私影响评估、法定依据、保存删除和授权撤回均验证；未解决隐私发现与未批准跨境传输为零 |
-| 外部集成/MCP | OP、钉钉、飞书、e签宝、银行、税务、附件、WORM、消息和 MCP 契约、沙箱演练、凭据预检、对账全部通过 |
+| 外部集成/MCP | OP、钉钉、飞书、e签宝、银行、税务、附件、WORM、消息、ERP MCP 与专业算薪 OAuth/MCP/七类共享事件的契约、沙箱演练、凭据预检、对账全部通过 |
 | 运行保障 | 监控、告警路由、值班、运行手册、备份、回滚、冻结、事故指挥、支持交接和 28 天 Hypercare 就绪 |
 
 十二份下游 verdict 必须声明固定 suite，并以 `subjectCommitSha` 精确绑定当前发布候选 commit；不同版本的通过报告不能拼接。证据完成时间距评估不得超过 30 天，每项证据自身有效期不得超过 90 天；最终评估与决定在提交验收时均不得超过 24 小时，也不得使用未来时间。计划切换窗口结束时间和 `GO` 有效期不得晚于任何一项证据的到期时间。
@@ -41,6 +41,14 @@ R0 23、R1 19、R2 8、R3 0。陈旧哈希、遗漏 Resource Template 或只满�
 
 至少使用三类协议客户端完成同版本互操作：交互式用户 Agent、机器服务 Agent、只读审计 Agent。必须覆盖初始化协商、OAuth 发现与授权、分页、结构化输出、资源/提示（如已声明）、确认、超时、幂等、错误、跨租户拒绝和审计。至少执行 30 次跨租户尝试并全部拒绝，审计事件数不得少于 Tool 总数。具体能力目录和跨系统实测由后续 MCP 验收切片提供；没有该证据时本门禁无法通过。
 
+专业算薪必须作为独立 OAuth 2.1 Resource Server 进入同一门禁：resource、
+授权服务器、镜像摘要、平台契约版本、七类事件契约摘要和完整 MCP
+`catalogHash` 均与现场 `integration-mcp` v2 verdict 一致。其最低目录固定为
+四个 Tool、两个 Resource Template、两个 Prompt，三类客户端均完成初始化；
+跨 resource Token 和错误租户各至少 30 次全部拒绝，七类事件至少回放 70 次
+且全部接受当前严格契约。专业算薪与 ERP 任一侧出现 R3 Tool、缺失 Schema、
+直接跨库或 Token 暴露时结论必须为 No-Go。
+
 ## 受保护工作流
 
 `.github/workflows/phase-5-go-no-go.yml` 只能在 `main` 手工启动，使用
@@ -49,10 +57,11 @@ R0 23、R1 19、R2 8、R3 0。陈旧哈希、遗漏 Resource Template 或只满�
 代码和证据，不承担生产部署。
 
 Repository Variables 配置以下非敏感值：环境名、区域、API/Worker/ERP Web/Website
-镜像 SHA-256、部署清单 SHA-256、证据 HTTPS URL、专用 OIDC audience 和预期
-证据 SHA-256。工作流把这些值及当前 `main` commit 与证据精确绑定，以单次
-GitHub OIDC 身份读取最多 1 MiB 的脱敏 JSON，并在 `$RUNNER_TEMP` 以 `0600`
-保存到作业结束。
+镜像 SHA-256、部署清单 SHA-256、证据 HTTPS URL、专用 OIDC audience、预期
+证据 SHA-256，以及专业算薪 resource、授权服务器、镜像、事件契约和 MCP
+目录摘要。工作流把这些值及当前 `main` commit 与证据精确绑定，以单次 GitHub
+OIDC 身份读取最多 1 MiB 的脱敏 JSON，并在 `$RUNNER_TEMP` 以 `0600` 保存到
+作业结束。
 
 ```bash
 pnpm release:go-no-go:validate-evidence -- /secure/release/phase-5-go-no-go.json

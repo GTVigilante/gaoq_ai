@@ -86,25 +86,42 @@ OP、钉钉、飞书、e签宝、银行、税务、附件和 WORM 只通过应�
 批量部门、员工或劳动关系快照 Resource/Tool；AI 只能使用目录中已有的脱敏控制
 摘要能力，不能把 MCP 变成跨系统主数据导出通道。
 
+专业算薪是独立 OAuth Resource Server，不得由 ERP MCP 代理。其最低标准目录
+固定为四个只读/受控查询 Tool（本人薪资单、工资期间、对账和税务状态）、两个
+Resource Template 与两个解释 Prompt，逐项名称见
+[专业算薪系统边界](../phase-0/07-payroll-system-boundary.md)。三类客户端必须分别
+初始化 ERP 与专业算薪资源，证明跨 resource Token、错误 audience 和错误租户
+全部拒绝；两个 MCP 都不得持有或返回对方 Token，也不得直接访问对方数据库。
+
 业务附件迁移固定为 L4，不注册正文、对象定位符、checksum 的迁移 Tool 或 Resource。AI 只能读取聚合迁移报告；未来若增加领域附件状态能力，也必须复用应用服务并返回无正文、无对象地址、无上传人员标识的最小安全投影。
 
-工具自测和本目录不等于联调完成。最终 `integration-mcp` verdict 必须绑定 commit、API/Worker/ERP Web/Website 四类镜像、`catalogHash`、三类客户端原始协议记录、八类外部沙箱证据、跨租户拒绝、审计和安全签署，随后才能进入[跨职能 Go/No-Go 门禁](./18-go-no-go-evidence-gate.md)。
+工具自测和本目录不等于联调完成。最终 `integration-mcp` v2 verdict 必须绑定
+commit、API/Worker/ERP Web/Website 四类镜像、ERP `catalogHash`、三类客户端
+原始协议记录、九类外部沙箱证据、跨租户拒绝、审计和安全签署；同时精确绑定
+专业算薪的 HTTPS resource、独立授权服务器、镜像摘要、平台契约 `1.0.0`、
+七类事件契约摘要、完整 MCP `catalogHash` 和四类原始证据摘要，随后才能进入
+[跨职能 Go/No-Go 门禁](./18-go-no-go-evidence-gate.md)。
 
 `.github/workflows/phase-5-mcp-integration.yml` 只允许 `main` 手工启动，使用
 `phase-5-mcp-integration` workflow policy 和 GitHub Hosted `ubuntu-latest`。
 Repository Variables 配置固定环境名、API/Worker/ERP Web/Website 镜像
-SHA-256、脱敏摘要 HTTPS URL、预期文件 SHA-256 和专用 OIDC audience。工作流
-以当前 policy 的单次 GitHub OIDC 身份取得最多 1 MiB 的严格 JSON，把证据
-与当前 commit、镜像和实时解析的 `catalogHash` 精确绑定，只上传脱敏 verdict，
-不上传 OAuth Token、协议正文、业务数据或供应商凭据。
+SHA-256、脱敏摘要 HTTPS URL、预期文件 SHA-256、专用 OIDC audience，以及
+专业算薪 resource、授权服务器、镜像摘要、事件契约摘要和 MCP 目录摘要。工作流
+以当前 policy 的单次 GitHub OIDC 身份取得最多 1 MiB 的严格 JSON，把证据与
+当前 commit、ERP 镜像/目录及专业算薪发布候选精确绑定，只上传脱敏 verdict，
+不上传 OAuth Token、协议正文、工资数据或供应商凭据。
 
 证据必须覆盖三类客户端各至少 10 次 Tool 调用、全部 50 个 Tool、4 个 Resource、
 27 个 Resource Template 和 25 个 Prompt 的一致目录；OP、钉钉、飞书、e签宝、
-银行、税务、附件、WORM 各至少 10 次沙箱请求。跨租户和无效 Scope 各至少
+银行、税务、附件、WORM 与专业算薪各至少 10 次沙箱请求。专业算薪另要求
+四 Tool、两 Resource Template、两 Prompt 均存在，七类事件至少回放 70 次，
+旧事件名和未知字段逐类拒绝，跨 resource Token 与错误租户各至少 30 次全部
+拒绝。ERP 跨租户和无效 Scope 各至少
 30 次并全部拒绝，过期确认至少 10 次并全部拒绝；丢失、重复业务效果、未对账、
 租户错配、Token 暴露、生产副作用和 R3 Tool 均为零。MCP、集成、安全和 QA
 四方在联调结束后独立签署。最终 Go/No-Go 证据还必须精确绑定该完整
-`catalogHash` 和四类目录数量，陈旧示例或仅满足数量下限的目录不得通过。
+ERP `catalogHash`、专业算薪 `catalogHash`、事件契约摘要和双方目录，陈旧示例
+或仅满足数量下限的目录不得通过。
 
 ```bash
 pnpm mcp:integration:validate-evidence -- /secure/mcp/phase-5-mcp-integration.json

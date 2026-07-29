@@ -10,7 +10,24 @@ const CLIENTS = Object.freeze({
   'machine-service-agent': 'client-credentials',
   'read-only-audit-agent': 'authorization-code-pkce',
 });
-const INTEGRATIONS = ['attachment', 'bank', 'dingtalk', 'esign', 'feishu', 'op', 'tax', 'worm'];
+const INTEGRATIONS = [
+  'attachment', 'bank', 'dingtalk', 'esign', 'feishu', 'op',
+  'professional-payroll', 'tax', 'worm',
+];
+const PROFESSIONAL_PAYROLL_TOOLS = Object.freeze([
+  'payroll_payslip_get_self',
+  'payroll_period_get',
+  'payroll_reconciliation_get',
+  'payroll_tax_filing_get',
+]);
+const PROFESSIONAL_PAYROLL_RESOURCES = Object.freeze([
+  'payroll://payslips/self/{period}',
+  'payroll://periods/{period}',
+]);
+const PROFESSIONAL_PAYROLL_PROMPTS = Object.freeze([
+  'payroll_payslip_explain_self',
+  'payroll_period_status_guide',
+]);
 const SIGNOFFS = ['integration_owner', 'mcp_owner', 'qa_owner', 'security_owner'];
 
 if (process.argv[2] === '--self-test') {
@@ -22,6 +39,16 @@ if (process.argv[2] === '--self-test') {
   process.env.MCP_INTEGRATION_EXPECTED_WORKER_IMAGE = bound.source.images.worker;
   process.env.MCP_INTEGRATION_EXPECTED_WEB_IMAGE = bound.source.images.web;
   process.env.MCP_INTEGRATION_EXPECTED_WEBSITE_IMAGE = bound.source.images.website;
+  process.env.MCP_INTEGRATION_EXPECTED_PAYROLL_RESOURCE =
+    bound.professionalPayroll.resource;
+  process.env.MCP_INTEGRATION_EXPECTED_PAYROLL_AUTHORIZATION_SERVER =
+    bound.professionalPayroll.authorizationServer;
+  process.env.MCP_INTEGRATION_EXPECTED_PAYROLL_IMAGE =
+    bound.professionalPayroll.imageDigest;
+  process.env.MCP_INTEGRATION_EXPECTED_PAYROLL_CONTRACT_HASH =
+    bound.professionalPayroll.eventContractHash;
+  process.env.MCP_INTEGRATION_EXPECTED_PAYROLL_CATALOG_HASH =
+    bound.professionalPayroll.catalogHash;
   validate(bound, true);
   const stale = fixture(); stale.source.catalogHash = digest('old');
   expectFailure(() => validate(stale), 'PHASE5_MCP_INTEGRATION_CATALOG_MISMATCH');
@@ -29,6 +56,26 @@ if (process.argv[2] === '--self-test') {
   expectFailure(() => validate(leaked), 'PHASE5_MCP_INTEGRATION_SECURITY_FAILED');
   const escaped = fixture(); escaped.authorization.crossTenantDenied = 29;
   expectFailure(() => validate(escaped), 'PHASE5_MCP_INTEGRATION_TENANT_ESCAPE');
+  const missingPayrollTool = fixture();
+  missingPayrollTool.professionalPayroll.requiredTools.pop();
+  expectFailure(
+    () => validate(missingPayrollTool),
+    'PHASE5_MCP_INTEGRATION_PAYROLL_CATALOG_INVALID',
+  );
+  const payrollAudienceEscape = fixture();
+  payrollAudienceEscape.professionalPayroll.crossResourceTokenDenied = 29;
+  expectFailure(
+    () => validate(payrollAudienceEscape),
+    'PHASE5_MCP_INTEGRATION_PAYROLL_AUDIENCE_ESCAPE',
+  );
+  const stalePayrollContract = fixture();
+  stalePayrollContract.professionalPayroll.eventContractHash = digest('stale-payroll-contract');
+  process.env.MCP_INTEGRATION_EXPECTED_PAYROLL_CONTRACT_HASH =
+    bound.professionalPayroll.eventContractHash;
+  expectFailure(
+    () => validate(stalePayrollContract, true),
+    'PHASE5_MCP_INTEGRATION_PAYROLL_CONTRACT_MISMATCH',
+  );
   process.env.MCP_INTEGRATION_EXPECTED_COMMIT = 'b'.repeat(40);
   expectFailure(() => validate(bound, true), 'PHASE5_MCP_INTEGRATION_COMMIT_MISMATCH');
   process.stdout.write('Phase 5 MCP 客户端与跨系统联调证据门禁自测通过。\n');
@@ -43,17 +90,19 @@ if (process.argv[2] === '--self-test') {
       (stat.mode & 0o022) !== 0) fail('PHASE5_MCP_INTEGRATION_FILE_INVALID');
   const result = validate(JSON.parse(await readFile(path, 'utf8')), enforce);
   process.stdout.write(`${JSON.stringify({
-    formatVersion: 1, suite: 'gaoq.phase5.integration-mcp.verdict', runId: result.runId,
+    formatVersion: 2, suite: 'gaoq.phase5.integration-mcp.verdict', runId: result.runId,
     commitSha: result.commitSha, catalogHash: catalog.catalogHash,
+    professionalPayrollCatalogHash: result.professionalPayroll.catalogHash,
+    professionalPayrollEventContractHash: result.professionalPayroll.eventContractHash,
     evidenceChecksum: digest(canonical(result)),
   }, null, 2)}\n`);
 }
 
 function validate(document, enforce = false) {
   exact(document, ['formatVersion', 'suite', 'runId', 'source', 'environment', 'clients',
-    'integrations', 'authorization', 'safety', 'artifacts', 'signoffs']);
-  equal(document.formatVersion, 1, 'PHASE5_MCP_INTEGRATION_FORMAT_INVALID');
-  equal(document.suite, 'gaoq.phase5.integration-mcp.v1', 'PHASE5_MCP_INTEGRATION_SUITE_INVALID');
+    'integrations', 'professionalPayroll', 'authorization', 'safety', 'artifacts', 'signoffs']);
+  equal(document.formatVersion, 2, 'PHASE5_MCP_INTEGRATION_FORMAT_INVALID');
+  equal(document.suite, 'gaoq.phase5.integration-mcp.v2', 'PHASE5_MCP_INTEGRATION_SUITE_INVALID');
   pattern(document.runId, ULID, 'PHASE5_MCP_INTEGRATION_RUN_ID_INVALID');
   exact(document.source, ['commitSha', 'images', 'protocolVersion', 'catalogHash']);
   pattern(document.source.commitSha, COMMIT, 'PHASE5_MCP_INTEGRATION_COMMIT_INVALID');
@@ -76,6 +125,7 @@ function validate(document, enforce = false) {
   if (ended - started < 30 * 60 * 1_000) fail('PHASE5_MCP_INTEGRATION_DURATION_INVALID');
   validateClients(document.clients);
   validateIntegrations(document.integrations);
+  const professionalPayroll = validateProfessionalPayroll(document.professionalPayroll);
   validateAuthorization(document.authorization);
   exact(document.safety, ['productionEndpointsUsed', 'productionSideEffects', 'r3ActionsEnabled',
     'secretsInEvidence', 'directDatabaseAccess', 'upstreamTokensReturned']);
@@ -90,7 +140,7 @@ function validate(document, enforce = false) {
   return Object.freeze({ runId: document.runId, commitSha: document.source.commitSha,
     source: document.source, environment: document.environment, clients: document.clients,
     integrations: document.integrations, authorization: document.authorization,
-    artifacts: document.artifacts });
+    professionalPayroll, artifacts: document.artifacts });
 }
 
 function validateExpected(document) {
@@ -101,6 +151,12 @@ function validateExpected(document) {
     worker: process.env.MCP_INTEGRATION_EXPECTED_WORKER_IMAGE,
     web: process.env.MCP_INTEGRATION_EXPECTED_WEB_IMAGE,
     website: process.env.MCP_INTEGRATION_EXPECTED_WEBSITE_IMAGE,
+    payrollResource: process.env.MCP_INTEGRATION_EXPECTED_PAYROLL_RESOURCE,
+    payrollAuthorizationServer:
+      process.env.MCP_INTEGRATION_EXPECTED_PAYROLL_AUTHORIZATION_SERVER,
+    payrollImage: process.env.MCP_INTEGRATION_EXPECTED_PAYROLL_IMAGE,
+    payrollContractHash: process.env.MCP_INTEGRATION_EXPECTED_PAYROLL_CONTRACT_HASH,
+    payrollCatalogHash: process.env.MCP_INTEGRATION_EXPECTED_PAYROLL_CATALOG_HASH,
   };
   if (expected.environment === undefined || !/^[a-z][a-z0-9-]{2,31}$/u.test(expected.environment)) {
     fail('PHASE5_MCP_INTEGRATION_EXPECTED_SOURCE_REQUIRED');
@@ -109,11 +165,59 @@ function validateExpected(document) {
   for (const field of ['api', 'worker', 'web', 'website']) {
     pattern(expected[field], SHA256, 'PHASE5_MCP_INTEGRATION_EXPECTED_SOURCE_REQUIRED');
   }
+  httpsOrigin(
+    expected.payrollResource,
+    'PHASE5_MCP_INTEGRATION_EXPECTED_PAYROLL_SOURCE_REQUIRED',
+  );
+  httpsOrigin(
+    expected.payrollAuthorizationServer,
+    'PHASE5_MCP_INTEGRATION_EXPECTED_PAYROLL_SOURCE_REQUIRED',
+  );
+  pattern(
+    expected.payrollImage,
+    SHA256,
+    'PHASE5_MCP_INTEGRATION_EXPECTED_PAYROLL_SOURCE_REQUIRED',
+  );
+  pattern(
+    expected.payrollContractHash,
+    SHA256,
+    'PHASE5_MCP_INTEGRATION_EXPECTED_PAYROLL_SOURCE_REQUIRED',
+  );
+  pattern(
+    expected.payrollCatalogHash,
+    SHA256,
+    'PHASE5_MCP_INTEGRATION_EXPECTED_PAYROLL_SOURCE_REQUIRED',
+  );
   equal(document.environment.name, expected.environment, 'PHASE5_MCP_INTEGRATION_ENV_MISMATCH');
   equal(document.source.commitSha, expected.commit, 'PHASE5_MCP_INTEGRATION_COMMIT_MISMATCH');
   for (const image of ['api', 'worker', 'web', 'website']) {
     equal(document.source.images[image], expected[image], 'PHASE5_MCP_INTEGRATION_IMAGE_MISMATCH');
   }
+  equal(
+    document.professionalPayroll.resource,
+    expected.payrollResource,
+    'PHASE5_MCP_INTEGRATION_PAYROLL_RESOURCE_MISMATCH',
+  );
+  equal(
+    document.professionalPayroll.authorizationServer,
+    expected.payrollAuthorizationServer,
+    'PHASE5_MCP_INTEGRATION_PAYROLL_AUTHORIZATION_SERVER_MISMATCH',
+  );
+  equal(
+    document.professionalPayroll.imageDigest,
+    expected.payrollImage,
+    'PHASE5_MCP_INTEGRATION_PAYROLL_IMAGE_MISMATCH',
+  );
+  equal(
+    document.professionalPayroll.eventContractHash,
+    expected.payrollContractHash,
+    'PHASE5_MCP_INTEGRATION_PAYROLL_CONTRACT_MISMATCH',
+  );
+  equal(
+    document.professionalPayroll.catalogHash,
+    expected.payrollCatalogHash,
+    'PHASE5_MCP_INTEGRATION_PAYROLL_CATALOG_MISMATCH',
+  );
 }
 
 function validateClients(clients) {
@@ -148,7 +252,7 @@ function validateClients(clients) {
 }
 
 function validateIntegrations(integrations) {
-  if (!Array.isArray(integrations) || integrations.length !== 8) {
+  if (!Array.isArray(integrations) || integrations.length !== INTEGRATIONS.length) {
     fail('PHASE5_MCP_INTEGRATION_SYSTEMS_INCOMPLETE');
   }
   const names = []; const hashes = new Set();
@@ -165,9 +269,184 @@ function validateIntegrations(integrations) {
     pattern(item.evidenceHash, SHA256, 'PHASE5_MCP_INTEGRATION_SYSTEM_EVIDENCE_INVALID');
     hashes.add(item.evidenceHash);
   }
-  if (canonical(names.sort()) !== canonical(INTEGRATIONS) || hashes.size !== 8) {
+  if (
+    canonical(names.sort()) !== canonical([...INTEGRATIONS].sort()) ||
+    hashes.size !== INTEGRATIONS.length
+  ) {
     fail('PHASE5_MCP_INTEGRATION_SYSTEMS_INCOMPLETE');
   }
+}
+
+function validateProfessionalPayroll(value) {
+  exact(value, [
+    'resource', 'mcpEndpoint', 'authorizationServer', 'imageDigest',
+    'platformContractVersion', 'eventContractHash', 'protocolVersion', 'transport',
+    'oauthProfile', 'catalogHash', 'requiredTools', 'requiredResourceTemplates',
+    'requiredPrompts', 'toolCount', 'resourceTemplateCount', 'promptCount',
+    'initializedClientProfiles', 'payslipSelfCalls', 'eventTypesValidated',
+    'eventReplayAttempts', 'eventReplayAccepted', 'legacyEventTypesRejected',
+    'unknownFieldsRejected', 'crossResourceTokenAttempts', 'crossResourceTokenDenied',
+    'wrongTenantAttempts', 'wrongTenantDenied', 'r3ToolCount',
+    'toolsWithoutInputSchema', 'toolsWithoutOutputSchema', 'toolsWithoutRiskLevel',
+    'directDatabaseAccessCount', 'upstreamTokenExposureCount', 'artifacts',
+  ]);
+  const resource = httpsOrigin(
+    value.resource,
+    'PHASE5_MCP_INTEGRATION_PAYROLL_RESOURCE_INVALID',
+  );
+  const authorizationServer = httpsOrigin(
+    value.authorizationServer,
+    'PHASE5_MCP_INTEGRATION_PAYROLL_AUTHORIZATION_SERVER_INVALID',
+  );
+  if (authorizationServer === resource) {
+    fail('PHASE5_MCP_INTEGRATION_PAYROLL_TRUST_DOMAINS_NOT_SEPARATE');
+  }
+  equal(
+    value.mcpEndpoint,
+    `${resource}/mcp`,
+    'PHASE5_MCP_INTEGRATION_PAYROLL_ENDPOINT_INVALID',
+  );
+  pattern(value.imageDigest, SHA256, 'PHASE5_MCP_INTEGRATION_PAYROLL_IMAGE_INVALID');
+  equal(
+    value.platformContractVersion,
+    '1.0.0',
+    'PHASE5_MCP_INTEGRATION_PAYROLL_CONTRACT_VERSION_INVALID',
+  );
+  pattern(
+    value.eventContractHash,
+    SHA256,
+    'PHASE5_MCP_INTEGRATION_PAYROLL_CONTRACT_INVALID',
+  );
+  equal(
+    value.protocolVersion,
+    '2025-11-25',
+    'PHASE5_MCP_INTEGRATION_PAYROLL_PROTOCOL_INVALID',
+  );
+  equal(
+    value.transport,
+    'streamable-http',
+    'PHASE5_MCP_INTEGRATION_PAYROLL_TRANSPORT_INVALID',
+  );
+  equal(
+    value.oauthProfile,
+    'oauth-2.1-resource-server',
+    'PHASE5_MCP_INTEGRATION_PAYROLL_OAUTH_INVALID',
+  );
+  pattern(value.catalogHash, SHA256, 'PHASE5_MCP_INTEGRATION_PAYROLL_CATALOG_INVALID');
+  exactStringArray(
+    value.requiredTools,
+    PROFESSIONAL_PAYROLL_TOOLS,
+    'PHASE5_MCP_INTEGRATION_PAYROLL_CATALOG_INVALID',
+  );
+  exactStringArray(
+    value.requiredResourceTemplates,
+    PROFESSIONAL_PAYROLL_RESOURCES,
+    'PHASE5_MCP_INTEGRATION_PAYROLL_CATALOG_INVALID',
+  );
+  exactStringArray(
+    value.requiredPrompts,
+    PROFESSIONAL_PAYROLL_PROMPTS,
+    'PHASE5_MCP_INTEGRATION_PAYROLL_CATALOG_INVALID',
+  );
+  integer(
+    value.toolCount,
+    PROFESSIONAL_PAYROLL_TOOLS.length,
+    10_000,
+    'PHASE5_MCP_INTEGRATION_PAYROLL_CATALOG_INVALID',
+  );
+  integer(
+    value.resourceTemplateCount,
+    PROFESSIONAL_PAYROLL_RESOURCES.length,
+    10_000,
+    'PHASE5_MCP_INTEGRATION_PAYROLL_CATALOG_INVALID',
+  );
+  integer(
+    value.promptCount,
+    PROFESSIONAL_PAYROLL_PROMPTS.length,
+    10_000,
+    'PHASE5_MCP_INTEGRATION_PAYROLL_CATALOG_INVALID',
+  );
+  exactStringArray(
+    value.initializedClientProfiles,
+    Object.keys(CLIENTS),
+    'PHASE5_MCP_INTEGRATION_PAYROLL_CLIENTS_INCOMPLETE',
+  );
+  integer(
+    value.payslipSelfCalls,
+    10,
+    Number.MAX_SAFE_INTEGER,
+    'PHASE5_MCP_INTEGRATION_PAYROLL_COVERAGE',
+  );
+  equal(value.eventTypesValidated, 7, 'PHASE5_MCP_INTEGRATION_PAYROLL_EVENT_COVERAGE');
+  integer(
+    value.eventReplayAttempts,
+    70,
+    Number.MAX_SAFE_INTEGER,
+    'PHASE5_MCP_INTEGRATION_PAYROLL_EVENT_COVERAGE',
+  );
+  equal(
+    value.eventReplayAccepted,
+    value.eventReplayAttempts,
+    'PHASE5_MCP_INTEGRATION_PAYROLL_EVENT_REPLAY_FAILED',
+  );
+  integer(
+    value.legacyEventTypesRejected,
+    7,
+    Number.MAX_SAFE_INTEGER,
+    'PHASE5_MCP_INTEGRATION_PAYROLL_EVENT_COVERAGE',
+  );
+  integer(
+    value.unknownFieldsRejected,
+    7,
+    Number.MAX_SAFE_INTEGER,
+    'PHASE5_MCP_INTEGRATION_PAYROLL_EVENT_COVERAGE',
+  );
+  integer(
+    value.crossResourceTokenAttempts,
+    30,
+    Number.MAX_SAFE_INTEGER,
+    'PHASE5_MCP_INTEGRATION_PAYROLL_COVERAGE',
+  );
+  equal(
+    value.crossResourceTokenDenied,
+    value.crossResourceTokenAttempts,
+    'PHASE5_MCP_INTEGRATION_PAYROLL_AUDIENCE_ESCAPE',
+  );
+  integer(
+    value.wrongTenantAttempts,
+    30,
+    Number.MAX_SAFE_INTEGER,
+    'PHASE5_MCP_INTEGRATION_PAYROLL_COVERAGE',
+  );
+  equal(
+    value.wrongTenantDenied,
+    value.wrongTenantAttempts,
+    'PHASE5_MCP_INTEGRATION_PAYROLL_TENANT_ESCAPE',
+  );
+  for (const field of [
+    'r3ToolCount', 'toolsWithoutInputSchema', 'toolsWithoutOutputSchema',
+    'toolsWithoutRiskLevel', 'directDatabaseAccessCount', 'upstreamTokenExposureCount',
+  ]) {
+    equal(value[field], 0, 'PHASE5_MCP_INTEGRATION_PAYROLL_SECURITY_FAILED');
+  }
+  exact(value.artifacts, [
+    'oauthMetadataHash', 'mcpCatalogArtifactHash', 'eventReplayHash', 'auditQueryHash',
+  ]);
+  const artifactHashes = Object.values(value.artifacts);
+  for (const hash of artifactHashes) {
+    pattern(hash, SHA256, 'PHASE5_MCP_INTEGRATION_PAYROLL_ARTIFACT_INVALID');
+  }
+  if (new Set(artifactHashes).size !== artifactHashes.length) {
+    fail('PHASE5_MCP_INTEGRATION_PAYROLL_ARTIFACT_REUSED');
+  }
+  return Object.freeze({
+    resource,
+    authorizationServer,
+    imageDigest: value.imageDigest,
+    eventContractHash: value.eventContractHash,
+    catalogHash: value.catalogHash,
+    artifacts: value.artifacts,
+  });
 }
 
 function validateAuthorization(value) {
@@ -203,7 +482,7 @@ function validateSignoffs(signoffs, ended) {
 
 function fixture() {
   const hash = (label) => digest(label);
-  return { formatVersion: 1, suite: 'gaoq.phase5.integration-mcp.v1',
+  return { formatVersion: 2, suite: 'gaoq.phase5.integration-mcp.v2',
     runId: '01J8ZQK7V0A2M4N6P8R0T2W6E1', source: { commitSha: 'a'.repeat(40),
       images: {
         api: hash('api'),
@@ -225,6 +504,47 @@ function fixture() {
       successfulResponses: 10, lostEvents: 0, duplicateBusinessEffects: 0,
       unreconciledEvents: 0, tenantMismatches: 0, upstreamTokenExposures: 0,
       productionSideEffects: 0, evidenceHash: hash(`integration-${name}`) })),
+    professionalPayroll: {
+      resource: 'https://payroll.example.invalid',
+      mcpEndpoint: 'https://payroll.example.invalid/mcp',
+      authorizationServer: 'https://identity.example.invalid',
+      imageDigest: hash('professional-payroll-image'),
+      platformContractVersion: '1.0.0',
+      eventContractHash: hash('professional-payroll-event-contract'),
+      protocolVersion: '2025-11-25',
+      transport: 'streamable-http',
+      oauthProfile: 'oauth-2.1-resource-server',
+      catalogHash: hash('professional-payroll-catalog'),
+      requiredTools: [...PROFESSIONAL_PAYROLL_TOOLS],
+      requiredResourceTemplates: [...PROFESSIONAL_PAYROLL_RESOURCES],
+      requiredPrompts: [...PROFESSIONAL_PAYROLL_PROMPTS],
+      toolCount: 4,
+      resourceTemplateCount: 2,
+      promptCount: 2,
+      initializedClientProfiles: Object.keys(CLIENTS),
+      payslipSelfCalls: 10,
+      eventTypesValidated: 7,
+      eventReplayAttempts: 70,
+      eventReplayAccepted: 70,
+      legacyEventTypesRejected: 7,
+      unknownFieldsRejected: 7,
+      crossResourceTokenAttempts: 30,
+      crossResourceTokenDenied: 30,
+      wrongTenantAttempts: 30,
+      wrongTenantDenied: 30,
+      r3ToolCount: 0,
+      toolsWithoutInputSchema: 0,
+      toolsWithoutOutputSchema: 0,
+      toolsWithoutRiskLevel: 0,
+      directDatabaseAccessCount: 0,
+      upstreamTokenExposureCount: 0,
+      artifacts: {
+        oauthMetadataHash: hash('professional-payroll-oauth'),
+        mcpCatalogArtifactHash: hash('professional-payroll-mcp-catalog'),
+        eventReplayHash: hash('professional-payroll-event-replay'),
+        auditQueryHash: hash('professional-payroll-audit'),
+      },
+    },
     authorization: { crossTenantAttempts: 30, crossTenantDenied: 30, invalidScopeAttempts: 30,
       invalidScopeDenied: 30, expiredConfirmationAttempts: 10, expiredConfirmationDenied: 10,
       r3ToolsListed: 0, auditEvents: 70 },
@@ -242,6 +562,33 @@ function exact(value, keys) { if (typeof value !== 'object' || value === null ||
 function equal(actual, expected, code) { if (actual !== expected) fail(code); }
 function pattern(value, regex, code) { if (typeof value !== 'string' || !regex.test(value)) fail(code); }
 function integer(value, min, max, code) { if (!Number.isSafeInteger(value) || value < min || value > max) fail(code); }
+function exactStringArray(value, expected, code) {
+  if (
+    !Array.isArray(value) ||
+    value.some((item) => typeof item !== 'string') ||
+    canonical([...value].sort()) !== canonical([...expected].sort())
+  ) fail(code);
+}
+function httpsOrigin(value, code) {
+  if (typeof value !== 'string' || value.length > 256) fail(code);
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    fail(code);
+  }
+  if (
+    parsed.protocol !== 'https:' ||
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    parsed.port !== '' ||
+    parsed.pathname !== '/' ||
+    parsed.search !== '' ||
+    parsed.hash !== '' ||
+    parsed.origin !== value
+  ) fail(code);
+  return parsed.origin;
+}
 function time(value) { const parsed = Date.parse(value); if (typeof value !== 'string' || !Number.isFinite(parsed) ||
   new Date(parsed).toISOString() !== value) fail('PHASE5_MCP_INTEGRATION_TIME_INVALID'); return parsed; }
 function canonical(value) { if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
