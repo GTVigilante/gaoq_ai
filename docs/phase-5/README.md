@@ -21,6 +21,9 @@ Phase 5 在已验收的组织、审批、招聘入职、考勤薪酬底座之上
    - [业务附件迁移索引运行手册](./10d-business-attachment-migration-index-runbook.md)
    - [数据迁移来源包运行手册](./11-data-migration-package-runbook.md)
    - [数据迁移三次演练证据门禁](./12-data-migration-rehearsal-gate.md)（工具已交付，三次真实演练待执行）
+     - Migration Rehearsal v2 要求架构、业务、数据和安全四方使用独立
+       Ed25519 密钥签署完整三轮、全部 Scope、故障演练与安全结果，并由
+       Repository Variable 固定 signer keyset
 8. [生产加固与 Go/No-Go 证据](./13-production-hardening.md)（供应链、镜像、容量、DAST 及韧性门禁工具已实现，真实实测待续）
    - [生产镜像构建与验证运行手册](./14-production-images-runbook.md)
    - [性能容量三次实测门禁](./15-performance-capacity-gate.md)

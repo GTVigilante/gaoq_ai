@@ -16,7 +16,7 @@ Go/No-Go 是人工治理决定，不是 CI 成功、AI 建议或某个负责人�
 | 工程质量 | Lint、类型、单元/集成/契约/E2E、构建全部通过 |
 | 供应链 | SAST、SCA、Secret Scan、许可证、SBOM、仓库与依赖扫描无阻断项 |
 | 生产镜像 | API/Worker/ERP Web/Website 固定摘要、nonroot、签名、SLSA provenance、准入策略和回滚冒烟通过 |
-| 数据迁移 | 固定 `gaoq.phase5.migration-rehearsal.verdict`；全部二十六个 Scope、三轮七十八个运行、故障演练、记录、关联、金额、附件和校验和未解释差异为零 |
+| 数据迁移 | 固定 `gaoq.phase5.migration-rehearsal.verdict`；v2 输入已由架构、业务、数据、安全四方独立 Ed25519 签署并绑定受信 keyset；全部二十六个 Scope、三轮七十八个运行、故障演练、记录、关联、金额、附件和校验和未解释差异为零 |
 | 性能容量 | 三次独立实测；1000 并发、API P95 `<500ms`、错误率 `≤1%`；1000 人工资 `<300s` |
 | DAST/ASVS | ASVS 5.0 L2 与高风险 L3、认证/越权探针、ZAP 主动扫描和四方签署通过 |
 | 容灾韧性 | RPO `≤900s`、RTO `≤14400s`；九类适配器（含独立专业算薪）断连 `≥7200s`、追赶 `≤3600s`、零丢失与重复业务效果 |

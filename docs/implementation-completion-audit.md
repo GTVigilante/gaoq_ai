@@ -42,7 +42,7 @@
 | #12 云平台、CI/CD、监控与灾备 | `deploy/helm/gaoq-erp/`、`deploy/helm/gaoq-platform-guardrails/`、`scripts/release/validate-phase-6-platform-intake.mjs`、`docs/phase-5/17-resilience-rehearsal-gate.md`、`scripts/resilience/validate-phase-5-resilience-evidence.mjs` | 真实 VPC/WAF/KMS/短期 CI 身份、平台准入六方角色密钥与签署、观测平台、备份恢复及 RPO/RTO |
 | #19 氚云审批模板迁移与 UAT | `apps/erp-api/src/modules/data-migration/`、`docs/phase-5/09-data-migration-control-plane.md`、`docs/phase-5/11-data-migration-package-runbook.md` | 真实模板、历史、在途实例、附件、三轮迁移与业务签署 |
 | #31 两个薪资影子周期 | `apps/erp-api/src/modules/payroll/application/payroll-shadow.service.ts` 及对应测试、`docs/phase-5/20-readiness-verdicts.md` | 两个真实完整周期、100% 覆盖、零未解释差异、薪酬与财务签署 |
-| #37 三次全量迁移演练 | `docs/phase-5/12-data-migration-rehearsal-gate.md`、`scripts/migration/validate-phase-5-migration-rehearsal-evidence.mjs`、`.github/workflows/phase-5-migration-rehearsal.yml` | 三份独立生产等价证据、8 小时窗口和四方签署 |
+| #37 三次全量迁移演练 | `docs/phase-5/12-data-migration-rehearsal-gate.md`、`scripts/migration/validate-phase-5-migration-rehearsal-evidence.mjs`、`.github/workflows/phase-5-migration-rehearsal.yml`；v2 聚合证据要求四方独立 Ed25519 签名并绑定受信 keyset | 三份独立生产等价证据、8 小时窗口、真实职责密钥和四方签署 |
 | #38 回滚与 Go/No-Go | `docs/phase-5/18-go-no-go-evidence-gate.md`、`scripts/release/validate-phase-5-go-no-go-evidence.mjs`、`scripts/resilience/validate-phase-5-resilience-evidence.mjs` | 生产级回滚、零 Sev1/Sev2/高危漏洞与跨职能签署 |
 | #39 统一切换 | `docs/phase-6/00-unified-cutover-contract.md`、`docs/phase-6/02-production-execution-runbook.md`、`scripts/release/validate-phase-6-cutover-evidence.mjs` | 批准窗口内的真实冻结、增量迁移、连接切换、双人复核、旧系统只读、五方真实角色密钥与签署 |
 | #40 四周 Hypercare | `docs/phase-6/01-hypercare-archive-contract.md`、`scripts/release/validate-phase-6-hypercare-evidence.mjs`、`.github/workflows/phase-6-hypercare.yml` | 连续四周 SLO、每日真实对账、差异闭环、三方真实角色密钥与归档批准 |
@@ -590,6 +590,17 @@ payload 覆盖环境、commit、五类镜像、RPO/RTO、恢复/回滚、八域�
 角色、keyId 与签署时间。伪签名、角色换钥、主体或公钥复用、签后篡改、超时
 签署和 keyset 漂移均失败关闭。仓库自测只生成临时密钥；真实人员身份、
 IAM/KMS 角色绑定、现场签署和 WORM 原始证据仍待外部验收。
+
+三次全量迁移演练聚合证据已升级为
+`gaoq.phase5.migration-rehearsal.v2`，关闭架构、业务、数据和安全四方签署只
+校验角色、证据 ID 与时间、无法验证职责主体及完整三轮结果的缺口。四方分别
+使用独立 Ed25519 公钥；keyId 等于 SPKI DER 摘要，完整角色/keyId 集合与
+受保护工作流的 Repository Variable 摘要绑定。共同批准 payload 覆盖环境、
+commit、四类镜像、部署清单、来源快照和来源包、三轮运行、二十六个 Scope、
+三类故障演练、安全结论及四方批准元数据；每份签名再绑定共同摘要、角色、keyId
+与签署时间。伪签名、角色换钥、主体或公钥复用、签后篡改、超时签署和 keyset
+漂移均失败关闭。仓库自测只生成临时密钥；真实人员身份、IAM/KMS 角色绑定、
+三次生产等价演练、现场签署和 WORM 原始证据仍待外部验收。
 
 最终 Go/No-Go 输入证据已升级为 `gaoq.phase5.go-no-go.v2`，关闭十方批准只
 校验角色、证据 ID 和意见摘要格式、却不验证批准角色密钥的缺口。架构、数据、财务、
