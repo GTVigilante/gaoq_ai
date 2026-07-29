@@ -9,11 +9,17 @@
   容灾、业务 UAT、Go/No-Go、统一切换和四周 Hypercare 仍以现场证据为准。
 - ERP 是组织与员工唯一主数据源；多租户从可信身份上下文强制；REST、事件、
   MCP 和 Worker 必须复用应用服务。
+- 2026-07-29 已交付标准 MCP 本地 stdio 入口，与生产 Streamable HTTP 共用
+  `McpRuntimeService` 和 `AccessTokenVerifier`。启动要求秘密管理器注入短时
+  Token 与 `erp:mcp:server:connect`，先预检、后逐消息复验，撤销/过期立即关闭；
+  stdout 仅传输 JSON-RPC。官方 TypeScript Client 已通过真实字节流发现同一套
+  47 Tool、Resource 与 22 Prompt；Claude、Kimi、Cursor 和 Inspector 实体
+  客户端仍保持 No-Go，待真实联调。
 - 2026-07-29 已把覆盖率门禁本身纳入失败关闭治理：
-  `scripts/validate-critical-coverage-policy.mjs` 从 `precheck/check` 解析 132 个
-  ERP API 专项脚本，展开其 `--coverage.include` 后要求 323 个生产文件逐一具有
+  `scripts/validate-critical-coverage-policy.mjs` 从 `precheck/check` 解析 133 个
+  ERP API 专项脚本，展开其 `--coverage.include` 后要求 325 个生产文件逐一具有
   四维 90% 阈值、路径真实存在且专项清单完全闭合；同时把租户、Identity、
-  Approval、Payroll、Treasury 与 MCP 六类章程关键域解析为 117 个权威文件，
+  Approval、Payroll、Treasury 与 MCP 六类章程关键域解析为 119 个权威文件，
   新文件不得逃出专项门禁，并锁定全生产源码 `src/**/*.ts` 四维 80% 分母。
   本轮补齐了 34 个此前仅在全量报告中的关键文件以及租户上下文、招聘渠道人工
   运维三个组合报告文件，负向自测覆盖分母、阈值、专项遗漏、关键域分类遗漏和
@@ -339,9 +345,9 @@
   `docs/implementation-completion-audit.md`。
 - 2026-07-29 ERP API 覆盖率已修正为显式纳入 `src/**/*.ts` 全部生产源码，
   包括测试未加载的启动、Worker、Controller、迁移和适配器文件，并把全量覆盖
-  命令接入 `pnpm check`。当前真实基线为语句 93.37%（31,550/33,788）、
-  分支 91.29%（21,816/23,896）、函数 93.62%（5,578/5,958）、行
-  94.40%（28,805/30,512），410 个测试文件、6,754 项测试全部通过并达到
+  命令接入 `pnpm check`。当前真实基线为语句 93.30%（31,631/33,900）、
+  分支 91.29%（21,843/23,925）、函数 93.49%（5,595/5,984）、行
+  94.32%（28,881/30,617），414 个测试文件、6,774 项测试全部通过并达到
   全仓四维 80% 强制门槛。
 - 2026-07-28 已加固 Talent Lifecycle 的 Recruitment、Onboarding、Org 与
   Care 四域来源完整性：每个窄查询口都二次校验可信租户及候选人、申请、职位、

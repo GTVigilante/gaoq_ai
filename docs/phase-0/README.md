@@ -20,9 +20,9 @@
 不降低本目录任何强制规范或阶段退出条件。
 
 当前覆盖率策略由 `scripts/validate-critical-coverage-policy.mjs` 自动复核：
-全生产源码四维 80% 分母及 132 个专项脚本覆盖的 323 个生产文件逐文件四维
+全生产源码四维 80% 分母及 133 个专项脚本覆盖的 325 个生产文件逐文件四维
 90% 阈值必须同时接入 `precheck/check`；租户、Identity、Approval、Payroll、
-Treasury 与 MCP 六类章程关键域的 117 个权威文件必须全部位于该专项闭包内。
+Treasury 与 MCP 六类章程关键域的 119 个权威文件必须全部位于该专项闭包内。
 这只证明仓库质量实现，不能替代 Hosted Actions 真实执行、Phase 0 三方签署或
 目标环境验收。
 

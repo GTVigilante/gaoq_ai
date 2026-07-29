@@ -28,6 +28,7 @@ Phase 5 在已验收的组织、审批、招聘入职、考勤薪酬底座之上
    - [容灾恢复与外部系统断连追赶门禁](./17-resilience-rehearsal-gate.md)
    - [跨职能 Go/No-Go 证据门禁](./18-go-no-go-evidence-gate.md)
    - [MCP 完整能力目录与联调门禁](./19-mcp-capability-catalog.md)
+   - [MCP stdio 客户端接入手册](./20-mcp-stdio-client-onboarding.md)
    - [七类发布就绪 verdict 门禁](./20-readiness-verdicts.md)
 9. [双语营销官网与 CMS](../marketing-cms.md)（Website、事务 Outbox、通知幂等、
    独立镜像与 Kubernetes 门禁代码已交付；正式域名、WAF、验证码、媒体、通知及

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { Response } from 'express';
 import { z } from 'zod';
 
@@ -13,6 +14,7 @@ import {
   managementDashboardSchema,
 } from '../analytics/analytics.contract.js';
 import { DATA_MIGRATION_SCOPES } from '../data-migration/data-migration-contract.js';
+import { buildMcpAuthInfo } from './mcp-auth-context.js';
 import { McpToolService } from './mcp-tool.service.js';
 
 const permissionsOutputSchema = z.object({
@@ -508,26 +510,15 @@ export class McpRuntimeService {
     if (token === undefined || request.bearerToken === undefined || request.traceId === undefined) {
       throw new Error('MCP 认证上下文未建立');
     }
-    const auth: AuthInfo = {
-      token: request.bearerToken,
-      clientId: token.clientId,
-      scopes: [...token.scopes],
-      expiresAt: token.expiresAt,
-      resource: new URL(token.resource[0] ?? ''),
-      extra: {
-        tenantId: token.tenantId,
-        actorId: token.actorId,
-        actorType: token.actorType,
-        roleCodes: [...token.roleCodes],
-        departmentIds: [...token.departmentIds],
-        traceId: request.traceId,
-      },
-    };
+    const auth: AuthInfo = buildMcpAuthInfo(
+      request.bearerToken,
+      token,
+      request.traceId,
+    );
     // SDK 1.29 明确要求无状态模式每个 HTTP 请求创建独立 transport；复用会被拒绝。
     const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
     transport.onerror = (error) => this.logger.error(`MCP transport：${error.message}`);
-    const mcpServer = this.createMcpServer();
-    await mcpServer.connect(transport);
+    const mcpServer = await this.connect(transport);
     const headers = new Headers();
     for (const [name, value] of Object.entries(request.headers)) {
       if (typeof value === 'string') headers.set(name, value);
@@ -564,6 +555,13 @@ export class McpRuntimeService {
     } finally {
       await mcpServer.close();
     }
+  }
+
+  /** 创建独立 MCP Server 并连接标准 transport；身份必须由 transport 注入。 */
+  async connect(transport: Transport): Promise<McpServer> {
+    const server = this.createMcpServer();
+    await server.connect(transport);
+    return server;
   }
 
   private createMcpServer(): McpServer {

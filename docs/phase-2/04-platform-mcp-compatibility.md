@@ -13,15 +13,23 @@
 
 ## MCP 客户端
 
-协议基线为 MCP `2025-11-25`，服务端 SDK 为 `@modelcontextprotocol/sdk 1.29.x`。
+协议基线为仓库锁定的 MCP `2025-11-25`，服务端 SDK 为
+`@modelcontextprotocol/sdk 1.29.x`。升级协议必须先经过 ADR、双版本契约测试与
+迁移公告。
 
-| 客户端 | 初始化/发现 | R0 | R1 确认 | R2 | 状态 |
+| 客户端 | 传输与初始化/发现 | R0 | R1 确认 | R2 | 状态 |
 | --- | --- | --- | --- | --- | --- |
-| 官方 TypeScript Client | 自动化测试通过 | 通过 | 协议与服务测试通过 | WebAuthn UV 服务测试通过；实体认证器待 UAT | 条件通过 |
-| Claude 当前稳定版 | 待真实客户端验证 | 待验证 | 待验证确认链接和结构化输出 | 待验证外部浏览器确认回传 | No-Go |
-| Kimi 当前稳定版 | 待真实客户端验证 | 待验证 | 待验证确认链接和结构化输出 | 待验证外部浏览器确认回传 | No-Go |
-| Cursor 当前稳定版 | 待真实客户端验证 | 待验证 | 待验证确认链接和结构化输出 | 待验证外部浏览器确认回传 | No-Go |
+| 官方 TypeScript Client | Streamable HTTP 既有测试通过；真实 stdio 字节流测试通过，发现 47 Tool、4 个静态 Resource 和 22 Prompt | 通过 | 协议与服务测试通过 | WebAuthn UV 服务测试通过；实体认证器待 UAT | 条件通过 |
+| MCP Inspector | stdio 启动入口已交付；实体 Inspector 会话待人工验收 | 待人工验证 | 待验证确认链接和结构化输出 | 待验证外部浏览器确认回传 | No-Go |
+| Claude 当前稳定版 | 标准 stdio/远程入口已具备，待真实客户端验证 | 待验证 | 待验证确认链接和结构化输出 | 待验证外部浏览器确认回传 | No-Go |
+| Kimi 当前稳定版 | 标准 stdio/远程入口已具备，待真实客户端验证 | 待验证 | 待验证确认链接和结构化输出 | 待验证外部浏览器确认回传 | No-Go |
+| Cursor 当前稳定版 | 标准 stdio/远程入口已具备，待真实客户端验证 | 待验证 | 待验证确认链接和结构化输出 | 待验证外部浏览器确认回传 | No-Go |
 
 客户端验收必须覆盖 OAuth Authorization Code + PKCE、Token 刷新、Scope 拒绝、结构化输出、中文错误、确认链接、一次性凭据、重放和过期。服务端不接受客户端 UI 自报“已确认”作为授权事实。
+
+stdio 自动化测试只证明标准协议协商、能力发现和逐消息身份复验，不证明 Claude、
+Kimi、Cursor 或 Inspector 的当前发行版已经通过真实客户端验收，也不替代远程
+OAuth 流程。接入边界见
+[stdio 客户端接入手册](../phase-5/20-mcp-stdio-client-onboarding.md)。
 
 R2 的授权事实仅来自 ERP 服务端验证成功的 WebAuthn 仪式。确认页必须在 `WEB_ORIGIN` 精确域名打开；生产环境必须使用 HTTPS。普通确认端点继续对 R2 失败关闭，作为防降级门禁。

@@ -1,11 +1,18 @@
 # Phase 5 MCP 完整能力目录与联调门禁
 
 - 文档编号：phase-5/19
-- 状态：运行时能力目录门禁已交付；三类客户端与外部沙箱真实联调待执行
+- 状态：远程 Streamable HTTP 与本地 stdio 运行入口、能力目录门禁已交付；
+  三类客户端与外部沙箱真实联调待执行
 
 ## 运行基线
 
-生产 MCP Server 已实现 `2025-11-25`、Streamable HTTP、OAuth 2.1 Resource Server、结构化输出、Resources、Resource Templates、Prompts 和 Tools。业务 Tool 只依赖应用服务；禁止访问 Model、Repository、MongoDB、供应商 SDK 或透传上游 Token。租户只能由验证后的 OAuth 身份解析，任何 Tool 参数中的租户标识都不可信。
+生产远程 MCP Server 已实现 `2025-11-25`、Streamable HTTP、OAuth 2.1 Resource
+Server、结构化输出、Resources、Resource Templates、Prompts 和 Tools。同一
+`McpRuntimeService` 还提供本地 stdio 入口，供同机 AI 客户端、开发和 Inspector
+使用；两个 transport 共用相同能力注册、应用服务与可信身份转换，不维护私有
+Tool 分支。业务 Tool 只依赖应用服务；禁止访问 Model、Repository、MongoDB、
+供应商 SDK 或透传上游 Token。租户只能由验证后的 OAuth 身份解析，任何 Tool
+参数或 stdio 消息中的租户标识都不可信。
 
 四个静态 Resource 分别提供服务说明、审批待办、已发布审批模板目录和本人委托目录。`erp://approval/templates/published` 只返回表单字段白名单；`erp://approval/delegations/mine` 只返回限期授权最小投影。两者均复用审批应用服务，不返回租户、权限快照、流程节点、审批人解析器、发布审批人或任何表单值；敏感审批正文不得进入 MCP 明文确认命令，持续授权关系不得注册 AI 写 Tool。
 
@@ -28,11 +35,25 @@ pnpm --silent mcp:catalog:print > /secure/mcp/gaoq-mcp-catalog.json
 
 上线前使用交互式用户 Agent、机器服务 Agent、只读审计 Agent 分别验证初始化协商、OAuth 发现、PKCE 或 Client Credentials、资源指示、Scope、分页、结构化内容、Tool Error、超时、取消、幂等重放、确认过期和审计。每类客户端必须读取同一 `catalogHash`；不按厂商名称做私有兼容分支，任何符合协议与授权标准的 AI 均可接入。
 
+本地 stdio 启动入口为 `apps/erp-api/dist/mcp-stdio-main.js`，要求秘密管理器注入
+短时 JWT 形态的 `MCP_STDIO_ACCESS_TOKEN`。启动预检和每条消息均复用
+`AccessTokenVerifier`，要求 `erp:mcp:server:connect`，即时撤销或过期即关闭
+连接。stdout 只传输 JSON-RPC，错误只向 stderr 输出稳定码。官方 TypeScript
+Client 已经通过真实 stdio 字节流完成初始化，并发现同一套 47 Tool、Resource
+与 22 Prompt；通用配置、构建和 Inspector 命令见
+[stdio 客户端接入手册](./20-mcp-stdio-client-onboarding.md)。该自动化证据不把
+任何厂商客户端标记为已验收。
+
 仓库门禁 `pnpm quality:mcp-http-entry-coverage` 覆盖 `/mcp` 与 `/mcp/` 的认证前
 Origin 拒绝、控制器二次 Origin 校验、连接 Scope、浏览器确认 Cookie 会话、
 R1/R2 状态、WebAuthn 仪式与显式可信用户审计。公共确认端点不得依赖 Bearer 请求
 租户上下文；业务拒绝或确认状态推进后的审计异常均不得改变原始决定。三个入口
 目标文件语句、分支、函数和行均不得低于 90%，当前 26 项测试达到四维 100%。
+
+仓库门禁 `pnpm quality:mcp-stdio-coverage` 覆盖环境变量白名单、连接 Scope、
+启动预检、逐消息重新验签、消息顺序、撤销/过期失败关闭、稳定错误、重复关闭以及
+官方 Client 的真实字节流协商与能力发现。认证 transport 和启动边界两个关键
+生产文件逐文件四维均不得低于 90%。
 
 ## 跨系统联调
 

@@ -27,7 +27,23 @@ MCP 是 GaoQ-OS 的标准 AI 接入面，不是独立业务实现。Web、REST�
 - 客户端认证通过后的 resource 或 Scope 越权必须在签发前拒绝，并记录不含资源
   正文、Scope 明细、密钥、断言或 Token 的稳定 R1 失败审计。
 
-### 2.2 Scope与数据范围
+### 2.2 本地 stdio 身份引导
+
+- stdio 只作为同机 AI 客户端、开发和 Inspector 的本地传输入口，不替代远程
+  Streamable HTTP、OAuth 发现、PKCE 或 Client Credentials。
+- 启动进程必须从本机秘密管理器注入短时 `MCP_STDIO_ACCESS_TOKEN`；禁止把
+  Token 写入仓库、客户端共享配置、命令行参数、日志或标准输出。
+- Token 必须通过与 HTTP `/mcp` 完全相同的 `AccessTokenVerifier`，并具有
+  `erp:mcp:server:connect` Scope。租户、主体、角色、数据范围和会话只能来自
+  验证后的 Token，stdio 消息不得自报这些身份事实。
+- 启动前执行一次预检；连接后的每条 JSON-RPC 消息都重新验签并检查即时撤销、
+  会话状态、有效期和连接 Scope。任何失败立即关闭 transport，且只输出稳定错误码。
+- stdout 只允许 MCP JSON-RPC 帧；运行日志和稳定故障码只能写 stderr。不得输出
+  Token、环境变量、请求正文、绝对路径、堆栈或验证器错误详情。
+- 客户端必须使用 stdio 服务程序的绝对路径。通用接入示例和本地验收命令见
+  [Phase 5 stdio 客户端接入手册](../phase-5/20-mcp-stdio-client-onboarding.md)。
+
+### 2.3 Scope与数据范围
 
 Scope格式固定为 `erp:{domain}:{resource}:{action}`，例如：
 
@@ -126,6 +142,8 @@ Phase 3 招聘的候选人身份、面试地点/评价和 Offer 条款属于 L3/
 ## 8. 兼容与验收
 
 - 使用官方TypeScript SDK和MCP Inspector执行协议测试。
+- stdio 必须以真实字节流完成官方 Client 的初始化、Tool/Resource/Prompt 发现
+  契约测试；生产远程入口继续单独验证 Streamable HTTP 与 OAuth。
 - 建立Claude、Kimi、Cursor当前版本兼容矩阵；仅承诺兼容支持当前稳定MCP规范的客户端。
 - 必测协议协商、OAuth发现、PKCE、Client Credentials、分页、结构化输出、超时、幂等、确认过期、跨租户拒绝、字段脱敏和审计脱敏。
 - 升级协议版本必须先做ADR、双版本契约测试和迁移公告，不得静默破坏客户端。
