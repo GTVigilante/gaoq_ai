@@ -281,6 +281,19 @@ export interface ApprovalTreasuryMigrationReference {
   readonly evidenceChecksum: string;
 }
 
+export interface ApprovalTreasuryBankAccountDecision {
+  readonly id: string;
+  readonly completedAt: string;
+  readonly approvedBy: string;
+  readonly ownerType: 'organization' | 'employee';
+  readonly ownerId: string;
+  readonly accountName: string;
+  readonly account: string;
+  readonly clearingCode: string;
+  readonly currency: 'CNY';
+  readonly formDataHash: string;
+}
+
 /** 审批应用服务：唯一事务编排入口，REST、Worker 与 MCP 必须复用本服务。 */
 @Injectable()
 export class ApprovalApplicationService {
@@ -1179,6 +1192,69 @@ export class ApprovalApplicationService {
     });
   }
 
+  /**
+   * Treasury 账户登记只读取专用审批的可信通过终态。
+   *
+   * L4 表单只在同进程应用服务调用期间返回，不进入 REST、MCP、事件、审计或日志。
+   */
+  async getTreasuryBankAccountDecision(
+    id: string,
+    session: ClientSession,
+  ): Promise<ApprovalTreasuryBankAccountDecision> {
+    const actor = this.context.getActorRequired();
+    if (!actor.scopes.includes('erp:treasury:account:attest')) throw new ForbiddenException({
+      code: 'APPROVAL_TREASURY_INTEGRATION_STATUS_DENIED',
+      message: '无权读取资金账户审批终态',
+    });
+    const instance = await this.requireInstance(id, session);
+    if (instance.templateSnapshot.templateCode !== 'treasury_bank_account_attestation') {
+      throw new ForbiddenException({
+        code: 'APPROVAL_TREASURY_INTEGRATION_TEMPLATE_DENIED',
+        message: '资金账户审批模板与登记动作不匹配',
+      });
+    }
+    if (instance.status !== 'approved' || instance.completedAt === null) {
+      throw new ConflictException({
+        code: 'APPROVAL_TREASURY_DECISION_INCOMPLETE',
+        message: '资金账户审批尚未形成可信通过终态',
+      });
+    }
+    const finalDecision = instance.resolvedNodes
+      .flatMap((node) => node.decisions)
+      .filter((decision) => decision.outcome === 'approved')
+      .sort((left, right) => left.decidedAt < right.decidedAt ? -1 : 1)
+      .at(-1);
+    if (finalDecision === undefined || finalDecision.decidedAt !== instance.completedAt) {
+      throw new ConflictException({
+        code: 'APPROVAL_TREASURY_DECISION_INVALID',
+        message: '资金账户审批终态证据不完整',
+      });
+    }
+    const form = instance.formData;
+    const ownerType = requiredTreasuryFormString(
+      form, 'owner_type', /^(organization|employee)$/u,
+    );
+    const currency = requiredTreasuryFormString(form, 'currency', /^CNY$/u);
+    return Object.freeze({
+      id: instance.id,
+      completedAt: instance.completedAt,
+      approvedBy: finalDecision.decidedBy,
+      ownerType: ownerType as 'organization' | 'employee',
+      ownerId: requiredTreasuryFormString(
+        form, 'owner_id', /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u,
+      ),
+      accountName: requiredTreasuryFormString(
+        form, 'account_name', /^(?!.*[\p{Cc}\p{Cf}])[\s\S]{1,140}$/u,
+      ),
+      account: requiredTreasuryFormString(form, 'account', /^[0-9]{8,32}$/u),
+      clearingCode: requiredTreasuryFormString(
+        form, 'clearing_code', /^[0-9A-Z]{8,12}$/u,
+      ),
+      currency: currency as 'CNY',
+      formDataHash: instance.formDataHash,
+    });
+  }
+
   private async requireApprovedAttendanceInstance(
     id: string,
     templateCode: 'attendance_correction' | 'attendance_month_reopen',
@@ -1414,6 +1490,19 @@ function requiredPayrollFormString(
   const value = form[field];
   if (typeof value !== 'string' || !pattern.test(value)) throw new ConflictException({
     code: 'APPROVAL_PAYROLL_FORM_INVALID', message: `工资审批字段 ${field} 非法或缺失`,
+  });
+  return value;
+}
+
+function requiredTreasuryFormString(
+  form: ApprovalFormData,
+  field: string,
+  pattern: RegExp,
+): string {
+  const value = form[field];
+  if (typeof value !== 'string' || !pattern.test(value)) throw new ConflictException({
+    code: 'APPROVAL_TREASURY_FORM_INVALID',
+    message: `资金账户审批字段 ${field} 非法或缺失`,
   });
   return value;
 }

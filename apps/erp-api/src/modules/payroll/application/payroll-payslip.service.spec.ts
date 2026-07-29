@@ -93,11 +93,15 @@ function assemble(options: AssembleOptions = {}) {
       .mockReturnValueOnce(decryptedInput)
       .mockReturnValueOnce(decryptedResult),
   };
-  const config = {
-    get: vi.fn((key: string) => {
-      if (key === 'PAYROLL_SYSTEM_MODE') return options.mode ?? 'legacy';
-      if (key === 'PAYROLL_WEB_ORIGIN') return 'https://payroll.example.test';
-      return undefined;
+  const boundary = {
+    assertLegacy: vi.fn(() => {
+      if ((options.mode ?? 'legacy') === 'legacy') return;
+      throw Object.assign(new Error('工资能力已迁移至专业算薪系统'), {
+        response: {
+          code: 'PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM',
+          payrollWebOrigin: 'https://payroll.example.test',
+        },
+      });
     }),
   };
   const service = new PayrollPayslipService(
@@ -107,11 +111,11 @@ function assemble(options: AssembleOptions = {}) {
     periods as never,
     inputs as never,
     results as never,
-    config as never,
+    boundary as never,
   );
   return {
     context, profiles, periodRecord, storedInput, storedResult,
-    periods, inputs, results, crypto, config, service,
+    periods, inputs, results, crypto, boundary, service,
   };
 }
 
@@ -183,7 +187,7 @@ describe('PayrollPayslipService', () => {
     await expect(read(store, { ...actor, scopes: [] })).rejects.toMatchObject({
       response: { code: 'AUTH_SCOPE_DENIED' },
     });
-    expect(store.config.get).not.toHaveBeenCalled();
+    expect(store.boundary.assertLegacy).not.toHaveBeenCalled();
   });
 
   it('服务主体不能冒充人员读取本人薪资单', async () => {

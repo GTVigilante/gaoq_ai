@@ -1,17 +1,14 @@
 import {
   ConflictException,
   ForbiddenException,
-  GoneException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { ULID_PATTERN } from '@gaoq/shared-utils';
-import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import type { Model } from 'mongoose';
 import { z } from 'zod';
 
-import type { AppEnvironment } from '../../../config/environment.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import { AccessProfileRepository } from '../../identity/access-profile.repository.js';
 import {
@@ -30,6 +27,7 @@ import {
   PayrollPeriodRecord,
   type PayrollPeriodDocument,
 } from '../persistence/payroll.schemas.js';
+import { LegacyPayrollBoundaryService } from '../legacy-payroll-boundary.service.js';
 
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -135,7 +133,7 @@ export class PayrollPayslipService {
     private readonly inputs: Model<PayrollInputSnapshotDocument>,
     @InjectModel(PayrollCalculationLineRecord.name)
     private readonly results: Model<PayrollCalculationLineDocument>,
-    private readonly config: ConfigService<AppEnvironment, true>,
+    private readonly boundary: LegacyPayrollBoundaryService,
   ) {}
 
   async getMyPayslip(period: string): Promise<PayrollPayslipView> {
@@ -226,12 +224,7 @@ export class PayrollPayslipService {
   }
 
   private assertLegacyBoundary(): void {
-    if (this.config.get('PAYROLL_SYSTEM_MODE', { infer: true }) === 'legacy') return;
-    throw new GoneException({
-      code: 'PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM',
-      message: '工资能力已迁移至专业算薪系统',
-      payrollWebOrigin: this.config.get('PAYROLL_WEB_ORIGIN', { infer: true }),
-    });
+    this.boundary.assertLegacy();
   }
 
   private assertPeriodRecord(

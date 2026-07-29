@@ -71,6 +71,37 @@ function runningInstance(templateCode = 'EXPENSE', riskLevel: 'R1' | 'R2' = 'R1'
   }, NOW).instance;
 }
 
+function treasuryApprovedInstance(
+  overrides: Readonly<Record<string, unknown>> = {},
+): ApprovalInstance {
+  const completedAt = '2026-07-20T00:00:00.000Z';
+  return {
+    id: '01J8ZQK7V0A2M4N6P8R0T2W4T1',
+    status: 'approved',
+    completedAt,
+    formDataHash: 't'.repeat(43),
+    templateSnapshot: { templateCode: 'treasury_bank_account_attestation' },
+    formData: {
+      owner_type: 'employee',
+      owner_id: 'employee-001',
+      account_name: '张三',
+      account: '6222000000000001',
+      clearing_code: 'CNAPS001',
+      currency: 'CNY',
+    },
+    resolvedNodes: [{
+      decisions: [{
+        decidedBy: 'finance-001',
+        principalApproverId: 'finance-001',
+        outcome: 'approved',
+        decidedAt: completedAt,
+        delegated: false,
+      }],
+    }],
+    ...overrides,
+  } as unknown as ApprovalInstance;
+}
+
 function trustedContext(scopes: readonly string[] = [], actorId = 'actor-001'): TenantContextService {
   const trusted = {
     tenant: { tenantId: 'tenant-001', source: 'access_token' as const },
@@ -798,6 +829,115 @@ describe('ApprovalApplicationService', () => {
       periodId: '01J8ZQK7V0A2M4N6P8R0T2W4P1', runId: '01J8ZQK7V0A2M4N6P8R0T2W4P2',
       inputSnapshotHash: 'a'.repeat(43), resultHash: 'b'.repeat(43),
       formDataHash: 'c'.repeat(43),
+    });
+  });
+
+  it('资金账户审批只输出专用表单绑定和最终通过人，并复用调用方事务', async () => {
+    const deps = dependencies();
+    const approved = treasuryApprovedInstance();
+    deps.instances.findById.mockResolvedValue(approved);
+    const result = await service(
+      deps,
+      trustedContext(['erp:treasury:account:attest']),
+    ).getTreasuryBankAccountDecision(approved.id, SESSION);
+    expect(result).toEqual({
+      id: approved.id,
+      completedAt: approved.completedAt,
+      approvedBy: 'finance-001',
+      ownerType: 'employee',
+      ownerId: 'employee-001',
+      accountName: '张三',
+      account: '6222000000000001',
+      clearingCode: 'CNAPS001',
+      currency: 'CNY',
+      formDataHash: 't'.repeat(43),
+    });
+    expect(deps.instances.findById).toHaveBeenCalledWith(
+      approved.id,
+      SESSION,
+    );
+    expect(result).not.toHaveProperty('resolvedNodes');
+  });
+
+  it('资金账户审批读取对 Scope、模板、通过终态和最终决定失败关闭', async () => {
+    await expect(service(dependencies()).getTreasuryBankAccountDecision(
+      'instance-001',
+      SESSION,
+    )).rejects.toMatchObject({
+      response: { code: 'APPROVAL_TREASURY_INTEGRATION_STATUS_DENIED' },
+    });
+
+    const templateDeps = dependencies();
+    templateDeps.instances.findById.mockResolvedValue(treasuryApprovedInstance({
+      templateSnapshot: { templateCode: 'EXPENSE' },
+    }));
+    await expect(service(
+      templateDeps,
+      trustedContext(['erp:treasury:account:attest']),
+    ).getTreasuryBankAccountDecision(
+      'instance-001',
+      SESSION,
+    )).rejects.toMatchObject({
+      response: { code: 'APPROVAL_TREASURY_INTEGRATION_TEMPLATE_DENIED' },
+    });
+
+    const stateDeps = dependencies();
+    stateDeps.instances.findById.mockResolvedValue(treasuryApprovedInstance({
+      status: 'running',
+      completedAt: null,
+    }));
+    await expect(service(
+      stateDeps,
+      trustedContext(['erp:treasury:account:attest']),
+    ).getTreasuryBankAccountDecision(
+      'instance-001',
+      SESSION,
+    )).rejects.toMatchObject({
+      response: { code: 'APPROVAL_TREASURY_DECISION_INCOMPLETE' },
+    });
+
+    const decisionDeps = dependencies();
+    decisionDeps.instances.findById.mockResolvedValue(treasuryApprovedInstance({
+      resolvedNodes: [{ decisions: [{
+        decidedBy: 'finance-001',
+        principalApproverId: 'finance-001',
+        outcome: 'approved',
+        decidedAt: '2026-07-19T00:00:00.000Z',
+        delegated: false,
+      }] }],
+    }));
+    await expect(service(
+      decisionDeps,
+      trustedContext(['erp:treasury:account:attest']),
+    ).getTreasuryBankAccountDecision(
+      'instance-001',
+      SESSION,
+    )).rejects.toMatchObject({
+      response: { code: 'APPROVAL_TREASURY_DECISION_INVALID' },
+    });
+  });
+
+  it.each([
+    ['owner_type', 'supplier'],
+    ['owner_id', '/invalid'],
+    ['account_name', '张三\u0000'],
+    ['account', '1234'],
+    ['clearing_code', 'cnaps001'],
+    ['currency', 'USD'],
+  ] as const)('资金账户审批拒绝非法或缺失的 %s 字段', async (field, value) => {
+    const deps = dependencies();
+    const approved = treasuryApprovedInstance();
+    deps.instances.findById.mockResolvedValue(treasuryApprovedInstance({
+      formData: { ...approved.formData, [field]: value },
+    }));
+    await expect(service(
+      deps,
+      trustedContext(['erp:treasury:account:attest']),
+    ).getTreasuryBankAccountDecision(
+      approved.id,
+      SESSION,
+    )).rejects.toMatchObject({
+      response: { code: 'APPROVAL_TREASURY_FORM_INVALID' },
     });
   });
 

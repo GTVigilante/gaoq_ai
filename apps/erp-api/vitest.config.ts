@@ -202,6 +202,18 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/payroll/legacy-payroll-boundary.service.ts': {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        'src/modules/payroll/legacy-payroll-boundary.guard.ts': {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
         'src/modules/payroll/application/payroll-approval.service.ts': {
           branches: 90,
           functions: 90,
@@ -263,6 +275,12 @@ export default defineConfig({
           statements: 90,
         },
         'src/modules/treasury/application/treasury-disbursement.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/treasury/application/treasury-bank-account.service.ts': {
           branches: 90,
           functions: 90,
           lines: 90,
