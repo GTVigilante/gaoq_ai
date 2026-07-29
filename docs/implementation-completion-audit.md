@@ -100,6 +100,24 @@ GitHub Hosted OIDC 和 Phase 0 三方签署要求。该模型不替代真实 DAS
 生产写客户端生成或外部验收证据。GitHub Hosted Actions 尚未启动 Runner，
 远端 CI 仍为 No-Go。
 
+### 2.7 AsyncAPI 与 CloudEvents 机器契约
+
+2026-07-30 已新增 `scripts/contracts/generate-asyncapi.mjs` 和
+`contracts/asyncapi/erp-events.asyncapi.json`。生成器从固定生产 Outbox 事件源
+及 `packages/platform-contracts` 专业算薪双向契约收集 184 个现行事件：
+ERP/平台出站 180 个、专业算薪入站 4 个。每个 Message/Channel/Operation 均
+声明 CloudEvents 1.0 固定 source/type、收发方向、权威系统、数据分级、幂等键、
+可信租户来源和实际运行时 Schema 文件；旧 `com.gaoq.*` 兼容 type 不进入现行
+目录。
+
+`pnpm contracts:asyncapi:self-test` 和
+`pnpm contracts:asyncapi:validate` 分别执行正负校验及逐字节漂移检查，并与
+OpenAPI 一起通过 `pretypecheck` 接入 `pnpm check`。统一信封完整展开，复杂逐
+type `data` 继续由列明的 Zod、TypeScript 和 JSON Schema 约束，禁止把目录当成
+绕过运行时校验的替代品。物理 Broker、Topic/ACL、mTLS、保留期、死信、断连
+追赶与真实外部回放仍待目标环境验收；Hosted Actions 未启动 Runner，远端仍为
+**No-Go**。
+
 ## 3. 未完成 Issue 的实施证据
 
 下表列出此前只有外部验收标签、但仓库已经具备实施控制面的工作项。添加

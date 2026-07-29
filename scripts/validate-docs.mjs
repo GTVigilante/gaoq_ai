@@ -21,8 +21,11 @@ const requiredDocuments = [
   'docs/phase-0/08-data-processing-register.md',
   'docs/phase-0/09-threat-model.md',
   'docs/phase-0/10-openapi-contract.md',
+  'docs/phase-0/11-asyncapi-cloudevents-contract.md',
   'contracts/openapi/erp-api.openapi.json',
+  'contracts/asyncapi/erp-events.asyncapi.json',
   'scripts/contracts/generate-openapi.mjs',
+  'scripts/contracts/generate-asyncapi.mjs',
   'docs/adr/README.md',
   'docs/adr/0001-modular-monolith-and-runtime.md',
   'docs/adr/0002-erp-master-data-and-platform-adapters.md',
@@ -299,6 +302,47 @@ const requiredOpenApiContractMarkers = new Map([
       '"contracts:openapi:generate"',
       '"contracts:openapi:self-test"',
       '"contracts:openapi:validate"',
+      '"pretypecheck"',
+    ],
+  ],
+]);
+const requiredAsyncApiContractMarkers = new Map([
+  [
+    'docs/phase-0/11-asyncapi-cloudevents-contract.md',
+    [
+      'contracts/asyncapi/erp-events.asyncapi.json',
+      'pnpm contracts:asyncapi:validate',
+      '184',
+      '出站 180',
+      '入站 4',
+      'x-runtime-schema-sources',
+      '专业算薪',
+    ],
+  ],
+  [
+    'scripts/contracts/generate-asyncapi.mjs',
+    [
+      "asyncapi: '3.0.0'",
+      'x-event-count',
+      'x-runtime-schema-sources',
+      'AsyncAPI 契约已漂移',
+    ],
+  ],
+  [
+    'contracts/asyncapi/erp-events.asyncapi.json',
+    [
+      '"asyncapi": "3.0.0"',
+      '"x-event-count": 184',
+      '"x-outbound-count": 180',
+      '"x-inbound-count": 4',
+    ],
+  ],
+  [
+    'package.json',
+    [
+      '"contracts:asyncapi:generate"',
+      '"contracts:asyncapi:self-test"',
+      '"contracts:asyncapi:validate"',
       '"pretypecheck"',
     ],
   ],
@@ -837,6 +881,19 @@ for (const [relativePath, markers] of requiredOpenApiContractMarkers) {
     }
   } catch {
     errors.push(`${relativePath}: 无法读取 OpenAPI 契约门禁文件`);
+  }
+}
+
+for (const [relativePath, markers] of requiredAsyncApiContractMarkers) {
+  try {
+    const content = await readFile(resolve(repoRoot, relativePath), 'utf8');
+    for (const marker of markers) {
+      if (!content.includes(marker)) {
+        errors.push(`${relativePath}: 缺少 AsyncAPI 契约标记 ${marker}`);
+      }
+    }
+  } catch {
+    errors.push(`${relativePath}: 无法读取 AsyncAPI 契约门禁文件`);
   }
 }
 

@@ -72,6 +72,13 @@
   `x-typescript-type`，字段级约束仍以 DTO、ValidationPipe 和协议测试为准，
   因此不得把该基线单独宣称为生产写客户端的完整 Schema；GitHub Hosted
   Actions 仍受账号付款或 Spending limit 阻塞。
+- 2026-07-30 已建立 AsyncAPI 3.0 / CloudEvents 1.0 机器契约：从固定生产
+  Outbox 与专业算薪平台契约确定性收集 184 个现行事件，其中 ERP/平台出站
+  180 个、专业算薪入站 4 个；每项声明固定 source、方向、权威系统、分级、
+  幂等规则和运行时 Schema 源。生成器排除兼容窗口旧 type，拒绝动态
+  `EVENT_TYPES`、重复 type、来源缺失及目录漂移，并与 OpenAPI 一起通过
+  `pretypecheck` 接入总门禁。物理 Broker、Topic ACL、mTLS、保留/死信和
+  逐 type 外部联调仍是目标环境验收项，不能由仓库目录替代。
 - 2026-07-29 已关闭审批 MCP 的 Schema 方言与机器可读风险分级缺口：锁定的
   `@modelcontextprotocol/sdk 1.29.0` 原本把 Zod Tool Schema 显式发现为
   Draft-07，现通过受控依赖补丁统一输出 JSON Schema 2020-12；9 个审批 Tool
