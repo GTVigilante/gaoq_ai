@@ -37,7 +37,9 @@ MongoDB 时间点恢复、Redis/BullMQ 重建、对象/WORM 与 KMS 验证、旧
 九类外部连接（含独立专业算薪）两小时断连追赶契约见
 [容灾恢复与外部系统断连追赶门禁](./17-resilience-rehearsal-gate.md)。现场脱敏
 摘要只能由 `phase-5-resilience` workflow policy 通过 GitHub Hosted Runner 和
-单次 OIDC 身份验收。
+单次 OIDC 身份验收。容灾 v4 把专业算薪 Resource、独立授权服务器、镜像、
+MCP 目录和事件契约纳入七方签名；Go/No-Go v3 再与 MCP 联调结论逐字段比对，
+禁止跨环境替身或旧版本拼接。
 
 工程质量、供应链、生产镜像、权限、业务 UAT、隐私合规和运行保障先由[七类发布就绪 verdict 门禁](./20-readiness-verdicts.md)生成独立证据。全部上线证据的新鲜度、版本绑定、十二类门禁、十方独立 Ed25519 签署和周末八小时切换窗口再由[跨职能 Go/No-Go 证据门禁](./18-go-no-go-evidence-gate.md)统一验收。工作流只生成不可部署的 verdict，不替代人工生产审批。
 

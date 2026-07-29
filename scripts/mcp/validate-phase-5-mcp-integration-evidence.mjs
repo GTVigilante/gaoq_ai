@@ -97,6 +97,10 @@ if (process.argv[2] === '--self-test') {
   );
   process.env.MCP_INTEGRATION_EXPECTED_COMMIT = 'b'.repeat(40);
   expectFailure(() => validate(bound, true), 'PHASE5_MCP_INTEGRATION_COMMIT_MISMATCH');
+  expectFailure(
+    () => parseDocument('{"formatVersion":3'),
+    'PHASE5_MCP_INTEGRATION_EVIDENCE_JSON_INVALID',
+  );
   runSignatureSelfTests();
   process.stdout.write('Phase 5 MCP 客户端与跨系统联调证据门禁自测通过。\n');
 } else if (process.argv.length === 3 && process.argv[2] === '--print-contract') {
@@ -132,7 +136,7 @@ if (process.argv[2] === '--self-test') {
   const stat = await lstat(path);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 2 || stat.size > 512 * 1_024 ||
       (stat.mode & 0o022) !== 0) fail('PHASE5_MCP_INTEGRATION_FILE_INVALID');
-  const result = validate(JSON.parse(await readFile(path, 'utf8')), enforce);
+  const result = validate(parseDocument(await readFile(path, 'utf8')), enforce);
   process.stdout.write(`${JSON.stringify({
     formatVersion: 3, suite: 'gaoq.phase5.integration-mcp.verdict', runId: result.runId,
     commitSha: result.commitSha, catalogHash: catalog.catalogHash,
@@ -951,6 +955,14 @@ function decodeSignature(value) {
     fail('PHASE5_MCP_INTEGRATION_SIGNOFF_SIGNATURE_INVALID');
   }
   return signature;
+}
+
+function parseDocument(value) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    fail('PHASE5_MCP_INTEGRATION_EVIDENCE_JSON_INVALID');
+  }
 }
 
 function exact(value, keys) { if (typeof value !== 'object' || value === null || Array.isArray(value) ||

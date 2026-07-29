@@ -369,6 +369,7 @@ jobs:
       - name: 检查韧性证据契约与现场工作流边界
         run: |
           node scripts/resilience/validate-phase-5-resilience-evidence.mjs --self-test
+          node scripts/resilience/validate-phase-5-resilience-evidence.mjs --print-contract > /dev/null
           node scripts/validate-security-workflow.mjs
 
   readiness-contract:
@@ -407,6 +408,7 @@ jobs:
       - name: 检查最终放行契约与现场工作流边界
         run: |
           node scripts/release/validate-phase-5-go-no-go-evidence.mjs --self-test
+          node scripts/release/validate-phase-5-go-no-go-evidence.mjs --print-contract > /dev/null
           node scripts/validate-security-workflow.mjs
 
   mcp-catalog-contract:

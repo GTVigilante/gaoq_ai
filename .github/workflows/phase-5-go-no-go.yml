@@ -31,7 +31,9 @@ jobs:
           node-version: 22
 
       - name: 校验最终放行契约
-        run: node scripts/release/validate-phase-5-go-no-go-evidence.mjs --self-test
+        run: |
+          node scripts/release/validate-phase-5-go-no-go-evidence.mjs --self-test
+          node scripts/release/validate-phase-5-go-no-go-evidence.mjs --print-contract > /dev/null
 
   evidence:
     name: 验收跨职能 Go-No-Go 证据

@@ -77,8 +77,8 @@ if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
   process.stdout.write('Phase 5 跨职能 Go-No-Go 证据门禁自测通过。\n');
 } else if (argumentsList.length === 1 && argumentsList[0] === '--print-contract') {
   process.stdout.write(`${JSON.stringify({
-    formatVersion: 2,
-    suite: 'gaoq.phase5.go-no-go.v2',
+    formatVersion: 3,
+    suite: 'gaoq.phase5.go-no-go.v3',
     verdictSuite: 'gaoq.phase5.go-no-go.verdict',
     signatureSuite: SIGNOFF_SUITE,
     signatureAlgorithm: 'Ed25519',
@@ -100,6 +100,13 @@ if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
     signoffRoles: SIGNOFF_ROLES,
     maximumDecisionAgeHours: 24,
     maximumDecisionLifetimeDays: 7,
+    resilienceProfessionalPayrollBindingFields: [
+      'professionalPayrollResource',
+      'professionalPayrollAuthorizationServer',
+      'professionalPayrollImageDigest',
+      'professionalPayrollEventContractHash',
+      'professionalPayrollCatalogHash',
+    ],
   }, null, 2)}\n`);
 } else {
   const enforceEnvironment = argumentsList[0] === '--enforce-environment';
@@ -115,7 +122,7 @@ if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
   const summary = validateEvidence(parseDocument(await readFile(evidencePath, 'utf8')),
     enforceEnvironment);
   process.stdout.write(`${JSON.stringify({
-    formatVersion: 2,
+    formatVersion: 3,
     suite: 'gaoq.phase5.go-no-go.verdict',
     decisionId: summary.decisionId,
     outcome: 'GO',
@@ -131,8 +138,8 @@ function validateEvidence(document, enforceEnvironment = false, now = Date.now()
     'formatVersion', 'suite', 'decisionId', 'environment', 'source', 'gates', 'acceptance',
     'integrations', 'mcp', 'operations', 'signingAuthorities', 'signoffs', 'decision',
   ], 'PHASE5_GO_NO_GO_DOCUMENT_INVALID');
-  equal(document.formatVersion, 2, 'PHASE5_GO_NO_GO_FORMAT_INVALID');
-  equal(document.suite, 'gaoq.phase5.go-no-go.v2', 'PHASE5_GO_NO_GO_SUITE_INVALID');
+  equal(document.formatVersion, 3, 'PHASE5_GO_NO_GO_FORMAT_INVALID');
+  equal(document.suite, 'gaoq.phase5.go-no-go.v3', 'PHASE5_GO_NO_GO_SUITE_INVALID');
   pattern(document.decisionId, ULID, 'PHASE5_GO_NO_GO_DECISION_ID_INVALID');
   const environment = validateEnvironment(document.environment, enforceEnvironment, now);
   const source = validateSource(document.source, enforceEnvironment);
@@ -140,6 +147,10 @@ function validateEvidence(document, enforceEnvironment = false, now = Date.now()
   const acceptance = validateAcceptance(document.acceptance);
   const integrations = validateIntegrations(document.integrations);
   const mcp = validateMcp(document.mcp, enforceEnvironment);
+  validateResilienceProfessionalPayrollBinding(
+    acceptance.resilience,
+    mcp.professionalPayroll,
+  );
   const operations = validateOperations(document.operations);
   const decision = validateDecision(
     document.decision,
@@ -342,7 +353,9 @@ function validateResilience(resilience) {
   object(resilience, [
     'actualRpoSeconds', 'actualRtoSeconds', 'adaptersRehearsed',
     'minimumOutageSeconds', 'maximumCatchUpSeconds', 'lostEvents',
-    'duplicateBusinessEffects', 'unreconciledEvents',
+    'duplicateBusinessEffects', 'unreconciledEvents', 'professionalPayrollResource',
+    'professionalPayrollAuthorizationServer', 'professionalPayrollImageDigest',
+    'professionalPayrollEventContractHash', 'professionalPayrollCatalogHash',
   ], 'PHASE5_GO_NO_GO_RESILIENCE_INVALID');
   integer(resilience.actualRpoSeconds, 0, 900, 'PHASE5_GO_NO_GO_RPO_EXCEEDED');
   integer(resilience.actualRtoSeconds, 1, 14_400, 'PHASE5_GO_NO_GO_RTO_EXCEEDED');
@@ -353,6 +366,34 @@ function validateResilience(resilience) {
   for (const field of ['lostEvents', 'duplicateBusinessEffects', 'unreconciledEvents']) {
     equal(resilience[field], 0, 'PHASE5_GO_NO_GO_RESILIENCE_DIFFERENCE');
   }
+}
+
+function validateResilienceProfessionalPayrollBinding(resilience, professionalPayroll) {
+  equal(
+    resilience.professionalPayrollResource,
+    professionalPayroll.resource,
+    'PHASE5_GO_NO_GO_RESILIENCE_PAYROLL_MISMATCH',
+  );
+  equal(
+    resilience.professionalPayrollAuthorizationServer,
+    professionalPayroll.authorizationServer,
+    'PHASE5_GO_NO_GO_RESILIENCE_PAYROLL_MISMATCH',
+  );
+  equal(
+    resilience.professionalPayrollImageDigest,
+    professionalPayroll.imageDigest,
+    'PHASE5_GO_NO_GO_RESILIENCE_PAYROLL_MISMATCH',
+  );
+  equal(
+    resilience.professionalPayrollEventContractHash,
+    professionalPayroll.eventContractHash,
+    'PHASE5_GO_NO_GO_RESILIENCE_PAYROLL_MISMATCH',
+  );
+  equal(
+    resilience.professionalPayrollCatalogHash,
+    professionalPayroll.catalogHash,
+    'PHASE5_GO_NO_GO_RESILIENCE_PAYROLL_MISMATCH',
+  );
 }
 
 function validateAuthorization(authorization) {
@@ -919,6 +960,14 @@ function runSelfTest() {
     'PHASE5_GO_NO_GO_PAYROLL_AUDIENCE_ESCAPE',
   );
 
+  const resiliencePayrollDrift = fixture();
+  resiliencePayrollDrift.acceptance.resilience.professionalPayrollCatalogHash =
+    digest('stale-resilience-payroll-catalog');
+  expectFailure(
+    () => validate(resiliencePayrollDrift),
+    'PHASE5_GO_NO_GO_RESILIENCE_PAYROLL_MISMATCH',
+  );
+
   const stalePayrollContract = fixture();
   stalePayrollContract.mcp.professionalPayroll.eventContractHash =
     digest('stale-professional-payroll-contract');
@@ -1006,8 +1055,8 @@ function bindExpectedEnvironment(document) {
 function fixture() {
   const hash = (label) => digest(label);
   const document = {
-    formatVersion: 2,
-    suite: 'gaoq.phase5.go-no-go.v2',
+    formatVersion: 3,
+    suite: 'gaoq.phase5.go-no-go.v3',
     decisionId: '01J8ZQK7V0A2M4N6P8R0T2W6D1',
     environment: {
       name: 'release-uat', region: 'cn-test-1', productionEquivalent: true,
@@ -1046,6 +1095,12 @@ function fixture() {
         actualRpoSeconds: 600, actualRtoSeconds: 7_200, adaptersRehearsed: 9,
         minimumOutageSeconds: 7_200, maximumCatchUpSeconds: 1_800, lostEvents: 0,
         duplicateBusinessEffects: 0, unreconciledEvents: 0,
+        professionalPayrollResource: 'https://payroll.example.invalid',
+        professionalPayrollAuthorizationServer: 'https://identity.example.invalid',
+        professionalPayrollImageDigest: hash('professional-payroll-image'),
+        professionalPayrollEventContractHash:
+          hash('professional-payroll-event-contract'),
+        professionalPayrollCatalogHash: hash('professional-payroll-catalog'),
       },
       authorization: {
         matrixCases: 240, passedCases: 240, crossTenantAttempts: 60, crossTenantDenied: 60,

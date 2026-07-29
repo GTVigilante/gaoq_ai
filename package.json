@@ -181,6 +181,7 @@
     "migration:rehearsal:print-contract": "node scripts/migration/validate-phase-5-migration-rehearsal-evidence.mjs --print-contract",
     "resilience:validate-evidence": "node scripts/resilience/validate-phase-5-resilience-evidence.mjs",
     "resilience:self-test": "node scripts/resilience/validate-phase-5-resilience-evidence.mjs --self-test",
+    "resilience:print-contract": "node scripts/resilience/validate-phase-5-resilience-evidence.mjs --print-contract",
     "release:go-no-go:validate-evidence": "node scripts/release/validate-phase-5-go-no-go-evidence.mjs",
     "release:go-no-go:self-test": "node scripts/release/validate-phase-5-go-no-go-evidence.mjs --self-test",
     "release:go-no-go:print-contract": "node scripts/release/validate-phase-5-go-no-go-evidence.mjs --print-contract",

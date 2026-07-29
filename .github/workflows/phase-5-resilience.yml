@@ -31,7 +31,9 @@ jobs:
           node-version: 22
 
       - name: 校验证据契约的失败关闭边界
-        run: node scripts/resilience/validate-phase-5-resilience-evidence.mjs --self-test
+        run: |
+          node scripts/resilience/validate-phase-5-resilience-evidence.mjs --self-test
+          node scripts/resilience/validate-phase-5-resilience-evidence.mjs --print-contract > /dev/null
 
   evidence:
     name: 验收隔离恢复环境证据
@@ -54,6 +56,10 @@ jobs:
       RESILIENCE_EXPECTED_WEB_IMAGE: ${{ vars.RESILIENCE_WEB_IMAGE_DIGEST }}
       RESILIENCE_EXPECTED_WEBSITE_IMAGE: ${{ vars.RESILIENCE_WEBSITE_IMAGE_DIGEST }}
       RESILIENCE_EXPECTED_PAYROLL_IMAGE: ${{ vars.RESILIENCE_PAYROLL_IMAGE_DIGEST }}
+      RESILIENCE_EXPECTED_PAYROLL_RESOURCE: ${{ vars.RESILIENCE_PAYROLL_RESOURCE }}
+      RESILIENCE_EXPECTED_PAYROLL_AUTHORIZATION_SERVER: ${{ vars.RESILIENCE_PAYROLL_AUTHORIZATION_SERVER }}
+      RESILIENCE_EXPECTED_PAYROLL_CONTRACT_HASH: ${{ vars.RESILIENCE_PAYROLL_CONTRACT_HASH }}
+      RESILIENCE_EXPECTED_PAYROLL_CATALOG_HASH: ${{ vars.RESILIENCE_PAYROLL_CATALOG_HASH }}
       RESILIENCE_EXPECTED_DEPLOYMENT_MANIFEST: ${{ vars.RESILIENCE_DEPLOYMENT_MANIFEST_SHA256 }}
       RESILIENCE_EXPECTED_SIGNER_KEYSET_SHA256: ${{ vars.RESILIENCE_SIGNER_KEYSET_SHA256 }}
     steps:

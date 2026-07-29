@@ -35,7 +35,9 @@ Phase 5 在已验收的组织、审批、招聘入职、考勤薪酬底座之上
        密钥签署完整扫描、ASVS、授权探针和安全隔离结果；独立 OIDC 验收
        工作流绑定当前 commit、镜像、目标摘要与 Repository Variable keyset
    - [容灾恢复与外部系统断连追赶门禁](./17-resilience-rehearsal-gate.md)
-     - Resilience v3 要求业务连续性、数据、集成、平台、QA、安全和 SRE 七方
+     - 容灾 v4 把独立专业算薪 Resource、授权服务器、镜像、MCP 目录和七类
+       事件契约纳入环境绑定、两小时断连结果与七方签名 payload
+     - Resilience v4 要求业务连续性、数据、集成、平台、QA、安全和 SRE 七方
        使用独立 Ed25519 密钥签署完整恢复、回滚、对账与断连追赶结果，并由
        Repository Variable 固定 signer keyset
    - [跨职能 Go/No-Go 证据门禁](./18-go-no-go-evidence-gate.md)
@@ -49,11 +51,12 @@ Phase 5 在已验收的组织、审批、招聘入职、考勤薪酬底座之上
        Repository Variable 绑定完整 signer keyset；同角色跨 Gate 保持同一主体，
        不同角色不得复用主体或公钥
    - [GitHub Hosted OIDC 证据交换标准](./21-github-oidc-evidence-exchange.md)
-   - MCP 联调已升级为 v3、Go/No-Go 为 v2，强制绑定独立专业算薪 OAuth Resource、
-     MCP 完整目录、发布镜像和七类共享事件契约；真实算薪环境证据仍待执行
-   - Go/No-Go v2 的十方批准必须使用逐角色独立 Ed25519 公钥验签，并由
-     Repository Variable 绑定完整 signer keyset 摘要；意见摘要或证据 ID
-     不能替代密码学签署
+   - MCP 联调已升级为 v3、Go/No-Go 为 v3，强制绑定独立专业算薪 OAuth
+     Resource、MCP 完整目录、发布镜像和七类共享事件契约；容灾与 MCP 联调
+     必须引用同一专业算薪边界，真实算薪环境证据仍待执行
+   - Go/No-Go v3 的十方批准必须使用逐角色独立 Ed25519 公钥验签，并由
+     Repository Variable 绑定完整 signer keyset 摘要；意见摘要、证据 ID 或
+     跨环境替身不能替代密码学签署
 9. [双语营销官网与 CMS](../marketing-cms.md)（Website、事务 Outbox、通知幂等、
    管理端与匿名端最小公开投影、公开响应严格运行时契约、列表 500 项上限、
    验证码 Origin 与 iframe 来源双绑定、列表/详情同步缓存失效、可信 Scope

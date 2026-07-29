@@ -27,6 +27,20 @@ const INTEGRATION_PROFILES = Object.freeze({
   tax: 'bidirectional',
   worm: 'request-response',
 });
+const PROFESSIONAL_PAYROLL_TOOLS = Object.freeze([
+  'payroll_payslip_get_self',
+  'payroll_period_get',
+  'payroll_reconciliation_get',
+  'payroll_tax_filing_get',
+]);
+const PROFESSIONAL_PAYROLL_RESOURCES = Object.freeze([
+  'payroll://payslips/self/{period}',
+  'payroll://periods/{period}',
+]);
+const PROFESSIONAL_PAYROLL_PROMPTS = Object.freeze([
+  'payroll_payslip_explain_self',
+  'payroll_period_status_guide',
+]);
 const SIGNOFF_ROLES = [
   'business_continuity_owner', 'data_owner', 'integration_owner', 'platform_owner',
   'qa_owner', 'security_owner', 'sre_owner',
@@ -46,6 +60,41 @@ const argumentsList = process.argv.slice(2);
 if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
   runSelfTest();
   process.stdout.write('Phase 5 容灾恢复与外部断连证据门禁自测通过。\n');
+} else if (argumentsList.length === 1 && argumentsList[0] === '--print-contract') {
+  process.stdout.write(`${JSON.stringify({
+    formatVersion: 4,
+    suite: 'gaoq.phase5.resilience.contract',
+    evidenceSuite: 'gaoq.phase5.resilience.v4',
+    verdictSuite: 'gaoq.phase5.resilience.verdict',
+    domainNames: DOMAIN_NAMES,
+    integrationProfiles: INTEGRATION_PROFILES,
+    professionalPayroll: {
+      platformContractVersion: '1.0.0',
+      protocolVersion: '2025-11-25',
+      transport: 'streamable-http',
+      oauthProfile: 'oauth-2.1-resource-server',
+      requiredTools: PROFESSIONAL_PAYROLL_TOOLS,
+      requiredResourceTemplates: PROFESSIONAL_PAYROLL_RESOURCES,
+      requiredPrompts: PROFESSIONAL_PAYROLL_PROMPTS,
+      requiredEventTypes: 7,
+    },
+    signoffRoles: SIGNOFF_ROLES,
+    signatureSuite: SIGNOFF_SIGNATURE_SUITE,
+    signatureAlgorithm: 'Ed25519',
+    signatureEncoding: 'base64url-unpadded',
+    publicKeyEncoding: 'base64-spki-der',
+    keyId: 'sha256:<lowercase-hex-of-spki-der>',
+    signerKeysetCanonicalFields: ['role', 'keyId'],
+    signerKeysetOrder: 'role-ascending',
+    maximumSignoffAgeHours: 24,
+    objectives: {
+      rpoTargetSeconds: 900,
+      rtoTargetSeconds: 14_400,
+      integrationOutageTargetSeconds: 7_200,
+      catchUpTargetSeconds: 3_600,
+    },
+    harnessSha256: HARNESS_DIGEST,
+  }, null, 2)}\n`);
 } else {
   const enforceEnvironment = argumentsList[0] === '--enforce-environment';
   const evidencePath = argumentsList[enforceEnvironment ? 1 : 0];
@@ -61,10 +110,14 @@ if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
   const document = parseDocument(await readFile(evidencePath, 'utf8'));
   const summary = validateEvidence(document, enforceEnvironment);
   process.stdout.write(`${JSON.stringify({
-    formatVersion: 3,
+    formatVersion: 4,
     suite: 'gaoq.phase5.resilience.verdict',
     runId: summary.runId,
     commitSha: summary.commitSha,
+    professionalPayrollResource: summary.professionalPayroll.resource,
+    professionalPayrollCatalogHash: summary.professionalPayroll.catalogHash,
+    professionalPayrollEventContractHash:
+      summary.professionalPayroll.eventContractHash,
     signerKeysetHash: summary.signerKeysetHash,
     approvalPayloadHash: summary.approvalPayloadHash,
     evidenceChecksum: digest(canonical(summary)),
@@ -74,11 +127,11 @@ if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
 function validateEvidence(document, enforceEnvironment = false) {
   object(document, [
     'formatVersion', 'suite', 'runId', 'environment', 'source', 'objectives',
-    'disasterRecovery', 'consistency', 'integrations', 'safety', 'artifacts',
-    'signingAuthorities', 'signoffs',
+    'disasterRecovery', 'consistency', 'professionalPayroll', 'integrations',
+    'safety', 'artifacts', 'signingAuthorities', 'signoffs',
   ], 'PHASE5_RESILIENCE_DOCUMENT_INVALID');
-  equal(document.formatVersion, 3, 'PHASE5_RESILIENCE_FORMAT_INVALID');
-  equal(document.suite, 'gaoq.phase5.resilience.v3', 'PHASE5_RESILIENCE_SUITE_INVALID');
+  equal(document.formatVersion, 4, 'PHASE5_RESILIENCE_FORMAT_INVALID');
+  equal(document.suite, 'gaoq.phase5.resilience.v4', 'PHASE5_RESILIENCE_SUITE_INVALID');
   pattern(document.runId, ULID, 'PHASE5_RESILIENCE_RUN_ID_INVALID');
 
   const environment = validateEnvironment(document.environment, enforceEnvironment);
@@ -99,6 +152,11 @@ function validateEvidence(document, enforceEnvironment = false) {
   const objectives = validateObjectives(document.objectives);
   const recovery = validateRecovery(document.disasterRecovery, environment, objectives);
   const consistency = validateConsistency(document.consistency);
+  const professionalPayroll = validateProfessionalPayroll(
+    document.professionalPayroll,
+    source,
+    enforceEnvironment,
+  );
   const integrations = validateIntegrations(
     document.integrations,
     environment,
@@ -126,6 +184,7 @@ function validateEvidence(document, enforceEnvironment = false) {
     objectives,
     recovery,
     consistency,
+    professionalPayroll,
     integrations,
     safety: document.safety,
     artifacts,
@@ -193,7 +252,7 @@ function validateSource(source, enforceEnvironment) {
   ) fail('PHASE5_RESILIENCE_IMAGES_NOT_INDEPENDENT');
   equal(
     source.rehearsalPlanVersion,
-    'phase-5-resilience-v3',
+    'phase-5-resilience-v4',
     'PHASE5_RESILIENCE_PLAN_VERSION_INVALID',
   );
   equal(source.harnessSha256, HARNESS_DIGEST, 'PHASE5_RESILIENCE_HARNESS_INVALID');
@@ -258,6 +317,147 @@ function validateObjectives(objectives) {
     'PHASE5_RESILIENCE_CATCHUP_TARGET_INVALID',
   );
   return objectives;
+}
+
+function validateProfessionalPayroll(value, source, enforceEnvironment) {
+  object(value, [
+    'resource', 'mcpEndpoint', 'authorizationServer', 'imageDigest',
+    'platformContractVersion', 'eventContractHash', 'protocolVersion', 'transport',
+    'oauthProfile', 'catalogHash', 'requiredTools', 'requiredResourceTemplates',
+    'requiredPrompts', 'eventTypesReplayed', 'artifacts',
+  ], 'PHASE5_RESILIENCE_PAYROLL_BOUNDARY_INVALID');
+  const resource = httpsOrigin(
+    value.resource,
+    'PHASE5_RESILIENCE_PAYROLL_RESOURCE_INVALID',
+  );
+  const authorizationServer = httpsOrigin(
+    value.authorizationServer,
+    'PHASE5_RESILIENCE_PAYROLL_AUTHORIZATION_SERVER_INVALID',
+  );
+  if (resource === authorizationServer) {
+    fail('PHASE5_RESILIENCE_PAYROLL_TRUST_DOMAINS_NOT_SEPARATE');
+  }
+  equal(
+    value.mcpEndpoint,
+    `${resource}/mcp`,
+    'PHASE5_RESILIENCE_PAYROLL_ENDPOINT_INVALID',
+  );
+  pattern(value.imageDigest, SHA256, 'PHASE5_RESILIENCE_PAYROLL_IMAGE_INVALID');
+  equal(
+    value.imageDigest,
+    source.professionalPayrollImage,
+    'PHASE5_RESILIENCE_PAYROLL_IMAGE_MISMATCH',
+  );
+  equal(
+    value.platformContractVersion,
+    '1.0.0',
+    'PHASE5_RESILIENCE_PAYROLL_CONTRACT_VERSION_INVALID',
+  );
+  pattern(
+    value.eventContractHash,
+    SHA256,
+    'PHASE5_RESILIENCE_PAYROLL_CONTRACT_INVALID',
+  );
+  equal(
+    value.protocolVersion,
+    '2025-11-25',
+    'PHASE5_RESILIENCE_PAYROLL_PROTOCOL_INVALID',
+  );
+  equal(
+    value.transport,
+    'streamable-http',
+    'PHASE5_RESILIENCE_PAYROLL_TRANSPORT_INVALID',
+  );
+  equal(
+    value.oauthProfile,
+    'oauth-2.1-resource-server',
+    'PHASE5_RESILIENCE_PAYROLL_OAUTH_INVALID',
+  );
+  pattern(value.catalogHash, SHA256, 'PHASE5_RESILIENCE_PAYROLL_CATALOG_INVALID');
+  exactStringArray(
+    value.requiredTools,
+    PROFESSIONAL_PAYROLL_TOOLS,
+    'PHASE5_RESILIENCE_PAYROLL_CATALOG_INVALID',
+  );
+  exactStringArray(
+    value.requiredResourceTemplates,
+    PROFESSIONAL_PAYROLL_RESOURCES,
+    'PHASE5_RESILIENCE_PAYROLL_CATALOG_INVALID',
+  );
+  exactStringArray(
+    value.requiredPrompts,
+    PROFESSIONAL_PAYROLL_PROMPTS,
+    'PHASE5_RESILIENCE_PAYROLL_CATALOG_INVALID',
+  );
+  equal(
+    value.eventTypesReplayed,
+    7,
+    'PHASE5_RESILIENCE_PAYROLL_EVENT_COVERAGE_INVALID',
+  );
+  object(value.artifacts, [
+    'oauthMetadataHash', 'mcpCatalogArtifactHash', 'capabilityProbeHash',
+    'eventReplayHash',
+  ], 'PHASE5_RESILIENCE_PAYROLL_ARTIFACT_INVALID');
+  const artifactHashes = Object.values(value.artifacts);
+  for (const hash of artifactHashes) {
+    pattern(hash, SHA256, 'PHASE5_RESILIENCE_PAYROLL_ARTIFACT_INVALID');
+  }
+  if (new Set(artifactHashes).size !== artifactHashes.length) {
+    fail('PHASE5_RESILIENCE_PAYROLL_ARTIFACT_REUSED');
+  }
+  if (enforceEnvironment) {
+    const expected = {
+      resource: process.env.RESILIENCE_EXPECTED_PAYROLL_RESOURCE,
+      authorizationServer:
+        process.env.RESILIENCE_EXPECTED_PAYROLL_AUTHORIZATION_SERVER,
+      eventContractHash:
+        process.env.RESILIENCE_EXPECTED_PAYROLL_CONTRACT_HASH,
+      catalogHash: process.env.RESILIENCE_EXPECTED_PAYROLL_CATALOG_HASH,
+    };
+    const expectedResource = httpsOrigin(
+      expected.resource,
+      'PHASE5_RESILIENCE_EXPECTED_PAYROLL_SOURCE_REQUIRED',
+    );
+    const expectedAuthorizationServer = httpsOrigin(
+      expected.authorizationServer,
+      'PHASE5_RESILIENCE_EXPECTED_PAYROLL_SOURCE_REQUIRED',
+    );
+    for (const field of ['eventContractHash', 'catalogHash']) {
+      pattern(
+        expected[field],
+        SHA256,
+        'PHASE5_RESILIENCE_EXPECTED_PAYROLL_SOURCE_REQUIRED',
+      );
+    }
+    equal(
+      resource,
+      expectedResource,
+      'PHASE5_RESILIENCE_PAYROLL_RESOURCE_MISMATCH',
+    );
+    equal(
+      authorizationServer,
+      expectedAuthorizationServer,
+      'PHASE5_RESILIENCE_PAYROLL_AUTHORIZATION_SERVER_MISMATCH',
+    );
+    equal(
+      value.eventContractHash,
+      expected.eventContractHash,
+      'PHASE5_RESILIENCE_PAYROLL_CONTRACT_MISMATCH',
+    );
+    equal(
+      value.catalogHash,
+      expected.catalogHash,
+      'PHASE5_RESILIENCE_PAYROLL_CATALOG_MISMATCH',
+    );
+  }
+  return Object.freeze({
+    resource,
+    authorizationServer,
+    imageDigest: value.imageDigest,
+    eventContractHash: value.eventContractHash,
+    catalogHash: value.catalogHash,
+    artifacts: value.artifacts,
+  });
 }
 
 function validateRecovery(recovery, environment, objectives) {
@@ -785,6 +985,7 @@ function resilienceApprovalPayload(document, signerKeysetHashValue) {
     objectives: document.objectives,
     disasterRecovery: document.disasterRecovery,
     consistency: document.consistency,
+    professionalPayroll: document.professionalPayroll,
     integrations: document.integrations,
     safety: document.safety,
     artifacts: document.artifacts,
@@ -827,7 +1028,30 @@ function runSelfTest() {
       () => validateEvidence(environmentBound, true),
       'PHASE5_RESILIENCE_SIGNER_KEYSET_MISMATCH',
     );
+    process.env.RESILIENCE_EXPECTED_SIGNER_KEYSET_SHA256 =
+      signerKeysetHash(environmentBound.signingAuthorities);
+    process.env.RESILIENCE_EXPECTED_PAYROLL_CATALOG_HASH =
+      digest('unapproved-payroll-catalog');
+    expectFailure(
+      () => validateEvidence(environmentBound, true),
+      'PHASE5_RESILIENCE_PAYROLL_CATALOG_MISMATCH',
+    );
   });
+
+  const missingPayrollTool = fixture();
+  missingPayrollTool.professionalPayroll.requiredTools.pop();
+  expectFailure(
+    () => validateEvidence(missingPayrollTool),
+    'PHASE5_RESILIENCE_PAYROLL_CATALOG_INVALID',
+  );
+
+  const sharedPayrollTrustDomain = fixture();
+  sharedPayrollTrustDomain.professionalPayroll.authorizationServer =
+    sharedPayrollTrustDomain.professionalPayroll.resource;
+  expectFailure(
+    () => validateEvidence(sharedPayrollTrustDomain),
+    'PHASE5_RESILIENCE_PAYROLL_TRUST_DOMAINS_NOT_SEPARATE',
+  );
 
   const rpoExceeded = fixture();
   rpoExceeded.disasterRecovery.lastRecoverablePointAt = '2026-07-01T23:54:59.000Z';
@@ -972,8 +1196,8 @@ function fixtureBundle() {
     auditHash: hash(`integration-${index}-audit`),
   }));
   const document = {
-    formatVersion: 3,
-    suite: 'gaoq.phase5.resilience.v3',
+    formatVersion: 4,
+    suite: 'gaoq.phase5.resilience.v4',
     runId: '01J8ZQK7V0A2M4N6P8R0T2W6B1',
     environment: {
       name: 'resilience-stage',
@@ -994,7 +1218,7 @@ function fixtureBundle() {
         website: hash('website'),
       },
       professionalPayrollImage: hash('professional-payroll-image'),
-      rehearsalPlanVersion: 'phase-5-resilience-v3',
+      rehearsalPlanVersion: 'phase-5-resilience-v4',
       harnessSha256: HARNESS_DIGEST,
       deploymentManifestHash: hash('deployment-manifest'),
     },
@@ -1003,6 +1227,28 @@ function fixtureBundle() {
       rtoTargetSeconds: 14_400,
       integrationOutageTargetSeconds: 7_200,
       catchUpTargetSeconds: 3_600,
+    },
+    professionalPayroll: {
+      resource: 'https://payroll.example.invalid',
+      mcpEndpoint: 'https://payroll.example.invalid/mcp',
+      authorizationServer: 'https://identity.example.invalid',
+      imageDigest: hash('professional-payroll-image'),
+      platformContractVersion: '1.0.0',
+      eventContractHash: hash('professional-payroll-event-contract'),
+      protocolVersion: '2025-11-25',
+      transport: 'streamable-http',
+      oauthProfile: 'oauth-2.1-resource-server',
+      catalogHash: hash('professional-payroll-catalog'),
+      requiredTools: [...PROFESSIONAL_PAYROLL_TOOLS],
+      requiredResourceTemplates: [...PROFESSIONAL_PAYROLL_RESOURCES],
+      requiredPrompts: [...PROFESSIONAL_PAYROLL_PROMPTS],
+      eventTypesReplayed: 7,
+      artifacts: {
+        oauthMetadataHash: hash('professional-payroll-oauth'),
+        mcpCatalogArtifactHash: hash('professional-payroll-mcp-catalog'),
+        capabilityProbeHash: hash('professional-payroll-capability-probe'),
+        eventReplayHash: hash('professional-payroll-event-replay'),
+      },
     },
     disasterRecovery: {
       scenario: 'isolated-region-loss',
@@ -1177,6 +1423,14 @@ function withExpectedEnvironment(document, action) {
     RESILIENCE_EXPECTED_WEB_IMAGE: document.source.images.web,
     RESILIENCE_EXPECTED_WEBSITE_IMAGE: document.source.images.website,
     RESILIENCE_EXPECTED_PAYROLL_IMAGE: document.source.professionalPayrollImage,
+    RESILIENCE_EXPECTED_PAYROLL_RESOURCE:
+      document.professionalPayroll.resource,
+    RESILIENCE_EXPECTED_PAYROLL_AUTHORIZATION_SERVER:
+      document.professionalPayroll.authorizationServer,
+    RESILIENCE_EXPECTED_PAYROLL_CONTRACT_HASH:
+      document.professionalPayroll.eventContractHash,
+    RESILIENCE_EXPECTED_PAYROLL_CATALOG_HASH:
+      document.professionalPayroll.catalogHash,
     RESILIENCE_EXPECTED_DEPLOYMENT_MANIFEST: document.source.deploymentManifestHash,
     RESILIENCE_EXPECTED_SIGNER_KEYSET_SHA256:
       signerKeysetHash(document.signingAuthorities),
@@ -1267,6 +1521,34 @@ function exactStringSet(actual, expected, code) {
     new Set(actual).size !== expected.length ||
     canonical([...actual].sort()) !== canonical([...expected].sort())
   ) fail(code);
+}
+
+function exactStringArray(actual, expected, code) {
+  if (
+    !Array.isArray(actual) ||
+    actual.some((item) => typeof item !== 'string') ||
+    canonical([...actual].sort()) !== canonical([...expected].sort())
+  ) fail(code);
+}
+
+function httpsOrigin(value, code) {
+  if (typeof value !== 'string' || value.length > 256) fail(code);
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    fail(code);
+  }
+  if (
+    parsed.protocol !== 'https:' ||
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    parsed.pathname !== '/' ||
+    parsed.search !== '' ||
+    parsed.hash !== '' ||
+    parsed.origin !== value
+  ) fail(code);
+  return parsed.origin;
 }
 
 function integer(value, minimum, maximum, code) {
