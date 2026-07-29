@@ -621,6 +621,63 @@ describe('MCP Streamable HTTP 协议集成', () => {
       'recruitment_offer_send_prepare',
       'recruitment_offer_send_execute',
     ]);
+    const jsonSchemaDialect = 'https://json-schema.org/draft/2020-12/schema';
+    for (const tool of listedTools.tools) {
+      expect(tool.inputSchema).toMatchObject({ type: 'object' });
+      if (tool.inputSchema.$schema === undefined) {
+        expect(tool.inputSchema).toEqual({ type: 'object', properties: {} });
+      } else {
+        expect(tool.inputSchema.$schema).toBe(jsonSchemaDialect);
+      }
+      expect(tool.outputSchema).toMatchObject({
+        $schema: jsonSchemaDialect,
+        type: 'object',
+      });
+    }
+    const approvalToolContracts = [
+      ['approval_get_inbox', 'R0', 'direct', []],
+      ['approval_get', 'R0', 'direct', ['instanceId']],
+      ['approval_timeline_get', 'R0', 'direct', ['instanceId']],
+      [
+        'approval_submit_prepare',
+        'R1',
+        'prepare',
+        ['instanceId', 'expectedVersion', 'prepareKey'],
+      ],
+      ['approval_submit_execute', 'R1', 'execute', ['operationId', 'confirmationCredential']],
+      [
+        'approval_withdraw_prepare',
+        'R1',
+        'prepare',
+        ['instanceId', 'expectedVersion', 'prepareKey'],
+      ],
+      ['approval_withdraw_execute', 'R1', 'execute', ['operationId', 'confirmationCredential']],
+      [
+        'approval_decide_prepare',
+        'R2',
+        'prepare',
+        ['instanceId', 'expectedVersion', 'prepareKey', 'principalApproverId', 'outcome'],
+      ],
+      ['approval_decide_execute', 'R2', 'execute', ['operationId', 'confirmationCredential']],
+    ] as const;
+    for (const [name, riskLevel, confirmationMode, required] of approvalToolContracts) {
+      const tool = listedTools.tools.find((candidate) => candidate.name === name);
+      expect(tool, `${name} 应存在于 MCP 能力目录`).toBeDefined();
+      expect(tool?.inputSchema).toMatchObject({ type: 'object' });
+      expect(tool?.outputSchema).toMatchObject({ type: 'object' });
+      if (required.length > 0) {
+        expect(tool?.inputSchema.required).toEqual(expect.arrayContaining([...required]));
+      }
+      expect(tool?.annotations).toMatchObject({
+        openWorldHint: false,
+        idempotentHint: true,
+      });
+      expect(tool?._meta).toMatchObject({
+        'com.gaoq/riskLevel': riskLevel,
+        'com.gaoq/jsonSchemaDialect': jsonSchemaDialect,
+        'com.gaoq/confirmationMode': confirmationMode,
+      });
+    }
     const resources = await client.listResources();
     expect(resources.resources).toEqual(expect.arrayContaining([
       expect.objectContaining({ uri: 'gaoq://mcp/guide' }),

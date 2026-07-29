@@ -1638,7 +1638,17 @@ export class McpRuntimeService {
         title: '查询我的审批待办',
         description: '返回当前主体可处理的审批摘要，不接受租户参数且不返回表单正文。风险等级 R0。',
         outputSchema: approvalInboxOutputSchema,
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+        _meta: {
+          'com.gaoq/riskLevel': 'R0',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'direct',
+        },
       },
       async (extra) => this.tools.getApprovalInbox(extra),
     );
@@ -1650,7 +1660,17 @@ export class McpRuntimeService {
         description: '按当前主体权限返回审批详情；L3/L4 字段由应用服务脱敏。风险等级 R0。',
         inputSchema: { instanceId: z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/) },
         outputSchema: approvalInstanceOutputSchema,
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+        _meta: {
+          'com.gaoq/riskLevel': 'R0',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'direct',
+        },
       },
       async ({ instanceId }, extra) => this.tools.getApprovalInstance(instanceId, extra),
     );
@@ -1662,7 +1682,17 @@ export class McpRuntimeService {
         description: '返回当前主体有权读取的追加式审批动作，不包含租户字段或表单正文。风险等级 R0。',
         inputSchema: { instanceId: z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/) },
         outputSchema: approvalTimelineOutputSchema,
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+        _meta: {
+          'com.gaoq/riskLevel': 'R0',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'direct',
+        },
       },
       async ({ instanceId }, extra) => this.tools.getApprovalTimeline(instanceId, extra),
     );
@@ -1675,6 +1705,11 @@ export class McpRuntimeService {
         inputSchema: approvalOperationInputSchema,
         outputSchema: preparedOperationOutputSchema,
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: {
+          'com.gaoq/riskLevel': 'R1',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'prepare',
+        },
       },
       async ({ instanceId, expectedVersion, prepareKey }, extra) =>
         this.tools.prepareApprovalSubmit(instanceId, expectedVersion, prepareKey, extra),
@@ -1688,6 +1723,11 @@ export class McpRuntimeService {
         inputSchema: confirmationExecuteInputSchema,
         outputSchema: approvalWriteOutputSchema,
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: {
+          'com.gaoq/riskLevel': 'R1',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'execute',
+        },
       },
       async ({ operationId, confirmationCredential }, extra) =>
         this.tools.executeApprovalSubmit(operationId, confirmationCredential, extra),
@@ -1701,6 +1741,11 @@ export class McpRuntimeService {
         inputSchema: approvalOperationInputSchema,
         outputSchema: preparedOperationOutputSchema,
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: {
+          'com.gaoq/riskLevel': 'R1',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'prepare',
+        },
       },
       async ({ instanceId, expectedVersion, prepareKey }, extra) =>
         this.tools.prepareApprovalWithdraw(instanceId, expectedVersion, prepareKey, extra),
@@ -1714,6 +1759,11 @@ export class McpRuntimeService {
         inputSchema: confirmationExecuteInputSchema,
         outputSchema: approvalWriteOutputSchema,
         annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+        _meta: {
+          'com.gaoq/riskLevel': 'R1',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'execute',
+        },
       },
       async ({ operationId, confirmationCredential }, extra) =>
         this.tools.executeApprovalWithdraw(operationId, confirmationCredential, extra),
@@ -1731,6 +1781,11 @@ export class McpRuntimeService {
         },
         outputSchema: preparedOperationOutputSchema,
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: {
+          'com.gaoq/riskLevel': 'R2',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'prepare',
+        },
       },
       async (input, extra) => this.tools.prepareApprovalDecision(input, extra),
     );
@@ -1743,6 +1798,11 @@ export class McpRuntimeService {
         inputSchema: confirmationExecuteInputSchema,
         outputSchema: approvalWriteOutputSchema,
         annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+        _meta: {
+          'com.gaoq/riskLevel': 'R2',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'execute',
+        },
       },
       async ({ operationId, confirmationCredential }, extra) =>
         this.tools.executeApprovalDecision(operationId, confirmationCredential, extra),

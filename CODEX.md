@@ -36,6 +36,14 @@
   MCP 联调和总 Go/No-Go 门禁均精确绑定完整摘要及数量，陈旧 30/3/2 示例不再
   可通过。该证据只关闭 Inspector 四类目录兼容缺口；正式 Token、授权读写、
   远程 OAuth、撤销/重连和业务 UAT 未完成，Inspector 整体仍保持 No-Go。
+- 2026-07-29 已关闭审批 MCP 的 Schema 方言与机器可读风险分级缺口：锁定的
+  `@modelcontextprotocol/sdk 1.29.0` 原本把 Zod Tool Schema 显式发现为
+  Draft-07，现通过受控依赖补丁统一输出 JSON Schema 2020-12；9 个审批 Tool
+  同时通过命名空间 `_meta` 声明 R0/R1/R2、`direct/prepare/execute` 和方言，
+  并全部显式 `openWorldHint: false`。官方 Streamable HTTP Client 契约测试逐项
+  校验输入/输出、注解和元数据，确定性目录门禁把这些语义纳入 `catalogHash`。
+  该仓库修复不替代 Claude、Kimi、Cursor 的正式 Token、授权读写、过期/重放
+  与实体 WebAuthn UAT。
 - 2026-07-29 已把覆盖率门禁本身纳入失败关闭治理：
   `scripts/validate-critical-coverage-policy.mjs` 从 `precheck/check` 解析 134 个
   ERP API 专项脚本，展开其 `--coverage.include` 后要求 334 个生产文件逐一具有

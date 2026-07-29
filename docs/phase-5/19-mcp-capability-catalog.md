@@ -26,6 +26,14 @@ Resource、27 个 Resource Template 和 25 个 Prompt。新增工资调整能力
 Tool 输入与输出 Schema、幂等与副作用注解、Resource 定位符/MIME、Prompt 参数、
 R1/R2 封闭世界、prepare 不产生破坏性效果，以及应用服务边界。
 
+`@modelcontextprotocol/sdk 1.29.0` 的高层服务默认把 Zod Schema 显式转换为
+Draft-07，与本项目和协议的 JSON Schema 2020-12 基线不一致。仓库通过
+`pnpm.patchedDependencies` 锁定最小补丁，仅把 Tool 输入/输出转换目标改为
+`draft-2020-12`；补丁哈希进入锁文件。官方 Client 协议测试直接检查发现结果，
+要求审批 Tool 的输入/输出根为对象、方言为 2020-12、必填字段完整、
+`openWorldHint: false`，并校验命名空间中的风险等级和确认模式。升级 SDK 时若
+上游已修复，必须删除补丁并保持同一契约测试通过。
+
 ```bash
 pnpm --silent mcp:catalog:print > /secure/mcp/gaoq-mcp-catalog.json
 ```

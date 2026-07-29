@@ -41,6 +41,12 @@ Phase 2 当前已交付审批模板、受限条件 DSL、模板快照、实例�
   审计故障不得覆盖原始异常，事务提交后的成功审计故障不得改变成功响应。
   这些运维入口不注册为 MCP Tool、Resource 或 Prompt。
 - R1 使用 `prepare → ERP 页面确认 → execute`；R2 使用与操作、租户、主体、浏览器会话绑定的一次性 WebAuthn challenge，要求认证器 UV 成功和独立审批人；R3 不注册工具。
+- 9 个审批 Tool 的能力发现固定使用 JSON Schema 2020-12，并以
+  `com.gaoq/riskLevel`、`com.gaoq/jsonSchemaDialect` 和
+  `com.gaoq/confirmationMode` 命名空间元数据分别声明 R0/R1/R2、Schema 方言和
+  `direct/prepare/execute`。所有审批 Tool 显式
+  `openWorldHint: false`；依赖补丁、协议集成测试和确定性目录哈希共同阻止 SDK
+  默认方言、风险或确认模式静默漂移。
 - Passkey 登记、清单和撤销要求 `erp:identity:passkey:manage`，生产 `WEB_ORIGIN` 必须为 HTTPS；服务端仅保存公钥、计数器、传输方式和备份状态。
 
 ## 上线门禁

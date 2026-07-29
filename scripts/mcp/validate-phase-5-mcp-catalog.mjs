@@ -69,6 +69,23 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       catalog.catalogHash,
       'PHASE5_MCP_PROMPT_SCHEMA_HASH_NOT_CHANGED',
     );
+    expectFailure(
+      () => buildCatalog(
+        runtime.replace("'com.gaoq/riskLevel': 'R0'", "'com.gaoq/riskLevel': 'R9'"),
+        toolService,
+      ),
+      'PHASE5_MCP_APPROVAL_RISK_METADATA_INVALID',
+    );
+    expectFailure(
+      () => buildCatalog(
+        runtime.replace(
+          "'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema'",
+          "'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft-07/schema'",
+        ),
+        toolService,
+      ),
+      'PHASE5_MCP_APPROVAL_SCHEMA_DIALECT_INVALID',
+    );
     equal(
       buildCatalog(`// 目录摘要忽略注释差异。\n${runtime}`, toolService).catalogHash,
       catalog.catalogHash,
@@ -165,6 +182,24 @@ function buildCatalog(runtimeSource, toolServiceSource) {
     if (item.name.endsWith('_prepare') && item.annotations.destructiveHint) {
       fail('PHASE5_MCP_PREPARE_DESTRUCTIVE');
     }
+    if (item.name.startsWith('approval_')) {
+      if (item.annotations.openWorldHint !== false) {
+        fail('PHASE5_MCP_APPROVAL_OPEN_WORLD_FORBIDDEN');
+      }
+      if (item.meta['com.gaoq/riskLevel'] !== riskLevel) {
+        fail('PHASE5_MCP_APPROVAL_RISK_METADATA_INVALID');
+      }
+      if (item.meta['com.gaoq/jsonSchemaDialect'] !==
+          'https://json-schema.org/draft/2020-12/schema') {
+        fail('PHASE5_MCP_APPROVAL_SCHEMA_DIALECT_INVALID');
+      }
+      const expectedConfirmationMode = item.name.endsWith('_prepare')
+        ? 'prepare'
+        : item.name.endsWith('_execute') ? 'execute' : 'direct';
+      if (item.meta['com.gaoq/confirmationMode'] !== expectedConfirmationMode) {
+        fail('PHASE5_MCP_APPROVAL_CONFIRMATION_MODE_INVALID');
+      }
+    }
     return {
       ...item,
       inputSchema: item.hasInputSchema ? 'declared' : 'empty-object',
@@ -213,11 +248,22 @@ function parseRegistration(name, metadata) {
   const annotations = Object.fromEntries(annotationsNode.properties
     .filter(ts.isPropertyAssignment)
     .map((property) => [property.name.getText(), booleanValue(property.initializer)]));
+  const metaNode = properties.get('_meta');
+  const meta = metaNode !== undefined && ts.isObjectLiteralExpression(metaNode)
+    ? Object.fromEntries(metaNode.properties.filter(ts.isPropertyAssignment).map((property) => {
+      const key = propertyName(property.name);
+      if (key === null) fail('PHASE5_MCP_TOOL_METADATA_INVALID');
+      const value = stringValue(property.initializer);
+      if (value === null) fail('PHASE5_MCP_TOOL_METADATA_INVALID');
+      return [key, value];
+    }))
+    : {};
   return {
     name, title, description,
     hasInputSchema: properties.has('inputSchema'),
     hasOutputSchema: properties.has('outputSchema'),
     annotations,
+    meta,
   };
 }
 

@@ -15,11 +15,14 @@
 
 协议基线为仓库锁定的 MCP `2025-11-25`，服务端 SDK 为
 `@modelcontextprotocol/sdk 1.29.x`。升级协议必须先经过 ADR、双版本契约测试与
-迁移公告。
+迁移公告。当前精确锁定 1.29.0，并应用仓库内受控补丁，使高层
+`McpServer` 的 Zod 输入/输出 Schema 按协议输出
+`https://json-schema.org/draft/2020-12/schema`；补丁哈希记录在
+`pnpm-lock.yaml`，任何 SDK 升级都必须先移除或重制补丁并通过协议契约。
 
 | 客户端 | 传输与初始化/发现 | R0 | R1 确认 | R2 | 状态 |
 | --- | --- | --- | --- | --- | --- |
-| 官方 TypeScript Client | Streamable HTTP 既有测试通过；真实 stdio 字节流测试通过，发现 50 Tool、4 个静态 Resource、27 个 Resource Template 和 25 个 Prompt | 通过 | 协议与服务测试通过 | WebAuthn UV 服务测试通过；实体认证器待 UAT | 条件通过 |
+| 官方 TypeScript Client | Streamable HTTP 既有测试通过；真实 stdio 字节流测试通过，发现 50 Tool、4 个静态 Resource、27 个 Resource Template 和 25 个 Prompt；审批 Tool 的 JSON Schema 2020-12、闭世界注解和命名空间风险元数据通过 | 通过 | 协议与服务测试通过 | WebAuthn UV 服务测试通过；实体认证器待 UAT | 条件通过 |
 | MCP Inspector | stdio 启动入口已交付；实体 Inspector 会话待人工验收 | 待人工验证 | 待验证确认链接和结构化输出 | 待验证外部浏览器确认回传 | No-Go |
 | Claude 当前稳定版 | 标准 stdio/远程入口已具备，待真实客户端验证 | 待验证 | 待验证确认链接和结构化输出 | 待验证外部浏览器确认回传 | No-Go |
 | Kimi 当前稳定版 | 标准 stdio/远程入口已具备，待真实客户端验证 | 待验证 | 待验证确认链接和结构化输出 | 待验证外部浏览器确认回传 | No-Go |
