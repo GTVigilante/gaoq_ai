@@ -17,6 +17,7 @@ import {
   type AttendanceMonthlySnapshotDocument,
 } from '../../attendance/persistence/attendance.schemas.js';
 import { AccessProfileRepository } from '../../identity/access-profile.repository.js';
+import { LegacyPayrollBoundaryService } from '../legacy-payroll-boundary.service.js';
 import {
   calculatePayroll,
   createPayrollPeriod,
@@ -200,6 +201,7 @@ export class PayrollRunService {
   constructor(
     private readonly idempotency: IdempotencyService,
     private readonly context: TenantContextService,
+    private readonly boundary: LegacyPayrollBoundaryService,
     private readonly profiles: AccessProfileRepository,
     private readonly crypto: PayrollDataCryptoService,
     private readonly outbox: PayrollOutboxWriter,
@@ -225,6 +227,7 @@ export class PayrollRunService {
     input: ImportPayrollPeriodFromMigrationInput,
   ): Promise<PayrollPeriodSummary> {
     this.assertMigrationWriter();
+    this.boundary.assertLegacy();
     assertPeriodMigrationInput(input);
     return this.run(() => this.idempotency.execute(
       'payroll.period.import_from_migration', key, input, async (session) => {
@@ -282,6 +285,7 @@ export class PayrollRunService {
     input: ImportPayrollCalculationRunFromMigrationInput,
   ): Promise<PayrollCalculationRunMigrationSummary> {
     this.assertMigrationWriter();
+    this.boundary.assertLegacy();
     assertCalculationRunMigrationInput(input);
     return this.run(() => this.idempotency.execute(
       'payroll.run.import_from_migration', key, input, async (session) => {
@@ -392,6 +396,7 @@ export class PayrollRunService {
     if (trusted.actor.actorType !== 'user') throw new ForbiddenException({
       code: 'PAYROLL_PERIOD_HUMAN_REQUIRED', message: '工资周期只能由已验证人员创建',
     });
+    this.boundary.assertLegacy();
     return this.run(() => this.idempotency.execute(
       'payroll.period.create', key, { period }, async (session) => {
       const created = createPayrollPeriod({
@@ -415,6 +420,7 @@ export class PayrollRunService {
     expectedVersion: number,
   ): Promise<PayrollPeriodSummary> {
     this.assertScope('erp:payroll:period:prepare');
+    this.boundary.assertLegacy();
     return this.run(() => this.idempotency.execute(
       'payroll.period.start_collection', key, { periodId, expectedVersion }, async (session) => {
         const current = await this.periods.findOne({
@@ -445,6 +451,7 @@ export class PayrollRunService {
         code: 'PAYROLL_RUN_SERVICE_REQUIRED', message: '工资计算只允许受信任计算服务执行',
       });
     }
+    this.boundary.assertLegacy();
     this.assertRunInput(input);
     return this.run(() => this.idempotency.execute(
       'payroll.run.execute', key, input, async (session) => {
@@ -543,6 +550,7 @@ export class PayrollRunService {
 
   async getPeriod(id: string): Promise<PayrollPeriodSummary> {
     this.assertScope('erp:payroll:period:read');
+    this.boundary.assertLegacy();
     if (!ID_PATTERN.test(id)) throw new BadRequestException({
       code: 'PAYROLL_PERIOD_ID_INVALID', message: '工资周期标识非法',
     });
@@ -559,6 +567,7 @@ export class PayrollRunService {
     expectedVersion: number,
   ): Promise<LockedPayrollDisbursementSource> {
     this.assertScope('erp:treasury:disbursement:prepare');
+    this.boundary.assertLegacy();
     return this.loadLockedDisbursementSource(periodId, expectedVersion, false);
   }
 
@@ -576,6 +585,7 @@ export class PayrollRunService {
         message: '迁移工资支付来源只允许受信任服务身份读取',
       });
     }
+    this.boundary.assertLegacy();
     return this.loadLockedDisbursementSource(periodId, expectedVersion, true);
   }
 

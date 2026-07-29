@@ -17,6 +17,7 @@ import { ApprovalApplicationService } from '../../approval/application/approval-
 import { AccessProfileRepository } from '../../identity/access-profile.repository.js';
 import type { VerifiedAccessToken } from '../../identity/auth.types.js';
 import { WebAuthnService } from '../../identity/strong-auth/webauthn.service.js';
+import { LegacyPayrollBoundaryService } from '../legacy-payroll-boundary.service.js';
 import {
   applyPayrollApproval,
   lockPayrollPeriod,
@@ -82,6 +83,7 @@ export class PayrollApprovalService {
   constructor(
     private readonly idempotency: IdempotencyService,
     private readonly context: TenantContextService,
+    private readonly boundary: LegacyPayrollBoundaryService,
     private readonly profiles: AccessProfileRepository,
     private readonly approvals: ApprovalApplicationService,
     private readonly strongAuth: WebAuthnService,
@@ -100,6 +102,7 @@ export class PayrollApprovalService {
     input: ImportPayrollPeriodApprovalFromMigrationInput,
   ): Promise<PayrollPeriodControlMigrationSummary> {
     this.assertMigrationWriter();
+    this.boundary.assertLegacy();
     assertApprovalMigrationInput(input);
     return this.run(() => this.idempotency.execute(
       'payroll.period_approval.import_from_migration', key, input, async (session) => {
@@ -170,6 +173,7 @@ export class PayrollApprovalService {
     input: ImportPayrollPeriodLockFromMigrationInput,
   ): Promise<PayrollPeriodControlMigrationSummary> {
     this.assertMigrationWriter();
+    this.boundary.assertLegacy();
     assertLockMigrationInput(input);
     return this.run(() => this.idempotency.execute(
       'payroll.period_lock.import_from_migration', key, input, async (session) => {
@@ -239,6 +243,7 @@ export class PayrollApprovalService {
     if (actor.actorType !== 'user') throw new ForbiddenException({
       code: 'PAYROLL_APPROVAL_HUMAN_REQUIRED', message: '工资送审只能由已验证人员执行',
     });
+    this.boundary.assertLegacy();
     const current = await this.requirePeriod(periodId);
     const domain = payrollPeriodFromRecord(current);
     if (domain.version !== expectedVersion || domain.status !== 'review' || domain.activeRun === null) {
@@ -299,6 +304,7 @@ export class PayrollApprovalService {
         code: 'PAYROLL_APPROVAL_SERVICE_REQUIRED', message: '只允许受信任审批同步服务执行',
       });
     }
+    this.boundary.assertLegacy();
     const decision = await this.approvals.getPayrollPeriodDecision(approvalInstanceId);
     return this.run(() => this.idempotency.execute(
       'payroll.approval.apply', key,
@@ -350,6 +356,7 @@ export class PayrollApprovalService {
     ) throw new ForbiddenException({
       code: 'PAYROLL_LOCK_IDENTITY_INVALID', message: '工资锁定身份上下文非法',
     });
+    this.boundary.assertLegacy();
     if (!ULID_PATTERN.test(periodId) || !ULID_PATTERN.test(evidenceId)) {
       throw new ForbiddenException({ code: 'PAYROLL_LOCK_EVIDENCE_INVALID', message: '锁定证据非法' });
     }

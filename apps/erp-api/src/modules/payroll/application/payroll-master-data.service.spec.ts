@@ -173,8 +173,10 @@ function assemble() {
     findOne: vi.fn().mockImplementation(() => query(null)),
     create: vi.fn().mockResolvedValue(undefined),
   };
+  const boundary = { assertLegacy: vi.fn() };
   const service = new PayrollMasterDataService(
-    idempotency as never, context, employees as never, approvals as never,
+    idempotency as never, context, boundary as never,
+    employees as never, approvals as never,
     crypto as never, outbox as never,
     profiles as unknown as Model<PayrollCompensationProfileDocument>,
     rulePacks as unknown as Model<PayrollRulePackDocument>,
@@ -189,10 +191,53 @@ function assemble() {
     outbox,
     profiles,
     rulePacks,
+    boundary,
   };
 }
 
 describe('PayrollMasterDataService migration', () => {
+  it('external 模式覆盖薪酬与规则的迁移和在线证明入口', async () => {
+    const failure = new Error('PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM');
+    const cases: readonly [
+      ActorContext,
+      (store: ReturnType<typeof assemble>) => Promise<unknown>,
+    ][] = [
+      [actor(), (store) =>
+        store.service.importCompensationFromMigration(
+          'boundary-compensation-migration',
+          {} as never,
+        )],
+      [actor(), (store) =>
+        store.service.importRulePackFromMigration('boundary-rule-migration', {} as never)],
+      [actorWith(['erp:payroll:compensation:attest']), (store) =>
+        store.service.attestCompensation(
+          'boundary-compensation-attest',
+          {} as never,
+        )],
+      [actorWith(['erp:payroll:rule:attest']), (store) =>
+        store.service.attestRulePack('boundary-rule-attest', {} as never)],
+    ];
+    for (const [principal, execute] of cases) {
+      const store = assemble();
+      store.boundary.assertLegacy.mockImplementation(() => { throw failure; });
+      await expect(store.context.run({ tenant, actor: principal }, () => execute(store)))
+        .rejects.toBe(failure);
+      expect(store.idempotency.execute).not.toHaveBeenCalled();
+      expect(store.employees.findById).not.toHaveBeenCalled();
+      expect(store.approvals.verifyPayrollMigrationReference).not.toHaveBeenCalled();
+      expect(store.crypto.protect).not.toHaveBeenCalled();
+    }
+
+    const unauthorized = assemble();
+    await expect(unauthorized.context.run({
+      tenant, actor: actorWith([]),
+    }, () => unauthorized.service.attestCompensation(
+      'boundary-unauthorized',
+      compensationAttestation(),
+    ))).rejects.toMatchObject({ response: { code: 'AUTH_SCOPE_DENIED' } });
+    expect(unauthorized.boundary.assertLegacy).not.toHaveBeenCalled();
+  });
+
   it('迁移薪酬档案只写密文、审批与 WORM 控制字段', async () => {
     const store = assemble();
     const data = profileData();

@@ -14,6 +14,7 @@ import { IdempotencyService } from '../../../core/idempotency/idempotency.servic
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import { EmployeeRepository } from '../../org/persistence/org.repositories.js';
 import { ApprovalApplicationService } from '../../approval/application/approval-application.service.js';
+import { LegacyPayrollBoundaryService } from '../legacy-payroll-boundary.service.js';
 import {
   calculatePayroll,
   payrollDigest,
@@ -118,6 +119,7 @@ export class PayrollMasterDataService {
   constructor(
     private readonly idempotency: IdempotencyService,
     private readonly context: TenantContextService,
+    private readonly boundary: LegacyPayrollBoundaryService,
     private readonly employees: EmployeeRepository,
     private readonly approvals: ApprovalApplicationService,
     private readonly crypto: PayrollDataCryptoService,
@@ -134,6 +136,7 @@ export class PayrollMasterDataService {
     input: ImportPayrollCompensationFromMigrationInput,
   ): Promise<CompensationProfileSummary> {
     this.assertMigrationWriter();
+    this.boundary.assertLegacy();
     this.assertInterval(input.effectiveFrom, input.effectiveTo);
     assertMigrationEnvelope(input);
     const parsed = profileSchema.safeParse(input.data);
@@ -212,6 +215,7 @@ export class PayrollMasterDataService {
     input: ImportPayrollRulePackFromMigrationInput,
   ): Promise<RulePackSummary> {
     this.assertMigrationWriter();
+    this.boundary.assertLegacy();
     this.assertInterval(input.effectiveFrom, input.effectiveTo);
     assertMigrationEnvelope(input);
     if (!ID_PATTERN.test(input.code) || !ID_PATTERN.test(input.jurisdictionCode) ||
@@ -296,6 +300,7 @@ export class PayrollMasterDataService {
     input: AttestCompensationProfileDto,
   ): Promise<CompensationProfileSummary> {
     this.assertTrustedService('erp:payroll:compensation:attest');
+    this.boundary.assertLegacy();
     const effectiveTo = input.effectiveTo ?? null;
     this.assertInterval(input.effectiveFrom, effectiveTo);
     if (!ID_PATTERN.test(input.employeeId) || !ID_PATTERN.test(input.approvalEvidenceId)) {
@@ -367,6 +372,7 @@ export class PayrollMasterDataService {
 
   async attestRulePack(key: string, input: AttestPayrollRulePackDto): Promise<RulePackSummary> {
     this.assertTrustedService('erp:payroll:rule:attest');
+    this.boundary.assertLegacy();
     const effectiveTo = input.effectiveTo ?? null;
     this.assertInterval(input.effectiveFrom, effectiveTo);
     if (

@@ -62,12 +62,13 @@
   只依赖 Controller Guard。ERP 为兼容旧客户端保留的
   `payroll_payslip_get_self` Tool/Resource 在 `external` 模式只返回
   `PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM`，不得读取 ERP 旧工资集合或解密快照。
-- 当前共享 `LegacyPayrollBoundaryService` 已由 REST Guard、本人薪资单应用服务
-  和全部 Treasury 应用服务复用。银行账户、代发、回盘、失败恢复和 Treasury
-  四方对账的在线、迁移及内部续跑入口均先校验可信主体与最小 Scope，再在审批、
-  强认证、生产授权、Payroll 端口、Mongo、加密、WORM、银行网关或 Inbox 前
-  失败关闭。其余旧 Payroll 算薪运行、审批、主数据、税务、对账和影子周期应用
-  服务仍须按风险逐项下沉，不能据此宣称旧 Payroll 内部入口已经完成切换。
+- 当前共享 `LegacyPayrollBoundaryService` 已由 REST Guard、全部旧 Payroll
+  应用服务和全部 Treasury 应用服务复用。算薪运行、本人薪资单、审批、主数据、
+  税务、Payroll/Treasury 对账、影子周期、银行账户、代发、回盘和失败恢复的
+  在线、MCP 只读、迁移及内部跨域入口均自行先校验可信主体与最小 Scope，再在
+  输入解释、审批、强认证、生产授权、Mongo、加密、WORM、银行/税务网关或
+  Inbox 前失败关闭。调用方经过 Controller、Worker 或上层应用服务不构成绕过
+  边界的理由。
 - ERP 门户只进行统一登录和受控跳转；工资明细不复制到 ERP。
 - 本人工资条由专业算薪系统自己的 OAuth Resource 和标准 MCP 提供；访问令牌中的
   `employee_id` 必须由服务端身份映射产生。ERP 不使用服务令牌加请求体
@@ -79,8 +80,8 @@
 ## 当前代码切换
 
 - GaoQ 默认 `PAYROLL_SYSTEM_MODE=external`，旧 Payroll/Treasury REST 写入口停止
-  形成工资事实；旧本人薪资单和全部 Treasury 应用服务同步失败关闭，MCP、迁移、
-  Worker 或内部续跑不可绕过 REST 守卫。
+  形成工资事实；全部旧 Payroll/Treasury 应用服务同步失败关闭，MCP、迁移、
+  Worker、内部续跑或跨域读取不可绕过 REST 守卫。
 - 专业算薪系统已实现权威快照同步、事件 Inbox、字段加密、确定性整数分计算、
   提交审批、职责分离锁定和本人工资条访问。
 - ERP 与专业算薪的七类共享事件现按完整信封、精确字段集、状态、日期、范围、

@@ -43,8 +43,10 @@ function assemble(overrides: Record<string, unknown> = {}) {
   const runs = overrides.runs ?? {};
   const snapshots = overrides.snapshots ?? {};
   const calculationLines = overrides.calculationLines ?? {};
+  const boundary = { assertLegacy: vi.fn() };
   const service = new PayrollRunService(
-    idempotency as never, context, profiles as never, crypto as never, outbox as never,
+    idempotency as never, context, boundary as never,
+    profiles as never, crypto as never, outbox as never,
     periods as never, rulePacks as never, compensation as never, attendance as never,
     runs as never, snapshots as never, calculationLines as never,
   );
@@ -61,11 +63,59 @@ function assemble(overrides: Record<string, unknown> = {}) {
     runs,
     snapshots,
     calculationLines,
+    boundary,
     service,
   };
 }
 
 describe('PayrollRunService 信任边界', () => {
+  it('external 模式覆盖在线、迁移、查询及 Treasury 内部读取入口', async () => {
+    const failure = new Error('PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM');
+    const migration = actor(
+      ['erp:migration:execute', 'erp:payroll:migration:write'],
+      'service',
+    );
+    const cases: readonly [
+      ActorContext,
+      (store: ReturnType<typeof assemble>) => Promise<unknown>,
+    ][] = [
+      [migration, (store) => store.service.importPeriodFromMigration('boundary-period', {} as never)],
+      [migration, (store) =>
+        store.service.importCalculationRunFromMigration('boundary-run-migration', {} as never)],
+      [actor(['erp:payroll:period:create']), (store) =>
+        store.service.createPeriod('boundary-create', 'invalid')],
+      [actor(['erp:payroll:period:prepare']), (store) =>
+        store.service.startCollection('boundary-collect', 'invalid', 0)],
+      [actor(['erp:payroll:run:execute'], 'service'), (store) =>
+        store.service.executeRun('boundary-run', {} as never)],
+      [actor(['erp:payroll:period:read']), (store) => store.service.getPeriod('invalid')],
+      [actor(['erp:treasury:disbursement:prepare']), (store) =>
+        store.service.getLockedDisbursementSource('invalid', 0)],
+      [actor(
+        ['erp:migration:execute', 'erp:treasury:migration:write'],
+        'service',
+      ), (store) => store.service.getLockedDisbursementSourceForMigration('invalid', 0)],
+    ];
+    for (const [principal, execute] of cases) {
+      const store = assemble();
+      store.boundary.assertLegacy.mockImplementation(() => { throw failure; });
+      await expect(store.context.run({ tenant, actor: principal }, () => execute(store)))
+        .rejects.toBe(failure);
+      expect(store.idempotency.execute).not.toHaveBeenCalled();
+      expect(store.periods.findOne).not.toHaveBeenCalled();
+      expect(store.periods.create).not.toHaveBeenCalled();
+    }
+
+    const unauthorized = assemble();
+    await expect(unauthorized.context.run({
+      tenant, actor: actor([], 'service'),
+    }, () => unauthorized.service.executeRun(
+      'boundary-unauthorized',
+      {} as never,
+    ))).rejects.toBeInstanceOf(ForbiddenException);
+    expect(unauthorized.boundary.assertLegacy).not.toHaveBeenCalled();
+  });
+
   it('创建周期只使用可信租户和当前已验证人员', async () => {
     const store = assemble();
     const result = await store.context.run({
@@ -384,7 +434,7 @@ describe('PayrollRunService 迁移重算控制', () => {
       }),
     };
     const service = new PayrollRunService(
-      idempotency as never, context, {} as never,
+      idempotency as never, context, { assertLegacy: vi.fn() } as never, {} as never,
       crypto as never, outbox as never,
       periods as never, rulePacks as never, compensation as never, attendance as never,
       runs as never, snapshots as never, calculationLines as never,

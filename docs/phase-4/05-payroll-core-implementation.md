@@ -2,6 +2,19 @@
 
 本批次实现工资计算的可信主数据、不可变输入/结果快照、周期持久化、REST、CloudEvents、审计和只读 MCP。它不包含审批锁定、工资单、银行代发或税务申报，因此旧系统仍是生产工资事实源。
 
+## 专业算薪模式边界
+
+`PayrollRunService` 与 `PayrollMasterDataService` 的在线、迁移、MCP 只读及
+Treasury 内部读取入口均自行校验可信主体和最小 Scope，并复用
+`LegacyPayrollBoundaryService`。默认 `PAYROLL_SYSTEM_MODE=external` 时，
+边界在输入解释、幂等、员工/考勤/审批读取、Mongo、解密和确定性计算前返回
+`PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM`；Controller、迁移控制面或跨域调用
+已经授权不能替代本层校验。
+
+算薪运行 33 项专项测试达到 92.36%/90.20%/96.10%/93.37%，主数据 18 项达到
+四维 100%（语句/分支/函数/行）。本地结果只证明旧 ERP 入口关闭和兼容路径
+完整性，不证明专业算薪真实联调、历史迁移或业务 UAT 已完成。
+
 ## 权威输入链
 
 工资运行接口只接收 `periodId / rulePackId / employeeId / compensationProfileId / attendanceSnapshotId` 等 ERP 引用，不接收金额、累计税额、租户或上游 Token。应用服务在同一 MongoDB 事务快照内完成：

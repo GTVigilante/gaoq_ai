@@ -54,12 +54,14 @@ function assemble(aggregateHash = runHash) {
     dataKeyId: 'key', dataIv: 'iv', dataCiphertext: 'cipher', dataAuthTag: 'tag',
   }])) };
   const crypto = { unprotect: vi.fn().mockReturnValue(result) };
+  const boundary = { assertLegacy: vi.fn() };
   const service = new PayrollRunService(
-    {} as never, context, {} as never, crypto as never, {} as never, periods as never,
+    {} as never, context, boundary as never,
+    {} as never, crypto as never, {} as never, periods as never,
     {} as never, {} as never, {} as never, {} as never, {} as never,
     calculationLines as never,
   );
-  return { context, period, periods, calculationLines, crypto, service };
+  return { context, period, periods, calculationLines, crypto, boundary, service };
 }
 
 describe('Payroll 锁定代发源端口', () => {

@@ -2,6 +2,11 @@
 
 > Phase 4 安全门禁：`PAYROLL_TAX_GATEWAY_MODE` 默认并必须保持 `sandbox`。沙箱请求与回执必须双向绑定 `submissionMode=sandbox`，外部网关必须使用税务沙箱租户与沙箱凭据。Phase 6 的 `production` 模式仍要求独立授权域逐清单绑定租户、摘要、版本、发布 commit 和部署清单，并由税务网关回显授权 WORM 证据；缺少任一项时应用服务与 HTTP Adapter 双重失败关闭。两个工资影子周期资格本身不足以授权真实申报。
 
+> `PayrollTaxFilingService` 的历史申报导入、只读、制备、审批和提交均在完成可信
+> 主体/Scope 与令牌主体绑定后调用共享 `LegacyPayrollBoundaryService`。
+> 默认 `PAYROLL_SYSTEM_MODE=external` 时，在输入解释、幂等、强认证、Mongo、
+> 加密、WORM、production 授权和税务网关前失败关闭；MCP 只读不能绕过。
+
 ## 责任边界
 
 ERP 从锁定工资结果、有效劳动关系和 `Person.identityEvidenceId` 生成确定性的 `CN_IIT_WITHHOLDING_MANIFEST_V1` 内部清单。该清单是税务隔离网关的输入契约，不冒充任何地区税局官方格式；地区格式转换、证件明文解析、税局客户端和税局凭据只存在于受控税务网关权限域。
@@ -55,12 +60,13 @@ REST 与 MCP 复用同一个 `PayrollTaxFilingService.getStatus` 应用服务，
 
 ## 自动化证据与外部验收
 
-`pnpm quality:payroll-tax-filing-coverage` 会先验证 28 项申报应用服务测试，再执行
+`pnpm quality:payroll-tax-filing-coverage` 会先验证 29 项申报应用服务测试，再执行
 `pnpm quality:payroll-tax-http-coverage` 的 131 项 WORM/税务网关协议测试。三个
 HTTP 生产文件合计覆盖率为 99.35%/98.57%/100%/99.25%
 （语句/分支/函数/行），归档适配器四维 100%，提交适配器为
 98.14%/98.52%/100%/97.82%，共享读取器为 100%/96.66%/100%/100%；
 三个文件均由逐文件四维 90% 门禁保护并已接入 `pnpm check`。
+申报应用服务达到 98.90%/98.58%/100%/100%，其独立四维 90% 门禁同时通过。
 
 这些自动化证据只证明仓库实现。真实税务沙箱租户、WORM Object Lock/法定保留与
 回读证明、网关签名/限流、Secret 轮换、断连恢复、production 独立授权域和税务
