@@ -310,12 +310,15 @@ const talentLifecycleSchema = z.object({
     'talent_pool', 'recruiting', 'offer', 'onboarding', 'employed',
     'offboarding', 'alumni', 'former_employee', 'inactive',
   ]),
-  currentApplicationStage: z.string().nullable(),
-  employeeStatus: z.string().nullable(),
+  currentApplicationStage: z.enum([
+    'applied', 'screening', 'interview', 'offer_approval', 'offer_sent',
+    'offer_accepted', 'preboarding', 'hired', 'rejected', 'withdrawn',
+  ]).nullable(),
+  employeeStatus: z.enum(['probation', 'active', 'suspended', 'terminated']).nullable(),
   openFollowUpCount: z.number().int().nonnegative(),
-  nextActionAt: z.string().nullable(),
-  updatedAt: z.string(),
-});
+  nextActionAt: z.string().datetime({ offset: true }).nullable(),
+  updatedAt: z.string().datetime({ offset: true }),
+}).strict();
 const attendanceMonthSchema = z.object({
   id: z.string(), employeeId: z.string(), month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
   snapshotVersion: z.number().int().positive(), rulesetVersion: z.string(),
@@ -1987,7 +1990,7 @@ export class McpRuntimeService {
         title: '查询人才全周期脱敏摘要',
         description: '返回生命周期阶段、待跟进数量和下一行动时间，不返回身份或备注。风险等级 R0。',
         inputSchema: { candidateId: recruitmentIdSchema },
-        outputSchema: z.object({ lifecycle: talentLifecycleSchema }),
+        outputSchema: z.object({ lifecycle: talentLifecycleSchema }).strict(),
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
       },
       async ({ candidateId }, extra) => this.tools.getTalentLifecycle(candidateId, extra),

@@ -297,7 +297,16 @@ export class McpToolService {
         await this.auditTool(identity, 'talent_lifecycle_get', 'R0', 'denied');
         return scopeError('erp:talent-lifecycle:read');
       }
-      const lifecycle = await this.talentLifecycle.getForMcp(candidateId);
+      const source = await this.talentLifecycle.getForMcp(candidateId);
+      const lifecycle = Object.freeze({
+        candidateId: source.candidateId,
+        stage: source.stage,
+        currentApplicationStage: source.currentApplicationStage,
+        employeeStatus: source.employeeStatus,
+        openFollowUpCount: source.openFollowUpCount,
+        nextActionAt: source.nextActionAt,
+        updatedAt: source.updatedAt,
+      });
       await this.auditTool(identity, 'talent_lifecycle_get', 'R0', 'success');
       return structuredResult({ lifecycle });
     });

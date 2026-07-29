@@ -671,6 +671,9 @@ describe('McpToolService', () => {
       openFollowUpCount: 1,
       nextActionAt: '2026-07-28T08:00:00.000Z',
       updatedAt: '2026-07-27T08:00:00.000Z',
+      displayName: '不得进入 MCP',
+      note: '不得进入 MCP',
+      tenantId: 'tenant-001',
     });
     const denied = await store.service.getTalentLifecycle(
       candidateId,
@@ -682,11 +685,19 @@ describe('McpToolService', () => {
       candidateId,
       extra(['erp:mcp:server:connect', 'erp:talent-lifecycle:read']),
     );
-    expect(result.structuredContent).toMatchObject({
-      lifecycle: { stage: 'recruiting', openFollowUpCount: 1 },
+    expect(result.structuredContent).toEqual({
+      lifecycle: {
+        candidateId,
+        stage: 'recruiting',
+        currentApplicationStage: 'interview',
+        employeeStatus: null,
+        openFollowUpCount: 1,
+        nextActionAt: '2026-07-28T08:00:00.000Z',
+        updatedAt: '2026-07-27T08:00:00.000Z',
+      },
     });
     expect(JSON.stringify(result)).not.toMatch(
-      /displayName|phone|email|note|reasonCode|EvidenceId/iu,
+      /displayName|phone|email|note|reasonCode|EvidenceId|tenantId/iu,
     );
   });
 

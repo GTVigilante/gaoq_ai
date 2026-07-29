@@ -380,9 +380,26 @@ downloadSignedFile / verifySignedFile`；入站验签由独立 Webhook 边界完
 
 - ERP 管理端 `/workspace/talent-lifecycle` 提供人才列表、阶段筛选、跨域时间线、开放跟进、下一步行动和服务记录；列表只搜索候选人标识、授权可见姓名及职位名称，部门数据范围继续由各权威域应用服务裁剪。没有 `read_all` 的主体只读取本人负责的服务触点，避免跨责任人备注明文泄露。
 - 只读端点固定为 `GET /talent-lifecycle/people` 与 `GET /talent-lifecycle/people/:candidateId`，要求 `erp:talent-lifecycle:read`。创建触点固定为 `POST /talent-lifecycle/people/:candidateId/touchpoints`，关闭固定为 `POST /talent-lifecycle/touchpoints/:id/close`，同时要求读 Scope 与 `erp:talent-lifecycle:touchpoint:write`。
+- REST 列表、详情和写响应必须经过显式公开投影。详情只保留管理页面所需的跨域
+  摘要、服务触点和时间线，不得展开候选人联系授权内部期限、保留期、部门路由、
+  任务证据、未展示的写关联键、租户或持久化时间戳；写响应不得包含备注。浏览器必须在
+  渲染或确认成功前严格校验顶层和嵌套字段、枚举、ULID、规范时间、数组上限、
+  唯一性及触点与候选人反向绑定，未知字段一律失败关闭。
+- PC 同时读取 `/auth/profile` 的可信身份摘要。只有同时具备
+  `erp:talent-lifecycle:read` 与 `erp:talent-lifecycle:touchpoint:write` 才显示
+  创建入口；关闭入口还要求责任人本人，或额外具备
+  `erp:talent-lifecycle:touchpoint:write_all`。服务端 Scope 与责任人校验仍是最终
+  授权边界，前端隐藏入口不能代替授权。
+- 创建和关闭在第一次发送前冻结可信主体、候选人/触点、请求正文、目标版本与
+  幂等键。网络断开、超时、限流、处理中、5xx 或成功响应契约无法验证时，只允许
+  复用完全相同请求重试；明确 4xx 拒绝、主体变化或权限撤销后清除原请求。结果
+  未知期间禁止修改表单、关闭详情或换用新幂等键。
 - 创建与关闭分别发布 `cn.gaoq.erp.talent.touchpoint.created.v1`、`cn.gaoq.erp.talent.touchpoint.completed.v1` 或 `cn.gaoq.erp.talent.touchpoint.cancelled.v1`。事件只含候选人/聚合引用、版本、受控类型/渠道/结果、状态、发生时间和下一行动时间，不含姓名、联系方式、备注、负责人或方向。
 - MCP Resource Template 固定为 `erp://talent-lifecycle/people/{candidateId}`，Tool 固定为 `talent_lifecycle_get`，Prompt 固定为 `talent_lifecycle_follow_up_guide`。输出仅含候选人引用、生命周期阶段、当前申请阶段、员工状态、开放跟进数、下一行动时间和更新时间。
-- MCP 不提供触点创建、关闭、候选人分类、录用、入职、离职或校友联系写能力；AI 只能基于最小只读投影给出人工跟进建议。
+- MCP Tool 输出必须再次按上述七个字段构造冻结投影，顶层与生命周期对象使用严格
+  Schema，申请阶段、员工状态和时间格式不得退化为任意字符串。MCP 不提供触点
+  创建、关闭、候选人分类、录用、入职、离职或校友联系写能力；AI 只能基于最小
+  只读投影给出人工跟进建议。
 - 四域来源完整性由 `pnpm quality:talent-lifecycle-sources-coverage` 独立门禁覆盖，
   四个生产查询口逐文件语句、分支、函数和行均不得低于 90%；MCP 继续只复用
   `TalentLifecycleService.getForMcp`，不得直接调用四域仓储或绕过引用闭包校验。
@@ -392,6 +409,9 @@ downloadSignedFile / verifySignedFile`；入站验签由独立 Webhook 边界完
   生产文件逐文件语句、分支、函数和行均不得低于 90%；标准 MCP 不因此新增
   触点写入、Outbox、重放或人工处置 Tool。
 - 当前代码已交付跨域应用服务投影、加密触点、REST、Outbox、MCP、管理页面和独立索引迁移；生产数据迁移、权限角色映射、代表性全周期数据回放及 HR/员工关怀/校友 UAT 仍待现场执行。
+- 弱网 UAT 还必须分别覆盖“请求未到达”“业务已提交但响应丢失”“幂等处理中”
+  “明确拒绝”“主体/Scope 变化”和“跨责任人关闭”六条路径，并用审计、Outbox
+  与最终触点版本证明没有重复创建、重复关闭或越权备注读取。
 
 ## 6. 发布门禁
 

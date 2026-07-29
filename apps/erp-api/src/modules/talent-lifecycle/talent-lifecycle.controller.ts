@@ -23,7 +23,10 @@ import {
 } from './application/talent-lifecycle.dto.js';
 import {
   TalentLifecycleService,
-  type TalentLifecycleDetail,
+  toTalentLifecyclePublicDetail,
+  toTalentLifecycleSummaryView,
+  toTalentTouchpointMutationView,
+  type TalentLifecyclePublicDetail,
   type TalentLifecycleSummary,
   type TalentTouchpointMutationView,
 } from './application/talent-lifecycle.service.js';
@@ -62,18 +65,23 @@ export class TalentLifecycleController {
 
   @Get('people')
   @RequiredScopes('erp:talent-lifecycle:read')
-  list(
+  async list(
     @Query() query: ListTalentLifecycleDto,
   ): Promise<{ readonly items: readonly TalentLifecycleSummary[] }> {
-    return this.lifecycle.list(query);
+    const result = await this.lifecycle.list(query);
+    return Object.freeze({
+      items: Object.freeze(result.items.map(toTalentLifecycleSummaryView)),
+    });
   }
 
   @Get('people/:candidateId')
   @RequiredScopes('erp:talent-lifecycle:read')
-  get(
+  async get(
     @Param('candidateId') candidateId: string,
-  ): Promise<TalentLifecycleDetail> {
-    return this.lifecycle.get(this.ulid(candidateId));
+  ): Promise<TalentLifecyclePublicDetail> {
+    return toTalentLifecyclePublicDetail(
+      await this.lifecycle.get(this.ulid(candidateId)),
+    );
   }
 
   @Post('people/:candidateId/touchpoints')
@@ -117,7 +125,9 @@ export class TalentLifecycleController {
         status: result.touchpoint.status,
       },
     );
-    return result;
+    return Object.freeze({
+      touchpoint: toTalentTouchpointMutationView(result.touchpoint),
+    });
   }
 
   @Post('touchpoints/:id/close')
@@ -163,7 +173,9 @@ export class TalentLifecycleController {
         version: result.touchpoint.version,
       },
     );
-    return result;
+    return Object.freeze({
+      touchpoint: toTalentTouchpointMutationView(result.touchpoint),
+    });
   }
 
   private createRequest(value: unknown): CreateTalentTouchpointDto {

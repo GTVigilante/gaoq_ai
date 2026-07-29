@@ -3,7 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuditService } from '../../core/audit/audit.service.js';
 import { REQUIRED_SCOPES_KEY } from '../identity/auth.decorators.js';
-import type { TalentLifecycleService } from './application/talent-lifecycle.service.js';
+import type {
+  TalentLifecycleDetail,
+  TalentLifecycleService,
+} from './application/talent-lifecycle.service.js';
 import { TalentLifecycleController } from './talent-lifecycle.controller.js';
 
 const CANDIDATE_ID = '01J8ZQK7V0A2M4N6P8R0T2W4Y6';
@@ -72,16 +75,131 @@ describe('TalentLifecycleController', () => {
     ]);
   });
 
-  it('列表与详情读取仅把白名单参数交给应用服务', async () => {
+  it('列表与详情读取仅把白名单参数交给应用服务并压缩公开投影', async () => {
     const store = fixture();
     const query = { limit: 20, stage: 'recruiting' as const };
-    const listResult = { items: [] };
-    const detail = { candidateId: CANDIDATE_ID };
+    const summary = {
+      candidateId: CANDIDATE_ID,
+      displayName: '候选人甲',
+      stage: 'recruiting' as const,
+      candidateStatus: 'active' as const,
+      currentApplicationStage: 'interview',
+      currentPositionTitle: '平台工程师',
+      employeeStatus: null,
+      activeCareStatus: null,
+      alumniConsentStatus: null,
+      openFollowUpCount: 1,
+      nextActionAt: NEXT_ACTION_AT,
+      updatedAt: OCCURRED_AT,
+    };
+    const listResult = {
+      items: [{ ...summary, tenantId: 'tenant-001', internalEvidenceId: 'evidence-001' }],
+    };
+    const detail = {
+      ...summary,
+      personId: '01J8ZQK7V0A2M4N6P8R0T2W4P1',
+      candidateContactConsentExpiresAt: '2027-07-28T01:00:00.000Z',
+      candidateRetentionExpiresAt: '2028-07-28T01:00:00.000Z',
+      applications: [{
+        id: '01J8ZQK7V0A2M4N6P8R0T2W4A1',
+        positionId: '01J8ZQK7V0A2M4N6P8R0T2W4A2',
+        positionTitle: '平台工程师',
+        departmentId: 'department-001',
+        location: '上海',
+        stage: 'interview',
+        sourceChannel: 'portal',
+        offerId: null,
+        onboardingInstanceId: null,
+        employmentId: null,
+        appliedAt: OCCURRED_AT,
+        endedAt: null,
+        updatedAt: OCCURRED_AT,
+        stageHistory: [],
+      }],
+      onboarding: [{
+        id: '01J8ZQK7V0A2M4N6P8R0T2W4B1',
+        applicationId: '01J8ZQK7V0A2M4N6P8R0T2W4A1',
+        offerId: '01J8ZQK7V0A2M4N6P8R0T2W4B2',
+        departmentId: 'department-001',
+        proposedStartDate: '2026-08-01',
+        status: 'in_progress',
+        tasks: {},
+        employmentId: null,
+        createdAt: OCCURRED_AT,
+        updatedAt: OCCURRED_AT,
+      }],
+      employments: [{
+        id: '01J8ZQK7V0A2M4N6P8R0T2W4C1',
+        employeeId: '01J8ZQK7V0A2M4N6P8R0T2W4C2',
+        employeeNo: 'E001',
+        displayName: '员工甲',
+        employeeStatus: 'active',
+        departmentIds: ['department-001'],
+        primaryDepartmentId: 'department-001',
+        status: 'active',
+        effectiveFrom: '2026-08-01',
+        effectiveTo: null,
+        onboardingInstanceId: '01J8ZQK7V0A2M4N6P8R0T2W4B1',
+        offerId: '01J8ZQK7V0A2M4N6P8R0T2W4B2',
+        careCaseId: null,
+        createdAt: OCCURRED_AT,
+        updatedAt: OCCURRED_AT,
+      }],
+      care: {
+        cases: [{
+          id: '01J8ZQK7V0A2M4N6P8R0T2W4D1',
+          employmentId: '01J8ZQK7V0A2M4N6P8R0T2W4C1',
+          employeeId: '01J8ZQK7V0A2M4N6P8R0T2W4C2',
+          separationType: 'voluntary_resignation',
+          lastWorkingDate: '2026-12-31',
+          status: 'draft',
+          tasks: {},
+          createdAt: OCCURRED_AT,
+          updatedAt: OCCURRED_AT,
+        }],
+        alumniConsents: [{
+          id: '01J8ZQK7V0A2M4N6P8R0T2W4D2',
+          personId: '01J8ZQK7V0A2M4N6P8R0T2W4P1',
+          careCaseId: '01J8ZQK7V0A2M4N6P8R0T2W4D1',
+          purpose: 'alumni_network',
+          channels: ['email'],
+          grantedAt: OCCURRED_AT,
+          expiresAt: '2027-07-28T01:00:00.000Z',
+          withdrawnAt: null,
+          status: 'active',
+        }],
+      },
+      touchpoints: [{ ...touchpoint, note: '授权备注', tenantId: 'tenant-001' }],
+      timeline: [{
+        id: `service:${TOUCHPOINT_ID}`,
+        domain: 'service',
+        eventType: 'touchpoint.open',
+        title: '服务跟进',
+        occurredAt: OCCURRED_AT,
+        referenceType: 'touchpoint',
+        referenceId: TOUCHPOINT_ID,
+        tenantId: 'tenant-001',
+      }],
+    } as unknown as TalentLifecycleDetail;
     store.lifecycle.list.mockResolvedValue(listResult);
     store.lifecycle.get.mockResolvedValue(detail);
 
-    await expect(store.controller.list(query)).resolves.toBe(listResult);
-    await expect(store.controller.get(CANDIDATE_ID)).resolves.toBe(detail);
+    await expect(store.controller.list(query)).resolves.toEqual({ items: [summary] });
+    const publicDetail = await store.controller.get(CANDIDATE_ID);
+    expect(publicDetail).toMatchObject({
+      ...summary,
+      applications: [{
+        id: '01J8ZQK7V0A2M4N6P8R0T2W4A1',
+        positionTitle: '平台工程师',
+        stage: 'interview',
+        sourceChannel: 'portal',
+        appliedAt: OCCURRED_AT,
+      }],
+      touchpoints: [{ ...touchpoint, note: '授权备注' }],
+    });
+    expect(JSON.stringify(publicDetail)).not.toMatch(
+      /tenantId|candidateContactConsentExpiresAt|candidateRetentionExpiresAt|departmentId|employeeId|channels/iu,
+    );
 
     expect(store.lifecycle.list).toHaveBeenCalledWith(query);
     expect(store.lifecycle.get).toHaveBeenCalledWith(CANDIDATE_ID);
@@ -89,7 +207,15 @@ describe('TalentLifecycleController', () => {
 
   it('创建触点绑定目标、幂等键、强响应版本和 R2 成功审计', async () => {
     const store = fixture();
-    const result = { touchpoint };
+    const result = {
+      touchpoint: {
+        ...touchpoint,
+        tenantId: 'tenant-001',
+        note: '不得进入写响应',
+        createdAt: OCCURRED_AT,
+        updatedAt: OCCURRED_AT,
+      },
+    };
     store.lifecycle.createTouchpoint.mockResolvedValue(result);
     store.audit.record.mockResolvedValue(undefined);
 
@@ -98,7 +224,7 @@ describe('TalentLifecycleController', () => {
       KEY,
       createBody,
       store.response as never,
-    )).resolves.toBe(result);
+    )).resolves.toEqual({ touchpoint });
 
     expect(store.lifecycle.createTouchpoint).toHaveBeenCalledWith(
       CANDIDATE_ID,
@@ -171,7 +297,7 @@ describe('TalentLifecycleController', () => {
         KEY,
         { status },
         store.response as never,
-      )).resolves.toBe(result);
+      )).resolves.toEqual(result);
 
       expect(store.lifecycle.closeTouchpoint).toHaveBeenCalledWith(
         TOUCHPOINT_ID,
@@ -313,7 +439,7 @@ describe('TalentLifecycleController', () => {
       KEY,
       createBody,
       store.response as never,
-    )).resolves.toBe(result);
+    )).resolves.toEqual(result);
 
     expect(store.response.setHeader).toHaveBeenCalledWith('ETag', '"1"');
     expect(logger).toHaveBeenCalledWith({
