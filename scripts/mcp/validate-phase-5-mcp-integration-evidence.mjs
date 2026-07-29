@@ -130,10 +130,10 @@ function validateClients(clients) {
     equal(client.initialized, true, 'PHASE5_MCP_INTEGRATION_INITIALIZE_FAILED');
     equal(client.protocolVersion, '2025-11-25', 'PHASE5_MCP_INTEGRATION_PROTOCOL_INVALID');
     equal(client.catalogHash, catalog.catalogHash, 'PHASE5_MCP_INTEGRATION_CATALOG_MISMATCH');
-    equal(client.toolCount, 47, 'PHASE5_MCP_INTEGRATION_CATALOG_MISMATCH');
+    equal(client.toolCount, 50, 'PHASE5_MCP_INTEGRATION_CATALOG_MISMATCH');
     integer(client.resourceCount, 4, 10_000, 'PHASE5_MCP_INTEGRATION_COVERAGE');
-    integer(client.resourceTemplateCount, 24, 10_000, 'PHASE5_MCP_INTEGRATION_COVERAGE');
-    integer(client.promptCount, 22, 10_000, 'PHASE5_MCP_INTEGRATION_COVERAGE');
+    integer(client.resourceTemplateCount, 27, 10_000, 'PHASE5_MCP_INTEGRATION_COVERAGE');
+    integer(client.promptCount, 25, 10_000, 'PHASE5_MCP_INTEGRATION_COVERAGE');
     integer(client.toolCalls, 10, Number.MAX_SAFE_INTEGER, 'PHASE5_MCP_INTEGRATION_COVERAGE');
     for (const field of ['structuredOutputFailures', 'schemaFailures', 'errorContractFailures',
       'timeoutCancellationFailures', 'idempotencyFailures']) equal(client[field], 0,
@@ -217,7 +217,7 @@ function fixture() {
       endedAt: '2026-07-22T01:00:00.000Z' },
     clients: Object.entries(CLIENTS).map(([profile, authFlow], index) => ({ profile, authFlow,
       initialized: true, protocolVersion: '2025-11-25', catalogHash: catalog.catalogHash,
-      toolCount: 47, resourceCount: 4, resourceTemplateCount: 24, promptCount: 22,
+      toolCount: 50, resourceCount: 4, resourceTemplateCount: 27, promptCount: 25,
       toolCalls: 20, structuredOutputFailures: 0, schemaFailures: 0,
       errorContractFailures: 0, timeoutCancellationFailures: 0, idempotencyFailures: 0,
       auditEvents: 20, evidenceHash: hash(`client-${index}`) })),

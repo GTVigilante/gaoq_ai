@@ -15,6 +15,9 @@ import type { AuditRecordInput } from '../../core/audit/audit.types.js';
 import type { ErpRequest } from '../../core/http/request-context.js';
 import { RequiredScopes } from '../identity/auth.decorators.js';
 import {
+  TreasuryAdjustmentSupplementService,
+} from './application/treasury-adjustment-supplement.service.js';
+import {
   TreasuryBankAccountService,
   type TreasuryBankAccountSummary,
 } from './application/treasury-bank-account.service.js';
@@ -35,6 +38,7 @@ import {
   ExecuteTreasuryReconciliationDto,
   IngestTreasuryBankReturnDto,
   PrepareTreasuryDisbursementDto,
+  PrepareTreasuryAdjustmentSupplementDto,
   SubmitTreasuryDisbursementDto,
 } from './application/treasury.dto.js';
 import { LegacyPayrollBoundaryGuard } from '../payroll/legacy-payroll-boundary.guard.js';
@@ -46,12 +50,45 @@ export class TreasuryController {
 
   constructor(
     private readonly accounts: TreasuryBankAccountService,
+    private readonly adjustmentSupplements: TreasuryAdjustmentSupplementService,
     private readonly bankReturns: TreasuryBankReturnService,
     private readonly disbursements: TreasuryDisbursementService,
     private readonly recovery: TreasuryRecoveryService,
     private readonly reconciliation: TreasuryReconciliationService,
     private readonly audit: AuditService,
   ) {}
+
+  /** R3：只从已锁定正向调整派生关联补发子批次；员工、金额和账户均由服务端确定。 */
+  @Post('payroll-adjustments/:id/supplement')
+  @RequiredScopes(
+    'erp:treasury:adjustment:prepare',
+    'erp:treasury:adjustment:source:read',
+  )
+  async prepareAdjustmentSupplement(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Body() body: PrepareTreasuryAdjustmentSupplementDto,
+  ): Promise<TreasuryDisbursementSummary> {
+    const result = await this.adjustmentSupplements.prepare(this.key(key), id, body);
+    await this.audit.record({
+      action: 'treasury.adjustment_supplement.prepare',
+      resourceType: 'treasury_disbursement_batch',
+      resourceId: result.id,
+      riskLevel: 'R3',
+      outcome: 'success',
+      metadata: {
+        adjustmentId: id,
+        payrollPeriodId: result.payrollPeriodId,
+        payrollRunId: result.payrollRunId,
+        status: result.status,
+        version: result.version,
+        lineCount: result.lineCount,
+        totalMinor: result.totalMinor,
+        objectEvidenceId: result.objectEvidenceId ?? 'none',
+      },
+    });
+    return result;
+  }
 
   /** R3：可信服务聚合锁定工资、银行提交、终态回盘和已提交个税；MCP 不执行。 */
   @Post('disbursements/:id/reconciliation')

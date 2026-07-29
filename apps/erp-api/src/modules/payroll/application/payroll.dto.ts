@@ -1,4 +1,16 @@
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsInt, IsOptional, Matches, Max, Min, ValidateNested } from 'class-validator';
+import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
+  IsIn,
+  IsInt,
+  IsISO8601,
+  IsOptional,
+  Matches,
+  Max,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -33,6 +45,35 @@ export class LockPayrollPeriodDto extends PayrollVersionCommandDto {
   @Matches(ULID) strongAuthEvidenceId!: string;
 }
 
+export class ApplyPayrollAdjustmentApprovalDto extends PayrollVersionCommandDto {
+  @Matches(ULID) approvalInstanceId!: string;
+}
+
+export class LockPayrollAdjustmentDto extends PayrollVersionCommandDto {
+  @Matches(ULID) strongAuthEvidenceId!: string;
+}
+
+export class OpenPayrollAdjustmentReceivableDto extends PayrollVersionCommandDto {}
+
+export class RecordPayrollAdjustmentRecoveryDto {
+  @IsInt() @Min(1) expectedReceivableVersion!: number;
+  @IsIn(['bank_repayment', 'authorized_payroll_deduction'])
+  method!: 'bank_repayment' | 'authorized_payroll_deduction';
+  @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) amountMinor!: number;
+  @Matches(ID) sourceReferenceId!: string;
+  @Matches(ID) sourceEvidenceId!: string;
+  @IsOptional() @Matches(ID) legalAuthorizationEvidenceId?: string;
+  @IsISO8601({ strict: true, strictSeparator: true }) receivedAt!: string;
+}
+
+export class PreparePayrollAdjustmentTaxCorrectionDto extends PayrollVersionCommandDto {}
+
+export class ApprovePayrollAdjustmentTaxCorrectionDto extends PayrollVersionCommandDto {
+  @Matches(ULID) strongAuthEvidenceId!: string;
+}
+
+export class SubmitPayrollAdjustmentTaxCorrectionDto extends PayrollVersionCommandDto {}
+
 export class PayrollAmountComponentDto {
   @Matches(/^[A-Z][A-Z0-9_]{0,63}$/) code!: string;
   @IsInt() @Min(0) @Max(Number.MAX_SAFE_INTEGER) amountMinor!: number;
@@ -46,6 +87,7 @@ export class PayrollAttendanceAdjustmentDto {
 
 export class AttestCompensationProfileDto {
   @Matches(ID) employeeId!: string;
+  @Matches(ID) jurisdictionCode!: string;
   @Matches(DATE) effectiveFrom!: string;
   @IsOptional() @Matches(DATE) effectiveTo!: string | null;
   @Matches(ID) approvalEvidenceId!: string;
@@ -80,6 +122,38 @@ export class AttestPayrollRulePackDto {
   @Matches(/^[A-Za-z0-9_-]{43}$/) sourceDigest!: string;
   @Matches(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/) sourceReference!: string;
   @Matches(ULID) approvalEvidenceId!: string;
+}
+
+export class PayrollAdjustmentLineDto {
+  @Matches(ID) employeeId!: string;
+  @Matches(ULID) compensationProfileId!: string;
+  @IsOptional() @IsArray() @ArrayMaxSize(30) @Matches(ULID, { each: true })
+  additionalCompensationProfileIds?: string[];
+  @Matches(ULID) attendanceSnapshotId!: string;
+}
+
+export class PreparePayrollAdjustmentDto {
+  @Matches(ULID) periodId!: string;
+  @Matches(ULID) originalCalculationLineId!: string;
+  @Matches(ULID) rulePackId!: string;
+  @IsInt() @Min(1) rulePackVersion!: number;
+  @Matches(/^[A-Z][A-Z0-9_]{1,63}$/) reasonCode!: string;
+  @ValidateNested() @Type(() => PayrollAdjustmentLineDto)
+  correctedLine!: PayrollAdjustmentLineDto;
+}
+
+export class OfficialAnnualTaxAssessmentDto {
+  @Matches(ID) assessmentId!: string;
+  @Matches(ID) assessmentEvidenceId!: string;
+  @IsInt() @Min(0) @Max(Number.MAX_SAFE_INTEGER) assessedTaxMinor!: number;
+  @Matches(/^[A-Za-z0-9_-]{43}$/) sourceDigest!: string;
+}
+
+export class PrepareAnnualPayrollReconciliationDto {
+  @Matches(ID) employeeId!: string;
+  @Matches(/^\d{4}$/) taxYear!: string;
+  @IsOptional() @ValidateNested() @Type(() => OfficialAnnualTaxAssessmentDto)
+  officialAssessment?: OfficialAnnualTaxAssessmentDto;
 }
 
 export class LegacyShadowPayrollLineDto {

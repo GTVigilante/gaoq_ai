@@ -322,6 +322,48 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/payroll/application/payroll-adjustment.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/payroll/application/payroll-adjustment-receivable.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/payroll/application/payroll-adjustment-tax-correction.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/payroll/application/payroll-annual-reconciliation.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/payroll/domain/payroll-adjustment.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/payroll/domain/payroll-annual-reconciliation.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/payroll/domain/payroll-proration.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/payroll/persistence/payroll-outbox.writer.ts': {
           branches: 90,
           functions: 90,
@@ -335,6 +377,12 @@ export default defineConfig({
           statements: 90,
         },
         'src/modules/treasury/application/treasury-disbursement.service.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/treasury/application/treasury-adjustment-supplement.service.ts': {
           branches: 90,
           functions: 90,
           lines: 90,

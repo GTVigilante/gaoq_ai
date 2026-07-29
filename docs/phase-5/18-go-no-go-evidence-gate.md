@@ -33,9 +33,9 @@ Go/No-Go 是人工治理决定，不是 CI 成功、AI 建议或某个负责人�
 ## MCP 上线标准
 
 MCP 固定使用 `2025-11-25`、Streamable HTTP 和 OAuth 2.1。最终能力目录必须
-直接绑定仓库实时生成的完整 `catalogHash`，并精确等于 47 个 Tool、4 个静态
-Resource、24 个 Resource Template 和 22 个 Prompt；Tool 风险分层固定为
-R0 23、R1 16、R2 8、R3 0。陈旧哈希、遗漏 Resource Template 或只满足数量
+直接绑定仓库实时生成的完整 `catalogHash`，并精确等于 50 个 Tool、4 个静态
+Resource、27 个 Resource Template 和 25 个 Prompt；Tool 风险分层固定为
+R0 23、R1 19、R2 8、R3 0。陈旧哈希、遗漏 Resource Template 或只满足数量
 下限均失败关闭。每个 Tool 必须同时具备输入/输出 Schema 和风险级别；直接
 数据库访问、上游 Token 暴露均为零。
 

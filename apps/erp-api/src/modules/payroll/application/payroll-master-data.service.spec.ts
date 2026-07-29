@@ -39,6 +39,7 @@ function actorWith(
 function profileData() {
   return {
     currency: 'CNY' as const,
+    jurisdictionCode: 'CN-SH',
     taxableEarnings: [{ code: 'BASE', amountMinor: 1_000_000 }],
     nonTaxableEarnings: [] as { code: string; amountMinor: number }[],
     employeeSocialInsuranceMinor: 80_000,
@@ -104,6 +105,7 @@ function compensationAttestation(
   const data = profileData();
   return {
     employeeId: 'employee-001',
+    jurisdictionCode: data.jurisdictionCode,
     effectiveFrom: '2026-01-01',
     effectiveTo: '2026-12-31',
     approvalEvidenceId: 'approval-evidence-001',

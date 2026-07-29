@@ -88,6 +88,9 @@ describe('Treasury 持久化契约', () => {
       { tenantId: 1, recoverySourceBatchId: 1 }, expect.objectContaining({ unique: true }),
     ]);
     expect(TreasuryDisbursementBatchRecordSchema.indexes()).toContainEqual([
+      { tenantId: 1, adjustmentSourceId: 1 }, expect.objectContaining({ unique: true }),
+    ]);
+    expect(TreasuryDisbursementBatchRecordSchema.indexes()).toContainEqual([
       { tenantId: 1, migrationEvidenceRef: 1 }, expect.objectContaining({
         unique: true, partialFilterExpression: { migrationEvidenceRef: { $type: 'string' } },
       }),
@@ -137,6 +140,21 @@ describe('Treasury 持久化契约', () => {
     });
     await expect(online.validate()).resolves.toBeUndefined();
     expect(online.strongAuthReferenceType).toBe('webauthn_evidence');
+    await expect(new BatchModel({
+      ...base,
+      purpose: 'supplement',
+      parentBatchId: base.id,
+      adjustmentSourceId: null,
+      adjustmentSourceHash: null,
+    }).validate()).rejects.toThrow('代发批次用途与父级、恢复或工资调整来源不一致');
+    await expect(new BatchModel({
+      ...base,
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4B2',
+      purpose: 'supplement',
+      parentBatchId: base.id,
+      adjustmentSourceId: '01J8ZQK7V0A2M4N6P8R0T2W4D1',
+      adjustmentSourceHash: 'a'.repeat(43),
+    }).validate()).resolves.toBeUndefined();
   });
 
   it('历史审批账户必须成对绑定迁移 WORM 引用和摘要', async () => {

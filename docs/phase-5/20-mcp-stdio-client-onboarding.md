@@ -103,7 +103,8 @@ pnpm mcp:client:inspector:run
 ```
 
 自动化测试使用官方 TypeScript Client 和真实 stdio 字节流完成初始化，验证同一
-运行时可以发现 47 个 Tool、静态 Resource 与 22 个 Prompt。专项覆盖环境白名单、
+运行时可以发现 50 个 Tool、4 个静态 Resource、27 个 Resource Template 与
+25 个 Prompt。专项覆盖环境白名单、
 连接 Scope、启动预检、逐消息复验、消息顺序、认证失败关闭、错误脱敏和幂等关闭。
 进程入口测试还验证应用模块只在环境预检后动态加载，输入结束、`SIGINT`、
 `SIGTERM`、连接错误和启动中迟到资源共用按对象身份幂等清理；stderr 或资源关闭
@@ -121,8 +122,8 @@ banner 的非纯 JSON 输出。该探针不读取 Resource 内容、不渲染 Pr
 每个客户端版本至少记录：
 
 1. 客户端名称、精确版本、操作系统、commit 和 `catalogHash`。
-2. 初始化协商、47 个 Tool、至少 4 个静态 Resource、24 个 Resource Template
-   和 22 个 Prompt 的目录一致性。
+2. 初始化协商、50 个 Tool、4 个静态 Resource、27 个 Resource Template
+   和 25 个 Prompt 的目录一致性。
 3. R0 读取、R1 确认、R2 外部浏览器强认证、结构化输出和 Resource Link。
 4. 无 Scope、跨租户、过期、即时撤销、重放、取消、超时和客户端重连。
 5. stdout 无非协议文本，日志、审计和错误中无 Token、L3/L4 正文或上游凭据。
@@ -144,11 +145,11 @@ pnpm mcp:client:kimi:run
 探针只走 ACP `initialize → session/new → /mcp`，其中 `/mcp` 是 Kimi 的本地
 状态命令，不调用模型、不执行 ERP 业务 Tool，也不读取 MongoDB、Redis 或外部
 系统。Kimi 实体进程经 stdio 成功连接同一个 `McpRuntimeService`，报告
-`gaoq-erp: connected (stdio, 47 tools)`；输出只保留客户端精确版本、连接结论、
+`gaoq-erp: connected (stdio, 50 tools)`；输出只保留客户端精确版本、连接结论、
 Tool 数量和当前 `catalogHash`。夹具禁止任何 Tool 调用，不包含真实 Token、
 租户数据或上游凭据。
 
-该证据把 Kimi 的“标准 stdio 启动及 47 Tool 目录发现”从 No-Go 收敛为已通过，
+该证据把 Kimi 的“标准 stdio 启动及 50 Tool 目录发现”从 No-Go 收敛为已通过，
 但 Kimi 的 Resource、Resource Template、Prompt、正式短时 Token、R0/R1/R2、
 撤销/重连和业务 UAT 尚未验收，因此 Kimi 整体仍保持 No-Go。Claude、Cursor 与
 Inspector 也没有因此获得完整验收结论。
@@ -162,7 +163,7 @@ pnpm mcp:client:inspector:run
 ```
 
 Inspector 通过 stdio 连接同一个 `McpRuntimeService` 目录夹具，并以正式 CLI
-方法发现 47 个 Tool、4 个静态 Resource、24 个 Resource Template 和 22 个
+方法发现 50 个 Tool、4 个静态 Resource、27 个 Resource Template 和 25 个
 Prompt。探针输出绑定当前 `catalogHash` 与 `runtimeContractHash`，同时明确记录
 `businessToolInvoked=false`、`resourceContentRead=false`、
 `promptRendered=false` 和 `modelInvoked=false`。

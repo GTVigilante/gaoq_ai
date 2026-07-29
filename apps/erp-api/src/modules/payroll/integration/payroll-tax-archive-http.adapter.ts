@@ -23,6 +23,15 @@ const manifestRootSchema = z.object({
   filingId: z.string().regex(ULID),
   tenantId: z.string().regex(ID),
 }).passthrough();
+const correctionRootSchema = z.object({
+  schema: z.literal('CN_IIT_WITHHOLDING_CORRECTION_V1'),
+  correctionFilingId: z.string().regex(ULID),
+  tenantId: z.string().regex(ID),
+}).passthrough();
+const archiveRootSchema = z.discriminatedUnion('schema', [
+  manifestRootSchema,
+  correctionRootSchema,
+]);
 const receiptSchema = z.object({
   objectRef: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9/._:-]{0,511}$/),
   evidenceId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
@@ -108,11 +117,16 @@ function assertManifestBinding(bytes: Buffer, tenantId: string, filingId: string
   } catch {
     throw new Error('PAYROLL_TAX_ARCHIVE_MANIFEST_INVALID');
   }
-  const parsed = manifestRootSchema.safeParse(manifest);
+  const parsed = archiveRootSchema.safeParse(manifest);
+  const parsedFilingId = parsed.success
+    ? parsed.data.schema === 'CN_IIT_WITHHOLDING_MANIFEST_V1'
+      ? parsed.data.filingId
+      : parsed.data.correctionFilingId
+    : null;
   if (
     !parsed.success ||
     parsed.data.tenantId !== tenantId ||
-    parsed.data.filingId !== filingId
+    parsedFilingId !== filingId
   ) throw new Error('PAYROLL_TAX_ARCHIVE_MANIFEST_INVALID');
 }
 

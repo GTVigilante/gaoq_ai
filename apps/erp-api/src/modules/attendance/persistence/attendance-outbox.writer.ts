@@ -14,6 +14,8 @@ export interface AttendanceEvent {
     | 'attendance.correction.requested'
     | 'attendance.correction.approved'
     | 'attendance.correction.migrated'
+    | 'attendance.shift_plan.assigned'
+    | 'attendance.shift.evaluated'
     | 'attendance.month.closed'
     | 'attendance.month.migrated'
     | 'attendance.month.superseded'

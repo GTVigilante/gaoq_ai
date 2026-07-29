@@ -29,6 +29,13 @@ import {
 import { PayrollTaxFilingService } from '../payroll/application/payroll-tax-filing.service.js';
 import { PayrollReconciliationService } from '../payroll/application/payroll-reconciliation.service.js';
 import { PayrollShadowService } from '../payroll/application/payroll-shadow.service.js';
+import { PayrollAdjustmentService } from '../payroll/application/payroll-adjustment.service.js';
+import {
+  PayrollAdjustmentTaxCorrectionService,
+} from '../payroll/application/payroll-adjustment-tax-correction.service.js';
+import {
+  PayrollAnnualReconciliationService,
+} from '../payroll/application/payroll-annual-reconciliation.service.js';
 import { OpOperatingSummaryService } from '../op/application/op-operating-summary.service.js';
 import { OpApprovalBridgeService } from '../op/application/op-approval-bridge.service.js';
 import { ManagementDashboardService } from '../analytics/application/management-dashboard.service.js';
@@ -87,6 +94,9 @@ export class McpToolService {
     private readonly taxFilings: PayrollTaxFilingService,
     private readonly reconciliations: PayrollReconciliationService,
     private readonly shadows: PayrollShadowService,
+    private readonly payrollAdjustments: PayrollAdjustmentService,
+    private readonly payrollAdjustmentTaxCorrections: PayrollAdjustmentTaxCorrectionService,
+    private readonly annualPayrollReconciliations: PayrollAnnualReconciliationService,
     private readonly opSummaries: OpOperatingSummaryService,
     private readonly opApprovalBridges: OpApprovalBridgeService,
     private readonly managementDashboard: ManagementDashboardService,
@@ -404,6 +414,87 @@ export class McpToolService {
         endPeriod: cutoverReadiness.endPeriod, evidenceHash: cutoverReadiness.evidenceHash,
       });
       return structuredResult({ cutoverReadiness });
+    });
+  }
+
+  async getPayrollAdjustmentStatus(id: string, extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:payroll:adjustment:read')) {
+        await this.auditTool(identity, 'payroll_adjustment_status_get', 'R1', 'denied');
+        return scopeError('erp:payroll:adjustment:read');
+      }
+      const payrollAdjustment = await this.payrollAdjustments.getControlStatus(id);
+      await this.auditTool(identity, 'payroll_adjustment_status_get', 'R1', 'success', {
+        adjustmentId: payrollAdjustment.id, period: payrollAdjustment.period,
+        status: payrollAdjustment.status,
+        cashSettlementStatus: payrollAdjustment.cashSettlementStatus,
+        taxCorrectionStatus: payrollAdjustment.taxCorrectionStatus,
+        adjustmentHash: payrollAdjustment.adjustmentHash,
+      });
+      return structuredResult({ payrollAdjustment });
+    });
+  }
+
+  async getPayrollAdjustmentTaxCorrectionStatus(
+    id: string,
+    extra: McpExtra,
+  ): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      const scope = 'erp:payroll:adjustment:tax_correction:read';
+      if (!identity.scopes.includes(scope)) {
+        await this.auditTool(
+          identity,
+          'payroll_adjustment_tax_correction_status_get',
+          'R1',
+          'denied',
+        );
+        return scopeError(scope);
+      }
+      const payrollAdjustmentTaxCorrection =
+        await this.payrollAdjustmentTaxCorrections.getControlStatus(id);
+      await this.auditTool(
+        identity,
+        'payroll_adjustment_tax_correction_status_get',
+        'R1',
+        'success',
+        {
+          filingId: payrollAdjustmentTaxCorrection.id,
+          adjustmentId: payrollAdjustmentTaxCorrection.adjustmentId,
+          period: payrollAdjustmentTaxCorrection.period,
+          status: payrollAdjustmentTaxCorrection.status,
+          contentHash: payrollAdjustmentTaxCorrection.contentHash,
+        },
+      );
+      return structuredResult({ payrollAdjustmentTaxCorrection });
+    });
+  }
+
+  async getAnnualPayrollReconciliationStatus(
+    id: string,
+    extra: McpExtra,
+  ): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:payroll:annual:read')) {
+        await this.auditTool(
+          identity, 'payroll_annual_reconciliation_status_get', 'R1', 'denied',
+        );
+        return scopeError('erp:payroll:annual:read');
+      }
+      const annualPayrollReconciliation =
+        await this.annualPayrollReconciliations.getControlStatus(id);
+      await this.auditTool(
+        identity, 'payroll_annual_reconciliation_status_get', 'R1', 'success',
+        {
+          reconciliationId: annualPayrollReconciliation.id,
+          taxYear: annualPayrollReconciliation.taxYear,
+          status: annualPayrollReconciliation.status,
+          evidenceHash: annualPayrollReconciliation.evidenceHash,
+        },
+      );
+      return structuredResult({ annualPayrollReconciliation });
     });
   }
 

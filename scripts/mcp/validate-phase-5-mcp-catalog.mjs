@@ -21,7 +21,9 @@ const RISK = Object.freeze({
     'approval_submit_prepare', 'approval_submit_execute', 'approval_withdraw_prepare',
     'approval_withdraw_execute', 'payroll_payslip_get_self', 'payroll_tax_filing_get',
     'payroll_reconciliation_get', 'payroll_shadow_cycle_get',
-    'payroll_cutover_readiness_get', 'management_dashboard_get',
+    'payroll_cutover_readiness_get', 'payroll_adjustment_status_get',
+    'payroll_adjustment_tax_correction_status_get',
+    'payroll_annual_reconciliation_status_get', 'management_dashboard_get',
     'data_migration_report_get', 'attendance_correction_prepare',
     'attendance_correction_execute', 'recruitment_position_transition_prepare',
     'recruitment_position_transition_execute', 'marketing_side_effect_get',
@@ -120,12 +122,12 @@ function buildCatalog(runtimeSource, toolServiceSource) {
   });
   const riskByName = new Map(Object.entries(RISK).flatMap(([risk, names]) =>
     names.map((name) => [name, risk])));
-  if (riskByName.size !== 47 || registrations.length !== 47) fail('PHASE5_MCP_TOOL_COUNT_INVALID');
+  if (riskByName.size !== 50 || registrations.length !== 50) fail('PHASE5_MCP_TOOL_COUNT_INVALID');
   const names = registrations.map((item) => item.name);
   if (new Set(names).size !== names.length || names.some((name) => !riskByName.has(name))) {
     fail('PHASE5_MCP_RISK_CATALOG_INCOMPLETE');
   }
-  if (resourceRegistrations.length !== 28) fail('PHASE5_MCP_RESOURCE_COUNT_INVALID');
+  if (resourceRegistrations.length !== 31) fail('PHASE5_MCP_RESOURCE_COUNT_INVALID');
   const resourceNames = resourceRegistrations.map((item) => item.name);
   if (new Set(resourceNames).size !== resourceNames.length) {
     fail('PHASE5_MCP_RESOURCE_NAME_DUPLICATE');
@@ -146,10 +148,10 @@ function buildCatalog(runtimeSource, toolServiceSource) {
       uriTemplate: item.uriTemplate,
       mimeType: item.mimeType,
     }));
-  if (resources.length !== 4 || resourceTemplates.length !== 24) {
+  if (resources.length !== 4 || resourceTemplates.length !== 27) {
     fail('PHASE5_MCP_RESOURCE_KIND_COUNT_INVALID');
   }
-  if (promptRegistrations.length !== 22) fail('PHASE5_MCP_PROMPT_COUNT_INVALID');
+  if (promptRegistrations.length !== 25) fail('PHASE5_MCP_PROMPT_COUNT_INVALID');
   const promptNames = promptRegistrations.map((item) => item.name);
   if (new Set(promptNames).size !== promptNames.length) fail('PHASE5_MCP_PROMPT_NAME_DUPLICATE');
   const tools = registrations.map((item) => {
@@ -181,14 +183,14 @@ function buildCatalog(runtimeSource, toolServiceSource) {
     transports: ['streamable-http', 'stdio'],
     oauthProfile: 'oauth-2.1',
     counts: {
-      total: 47,
+      total: 50,
       R0: 23,
-      R1: 16,
+      R1: 19,
       R2: 8,
       R3: 0,
       resources: 4,
-      resourceTemplates: 24,
-      prompts: 22,
+      resourceTemplates: 27,
+      prompts: 25,
     },
     runtimeContractHash: semanticDigest(runtimeSource),
     tools,

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AttendanceCorrectionRecordSchema,
   AttendanceMonthlySnapshotRecordSchema,
+  AttendanceShiftPlanRecordSchema,
   AttendanceSourceFactRecordSchema,
   type AttendanceSourceFactRecord,
 } from './attendance.schemas.js';
@@ -75,7 +76,8 @@ describe('Attendance 持久化契约', () => {
     const valid = {
       id: 'snapshot-001', tenantId: 'tenant-001', employeeId: 'employee-001',
       month: '2026-04', snapshotVersion: 1, rulesetVersion: 'legacy-cn-v1',
-      sourceCutoffAt: new Date(), workedMinutes: 480, leaveMinutes: 0,
+      sourceCutoffAt: new Date(), sourceProviderCount: 0,
+      sourceWatermarkDigest: 'w'.repeat(43), workedMinutes: 480, leaveMinutes: 0,
       overtimeMinutes: 0, absentMinutes: 0, sourceFactCount: 1, correctionCount: 0,
       snapshotHash: 's'.repeat(43), status: 'active', previousSnapshotId: null,
       supersessionEvidenceId: null, closedAt: new Date(),
@@ -91,9 +93,48 @@ describe('Attendance 持久化契约', () => {
     }).validate()).rejects.toThrow('必须成对出现');
   });
 
+  it('班次计划只保存完整加密规则，完成态必须绑定唯一派生事实', async () => {
+    const ShiftPlanModel = mongoose.model(
+      'AttendanceShiftPlanContract',
+      AttendanceShiftPlanRecordSchema,
+    );
+    const valid = {
+      id: 'shift-plan-001',
+      tenantId: 'tenant-001',
+      employeeId: 'employee-001',
+      providerCode: 'workforce_scheduler',
+      planCode: 'NIGHT-A',
+      businessDate: '2026-04-30',
+      rulesetVersion: 'attendance-cn-v2',
+      sourceObservedAt: new Date('2026-04-29T00:00:00.000Z'),
+      evaluationDueAt: new Date('2026-05-01T08:00:00.000Z'),
+      evaluationStatus: 'pending',
+      evaluatedAt: null,
+      evaluatedSourceFactId: null,
+      sourcePlanBlindIndexes: [`key.${'a'.repeat(43)}`],
+      dataKeyId: 'key-001',
+      dataIv: 'a'.repeat(16),
+      dataCiphertext: 'b'.repeat(32),
+      dataAuthTag: 'c'.repeat(22),
+    };
+    await expect(new ShiftPlanModel(valid).validate()).resolves.toBeUndefined();
+    await expect(new ShiftPlanModel({
+      ...valid,
+      evaluationStatus: 'completed',
+    }).validate()).rejects.toThrow('缺少派生事实检查点');
+  });
+
   it('外部事件、单事实修订、审批实例、活动快照和版本链均有唯一约束', () => {
     expect(AttendanceSourceFactRecordSchema.indexes()).toContainEqual([
       { tenantId: 1, sourceEventBlindIndexes: 1 }, expect.objectContaining({ unique: true }),
+    ]);
+    expect(AttendanceSourceFactRecordSchema.indexes()).toContainEqual([
+      { tenantId: 1, shiftPlanId: 1 },
+      expect.objectContaining({ unique: true }),
+    ]);
+    expect(AttendanceShiftPlanRecordSchema.indexes()).toContainEqual([
+      { tenantId: 1, sourcePlanBlindIndexes: 1 },
+      expect.objectContaining({ unique: true }),
     ]);
     expect(AttendanceSourceFactRecordSchema.indexes()).toContainEqual([
       { tenantId: 1, migrationEvidenceRef: 1 },

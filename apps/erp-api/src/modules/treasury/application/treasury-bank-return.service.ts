@@ -15,6 +15,7 @@ import { z } from 'zod';
 import { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import { LegacyPayrollBoundaryService } from '../../payroll/legacy-payroll-boundary.service.js';
+import { PayrollAdjustmentService } from '../../payroll/application/payroll-adjustment.service.js';
 import {
   applyBankReturn,
   type DisbursementBatch,
@@ -42,7 +43,8 @@ const instructionSchema = z.object({
   bankAccountId: z.string().regex(ID), payrollCalculationLineId: z.string().regex(ID),
   payrollResultHash: z.string().regex(HASH), creditorName: z.string(),
   creditorAccount: z.string(), creditorAgentClearingCode: z.string(),
-  amountMinor: z.number().int().safe().positive(), purposeCode: z.literal('PAYROLL'),
+  amountMinor: z.number().int().safe().positive(),
+  purposeCode: z.enum(['PAYROLL', 'PAYROLL_ADJUSTMENT']),
 }).strict();
 
 export interface TreasuryBankReturnSummary extends Record<string, unknown> {
@@ -88,6 +90,7 @@ export class TreasuryBankReturnService {
     private readonly idempotency: IdempotencyService,
     private readonly context: TenantContextService,
     private readonly boundary: LegacyPayrollBoundaryService,
+    private readonly payrollAdjustments: PayrollAdjustmentService,
     private readonly inbox: TreasuryBankReturnInbox,
     private readonly crypto: TreasuryDataCryptoService,
     private readonly outbox: TreasuryOutboxWriter,
@@ -380,6 +383,48 @@ export class TreasuryBankReturnService {
           code: 'TREASURY_RETURN_LINE_WRITE_CONFLICT', message: '回盘支付行发生并发冲突',
         });
       }
+      if (current.purpose === 'supplement') {
+        if (
+          current.adjustmentSourceId === null ||
+          current.adjustmentSourceHash === null ||
+          succeeded.length !== 1 ||
+          failed.length !== 0 ||
+          successfulMinor !== current.totalMinor
+        ) throw new ConflictException({
+          code: 'TREASURY_ADJUSTMENT_RETURN_BINDING_INVALID',
+          message: '补发子批次终态回盘与工资调整来源不一致',
+        });
+        await this.payrollAdjustments.recordSupplementBankReturn({
+          adjustmentId: current.adjustmentSourceId,
+          adjustmentHash: current.adjustmentSourceHash,
+          batchId: current.id,
+          returnId: manifest.returnId,
+          successfulMinor,
+        }, session);
+      } else if (current.purpose === 'recovery') {
+        const supplement = await this.findAdjustmentSupplementRoot(current, session);
+        if (supplement !== null) {
+          if (
+            supplement.adjustmentSourceId === null ||
+            supplement.adjustmentSourceHash === null ||
+            current.lineCount !== 1 ||
+            succeeded.length !== 1 ||
+            failed.length !== 0 ||
+            successfulMinor !== current.totalMinor ||
+            successfulMinor !== supplement.totalMinor
+          ) throw new ConflictException({
+            code: 'TREASURY_ADJUSTMENT_RECOVERY_RETURN_BINDING_INVALID',
+            message: '补发恢复子批次终态回盘与工资调整来源不一致',
+          });
+          await this.payrollAdjustments.recordSupplementBankReturn({
+            adjustmentId: supplement.adjustmentSourceId,
+            adjustmentHash: supplement.adjustmentSourceHash,
+            batchId: current.id,
+            returnId: manifest.returnId,
+            successfulMinor,
+          }, session);
+        }
+      }
     } else {
       const frozen = await this.instructions.updateMany({
         tenantId: this.tenantId(), batchId: current.id, status: 'submitted',
@@ -407,6 +452,38 @@ export class TreasuryBankReturnService {
       unknownCount, duplicateCount, lineAmountMismatchCount,
       successfulMinor, failedMinor, freezeReason: next.freezeReason,
     });
+  }
+
+  /** 沿恢复链向上解析唯一 supplement 根；普通工资恢复返回 null。 */
+  private async findAdjustmentSupplementRoot(
+    batch: TreasuryDisbursementBatchRecord,
+    session: ClientSession,
+  ): Promise<TreasuryDisbursementBatchRecord | null> {
+    let sourceId = batch.recoverySourceBatchId;
+    const seen = new Set([batch.id]);
+    for (let depth = 0; depth < 16 && sourceId !== null; depth += 1) {
+      if (seen.has(sourceId)) throw new ConflictException({
+        code: 'TREASURY_RECOVERY_CHAIN_CYCLE_DETECTED',
+        message: '恢复批次来源链存在循环引用',
+      });
+      seen.add(sourceId);
+      const source = await this.batches.findOne({
+        tenantId: this.tenantId(),
+        id: sourceId,
+      }).session(session).lean().exec();
+      if (source === null) throw new ConflictException({
+        code: 'TREASURY_RECOVERY_CHAIN_SOURCE_NOT_FOUND',
+        message: '恢复批次来源链不完整',
+      });
+      if (source.purpose === 'supplement') return source;
+      if (source.purpose === 'regular') return null;
+      sourceId = source.recoverySourceBatchId;
+    }
+    if (sourceId !== null) throw new ConflictException({
+      code: 'TREASURY_RECOVERY_CHAIN_DEPTH_EXCEEDED',
+      message: '恢复批次来源链超过允许深度',
+    });
+    return null;
   }
 
   private migrationReturnControls(

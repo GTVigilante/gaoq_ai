@@ -19,7 +19,7 @@
 
 | 客户端 | 传输与初始化/发现 | R0 | R1 确认 | R2 | 状态 |
 | --- | --- | --- | --- | --- | --- |
-| 官方 TypeScript Client | Streamable HTTP 既有测试通过；真实 stdio 字节流测试通过，发现 47 Tool、4 个静态 Resource 和 22 Prompt | 通过 | 协议与服务测试通过 | WebAuthn UV 服务测试通过；实体认证器待 UAT | 条件通过 |
+| 官方 TypeScript Client | Streamable HTTP 既有测试通过；真实 stdio 字节流测试通过，发现 50 Tool、4 个静态 Resource、27 个 Resource Template 和 25 个 Prompt | 通过 | 协议与服务测试通过 | WebAuthn UV 服务测试通过；实体认证器待 UAT | 条件通过 |
 | MCP Inspector | stdio 启动入口已交付；实体 Inspector 会话待人工验收 | 待人工验证 | 待验证确认链接和结构化输出 | 待验证外部浏览器确认回传 | No-Go |
 | Claude 当前稳定版 | 标准 stdio/远程入口已具备，待真实客户端验证 | 待验证 | 待验证确认链接和结构化输出 | 待验证外部浏览器确认回传 | No-Go |
 | Kimi 当前稳定版 | 标准 stdio/远程入口已具备，待真实客户端验证 | 待验证 | 待验证确认链接和结构化输出 | 待验证外部浏览器确认回传 | No-Go |

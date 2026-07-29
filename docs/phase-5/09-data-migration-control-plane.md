@@ -56,7 +56,7 @@
 - v1 不得包含前序或重开证据；v2+ 必须引用同员工同月份的 v(n-1) 目标映射、已通过 `attendance_month_reopen` 历史及其 WORM checksum，并满足重开审批完成 ≤ 关账时间。每一版另绑定唯一 WORM，激活新版本时只把直接前序标记为 superseded。
 - 只发布 `attendance.month.migrated`，不伪造普通关账/重开事件。逐日明细继续使用 AES-256-GCM；迁移账本、报告、事件与 MCP 不输出逐日明细或来源控制 payload。
 - `payroll_rule_packs` 必须先执行。每条规则版本引用 `payroll_rule_pack` approved 审批历史、审批 WORM checksum、法规来源摘要/引用和独立 WORM；目标重新运行确定性税率校验，按法域要求版本连续、生效区间不重叠，只发布 `payroll.rule_pack.migrated`。
-- `payroll_compensation_profiles` 随后按员工、版本升序执行。员工只来自 ERP 主数据映射，审批只接受 `payroll_compensation` approved 历史；金额组件、扣缴与考勤调整策略使用 Payroll 独立 AES-256-GCM 密钥域，目标重算 `profileHash`，版本不连续、生效区间重叠、审批/WORM 或密文重放不一致均失败关闭。
+- `payroll_compensation_profiles` 随后按员工、版本升序执行。员工只来自 ERP 主数据映射，审批只接受 `payroll_compensation` approved 历史；法域、金额组件、扣缴与考勤调整策略使用 Payroll 独立 AES-256-GCM 密钥域，法域另存控制字段并与密文交叉核验。目标重算 `profileHash`，版本不连续、生效区间重叠、审批/WORM、法域不一致或密文重放不一致均失败关闭。
 - `payroll_periods` 只允许恢复 `draft|collecting` 基线。制单人必须先由来源员工映射为 ERP employeeId，再由身份仓储反查 actorId；来源不得提交 actorId。草稿的创建/更新时间必须相同，采集中周期只能通过正式领域状态机从版本 1 推到版本 2。周期不得携带运行、审批、锁定、代发或对账字段，每条周期绑定独立 WORM，只发布 `payroll.period.migrated`。
 - `payroll_calculation_runs` 必须在规则、薪酬档案、考勤月结和 `collecting` 周期之后，按税年、月份、运行序号升序执行。首个运行执行 `collecting → review`，后续历史重算执行 `review → review`；固定满足 `expectedPeriodVersion = runNumber + 1`，且前一运行必须由本迁移产生、WORM 成对完整并与周期活动运行及全部摘要一致。来源只提交这些实体的来源引用、运行序号、完成时间、每员工应发/税额/实发控制金额和期间汇总，不提交目标输入快照、计算步骤、累计税状态或目标哈希。目标将全部引用解析为当前租户目标 ID，读取并验密薪酬与考勤快照，复用正式累计预扣内核逐员工重算；跨月累计只允许继承已锁定/已支付周期，或已经目标重算且运行 WORM 与周期摘要完全一致的前月迁移运行，普通在线计算不放宽。任一员工行、人数、三项汇总、规则摘要、前月/前次运行完整性或连续运行序号不一致即整笔失败，不写运行、密文或周期。
 - 重算通过后，目标输入与结果继续分别使用 Payroll AES-256-GCM 密钥域保存，运行级 WORM 与历史完成时间冻结；首个运行把版本 2 `collecting` 推到版本 3 `review`，后续运行只按连续版本留在 `review` 并替换活动运行，只发布 `payroll.run.migrated`。审批、强认证锁定、代发、对账与报税必须由后续独立 Scope 恢复，禁止本 Scope 合成。

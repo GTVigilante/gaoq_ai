@@ -13,7 +13,7 @@
   `McpRuntimeService` 和 `AccessTokenVerifier`。启动要求秘密管理器注入短时
   Token 与 `erp:mcp:server:connect`，先预检、后逐消息复验，撤销/过期立即关闭；
   stdout 仅传输 JSON-RPC。官方 TypeScript Client 已通过真实字节流发现同一套
-  47 Tool、4 个静态 Resource、24 个 Resource Template 与 22 个 Prompt；
+  50 Tool、4 个静态 Resource、27 个 Resource Template 与 25 个 Prompt；
   各实体客户端仍须按其已完成范围与外部验收边界单独判定。
 - 2026-07-29 已把 stdio 进程入口抽成可测试的失败关闭运行器：环境预检先于
   `AppModule` 动态加载，输入结束、`SIGINT`、`SIGTERM`、连接错误和迟到资源
@@ -23,13 +23,13 @@
   提升退出状态，不泄漏 Token、环境、路径或堆栈。
 - 2026-07-29 已取得首个厂商实体客户端目录证据：Kimi Code CLI 0.28.1 通过
   正式 ACP 客户端层加载同一 `McpRuntimeService`，经 stdio 报告
-  `gaoq-erp: connected (stdio, 47 tools)`。可重复探针只执行本地 `/mcp`
+  `gaoq-erp: connected (stdio, 50 tools)`。可重复探针只执行本地 `/mcp`
   状态命令，不调用模型、不执行业务 Tool、不依赖数据库或外部系统，结果绑定
   当前 `catalogHash`。这只通过 Kimi 的启动与 Tool 目录发现；正式 Token、
   Resource/Prompt、R0/R1/R2、撤销/重连和业务 UAT 未验收，Kimi 整体以及
   Claude、Cursor、Inspector 仍保持 No-Go。
 - 2026-07-29 已把 `catalogHash` 从 Tool 摘要升级为四类完整能力目录摘要：
-  从同一运行时实时解析 47 Tool、4 Resource、24 Resource Template、22 Prompt，
+  从同一运行时实时解析 50 Tool、4 Resource、27 Resource Template、25 Prompt，
   并绑定忽略注释/格式差异的 `runtimeContractHash`。锁定且隔离的官方 MCP
   Inspector CLI 2.0.0 已实体执行四个 list 方法并逐项匹配目录；探针不读取
   Resource、不渲染 Prompt、不调用业务 Tool/模型/数据库/外部系统。Phase 5
@@ -37,10 +37,10 @@
   可通过。该证据只关闭 Inspector 四类目录兼容缺口；正式 Token、授权读写、
   远程 OAuth、撤销/重连和业务 UAT 未完成，Inspector 整体仍保持 No-Go。
 - 2026-07-29 已把覆盖率门禁本身纳入失败关闭治理：
-  `scripts/validate-critical-coverage-policy.mjs` 从 `precheck/check` 解析 133 个
-  ERP API 专项脚本，展开其 `--coverage.include` 后要求 326 个生产文件逐一具有
+  `scripts/validate-critical-coverage-policy.mjs` 从 `precheck/check` 解析 134 个
+  ERP API 专项脚本，展开其 `--coverage.include` 后要求 334 个生产文件逐一具有
   四维 90% 阈值、路径真实存在且专项清单完全闭合；同时把租户、Identity、
-  Approval、Payroll、Treasury 与 MCP 六类章程关键域解析为 120 个权威文件，
+  Approval、Payroll、Treasury 与 MCP 六类章程关键域解析为 128 个权威文件，
   新文件不得逃出专项门禁，并锁定全生产源码 `src/**/*.ts` 四维 80% 分母。
   本轮补齐了 34 个此前仅在全量报告中的关键文件以及租户上下文、招聘渠道人工
   运维三个组合报告文件，负向自测覆盖分母、阈值、专项遗漏、关键域分类遗漏和
@@ -383,9 +383,11 @@
   `docs/implementation-completion-audit.md`。
 - 2026-07-29 ERP API 覆盖率已修正为显式纳入 `src/**/*.ts` 全部生产源码，
   包括测试未加载的启动、Worker、Controller、迁移和适配器文件，并把全量覆盖
-  命令接入 `pnpm check`。当前真实基线为语句 93.38%、分支 91.31%、函数
-  93.52%、行 94.40%，415 个测试文件、6,787 项测试全部通过并达到
-  全仓四维 80% 强制门槛。
+  命令接入 `pnpm check`。合并 Phase 4 工资调整结算闭环后的当前真实基线为
+  语句 93.18%、分支 91.01%、函数 93.25%、行 94.20%，436 个测试文件、
+  7,140 项测试全部通过并达到全仓四维 80% 强制门槛；完整 `pnpm check`、
+  显式公开 Origin 的 `pnpm build` 与 `pnpm audit --audit-level high` 同日
+  通过，依赖审计未发现已知漏洞。
 - 2026-07-28 已加固 Talent Lifecycle 的 Recruitment、Onboarding、Org 与
   Care 四域来源完整性：每个窄查询口都二次校验可信租户及候选人、申请、职位、
   阶段事件、自然人、劳动关系、员工、离职案件和校友授权引用闭包，错位数据整体
@@ -816,7 +818,7 @@
   错用缺失的请求租户上下文；确认状态推进后的审计异常只记录稳定告警，不把已生成
   的一次性凭据反向暴露为失败。确认控制器、全局 Origin Guard 和 MCP 控制器均达到
   四维 100%，独立 90% 门禁已接入 `pnpm check`。
-- 标准 MCP 运行时已使用官方 Client 覆盖 22 个 Prompt、47 个 Tool 与 27 个
+- 标准 MCP 运行时已使用官方 Client 覆盖 25 个 Prompt、50 个 Tool 与 31 个
   受控 Resource 入口，并验证 Origin 白名单、参数失败关闭、最小 fallback 和
   无权读取语义；覆盖率达到 97.97%/95.67%/97.32%/98.88%
   （语句/分支/函数/行），独立 90% 门禁已接入 `pnpm check`。
@@ -962,6 +964,25 @@
   一次性 WORM 证据、响应体上限、严格 JSON、短时窗口与上游失败关闭测试，
   并将非法 URL 统一映射为稳定领域错误；覆盖率达到四维 100%，独立 90%
   门禁已接入 `pnpm check`。
+- 2026-07-27 已补齐 Phase 4 Attendance 的 Employment 有效期、版本化日班次、
+  跨日归属、Provider 提交水位/Inbox 对账与月结摘要哈希；真实 Provider 沙箱
+  和生产 Replica Set 上的 v2 索引 apply 仍待现场证据。
+- 2026-07-27 已补齐 Phase 4 Payroll 月中薪酬与跨法域自然日 HALF_UP 分摊：
+  工资运行只接收精确档案引用，校验整月无缺口/无重叠，把档案版本、法域和分摊
+  边界冻结进 L4 输入快照；不同考勤费率缺少逐日归属时失败关闭。
+- 2026-07-27 已交付锁定工资补发/冲销的确定性差额准备、专用 Approval 审批和
+  独立 WebAuthn UV 锁定：客户端不提交金额，重算、送审、审批与锁定职责分离，
+  事件不含人员或金额。正向调整现可从原代发批次创建唯一单行 Treasury 补发子批次，
+  并在直接或恢复全额成功回盘时事务性回写现金结算；负向调整建立唯一员工应收，
+  支持追加式银行回款或带法定授权证据的工资抵扣；税务更正采用独立密文、WORM、
+  WebAuthn 审批和税局提交，现金与税务均终结后才进入 settled。
+- 2026-07-27 已交付员工年度工资代扣、已提交税表与带证据税局评估核对；仅给出
+  应补/应退提示，不代替官方个人综合所得申报或自动收付。真实税局评估适配器、
+  官方个人综合所得办理与现场金样例仍未完成。
+- GitHub PR #103、#109、#111 与 #113 的 Hosted Actions 当前在任何步骤执行前被账户
+  付款或 Spending limit 拦截；代表 Job 的 Runner 与 Steps 均为空。这是外部门禁
+  未执行，不得记为代码测试失败或门禁通过；按零付费约束不使用 NAS、自建 Runner
+  或虚拟机绕过。
 
 ## 目录约定
 

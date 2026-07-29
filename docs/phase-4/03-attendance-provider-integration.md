@@ -49,7 +49,9 @@ Provider 的拉取响应不提供可验证的业务数字签名，因此这里�
   ID，或绑定到飞书 `record_id`、槽位记录 ID、`result_id + direction +
   slotIndex` 的确定性摘要；`pulledAt` 不得超出五分钟时钟偏差，事实时间不得晚于
   拉取时间。只验证字符串长度或 Envelope 外形不构成合格证据。
-- 单条 `punch_in/punch_out` 的分钟影响固定为零。工时、迟到、早退、跨天和缺勤必须由后续版本化规则集结合班次计算，禁止在 Provider Adapter 中写死薪资口径。
+- 单条 `punch_in/punch_out` 的分钟影响固定为零。工时、迟到、早退、跨天和缺勤
+  必须由 `01-attendance-implementation.md` 的版本化规则、日班次与覆盖证明共同
+  计算，禁止在 Provider Adapter 中写死薪资口径。
 - Registry 要求钉钉和飞书的 Adapter、Normalizer、EvidenceVerifier 三者同时存在；缺一即应用启动失败。
 - MCP 不暴露 Provider 补拉、游标、员工映射或 Inbox 工具；AI 只能使用 Attendance 应用服务提供的本人汇总与标准修订申请。
 - 覆盖对账入口固定为

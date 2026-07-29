@@ -47,8 +47,8 @@ Phase 4 在 ERP 组织与劳动关系主数据之上，建立可重放的考勤�
 实现顺序：
 
 1. [领域、金额、安全、集成与 MCP 强制契约](./00-payroll-attendance-contract.md)
-2. [考勤原始事实、人工修订审批和不可变月结快照](./01-attendance-implementation.md)
-3. [Attendance 索引迁移 Runbook](./02-attendance-index-migration-runbook.md)
+2. [考勤原始事实、版本化班次、人工修订审批和不可变月结快照](./01-attendance-implementation.md)
+3. [Attendance v1/v2 索引迁移 Runbook](./02-attendance-index-migration-runbook.md)
 4. [钉钉/飞书考勤 Provider 加密补拉与标准化](./03-attendance-provider-integration.md)
 5. [Attendance Provider 独立索引迁移 Runbook](./04-attendance-provider-index-migration-runbook.md)
 6. [薪酬结构、法定规则、权威输入快照与确定性运行](./05-payroll-core-implementation.md)
@@ -67,6 +67,16 @@ Phase 4 在 ERP 组织与劳动关系主数据之上，建立可重放的考勤�
 19. [两个完整工资影子周期、差异归因与财务签署](./18-payroll-shadow-cycles.md)
 20. [Payroll 影子周期索引迁移 Runbook](./19-payroll-shadow-index-migration-runbook.md)
 21. [Attendance 规则、排班与覆盖证明索引迁移 Runbook](./20-attendance-rules-index-migration-runbook.md)
+22. [锁定工资补发、冲销与税务差额准备](./20-payroll-adjustment-preparation.md)
+23. [Payroll Adjustment 索引迁移 Runbook](./21-payroll-adjustment-index-migration-runbook.md)
+24. [年度工资代扣、税表与税局评估核对](./22-payroll-annual-withholding-reconciliation.md)
+25. [Payroll Annual Reconciliation 索引迁移 Runbook](./23-payroll-annual-index-migration-runbook.md)
+26. [工资调整专用审批与 WebAuthn 锁定](./24-payroll-adjustment-approval-locking.md)
+27. [工资调整正向补发子批次与现金结算回写](./25-payroll-adjustment-supplement-disbursement.md)
+28. [Treasury 工资调整来源索引迁移 Runbook](./26-treasury-adjustment-index-migration-runbook.md)
+29. [负向工资调整员工应收与恢复凭证](./27-payroll-adjustment-receivable-settlement.md)
+30. [工资调整税务更正、WORM、审批与税局受理](./28-payroll-adjustment-tax-correction.md)
+31. [工资调整结算索引迁移 Runbook](./29-payroll-adjustment-settlement-index-migration-runbook.md)
 
 Treasury 银行提交出站边界已固定标准 HTTPS `POST /v1/submissions`、独立凭据、
 短时生产授权、确定性幂等、16 KiB 严格 UTF-8/JSON 回执及批次控制量精确绑定。

@@ -9,17 +9,20 @@ import type { TenantContextService } from '../../../core/tenant/tenant-context.s
 import {
   restoreAttendanceCorrectionFromMigration,
   restoreAttendanceMonthFromMigration,
+  createAttendanceShiftPlan,
   restoreAttendanceSourceFactFromMigration,
 } from '../domain/index.js';
 import { AttendanceDataCryptoService } from './attendance-data-crypto.service.js';
 import {
   AttendanceCorrectionRepository,
   AttendanceMonthlySnapshotRepository,
+  AttendanceShiftPlanRepository,
   AttendanceSourceFactRepository,
 } from './attendance.repositories.js';
 import type {
   AttendanceCorrectionDocument,
   AttendanceMonthlySnapshotDocument,
+  AttendanceShiftPlanDocument,
   AttendanceSourceFactDocument,
 } from './attendance.schemas.js';
 
@@ -109,6 +112,26 @@ function correction() {
     approvalEvidenceId: 'approval-history-001', approvedAt: '2026-04-01T02:00:00.000Z',
     createdAt: '2026-04-01T02:01:00.000Z',
   }, new Date('2026-04-02T00:00:00.000Z'));
+}
+
+function shiftPlan() {
+  return createAttendanceShiftPlan({
+    id: 'shift-plan-001',
+    tenantId: 'tenant-001',
+    employeeId: 'employee-001',
+    providerCode: 'dingtalk',
+    planCode: 'CN-SH-DAY',
+    businessDate: '2026-04-01',
+    timeZone: 'Asia/Shanghai',
+    scheduledStartAt: '2026-04-01T01:00:00.000Z',
+    scheduledEndAt: '2026-04-01T10:00:00.000Z',
+    breakMinutes: 60,
+    graceMinutes: 5,
+    earlyArrivalWindowMinutes: 120,
+    lateDepartureWindowMinutes: 180,
+    rulesetVersion: 'cn-sh-2026-v1',
+    sourceObservedAt: '2026-03-31T08:00:00.000Z',
+  }, new Date('2026-03-31T08:01:00.000Z'));
 }
 
 function snapshot() {
@@ -268,6 +291,133 @@ describe('Attendance 仓储读写与租户边界', () => {
     harness.setOne(null);
     await expect(repository.findById('missing')).resolves.toBeNull();
     await expect(repository.findByEventFingerprints(['missing'], session)).resolves.toBeNull();
+  });
+
+  it('源事实按班次和跨日打卡范围读取并保持租户与类型白名单', async () => {
+    const harness = modelHarness();
+    const repository = new AttendanceSourceFactRepository(
+      context(), harness.model as unknown as Model<AttendanceSourceFactDocument>, crypto(),
+    );
+
+    harness.setOne(null);
+    await expect(repository.findByShiftPlanId('shift-plan-001'))
+      .resolves.toBeNull();
+    await expect(repository.findByShiftPlanId('shift-plan-001', session))
+      .resolves.toBeNull();
+    harness.setMany([]);
+    await expect(repository.findPunchesForDateRange(
+      'employee-001',
+      '2026-03-31',
+      '2026-04-02',
+      session,
+    )).resolves.toEqual([]);
+    expect(harness.model.findOne).toHaveBeenLastCalledWith({
+      tenantId: 'tenant-001',
+      shiftPlanId: 'shift-plan-001',
+    });
+    expect(harness.model.find).toHaveBeenLastCalledWith({
+      tenantId: 'tenant-001',
+      employeeId: 'employee-001',
+      businessDate: { $gte: '2026-03-31', $lte: '2026-04-02' },
+      factType: { $in: ['punch_in', 'punch_out'] },
+    });
+  });
+
+  it('班次计划支持加密写入、受控查询、幂等求值检查点与租户拒绝', async () => {
+    const harness = modelHarness();
+    const repository = new AttendanceShiftPlanRepository(
+      context(), harness.model as unknown as Model<AttendanceShiftPlanDocument>, crypto(),
+    );
+    const plan = shiftPlan();
+
+    await repository.insert(plan, ['attendance-blind-001.shift'], session);
+    const documents = harness.model.create.mock.calls[0]?.[0] as
+      readonly Record<string, unknown>[];
+    const record = documents[0];
+    expect(record).toMatchObject({
+      id: plan.id,
+      sourcePlanBlindIndexes: ['attendance-blind-001.shift'],
+      evaluationStatus: 'pending',
+      evaluatedAt: null,
+      evaluatedSourceFactId: null,
+    });
+    expect(record).not.toHaveProperty('timeZone');
+    expect(record).not.toHaveProperty('scheduledStartAt');
+
+    harness.setOne(record);
+    await expect(repository.findById(plan.id, session)).resolves.toEqual(plan);
+    expect(harness.queries.at(-1)?.session).toHaveBeenCalledWith(session);
+    await expect(repository.findByEventFingerprints(
+      ['attendance-blind-001.shift'],
+    )).resolves.toEqual(plan);
+    expect(harness.queries.at(-1)?.session).not.toHaveBeenCalled();
+
+    harness.setMany([record]);
+    const monthly = await repository.findForMonth(
+      plan.employeeId,
+      '2026-04',
+      new Date('2026-04-30T23:59:59.999Z'),
+      session,
+    );
+    expect(monthly).toEqual([plan]);
+    expect(Object.isFrozen(monthly)).toBe(true);
+    const nearby = await repository.findNearBusinessDate(
+      plan.employeeId,
+      '2026-03-31',
+      '2026-04-02',
+      session,
+    );
+    expect(nearby).toEqual([plan]);
+    expect(harness.model.find).toHaveBeenLastCalledWith({
+      tenantId: 'tenant-001',
+      employeeId: plan.employeeId,
+      businessDate: { $gte: '2026-03-31', $lte: '2026-04-02' },
+    });
+
+    await repository.markEvaluated(
+      plan.id,
+      'fact-001',
+      new Date('2026-04-01T10:05:00.000Z'),
+      session,
+    );
+    expect(harness.model.updateOne).toHaveBeenCalledWith(
+      {
+        tenantId: 'tenant-001',
+        id: plan.id,
+        $or: [
+          { evaluationStatus: 'pending' },
+          { evaluationStatus: 'completed', evaluatedSourceFactId: 'fact-001' },
+        ],
+      },
+      { $set: {
+        evaluationStatus: 'completed',
+        evaluatedAt: new Date('2026-04-01T10:05:00.000Z'),
+        evaluatedSourceFactId: 'fact-001',
+      } },
+      { session, runValidators: true, timestamps: false },
+    );
+
+    harness.setOne(null);
+    await expect(repository.findById('missing')).resolves.toBeNull();
+    await expect(repository.findByEventFingerprints(['missing'], session)).resolves.toBeNull();
+
+    const conflict = modelHarness();
+    conflict.model.updateOne.mockResolvedValue({ matchedCount: 0 });
+    const conflictRepository = new AttendanceShiftPlanRepository(
+      context(), conflict.model as unknown as Model<AttendanceShiftPlanDocument>, crypto(),
+    );
+    await expect(conflictRepository.markEvaluated(
+      plan.id,
+      'fact-001',
+      new Date('2026-04-01T10:05:00.000Z'),
+      session,
+    )).rejects.toThrow('ATTENDANCE_SHIFT_EVALUATION_CHECKPOINT_CONFLICT');
+
+    await expect(repository.insert(
+      { ...plan, tenantId: 'tenant-002' },
+      ['attendance-blind-001.shift'],
+      session,
+    )).rejects.toThrow('Attendance 仓储拒绝跨租户实体');
   });
 
   it.each([

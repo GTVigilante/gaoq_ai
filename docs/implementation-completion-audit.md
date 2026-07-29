@@ -24,7 +24,7 @@
 
 | Phase | 仓库实施证据 | 尚缺外部证据 | 结论 |
 |---|---|---|---|
-| 0 | `docs/phase-0/`、Issue 模板、7 个 Milestone、标签、Draft PR、只读治理自动化、全量四维 80% 与 326 个生产文件逐文件四维 90% 门禁 | Issue #41 的 GitHub Project 需要 `project` 权限；Hosted Actions 真实执行及架构/安全/业务签署尚未取得 | 仓库实施已交付，外部/治理验收待完成 |
+| 0 | `docs/phase-0/`、Issue 模板、7 个 Milestone、标签、Draft PR、只读治理自动化、全量四维 80% 与 334 个生产文件逐文件四维 90% 门禁 | Issue #41 的 GitHub Project 需要 `project` 权限；Hosted Actions 真实执行及架构/安全/业务签署尚未取得 | 仓库实施已交付，外部/治理验收待完成 |
 | 1 | `apps/erp-api/src/modules/auth/`、`org/`、`security/`、`integration/`，`deploy/helm/`，Phase 1 工作流 | 境内云 VPC、WAF/KMS、真实 SSO/组织下发、监控告警、备份恢复与 RPO/RTO 演练 | 实施已交付，外部验收待完成 |
 | 2 | `apps/erp-api/src/modules/approval/`、审批前端、通知、迁移与 MCP 能力 | 氚云模板/历史/在途审批真实盘点迁移、三次演练和业务签署 | 实施已交付，外部验收待完成 |
 | 3 | 招聘、eSign、Onboarding、Knowledge、Care、Talent Lifecycle 360 及对应 REST/事件/MCP | 真实渠道、e签宝、对象/WORM、OpenAI/搜索/评分/通知、CRM/校友平台与跨角色 UAT | 实施已交付，外部验收待完成 |
@@ -68,19 +68,24 @@
 ## 5. 覆盖率边界
 
 2026-07-29 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，415 个测试文件、6,787 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，436 个测试文件、7,140 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-93.38%、分支 91.31%、函数 93.52%、行 94.40%。全仓四维已达到 Phase 0
+93.18%、分支 91.01%、函数 93.25%、行 94.20%。全仓四维已达到 Phase 0
 规定的 80% 门槛。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
 
+同日完整 `pnpm check`、显式公开 HTTPS Origin 的全工作区 `pnpm build` 与
+`pnpm audit --audit-level high` 均通过，依赖审计未发现已知漏洞。该本地证据
+只证明当前提交候选的工程门禁可重复执行，不替代 GitHub Hosted Actions、
+目标环境联调、生产等价演练或人工签署。
+
 `scripts/validate-critical-coverage-policy.mjs` 进一步从 `precheck/check` 递归
-解析 133 个可达 ERP API 专项脚本，展开全部 `--coverage.include` glob，并要求
-326 个目标生产文件与 `vitest.config.ts` 的显式逐文件四维 90% 阈值一一闭合。
+解析 134 个可达 ERP API 专项脚本，展开全部 `--coverage.include` glob，并要求
+334 个目标生产文件与 `vitest.config.ts` 的显式逐文件四维 90% 阈值一一闭合。
 租户、Identity、Approval、Payroll、Treasury 与 MCP 六类章程关键域按统一排除
-规则形成 120 个权威生产文件；未来新增关键文件若未进入专项脚本会立即失败。
+规则形成 128 个权威生产文件；未来新增关键文件若未进入专项脚本会立即失败。
 校验器同时拒绝缺失文件、未匹配 glob、重复属性、低阈值、只有阈值没有专项、
 只有专项没有阈值、关键域分类遗漏及未接入 `precheck`，并以六类负向自测证明
 失败关闭。本轮据此补齐 34 个此前仅受全量报告约束的关键文件，以及租户上下文
@@ -92,7 +97,8 @@ Service、招聘渠道人工运维 Service/Controller 三个组合报告下的�
 注册和访问令牌验证器；短时 Token 必须具有 `erp:mcp:server:connect`，启动前
 预检且每条消息重新验签，撤销、会话失效、过期或 Scope 缺失均立即关闭连接。
 stdout 只允许 JSON-RPC。28 项专项测试覆盖传输失败关闭和真实字节流协议协商，
-官方 TypeScript Client 已发现 47 个 Tool、静态 Resource 与 22 个 Prompt；
+官方 TypeScript Client 已发现 50 个 Tool、4 个静态 Resource、27 个 Resource
+Template 与 25 个 Prompt；
 `pnpm quality:mcp-stdio-coverage` 已接入 `precheck/check`，三个目标生产文件
 逐文件四维均不低于 90%。该仓库证据不替代 Claude、Kimi、Cursor、Inspector
 实体客户端、远程 OAuth 或外部系统联调。
@@ -108,16 +114,16 @@ stdout 只允许 JSON-RPC。28 项专项测试覆盖传输失败关闭和真实�
 同日已使用 Kimi Code CLI 0.28.1 的正式 ACP 客户端层取得首个厂商实体目录
 证据。`scripts/mcp/validate-kimi-mcp-client.mjs` 通过
 `initialize → session/new → /mcp` 启动只读目录夹具，Kimi 经 stdio 报告
-`gaoq-erp: connected (stdio, 47 tools)`；探针不调用模型、不执行业务 Tool，
+`gaoq-erp: connected (stdio, 50 tools)`；探针不调用模型、不执行业务 Tool，
 并把结果绑定当前 `catalogHash`。这只证明 Kimi 当前版本可启动标准入口并发现
-47 个 Tool，不证明真实短时 Token、Resource/Prompt、R0/R1/R2、撤销/重连或
+50 个 Tool，不证明真实短时 Token、Resource/Prompt、R0/R1/R2、撤销/重连或
 业务 UAT；Issue #36 和 Kimi 整体仍保持外部验收状态。
 
-同日完整 MCP 目录门禁已从仅覆盖 Tool 升级为实时解析 47 个 Tool、4 个静态
-Resource、24 个 Resource Template 和 22 个 Prompt，并把四类目录与忽略注释/
+同日完整 MCP 目录门禁已从仅覆盖 Tool 升级为实时解析 50 个 Tool、4 个静态
+Resource、27 个 Resource Template 和 25 个 Prompt，并把四类目录与忽略注释/
 格式差异的运行时语义摘要共同纳入 `catalogHash`。锁定在独立工具工作区的官方
 MCP Inspector CLI 2.0.0 已通过正式 CLI 层依次执行四个 list 方法，逐项匹配
-47/4/24/22；探针未读取 Resource、未渲染 Prompt、未调用业务 Tool/模型/数据库
+50/4/27/25；探针未读取 Resource、未渲染 Prompt、未调用业务 Tool/模型/数据库
 或外部系统。Phase 5 MCP 联调与总 Go/No-Go 验证器现均精确绑定完整目录，
 陈旧哈希、遗漏 Resource Template 或只满足数量下限都会失败。该仓库实体证据
 不替代正式 Token、授权读写、远程 OAuth、撤销/重连、安全复核或业务 UAT，
@@ -932,7 +938,7 @@ MCP HTTP 入口已覆盖 26 项固定路由、精确 Origin、`/mcp/` 尾斜杠�
 确认控制器、全局 Origin Guard 和 MCP 控制器合计覆盖率达到四维 100%，独立四维
 90% 门禁已接入 `pnpm check`。
 
-标准 MCP 运行时已使用官方 Client 覆盖 22 个 Prompt、47 个 Tool 与 27 个
+标准 MCP 运行时已使用官方 Client 覆盖 25 个 Prompt、50 个 Tool 与 31 个
 受控 Resource 入口，并验证 Origin 白名单、参数失败关闭、最小 fallback 和
 无权读取语义；覆盖率达到 97.97%/95.67%/97.32%/98.88%
 （语句/分支/函数/行），独立四维 90% 门禁已接入 `pnpm check`。

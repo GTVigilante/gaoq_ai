@@ -322,6 +322,7 @@ function validCalculationMigration(overrides: Record<string, unknown> = {}) {
 function compensationData(overrides: Record<string, unknown> = {}) {
   return {
     currency: 'CNY',
+    jurisdictionCode: 'CN-SH',
     taxableEarnings: [{ code: 'BASE', amountMinor: 100_000 }],
     nonTaxableEarnings: [],
     employeeSocialInsuranceMinor: 0,
@@ -362,6 +363,7 @@ describe('PayrollRunService 迁移重算控制', () => {
     const attendanceId = '01J8ZQK7V0A2M4N6P8R0T2W4A1';
     const profileData = {
       currency: 'CNY' as const,
+      jurisdictionCode: 'CN-SH',
       taxableEarnings: [{ code: 'BASE', amountMinor: 100_000 }],
       nonTaxableEarnings: [], employeeSocialInsuranceMinor: 0,
       employeeHousingFundMinor: 0, specialAdditionalDeductionMinor: 0,
@@ -404,6 +406,8 @@ describe('PayrollRunService 迁移重算控制', () => {
     })) };
     const compensation = { findOne: vi.fn().mockReturnValue(query({
       id: profileId, tenantId: 'tenant-001', employeeId: 'employee-001', version: 1,
+      jurisdictionCode: 'CN-SH',
+      effectiveFrom: '2026-01-01', effectiveTo: '2026-12-31',
       profileHash: payrollDigest(profileData), dataKeyId: 'key', dataIv: 'iv',
       dataCiphertext: 'cipher', dataAuthTag: 'tag',
     })) };
@@ -671,6 +675,208 @@ describe('PayrollRunService 周期状态机与错误分类', () => {
   });
 });
 
+describe('PayrollRunService 月中薪酬运行', () => {
+  it('只按明确档案引用完成跨法域自然日分摊并冻结输入证据', async () => {
+    const periodId = '01J8ZQK7V0A2M4N6P8R0T2W4P1';
+    const rulePackId = '01J8ZQK7V0A2M4N6P8R0T2W4R1';
+    const firstProfileId = '01J8ZQK7V0A2M4N6P8R0T2W4C1';
+    const secondProfileId = '01J8ZQK7V0A2M4N6P8R0T2W4C2';
+    const attendanceId = '01J8ZQK7V0A2M4N6P8R0T2W4A1';
+    const rates = {
+      overtimePayMinorPerMinute: 0,
+      absenceDeductionMinorPerMinute: 0,
+      unpaidLeaveDeductionMinorPerMinute: 0,
+    };
+    const firstData = {
+      currency: 'CNY' as const,
+      jurisdictionCode: 'CN-SH',
+      taxableEarnings: [{ code: 'BASE', amountMinor: 310_000 }],
+      nonTaxableEarnings: [],
+      employeeSocialInsuranceMinor: 0,
+      employeeHousingFundMinor: 0,
+      specialAdditionalDeductionMinor: 0,
+      otherPreTaxWithholdingMinor: 0,
+      postTaxDeductionMinor: 0,
+      attendanceAdjustment: rates,
+    };
+    const secondData = {
+      ...firstData,
+      jurisdictionCode: 'CN-BJ',
+      taxableEarnings: [{ code: 'BASE', amountMinor: 620_000 }],
+    };
+    const ruleSnapshot = {
+      id: rulePackId,
+      version: 1,
+      monthlyBasicDeductionMinor: 50_000,
+      taxBrackets: [{ upperBoundMinor: null, rateBps: 300, quickDeductionMinor: 0 }],
+      roundingMode: 'HALF_UP' as const,
+    };
+    const current = {
+      id: periodId,
+      tenantId: 'tenant-001',
+      period: '2026-07',
+      currency: 'CNY',
+      status: 'collecting',
+      preparedBy: 'actor-preparer-001',
+      version: 2,
+      activeRunId: null,
+      inputSnapshotHash: null,
+      resultHash: null,
+      employeeCount: null,
+      totalGrossMinor: null,
+      totalTaxMinor: null,
+      totalNetMinor: null,
+      approvalReferenceType: null,
+      approvalInstanceId: null,
+      approvedBy: null,
+      approvalEvidenceId: null,
+      lockedBy: null,
+      strongAuthEvidenceId: null,
+      strongAuthReferenceType: null,
+      disbursementBatchId: null,
+      disbursementPreparedBy: null,
+      disbursementExportEvidenceId: null,
+      reconciliationEvidenceId: null,
+      reconciledBy: null,
+      migrationEvidenceRef: null,
+      migrationEvidenceChecksum: null,
+      createdAt: new Date('2026-07-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-07-02T00:00:00.000Z'),
+    };
+    const periods = {
+      findOne: vi.fn().mockReturnValue(query(current)),
+      find: vi.fn().mockReturnValue(query([])),
+      updateOne: vi.fn().mockResolvedValue({ modifiedCount: 1 }),
+    };
+    const rulePacks = {
+      findOne: vi.fn().mockReturnValue(query({
+        ...ruleSnapshot,
+        tenantId: 'tenant-001',
+        code: 'CN_IIT',
+        jurisdictionCode: 'CN',
+        effectiveFrom: '2026-01-01',
+        effectiveTo: null,
+        status: 'published',
+        rulesHash: payrollDigest(ruleSnapshot),
+      })),
+    };
+    const compensation = {
+      find: vi.fn().mockReturnValue(query([
+        {
+          id: firstProfileId,
+          tenantId: 'tenant-001',
+          employeeId: 'employee-001',
+          jurisdictionCode: 'CN-SH',
+          version: 1,
+          status: 'active',
+          effectiveFrom: '2026-01-01',
+          effectiveTo: '2026-07-15',
+          profileHash: payrollDigest(firstData),
+          dataKeyId: 'key',
+          dataIv: 'iv',
+          dataCiphertext: 'cipher-1',
+          dataAuthTag: 'tag',
+        },
+        {
+          id: secondProfileId,
+          tenantId: 'tenant-001',
+          employeeId: 'employee-001',
+          jurisdictionCode: 'CN-BJ',
+          version: 2,
+          status: 'active',
+          effectiveFrom: '2026-07-16',
+          effectiveTo: null,
+          profileHash: payrollDigest(secondData),
+          dataKeyId: 'key',
+          dataIv: 'iv',
+          dataCiphertext: 'cipher-2',
+          dataAuthTag: 'tag',
+        },
+      ])),
+    };
+    const attendance = {
+      findOne: vi.fn().mockReturnValue(query({
+        id: attendanceId,
+        employeeId: 'employee-001',
+        month: '2026-07',
+        status: 'active',
+        snapshotHash: 's'.repeat(43),
+        workedMinutes: 0,
+        leaveMinutes: 0,
+        overtimeMinutes: 0,
+        absentMinutes: 0,
+      })),
+    };
+    const protectedInputs: unknown[] = [];
+    const crypto = {
+      unprotect: vi.fn((aad: { resourceId: string }) =>
+        aad.resourceId === firstProfileId ? firstData : secondData),
+      protect: vi.fn((_aad: unknown, value: unknown) => {
+        protectedInputs.push(value);
+        return {
+          keyId: 'payroll-key-001',
+          iv: 'i'.repeat(16),
+          ciphertext: 'c'.repeat(32),
+          authTag: 'a'.repeat(22),
+        };
+      }),
+    };
+    const runs = {
+      findOne: vi.fn().mockReturnValue(query(null)),
+      create: vi.fn().mockResolvedValue([]),
+    };
+    const snapshots = { create: vi.fn().mockResolvedValue([]) };
+    const calculationLines = { create: vi.fn().mockResolvedValue([]) };
+    const store = assemble({
+      periods,
+      rulePacks,
+      compensation,
+      attendance,
+      crypto,
+      runs,
+      snapshots,
+      calculationLines,
+    });
+
+    const result = await store.context.run({
+      tenant,
+      actor: actor(['erp:payroll:run:execute'], 'system_job'),
+    }, () => store.service.executeRun('payroll-run-proration-001', {
+      periodId,
+      expectedVersion: 2,
+      rulePackId,
+      rulePackVersion: 1,
+      lines: [{
+        employeeId: 'employee-001',
+        compensationProfileId: firstProfileId,
+        additionalCompensationProfileIds: [secondProfileId],
+        attendanceSnapshotId: attendanceId,
+      }],
+    }));
+
+    expect(result).toMatchObject({
+      status: 'review',
+      employeeCount: 1,
+      totalGrossMinor: 470_000,
+      totalTaxMinor: 12_600,
+      totalNetMinor: 457_400,
+    });
+    expect(protectedInputs[0]).toMatchObject({
+      taxableEarnings: [{ code: 'BASE', amountMinor: 470_000 }],
+      compensationAllocations: [
+        expect.objectContaining({ jurisdictionCode: 'CN-SH', allocatedDays: 15 }),
+        expect.objectContaining({ jurisdictionCode: 'CN-BJ', allocatedDays: 16 }),
+      ],
+    });
+    expect(snapshots.create).toHaveBeenCalledWith([
+      expect.objectContaining({
+        compensationProfileId: firstProfileId,
+        compensationProfileIds: [firstProfileId, secondProfileId],
+      }),
+    ], { session });
+  });
+});
+
 describe('PayrollRunService 命令输入白名单', () => {
   it('运行根字段、版本、批量和重复员工逐项失败关闭', async () => {
     const store = assemble();
@@ -788,6 +994,7 @@ describe('PayrollRunService 确定性计算执行', () => {
         id: profileId,
         tenantId: 'tenant-001',
         employeeId: 'employee-001',
+        jurisdictionCode: 'CN-SH',
         status: 'active',
         effectiveFrom: '2026-01-01',
         effectiveTo: null,
@@ -953,6 +1160,7 @@ describe('PayrollRunService 确定性计算执行', () => {
     const validCompensationRecord = {
       id: profileId,
       employeeId: 'employee-001',
+      jurisdictionCode: 'CN-SH',
       version: 1,
       profileHash: payrollDigest(validProfile),
       dataKeyId: 'key',
@@ -1371,6 +1579,7 @@ describe('PayrollRunService 迁移输入与不可变基线', () => {
           id: profileId,
           tenantId: 'tenant-001',
           employeeId: 'employee-001',
+          jurisdictionCode: 'CN-SH',
           status: 'active',
           effectiveFrom: '2026-01-01',
           effectiveTo: null,

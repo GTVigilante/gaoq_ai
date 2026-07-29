@@ -13,7 +13,11 @@ import { IdempotencyService } from '../../../core/idempotency/idempotency.servic
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import { ApprovalApplicationService } from '../../approval/application/approval-application.service.js';
 import { AccessProfileRepository } from '../../identity/access-profile.repository.js';
-import { EmployeeRepository } from '../../org/persistence/org.repositories.js';
+import type { Employment } from '../../org/domain/employment.js';
+import {
+  EmployeeRepository,
+  EmploymentRepository,
+} from '../../org/persistence/org.repositories.js';
 import {
   AttendanceDomainError,
   closeAttendanceMonth,
@@ -22,17 +26,21 @@ import {
   restoreAttendanceCorrectionFromMigration,
   restoreAttendanceMonthFromMigration,
   restoreAttendanceSourceFactFromMigration,
+  shiftPlanRequiredThroughDate,
   type AttendanceCorrection,
   type AttendanceFactType,
   type AttendanceImpact,
   type AttendanceMonthlySnapshot,
+  type AttendanceShiftPlan,
   type AttendanceSourceFact,
 } from '../domain/index.js';
 import { AttendanceDataCryptoService } from '../persistence/attendance-data-crypto.service.js';
 import { AttendanceOutboxWriter } from '../persistence/attendance-outbox.writer.js';
+import { AttendanceSourceReadinessRepository } from '../persistence/attendance-source-readiness.repository.js';
 import {
   AttendanceCorrectionRepository,
   AttendanceMonthlySnapshotRepository,
+  AttendanceShiftPlanRepository,
   AttendanceSourceFactRepository,
 } from '../persistence/attendance.repositories.js';
 import type {
@@ -75,6 +83,8 @@ export interface AttendanceMonthSummary extends Record<string, unknown> {
   readonly snapshotVersion: number;
   readonly rulesetVersion: string;
   readonly sourceCutoffAt: string;
+  readonly sourceProviderCount: number;
+  readonly sourceWatermarkDigest: string;
   readonly workedMinutes: number;
   readonly leaveMinutes: number;
   readonly overtimeMinutes: number;
@@ -138,12 +148,15 @@ export class AttendanceApplicationService {
     private readonly context: TenantContextService,
     private readonly profiles: AccessProfileRepository,
     private readonly employees: EmployeeRepository,
+    private readonly employments: EmploymentRepository,
     private readonly approvals: ApprovalApplicationService,
     private readonly rules: AttendanceRuleApplicationService,
     private readonly crypto: AttendanceDataCryptoService,
     private readonly facts: AttendanceSourceFactRepository,
     private readonly corrections: AttendanceCorrectionRepository,
     private readonly snapshots: AttendanceMonthlySnapshotRepository,
+    private readonly shiftPlans: AttendanceShiftPlanRepository,
+    private readonly sourceReadiness: AttendanceSourceReadinessRepository,
     private readonly outbox: AttendanceOutboxWriter,
   ) {}
 
@@ -366,6 +379,13 @@ export class AttendanceApplicationService {
           this.corrections.findForMonth(input.employeeId, input.month, cutoffAt, session),
           this.snapshots.findActive(input.employeeId, input.month, session),
         ]);
+        const employments = await this.employments.findOverlappingByEmployeeIds(
+          [input.employeeId],
+          `${input.month}-01`,
+          endOfMonth(input.month),
+          session,
+        );
+        assertEmploymentCoverage(input.employeeId, input.month, facts, employments);
         const id = input.targetId ?? createEventId(closedAt);
         const snapshot = restoreAttendanceMonthFromMigration({
           id, tenantId, employeeId: input.employeeId, month: input.month,
@@ -630,11 +650,29 @@ export class AttendanceApplicationService {
           code: 'ATTENDANCE_MONTH_CHANGED', message: '考勤月结状态已变化，请重新读取',
         });
         const cutoffAt = new Date(normalizeInstant(input.sourceCutoffAt));
-        const facts = await this.facts.findForRuleEvaluation(
-          input.employeeId, input.month, cutoffAt, session,
-        );
-        const corrections = await this.corrections.findForRuleEvaluation(
-          input.employeeId, input.month, cutoffAt, session,
+        const [facts, corrections, employments, shiftPlans] = await Promise.all([
+          this.facts.findForRuleEvaluation(input.employeeId, input.month, cutoffAt, session),
+          this.corrections.findForRuleEvaluation(input.employeeId, input.month, cutoffAt, session),
+          this.employments.findOverlappingByEmployeeIds(
+            [input.employeeId],
+            `${input.month}-01`,
+            endOfMonth(input.month),
+            session,
+          ),
+          this.shiftPlans.findForMonth(input.employeeId, input.month, cutoffAt, session),
+        ]);
+        assertEmploymentCoverage(input.employeeId, input.month, facts, employments);
+        assertShiftPlanReadiness(input.rulesetVersion, facts, shiftPlans, employments);
+        const requiredThroughDate = shiftPlans.reduce((value, plan) => {
+          const planThroughDate = shiftPlanRequiredThroughDate(plan);
+          return planThroughDate > value ? planThroughDate : value;
+        }, endOfMonth(input.month));
+        const sourceWatermarks = await this.sourceReadiness.reconcile(
+          input.employeeId,
+          input.month,
+          cutoffAt,
+          session,
+          requiredThroughDate,
         );
         const evaluated = await this.rules.evaluateMonth({
           employeeId: input.employeeId,
@@ -650,6 +688,7 @@ export class AttendanceApplicationService {
           employeeId: input.employeeId, month: input.month,
           snapshotVersion: (active?.snapshotVersion ?? 0) + 1,
           rulesetVersion: input.rulesetVersion, sourceCutoffAt: cutoffAt.toISOString(),
+          sourceWatermarks,
           facts: evaluated.facts,
           corrections: evaluated.corrections,
           evaluatedDailySummaries: evaluated.dailySummaries,
@@ -753,7 +792,8 @@ export class AttendanceApplicationService {
         }
         if (
           error.code.includes('SUPERSESSION') || error.code.includes('DUPLICATE') ||
-          error.code.includes('OUT_OF_SCOPE') || error.code.includes('CUTOFF')
+          error.code.includes('OUT_OF_SCOPE') || error.code.includes('CUTOFF') ||
+          error.code.includes('SOURCE_NOT_READY')
         ) throw new ConflictException({ code: error.code, message: error.message });
         throw new BadRequestException({ code: error.code, message: error.message });
       }
@@ -807,6 +847,8 @@ function monthSummary(snapshot: AttendanceMonthlySnapshot): AttendanceMonthSumma
     id: snapshot.id, employeeId: snapshot.employeeId, month: snapshot.month,
     snapshotVersion: snapshot.snapshotVersion, rulesetVersion: snapshot.rulesetVersion,
     sourceCutoffAt: snapshot.sourceCutoffAt, workedMinutes: snapshot.workedMinutes,
+    sourceProviderCount: snapshot.sourceProviderCount,
+    sourceWatermarkDigest: snapshot.sourceWatermarkDigest,
     leaveMinutes: snapshot.leaveMinutes, overtimeMinutes: snapshot.overtimeMinutes,
     absentMinutes: snapshot.absentMinutes, sourceFactCount: snapshot.sourceFactCount,
     correctionCount: snapshot.correctionCount, snapshotHash: snapshot.snapshotHash,
@@ -826,6 +868,101 @@ function normalizeInstant(value: string): string {
     code: 'ATTENDANCE_INSTANT_INVALID', message: '考勤时间非法',
   });
   return parsed.toISOString();
+}
+
+function endOfMonth(month: string): string {
+  const [yearText, monthText] = month.split('-');
+  const year = Number(yearText);
+  const monthIndex = Number(monthText);
+  return new Date(Date.UTC(year, monthIndex, 0)).toISOString().slice(0, 10);
+}
+
+function assertEmploymentCoverage(
+  employeeId: string,
+  month: string,
+  facts: readonly AttendanceSourceFact[],
+  employments: readonly Employment[],
+): void {
+  if (employments.length === 0) throw new ConflictException({
+    code: 'ATTENDANCE_EMPLOYMENT_NOT_EFFECTIVE',
+    message: '员工在关账月份没有有效劳动关系',
+  });
+  for (const fact of facts) {
+    const covered = employments.some((employment) =>
+      employment.employeeId === employeeId &&
+      employment.effectiveFrom <= fact.businessDate &&
+      (employment.effectiveTo === null || employment.effectiveTo >= fact.businessDate));
+    if (!covered) throw new ConflictException({
+      code: 'ATTENDANCE_FACT_OUTSIDE_EMPLOYMENT',
+      message: `考勤事实 ${fact.id} 不在员工劳动关系有效区间内`,
+    });
+  }
+  const monthStart = `${month}-01`;
+  const monthEnd = endOfMonth(month);
+  if (!employments.some((employment) =>
+    employment.effectiveFrom <= monthEnd &&
+    (employment.effectiveTo === null || employment.effectiveTo >= monthStart))) {
+    throw new ConflictException({
+      code: 'ATTENDANCE_EMPLOYMENT_NOT_EFFECTIVE',
+      message: '员工劳动关系未覆盖关账月份',
+    });
+  }
+}
+
+function assertShiftPlanReadiness(
+  rulesetVersion: string,
+  facts: readonly AttendanceSourceFact[],
+  plans: readonly AttendanceShiftPlan[],
+  employments: readonly Employment[],
+): void {
+  const planById = new Map(plans.map((plan) => [plan.id, plan]));
+  for (const plan of plans) {
+    if (plan.rulesetVersion !== rulesetVersion) throw new ConflictException({
+      code: 'ATTENDANCE_SHIFT_RULESET_MISMATCH',
+      message: `班次 ${plan.id} 的规则版本与月结规则版本不一致`,
+    });
+    if (!employments.some((employment) =>
+      employment.employeeId === plan.employeeId &&
+      employment.effectiveFrom <= plan.businessDate &&
+      (employment.effectiveTo === null || employment.effectiveTo >= plan.businessDate))) {
+      throw new ConflictException({
+        code: 'ATTENDANCE_SHIFT_OUTSIDE_EMPLOYMENT',
+        message: `班次 ${plan.id} 不在员工劳动关系有效区间内`,
+      });
+    }
+  }
+  const derivedByPlan = new Map<string, AttendanceSourceFact>();
+  for (const fact of facts) {
+    if (fact.shiftPlanId === undefined || fact.shiftPlanId === null) continue;
+    const plan = planById.get(fact.shiftPlanId);
+    if (plan === undefined || fact.factType !== 'shift' ||
+      fact.providerCode !== 'attendance_rules' ||
+      fact.businessDate !== plan.businessDate) {
+      throw new ConflictException({
+        code: 'ATTENDANCE_SHIFT_DERIVATION_INVALID',
+        message: `班次派生事实 ${fact.id} 与计划绑定不一致`,
+      });
+    }
+    if (derivedByPlan.has(plan.id)) throw new ConflictException({
+      code: 'ATTENDANCE_SHIFT_DERIVATION_DUPLICATE',
+      message: `班次 ${plan.id} 存在多个派生事实`,
+    });
+    derivedByPlan.set(plan.id, fact);
+  }
+  for (const plan of plans) {
+    if (!derivedByPlan.has(plan.id)) throw new ConflictException({
+      code: 'ATTENDANCE_SHIFT_EVALUATION_REQUIRED',
+      message: `班次 ${plan.id} 尚未完成规则计算`,
+    });
+  }
+  if (facts.some((fact) =>
+    (fact.factType === 'punch_in' || fact.factType === 'punch_out')) &&
+    plans.length === 0) {
+    throw new ConflictException({
+      code: 'ATTENDANCE_SHIFT_PLAN_REQUIRED',
+      message: '存在 Provider 打卡但没有版本化班次计划',
+    });
+  }
 }
 
 function isDuplicateKeyError(error: unknown): boolean {
@@ -874,6 +1011,8 @@ function sameMigratedMonth(
     left.snapshotVersion === right.snapshotVersion &&
     left.rulesetVersion === right.rulesetVersion &&
     left.sourceCutoffAt === right.sourceCutoffAt &&
+    left.sourceProviderCount === right.sourceProviderCount &&
+    left.sourceWatermarkDigest === right.sourceWatermarkDigest &&
     left.workedMinutes === right.workedMinutes && left.leaveMinutes === right.leaveMinutes &&
     left.overtimeMinutes === right.overtimeMinutes && left.absentMinutes === right.absentMinutes &&
     left.sourceFactCount === right.sourceFactCount &&

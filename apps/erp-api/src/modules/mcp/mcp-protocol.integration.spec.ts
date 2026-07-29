@@ -352,6 +352,9 @@ describe('MCP Streamable HTTP 协议集成', () => {
       getPayrollReconciliation: vi.fn(),
       getPayrollShadowCycle: vi.fn(),
       getPayrollCutoverReadiness: vi.fn(),
+      getPayrollAdjustmentStatus: vi.fn(),
+      getPayrollAdjustmentTaxCorrectionStatus: vi.fn(),
+      getAnnualPayrollReconciliationStatus: vi.fn(),
       getOpOperatingSummary: vi.fn().mockResolvedValue({
         content: [{ type: 'text' as const, text: JSON.stringify({ operatingSummary: {
           summaryDate: '2026-07-22', revision: 1,
@@ -600,6 +603,9 @@ describe('MCP Streamable HTTP 协议集成', () => {
       'payroll_reconciliation_get',
       'payroll_shadow_cycle_get',
       'payroll_cutover_readiness_get',
+      'payroll_adjustment_status_get',
+      'payroll_adjustment_tax_correction_status_get',
+      'payroll_annual_reconciliation_status_get',
       'op_operating_summary_get',
       'op_approval_bridge_get',
       'management_dashboard_get',
@@ -654,6 +660,11 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ uriTemplate: 'erp://payroll/reconciliations/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://payroll/shadow-cycles/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://payroll/cutover-readiness/{id}' }),
+      expect.objectContaining({ uriTemplate: 'erp://payroll/adjustments/{id}' }),
+      expect.objectContaining({
+        uriTemplate: 'erp://payroll/adjustment-tax-corrections/{id}',
+      }),
+      expect.objectContaining({ uriTemplate: 'erp://payroll/annual-reconciliations/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://op/operating-summaries/{date}' }),
       expect.objectContaining({ uriTemplate: 'erp://op/approval-bridges/{externalEventId}' }),
       expect.objectContaining({ uriTemplate: 'erp://analytics/management-dashboard/{asOf}' }),
@@ -680,6 +691,11 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ name: 'payroll_reconciliation_review_guide' }),
       expect.objectContaining({ name: 'payroll_shadow_cycle_review_guide' }),
       expect.objectContaining({ name: 'payroll_cutover_readiness_review_guide' }),
+      expect.objectContaining({ name: 'payroll_adjustment_review_guide' }),
+      expect.objectContaining({
+        name: 'payroll_adjustment_tax_correction_review_guide',
+      }),
+      expect.objectContaining({ name: 'payroll_annual_reconciliation_review_guide' }),
       expect.objectContaining({ name: 'op_operating_summary_review_guide' }),
       expect.objectContaining({ name: 'op_approval_bridge_review_guide' }),
       expect.objectContaining({ name: 'management_dashboard_review_guide' }),
@@ -981,6 +997,9 @@ describe('MCP Streamable HTTP 协议集成', () => {
       ['payroll_reconciliation_get', { id: validId }],
       ['payroll_shadow_cycle_get', { id: validId }],
       ['payroll_cutover_readiness_get', { id: validId }],
+      ['payroll_adjustment_status_get', { id: validId }],
+      ['payroll_adjustment_tax_correction_status_get', { id: validId }],
+      ['payroll_annual_reconciliation_status_get', { id: validId }],
       ['op_operating_summary_get', { date: '2026-07-22' }],
       ['data_migration_report_get', { runId: validId }],
       ['management_dashboard_export_prepare', {
@@ -1071,6 +1090,18 @@ describe('MCP Streamable HTTP 协议集成', () => {
       [
         'getPayrollCutoverReadiness',
         'erp://payroll/cutover-readiness/01J8ZQK7V0A2M4N6P8R0T2W4P5',
+      ],
+      [
+        'getPayrollAdjustmentStatus',
+        'erp://payroll/adjustments/01J8ZQK7V0A2M4N6P8R0T2W4A3',
+      ],
+      [
+        'getPayrollAdjustmentTaxCorrectionStatus',
+        'erp://payroll/adjustment-tax-corrections/01J8ZQK7V0A2M4N6P8R0T2W4F1',
+      ],
+      [
+        'getAnnualPayrollReconciliationStatus',
+        'erp://payroll/annual-reconciliations/01J8ZQK7V0A2M4N6P8R0T2W4Y1',
       ],
       ['getOpOperatingSummary', 'erp://op/operating-summaries/2026-07-22'],
       ['getOpApprovalBridge', 'erp://op/approval-bridges/approval-event-001'],

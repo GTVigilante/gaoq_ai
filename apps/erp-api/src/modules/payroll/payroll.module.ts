@@ -10,6 +10,10 @@ import { AttendanceMonthlySnapshotRecord, AttendanceMonthlySnapshotRecordSchema 
 import { OrgModule } from '../org/org.module.js';
 import { OutboxRecord, OutboxRecordSchema } from '../org/persistence/outbox.schema.js';
 import { PayrollMasterDataService } from './application/payroll-master-data.service.js';
+import { PayrollAdjustmentService } from './application/payroll-adjustment.service.js';
+import { PayrollAdjustmentReceivableService } from './application/payroll-adjustment-receivable.service.js';
+import { PayrollAdjustmentTaxCorrectionService } from './application/payroll-adjustment-tax-correction.service.js';
+import { PayrollAnnualReconciliationService } from './application/payroll-annual-reconciliation.service.js';
 import { PayrollApprovalService } from './application/payroll-approval.service.js';
 import { PayrollRunService } from './application/payroll-run.service.js';
 import { PayrollPayslipService } from './application/payroll-payslip.service.js';
@@ -25,6 +29,16 @@ import { PayrollOutboxWriter } from './persistence/payroll-outbox.writer.js';
 import {
   PayrollCalculationLineRecord,
   PayrollCalculationLineRecordSchema,
+  PayrollAdjustmentRecord,
+  PayrollAdjustmentRecordSchema,
+  PayrollAdjustmentReceivableRecord,
+  PayrollAdjustmentReceivableRecordSchema,
+  PayrollAdjustmentReceivableRecoveryRecord,
+  PayrollAdjustmentReceivableRecoveryRecordSchema,
+  PayrollAdjustmentTaxCorrectionRecord,
+  PayrollAdjustmentTaxCorrectionRecordSchema,
+  PayrollAnnualReconciliationRecord,
+  PayrollAnnualReconciliationRecordSchema,
   PayrollCalculationRunRecord,
   PayrollCalculationRunRecordSchema,
   PayrollCompensationProfileRecord,
@@ -77,6 +91,23 @@ import { LegacyPayrollBoundaryService } from './legacy-payroll-boundary.service.
       { name: PayrollCalculationRunRecord.name, schema: PayrollCalculationRunRecordSchema },
       { name: PayrollInputSnapshotRecord.name, schema: PayrollInputSnapshotRecordSchema },
       { name: PayrollCalculationLineRecord.name, schema: PayrollCalculationLineRecordSchema },
+      { name: PayrollAdjustmentRecord.name, schema: PayrollAdjustmentRecordSchema },
+      {
+        name: PayrollAdjustmentReceivableRecord.name,
+        schema: PayrollAdjustmentReceivableRecordSchema,
+      },
+      {
+        name: PayrollAdjustmentReceivableRecoveryRecord.name,
+        schema: PayrollAdjustmentReceivableRecoveryRecordSchema,
+      },
+      {
+        name: PayrollAdjustmentTaxCorrectionRecord.name,
+        schema: PayrollAdjustmentTaxCorrectionRecordSchema,
+      },
+      {
+        name: PayrollAnnualReconciliationRecord.name,
+        schema: PayrollAnnualReconciliationRecordSchema,
+      },
       { name: PayrollTaxFilingRecord.name, schema: PayrollTaxFilingRecordSchema },
       { name: PayrollReconciliationRecord.name, schema: PayrollReconciliationRecordSchema },
       { name: PayrollShadowCycleRecord.name, schema: PayrollShadowCycleRecordSchema },
@@ -91,6 +122,10 @@ import { LegacyPayrollBoundaryService } from './legacy-payroll-boundary.service.
   controllers: [PayrollController],
   providers: [
     PayrollRunService,
+    PayrollAdjustmentService,
+    PayrollAdjustmentReceivableService,
+    PayrollAdjustmentTaxCorrectionService,
+    PayrollAnnualReconciliationService,
     PayrollPayslipService,
     PayrollApprovalService,
     PayrollMasterDataService,
@@ -108,6 +143,10 @@ import { LegacyPayrollBoundaryService } from './legacy-payroll-boundary.service.
   ],
   exports: [
     PayrollRunService, PayrollPayslipService,
+    PayrollAdjustmentService,
+    PayrollAdjustmentReceivableService,
+    PayrollAdjustmentTaxCorrectionService,
+    PayrollAnnualReconciliationService,
     PayrollApprovalService,
     PayrollMasterDataService,
     PayrollTaxFilingService, PayrollReconciliationService,

@@ -26,6 +26,8 @@ import { OpApprovalQueueMetricsPoller } from '../op/op-approval-queue-metrics.po
 import { AuditModule } from '../../core/audit/audit.module.js';
 import { TenantContextModule } from '../../core/tenant/tenant-context.module.js';
 import { AttendanceCoreModule } from '../attendance/attendance-core.module.js';
+import { AttendanceShiftProcessor } from '../attendance/attendance-shift.processor.js';
+import { AttendanceShiftScheduler } from '../attendance/attendance-shift.scheduler.js';
 import { RecruitmentCoreModule } from '../recruitment/recruitment-core.module.js';
 
 /** 只在独立 Worker 进程装配队列消费者，API 进程不消费后台任务。 */
@@ -49,6 +51,7 @@ import { RecruitmentCoreModule } from '../recruitment/recruitment-core.module.js
     ESignWebhookProcessor, ESignScheduler, ESignQueueMetricsPoller,
     RecruitmentChannelProcessor, RecruitmentChannelScheduler,
     AttendanceProviderProcessor, AttendanceProviderScheduler,
+    AttendanceShiftProcessor, AttendanceShiftScheduler,
     OpOperatingSummaryProcessor,
     OpApprovalProcessor, OpApprovalScheduler, OpApprovalQueueMetricsPoller,
   ],

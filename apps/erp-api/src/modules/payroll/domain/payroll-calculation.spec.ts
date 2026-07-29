@@ -32,6 +32,31 @@ const base: PayrollCalculationInput = {
     otherDeductionMinor: 0, taxWithheldMinor: 0,
   },
 };
+const firstAllocation = {
+  profileId: 'profile-001',
+  profileVersion: 1,
+  profileHash: 'a'.repeat(43),
+  jurisdictionCode: 'CN-SH',
+  effectiveFrom: '2026-01-01',
+  effectiveTo: '2026-07-15',
+  allocatedFrom: '2026-07-01',
+  allocatedTo: '2026-07-15',
+  allocatedDays: 15,
+  periodDays: 31,
+  allocationMethod: 'CALENDAR_DAY_HALF_UP',
+} as const;
+const secondAllocation = {
+  ...firstAllocation,
+  profileId: 'profile-002',
+  profileVersion: 2,
+  profileHash: 'b'.repeat(43),
+  jurisdictionCode: 'CN-BJ',
+  effectiveFrom: '2026-07-16',
+  effectiveTo: null,
+  allocatedFrom: '2026-07-16',
+  allocatedTo: '2026-07-31',
+  allocatedDays: 16,
+} as const;
 
 describe('累计预扣确定性计算内核', () => {
   it('只用整数分和基点计算首月应税、预扣与实发', () => {
@@ -84,6 +109,56 @@ describe('累计预扣确定性计算内核', () => {
     });
     expect(right.resultHash).toBe(left.resultHash);
     expect(right.steps).toEqual(left.steps);
+  });
+
+  it('月中跨法域薪酬分摊证据进入输入摘要且完整覆盖自然日', () => {
+    const withAllocations = calculatePayroll({
+      ...base,
+      compensationAllocations: [firstAllocation, secondAllocation],
+    });
+    const withoutAllocations = calculatePayroll(base);
+
+    expect(withAllocations.inputHash).not.toBe(withoutAllocations.inputHash);
+    expect(withAllocations.resultHash).not.toBe(withoutAllocations.resultHash);
+    expect(withAllocations.netPayMinor).toBe(withoutAllocations.netPayMinor);
+  });
+
+  it('薪酬分摊证据对引用、日期、法域、天数、方法和重复档案逐项失败关闭', () => {
+    const invalidAllocations = [
+      [],
+      [{ ...firstAllocation, profileId: '@' }, secondAllocation],
+      [{ ...firstAllocation, jurisdictionCode: '@' }, secondAllocation],
+      [{ ...firstAllocation, profileHash: 'short' }, secondAllocation],
+      [{ ...firstAllocation, profileVersion: 0 }, secondAllocation],
+      [{ ...firstAllocation, allocatedDays: 0 }, secondAllocation],
+      [{ ...firstAllocation, periodDays: 27 }, secondAllocation],
+      [{ ...firstAllocation, periodDays: 32 }, secondAllocation],
+      [{
+        ...firstAllocation,
+        allocationMethod: 'WORKING_DAY' as never,
+      }, secondAllocation],
+      [{ ...firstAllocation, effectiveFrom: '2026-7-01' }, secondAllocation],
+      [{ ...firstAllocation, effectiveTo: '2026-7-15' }, secondAllocation],
+      [{ ...firstAllocation, allocatedFrom: '2026-7-01' }, secondAllocation],
+      [{ ...firstAllocation, allocatedTo: '2026-7-15' }, secondAllocation],
+      [{
+        ...firstAllocation,
+        allocatedFrom: '2026-07-16',
+        allocatedTo: '2026-07-15',
+      }, secondAllocation],
+      [{ ...firstAllocation, periodDays: 30 }, secondAllocation],
+      [firstAllocation, { ...secondAllocation, profileId: firstAllocation.profileId }],
+      [firstAllocation, { ...secondAllocation, allocatedDays: 15 }],
+    ] as const;
+
+    for (const compensationAllocations of invalidAllocations) {
+      expect(() => calculatePayroll({
+        ...base,
+        compensationAllocations,
+      })).toThrow(expect.objectContaining<Partial<PayrollCalculationError>>({
+        code: 'PAYROLL_COMPENSATION_ALLOCATION_INVALID',
+      }));
+    }
   });
 
   it('规范摘要对对象键顺序稳定，并拒绝日期对象和循环引用', () => {

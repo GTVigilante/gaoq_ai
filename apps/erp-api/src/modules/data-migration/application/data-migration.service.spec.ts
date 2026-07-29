@@ -1846,7 +1846,8 @@ describe('DataMigrationService', () => {
       approvalHistorySourceId: 'legacy-approval-compensation-001',
       approvalEvidenceChecksum: 'a'.repeat(43),
       data: {
-        currency: 'CNY', taxableEarnings: [{ code: 'BASE', amountMinor: 1_000_000 }],
+        currency: 'CNY', jurisdictionCode: 'CN-SH',
+        taxableEarnings: [{ code: 'BASE', amountMinor: 1_000_000 }],
         nonTaxableEarnings: [], employeeSocialInsuranceMinor: 80_000,
         employeeHousingFundMinor: 70_000, specialAdditionalDeductionMinor: 20_000,
         otherPreTaxWithholdingMinor: 0, postTaxDeductionMinor: 0,
@@ -1909,6 +1910,39 @@ describe('DataMigrationService', () => {
     );
     const item = items.create.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
     expect(JSON.stringify(item)).not.toMatch(/BASE|1000000|taxableEarnings/u);
+
+    const {
+      jurisdictionCode: _omittedJurisdictionCode,
+      ...withoutJurisdiction
+    } = payload.data;
+    expect(_omittedJurisdictionCode).toBe('CN-SH');
+    for (const [sequence, data] of [
+      [2, withoutJurisdiction],
+      [3, { ...payload.data, jurisdictionCode: '@' }],
+    ] as const) {
+      const invalidPayload = { ...payload, data };
+      await expect(trusted(context, () => service.apply(RUN_ID, {
+        sequence: 1,
+        sourceRecordId: `legacy-compensation-invalid-${sequence}`,
+        sourceVersion: '1',
+        entityType: 'payroll.compensation_profile',
+        payload: invalidPayload,
+        payloadHash: dataMigrationChecksum.digest(
+          dataMigrationChecksum.canonicalJson(invalidPayload),
+        ),
+        associationSourceIds: [
+          'legacy-approval-compensation-001',
+          'legacy-employee-001',
+        ],
+        attachments: [{
+          sourceAttachmentId: 'payroll-compensation-001',
+          checksum: 'c'.repeat(43),
+        }],
+      }))).resolves.toMatchObject({
+        status: 'rejected',
+        rejectionCode: 'DATA_MIGRATION_PAYLOAD_INVALID',
+      });
+    }
   });
 
   it('工资周期迁移解析制单员工且只下发 draft/collecting 基线', async () => {

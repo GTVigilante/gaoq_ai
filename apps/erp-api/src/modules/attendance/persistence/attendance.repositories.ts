@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import type { ClientSession, Model } from 'mongoose';
@@ -7,6 +9,7 @@ import { TenantContextService } from '../../../core/tenant/tenant-context.servic
 import type {
   AttendanceCorrection,
   AttendanceMonthlySnapshot,
+  AttendanceShiftPlan,
   AttendanceSourceFact,
 } from '../domain/index.js';
 import { AttendanceDataCryptoService, type ProtectedAttendanceData } from './attendance-data-crypto.service.js';
@@ -17,6 +20,8 @@ import {
   type AttendanceMonthlySnapshotDocument,
   AttendanceSourceFactRecord,
   type AttendanceSourceFactDocument,
+  AttendanceShiftPlanRecord,
+  type AttendanceShiftPlanDocument,
 } from './attendance.schemas.js';
 
 const impactSchema = z.object({
@@ -37,6 +42,17 @@ const dailySummarySchema = impactSchema.extend({
   correctionCount: z.number().int().nonnegative(), digest: z.string(),
 }).strict();
 const snapshotPayloadSchema = z.object({ dailySummaries: z.array(dailySummarySchema) }).strict();
+const EMPTY_SOURCE_WATERMARK_DIGEST =
+  createHash('sha256').update('[]', 'utf8').digest('base64url');
+const shiftPlanPayloadSchema = z.object({
+  timeZone: z.string(),
+  scheduledStartAt: z.string(),
+  scheduledEndAt: z.string(),
+  breakMinutes: z.number().int().nonnegative(),
+  graceMinutes: z.number().int().nonnegative(),
+  earlyArrivalWindowMinutes: z.number().int().nonnegative(),
+  lateDepartureWindowMinutes: z.number().int().nonnegative(),
+}).strict();
 
 abstract class TenantRepository {
   constructor(protected readonly context: TenantContextService) {}
@@ -72,6 +88,31 @@ export class AttendanceSourceFactRepository extends TenantRepository {
     if (session !== undefined) query.session(session);
     const record = await query.lean().exec();
     return record === null ? null : this.toDomain(record);
+  }
+
+  async findByShiftPlanId(
+    shiftPlanId: string,
+    session?: ClientSession,
+  ): Promise<AttendanceSourceFact | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), shiftPlanId });
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record === null ? null : this.toDomain(record);
+  }
+
+  async findPunchesForDateRange(
+    employeeId: string,
+    fromBusinessDate: string,
+    toBusinessDate: string,
+    session: ClientSession,
+  ): Promise<readonly AttendanceSourceFact[]> {
+    const records = await this.records.find({
+      tenantId: this.tenantId(),
+      employeeId,
+      businessDate: { $gte: fromBusinessDate, $lte: toBusinessDate },
+      factType: { $in: ['punch_in', 'punch_out'] },
+    }).sort({ businessDate: 1, id: 1 }).session(session).lean().exec();
+    return Object.freeze(records.map((record) => this.toDomain(record)));
   }
 
   async findForMonth(
@@ -165,6 +206,7 @@ export class AttendanceSourceFactRepository extends TenantRepository {
     await this.records.create([{
       id: fact.id, tenantId: fact.tenantId, employeeId: fact.employeeId,
       providerCode: fact.providerCode, factType: fact.factType, businessDate: fact.businessDate,
+      shiftPlanId: fact.shiftPlanId ?? null,
       sourceObservedAt: new Date(fact.sourceObservedAt), sourceEventBlindIndexes: [...sourceEventBlindIndexes],
       migrationEvidenceRef, migrationEvidenceChecksum,
       ...toProtectedRecord(protectedData), createdAt: new Date(fact.createdAt), updatedAt: new Date(fact.createdAt),
@@ -181,7 +223,156 @@ export class AttendanceSourceFactRepository extends TenantRepository {
       providerCode: record.providerCode, factType: record.factType,
       occurredAt: payload.occurredAt, timeZone: payload.timeZone,
       businessDate: record.businessDate, impact: Object.freeze(payload.impact),
+      ...(record.shiftPlanId === null || record.shiftPlanId === undefined
+        ? {}
+        : { shiftPlanId: record.shiftPlanId }),
       sourceObservedAt: record.sourceObservedAt.toISOString(), createdAt: record.createdAt.toISOString(),
+    });
+  }
+}
+
+@Injectable()
+export class AttendanceShiftPlanRepository extends TenantRepository {
+  constructor(
+    context: TenantContextService,
+    @InjectModel(AttendanceShiftPlanRecord.name)
+    private readonly records: Model<AttendanceShiftPlanDocument>,
+    private readonly crypto: AttendanceDataCryptoService,
+  ) { super(context); }
+
+  async findById(id: string, session?: ClientSession): Promise<AttendanceShiftPlan | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), id });
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record === null ? null : this.toDomain(record);
+  }
+
+  async findByEventFingerprints(
+    fingerprints: readonly string[],
+    session?: ClientSession,
+  ): Promise<AttendanceShiftPlan | null> {
+    const query = this.records.findOne({
+      tenantId: this.tenantId(),
+      sourcePlanBlindIndexes: { $in: [...fingerprints] },
+    });
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record === null ? null : this.toDomain(record);
+  }
+
+  async findForMonth(
+    employeeId: string,
+    month: string,
+    cutoffAt: Date,
+    session: ClientSession,
+  ): Promise<readonly AttendanceShiftPlan[]> {
+    const records = await this.records.find({
+      tenantId: this.tenantId(),
+      employeeId,
+      businessDate: { $gte: `${month}-01`, $lte: `${month}-31` },
+      sourceObservedAt: { $lte: cutoffAt },
+      createdAt: { $lte: cutoffAt },
+    }).sort({ businessDate: 1, id: 1 }).session(session).lean().exec();
+    return Object.freeze(records.map((record) => this.toDomain(record)));
+  }
+
+  async findNearBusinessDate(
+    employeeId: string,
+    fromDate: string,
+    toDate: string,
+    session: ClientSession,
+  ): Promise<readonly AttendanceShiftPlan[]> {
+    const records = await this.records.find({
+      tenantId: this.tenantId(),
+      employeeId,
+      businessDate: { $gte: fromDate, $lte: toDate },
+    }).sort({ businessDate: 1, id: 1 }).session(session).lean().exec();
+    return Object.freeze(records.map((record) => this.toDomain(record)));
+  }
+
+  async insert(
+    plan: AttendanceShiftPlan,
+    sourcePlanBlindIndexes: readonly string[],
+    session: ClientSession,
+  ): Promise<void> {
+    this.assertTenant(plan.tenantId);
+    const protectedData = this.crypto.protect(
+      { tenantId: plan.tenantId, resourceType: 'shift_plan', resourceId: plan.id },
+      {
+        timeZone: plan.timeZone,
+        scheduledStartAt: plan.scheduledStartAt,
+        scheduledEndAt: plan.scheduledEndAt,
+        breakMinutes: plan.breakMinutes,
+        graceMinutes: plan.graceMinutes,
+        earlyArrivalWindowMinutes: plan.earlyArrivalWindowMinutes,
+        lateDepartureWindowMinutes: plan.lateDepartureWindowMinutes,
+      },
+    );
+    await this.records.create([{
+      id: plan.id,
+      tenantId: plan.tenantId,
+      employeeId: plan.employeeId,
+      providerCode: plan.providerCode,
+      planCode: plan.planCode,
+      businessDate: plan.businessDate,
+      rulesetVersion: plan.rulesetVersion,
+      sourceObservedAt: new Date(plan.sourceObservedAt),
+      evaluationDueAt: new Date(
+        Date.parse(plan.scheduledEndAt) + plan.lateDepartureWindowMinutes * 60_000,
+      ),
+      evaluationStatus: 'pending',
+      evaluatedAt: null,
+      evaluatedSourceFactId: null,
+      sourcePlanBlindIndexes: [...sourcePlanBlindIndexes],
+      ...toProtectedRecord(protectedData),
+      createdAt: new Date(plan.createdAt),
+      updatedAt: new Date(plan.createdAt),
+    }], { session });
+  }
+
+  async markEvaluated(
+    planId: string,
+    sourceFactId: string,
+    evaluatedAt: Date,
+    session: ClientSession,
+  ): Promise<void> {
+    const result = await this.records.updateOne(
+      {
+        tenantId: this.tenantId(),
+        id: planId,
+        $or: [
+          { evaluationStatus: 'pending' },
+          { evaluationStatus: 'completed', evaluatedSourceFactId: sourceFactId },
+        ],
+      },
+      { $set: {
+        evaluationStatus: 'completed',
+        evaluatedAt,
+        evaluatedSourceFactId: sourceFactId,
+      } },
+      { session, runValidators: true, timestamps: false },
+    );
+    if (result.matchedCount !== 1) {
+      throw new Error('ATTENDANCE_SHIFT_EVALUATION_CHECKPOINT_CONFLICT');
+    }
+  }
+
+  private toDomain(record: AttendanceShiftPlanRecord): AttendanceShiftPlan {
+    const payload = shiftPlanPayloadSchema.parse(this.crypto.unprotect(
+      { tenantId: record.tenantId, resourceType: 'shift_plan', resourceId: record.id },
+      fromProtectedRecord(record),
+    ));
+    return Object.freeze({
+      id: record.id,
+      tenantId: record.tenantId,
+      employeeId: record.employeeId,
+      providerCode: record.providerCode,
+      planCode: record.planCode,
+      businessDate: record.businessDate,
+      rulesetVersion: record.rulesetVersion,
+      sourceObservedAt: record.sourceObservedAt.toISOString(),
+      createdAt: record.createdAt.toISOString(),
+      ...payload,
     });
   }
 }
@@ -418,6 +609,8 @@ export class AttendanceMonthlySnapshotRepository extends TenantRepository {
       month: snapshot.month, snapshotVersion: snapshot.snapshotVersion,
       rulesetVersion: snapshot.rulesetVersion,
       sourceCutoffAt: new Date(snapshot.sourceCutoffAt), closedAt: new Date(snapshot.closedAt),
+      sourceProviderCount: snapshot.sourceProviderCount,
+      sourceWatermarkDigest: snapshot.sourceWatermarkDigest,
       workedMinutes: snapshot.workedMinutes, leaveMinutes: snapshot.leaveMinutes,
       overtimeMinutes: snapshot.overtimeMinutes, absentMinutes: snapshot.absentMinutes,
       sourceFactCount: snapshot.sourceFactCount, correctionCount: snapshot.correctionCount,
@@ -434,10 +627,20 @@ export class AttendanceMonthlySnapshotRepository extends TenantRepository {
       { tenantId: record.tenantId, resourceType: 'monthly_snapshot', resourceId: record.id },
       fromProtectedRecord(record),
     ));
+    const rawProviderCount: unknown = Reflect.get(record, 'sourceProviderCount');
+    const rawWatermarkDigest: unknown = Reflect.get(record, 'sourceWatermarkDigest');
     return Object.freeze({
       id: record.id, tenantId: record.tenantId, employeeId: record.employeeId,
       month: record.month, snapshotVersion: record.snapshotVersion,
       rulesetVersion: record.rulesetVersion, sourceCutoffAt: record.sourceCutoffAt.toISOString(),
+      sourceProviderCount: typeof rawProviderCount === 'number' &&
+        Number.isSafeInteger(rawProviderCount) && rawProviderCount >= 0
+        ? rawProviderCount
+        : 0,
+      sourceWatermarkDigest: typeof rawWatermarkDigest === 'string' &&
+        /^[A-Za-z0-9_-]{43}$/.test(rawWatermarkDigest)
+        ? rawWatermarkDigest
+        : EMPTY_SOURCE_WATERMARK_DIGEST,
       workedMinutes: record.workedMinutes, leaveMinutes: record.leaveMinutes,
       overtimeMinutes: record.overtimeMinutes, absentMinutes: record.absentMinutes,
       sourceFactCount: record.sourceFactCount, correctionCount: record.correctionCount,

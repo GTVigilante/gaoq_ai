@@ -138,16 +138,18 @@ describe('MCP stdio 协议集成', () => {
 
     const tools = await client.listTools();
     const resources = await client.listResources();
+    const resourceTemplates = await client.listResourceTemplates();
     const prompts = await client.listPrompts();
 
     expect(client.getServerVersion()).toMatchObject({
       name: 'gaoq-erp',
       version: '0.1.0',
     });
-    expect(tools.tools).toHaveLength(47);
+    expect(tools.tools).toHaveLength(50);
     expect(resources.resources.map((resource) => resource.uri))
       .toContain('gaoq://mcp/guide');
-    expect(prompts.prompts).toHaveLength(22);
-    expect(provideAuthInfo.mock.calls.length).toBeGreaterThanOrEqual(4);
+    expect(resourceTemplates.resourceTemplates).toHaveLength(27);
+    expect(prompts.prompts).toHaveLength(25);
+    expect(provideAuthInfo.mock.calls.length).toBeGreaterThanOrEqual(5);
   });
 });

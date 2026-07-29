@@ -56,6 +56,7 @@ export interface AttendanceCryptoContext {
   readonly tenantId: string;
   readonly resourceType:
     | 'source_fact'
+    | 'shift_plan'
     | 'correction'
     | 'monthly_snapshot'
     | 'provider_cursor'
@@ -234,7 +235,7 @@ export class AttendanceDataCryptoService {
     if (
       !ID_PATTERN.test(context.tenantId) || !ID_PATTERN.test(context.resourceId) ||
       ![
-        'source_fact', 'correction', 'monthly_snapshot',
+        'source_fact', 'shift_plan', 'correction', 'monthly_snapshot',
         'provider_cursor', 'provider_inbox', 'provider_mapping',
       ].includes(context.resourceType)
     ) throw this.invalidCiphertext();

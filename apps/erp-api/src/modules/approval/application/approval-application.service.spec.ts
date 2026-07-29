@@ -102,6 +102,34 @@ function treasuryApprovedInstance(
   } as unknown as ApprovalInstance;
 }
 
+function payrollAdjustmentApprovedInstance(
+  overrides: Readonly<Record<string, unknown>> = {},
+): ApprovalInstance {
+  const completedAt = '2026-07-31T11:00:00.000Z';
+  return {
+    id: '01J8ZQK7V0A2M4N6P8R0T2W4A4',
+    status: 'approved',
+    completedAt,
+    formDataHash: 'd'.repeat(43),
+    templateSnapshot: { templateCode: 'payroll_adjustment_approval' },
+    formData: {
+      adjustment_id: '01J8ZQK7V0A2M4N6P8R0T2W4D1',
+      adjustment_hash: 'a'.repeat(43),
+      period: '2026-07',
+      adjustment_type: 'supplement',
+      reason_code: 'RETROACTIVE_SALARY_CHANGE',
+    },
+    resolvedNodes: [{ decisions: [{
+      decidedBy: 'finance-002',
+      principalApproverId: 'finance-002',
+      outcome: 'approved',
+      decidedAt: completedAt,
+      delegated: false,
+    }] }],
+    ...overrides,
+  } as unknown as ApprovalInstance;
+}
+
 function trustedContext(scopes: readonly string[] = [], actorId = 'actor-001'): TenantContextService {
   const trusted = {
     tenant: { tenantId: 'tenant-001', source: 'access_token' as const },
@@ -939,6 +967,142 @@ describe('ApprovalApplicationService', () => {
     )).rejects.toMatchObject({
       response: { code: 'APPROVAL_TREASURY_FORM_INVALID' },
     });
+  });
+
+  it('工资调整审批终态只输出固定控制摘要，不输出员工或金额', async () => {
+    const deps = dependencies();
+    const approved = payrollAdjustmentApprovedInstance();
+    deps.instances.findById.mockResolvedValue(approved);
+    const result = await service(
+      deps, trustedContext(['erp:payroll:adjustment:approval:sync']),
+    ).getPayrollAdjustmentDecision(approved.id);
+    expect(result).toEqual({
+      id: approved.id,
+      outcome: 'approved',
+      decidedBy: 'finance-002',
+      completedAt: approved.completedAt,
+      adjustmentId: '01J8ZQK7V0A2M4N6P8R0T2W4D1',
+      adjustmentHash: 'a'.repeat(43),
+      period: '2026-07',
+      adjustmentType: 'supplement',
+      reasonCode: 'RETROACTIVE_SALARY_CHANGE',
+      formDataHash: 'd'.repeat(43),
+    });
+    expect(JSON.stringify(result)).not.toMatch(/employee|amount|payable|receivable/u);
+  });
+
+  it('工资调整审批同步对 Scope、模板、终态和决策链逐项失败关闭', async () => {
+    const id = payrollAdjustmentApprovedInstance().id;
+    const denied = dependencies();
+    denied.instances.findById.mockResolvedValue(payrollAdjustmentApprovedInstance());
+    await expect(service(denied).getPayrollAdjustmentDecision(id))
+      .rejects.toMatchObject({
+        response: { code: 'APPROVAL_PAYROLL_ADJUSTMENT_STATUS_DENIED' },
+      });
+
+    const cases = [
+      [
+        payrollAdjustmentApprovedInstance({
+          templateSnapshot: { templateCode: 'payroll_period_approval' },
+        }),
+        'APPROVAL_PAYROLL_ADJUSTMENT_TEMPLATE_DENIED',
+      ],
+      [
+        payrollAdjustmentApprovedInstance({ status: 'running', completedAt: null }),
+        'APPROVAL_PAYROLL_ADJUSTMENT_INCOMPLETE',
+      ],
+      [
+        payrollAdjustmentApprovedInstance({ status: 'approved', completedAt: null }),
+        'APPROVAL_PAYROLL_ADJUSTMENT_INCOMPLETE',
+      ],
+      [
+        payrollAdjustmentApprovedInstance({ resolvedNodes: [{ decisions: [] }] }),
+        'APPROVAL_PAYROLL_ADJUSTMENT_DECISION_INVALID',
+      ],
+      [
+        payrollAdjustmentApprovedInstance({
+          resolvedNodes: [{ decisions: [{
+            decidedBy: 'finance-002',
+            principalApproverId: 'finance-002',
+            outcome: 'approved',
+            decidedAt: '2026-07-31T10:59:59.000Z',
+            delegated: false,
+          }] }],
+        }),
+        'APPROVAL_PAYROLL_ADJUSTMENT_DECISION_INVALID',
+      ],
+    ] as const;
+
+    for (const [instance, code] of cases) {
+      const deps = dependencies();
+      deps.instances.findById.mockResolvedValue(instance);
+      await expect(service(
+        deps,
+        trustedContext(['erp:payroll:adjustment:approval:sync']),
+      ).getPayrollAdjustmentDecision(id)).rejects.toMatchObject({
+        response: { code },
+      });
+    }
+  });
+
+  it('工资调整拒绝终态取最后一项可信决策并校验全部固定表单字段', async () => {
+    const rejected = payrollAdjustmentApprovedInstance({
+      status: 'rejected',
+      completedAt: '2026-07-31T12:00:00.000Z',
+      formData: {
+        ...payrollAdjustmentApprovedInstance().formData,
+        adjustment_type: 'reversal',
+      },
+      resolvedNodes: [
+        { decisions: [{
+          decidedBy: 'finance-001',
+          principalApproverId: 'finance-001',
+          outcome: 'rejected',
+          decidedAt: '2026-07-31T11:00:00.000Z',
+          delegated: false,
+        }] },
+        { decisions: [{
+          decidedBy: 'finance-003',
+          principalApproverId: 'finance-003',
+          outcome: 'rejected',
+          decidedAt: '2026-07-31T12:00:00.000Z',
+          delegated: false,
+        }] },
+      ],
+    });
+    const deps = dependencies();
+    deps.instances.findById.mockResolvedValue(rejected);
+    await expect(service(
+      deps,
+      trustedContext(['erp:payroll:adjustment:approval:sync']),
+    ).getPayrollAdjustmentDecision(rejected.id)).resolves.toMatchObject({
+      outcome: 'rejected',
+      decidedBy: 'finance-003',
+      adjustmentType: 'reversal',
+    });
+
+    for (const [field, value] of [
+      ['adjustment_id', 'invalid'],
+      ['adjustment_hash', 'short'],
+      ['period', '2026-13'],
+      ['adjustment_type', 'other'],
+      ['reason_code', 'lowercase'],
+    ] as const) {
+      const invalid = payrollAdjustmentApprovedInstance({
+        formData: {
+          ...payrollAdjustmentApprovedInstance().formData,
+          [field]: value,
+        },
+      });
+      const invalidDeps = dependencies();
+      invalidDeps.instances.findById.mockResolvedValue(invalid);
+      await expect(service(
+        invalidDeps,
+        trustedContext(['erp:payroll:adjustment:approval:sync']),
+      ).getPayrollAdjustmentDecision(invalid.id)).rejects.toMatchObject({
+        response: { code: 'APPROVAL_PAYROLL_FORM_INVALID' },
+      });
+    }
   });
 
   it('创建实例只返回脱敏摘要，聚合与事件共用幂等事务', async () => {

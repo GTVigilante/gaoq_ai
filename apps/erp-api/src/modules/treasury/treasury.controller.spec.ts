@@ -117,8 +117,10 @@ function fixture() {
     }),
   };
   const record = vi.fn().mockResolvedValue(undefined);
+  const adjustmentSupplements = {};
   const controller = new TreasuryController(
     accounts as unknown as TreasuryBankAccountService,
+    adjustmentSupplements as never,
     bankReturns as unknown as TreasuryBankReturnService,
     disbursements as unknown as TreasuryDisbursementService,
     recovery as unknown as TreasuryRecoveryService,
@@ -133,6 +135,7 @@ function fixture() {
     disbursements,
     recovery,
     reconciliation,
+    adjustmentSupplements,
   };
 }
 
