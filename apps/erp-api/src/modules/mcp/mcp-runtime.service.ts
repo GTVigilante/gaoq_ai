@@ -917,8 +917,8 @@ export class McpRuntimeService {
       'my-payroll-payslip',
       new ResourceTemplate('erp://payroll/payslips/{period}/me', { list: undefined }),
       {
-        title: '我的已发布薪资单',
-        description: '只按当前已验证员工返回已锁定月份的本人薪资单；属于 L4 数据。',
+        title: '我的已发布薪资单（legacy 兼容）',
+        description: '仅 legacy 模式按已验证员工返回本人 L4 薪资单；external 模式返回专业工资迁移错误。',
         mimeType: 'application/json',
       },
       async (uri, { period }, extra) => {
@@ -1391,13 +1391,13 @@ export class McpRuntimeService {
     server.registerPrompt(
       'payroll_payslip_review_guide',
       {
-        title: '本人薪资单核对清单',
-        description: '指导 AI 只解释本人已发布薪资单，不推断他人薪酬或触发写操作。',
+        title: '本人薪资单核对清单（legacy 兼容）',
+        description: '指导 AI 只解释本人已发布薪资单；迁移后停止读取 ERP 旧工资数据。',
         argsSchema: { period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/) },
       },
       ({ period }) => ({ messages: [{ role: 'user', content: {
         type: 'text',
-        text: `请读取我 ${period} 的已发布薪资单，解释收入、个人扣款、预扣税和实发。不得推断或比较他人薪酬，不得触发重算、审批、锁定、导出或发薪。`,
+        text: `请读取我 ${period} 的已发布薪资单，解释收入、个人扣款、预扣税和实发。若返回专业工资迁移错误，停止读取 ERP 旧数据并提示我前往专业工资系统。不得推断或比较他人薪酬，不得触发重算、审批、锁定、导出或发薪。`,
       } }] }),
     );
 
@@ -1830,8 +1830,8 @@ export class McpRuntimeService {
     server.registerTool(
       'payroll_payslip_get_self',
       {
-        title: '查询本人已发布薪资单',
-        description: '从已验证主体反查 ERP 员工，仅返回已锁定月份的本人 L4 薪资单。风险等级 R1。',
+        title: '查询本人已发布薪资单（legacy 兼容）',
+        description: '仅 legacy 模式从已验证主体反查 ERP 员工；external 模式失败关闭并引导专业工资系统。风险等级 R1。',
         inputSchema: { period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/) },
         outputSchema: z.object({ payslip: payrollPayslipSchema }),
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },

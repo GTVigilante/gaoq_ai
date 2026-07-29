@@ -90,7 +90,7 @@ draft → collecting → calculating → review → pending_approval → approve
 | 查询本人考勤月结 | `GET /attendance/months/{month}/me` | 无 | Resource + `attendance_month_get` | R0 |
 | 提交考勤修订请求 | `POST /attendance/correction-requests` | `attendance.correction.requested.v1` | `attendance_correction_prepare/execute`，只形成请求 | R1 |
 | 关闭考勤月份 | 内部月结命令 | `attendance.month.closed.v1` | 不开放 | R2 |
-| 查询本人薪资单 | `GET /payroll/payslips/{period}/me` | 无 | Resource + `payroll_payslip_get`，默认脱敏 | R0 |
+| 查询本人薪资单（legacy 兼容） | `GET /payroll/payslips/{period}/me` | 无 | Resource + `payroll_payslip_get_self`；external 模式失败关闭 | R1 |
 | 计算/重算工资 | 内部 Worker 命令 | `payroll.run.completed/failed.v1` | 不开放 | R2 |
 | 审批与锁定工资 | Approval + 内部命令 | `payroll.period.approved/locked.v1` | 只读状态，不开放执行 | R2/R3 |
 | 受控聚合分析 | `POST /payroll/analytics` | 无 | `payroll_aggregate_analyze`，最小分组阈值 | R1 |
@@ -104,7 +104,9 @@ draft → collecting → calculating → review → pending_approval → approve
 幂等/月份/强认证边界和提交后审计语义由
 `pnpm quality:phase4-entry-controllers-coverage` 逐文件四维 90% 失败关闭。
 `PAYROLL_SYSTEM_MODE=external` 时旧 Payroll/Treasury 控制器仍由统一边界守卫
-返回 410；该质量门禁不扩大 MCP 能力，也不重新启用旧工资事实源。
+返回 410；本人薪资单应用服务同步返回
+`PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM`，MCP 兼容入口不得绕过 REST 守卫读取
+旧集合。该质量门禁不扩大 MCP 能力，也不重新启用旧工资事实源。
 
 MCP Server 必须继续使用 MCP 2025-11-25、OAuth 2.1 Resource Server、JSON Schema、结构化内容、风险注解和审计。任何 AI 客户端都只能通过应用服务读取脱敏投影；禁止 MCP 直接查数据库、接触银行/税务文件、执行发薪或绕过 Approval。
 

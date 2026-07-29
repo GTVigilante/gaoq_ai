@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { GoneException, Injectable, Logger } from '@nestjs/common';
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type {
   CallToolResult,
@@ -22,7 +22,10 @@ import { CareOccasionApplicationService } from '../care/application/care-occasio
 import { CareAlumniCleanupApplicationService } from '../care/application/care-alumni-cleanup-application.service.js';
 import { AttendanceApplicationService } from '../attendance/application/attendance-application.service.js';
 import { PayrollRunService } from '../payroll/application/payroll-run.service.js';
-import { PayrollPayslipService } from '../payroll/application/payroll-payslip.service.js';
+import {
+  PayrollPayslipService,
+  type PayrollPayslipView,
+} from '../payroll/application/payroll-payslip.service.js';
 import { PayrollTaxFilingService } from '../payroll/application/payroll-tax-filing.service.js';
 import { PayrollReconciliationService } from '../payroll/application/payroll-reconciliation.service.js';
 import { PayrollShadowService } from '../payroll/application/payroll-shadow.service.js';
@@ -320,7 +323,17 @@ export class McpToolService {
         await this.auditTool(identity, 'payroll_payslip_get_self', 'R1', 'denied');
         return scopeError('erp:payroll:sheet:read_self');
       }
-      const payslip = await this.payslips.getMyPayslip(period);
+      let payslip: PayrollPayslipView;
+      try {
+        payslip = await this.payslips.getMyPayslip(period);
+      } catch (error) {
+        if (!isPayrollMigrationError(error)) throw error;
+        await this.auditTool(identity, 'payroll_payslip_get_self', 'R1', 'denied');
+        return businessError(
+          'PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM',
+          '工资能力已迁移至专业算薪系统',
+        );
+      }
       await this.auditTool(identity, 'payroll_payslip_get_self', 'R1', 'success', {
         period, inputHash: payslip.inputHash, resultHash: payslip.resultHash,
       });
@@ -1349,6 +1362,14 @@ function businessError(code: string, message: string): McpToolResult {
     isError: true,
     content: [{ type: 'text', text: JSON.stringify({ code, message }) }],
   };
+}
+
+function isPayrollMigrationError(error: unknown): error is GoneException {
+  if (!(error instanceof GoneException)) return false;
+  const response = error.getResponse();
+  return typeof response === 'object' && response !== null &&
+    'code' in response &&
+    response.code === 'PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM';
 }
 
 function preparedResult(prepared: McpPreparedOperation): McpToolResult {

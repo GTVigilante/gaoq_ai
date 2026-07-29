@@ -1,6 +1,6 @@
 # 仓库实施完成度审计
 
-- 审计日期：2026-07-28
+- 审计日期：2026-07-29
 - 审计对象：Phase 0–6、开放 Issue、当前堆叠 Draft PR 与 GitHub 治理配置
 - 结论：应用、契约、迁移控制面、生产门禁、Helm/Kubernetes 编排和标准 MCP
   已形成仓库实施基线；真实外部联调、目标环境演练、UAT、切换与 Hypercare
@@ -62,14 +62,25 @@
 ## 5. 覆盖率边界
 
 2026-07-29 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，403 个测试文件、6,316 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，407 个测试文件、6,598 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-92.50%（30,878/33,380）、分支 89.85%（21,177/23,567）、函数
-93.34%（5,512/5,905）、行 93.68%（28,225/30,128）。全仓四维已达到 Phase 0
+92.73%（31,139/33,578）、分支 90.18%（21,372/23,699）、函数
+93.49%（5,548/5,934）、行 93.89%（28,461/30,313）。全仓四维已达到 Phase 0
 规定的 80% 门槛。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
+
+2026-07-29 本人薪资单边界已下沉到 REST 与标准 MCP 共用的应用服务；
+`PAYROLL_SYSTEM_MODE=external` 在读取身份画像、Mongo 或 L4 密文前稳定失败
+关闭，MCP 返回 `PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM` 并写 R1 拒绝审计。
+兼容模式严格反向绑定可信主体、员工画像、期间、运行和结果快照，校验密文信封、
+解密 Schema、确定性重算与摘要，只返回冻结最小投影。66 项专项测试使目标服务
+达到 100%/100%/100%/100%，独立逐文件四维 90% 门禁已接入 `pnpm precheck`
+与 `pnpm check`；MCP Tool/Runtime 门禁继续高于 90%。真实专业算薪必须自行
+提供以用户 OAuth 身份解析 `employee_id` 的 MCP/Resource Server；ERP 不使用
+服务 Token 加客户端 `employeeId` 代查，也不透传上游 Token。真实联调、密钥
+轮换和员工 UAT 仍待外部验收。
 
 2026-07-29 Knowledge 考试运行仓储已对查询输入、可信租户、最小投影、考试/
 任务引用、题型策略、状态、版本、锁、重放与时间/证据组合执行运行时闭包；尝试号
@@ -167,6 +178,7 @@ OP Webhook 双入口、
 `pnpm quality:analytics-management-coverage` 和
 `pnpm quality:payroll-shadow-coverage`、
 `pnpm quality:payroll-run-coverage`、
+`pnpm quality:payroll-payslip-coverage`、
 `pnpm quality:payroll-approval-coverage`、
 `pnpm quality:payroll-master-data-coverage`、
 `pnpm quality:payroll-master-data-snapshot-coverage`、
@@ -266,7 +278,7 @@ OP Webhook 双入口、
 `pnpm quality:onboarding-outbox-boundary-coverage`、
 `pnpm quality:production-execution-authorization-coverage`、
 `pnpm quality:op-approval-result-operations-coverage` 和
-`pnpm quality:org-person-birthday-entry-coverage`。一百二十一条链路当前覆盖率基线集合为
+`pnpm quality:org-person-birthday-entry-coverage`。上述关键链路当前覆盖率基线集合为
 100%/100%/100%/100%、100%/100%/100%/100%、100%/100%/100%/100%、
 100%/100%/100%/100%、
 97.44%/93.52%/100%/97.50%、
@@ -360,8 +372,9 @@ OP Webhook 双入口、
 （语句/分支/函数/行）；电子签十个核心文件另达到
 98.11%/95.70%/99.04%/99.54%，审计追加三个核心文件另达到
 96.91%/97.48%/96.66%/99.00%，审计后台七个生产文件另达到
-100%/100%/100%/100%、100%/100%/100%/100%、100%/98.07%/100%/100%；一百二十一项阈值均固定为 90%，
-使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明一百二十一条关键链路达标，
+100%/100%/100%/100%、100%/100%/100%/100%、100%/98.07%/100%/100%、
+100%/100%/100%/100%；上述阈值均固定为 90%，
+使用相互隔离的报告目录，并已接入 `pnpm check`。这只证明上述关键链路达标，
 不替代全仓 80% 或其余关键服务 90% 的证据。
 
 自然人生日证明入口执行 73 项严格 ULID、强 `If-Match`、白名单幂等键、规范

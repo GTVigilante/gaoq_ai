@@ -1,7 +1,7 @@
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type { ServerNotification, ServerRequest } from '@modelcontextprotocol/sdk/types.js';
-import { Logger, UnauthorizedException } from '@nestjs/common';
+import { GoneException, Logger, UnauthorizedException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AuditService } from '../../core/audit/audit.service.js';
@@ -674,6 +674,44 @@ describe('McpToolService', () => {
     expect(result.structuredContent).toMatchObject({
       payslip: { period: '2026-07', netPayMinor: 839_500 },
     });
+  });
+
+  it('专业工资模式的迁移响应原样失败关闭且不误记读取成功', async () => {
+    const store = assemble();
+    store.payslips.getMyPayslip.mockRejectedValue(new GoneException({
+      code: 'PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM',
+      message: '工资能力已迁移至专业算薪系统',
+      payrollWebOrigin: 'https://payroll.example.test',
+    }));
+
+    const moved = await store.service.getMyPayrollPayslip(
+      '2026-07',
+      extra(['erp:mcp:server:connect', 'erp:payroll:sheet:read_self']),
+    );
+    expect(moved.isError).toBe(true);
+    const firstContent = moved.content[0];
+    const text = firstContent?.type === 'text' ? firstContent.text : '';
+    expect(text).toContain('PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM');
+    expect(store.audit.record).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'mcp.tool.payroll_payslip_get_self',
+      outcome: 'denied',
+    }));
+  });
+
+  it('不把无关的 410 异常误报为专业工资迁移', async () => {
+    const store = assemble();
+    store.payslips.getMyPayslip.mockRejectedValue(new GoneException({
+      code: 'PAYROLL_PAYSLIP_ARCHIVED',
+      message: '薪资单已归档',
+    }));
+
+    await expect(store.service.getMyPayrollPayslip(
+      '2026-07',
+      extra(['erp:mcp:server:connect', 'erp:payroll:sheet:read_self']),
+    )).rejects.toMatchObject({
+      response: { code: 'PAYROLL_PAYSLIP_ARCHIVED' },
+    });
+    expect(store.audit.record).not.toHaveBeenCalled();
   });
 
   it('个税申报 MCP 只复用应用服务并返回控制摘要', async () => {

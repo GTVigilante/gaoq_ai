@@ -9,6 +9,12 @@ Phase 4 在 ERP 组织与劳动关系主数据之上，建立可重放的考勤�
 > `cn.gaoq.<域>.<实体>.<动作>.v1`，并由
 > `@gaoq/platform-contracts@1.0.0` 的逐类型运行时验证器和 JSON Schema
 > 共同锁定；旧 `com.gaoq.*` 名称仅有一个发布迭代的显式迁移窗口。
+>
+> 2026-07-29 已闭合旧本人薪资单的 REST/MCP 模式边界：默认
+> `PAYROLL_SYSTEM_MODE=external` 时，共享应用服务在身份映射、Mongo 和解密前
+> 统一返回 410，MCP 不再绕过 REST 守卫读取 ERP 旧工资数据。legacy 路径对周期、
+> 员工行、密文信封、严格解密 Schema 和确定性摘要执行运行时反向绑定，并由
+> 独立逐文件四维 90% 门禁约束。专业算薪的 OAuth/MCP 真实联调仍待现场验收。
 
 实现顺序：
 

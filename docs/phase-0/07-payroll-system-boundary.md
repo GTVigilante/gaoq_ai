@@ -58,7 +58,13 @@
 
 - `PAYROLL_SYSTEM_MODE=external` 时 ERP 旧 Payroll/Treasury REST 入口返回 410，
   禁止继续形成工资或资金事实。
+- 同一边界必须下沉到 REST 与 MCP 共用的应用服务。ERP 为兼容旧客户端保留的
+  `payroll_payslip_get_self` Tool/Resource 在 `external` 模式只返回
+  `PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM`，不得读取 ERP 旧工资集合或解密快照。
 - ERP 门户只进行统一登录和受控跳转；工资明细不复制到 ERP。
+- 本人工资条由专业算薪系统自己的 OAuth Resource 和标准 MCP 提供；访问令牌中的
+  `employee_id` 必须由服务端身份映射产生。ERP 不使用服务令牌加请求体
+  `employeeId` 代理 L4 工资条，也不透传用户 Token。
 - 专业算薪批量主数据快照是专用服务到服务 REST，不注册 MCP Resource/Tool；
   AI 不得借 MCP 绕过批量导出限制。
 - 真实发薪切换仍必须完成两个完整影子周期、零未解释差异、回滚演练和财务签署。
@@ -66,7 +72,7 @@
 ## 当前代码切换
 
 - GaoQ 默认 `PAYROLL_SYSTEM_MODE=external`，旧 Payroll/Treasury REST 写入口停止
-  形成工资事实。
+  形成工资事实；旧本人薪资单应用服务同步失败关闭，MCP 不可绕过 REST 守卫。
 - 专业算薪系统已实现权威快照同步、事件 Inbox、字段加密、确定性整数分计算、
   提交审批、职责分离锁定和本人工资条访问。
 - ERP 与专业算薪的七类共享事件现按完整信封、精确字段集、状态、日期、范围、
