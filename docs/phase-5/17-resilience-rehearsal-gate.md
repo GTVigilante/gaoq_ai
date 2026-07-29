@@ -58,7 +58,10 @@ Repository Variables 只配置非敏感值：
 - `RESILIENCE_ENVIRONMENT_NAME`：固定恢复环境名，必须带 `dr/recovery/resilience/stage/staging/preprod/uat` 独立标签；
 - `RESILIENCE_REGION`：固定隔离区域名；
 - `RESILIENCE_API_IMAGE_DIGEST`、`RESILIENCE_WORKER_IMAGE_DIGEST`、`RESILIENCE_WEB_IMAGE_DIGEST`、`RESILIENCE_WEBSITE_IMAGE_DIGEST`：现场实际部署的四类不可变镜像 SHA-256；
+- `RESILIENCE_PAYROLL_IMAGE_DIGEST`：独立专业算薪服务的不可变镜像 SHA-256；
 - `RESILIENCE_DEPLOYMENT_MANIFEST_SHA256`：本次隔离环境部署清单 SHA-256。
+- `RESILIENCE_SIGNER_KEYSET_SHA256`：按角色排序的七方
+  `{role,keyId}` 规范 JSON 的 SHA-256，用于固定本次允许签署的职责密钥集合。
 
 受控证据网关只向匹配当前仓库 ID、`main` commit、workflow、policy、
 专用 audience 和 Hosted Runner claim 的 GitHub OIDC 主体返回严格白名单摘要。
@@ -78,17 +81,32 @@ pnpm resilience:validate-evidence -- /secure/resilience/phase-5-resilience.json
 
 ## 证据与签署
 
-`gaoq.phase5.resilience.v2` 证据绑定 commit、API/Worker/ERP Web/Website 与
+`gaoq.phase5.resilience.v3` 证据绑定 commit、API/Worker/ERP Web/Website 与
 独立专业算薪镜像摘要、部署清单和当前校验器/工作流摘要；严格拒绝未知字段。
 八个业务域、Outbox、Inbox、BullMQ、审计链、业务金额、九类外部连接、备份
 清单、恢复日志、监控、告警、运行手册和回滚决定均以独立 SHA-256 引用，不在
 GitHub 复制正文。专业算薪按双向连接执行至少两小时断连、自动追赶、对账和零
 丢失/零重复业务效果验收，不得用 ERP 旧 Payroll 集合或本地兼容模式代替。
 
-SRE、平台、数据、集成、安全、QA 和业务连续性七类负责人必须在演练结束后以不同证据 ID 作出 `approve` 签署。签署只表示本门禁通过，不替代最终由项目发起人、产品、架构、HR、财务、法务等角色共同完成的 Go/No-Go。
+SRE、平台、数据、集成、安全、QA 和业务连续性七类负责人必须在演练结束后
+24 小时内，以不同主体、不同证据 ID、不同意见摘要和不同 Ed25519 公钥作出
+`approve` 签署。每个 `keyId` 必须等于对应 SPKI DER 公钥的 SHA-256，七个
+角色与 keyId 的规范集合必须等于 Repository Variable 固定的受信 keyset 摘要；
+同一主体、公钥、证据、意见或签名不得跨角色复用。
+
+共同批准 payload 覆盖证据版本、run、环境、commit、五类镜像、部署清单、
+RPO/RTO、恢复组件、八域对账、Outbox/Inbox/BullMQ、审计、九类外部连接、
+安全断言、全部产物摘要，以及七方角色、主体、决定、证据、意见和批准时间。
+每位负责人再用自己的角色密钥签署该共同 payload 摘要、自身角色、keyId 与
+签名时间。这样任何签后修改演练结果、替换角色密钥、伪造签名或漂移受信
+keyset 都会失败关闭。仓库自测只生成临时密钥，不保存私钥；真实人员身份、
+职责与角色密钥绑定、KMS/HSM 签署和 WORM 原始材料仍属于现场验收。
+
+签署只表示本门禁通过，不替代最终由项目发起人、产品、架构、HR、财务、法务
+等角色共同完成的 Go/No-Go。
 
 AI 与 MCP 不得启动故障注入、恢复、回滚、重放、死信处理或签署，也不得读取备份和原始日志。后续 MCP 能力目录只能暴露经权限、脱敏和审计保护的只读门禁状态；任何恢复写操作均按 R3 永久不注册 Tool。
 
 ## No-Go 条件
 
-以下任一项成立即失败关闭：RPO 或 RTO 超标；八个业务域未全部对账；Redis 被当作唯一事实源；对象/WORM、KMS、审计链或服务副本验证不完整；Outbox/Inbox/BullMQ 存在丢失、重复业务效果、乱序、孤儿、死信或超时积压；任一外部连接断连不足两小时、追赶超过一小时或需要人工改数；回滚超过四小时或仍有差异；使用生产数据/端点或产生真实外部副作用；证据复用、篡改、环境错配或签署不全。
+以下任一项成立即失败关闭：RPO 或 RTO 超标；八个业务域未全部对账；Redis 被当作唯一事实源；对象/WORM、KMS、审计链或服务副本验证不完整；Outbox/Inbox/BullMQ 存在丢失、重复业务效果、乱序、孤儿、死信或超时积压；任一外部连接断连不足两小时、追赶超过一小时或需要人工改数；回滚超过四小时或仍有差异；使用生产数据/端点或产生真实外部副作用；证据复用、篡改、环境错配、伪签名、角色/主体/公钥复用、签署超时或 keyset 漂移。

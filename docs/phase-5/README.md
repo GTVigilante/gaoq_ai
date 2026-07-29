@@ -26,6 +26,9 @@ Phase 5 在已验收的组织、审批、招聘入职、考勤薪酬底座之上
    - [性能容量三次实测门禁](./15-performance-capacity-gate.md)
    - [DAST 与 ASVS 5.0.0 证据门禁](./16-dast-asvs-gate.md)
    - [容灾恢复与外部系统断连追赶门禁](./17-resilience-rehearsal-gate.md)
+     - Resilience v3 要求业务连续性、数据、集成、平台、QA、安全和 SRE 七方
+       使用独立 Ed25519 密钥签署完整恢复、回滚、对账与断连追赶结果，并由
+       Repository Variable 固定 signer keyset
    - [跨职能 Go/No-Go 证据门禁](./18-go-no-go-evidence-gate.md)
    - [MCP 完整能力目录与联调门禁](./19-mcp-capability-catalog.md)
    - [MCP stdio 客户端接入手册](./20-mcp-stdio-client-onboarding.md)

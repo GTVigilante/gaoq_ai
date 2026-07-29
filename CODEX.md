@@ -116,6 +116,16 @@
   `READINESS_SIGNER_KEYSET_SHA256` 固定生产批准 keyset。伪签名、角色换钥、签后
   篡改、主体漂移或 keyset 漂移均失败关闭。仓库自测只生成临时密钥；真实人员、
   IAM/KMS 角色绑定、签署和 WORM 原始证据仍待现场验收。
+- 2026-07-30 已关闭 Phase 5 容灾恢复与外部断连演练的七方批准只校验角色、
+  证据 ID、意见摘要和时间，无法证明真实职责主体签署完整演练结果的缺口：
+  输入证据升级为 `gaoq.phase5.resilience.v3`，业务连续性、数据、集成、平台、
+  QA、安全和 SRE 各使用独立 Ed25519 公钥。每个 keyId 必须等于 SPKI DER
+  摘要，角色/keyId 规范集合与 Repository Variable 中批准的 signer keyset
+  摘要绑定；共同批准 payload 覆盖环境、commit、五类镜像、RPO/RTO、恢复、
+  回滚、八域与消息对账、九类外部连接、安全断言、产物和七方批准元数据。
+  伪签名、角色换钥、主体或公钥复用、签后篡改、超时签署与 keyset 漂移均
+  失败关闭。仓库自测只生成临时密钥；真实人员、IAM/KMS 角色绑定、现场演练、
+  签署和 WORM 原始证据仍待外部验收。
 - 2026-07-30 已关闭 Phase 6 生产 Apply 虽要求变更负责人和 SRE 双人批准、
   却只使用一个 Ed25519 密钥签署整份文件的职责分离缺口：部署授权升级为
   `gaoq.phase6.deployment-authorization.v2`，两个角色必须携带不同 SPKI DER
