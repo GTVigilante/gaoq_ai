@@ -116,6 +116,15 @@
   决定；复用公钥、角色换签、签后篡改或 keyset 漂移均失败关闭。仓库自测只生成
   临时密钥，不保存私钥；真实人员身份、职责与角色密钥绑定仍须由企业 IAM/KMS
   和 WORM 签署审计证明。
+- 2026-07-30 已关闭 Phase 6 平台准入声称变更、合规、数据、平台、安全、SRE
+  六方签署，却只校验主体/证据摘要而无法验签的缺口：准入证据升级为
+  `gaoq.phase6.production-platform-intake.v2`，六个角色必须使用六个不同
+  Ed25519 公钥，分别签署同一最终准入 payload；keyId 等于 SPKI DER 摘要，
+  角色/keyId 规范集合与 Repository Variable 的批准 keyset 摘要绑定。签名覆盖
+  commit、部署包、护栏、集群、GitHub/OIDC/RBAC、九类平台服务、六份审批元数据
+  和最终 `READY` 决定；伪签名、复用公钥、角色换签、签后篡改或 keyset 漂移
+  均失败关闭，Plan 与 Apply 都重复验收。仓库自测只使用临时密钥；真实六方人员、
+  IAM/KMS 角色密钥和 WORM 审计仍待现场验收。
 - 2026-07-29 已把覆盖率门禁本身纳入失败关闭治理：
   `scripts/validate-critical-coverage-policy.mjs` 从 `precheck/check` 解析 134 个
   ERP API 专项脚本，展开其 `--coverage.include` 后要求 336 个生产文件逐一具有

@@ -43,6 +43,7 @@ const requiredDocuments = [
   'scripts/github/github-oidc-kubernetes-credential.mjs',
   'scripts/github/write-oidc-kubeconfig.mjs',
   'scripts/release/validate-phase-6-deployment-authorization.mjs',
+  'scripts/release/validate-phase-6-platform-intake.mjs',
   'scripts/mcp/validate-kimi-mcp-client.mjs',
   'scripts/mcp/validate-mcp-inspector-client.mjs',
   'apps/erp-api/scripts/mcp-catalog-stdio-fixture.mjs',
@@ -229,12 +230,34 @@ const requiredHostedOidcMarkers = new Map([
     ],
   ],
   [
+    'scripts/release/validate-phase-6-platform-intake.mjs',
+    [
+      'gaoq.phase6.production-platform-intake.v2',
+      'signerKeysetHash',
+      'Ed25519',
+      'compliance_owner',
+      'platform_owner',
+      'PHASE6_DEPLOYMENT_PLATFORM_INTAKE_SIGNER_KEYSET_SHA256',
+    ],
+  ],
+  [
     'docs/phase-6/05-protected-production-deployment.md',
     [
       'GitHub Hosted `ubuntu-latest`',
       'Plan 专用 OIDC audience',
       'Apply 专用 OIDC audience',
       '管理员 kubeconfig',
+      'PHASE6_DEPLOYMENT_PLATFORM_INTAKE_SIGNER_KEYSET_SHA256',
+    ],
+  ],
+  [
+    'docs/phase-6/07-production-platform-intake.md',
+    [
+      'gaoq.phase6.production-platform-intake.v2',
+      '六个不同主体',
+      '不同 Ed25519 公钥',
+      'signerKeysetHash',
+      'PHASE6_DEPLOYMENT_PLATFORM_INTAKE_SIGNER_KEYSET_SHA256',
     ],
   ],
 ]);

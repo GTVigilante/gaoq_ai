@@ -31,7 +31,7 @@ Required Reviewers 当作可用控制。保护链改为：
 
 | 工作流 | OIDC policy | 集群权限 | 人工授权 |
 |---|---|---|---|
-| Plan | `phase-6-deployment-plan` | release ConfigMap、命名空间和非敏感运行配置只读；禁止 Secret get 与 Deployment create/patch/delete | 平台准入证据已有六方审批；计划产物等待外部复核 |
+| Plan | `phase-6-deployment-plan` | release ConfigMap、命名空间和非敏感运行配置只读；禁止 Secret get 与 Deployment create/patch/delete | 平台准入证据已有六方独立 Ed25519 签名；计划产物等待外部复核 |
 | Apply | `phase-6-deployment-apply` | 仅管理当前 release 的 namespaced 非 Secret 资源；禁止 Secret get、ClusterRole、护栏和云账号权限 | `change_owner`、`sre_owner` 两名不同主体、不同批准密钥的 Ed25519 独立签名 |
 
 每次执行均由 GitHub 分配全新 `ubuntu-latest` Runner，不复用 kubeconfig、工作目录
@@ -80,6 +80,7 @@ ValidatingAdmissionPolicy 必须由独立集群管理员预装并通过正反例
 | `PHASE6_DEPLOYMENT_*_CONFIG_MAP`、`PHASE6_DEPLOYMENT_*_SECRET` | 四组件八个外部引用名；Runner 不读取 Secret |
 | `PHASE6_DEPLOYMENT_GO_NO_GO_ENVIRONMENT`、`PHASE6_DEPLOYMENT_GO_NO_GO_REGION` | 目标环境与 Region |
 | `PHASE6_DEPLOYMENT_GO_NO_GO_SIGNER_KEYSET_SHA256` | Phase 5 十方 Ed25519 公钥角色/keyId 规范集合摘要；Plan 与 Apply 都重新绑定 |
+| `PHASE6_DEPLOYMENT_PLATFORM_INTAKE_SIGNER_KEYSET_SHA256` | Phase 6 平台准入六方 Ed25519 公钥角色/keyId 规范集合摘要；Plan 与 Apply 都重新绑定 |
 
 ### 3.3 Apply 授权
 
@@ -100,7 +101,8 @@ Plan 每次重新读取三份输入并执行：
 
 1. Go/No-Go `GO`、24 小时新鲜度、commit、四镜像、部署包、十方独立
    Ed25519 签名和批准 signer keyset 绑定；
-2. 平台准入 `READY`、当前 policy/workflow、Hosted Runner、audience、RBAC 与六方审批；
+2. 平台准入 `READY`、当前 policy/workflow、Hosted Runner、audience、RBAC、
+   六方独立 Ed25519 签名和批准 signer keyset 绑定；
 3. Helm strict lint、仓库清单检查和固定 schema Kubeconform；
 4. 四个 Deployment、八个运行时引用、rollout ID 和 Website 公开配置绑定；
 5. 控制/业务命名空间和四个 ConfigMap 存在；Secret get 与 Deployment 写权限被拒绝；

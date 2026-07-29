@@ -1,4 +1,10 @@
-import { createHash } from 'node:crypto';
+import {
+  createHash,
+  createPublicKey,
+  generateKeyPairSync,
+  sign,
+  verify,
+} from 'node:crypto';
 import { lstat, readFile } from 'node:fs/promises';
 
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
@@ -7,6 +13,7 @@ const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/u;
 const DNS_LABEL = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/u;
 const GROUP = /^[A-Za-z0-9][A-Za-z0-9:._/@-]{2,127}$/u;
 const REGION = /^[a-z0-9-]{2,32}$/u;
+const SIGNATURE = /^[A-Za-z0-9_-]{86}$/u;
 const SERVICE_NAMES = [
   'egress-gateway', 'ingress-gateway', 'kms', 'mongodb', 'observability',
   'redis', 'registry', 'secret-manager', 'worm-storage',
@@ -15,6 +22,7 @@ const APPROVAL_ROLES = [
   'change_owner', 'compliance_owner', 'data_owner', 'platform_owner', 'security_owner',
   'sre_owner',
 ];
+const APPROVAL_SIGNATURE_SUITE = 'gaoq.phase6.production-platform-intake.approval.v1';
 const FORBIDDEN_KEYS = new Set([
   'accessKey', 'apiKey', 'clientSecret', 'connectionString', 'credential', 'password',
   'privateKey', 'secret', 'secretValue', 'token',
@@ -27,11 +35,30 @@ if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
   process.stdout.write('Phase 6 生产平台准入证据门禁自测通过。\n');
 } else if (argumentsList.length === 1 && argumentsList[0] === '--print-contract') {
   process.stdout.write(`${JSON.stringify({
-    formatVersion: 1,
-    suite: 'gaoq.phase6.production-platform-intake.v1',
+    formatVersion: 2,
+    suite: 'gaoq.phase6.production-platform-intake.v2',
     validatorSha256: VALIDATOR_SHA256,
     serviceNames: SERVICE_NAMES,
     approvalRoles: APPROVAL_ROLES,
+    signatureSuite: APPROVAL_SIGNATURE_SUITE,
+    signatureAlgorithm: 'Ed25519',
+    signatureEncoding: 'base64url-unpadded',
+    publicKeyEncoding: 'base64-spki-der',
+    keyId: 'sha256:<lowercase-hex-of-spki-der>',
+    canonicalization: 'RFC8785-compatible-validated-number-subset',
+    signerKeysetCanonicalFields: ['role', 'keyId'],
+    signerKeysetOrder: 'role-ascending',
+    intakePayloadFields: [
+      'formatVersion', 'suite', 'intakeId', 'assessedAt', 'source', 'cluster',
+      'github', 'services', 'approvals', 'decision', 'signerKeysetHash',
+    ],
+    intakeApprovalFields: [
+      'role', 'actorHash', 'status', 'approvedAt', 'evidenceHash',
+    ],
+    intakeApprovalOrder: 'document-order',
+    approvalPayloadFields: [
+      'suite', 'intakePayloadHash', 'role', 'keyId', 'signedAt',
+    ],
   }, null, 2)}\n`);
 } else {
   const enforceEnvironment = argumentsList[0] === '--enforce-environment';
@@ -48,13 +75,15 @@ if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
   const expected = enforceEnvironment ? expectedFromEnvironment(raw) : undefined;
   const summary = validateEvidence(parseDocument(raw), expected);
   process.stdout.write(`${JSON.stringify({
-    formatVersion: 1,
+    formatVersion: 2,
     suite: 'gaoq.phase6.production-platform-intake.verdict',
     intakeId: summary.intakeId,
     outcome: 'READY',
     commitSha: summary.commitSha,
     region: summary.region,
     clusterVersion: summary.clusterVersion,
+    signerKeysetHash: summary.signerKeysetHash,
+    intakePayloadHash: summary.intakePayloadHash,
     evidenceChecksum: digest(raw),
   }, null, 2)}\n`);
 }
@@ -79,6 +108,8 @@ function expectedFromEnvironment(raw) {
     kubernetesOidcAudienceHash: process.env.PHASE6_KUBERNETES_OIDC_AUDIENCE === undefined
       ? undefined
       : digest(process.env.PHASE6_KUBERNETES_OIDC_AUDIENCE),
+    signerKeysetHash:
+      process.env.PHASE6_DEPLOYMENT_PLATFORM_INTAKE_SIGNER_KEYSET_SHA256,
   });
   pattern(expected.checksum, SHA256, 'PHASE6_PLATFORM_INTAKE_EXPECTED_INVALID');
   equal(digest(raw), expected.checksum, 'PHASE6_PLATFORM_INTAKE_CHECKSUM_MISMATCH');
@@ -107,6 +138,7 @@ function expectedFromEnvironment(raw) {
     SHA256,
     'PHASE6_PLATFORM_INTAKE_EXPECTED_INVALID',
   );
+  pattern(expected.signerKeysetHash, SHA256, 'PHASE6_PLATFORM_INTAKE_EXPECTED_INVALID');
   kubernetesVersion(expected.kubectlVersion);
   return expected;
 }
@@ -115,10 +147,10 @@ function validateEvidence(document, expected, now = Date.now()) {
   ensureNoSensitiveMaterial(document);
   object(document, [
     'formatVersion', 'suite', 'intakeId', 'assessedAt', 'source', 'cluster', 'github',
-    'services', 'approvals', 'decision',
+    'services', 'signingAuthorities', 'approvals', 'decision',
   ], 'PHASE6_PLATFORM_INTAKE_DOCUMENT_INVALID');
-  equal(document.formatVersion, 1, 'PHASE6_PLATFORM_INTAKE_FORMAT_INVALID');
-  equal(document.suite, 'gaoq.phase6.production-platform-intake.v1',
+  equal(document.formatVersion, 2, 'PHASE6_PLATFORM_INTAKE_FORMAT_INVALID');
+  equal(document.suite, 'gaoq.phase6.production-platform-intake.v2',
     'PHASE6_PLATFORM_INTAKE_SUITE_INVALID');
   pattern(document.intakeId, ULID, 'PHASE6_PLATFORM_INTAKE_ID_INVALID');
   const assessedAt = timestamp(document.assessedAt);
@@ -129,14 +161,35 @@ function validateEvidence(document, expected, now = Date.now()) {
   const cluster = validateCluster(document.cluster);
   validateGithub(document.github);
   validateServices(document.services);
-  const approvalTimes = validateApprovals(document.approvals, assessedAt);
+  const signingAuthorities = validateSigningAuthorities(document.signingAuthorities);
+  if (expected !== undefined) {
+    equal(
+      signingAuthorities.keysetHash,
+      expected.signerKeysetHash,
+      'PHASE6_PLATFORM_INTAKE_SIGNER_KEYSET_MISMATCH',
+    );
+  }
+  const approvalTimes = validateApprovalMetadata(document.approvals, assessedAt);
   validateDecision(document.decision, assessedAt, Math.max(...approvalTimes), now);
+  const intakePayloadHash = digest(
+    intakePayload(document, signingAuthorities.keysetHash),
+  );
+  validateApprovalSignatures(
+    document.approvals,
+    signingAuthorities.byRole,
+    intakePayloadHash,
+    timestamp(document.decision.decidedAt),
+    timestamp(document.decision.expiresAt),
+    now,
+  );
   if (expected !== undefined) validateExpected(document, expected);
   return Object.freeze({
     intakeId: document.intakeId,
     commitSha: document.source.commitSha,
     region: cluster.region,
     clusterVersion: cluster.version,
+    signerKeysetHash: signingAuthorities.keysetHash,
+    intakePayloadHash,
   });
 }
 
@@ -287,7 +340,53 @@ function validateServices(services) {
   ) fail('PHASE6_PLATFORM_INTAKE_SERVICES_INCOMPLETE');
 }
 
-function validateApprovals(approvals, assessedAt) {
+function validateSigningAuthorities(authorities) {
+  if (!Array.isArray(authorities) || authorities.length !== APPROVAL_ROLES.length) {
+    fail('PHASE6_PLATFORM_INTAKE_SIGNING_AUTHORITIES_INCOMPLETE');
+  }
+  const roles = [];
+  const keyIds = new Set();
+  const byRole = new Map();
+  const keyset = [];
+  for (const authority of authorities) {
+    object(
+      authority,
+      ['role', 'algorithm', 'keyId', 'publicKeySpkiBase64'],
+      'PHASE6_PLATFORM_INTAKE_SIGNING_AUTHORITY_INVALID',
+    );
+    if (!APPROVAL_ROLES.includes(authority.role)) {
+      fail('PHASE6_PLATFORM_INTAKE_SIGNING_AUTHORITY_INVALID');
+    }
+    equal(
+      authority.algorithm,
+      'Ed25519',
+      'PHASE6_PLATFORM_INTAKE_SIGNING_AUTHORITY_INVALID',
+    );
+    pattern(
+      authority.keyId,
+      SHA256,
+      'PHASE6_PLATFORM_INTAKE_SIGNING_AUTHORITY_INVALID',
+    );
+    const publicKey = publicKeyFromSpkiBase64(authority.publicKeySpkiBase64);
+    equal(
+      authority.keyId,
+      publicKeyHash(publicKey),
+      'PHASE6_PLATFORM_INTAKE_SIGNING_AUTHORITY_KEY_MISMATCH',
+    );
+    roles.push(authority.role);
+    keyIds.add(authority.keyId);
+    byRole.set(authority.role, Object.freeze({ keyId: authority.keyId, publicKey }));
+    keyset.push(Object.freeze({ role: authority.role, keyId: authority.keyId }));
+  }
+  if (
+    canonical(roles.sort()) !== canonical(APPROVAL_ROLES) ||
+    keyIds.size !== APPROVAL_ROLES.length ||
+    byRole.size !== APPROVAL_ROLES.length
+  ) fail('PHASE6_PLATFORM_INTAKE_SIGNING_AUTHORITIES_INCOMPLETE');
+  return Object.freeze({ byRole, keysetHash: signerKeysetHash(keyset) });
+}
+
+function validateApprovalMetadata(approvals, assessedAt) {
   if (!Array.isArray(approvals) || approvals.length !== APPROVAL_ROLES.length) {
     fail('PHASE6_PLATFORM_INTAKE_APPROVALS_INCOMPLETE');
   }
@@ -296,8 +395,17 @@ function validateApprovals(approvals, assessedAt) {
   const evidence = new Set();
   const times = [];
   for (const approval of approvals) {
-    object(approval, ['role', 'actorHash', 'status', 'approvedAt', 'evidenceHash'],
-      'PHASE6_PLATFORM_INTAKE_APPROVAL_INVALID');
+    object(
+      approval,
+      [
+        'role', 'actorHash', 'status', 'approvedAt', 'evidenceHash', 'signedAt',
+        'algorithm', 'keyId', 'signedPayloadSha256', 'signature',
+      ],
+      'PHASE6_PLATFORM_INTAKE_APPROVAL_INVALID',
+    );
+    if (!APPROVAL_ROLES.includes(approval.role)) {
+      fail('PHASE6_PLATFORM_INTAKE_APPROVAL_INVALID');
+    }
     pattern(approval.actorHash, SHA256, 'PHASE6_PLATFORM_INTAKE_APPROVAL_INVALID');
     pattern(approval.evidenceHash, SHA256, 'PHASE6_PLATFORM_INTAKE_APPROVAL_INVALID');
     equal(approval.status, 'approved', 'PHASE6_PLATFORM_INTAKE_APPROVAL_MISSING');
@@ -328,6 +436,77 @@ function validateDecision(decision, assessedAt, latestApproval, now) {
     expiresAt <= now || expiresAt - decidedAt > 72 * 60 * 60_000
   ) fail('PHASE6_PLATFORM_INTAKE_DECISION_TIME_INVALID');
   pattern(decision.evidenceHash, SHA256, 'PHASE6_PLATFORM_INTAKE_DECISION_INVALID');
+}
+
+function validateApprovalSignatures(
+  approvals,
+  signingAuthorities,
+  intakePayloadHash,
+  decidedAt,
+  expiresAt,
+  now,
+) {
+  const signatures = new Set();
+  for (const approval of approvals) {
+    equal(
+      approval.algorithm,
+      'Ed25519',
+      'PHASE6_PLATFORM_INTAKE_APPROVAL_PROOF_INVALID',
+    );
+    pattern(
+      approval.keyId,
+      SHA256,
+      'PHASE6_PLATFORM_INTAKE_APPROVAL_PROOF_INVALID',
+    );
+    pattern(
+      approval.signedPayloadSha256,
+      SHA256,
+      'PHASE6_PLATFORM_INTAKE_APPROVAL_PROOF_INVALID',
+    );
+    pattern(
+      approval.signature,
+      SIGNATURE,
+      'PHASE6_PLATFORM_INTAKE_APPROVAL_PROOF_INVALID',
+    );
+    const signedAt = timestamp(approval.signedAt);
+    if (
+      signedAt < decidedAt ||
+      signedAt >= expiresAt ||
+      signedAt > now + 5 * 60_000
+    ) {
+      fail('PHASE6_PLATFORM_INTAKE_APPROVAL_SIGNATURE_TIME_INVALID');
+    }
+    const authority = signingAuthorities.get(approval.role);
+    if (authority === undefined) {
+      fail('PHASE6_PLATFORM_INTAKE_APPROVAL_AUTHORITY_INVALID');
+    }
+    equal(
+      approval.keyId,
+      authority.keyId,
+      'PHASE6_PLATFORM_INTAKE_APPROVAL_KEY_MISMATCH',
+    );
+    const payload = approvalSignaturePayload(intakePayloadHash, approval);
+    equal(
+      approval.signedPayloadSha256,
+      digest(payload),
+      'PHASE6_PLATFORM_INTAKE_APPROVAL_PAYLOAD_MISMATCH',
+    );
+    let signature;
+    try {
+      signature = Buffer.from(approval.signature, 'base64url');
+    } catch {
+      fail('PHASE6_PLATFORM_INTAKE_APPROVAL_SIGNATURE_INVALID');
+    }
+    if (
+      signature.length !== 64 ||
+      signature.toString('base64url') !== approval.signature ||
+      !verify(null, Buffer.from(payload, 'utf8'), authority.publicKey, signature)
+    ) fail('PHASE6_PLATFORM_INTAKE_APPROVAL_SIGNATURE_INVALID');
+    signatures.add(approval.signature);
+  }
+  if (signatures.size !== APPROVAL_ROLES.length) {
+    fail('PHASE6_PLATFORM_INTAKE_APPROVALS_INCOMPLETE');
+  }
 }
 
 function validateExpected(document, expected) {
@@ -364,6 +543,77 @@ function validateExpected(document, expected) {
   );
 }
 
+function intakePayload(document, signerKeysetHashValue) {
+  return canonical({
+    formatVersion: document.formatVersion,
+    suite: document.suite,
+    intakeId: document.intakeId,
+    assessedAt: document.assessedAt,
+    source: document.source,
+    cluster: document.cluster,
+    github: document.github,
+    services: document.services,
+    approvals: document.approvals.map((approval) => ({
+      role: approval.role,
+      actorHash: approval.actorHash,
+      status: approval.status,
+      approvedAt: approval.approvedAt,
+      evidenceHash: approval.evidenceHash,
+    })),
+    decision: document.decision,
+    signerKeysetHash: signerKeysetHashValue,
+  });
+}
+
+function approvalSignaturePayload(intakePayloadHash, approval) {
+  return canonical({
+    suite: APPROVAL_SIGNATURE_SUITE,
+    intakePayloadHash,
+    role: approval.role,
+    keyId: approval.keyId,
+    signedAt: approval.signedAt,
+  });
+}
+
+function publicKeyFromSpkiBase64(value) {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/u.test(value)) {
+    fail('PHASE6_PLATFORM_INTAKE_SIGNING_AUTHORITY_INVALID');
+  }
+  let der;
+  try {
+    der = Buffer.from(value, 'base64');
+  } catch {
+    fail('PHASE6_PLATFORM_INTAKE_SIGNING_AUTHORITY_INVALID');
+  }
+  if (
+    der.length < 32 ||
+    der.length > 256 ||
+    der.toString('base64') !== value
+  ) fail('PHASE6_PLATFORM_INTAKE_SIGNING_AUTHORITY_INVALID');
+  let publicKey;
+  try {
+    publicKey = createPublicKey({ key: der, format: 'der', type: 'spki' });
+  } catch {
+    fail('PHASE6_PLATFORM_INTAKE_SIGNING_AUTHORITY_INVALID');
+  }
+  if (publicKey.asymmetricKeyType !== 'ed25519') {
+    fail('PHASE6_PLATFORM_INTAKE_SIGNING_AUTHORITY_INVALID');
+  }
+  return publicKey;
+}
+
+function publicKeyHash(publicKey) {
+  return digest(publicKey.export({ format: 'der', type: 'spki' }));
+}
+
+function signerKeysetHash(authorities) {
+  return digest(canonical(
+    authorities
+      .map(({ role, keyId }) => ({ role, keyId }))
+      .sort((left, right) => left.role.localeCompare(right.role)),
+  ));
+}
+
 function ensureNoSensitiveMaterial(value, path = '$') {
   if (Array.isArray(value)) {
     value.forEach((item, index) => ensureNoSensitiveMaterial(item, `${path}[${index}]`));
@@ -385,9 +635,21 @@ function ensureNoSensitiveMaterial(value, path = '$') {
 function runSelfTest() {
   const now = Date.parse('2026-07-23T00:00:00.000Z');
   const hash = (character) => `sha256:${character.repeat(64)}`;
+  const privateKeys = new Map();
+  const signingAuthorities = APPROVAL_ROLES.map((role) => {
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    const keyId = publicKeyHash(publicKey);
+    privateKeys.set(role, privateKey);
+    return {
+      role,
+      algorithm: 'Ed25519',
+      keyId,
+      publicKeySpkiBase64: publicKey.export({ format: 'der', type: 'spki' }).toString('base64'),
+    };
+  });
   const evidence = {
-    formatVersion: 1,
-    suite: 'gaoq.phase6.production-platform-intake.v1',
+    formatVersion: 2,
+    suite: 'gaoq.phase6.production-platform-intake.v2',
     intakeId: '01K00000000000000000000000',
     assessedAt: '2026-07-22T23:00:00.000Z',
     source: {
@@ -436,16 +698,24 @@ function runSelfTest() {
       multiZone: true, recoveryVerified: true, auditEnabled: true,
       evidenceHash: hash(String(index + 1)),
     })),
+    signingAuthorities,
     approvals: APPROVAL_ROLES.map((role, index) => ({
       role, actorHash: hash(String.fromCharCode(97 + index)), status: 'approved',
       approvedAt: '2026-07-22T23:15:00.000Z',
       evidenceHash: hash(String(index + 1)),
+      signedAt: `2026-07-22T23:${String(31 + index).padStart(2, '0')}:00.000Z`,
+      algorithm: 'Ed25519',
+      keyId: signingAuthorities[index].keyId,
+      signedPayloadSha256: hash('0'),
+      signature: 'A'.repeat(86),
     })),
     decision: {
       outcome: 'READY', decidedAt: '2026-07-22T23:30:00.000Z',
       expiresAt: '2026-07-24T23:30:00.000Z', evidenceHash: hash('0'),
     },
   };
+  signFixtureApprovals(evidence, privateKeys);
+  const keysetHash = signerKeysetHash(signingAuthorities);
   const expected = Object.freeze({
     commitSha: evidence.source.commitSha,
     deploymentManifestHash: evidence.source.deploymentManifestHash,
@@ -460,6 +730,7 @@ function runSelfTest() {
     githubPolicy: 'phase-6-deployment-plan',
     evidenceOidcAudienceHash: evidence.github.plan.evidenceAudienceHash,
     kubernetesOidcAudienceHash: evidence.github.plan.kubernetesAudienceHash,
+    signerKeysetHash: keysetHash,
   });
   validateEvidence(evidence, expected, now);
   for (const mutate of [
@@ -478,6 +749,20 @@ function runSelfTest() {
     (copy) => { copy.approvals[1].actorHash = copy.approvals[0].actorHash; },
     (copy) => { copy.decision.outcome = 'BLOCKED'; },
     (copy) => { copy.source.password = 'forbidden'; },
+    (copy) => {
+      copy.approvals[0].signature =
+        `${copy.approvals[0].signature[0] === 'A' ? 'B' : 'A'}${copy.approvals[0].signature.slice(1)}`;
+    },
+    (copy) => {
+      copy.signingAuthorities[1].keyId = copy.signingAuthorities[0].keyId;
+      copy.signingAuthorities[1].publicKeySpkiBase64 =
+        copy.signingAuthorities[0].publicKeySpkiBase64;
+    },
+    (copy) => {
+      const firstKeyId = copy.approvals[0].keyId;
+      copy.approvals[0].keyId = copy.approvals[1].keyId;
+      copy.approvals[1].keyId = firstKeyId;
+    },
   ]) {
     const copy = structuredClone(evidence);
     mutate(copy);
@@ -486,6 +771,28 @@ function runSelfTest() {
   const guardrailsMismatch = structuredClone(evidence);
   guardrailsMismatch.source.guardrailsManifestHash = hash('9');
   expectFailure(() => validateEvidence(guardrailsMismatch, expected, now));
+  const keysetMismatch = Object.freeze({ ...expected, signerKeysetHash: hash('9') });
+  expectFailure(() => validateEvidence(evidence, keysetMismatch, now));
+  const futureSignature = structuredClone(evidence);
+  for (const approval of futureSignature.approvals) {
+    approval.signedAt = '2026-07-24T00:00:00.000Z';
+  }
+  signFixtureApprovals(futureSignature, privateKeys);
+  expectFailure(() => validateEvidence(futureSignature, undefined, now));
+}
+
+function signFixtureApprovals(evidence, privateKeys) {
+  const keysetHash = signerKeysetHash(evidence.signingAuthorities);
+  const payloadHash = digest(intakePayload(evidence, keysetHash));
+  for (const approval of evidence.approvals) {
+    const payload = approvalSignaturePayload(payloadHash, approval);
+    approval.signedPayloadSha256 = digest(payload);
+    approval.signature = sign(
+      null,
+      Buffer.from(payload, 'utf8'),
+      privateKeys.get(approval.role),
+    ).toString('base64url');
+  }
 }
 
 function parseDocument(raw) {
@@ -536,7 +843,25 @@ function equal(actual, expected, code) {
 }
 
 function canonical(value) {
-  return JSON.stringify(value);
+  if (
+    value === null ||
+    typeof value === 'boolean' ||
+    typeof value === 'string'
+  ) return JSON.stringify(value);
+  if (typeof value === 'number') {
+    if (!Number.isSafeInteger(value)) fail('PHASE6_PLATFORM_INTAKE_NUMBER_INVALID');
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonical(item)).join(',')}]`;
+  }
+  if (typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`)
+      .join(',')}}`;
+  }
+  return fail('PHASE6_PLATFORM_INTAKE_VALUE_INVALID');
 }
 
 function digest(value) {

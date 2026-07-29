@@ -90,6 +90,12 @@ create/patch/delete 均被拒绝。Apply 仅能管理当前 release 所需的 na
 `job_workflow_ref`、run ID/attempt、三份输入摘要、渲染清单摘要和验证器摘要的
 绑定文件。
 
+Plan 与 Apply 还必须重新验收
+`gaoq.phase6.production-platform-intake.v2`：变更、合规、数据、平台、安全和
+SRE 六个角色分别以不同 Ed25519 密钥签署同一最终准入 payload，完整角色/keyId
+集合与 Repository Variable 的批准摘要匹配。证据自带公钥不能自行建立信任，
+复用公钥、角色换签、签后篡改或批准 keyset 漂移必须失败关闭。
+
 企业变更系统复核 Plan 后生成
 `gaoq.phase6.deployment-authorization.v2`：
 
