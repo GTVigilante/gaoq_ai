@@ -105,6 +105,14 @@ stdout 只允许 JSON-RPC。28 项专项测试覆盖传输失败关闭和真实�
 99.25%/95.74%/96.42%/100%，逐文件四维均不低于 90%。由此关闭的是仓库入口
 生命周期缺口，不替代真实 Inspector 与厂商客户端验收。
 
+同日已使用 Kimi Code CLI 0.28.1 的正式 ACP 客户端层取得首个厂商实体目录
+证据。`scripts/mcp/validate-kimi-mcp-client.mjs` 通过
+`initialize → session/new → /mcp` 启动只读目录夹具，Kimi 经 stdio 报告
+`gaoq-erp: connected (stdio, 47 tools)`；探针不调用模型、不执行业务 Tool，
+并把结果绑定当前 `catalogHash`。这只证明 Kimi 当前版本可启动标准入口并发现
+47 个 Tool，不证明真实短时 Token、Resource/Prompt、R0/R1/R2、撤销/重连或
+业务 UAT；Issue #36 和 Kimi 整体仍保持外部验收状态。
+
 2026-07-29 本人薪资单边界已下沉到 REST 与标准 MCP 共用的应用服务；
 `PAYROLL_SYSTEM_MODE=external` 在读取身份画像、Mongo 或 L4 密文前稳定失败
 关闭，MCP 返回 `PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM` 并写 R1 拒绝审计。

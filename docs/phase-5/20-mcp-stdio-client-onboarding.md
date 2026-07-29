@@ -92,6 +92,7 @@ npx @modelcontextprotocol/inspector \
 pnpm quality:mcp-stdio-coverage
 pnpm mcp:catalog:self-test
 pnpm --silent mcp:catalog:print
+pnpm mcp:client:kimi:self-test
 ```
 
 自动化测试使用官方 TypeScript Client 和真实 stdio 字节流完成初始化，验证同一
@@ -117,8 +118,31 @@ pnpm --silent mcp:catalog:print
 单独完成 OAuth Authorization Code + PKCE 或 Client Credentials、Origin、
 TLS、限流和外部系统联调。
 
+### 5.1 Kimi 实体客户端目录兼容证据
+
+2026-07-29 已使用本机 Kimi Code CLI 0.28.1 的正式 ACP 客户端层执行：
+
+```bash
+pnpm --filter @gaoq/erp-api build
+pnpm mcp:client:kimi:run
+```
+
+探针只走 ACP `initialize → session/new → /mcp`，其中 `/mcp` 是 Kimi 的本地
+状态命令，不调用模型、不执行 ERP 业务 Tool，也不读取 MongoDB、Redis 或外部
+系统。Kimi 实体进程经 stdio 成功连接同一个 `McpRuntimeService`，报告
+`gaoq-erp: connected (stdio, 47 tools)`；输出只保留客户端精确版本、连接结论、
+Tool 数量和当前 `catalogHash`。夹具禁止任何 Tool 调用，不包含真实 Token、
+租户数据或上游凭据。
+
+该证据把 Kimi 的“标准 stdio 启动及 47 Tool 目录发现”从 No-Go 收敛为已通过，
+但 Kimi 的 Resource、Resource Template、Prompt、正式短时 Token、R0/R1/R2、
+撤销/重连和业务 UAT 尚未验收，因此 Kimi 整体仍保持 No-Go。Claude、Cursor 与
+Inspector 也没有因此获得任何验收结论。
+
 ## 6. 参考
 
 - [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector)
 - [MCP 调试指南](https://modelcontextprotocol.io/docs/tools/debugging)
 - [MCP TypeScript SDK：构建首个 Server](https://ts.sdk.modelcontextprotocol.io/v2/get-started/first-server)
+- [Kimi Code MCP](https://moonshotai.github.io/kimi-code/en/customization/mcp.html)
+- [Kimi Code ACP](https://moonshotai.github.io/kimi-code/en/reference/kimi-acp)

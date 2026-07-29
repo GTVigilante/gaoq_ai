@@ -21,6 +21,13 @@
   `close()` 的竞态。28 项专项测试使三个 stdio 生产边界分别达到逐文件四维
   90%，专项门禁已接入 `precheck/check`；稳定码写入失败和资源关闭失败也只
   提升退出状态，不泄漏 Token、环境、路径或堆栈。
+- 2026-07-29 已取得首个厂商实体客户端目录证据：Kimi Code CLI 0.28.1 通过
+  正式 ACP 客户端层加载同一 `McpRuntimeService`，经 stdio 报告
+  `gaoq-erp: connected (stdio, 47 tools)`。可重复探针只执行本地 `/mcp`
+  状态命令，不调用模型、不执行业务 Tool、不依赖数据库或外部系统，结果绑定
+  当前 `catalogHash`。这只通过 Kimi 的启动与 Tool 目录发现；正式 Token、
+  Resource/Prompt、R0/R1/R2、撤销/重连和业务 UAT 未验收，Kimi 整体以及
+  Claude、Cursor、Inspector 仍保持 No-Go。
 - 2026-07-29 已把覆盖率门禁本身纳入失败关闭治理：
   `scripts/validate-critical-coverage-policy.mjs` 从 `precheck/check` 解析 133 个
   ERP API 专项脚本，展开其 `--coverage.include` 后要求 326 个生产文件逐一具有

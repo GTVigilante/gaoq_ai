@@ -15,3 +15,6 @@
 - `wordpress backup/` 永久排除，不得纳入盘点、构建、扫描或迁移。
 - 禁止把密码、密钥、Token 或生产凭据写入仓库、命令行、日志和代理上下文。
 - MCP 必须复用应用服务，禁止直接访问数据库、透传上游 Token 或执行 R3 操作。
+- Kimi Code CLI 0.28.1 已通过正式 ACP 层发现 stdio 的 47 个 Tool；这只是实体
+  客户端目录证据。Resource/Prompt、正式 Token、R0/R1/R2、撤销/重连和 UAT
+  未完成前，Kimi 整体及其他厂商客户端仍保持 No-Go。

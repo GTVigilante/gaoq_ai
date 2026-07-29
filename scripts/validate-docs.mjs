@@ -35,6 +35,8 @@ const requiredDocuments = [
   'deploy/helm/gaoq-erp/README.md',
   'deploy/helm/gaoq-platform-guardrails/README.md',
   'scripts/github/validate-repository-governance.mjs',
+  'scripts/mcp/validate-kimi-mcp-client.mjs',
+  'apps/erp-api/scripts/mcp-catalog-stdio-fixture.mjs',
   '.github/workflows/github-governance.yml',
 ];
 
@@ -100,6 +102,34 @@ const requiredRepositoryGovernanceMarkers = new Map([
       'GOV-PR-ISSUE-MISSING',
       'GOV-ISSUE-PHASE-MISMATCH',
       'GOV-EPIC-CHILD-OPEN',
+    ],
+  ],
+]);
+const requiredMcpClientCompatibilityMarkers = new Map([
+  [
+    'docs/phase-5/20-mcp-stdio-client-onboarding.md',
+    [
+      'mcp:client:kimi:run',
+      'Kimi Code CLI 0.28.1',
+      '不调用模型',
+      '仍保持 No-Go',
+    ],
+  ],
+  [
+    'scripts/mcp/validate-kimi-mcp-client.mjs',
+    [
+      'gaoq.mcp.client.kimi.v1',
+      'session/new',
+      '/mcp',
+      'modelInvoked: false',
+    ],
+  ],
+  [
+    'apps/erp-api/scripts/mcp-catalog-stdio-fixture.mjs',
+    [
+      'McpRuntimeService',
+      'McpAuthenticatedStdioTransport',
+      'MCP_CLIENT_FIXTURE_TOOL_CALL_FORBIDDEN',
     ],
   ],
 ]);
@@ -215,6 +245,19 @@ for (const [relativePath, markers] of requiredRepositoryGovernanceMarkers) {
     for (const marker of markers) {
       if (!content.includes(marker)) {
         errors.push(`${relativePath}: 缺少 GitHub 治理门禁标记 ${marker}`);
+      }
+    }
+  } catch {
+    // 缺失文件已在第一阶段报告。
+  }
+}
+
+for (const [relativePath, markers] of requiredMcpClientCompatibilityMarkers) {
+  try {
+    const content = await readFile(resolve(repoRoot, relativePath), 'utf8');
+    for (const marker of markers) {
+      if (!content.includes(marker)) {
+        errors.push(`${relativePath}: 缺少 MCP 实体客户端门禁标记 ${marker}`);
       }
     }
   } catch {
