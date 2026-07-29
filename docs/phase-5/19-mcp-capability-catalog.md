@@ -2,7 +2,8 @@
 
 - 文档编号：phase-5/19
 - 状态：远程 Streamable HTTP 与本地 stdio 运行入口、能力目录门禁已交付；
-  三类客户端与外部沙箱真实联调待执行
+  Kimi Tool 目录及 Inspector 四类目录实体探针已通过，三类授权客户端与外部
+  沙箱真实联调待执行
 
 ## 运行基线
 
@@ -16,13 +17,20 @@ Tool 分支。业务 Tool 只依赖应用服务；禁止访问 Model、Repositor
 
 四个静态 Resource 分别提供服务说明、审批待办、已发布审批模板目录和本人委托目录。`erp://approval/templates/published` 只返回表单字段白名单；`erp://approval/delegations/mine` 只返回限期授权最小投影。两者均复用审批应用服务，不返回租户、权限快照、流程节点、审批人解析器、发布审批人或任何表单值；敏感审批正文不得进入 MCP 明文确认命令，持续授权关系不得注册 AI 写 Tool。
 
-确定性目录直接从 `McpRuntimeService` 的 47 个真实 `registerTool` 注册点解析，不维护第二份容易漂移的手工清单：R0 23 个、R1 16 个、R2 8 个、R3 0 个。门禁验证中文标题/说明、输入与输出 Schema、幂等与副作用注解、R1/R2 封闭世界、prepare 不产生破坏性效果，以及应用服务边界。
+确定性目录直接从 `McpRuntimeService` 的真实注册点解析，不维护第二份容易漂移的
+手工清单：47 个 Tool（R0 23 个、R1 16 个、R2 8 个、R3 0 个）、4 个静态
+Resource、24 个 Resource Template 和 22 个 Prompt。门禁验证中文标题/说明、
+Tool 输入与输出 Schema、幂等与副作用注解、Resource 定位符/MIME、Prompt 参数、
+R1/R2 封闭世界、prepare 不产生破坏性效果，以及应用服务边界。
 
 ```bash
 pnpm --silent mcp:catalog:print > /secure/mcp/gaoq-mcp-catalog.json
 ```
 
-输出按源码注册顺序规范化并生成 `catalogHash`。任何 Tool 增删、标题/Schema/注解或风险分级变化都会改变目录摘要并要求重新完成安全评审和客户端联调。
+输出按源码注册顺序规范化并生成 `catalogHash`。摘要覆盖四类完整目录以及忽略
+注释和格式差异的 `runtimeContractHash`；Tool、Resource、Resource Template、
+Prompt 的增删或契约语义变化都会改变目录摘要，并要求重新完成安全评审和客户端
+联调。仅修改注释不会制造无意义的目录漂移。
 
 ## 能力分层
 
@@ -39,10 +47,12 @@ pnpm --silent mcp:catalog:print > /secure/mcp/gaoq-mcp-catalog.json
 短时 JWT 形态的 `MCP_STDIO_ACCESS_TOKEN`。启动预检和每条消息均复用
 `AccessTokenVerifier`，要求 `erp:mcp:server:connect`，即时撤销或过期即关闭
 连接。stdout 只传输 JSON-RPC，错误只向 stderr 输出稳定码。官方 TypeScript
-Client 已经通过真实 stdio 字节流完成初始化，并发现同一套 47 Tool、Resource
-与 22 Prompt；通用配置、构建和 Inspector 命令见
-[stdio 客户端接入手册](./20-mcp-stdio-client-onboarding.md)。该自动化证据不把
-任何厂商客户端标记为已验收。
+Client 已经通过真实 stdio 字节流完成初始化，并发现同一套四类目录。锁定的
+官方 MCP Inspector CLI 2.0.0 还实体执行了 `tools/list`、`resources/list`、
+`resources/templates/list` 和 `prompts/list`，逐项匹配 47/4/24/22 与当前
+两个摘要；通用配置、构建和 Inspector 命令见
+[stdio 客户端接入手册](./20-mcp-stdio-client-onboarding.md)。这些目录证据不
+包含 Resource 读取、Prompt 渲染、业务 Tool 调用、OAuth 或业务 UAT。
 
 仓库门禁 `pnpm quality:mcp-http-entry-coverage` 覆盖 `/mcp` 与 `/mcp/` 的认证前
 Origin 拒绝、控制器二次 Origin 校验、连接 Scope、浏览器确认 Cookie 会话、
@@ -71,7 +81,13 @@ OP、钉钉、飞书、e签宝、银行、税务、附件和 WORM 只通过应�
 
 `.github/workflows/phase-5-mcp-integration.yml` 只允许 `main` 手工启动，绑定 Required Reviewers 保护的 `phase-5-mcp-integration` Environment 和同名隔离单次 Runner 标签。Environment 配置固定环境名及 API/Worker/ERP Web/Website 镜像 SHA-256；现场摘要文件固定为 `/var/lib/gaoq/mcp/phase-5-mcp-integration.json`。工作流把证据与当前 commit、镜像和实时解析的 `catalogHash` 精确绑定，只上传脱敏 verdict，不上传 OAuth Token、协议正文、业务数据或供应商凭据。
 
-证据必须覆盖三类客户端各至少 10 次 Tool 调用、全部 47 个 Tool 的一致目录、至少 4 个 Resource、24 个 Resource Template、22 个 Prompt；OP、钉钉、飞书、e签宝、银行、税务、附件、WORM 各至少 10 次沙箱请求。跨租户和无效 Scope 各至少 30 次并全部拒绝，过期确认至少 10 次并全部拒绝；丢失、重复业务效果、未对账、租户错配、Token 暴露、生产副作用和 R3 Tool 均为零。MCP、集成、安全和 QA 四方在联调结束后独立签署。
+证据必须覆盖三类客户端各至少 10 次 Tool 调用、全部 47 个 Tool、4 个 Resource、
+24 个 Resource Template 和 22 个 Prompt 的一致目录；OP、钉钉、飞书、e签宝、
+银行、税务、附件、WORM 各至少 10 次沙箱请求。跨租户和无效 Scope 各至少
+30 次并全部拒绝，过期确认至少 10 次并全部拒绝；丢失、重复业务效果、未对账、
+租户错配、Token 暴露、生产副作用和 R3 Tool 均为零。MCP、集成、安全和 QA
+四方在联调结束后独立签署。最终 Go/No-Go 证据还必须精确绑定该完整
+`catalogHash` 和四类目录数量，陈旧示例或仅满足数量下限的目录不得通过。
 
 ```bash
 pnpm mcp:integration:validate-evidence -- /secure/mcp/phase-5-mcp-integration.json

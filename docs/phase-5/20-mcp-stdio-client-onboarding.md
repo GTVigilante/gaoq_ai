@@ -3,7 +3,8 @@
 - 文档编号：phase-5/20
 - 适用范围：同机 AI 客户端、开发和 MCP Inspector
 - 协议基线：仓库锁定的 MCP `2025-11-25`
-- 状态：标准入口和自动化协议测试已交付；厂商客户端实体联调待验收
+- 状态：标准入口和自动化协议测试已交付；Kimi Tool 目录及 Inspector 四类
+  目录实体探针已通过，其余授权与业务实体联调待验收
 
 ## 1. 安全边界
 
@@ -79,10 +80,14 @@ Claude、Kimi、Cursor 等厂商的字段、OAuth 支持和发行版行为可能
 
 ## 4. Inspector 与自动化验证
 
-先由秘密管理器为当前进程环境注入短时 Token，再按 MCP Inspector 官方方式启动：
+仓库把官方 MCP Inspector CLI 2.0.0 隔离锁定在
+`tools/mcp-inspector-client`，不会使用未固定的 `latest`，也不会把其 UI/开发
+依赖加入生产应用。先完成仓库锁定安装，再由秘密管理器为当前进程环境注入短时
+Token；手工连接真实入口时使用：
 
 ```bash
-npx @modelcontextprotocol/inspector \
+pnpm install --frozen-lockfile
+pnpm --filter @gaoq/mcp-inspector-client exec mcp-inspector \
   node /absolute/path/to/gaoq_ai/apps/erp-api/dist/mcp-stdio-main.js
 ```
 
@@ -93,6 +98,8 @@ pnpm quality:mcp-stdio-coverage
 pnpm mcp:catalog:self-test
 pnpm --silent mcp:catalog:print
 pnpm mcp:client:kimi:self-test
+pnpm mcp:client:inspector:self-test
+pnpm mcp:client:inspector:run
 ```
 
 自动化测试使用官方 TypeScript Client 和真实 stdio 字节流完成初始化，验证同一
@@ -101,6 +108,13 @@ pnpm mcp:client:kimi:self-test
 进程入口测试还验证应用模块只在环境预检后动态加载，输入结束、`SIGINT`、
 `SIGTERM`、连接错误和启动中迟到资源共用按对象身份幂等清理；stderr 或资源关闭
 失败只提升退出码，不能把内部异常、配置、Token、路径或堆栈写入协议通道。
+
+`mcp:client:inspector:run` 使用官方 Inspector 的正式 CLI 层连接只读目录夹具，
+依次且仅执行 `tools/list`、`resources/list`、`resources/templates/list` 和
+`prompts/list`。它将实体响应逐项绑定完整 `catalogHash` 与
+`runtimeContractHash`，拒绝缺项、重复名称、定位符或 Prompt 参数漂移以及夹杂
+banner 的非纯 JSON 输出。该探针不读取 Resource 内容、不渲染 Prompt、不调用
+业务 Tool、不调用模型，也不访问数据库或外部系统。
 
 ## 5. 实体客户端验收
 
@@ -113,10 +127,10 @@ pnpm mcp:client:kimi:self-test
 4. 无 Scope、跨租户、过期、即时撤销、重放、取消、超时和客户端重连。
 5. stdout 无非协议文本，日志、审计和错误中无 Token、L3/L4 正文或上游凭据。
 
-官方 Client 自动化通过不等于厂商客户端通过。Claude、Kimi、Cursor 和 Inspector
-在原始协议记录、安全复核和业务验收签署完成前均保持 No-Go。远程生产接入还必须
-单独完成 OAuth Authorization Code + PKCE 或 Client Credentials、Origin、
-TLS、限流和外部系统联调。
+官方 Client 自动化或目录实体探针通过不等于完整客户端验收。Claude、Kimi、
+Cursor 和 Inspector 在正式 Token、授权读写、撤销/重连、安全复核和业务验收
+签署完成前整体仍保持 No-Go。远程生产接入还必须单独完成 OAuth Authorization
+Code + PKCE 或 Client Credentials、Origin、TLS、限流和外部系统联调。
 
 ### 5.1 Kimi 实体客户端目录兼容证据
 
@@ -137,7 +151,26 @@ Tool 数量和当前 `catalogHash`。夹具禁止任何 Tool 调用，不包含�
 该证据把 Kimi 的“标准 stdio 启动及 47 Tool 目录发现”从 No-Go 收敛为已通过，
 但 Kimi 的 Resource、Resource Template、Prompt、正式短时 Token、R0/R1/R2、
 撤销/重连和业务 UAT 尚未验收，因此 Kimi 整体仍保持 No-Go。Claude、Cursor 与
-Inspector 也没有因此获得任何验收结论。
+Inspector 也没有因此获得完整验收结论。
+
+### 5.2 Inspector 实体客户端四类目录证据
+
+2026-07-29 已使用锁定的官方 MCP Inspector CLI 2.0.0 执行：
+
+```bash
+pnpm mcp:client:inspector:run
+```
+
+Inspector 通过 stdio 连接同一个 `McpRuntimeService` 目录夹具，并以正式 CLI
+方法发现 47 个 Tool、4 个静态 Resource、24 个 Resource Template 和 22 个
+Prompt。探针输出绑定当前 `catalogHash` 与 `runtimeContractHash`，同时明确记录
+`businessToolInvoked=false`、`resourceContentRead=false`、
+`promptRendered=false` 和 `modelInvoked=false`。
+
+该证据只关闭 Inspector 2.0.0 的四类目录兼容缺口，不证明正式短时 Token、
+Resource 内容授权、Prompt 渲染、R0/R1/R2 Tool、撤销/重连、远程 OAuth 或业务
+UAT；Inspector 整体仍保持 No-Go。Inspector 上游开发依赖当前存在 peer 与废弃
+子依赖警告，因此固定隔离在工具工作区；生产依赖审计和许可证门禁继续独立执行。
 
 ## 6. 参考
 

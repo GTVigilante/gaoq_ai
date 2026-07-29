@@ -49,6 +49,29 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const broken = runtime.replace('outputSchema: permissionsOutputSchema',
       'missingOutputSchema: permissionsOutputSchema');
     expectFailure(() => buildCatalog(broken, toolService), 'PHASE5_MCP_OUTPUT_SCHEMA_MISSING');
+    const resourceChanged = buildCatalog(
+      runtime.replace("'gaoq://mcp/guide'", "'gaoq://mcp/guide-v2'"),
+      toolService,
+    );
+    notEqual(
+      resourceChanged.catalogHash,
+      catalog.catalogHash,
+      'PHASE5_MCP_RESOURCE_HASH_NOT_CHANGED',
+    );
+    const promptSchemaChanged = buildCatalog(
+      runtime.replace('z.string().min(1).max(64)', 'z.string().min(2).max(64)'),
+      toolService,
+    );
+    notEqual(
+      promptSchemaChanged.catalogHash,
+      catalog.catalogHash,
+      'PHASE5_MCP_PROMPT_SCHEMA_HASH_NOT_CHANGED',
+    );
+    equal(
+      buildCatalog(`// 目录摘要忽略注释差异。\n${runtime}`, toolService).catalogHash,
+      catalog.catalogHash,
+      'PHASE5_MCP_COMMENT_CHANGED_HASH',
+    );
     process.stdout.write('Phase 5 MCP 确定性能力目录门禁自测通过。\n');
   } else if (process.argv.length === 3 && process.argv[2] === '--print') {
     process.stdout.write(`${JSON.stringify(catalog, null, 2)}\n`);
@@ -69,14 +92,31 @@ function buildCatalog(runtimeSource, toolServiceSource) {
   const sourceFile = ts.createSourceFile('mcp-runtime.service.ts', runtimeSource,
     ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const registrations = [];
+  const resourceRegistrations = [];
+  const promptRegistrations = [];
   walk(sourceFile, (node) => {
-    if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression) ||
-        node.expression.name.text !== 'registerTool') return;
+    if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return;
+    const method = node.expression.name.text;
+    if (!['registerTool', 'registerResource', 'registerPrompt'].includes(method)) return;
     const [nameNode, metadataNode] = node.arguments;
-    if (!ts.isStringLiteral(nameNode) || !ts.isObjectLiteralExpression(metadataNode)) {
+    if (!ts.isStringLiteral(nameNode)) {
       fail('PHASE5_MCP_REGISTRATION_DYNAMIC');
     }
-    registrations.push(parseRegistration(nameNode.text, metadataNode));
+    if (method === 'registerTool') {
+      if (!ts.isObjectLiteralExpression(metadataNode)) fail('PHASE5_MCP_REGISTRATION_DYNAMIC');
+      registrations.push(parseRegistration(nameNode.text, metadataNode));
+      return;
+    }
+    if (method === 'registerResource') {
+      const [, targetNode, resourceMetadataNode] = node.arguments;
+      resourceRegistrations.push(parseResourceRegistration(
+        nameNode.text,
+        targetNode,
+        resourceMetadataNode,
+      ));
+      return;
+    }
+    promptRegistrations.push(parsePromptRegistration(nameNode.text, metadataNode));
   });
   const riskByName = new Map(Object.entries(RISK).flatMap(([risk, names]) =>
     names.map((name) => [name, risk])));
@@ -85,6 +125,33 @@ function buildCatalog(runtimeSource, toolServiceSource) {
   if (new Set(names).size !== names.length || names.some((name) => !riskByName.has(name))) {
     fail('PHASE5_MCP_RISK_CATALOG_INCOMPLETE');
   }
+  if (resourceRegistrations.length !== 28) fail('PHASE5_MCP_RESOURCE_COUNT_INVALID');
+  const resourceNames = resourceRegistrations.map((item) => item.name);
+  if (new Set(resourceNames).size !== resourceNames.length) {
+    fail('PHASE5_MCP_RESOURCE_NAME_DUPLICATE');
+  }
+  const resources = resourceRegistrations.filter((item) => item.kind === 'resource')
+    .map((item) => ({
+      name: item.name,
+      title: item.title,
+      description: item.description,
+      uri: item.uri,
+      mimeType: item.mimeType,
+    }));
+  const resourceTemplates = resourceRegistrations.filter((item) => item.kind === 'template')
+    .map((item) => ({
+      name: item.name,
+      title: item.title,
+      description: item.description,
+      uriTemplate: item.uriTemplate,
+      mimeType: item.mimeType,
+    }));
+  if (resources.length !== 4 || resourceTemplates.length !== 24) {
+    fail('PHASE5_MCP_RESOURCE_KIND_COUNT_INVALID');
+  }
+  if (promptRegistrations.length !== 22) fail('PHASE5_MCP_PROMPT_COUNT_INVALID');
+  const promptNames = promptRegistrations.map((item) => item.name);
+  if (new Set(promptNames).size !== promptNames.length) fail('PHASE5_MCP_PROMPT_NAME_DUPLICATE');
   const tools = registrations.map((item) => {
     const riskLevel = riskByName.get(item.name);
     if (!item.hasOutputSchema) fail('PHASE5_MCP_OUTPUT_SCHEMA_MISSING');
@@ -111,16 +178,29 @@ function buildCatalog(runtimeSource, toolServiceSource) {
     suite: 'gaoq.phase5.mcp-catalog.v1',
     protocolVersion: '2025-11-25',
     transport: 'streamable-http',
+    transports: ['streamable-http', 'stdio'],
     oauthProfile: 'oauth-2.1',
-    counts: { total: 47, R0: 23, R1: 16, R2: 8, R3: 0 },
+    counts: {
+      total: 47,
+      R0: 23,
+      R1: 16,
+      R2: 8,
+      R3: 0,
+      resources: 4,
+      resourceTemplates: 24,
+      prompts: 22,
+    },
+    runtimeContractHash: semanticDigest(runtimeSource),
     tools,
+    resources,
+    resourceTemplates,
+    prompts: promptRegistrations,
   };
   return { ...core, catalogHash: digest(canonical(core)) };
 }
 
 function parseRegistration(name, metadata) {
-  const properties = new Map(metadata.properties.filter(ts.isPropertyAssignment).map((property) =>
-    [property.name.getText().replaceAll(/["']/gu, ''), property.initializer]));
+  const properties = propertyMap(metadata);
   const title = stringValue(properties.get('title'));
   const description = stringValue(properties.get('description'));
   if (title === null || description === null || !/[\u3400-\u9fff]/u.test(`${title}${description}`)) {
@@ -137,6 +217,84 @@ function parseRegistration(name, metadata) {
     hasOutputSchema: properties.has('outputSchema'),
     annotations,
   };
+}
+
+function parseResourceRegistration(name, target, metadata) {
+  if (!ts.isObjectLiteralExpression(metadata)) fail('PHASE5_MCP_RESOURCE_METADATA_INVALID');
+  const properties = propertyMap(metadata);
+  const title = stringValue(properties.get('title'));
+  const description = stringValue(properties.get('description'));
+  const mimeType = stringValue(properties.get('mimeType'));
+  validateChineseMetadata(title, description, 'PHASE5_MCP_RESOURCE_METADATA_INVALID');
+  if (!['application/json', 'text/markdown'].includes(mimeType ?? '')) {
+    fail('PHASE5_MCP_RESOURCE_MIME_INVALID');
+  }
+  if (ts.isStringLiteral(target) || ts.isNoSubstitutionTemplateLiteral(target)) {
+    return {
+      kind: 'resource',
+      name,
+      title,
+      description,
+      uri: target.text,
+      mimeType,
+    };
+  }
+  if (!ts.isNewExpression(target) || !ts.isIdentifier(target.expression) ||
+      target.expression.text !== 'ResourceTemplate') {
+    fail('PHASE5_MCP_RESOURCE_TARGET_DYNAMIC');
+  }
+  const uriTemplate = stringValue(target.arguments?.[0]);
+  if (uriTemplate === null) fail('PHASE5_MCP_RESOURCE_TARGET_DYNAMIC');
+  return {
+    kind: 'template',
+    name,
+    title,
+    description,
+    uriTemplate,
+    mimeType,
+  };
+}
+
+function parsePromptRegistration(name, metadata) {
+  if (!ts.isObjectLiteralExpression(metadata)) fail('PHASE5_MCP_PROMPT_METADATA_INVALID');
+  const properties = propertyMap(metadata);
+  const title = stringValue(properties.get('title'));
+  const description = stringValue(properties.get('description'));
+  validateChineseMetadata(title, description, 'PHASE5_MCP_PROMPT_METADATA_INVALID');
+  const argsSchema = properties.get('argsSchema');
+  if (argsSchema !== undefined && !ts.isObjectLiteralExpression(argsSchema)) {
+    fail('PHASE5_MCP_PROMPT_SCHEMA_DYNAMIC');
+  }
+  const arguments_ = argsSchema === undefined ? [] : argsSchema.properties.map((property) => {
+    if (!ts.isPropertyAssignment(property)) fail('PHASE5_MCP_PROMPT_SCHEMA_DYNAMIC');
+    const argument = propertyName(property.name);
+    if (argument === null || !/^[A-Za-z][A-Za-z0-9]*$/u.test(argument)) {
+      fail('PHASE5_MCP_PROMPT_ARGUMENT_INVALID');
+    }
+    return argument;
+  });
+  if (new Set(arguments_).size !== arguments_.length) fail('PHASE5_MCP_PROMPT_ARGUMENT_DUPLICATE');
+  return { name, title, description, arguments: arguments_ };
+}
+
+function propertyMap(object) {
+  return new Map(object.properties.filter(ts.isPropertyAssignment).map((property) => {
+    const name = propertyName(property.name);
+    if (name === null) fail('PHASE5_MCP_METADATA_PROPERTY_DYNAMIC');
+    return [name, property.initializer];
+  }));
+}
+
+function propertyName(node) {
+  if (ts.isIdentifier(node) || ts.isStringLiteral(node) ||
+      ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+  return null;
+}
+
+function validateChineseMetadata(title, description, code) {
+  if (title === null || description === null || !/[\u3400-\u9fff]/u.test(`${title}${description}`)) {
+    fail(code);
+  }
 }
 
 function domain(name) {
@@ -184,12 +342,34 @@ function digest(value) {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`;
 }
 
+function semanticDigest(source) {
+  const scanner = ts.createScanner(
+    ts.ScriptTarget.Latest,
+    true,
+    ts.LanguageVariant.Standard,
+    source,
+  );
+  const tokens = [];
+  for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
+    tokens.push(`${token}:${scanner.getTokenText()}`);
+  }
+  return digest(tokens.join('\u0000'));
+}
+
 function expectFailure(callback, code) {
   try { callback(); } catch (error) {
     if (error instanceof Error && error.message === code) return;
     throw error;
   }
   fail(`SELF_TEST_DID_NOT_FAIL:${code}`);
+}
+
+function equal(actual, expected, code) {
+  if (actual !== expected) fail(code);
+}
+
+function notEqual(actual, expected, code) {
+  if (actual === expected) fail(code);
 }
 
 function fail(code) {

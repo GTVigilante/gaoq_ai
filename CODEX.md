@@ -13,8 +13,8 @@
   `McpRuntimeService` 和 `AccessTokenVerifier`。启动要求秘密管理器注入短时
   Token 与 `erp:mcp:server:connect`，先预检、后逐消息复验，撤销/过期立即关闭；
   stdout 仅传输 JSON-RPC。官方 TypeScript Client 已通过真实字节流发现同一套
-  47 Tool、Resource 与 22 Prompt；Claude、Kimi、Cursor 和 Inspector 实体
-  客户端仍保持 No-Go，待真实联调。
+  47 Tool、4 个静态 Resource、24 个 Resource Template 与 22 个 Prompt；
+  各实体客户端仍须按其已完成范围与外部验收边界单独判定。
 - 2026-07-29 已把 stdio 进程入口抽成可测试的失败关闭运行器：环境预检先于
   `AppModule` 动态加载，输入结束、`SIGINT`、`SIGTERM`、连接错误和迟到资源
   使用同一幂等清理状态机；测试发现并关闭了应用加载与信号并发时重复
@@ -28,6 +28,14 @@
   当前 `catalogHash`。这只通过 Kimi 的启动与 Tool 目录发现；正式 Token、
   Resource/Prompt、R0/R1/R2、撤销/重连和业务 UAT 未验收，Kimi 整体以及
   Claude、Cursor、Inspector 仍保持 No-Go。
+- 2026-07-29 已把 `catalogHash` 从 Tool 摘要升级为四类完整能力目录摘要：
+  从同一运行时实时解析 47 Tool、4 Resource、24 Resource Template、22 Prompt，
+  并绑定忽略注释/格式差异的 `runtimeContractHash`。锁定且隔离的官方 MCP
+  Inspector CLI 2.0.0 已实体执行四个 list 方法并逐项匹配目录；探针不读取
+  Resource、不渲染 Prompt、不调用业务 Tool/模型/数据库/外部系统。Phase 5
+  MCP 联调和总 Go/No-Go 门禁均精确绑定完整摘要及数量，陈旧 30/3/2 示例不再
+  可通过。该证据只关闭 Inspector 四类目录兼容缺口；正式 Token、授权读写、
+  远程 OAuth、撤销/重连和业务 UAT 未完成，Inspector 整体仍保持 No-Go。
 - 2026-07-29 已把覆盖率门禁本身纳入失败关闭治理：
   `scripts/validate-critical-coverage-policy.mjs` 从 `precheck/check` 解析 133 个
   ERP API 专项脚本，展开其 `--coverage.include` 后要求 326 个生产文件逐一具有

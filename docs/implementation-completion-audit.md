@@ -103,7 +103,7 @@ stdout 只允许 JSON-RPC。28 项专项测试覆盖传输失败关闭和真实�
 的竞态；稳定码写入和资源关闭异常只提升失败退出状态，不泄漏内部详情。扩展后的
 28 项专项测试覆盖三个目标生产文件，语句/分支/函数/行合计达到
 99.25%/95.74%/96.42%/100%，逐文件四维均不低于 90%。由此关闭的是仓库入口
-生命周期缺口，不替代真实 Inspector 与厂商客户端验收。
+生命周期缺口，不替代 Inspector 授权读写与其他厂商客户端完整验收。
 
 同日已使用 Kimi Code CLI 0.28.1 的正式 ACP 客户端层取得首个厂商实体目录
 证据。`scripts/mcp/validate-kimi-mcp-client.mjs` 通过
@@ -112,6 +112,16 @@ stdout 只允许 JSON-RPC。28 项专项测试覆盖传输失败关闭和真实�
 并把结果绑定当前 `catalogHash`。这只证明 Kimi 当前版本可启动标准入口并发现
 47 个 Tool，不证明真实短时 Token、Resource/Prompt、R0/R1/R2、撤销/重连或
 业务 UAT；Issue #36 和 Kimi 整体仍保持外部验收状态。
+
+同日完整 MCP 目录门禁已从仅覆盖 Tool 升级为实时解析 47 个 Tool、4 个静态
+Resource、24 个 Resource Template 和 22 个 Prompt，并把四类目录与忽略注释/
+格式差异的运行时语义摘要共同纳入 `catalogHash`。锁定在独立工具工作区的官方
+MCP Inspector CLI 2.0.0 已通过正式 CLI 层依次执行四个 list 方法，逐项匹配
+47/4/24/22；探针未读取 Resource、未渲染 Prompt、未调用业务 Tool/模型/数据库
+或外部系统。Phase 5 MCP 联调与总 Go/No-Go 验证器现均精确绑定完整目录，
+陈旧哈希、遗漏 Resource Template 或只满足数量下限都会失败。该仓库实体证据
+不替代正式 Token、授权读写、远程 OAuth、撤销/重连、安全复核或业务 UAT，
+Inspector 整体仍保持外部验收状态。
 
 2026-07-29 本人薪资单边界已下沉到 REST 与标准 MCP 共用的应用服务；
 `PAYROLL_SYSTEM_MODE=external` 在读取身份画像、Mongo 或 L4 密文前稳定失败

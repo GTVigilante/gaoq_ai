@@ -18,3 +18,7 @@
 - Kimi Code CLI 0.28.1 已通过正式 ACP 层发现 stdio 的 47 个 Tool；这只是实体
   客户端目录证据。Resource/Prompt、正式 Token、R0/R1/R2、撤销/重连和 UAT
   未完成前，Kimi 整体及其他厂商客户端仍保持 No-Go。
+- 官方 MCP Inspector CLI 2.0.0 已通过正式 CLI 层发现 47 Tool、4 Resource、
+  24 Resource Template 和 22 Prompt；这只证明四类目录兼容。读取、渲染、
+  业务 Tool、正式 Token、OAuth、撤销/重连和 UAT 未完成前 Inspector 整体仍
+  保持 No-Go。

@@ -14,7 +14,7 @@
     "prelint": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && pnpm --filter @gaoq/platform-contracts build",
     "lint": "eslint .",
     "typecheck": "pnpm -r --if-present typecheck",
-    "test": "pnpm -r --if-present test && pnpm github:governance:self-test && pnpm mcp:client:kimi:self-test",
+    "test": "pnpm -r --if-present test && pnpm github:governance:self-test && pnpm mcp:client:kimi:self-test && pnpm mcp:client:inspector:self-test",
     "test:coverage": "pnpm -r --if-present test:coverage",
     "quality:critical-coverage-policy": "node scripts/validate-critical-coverage-policy.mjs --self-test",
     "github:governance:self-test": "node scripts/github/validate-repository-governance.mjs --self-test",
@@ -179,6 +179,8 @@
     "mcp:catalog:self-test": "node scripts/mcp/validate-phase-5-mcp-catalog.mjs --self-test",
     "mcp:client:kimi:self-test": "node scripts/mcp/validate-kimi-mcp-client.mjs --self-test",
     "mcp:client:kimi:run": "node scripts/mcp/validate-kimi-mcp-client.mjs --run",
+    "mcp:client:inspector:self-test": "node scripts/mcp/validate-mcp-inspector-client.mjs --self-test",
+    "mcp:client:inspector:run": "node scripts/mcp/validate-mcp-inspector-client.mjs --run",
     "mcp:integration:validate-evidence": "node scripts/mcp/validate-phase-5-mcp-integration-evidence.mjs",
     "mcp:integration:self-test": "node scripts/mcp/validate-phase-5-mcp-integration-evidence.mjs --self-test",
     "release:phase6:cutover:validate-evidence": "node scripts/release/validate-phase-6-cutover-evidence.mjs",
@@ -208,6 +210,7 @@
     "eslint": "^10.7.0",
     "globals": "^17.7.0",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.65.0"
+    "typescript-eslint": "^8.65.0",
+    "vite": "7.3.6"
   }
 }

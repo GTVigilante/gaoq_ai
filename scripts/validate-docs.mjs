@@ -23,6 +23,9 @@ const requiredDocuments = [
   'docs/phase-3/README.md',
   'docs/phase-4/README.md',
   'docs/phase-5/README.md',
+  'docs/phase-5/18-go-no-go-evidence-gate.md',
+  'docs/phase-5/19-mcp-capability-catalog.md',
+  'docs/phase-5/20-mcp-stdio-client-onboarding.md',
   'docs/phase-6/README.md',
   'docs/phase-6/00-unified-cutover-contract.md',
   'docs/phase-6/01-hypercare-archive-contract.md',
@@ -36,7 +39,9 @@ const requiredDocuments = [
   'deploy/helm/gaoq-platform-guardrails/README.md',
   'scripts/github/validate-repository-governance.mjs',
   'scripts/mcp/validate-kimi-mcp-client.mjs',
+  'scripts/mcp/validate-mcp-inspector-client.mjs',
   'apps/erp-api/scripts/mcp-catalog-stdio-fixture.mjs',
+  'tools/mcp-inspector-client/package.json',
   '.github/workflows/github-governance.yml',
 ];
 
@@ -110,7 +115,9 @@ const requiredMcpClientCompatibilityMarkers = new Map([
     'docs/phase-5/20-mcp-stdio-client-onboarding.md',
     [
       'mcp:client:kimi:run',
+      'mcp:client:inspector:run',
       'Kimi Code CLI 0.28.1',
+      'MCP Inspector CLI 2.0.0',
       '不调用模型',
       '仍保持 No-Go',
     ],
@@ -122,6 +129,23 @@ const requiredMcpClientCompatibilityMarkers = new Map([
       'session/new',
       '/mcp',
       'modelInvoked: false',
+    ],
+  ],
+  [
+    'scripts/mcp/validate-mcp-inspector-client.mjs',
+    [
+      'gaoq.mcp.client.inspector.v1',
+      'resources/templates/list',
+      'runtimeContractHash',
+      'modelInvoked: false',
+    ],
+  ],
+  [
+    'tools/mcp-inspector-client/package.json',
+    [
+      '@modelcontextprotocol/inspector',
+      '2.0.0',
+      '>=22.19.0',
     ],
   ],
   [

@@ -32,7 +32,12 @@ Go/No-Go 是人工治理决定，不是 CI 成功、AI 建议或某个负责人�
 
 ## MCP 上线标准
 
-MCP 固定使用 `2025-11-25`、Streamable HTTP 和 OAuth 2.1。最终能力目录必须保存确定性 SHA-256，并按 R0/R1/R2 汇总；三类数量之和必须等于 Tool 总数。每个 Tool 必须同时具备输入/输出 Schema 和风险级别；R3 Tool、直接数据库访问、上游 Token 暴露均为零。
+MCP 固定使用 `2025-11-25`、Streamable HTTP 和 OAuth 2.1。最终能力目录必须
+直接绑定仓库实时生成的完整 `catalogHash`，并精确等于 47 个 Tool、4 个静态
+Resource、24 个 Resource Template 和 22 个 Prompt；Tool 风险分层固定为
+R0 23、R1 16、R2 8、R3 0。陈旧哈希、遗漏 Resource Template 或只满足数量
+下限均失败关闭。每个 Tool 必须同时具备输入/输出 Schema 和风险级别；直接
+数据库访问、上游 Token 暴露均为零。
 
 至少使用三类协议客户端完成同版本互操作：交互式用户 Agent、机器服务 Agent、只读审计 Agent。必须覆盖初始化协商、OAuth 发现与授权、分页、结构化输出、资源/提示（如已声明）、确认、超时、幂等、错误、跨租户拒绝和审计。至少执行 30 次跨租户尝试并全部拒绝，审计事件数不得少于 Tool 总数。具体能力目录和跨系统实测由后续 MCP 验收切片提供；没有该证据时本门禁无法通过。
 

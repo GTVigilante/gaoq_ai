@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { lstat, readFile } from 'node:fs/promises';
+import { catalog } from '../mcp/validate-phase-5-mcp-catalog.mjs';
 
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
 const COMMIT = /^[a-f0-9]{40}$/u;
@@ -377,21 +378,29 @@ function validateIntegrations(integrations) {
 function validateMcp(mcp) {
   object(mcp, [
     'protocolVersion', 'transport', 'oauthProfile', 'catalogHash', 'toolCount',
-    'resourceCount', 'promptCount', 'r0ToolCount', 'r1ToolCount', 'r2ToolCount',
-    'r3ToolCount', 'toolsWithoutInputSchema', 'toolsWithoutOutputSchema',
+    'resourceCount', 'resourceTemplateCount', 'promptCount', 'r0ToolCount',
+    'r1ToolCount', 'r2ToolCount', 'r3ToolCount', 'toolsWithoutInputSchema',
+    'toolsWithoutOutputSchema',
     'toolsWithoutRiskLevel', 'directDatabaseAccessCount', 'upstreamTokenExposureCount',
     'clientProfiles', 'crossTenantAttempts', 'crossTenantDenied', 'auditEvents',
   ], 'PHASE5_GO_NO_GO_MCP_INVALID');
   equal(mcp.protocolVersion, '2025-11-25', 'PHASE5_GO_NO_GO_MCP_PROTOCOL_INVALID');
   equal(mcp.transport, 'streamable-http', 'PHASE5_GO_NO_GO_MCP_TRANSPORT_INVALID');
   equal(mcp.oauthProfile, 'oauth-2.1', 'PHASE5_GO_NO_GO_MCP_OAUTH_INVALID');
-  pattern(mcp.catalogHash, SHA256, 'PHASE5_GO_NO_GO_MCP_CATALOG_INVALID');
-  integer(mcp.toolCount, 1, 10_000, 'PHASE5_GO_NO_GO_MCP_CATALOG_INVALID');
-  for (const field of ['resourceCount', 'promptCount', 'r0ToolCount', 'r1ToolCount', 'r2ToolCount']) {
-    integer(mcp[field], 0, 10_000, 'PHASE5_GO_NO_GO_MCP_CATALOG_INVALID');
+  equal(mcp.catalogHash, catalog.catalogHash, 'PHASE5_GO_NO_GO_MCP_CATALOG_INVALID');
+  const expectedCounts = Object.freeze({
+    toolCount: catalog.counts.total,
+    resourceCount: catalog.counts.resources,
+    resourceTemplateCount: catalog.counts.resourceTemplates,
+    promptCount: catalog.counts.prompts,
+    r0ToolCount: catalog.counts.R0,
+    r1ToolCount: catalog.counts.R1,
+    r2ToolCount: catalog.counts.R2,
+    r3ToolCount: catalog.counts.R3,
+  });
+  for (const [field, expected] of Object.entries(expectedCounts)) {
+    equal(mcp[field], expected, 'PHASE5_GO_NO_GO_MCP_CATALOG_INVALID');
   }
-  equal(mcp.r0ToolCount + mcp.r1ToolCount + mcp.r2ToolCount, mcp.toolCount,
-    'PHASE5_GO_NO_GO_MCP_CATALOG_INVALID');
   for (const field of [
     'r3ToolCount', 'toolsWithoutInputSchema', 'toolsWithoutOutputSchema',
     'toolsWithoutRiskLevel', 'directDatabaseAccessCount', 'upstreamTokenExposureCount',
@@ -508,7 +517,15 @@ function runSelfTest() {
 
   const r3Exposed = fixture();
   r3Exposed.mcp.r3ToolCount = 1;
-  expectFailure(() => validate(r3Exposed), 'PHASE5_GO_NO_GO_MCP_SECURITY_FAILED');
+  expectFailure(() => validate(r3Exposed), 'PHASE5_GO_NO_GO_MCP_CATALOG_INVALID');
+
+  const staleCatalog = fixture();
+  staleCatalog.mcp.catalogHash = digest('stale-mcp-catalog');
+  expectFailure(() => validate(staleCatalog), 'PHASE5_GO_NO_GO_MCP_CATALOG_INVALID');
+
+  const staleResourceTemplates = fixture();
+  staleResourceTemplates.mcp.resourceTemplateCount = 23;
+  expectFailure(() => validate(staleResourceTemplates), 'PHASE5_GO_NO_GO_MCP_CATALOG_INVALID');
 
   const unsignedImage = fixture();
   unsignedImage.operations.imageSignaturesVerified = false;
@@ -611,8 +628,12 @@ function fixture() {
     })),
     mcp: {
       protocolVersion: '2025-11-25', transport: 'streamable-http', oauthProfile: 'oauth-2.1',
-      catalogHash: hash('mcp-catalog'), toolCount: 30, resourceCount: 3, promptCount: 2,
-      r0ToolCount: 20, r1ToolCount: 6, r2ToolCount: 4, r3ToolCount: 0,
+      catalogHash: catalog.catalogHash, toolCount: catalog.counts.total,
+      resourceCount: catalog.counts.resources,
+      resourceTemplateCount: catalog.counts.resourceTemplates,
+      promptCount: catalog.counts.prompts, r0ToolCount: catalog.counts.R0,
+      r1ToolCount: catalog.counts.R1, r2ToolCount: catalog.counts.R2,
+      r3ToolCount: catalog.counts.R3,
       toolsWithoutInputSchema: 0, toolsWithoutOutputSchema: 0, toolsWithoutRiskLevel: 0,
       directDatabaseAccessCount: 0, upstreamTokenExposureCount: 0,
       clientProfiles: [...MCP_CLIENT_PROFILES], crossTenantAttempts: 30, crossTenantDenied: 30,
