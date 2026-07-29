@@ -17,6 +17,7 @@ import { TenantContextService } from '../../../core/tenant/tenant-context.servic
 import type { VerifiedAccessToken } from '../../identity/auth.types.js';
 import { WebAuthnService } from '../../identity/strong-auth/webauthn.service.js';
 import { payrollDigest } from '../../payroll/domain/index.js';
+import { LegacyPayrollBoundaryService } from '../../payroll/legacy-payroll-boundary.service.js';
 import { TreasuryDataCryptoService } from '../persistence/treasury-data-crypto.service.js';
 import { TreasuryOutboxWriter } from '../persistence/treasury-outbox.writer.js';
 import {
@@ -73,6 +74,7 @@ export class TreasuryRecoveryService {
   constructor(
     private readonly idempotency: IdempotencyService,
     private readonly context: TenantContextService,
+    private readonly boundary: LegacyPayrollBoundaryService,
     private readonly strongAuth: WebAuthnService,
     private readonly crypto: TreasuryDataCryptoService,
     private readonly outbox: TreasuryOutboxWriter,
@@ -103,6 +105,7 @@ export class TreasuryRecoveryService {
     ) throw new ForbiddenException({
       code: 'TREASURY_RECOVERY_APPROVER_IDENTITY_INVALID', message: '失败代发恢复身份上下文非法',
     });
+    this.boundary.assertLegacy();
     if (!ID.test(parentBatchId)) throw new BadRequestException({
       code: 'TREASURY_BATCH_ID_INVALID', message: '父代发批次标识非法',
     });

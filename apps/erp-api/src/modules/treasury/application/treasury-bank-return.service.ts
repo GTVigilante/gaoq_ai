@@ -14,6 +14,7 @@ import { z } from 'zod';
 
 import { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
+import { LegacyPayrollBoundaryService } from '../../payroll/legacy-payroll-boundary.service.js';
 import {
   applyBankReturn,
   type DisbursementBatch,
@@ -86,6 +87,7 @@ export class TreasuryBankReturnService {
   constructor(
     private readonly idempotency: IdempotencyService,
     private readonly context: TenantContextService,
+    private readonly boundary: LegacyPayrollBoundaryService,
     private readonly inbox: TreasuryBankReturnInbox,
     private readonly crypto: TreasuryDataCryptoService,
     private readonly outbox: TreasuryOutboxWriter,
@@ -103,6 +105,7 @@ export class TreasuryBankReturnService {
     input: ImportTreasuryBankReturnFromMigrationInput,
   ): Promise<TreasuryBankReturnSummary> {
     this.assertMigrationWriter();
+    this.boundary.assertLegacy();
     assertBankReturnMigrationInput(input);
     return this.run(() => this.idempotency.execute(
       'treasury.bank_return.import_from_migration', key, input, async (session) => {
@@ -233,6 +236,7 @@ export class TreasuryBankReturnService {
         code: 'TREASURY_BANK_RETURN_SERVICE_REQUIRED', message: '只允许受信任回盘服务执行',
       });
     }
+    this.boundary.assertLegacy();
     if (!ID.test(batchId) || !Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
       throw new BadRequestException({ code: 'TREASURY_BANK_RETURN_INPUT_INVALID', message: '回盘引用非法' });
     }

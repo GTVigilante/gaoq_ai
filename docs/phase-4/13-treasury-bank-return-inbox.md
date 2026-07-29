@@ -13,6 +13,11 @@ Authorization、Accept、Cache-Control、Content-Type、Content-Length 与
 Idempotency-Key 由适配器生成，业务调用方不可覆盖。运行时必须二次校验 Inbox
 凭据为 32–512 字节可见 ASCII；配置层校验不能替代该失败关闭边界。
 
+回盘在线领取和迁移导入分别校验受信任服务/迁移主体与最小 Scope，再复用
+`LegacyPayrollBoundaryService`；`external` 模式在 Mongo、Inbox 和加密前
+失败关闭。失败恢复同样先校验可信用户与恢复 Scope，并在 WebAuthn、Mongo、
+解密、账户查询和子批次物化前关闭，禁止从迁移或内部应用调用绕过 REST Guard。
+
 ## 领取与绑定契约
 
 - `POST /treasury/disbursements/:id/returns` 只允许拥有 `erp:treasury:return:ingest` 的受信任 `service` 或 `system_job` 调用；普通用户与 MCP 均不可调用。
@@ -51,6 +56,12 @@ UTF-8/JSON、完整 Schema、领取对象绑定与负面证据保留测试；目
 98.90%/96.15%/100%/98.70%（语句/分支/函数/行），逐文件四维 90% 门禁由
 银行回盘服务门禁接入 `pnpm check`。该本地代码证据不替代真实银行签名、
 恶意样本、WORM 回读、限流、断连和超大响应现场联调。
+
+应用服务另由 `pnpm quality:treasury-bank-return-coverage` 的 38 项测试约束，
+达到 97.08%/96.27%/100%/97.10%；恢复服务由
+`pnpm quality:treasury-recovery-coverage` 的 16 项测试约束，达到
+94.61%/94.59%/96%/97.24%（均为语句/分支/函数/行）。两个门禁均逐文件四维
+不低于 90% 并接入 `pnpm check`。
 
 ## 失败行恢复子批次
 

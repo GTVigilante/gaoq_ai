@@ -5,6 +5,12 @@
 - Treasury 不直接读取 Payroll 集合或使用 Payroll 密钥。内部只读端口 `getLockedDisbursementSource` 仅对拥有 `erp:treasury:disbursement:prepare` 的上下文开放。
 - Payroll 端口要求周期状态严格为 `locked`，并逐行验证 AES-GCM 密文、员工结果摘要，再复核运行级结果摘要、员工数和实发总额；任一不一致均不输出员工实发数据。
 - `POST /treasury/disbursements` 只允许已验证人员执行，代发制备人不得是工资锁定人。请求只接受工资周期、预期版本、组织付款账户引用和执行日期，不接受客户端金额或员工行。
+- 在线制备、迁移导入、导出批准、银行提交和导出的内部 `materializeStaged`
+  续跑均各自校验可信用户/服务主体及最小 Scope，并复用
+  `LegacyPayrollBoundaryService`。内部续跑只接受已验证用户且要求
+  `erp:treasury:disbursement:prepare` 或 `erp:treasury:recovery:create`；
+  `external` 模式在 Payroll、Mongo、加密、WORM、银行网关、强认证和生产授权前
+  失败关闭，禁止利用导出方法绕过 Controller。
 
 ## 两阶段幂等编排
 
@@ -51,3 +57,11 @@
 - 独立银行网关只接收批次 ID、WORM 对象引用、文件摘要、行数与控制总额；ERP 不回读或重传银行文件，银行凭据仅存在于网关权限域。
 - 网关以确定性幂等键提交。回执必须为 `accepted=true`，并反向绑定批次、对象引用、摘要、行数与总额；错批、错文件、未受理、超大或非 JSON 回执全部失败关闭。
 - 有效回执之后，第二阶段事务才以乐观版本把批次及全部支付指令转为 `submitted`，同时保存提交 ID、证据 ID 和白名单事件。网关失败或回执非法只保留可恢复的 `submitting` 暂存状态，绝不伪造 `submitted`。
+
+## 自动化门禁与外部验收
+
+`pnpm quality:treasury-disbursement-coverage` 覆盖 23 项应用服务身份、模式边界、
+迁移、物化、WORM、强认证、生产授权和银行提交用例，目标服务达到
+94.05%/93.04%/96.10%/95.91%（语句/分支/函数/行）；逐文件四维 90% 门禁
+已接入 `pnpm check`。该证据不替代真实 Payroll 源、WORM Object Lock、银行
+沙箱、生产授权域和财务 UAT。

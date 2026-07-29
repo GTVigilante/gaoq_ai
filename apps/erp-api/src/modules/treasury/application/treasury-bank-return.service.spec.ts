@@ -130,12 +130,15 @@ receivedAt = new Date().toISOString(), sequence = 1) {
     handler: (value: ClientSession) => Promise<Record<string, unknown>>,
   ) => handler(session)) };
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
+  const boundary = { assertLegacy: vi.fn() };
   const service = new TreasuryBankReturnService(
-    idempotency as never, context, inbox, crypto as never, outbox as never,
+    idempotency as never, context, boundary as never,
+    inbox, crypto as never, outbox as never,
     batches as never, instructions as never, returns as never,
   );
   return {
-    context, batches, instructions, inbox, crypto, manifest, returns, outbox, service,
+    context, idempotency, batches, instructions, inbox, crypto, manifest,
+    returns, outbox, boundary, service,
     getBatch: () => batch,
     setBatch: (value: Record<string, unknown> | null) => { batch = value; },
     mutateBatch: (value: Readonly<Record<string, unknown>>) => {
@@ -179,6 +182,40 @@ function migrationInput(targetId: string | null = null) {
 }
 
 describe('TreasuryBankReturnService', () => {
+  it('external 模式在身份授权后、回盘读取与外部 Inbox 前失败关闭', async () => {
+    const failure = new Error('PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM');
+    const migration = assemble();
+    migration.boundary.assertLegacy.mockImplementation(() => { throw failure; });
+    await expect(migration.context.run({ tenant, actor: migrationActor() }, () =>
+      migration.service.importCleanFromMigration(
+        'boundary-return-migration',
+        {} as never,
+      ))).rejects.toBe(failure);
+    expect(migration.idempotency.execute).not.toHaveBeenCalled();
+    expect(migration.batches.findOne).not.toHaveBeenCalled();
+
+    const online = assemble();
+    online.boundary.assertLegacy.mockImplementation(() => { throw failure; });
+    await expect(online.context.run({ tenant, actor }, () => online.service.ingest(
+      'boundary-return-ingest',
+      BATCH_ID,
+      4,
+    ))).rejects.toBe(failure);
+    expect(online.batches.findOne).not.toHaveBeenCalled();
+    expect(online.inbox.claim).not.toHaveBeenCalled();
+
+    const unauthorized = assemble();
+    await expect(unauthorized.context.run({
+      tenant,
+      actor: { ...actor, scopes: [] },
+    }, () => unauthorized.service.ingest(
+      'boundary-return-unauthorized',
+      BATCH_ID,
+      4,
+    ))).rejects.toMatchObject({ response: { code: 'AUTH_SCOPE_DENIED' } });
+    expect(unauthorized.boundary.assertLegacy).not.toHaveBeenCalled();
+  });
+
   it('迁移全量成功回盘时重建密文清单且不调用外部 Inbox', async () => {
     const store = assemble();
     const result = await store.context.run({ tenant, actor: migrationActor() }, () =>

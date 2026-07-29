@@ -59,6 +59,20 @@ function assemble(parentChanges: Readonly<Record<string, unknown>> = {}) {
     successfulMinor: 1_000, failedMinor: 500, outcome: 'frozen',
     dataKeyId: 'key', dataIv: 'iv', dataCiphertext: 'cipher', dataAuthTag: 'tag',
   };
+  const returnManifest = {
+    returnId: RETURN_ID, tenantId: tenant.tenantId, batchId: PARENT_ID,
+    bankSubmissionId: 'bank-submit-001', sequence: 1, returnHash: 'r'.repeat(43),
+    lines: [
+      {
+        instructionId: FAILED_ID, outcome: 'failed' as const,
+        amountMinor: 500, bankLineReference: 'failed-ref',
+      },
+      {
+        instructionId: SUCCESS_ID, outcome: 'succeeded' as const,
+        amountMinor: 1_000, bankLineReference: 'success-ref',
+      },
+    ],
+  };
   const failedData = {
     instructionId: FAILED_ID, employeeId: 'employee-failed', bankAccountId: 'old-account',
     payrollCalculationLineId: '01J8ZQK7V0A2M4N6P8R0T2W4L1', payrollResultHash: 'a'.repeat(43),
@@ -76,9 +90,15 @@ function assemble(parentChanges: Readonly<Record<string, unknown>> = {}) {
     payrollCalculationLineId: data.payrollCalculationLineId, status: 'frozen',
     dataKeyId: 'key', dataIv: 'iv', dataCiphertext: 'cipher', dataAuthTag: 'tag',
   }));
+  let parentAvailable = true;
+  let existingRecovery: Readonly<Record<string, unknown>> | null = null;
+  let latest: Readonly<Record<string, unknown>> | null = parent;
   const batches = {
-    findOne: vi.fn().mockImplementation((filter: Readonly<Record<string, unknown>>) =>
-      query(() => 'recoverySourceBatchId' in filter ? null : parent)),
+    findOne: vi.fn().mockImplementation((filter: Readonly<Record<string, unknown>>) => query(() => {
+      if ('recoverySourceBatchId' in filter) return existingRecovery;
+      if ('payrollRunId' in filter) return latest;
+      return parentAvailable ? parent : null;
+    })),
     create: vi.fn().mockResolvedValue([]),
   };
   const returns = { findOne: vi.fn().mockReturnValue(query(() => returned)) };
@@ -89,17 +109,18 @@ function assemble(parentChanges: Readonly<Record<string, unknown>> = {}) {
     id: ACCOUNT_ID, ownerId: 'employee-failed', version: 2,
     dataKeyId: 'key', dataIv: 'iv', dataCiphertext: 'cipher', dataAuthTag: 'tag',
   };
-  const accounts = { find: vi.fn().mockReturnValue(query(() => [account])) };
+  const activeAccounts = [account];
+  const accounts = { find: vi.fn().mockReturnValue(query(() => activeAccounts)) };
+  const parentHeader = {
+    messageId: PARENT_ID, paymentInformationId: PARENT_ID,
+    creationDateTime: new Date().toISOString(), requestedExecutionDate: '2026-07-22',
+    debtorBankAccountId: 'debtor-account', debtorName: '付款组织',
+    debtorAccount: '6222000000000088', debtorAgentClearingCode: 'CNAPS008',
+    payrollResultHash: parent.payrollResultHash, payableResultHash: parent.payableResultHash,
+  };
   const crypto = {
     unprotect: vi.fn().mockImplementation((cryptoContext: { resourceType: string; resourceId: string }) => {
-      if (cryptoContext.resourceType === 'bank_return') return {
-        returnId: RETURN_ID, tenantId: tenant.tenantId, batchId: PARENT_ID,
-        bankSubmissionId: 'bank-submit-001', sequence: 1, returnHash: 'r'.repeat(43),
-        lines: [
-          { instructionId: FAILED_ID, outcome: 'failed', amountMinor: 500, bankLineReference: 'failed-ref' },
-          { instructionId: SUCCESS_ID, outcome: 'succeeded', amountMinor: 1_000, bankLineReference: 'success-ref' },
-        ],
-      };
+      if (cryptoContext.resourceType === 'bank_return') return returnManifest;
       if (cryptoContext.resourceType === 'payment_instruction') {
         return cryptoContext.resourceId === FAILED_ID ? failedData : successData;
       }
@@ -107,13 +128,7 @@ function assemble(parentChanges: Readonly<Record<string, unknown>> = {}) {
         accountName: '新审批户名', account: '6222000000000099',
         clearingCode: 'CNAPS009', currency: 'CNY',
       };
-      return {
-        messageId: PARENT_ID, paymentInformationId: PARENT_ID,
-        creationDateTime: new Date().toISOString(), requestedExecutionDate: '2026-07-22',
-        debtorBankAccountId: 'debtor-account', debtorName: '付款组织',
-        debtorAccount: '6222000000000088', debtorAgentClearingCode: 'CNAPS008',
-        payrollResultHash: parent.payrollResultHash, payableResultHash: parent.payableResultHash,
-      };
+      return parentHeader;
     }),
     protect: vi.fn().mockReturnValue({
       keyId: 'recovery-key', iv: 'recovery-iv', ciphertext: 'recovery-cipher',
@@ -128,6 +143,7 @@ function assemble(parentChanges: Readonly<Record<string, unknown>> = {}) {
     handler: (value: ClientSession) => Promise<Record<string, unknown>>,
   ) => handler(session)) };
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
+  const boundary = { assertLegacy: vi.fn() };
   const disbursements = { materializeStaged: vi.fn().mockImplementation((
     _key: string, id: string,
   ) => Promise.resolve({
@@ -137,7 +153,8 @@ function assemble(parentChanges: Readonly<Record<string, unknown>> = {}) {
     bankSubmissionId: null, bankSubmissionEvidenceId: null,
   })) };
   const service = new TreasuryRecoveryService(
-    idempotency as never, context, strongAuth as never, crypto as never, outbox as never,
+    idempotency as never, context, boundary as never,
+    strongAuth as never, crypto as never, outbox as never,
     disbursements as never, accounts as never, instructions as never, batches as never,
     returns as never,
   );
@@ -149,11 +166,58 @@ function assemble(parentChanges: Readonly<Record<string, unknown>> = {}) {
     sessionId: 'session-recovery', expiresAt: Date.now() + 60_000,
   };
   return {
-    context, service, token, batches, instructions, crypto, outbox, disbursements, strongAuth,
+    context, service, token, batches, instructions, crypto, outbox,
+    disbursements, strongAuth, boundary, idempotency, returns, accounts,
+    parent, returned, returnManifest, originals, failedData, successData,
+    activeAccounts, parentHeader,
+    setParentAvailable: (value: boolean) => { parentAvailable = value; },
+    setExistingRecovery: (value: Readonly<Record<string, unknown>> | null) => {
+      existingRecovery = value;
+    },
+    setLatest: (value: Readonly<Record<string, unknown>> | null) => { latest = value; },
   };
 }
 
+function runRecovery(
+  store: ReturnType<typeof assemble>,
+  key: string,
+) {
+  return store.context.run({ tenant, actor: actor() }, () => store.service.create(
+    key,
+    PARENT_ID,
+    { expectedVersion: 5, strongAuthEvidenceId: EVIDENCE_ID },
+    store.token,
+  ));
+}
+
 describe('TreasuryRecoveryService', () => {
+  it('external 模式在身份授权后、强认证与恢复事务前失败关闭', async () => {
+    const store = assemble();
+    const failure = new Error('PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM');
+    store.boundary.assertLegacy.mockImplementation(() => { throw failure; });
+    await expect(store.context.run({ tenant, actor: actor() }, () => store.service.create(
+      'boundary-recovery',
+      PARENT_ID,
+      { expectedVersion: 5, strongAuthEvidenceId: EVIDENCE_ID },
+      store.token,
+    ))).rejects.toBe(failure);
+    expect(store.strongAuth.requireVerifiedEvidence).not.toHaveBeenCalled();
+    expect(store.batches.findOne).not.toHaveBeenCalled();
+    expect(store.disbursements.materializeStaged).not.toHaveBeenCalled();
+
+    const unauthorized = assemble();
+    await expect(unauthorized.context.run({
+      tenant,
+      actor: { ...actor(), scopes: [] },
+    }, () => unauthorized.service.create(
+      'boundary-recovery-unauthorized',
+      PARENT_ID,
+      { expectedVersion: 5, strongAuthEvidenceId: EVIDENCE_ID },
+      unauthorized.token,
+    ))).rejects.toMatchObject({ response: { code: 'AUTH_SCOPE_DENIED' } });
+    expect(unauthorized.boundary.assertLegacy).not.toHaveBeenCalled();
+  });
+
   it('强认证后仅用明确失败行和当前审批账户创建关联子批次', async () => {
     const store = assemble();
     const result = await store.context.run({ tenant, actor: actor() }, () => store.service.create(
@@ -191,6 +255,94 @@ describe('TreasuryRecoveryService', () => {
       store.outbox.append.mock.calls, result,
     ]);
     expect(persistence).not.toMatch(/62220000000000(?:01|88|99)|旧户名|新审批户名|付款组织/u);
+  });
+
+  it('恢复重试只复用仍处于物化或已制备状态且控制人一致的子批次', async () => {
+    const store = assemble();
+    store.setExistingRecovery({
+      ...store.parent,
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4C1',
+      purpose: 'recovery',
+      parentBatchId: PARENT_ID,
+      status: 'prepared',
+      recoveryApprovedBy: 'recovery-approver',
+      recoveryStrongAuthEvidenceId: EVIDENCE_ID,
+    });
+    await expect(runRecovery(store, 'treasury-recovery-replay')).resolves.toMatchObject({
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4C1',
+      status: 'prepared',
+    });
+    expect(store.batches.create).not.toHaveBeenCalled();
+
+    const invalid = assemble();
+    invalid.setExistingRecovery({
+      ...invalid.parent,
+      purpose: 'recovery',
+      parentBatchId: PARENT_ID,
+      status: 'submitted',
+      recoveryApprovedBy: 'recovery-approver',
+      recoveryStrongAuthEvidenceId: EVIDENCE_ID,
+    });
+    await expect(runRecovery(invalid, 'treasury-recovery-replay-invalid'))
+      .rejects.toMatchObject({
+        response: { code: 'TREASURY_RECOVERY_ALREADY_ADVANCED' },
+      });
+  });
+
+  it.each([
+    ['父批次缺失', (store: ReturnType<typeof assemble>) => {
+      store.setParentAvailable(false);
+    }, 'TREASURY_BATCH_NOT_FOUND'],
+    ['回盘签名无效', (store: ReturnType<typeof assemble>) => {
+      store.returned.signatureVerified = false;
+    }, 'TREASURY_RECOVERY_RETURN_INVALID'],
+    ['回盘密文错绑', (store: ReturnType<typeof assemble>) => {
+      store.returnManifest.returnHash = 'x'.repeat(43);
+    }, 'TREASURY_RECOVERY_RETURN_BINDING_MISMATCH'],
+    ['冻结指令不完整', (store: ReturnType<typeof assemble>) => {
+      store.originals.pop();
+    }, 'TREASURY_RECOVERY_INSTRUCTION_INCOMPLETE'],
+    ['指令密文错绑', (store: ReturnType<typeof assemble>) => {
+      store.failedData.bankAccountId = 'other-account';
+    }, 'TREASURY_RECOVERY_INSTRUCTION_BINDING_MISMATCH'],
+    ['回盘行重复', (store: ReturnType<typeof assemble>) => {
+      store.returnManifest.lines[1]!.instructionId = FAILED_ID;
+    }, 'TREASURY_RECOVERY_MANIFEST_MISMATCH'],
+    ['当前账户不完整', (store: ReturnType<typeof assemble>) => {
+      store.activeAccounts.pop();
+    }, 'TREASURY_RECOVERY_ACCOUNT_INCOMPLETE'],
+    ['父批次密文错绑', (store: ReturnType<typeof assemble>) => {
+      store.parentHeader.messageId = 'other-batch';
+    }, 'TREASURY_RECOVERY_BATCH_BINDING_MISMATCH'],
+    ['恢复序号缺失', (store: ReturnType<typeof assemble>) => {
+      store.setLatest(null);
+    }, 'TREASURY_RECOVERY_SEQUENCE_INVALID'],
+    ['汇总金额不一致', (store: ReturnType<typeof assemble>) => {
+      store.parent.failedMinor = 501;
+      store.returned.failedMinor = 501;
+    }, 'TREASURY_RECOVERY_TOTAL_MISMATCH'],
+  ] as const)('恢复控制失败关闭：%s', async (_label, mutate, code) => {
+    const store = assemble();
+    mutate(store);
+    await expect(runRecovery(store, `treasury-recovery-${_label}`))
+      .rejects.toMatchObject({ response: { code } });
+    expect(store.batches.create).not.toHaveBeenCalled();
+  });
+
+  it('受保护数据损坏与唯一索引冲突映射为稳定恢复错误', async () => {
+    const protectedData = assemble();
+    protectedData.returnManifest.sequence = 0;
+    await expect(runRecovery(protectedData, 'treasury-recovery-protected-invalid'))
+      .rejects.toMatchObject({
+        response: { code: 'TREASURY_RECOVERY_PROTECTED_DATA_INVALID' },
+      });
+
+    const duplicate = assemble();
+    duplicate.batches.create.mockRejectedValueOnce({ code: 11_000 });
+    await expect(runRecovery(duplicate, 'treasury-recovery-duplicate'))
+      .rejects.toMatchObject({
+        response: { code: 'TREASURY_RECOVERY_ALREADY_EXISTS' },
+      });
   });
 
   it('非部分成功冻结不得创建恢复子批次', async () => {

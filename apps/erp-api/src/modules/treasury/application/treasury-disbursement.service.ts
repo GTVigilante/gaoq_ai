@@ -31,6 +31,7 @@ import {
   type LockedPayrollDisbursementSource,
 } from '../../payroll/application/payroll-run.service.js';
 import { payrollDigest } from '../../payroll/domain/index.js';
+import { LegacyPayrollBoundaryService } from '../../payroll/legacy-payroll-boundary.service.js';
 import {
   approveDisbursementExport,
   type DisbursementBatch,
@@ -142,6 +143,7 @@ export class TreasuryDisbursementService {
   constructor(
     private readonly idempotency: IdempotencyService,
     private readonly context: TenantContextService,
+    private readonly boundary: LegacyPayrollBoundaryService,
     private readonly payroll: PayrollRunService,
     private readonly strongAuth: WebAuthnService,
     private readonly crypto: TreasuryDataCryptoService,
@@ -168,6 +170,7 @@ export class TreasuryDisbursementService {
     input: ImportTreasuryDisbursementFromMigrationInput,
   ): Promise<TreasuryDisbursementSummary> {
     this.assertMigrationWriter();
+    this.boundary.assertLegacy();
     assertDisbursementMigrationInput(input);
     const profiles = this.profiles;
     const approvals = this.approvals;
@@ -323,6 +326,7 @@ export class TreasuryDisbursementService {
         code: 'TREASURY_BANK_SUBMISSION_SERVICE_REQUIRED', message: '只允许受信任银行提交服务执行',
       });
     }
+    this.boundary.assertLegacy();
     if (!ID_PATTERN.test(batchId)) throw new BadRequestException({
       code: 'TREASURY_BATCH_ID_INVALID', message: '代发批次标识非法',
     });
@@ -447,6 +451,7 @@ export class TreasuryDisbursementService {
     ) throw new ForbiddenException({
       code: 'TREASURY_EXPORT_APPROVER_IDENTITY_INVALID', message: '代发导出批准身份上下文非法',
     });
+    this.boundary.assertLegacy();
     if (!ID_PATTERN.test(batchId)) throw new BadRequestException({
       code: 'TREASURY_BATCH_ID_INVALID', message: '代发批次标识非法',
     });
@@ -502,6 +507,7 @@ export class TreasuryDisbursementService {
     input: PrepareTreasuryDisbursementDto,
   ): Promise<TreasuryDisbursementSummary> {
     this.assertHumanPreparer();
+    this.boundary.assertLegacy();
     if (!isCalendarDate(input.requestedExecutionDate)) throw new BadRequestException({
       code: 'TREASURY_EXECUTION_DATE_INVALID', message: '代发执行日期非法',
     });
@@ -638,6 +644,8 @@ export class TreasuryDisbursementService {
 
   /** 仅供已在 Treasury 事务中建立可信密文快照的编排服务继续 WORM 物化。 */
   async materializeStaged(key: string, batchId: string): Promise<TreasuryDisbursementSummary> {
+    this.assertMaterializer();
+    this.boundary.assertLegacy();
     const batch = await this.batches.findOne({ tenantId: this.tenantId(), id: batchId }).lean().exec();
     if (batch === null) throw new NotFoundException({
       code: 'TREASURY_BATCH_NOT_FOUND', message: '代发批次不存在',
@@ -966,6 +974,20 @@ export class TreasuryDisbursementService {
     });
     if (actor.actorType !== 'user') throw new ForbiddenException({
       code: 'TREASURY_PREPARER_HUMAN_REQUIRED', message: '代发制备只能由已验证人员执行',
+    });
+  }
+
+  private assertMaterializer(): void {
+    const actor = this.context.getActorRequired();
+    if (
+      actor.actorType !== 'user' ||
+      (
+        !actor.scopes.includes('erp:treasury:disbursement:prepare') &&
+        !actor.scopes.includes('erp:treasury:recovery:create')
+      )
+    ) throw new ForbiddenException({
+      code: 'TREASURY_MATERIALIZATION_CALLER_DENIED',
+      message: '代发文件物化必须由已授权的制备或恢复编排调用',
     });
   }
 
