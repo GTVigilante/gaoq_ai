@@ -275,10 +275,25 @@ downloadSignedFile / verifySignedFile`；入站验签由独立 Webhook 边界完
 
 ### 5.3 HC 审批模板与 Saga 契约
 
+- 管理端固定使用 `POST /recruitment/requisitions`、`GET /recruitment/requisitions/:id`、
+  `POST /recruitment/requisitions/:id/submit`、
+  `POST /recruitment/requisitions/:id/sync-approval`、
+  `POST /recruitment/requisitions/:id/positions`、`GET /recruitment/positions/:id`
+  和 `POST /recruitment/positions/:id/status`。资源标识必须为规范 ULID；所有
+  写接口强制 8–128 位白名单 `Idempotency-Key`，更新接口还强制不会导致版本
+  上溢的安全正整数强 `If-Match`。
+- `submit` 与 `sync-approval` 只允许缺失正文或精确空普通对象；客户端不得上报
+  outcome、审批证据或租户。创建 DTO 拒绝未知字段，HC 理由至少包含三个非空白
+  字符；DTO 通过后，领域仍再次验证标识、标签、人数、状态枚举、安全版本、单调
+  时间和迁移状态闭包，供 REST、内部应用调用与标准 MCP 共用。
 - Approval 必须预先发布唯一编码 `recruitment_hc` 的 R2 模板；表单字段固定为 `requisition_id`、`department_id`、`position_title`、`headcount`、`justification`。发布前必须验证部门负责人、HRBP 和财务/编制负责人解析规则。
 - 提交链路使用一个客户端根幂等键派生审批创建、审批提交和招聘绑定三个幂等步骤。跨域调用不嵌套 Mongo 事务；任一步崩溃后以同一根键重试，必须回到同一审批实例。
 - Recruitment 只能通过 Approval 应用服务的专用 Scope 读取 `recruitment_hc` 状态摘要，不读表单原文；仅 `approved/rejected` 终态可以驱动 HC。
 - 一份 HC 对应一个业务职位，职位标题、部门和人数从 HC 锁定继承；多招聘渠道发布使用外部映射，不复制业务职位。
+- 创建 HC/职位与职位迁移按 R1、HC 提交/审批同步按 R2 写低敏成功或失败审计；
+  审计只含资源标识、版本和状态，不含理由、标题、地点、幂等键或详细异常。业务
+  失败审计异常保留原异常；提交后的成功审计异常只告警，不改变响应、ETag 或
+  Saga 终态。
 
 ### 5.4 Offer 审批、发送与证据契约
 

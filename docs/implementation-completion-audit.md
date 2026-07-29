@@ -225,6 +225,7 @@ OP Webhook 双入口、
 `pnpm quality:recruitment-channel-stage-delivery-coverage`、
 `pnpm quality:recruitment-channel-operations-coverage`、
 `pnpm quality:recruitment-management-coverage`、
+`pnpm quality:recruitment-management-entry-coverage`、
 `pnpm quality:recruitment-onboarding-bridge-coverage`、
 `pnpm quality:talent-lifecycle-application-coverage`、
 `pnpm quality:talent-lifecycle-entry-coverage`、
@@ -1030,6 +1031,18 @@ Recruitment Offer REST、DTO 与领域入口已覆盖 165 项严格 ULID、强 E
 `pnpm check` 与全局覆盖链。REST、事件和标准 MCP 契约不变，MCP 继续只复用
 脱敏应用服务，不开放审批、投递、候选人决定、签署或 L4 条款能力；真实 Approval、
 eSign、招聘渠道回放及 HR UAT 仍待现场验收。
+
+HC→审批→职位管理入口已覆盖 97 项严格 ULID、白名单幂等键、不会上溢的强
+ETag、精确 DTO/空正文、运行时状态枚举、安全版本、单调时间、迁移快照和审计
+终态隔离测试。Controller 与 DTO 合计四维 100%；职位领域为
+100%/97.26%/100%/100%，HC 领域为 92.30%/90.16%/100%/95%，共享运行时
+校验四维 100%，五个目标文件逐文件四维均不低于 90%。应用服务既有 70 项测试
+保持 99.51%/99.45%/100%/100%。独立门禁
+`pnpm quality:recruitment-management-entry-coverage` 已接入 `pnpm precheck`、
+`pnpm check` 与全局覆盖链。REST、事件和标准 MCP 契约不变；MCP 仅复用应用
+服务执行 HC 提交 R2 与职位迁移 R1，不保存 L3 原文、不直连数据库，也不接受
+AI 上报审批终态。真实 Approval、组织主数据、招聘渠道回放及 HR UAT 仍待现场
+验收。
 
 ## 6. 架构边界
 
