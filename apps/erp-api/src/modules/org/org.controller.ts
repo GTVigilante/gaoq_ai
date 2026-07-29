@@ -15,7 +15,19 @@ import type { Response } from 'express';
 
 import { AuditService } from '../../core/audit/audit.service.js';
 import { RequiredScopes } from '../identity/auth.decorators.js';
-import { OrgApplicationService, type OrgChart } from './application/org-application.service.js';
+import {
+  OrgApplicationService,
+  toOrgChartView,
+  toOrgDepartmentView,
+  toOrgEmployeeView,
+  toOrgJobLevelView,
+  toOrgPositionView,
+  type OrgChart,
+  type OrgDepartmentView,
+  type OrgEmployeeView,
+  type OrgJobLevelView,
+  type OrgPositionView,
+} from './application/org-application.service.js';
 import {
   CreateDepartmentDto,
   CreateEmployeeDto,
@@ -27,8 +39,6 @@ import {
   UpdateJobLevelDto,
   UpdatePositionDto,
 } from './application/org.dto.js';
-import type { Department, Employee, JobLevel, Position } from './domain/index.js';
-
 const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 const IF_MATCH_PATTERN = /^"([1-9][0-9]*)"$/;
 
@@ -45,7 +55,7 @@ export class OrgController {
   @Get('chart')
   @RequiredScopes('erp:org:chart:read')
   async getChart(): Promise<OrgChart> {
-    return this.organization.getOrgChart();
+    return toOrgChartView(await this.organization.getOrgChart());
   }
 
   @Post('departments')
@@ -54,11 +64,11 @@ export class OrgController {
     @Headers('idempotency-key') key: string | undefined,
     @Body() body: CreateDepartmentDto,
     @Res({ passthrough: true }) response: Response,
-  ): Promise<{ readonly department: Department }> {
+  ): Promise<{ readonly department: OrgDepartmentView }> {
     const result = await this.organization.createDepartment(this.requireIdempotencyKey(key), body);
     this.setVersion(response, result.department.version);
     await this.auditSuccess('org.department.create', 'org_department', result.department.id);
-    return result;
+    return { department: toOrgDepartmentView(result.department) };
   }
 
   @Patch('departments/:id')
@@ -69,7 +79,7 @@ export class OrgController {
     @Headers('idempotency-key') key: string | undefined,
     @Body() body: UpdateDepartmentDto,
     @Res({ passthrough: true }) response: Response,
-  ): Promise<{ readonly department: Department }> {
+  ): Promise<{ readonly department: OrgDepartmentView }> {
     const result = await this.organization.updateDepartment(
       this.requireUlid(id),
       this.requireVersion(ifMatch),
@@ -78,7 +88,7 @@ export class OrgController {
     );
     this.setVersion(response, result.department.version);
     await this.auditSuccess('org.department.update', 'org_department', result.department.id);
-    return result;
+    return { department: toOrgDepartmentView(result.department) };
   }
 
   @Post('positions')
@@ -87,11 +97,11 @@ export class OrgController {
     @Headers('idempotency-key') key: string | undefined,
     @Body() body: CreatePositionDto,
     @Res({ passthrough: true }) response: Response,
-  ): Promise<{ readonly position: Position }> {
+  ): Promise<{ readonly position: OrgPositionView }> {
     const result = await this.organization.createPosition(this.requireIdempotencyKey(key), body);
     this.setVersion(response, result.position.version);
     await this.auditSuccess('org.position.create', 'org_position', result.position.id);
-    return result;
+    return { position: toOrgPositionView(result.position) };
   }
 
   @Patch('positions/:id')
@@ -102,7 +112,7 @@ export class OrgController {
     @Headers('idempotency-key') key: string | undefined,
     @Body() body: UpdatePositionDto,
     @Res({ passthrough: true }) response: Response,
-  ): Promise<{ readonly position: Position }> {
+  ): Promise<{ readonly position: OrgPositionView }> {
     const result = await this.organization.updatePosition(
       this.requireUlid(id),
       this.requireVersion(ifMatch),
@@ -111,7 +121,7 @@ export class OrgController {
     );
     this.setVersion(response, result.position.version);
     await this.auditSuccess('org.position.update', 'org_position', result.position.id);
-    return result;
+    return { position: toOrgPositionView(result.position) };
   }
 
   @Post('job-levels')
@@ -120,11 +130,11 @@ export class OrgController {
     @Headers('idempotency-key') key: string | undefined,
     @Body() body: CreateJobLevelDto,
     @Res({ passthrough: true }) response: Response,
-  ): Promise<{ readonly jobLevel: JobLevel }> {
+  ): Promise<{ readonly jobLevel: OrgJobLevelView }> {
     const result = await this.organization.createJobLevel(this.requireIdempotencyKey(key), body);
     this.setVersion(response, result.jobLevel.version);
     await this.auditSuccess('org.job_level.create', 'org_job_level', result.jobLevel.id);
-    return result;
+    return { jobLevel: toOrgJobLevelView(result.jobLevel) };
   }
 
   @Patch('job-levels/:id')
@@ -135,7 +145,7 @@ export class OrgController {
     @Headers('idempotency-key') key: string | undefined,
     @Body() body: UpdateJobLevelDto,
     @Res({ passthrough: true }) response: Response,
-  ): Promise<{ readonly jobLevel: JobLevel }> {
+  ): Promise<{ readonly jobLevel: OrgJobLevelView }> {
     const result = await this.organization.updateJobLevel(
       this.requireUlid(id),
       this.requireVersion(ifMatch),
@@ -144,7 +154,7 @@ export class OrgController {
     );
     this.setVersion(response, result.jobLevel.version);
     await this.auditSuccess('org.job_level.update', 'org_job_level', result.jobLevel.id);
-    return result;
+    return { jobLevel: toOrgJobLevelView(result.jobLevel) };
   }
 
   @Post('employees')
@@ -153,11 +163,11 @@ export class OrgController {
     @Headers('idempotency-key') key: string | undefined,
     @Body() body: CreateEmployeeDto,
     @Res({ passthrough: true }) response: Response,
-  ): Promise<{ readonly employee: Employee }> {
+  ): Promise<{ readonly employee: OrgEmployeeView }> {
     const result = await this.organization.createEmployee(this.requireIdempotencyKey(key), body);
     this.setVersion(response, result.employee.version);
     await this.auditSuccess('org.employee.create', 'org_employee', result.employee.id);
-    return result;
+    return { employee: toOrgEmployeeView(result.employee) };
   }
 
   @Patch('employees/:id')
@@ -168,7 +178,7 @@ export class OrgController {
     @Headers('idempotency-key') key: string | undefined,
     @Body() body: UpdateEmployeeDto,
     @Res({ passthrough: true }) response: Response,
-  ): Promise<{ readonly employee: Employee }> {
+  ): Promise<{ readonly employee: OrgEmployeeView }> {
     const result = await this.organization.updateEmployee(
       this.requireUlid(id),
       this.requireVersion(ifMatch),
@@ -177,7 +187,7 @@ export class OrgController {
     );
     this.setVersion(response, result.employee.version);
     await this.auditSuccess('org.employee.update', 'org_employee', result.employee.id);
-    return result;
+    return { employee: toOrgEmployeeView(result.employee) };
   }
 
   @Post('employees/:id/status-transitions')
@@ -189,7 +199,7 @@ export class OrgController {
     @Headers('idempotency-key') key: string | undefined,
     @Body() body: TransitionEmployeeStatusDto,
     @Res({ passthrough: true }) response: Response,
-  ): Promise<{ readonly employee: Employee }> {
+  ): Promise<{ readonly employee: OrgEmployeeView }> {
     if (body.status === 'terminated') throw new BadRequestException({
       code: 'ORG_CARE_WORKFLOW_REQUIRED', message: '员工离职必须通过 Care 清算与定时执行',
     });
@@ -205,7 +215,7 @@ export class OrgController {
       'org_employee',
       result.employee.id,
     );
-    return { employee: result.employee };
+    return { employee: toOrgEmployeeView(result.employee) };
   }
 
   private requireIdempotencyKey(value: string | undefined): string {

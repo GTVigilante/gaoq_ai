@@ -8,7 +8,10 @@ import type {
 
 import { AuditService } from '../../core/audit/audit.service.js';
 import { TenantContextService } from '../../core/tenant/tenant-context.service.js';
-import { OrgApplicationService } from '../org/application/org-application.service.js';
+import {
+  OrgApplicationService,
+  toOrgChartView,
+} from '../org/application/org-application.service.js';
 import { ApprovalApplicationService } from '../approval/application/approval-application.service.js';
 import { RecruitmentApplicationService } from '../recruitment/application/recruitment-application.service.js';
 import { RecruitmentInterviewService } from '../recruitment/application/recruitment-interview.service.js';
@@ -910,7 +913,7 @@ export class McpToolService {
           }],
         };
       }
-      const chart = await this.organization.getOrgChart();
+      const chart = toOrgChartView(await this.organization.getOrgChart());
       const data: Record<string, unknown> = {
         departments: chart.departments,
         employees: chart.employees,

@@ -27,7 +27,6 @@ const permissionsOutputSchema = z.object({
 const orgChartOutputSchema = z.object({
   departments: z.array(z.object({
     id: z.string(),
-    tenantId: z.string(),
     code: z.string(),
     name: z.string(),
     status: z.enum(['active', 'inactive']),
@@ -35,12 +34,9 @@ const orgChartOutputSchema = z.object({
     managerId: z.string().nullable(),
     sortOrder: z.number().int().nonnegative(),
     version: z.number().int().positive(),
-    createdAt: z.string(),
-    updatedAt: z.string(),
-  })),
+  }).strict()),
   employees: z.array(z.object({
     id: z.string(),
-    tenantId: z.string(),
     employeeNo: z.string(),
     displayName: z.string(),
     status: z.enum(['probation', 'active', 'suspended', 'terminated']),
@@ -49,10 +45,8 @@ const orgChartOutputSchema = z.object({
     positionIds: z.array(z.string()),
     jobLevelId: z.string().nullable(),
     version: z.number().int().positive(),
-    createdAt: z.string(),
-    updatedAt: z.string(),
-  })),
-});
+  }).strict()),
+}).strict();
 
 const approvalSummarySchema = z.object({
   id: z.string(),

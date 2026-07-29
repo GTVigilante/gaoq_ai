@@ -238,6 +238,12 @@ describe('OrgApplicationService', () => {
 
     expect(chart.departments.map((item) => item.id)).toEqual(['dept-a', 'dept-a-child']);
     expect(chart.employees.map((item) => item.id)).toEqual(['employee-a']);
+    expect(JSON.stringify(chart)).not.toContain('tenantId');
+    expect(JSON.stringify(chart)).not.toContain('createdAt');
+    expect(JSON.stringify(chart)).not.toContain('updatedAt');
+    expect(Object.isFrozen(chart)).toBe(true);
+    expect(Object.isFrozen(chart.departments)).toBe(true);
+    expect(Object.isFrozen(chart.employees[0]?.departmentIds)).toBe(true);
   });
 
   it('创建部门只使用可信租户，并在同一 session 写聚合与 Outbox', async () => {

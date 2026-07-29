@@ -284,17 +284,65 @@ describe('McpToolService', () => {
       observedTenant = store.context.getTenantRequired().tenantId;
       observedDepartments = store.context.getActorRequired().departmentIds;
       return Promise.resolve({
-        departments: [{ id: 'department-001', name: '财务部' }],
-        employees: [],
+        departments: [{
+          id: 'department-001',
+          tenantId: 'tenant-001',
+          code: 'FIN',
+          name: '财务部',
+          status: 'active' as const,
+          parentId: null,
+          managerId: null,
+          sortOrder: 0,
+          version: 2,
+          createdAt: '2026-07-29T00:00:00.000Z',
+          updatedAt: '2026-07-29T00:00:00.000Z',
+        }],
+        employees: [{
+          id: 'employee-001',
+          tenantId: 'tenant-001',
+          employeeNo: 'E001',
+          displayName: '员工甲',
+          status: 'active' as const,
+          departmentIds: ['department-001'],
+          primaryDepartmentId: 'department-001',
+          positionIds: [],
+          jobLevelId: null,
+          version: 3,
+          createdAt: '2026-07-29T00:00:00.000Z',
+          updatedAt: '2026-07-29T00:00:00.000Z',
+        }],
       });
     });
 
     const result = await store.service.getOrgChart(extra(['erp:mcp:server:connect', 'erp:org:chart:read']));
 
     expect(result.isError).not.toBe(true);
-    expect(result.structuredContent).toMatchObject({
-      departments: [{ id: 'department-001', name: '财务部' }],
+    expect(result.structuredContent).toEqual({
+      departments: [{
+        id: 'department-001',
+        code: 'FIN',
+        name: '财务部',
+        status: 'active',
+        parentId: null,
+        managerId: null,
+        sortOrder: 0,
+        version: 2,
+      }],
+      employees: [{
+        id: 'employee-001',
+        employeeNo: 'E001',
+        displayName: '员工甲',
+        status: 'active',
+        departmentIds: ['department-001'],
+        primaryDepartmentId: 'department-001',
+        positionIds: [],
+        jobLevelId: null,
+        version: 3,
+      }],
     });
+    expect(JSON.stringify(result)).not.toContain('tenantId');
+    expect(JSON.stringify(result)).not.toContain('createdAt');
+    expect(JSON.stringify(result)).not.toContain('updatedAt');
     expect(observedTenant).toBe('tenant-001');
     expect(observedDepartments).toEqual(['department-001']);
     expect(store.audit.record).toHaveBeenCalledWith(expect.objectContaining({

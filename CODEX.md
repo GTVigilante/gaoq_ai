@@ -63,6 +63,13 @@
   加签入口统一采用相同失败分类，专项契约测试覆盖无 Scope、R2、非运行态及
   换实例/主体/动作拒绝。真实浏览器弱网、响应丢失和实体用户三步 UAT 仍待
   外部验收。
+- 2026-07-29 已加固 Issue #8 的组织公开读取与创建入口：组织应用服务、REST
+  图表/写响应和标准 MCP `get_org_chart` 统一复用冻结最小投影，不再输出
+  `tenantId`、`createdAt`、`updatedAt`；MCP 输出 Schema 与浏览器运行时契约均
+  严格拒绝未知字段。PC 只在可信身份摘要包含 `erp:org:master:write` 时显示创建
+  入口，创建载荷走白名单构造器；网络、5xx、限流、处理中或响应契约异常导致结果
+  未知时保留同一主体、正文和幂等键，仅允许原请求重试。真实浏览器故障注入、实体
+  角色矩阵、组织管理员 UAT 与外部平台下发仍待现场验收。
 - 2026-07-29 已把覆盖率门禁本身纳入失败关闭治理：
   `scripts/validate-critical-coverage-policy.mjs` 从 `precheck/check` 解析 134 个
   ERP API 专项脚本，展开其 `--coverage.include` 后要求 334 个生产文件逐一具有

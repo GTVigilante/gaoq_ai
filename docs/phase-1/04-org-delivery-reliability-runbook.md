@@ -101,16 +101,37 @@ Content-Type: application/json
 ## 6. MCP 边界
 
 标准 MCP 组织能力继续使用 `get_org_chart`，复用组织应用服务和可信租户/部门数据
-范围；不接受客户端租户参数。投递列表、人工重试、凭据修复、平台写入和对账控制面
-均不暴露为 MCP Tool/Resource/Prompt，AI 不得执行组织外部写入或 R2 恢复。
+范围；不接受客户端租户参数。REST `GET /api/org/chart`、组织写响应和
+`get_org_chart` 必须复用同一公开投影，只包含业务标识、组织字段和并发版本，
+不得返回 `tenantId`、`createdAt`、`updatedAt`。MCP 输出 Schema 对组织图及其
+元素使用严格对象，新增内部字段必须先建立独立公开契约和协议测试，不得被 Zod
+默认剥离后静默放行。
 
-## 7. 仓库内验收
+投递列表、人工重试、凭据修复、平台写入和对账控制面均不暴露为 MCP
+Tool/Resource/Prompt，AI 不得执行组织外部写入或 R2 恢复。
+
+## 7. PC 授权与弱网重试
+
+- PC 同时加载组织公开投影与 `/api/auth/profile` 可信身份摘要；只有摘要包含
+  `erp:org:master:write` 才显示新建部门和新建员工入口。隐藏按钮只用于减少误操作，
+  服务端 Scope Guard 仍是最终授权边界。
+- 浏览器必须在渲染前严格校验组织图和写响应的字段、枚举、ULID、版本、数组上限与
+  唯一性。未知字段、租户路由、持久化时间戳或损坏的主部门引用一律失败关闭。
+- 创建载荷只能由白名单构造器生成，禁止展开任意表单对象，禁止提交 `tenantId`。
+- 写请求的正文和幂等键必须在发起前绑定。超时、限流、处理中、5xx、网络断开或
+  无法校验成功响应时，页面保留原正文和原幂等键，只提供“重试原请求”；只有服务端
+  明确拒绝或可信主体变化才清除。结果未知期间禁止修改表单或关闭对话框。
+- 弱网 UAT 必须分别验证请求未到达、服务端已提交但响应丢失、幂等处理中、明确
+  4xx 拒绝、切换主体五条路径，并用服务端审计与最终主数据证明没有重复创建。
+
+## 8. 仓库内验收
 
 ```bash
 pnpm quality:org-delivery-reliability-coverage
 pnpm quality:org-external-identity-boundary-coverage
 pnpm quality:org-platform-adapters-coverage
 pnpm quality:org-provisioning-coverage
+pnpm --filter @gaoq/erp-web test
 pnpm check
 pnpm build
 ```
@@ -128,3 +149,7 @@ HMAC、身份恢复、分页和响应硬上限；第四条覆盖首次开户入�
 生产文件合计为
 99.02%/97.69%/100%/100%。真实平台沙箱回执、Secret 轮换、Prometheus 规则加载
 和 24 小时演练属于外部验收，不能用本地测试替代。
+
+组织公开投影还须由应用服务、REST 控制器、MCP Tool 与浏览器运行时契约共同覆盖；
+本地测试只能证明字段闭包、授权入口和幂等重试状态机，不能替代真实浏览器网络故障
+注入、实体角色矩阵与外部平台沙箱验收。
