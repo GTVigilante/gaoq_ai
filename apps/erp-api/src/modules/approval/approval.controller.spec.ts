@@ -50,10 +50,14 @@ function fixture() {
       delegation: { ...delegation, status: 'revoked', version: 3 },
     }),
     createTemplate: vi.fn().mockResolvedValue({ template }),
+    updateTemplate: vi.fn().mockResolvedValue({
+      template: { ...template, version: 3 },
+    }),
     publishTemplate: vi.fn().mockResolvedValue({
       template: { ...template, status: 'published', version: 3 },
     }),
     createInstance: vi.fn().mockResolvedValue({ instance }),
+    updateInstance: vi.fn().mockResolvedValue({ instance }),
     getInbox: vi.fn().mockResolvedValue([instance]),
     getInstance: vi.fn().mockResolvedValue(instance),
     getTimeline: vi.fn().mockResolvedValue(timeline),
@@ -81,8 +85,10 @@ describe('ApprovalController', () => {
     ['createDelegation', 'erp:approval:delegation:write'],
     ['revokeDelegation', 'erp:approval:delegation:write'],
     ['createTemplate', 'erp:approval:template:write'],
+    ['updateTemplate', 'erp:approval:template:write'],
     ['publishTemplate', 'erp:approval:template:publish'],
     ['createInstance', 'erp:approval:instance:submit'],
+    ['updateInstance', 'erp:approval:instance:submit'],
     ['getInbox', 'erp:approval:instance:read'],
     ['getInstance', 'erp:approval:instance:read'],
     ['getTimeline', 'erp:approval:instance:read'],
@@ -195,15 +201,23 @@ describe('ApprovalController', () => {
     });
   });
 
-  it('创建和发布模板固化模板风险等级与版本', async () => {
+  it('模板创建、草稿更新和发布统一执行幂等、强版本与审计', async () => {
     const store = fixture();
-    const body = { code: 'EXPENSE', name: '费用审批' };
+    const createBody = { code: 'EXPENSE', name: '费用审批' };
+    const updateBody = { name: '费用审批修订', riskLevel: 'R2', definition: { fields: [], nodes: [] } };
 
     await expect(store.controller.createTemplate(
       'template-create-001',
-      body as never,
+      createBody as never,
       store.response,
     )).resolves.toEqual({ template });
+    await expect(store.controller.updateTemplate(
+      ID,
+      '"2"',
+      'template-update-001',
+      updateBody as never,
+      store.response,
+    )).resolves.toMatchObject({ template: { status: 'draft', version: 3 } });
     await expect(store.controller.publishTemplate(
       ID,
       '"2"',
@@ -213,7 +227,13 @@ describe('ApprovalController', () => {
 
     expect(store.approvals.createTemplate).toHaveBeenCalledWith(
       'template-create-001',
-      body,
+      createBody,
+    );
+    expect(store.approvals.updateTemplate).toHaveBeenCalledWith(
+      ID,
+      2,
+      'template-update-001',
+      updateBody,
     );
     expect(store.approvals.publishTemplate).toHaveBeenCalledWith(
       ID,
@@ -221,7 +241,8 @@ describe('ApprovalController', () => {
       'template-publish-001',
     );
     expectCommittedAudit(store, 1, 'approval.template.create', 'approval_template', VERSION);
-    expectCommittedAudit(store, 2, 'approval.template.publish', 'approval_template', 3);
+    expectCommittedAudit(store, 2, 'approval.template.update', 'approval_template', 3);
+    expectCommittedAudit(store, 3, 'approval.template.publish', 'approval_template', 3);
   });
 
   it('创建审批实例写入 ETag 与实例风险审计', async () => {
@@ -243,6 +264,24 @@ describe('ApprovalController', () => {
   });
 
   it.each([
+    {
+      name: '更新草稿',
+      action: 'approval.instance.update',
+      service: 'updateInstance',
+      invoke: (store: ReturnType<typeof fixture>) => store.controller.updateInstance(
+        ID,
+        '"1"',
+        'instance-update-001',
+        { title: '费用申请修订', formData: { amount: 123_45 } },
+        store.response,
+      ),
+      args: [
+        ID,
+        1,
+        'instance-update-001',
+        { title: '费用申请修订', formData: { amount: 123_45 } },
+      ],
+    },
     {
       name: '提交',
       action: 'approval.instance.submit',
@@ -484,8 +523,10 @@ function method(
   | 'createDelegation'
   | 'revokeDelegation'
   | 'createTemplate'
+  | 'updateTemplate'
   | 'publishTemplate'
   | 'createInstance'
+  | 'updateInstance'
   | 'getInbox'
   | 'getInstance'
   | 'getTimeline'

@@ -18,6 +18,7 @@ import {
   buildApprovalDelegationEvent,
   buildApprovalLegacyHistoryMigratedEvent,
   buildApprovalInstanceCreatedEvent,
+  buildApprovalInstanceUpdatedEvent,
   buildApprovalInstanceMigratedEvent,
   buildApprovalTemplateEvent,
   buildApprovalTemplateMigratedEvent,
@@ -34,6 +35,8 @@ import {
   revokeApprovalDelegation,
   submitApprovalInstance,
   transferApprovalTask,
+  updateApprovalInstanceDraft,
+  updateApprovalTemplateDraft,
   withdrawApprovalInstance,
   currentApprovalNode,
   ApprovalDomainError,
@@ -679,6 +682,34 @@ export class ApprovalApplicationService {
     ));
   }
 
+  /** 修改当前模板草稿；编码和修订号不可变，发布或退役版本永久拒绝覆盖。 */
+  async updateTemplate(
+    id: string,
+    expectedVersion: number,
+    key: string,
+    input: {
+      readonly name: string;
+      readonly riskLevel: 'R1' | 'R2';
+      readonly definition: ApprovalTemplateDefinition;
+    },
+  ): Promise<{ readonly template: ApprovalTemplateSummary }> {
+    return this.run(async () => this.idempotency.execute(
+      'approval.template.update', key, { id, expectedVersion, ...input }, async (session) => {
+        const current = await this.requireTemplate(id, session);
+        const trusted = this.context.getRequired();
+        const updated = updateApprovalTemplateDraft(current, {
+          tenantId: trusted.tenant.tenantId,
+          expectedVersion,
+          actorId: trusted.actor.actorId,
+          ...input,
+        }, new Date());
+        await this.templates.replace(updated, expectedVersion, session);
+        await this.outbox.append(buildApprovalTemplateEvent(updated, 'draft_updated'), session);
+        return { template: templateSummary(updated) };
+      },
+    ));
+  }
+
   /** 返回可发起模板的最小表单投影；不暴露节点解析器、审批人或租户。 */
   async listPublishedTemplateForms(): Promise<readonly ApprovalPublishedTemplateFormView[]> {
     const templates = await this.templates.findPublished();
@@ -784,6 +815,33 @@ export class ApprovalApplicationService {
         await this.instances.insert(instance, session);
         await this.outbox.append(buildApprovalInstanceCreatedEvent(instance), session);
         return { instance: instanceSummary(instance) };
+      },
+    ));
+  }
+
+  /** 修改本人未提交实例草稿；模板快照不可替换，正文只进入加密聚合。 */
+  async updateInstance(
+    id: string,
+    expectedVersion: number,
+    key: string,
+    input: {
+      readonly title: string;
+      readonly formData: ApprovalFormData;
+    },
+  ): Promise<{ readonly instance: ApprovalInstanceSummary }> {
+    return this.run(async () => this.idempotency.execute(
+      'approval.instance.update', key, { id, expectedVersion, ...input }, async (session) => {
+        const current = await this.requireInstance(id, session);
+        const trusted = this.context.getRequired();
+        const updated = updateApprovalInstanceDraft(current, {
+          tenantId: trusted.tenant.tenantId,
+          expectedVersion,
+          actorId: trusted.actor.actorId,
+          ...input,
+        }, new Date());
+        await this.instances.replace(updated, expectedVersion, session);
+        await this.outbox.append(buildApprovalInstanceUpdatedEvent(updated), session);
+        return { instance: instanceSummary(updated) };
       },
     ));
   }

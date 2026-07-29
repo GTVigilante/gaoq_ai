@@ -11,6 +11,7 @@ import {
   createNextApprovalTemplateRevision,
   createApprovalTemplateDraft,
   decideApprovalInstance,
+  hashApprovalJson,
   publishApprovalTemplate,
   submitApprovalInstance,
   type ApprovalTemplateDefinition,
@@ -1123,6 +1124,69 @@ describe('ApprovalApplicationService', () => {
     expect(JSON.stringify(deps.outbox.append.mock.calls[0]?.[0])).not.toContain('费用申请');
   });
 
+  it('实例草稿更新保持模板快照并只发布正文摘要事件', async () => {
+    const current = draftInstance();
+    const updatedFormData = { amount: 456_78, remark: '更新后的私密说明' };
+    const deps = dependencies();
+    deps.instances.findById.mockResolvedValue(current);
+
+    const result = await service(deps).updateInstance(
+      current.id,
+      current.version,
+      'instance-update-001',
+      { title: '更新后的费用申请', formData: updatedFormData },
+    );
+
+    expect(result.instance).toMatchObject({
+      id: current.id,
+      status: 'draft',
+      templateCode: current.templateSnapshot.templateCode,
+      templateRevision: current.templateSnapshot.revision,
+      version: 2,
+    });
+    expect(deps.instances.replace).toHaveBeenCalledWith(expect.objectContaining({
+      title: '更新后的费用申请',
+      formData: { amount: 456_78, remark: '更新后的私密说明' },
+      templateSnapshot: current.templateSnapshot,
+      version: 2,
+    }), 1, SESSION);
+    expect(deps.outbox.append).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'approval_instance.draft_updated',
+      payload: {
+        templateCode: current.templateSnapshot.templateCode,
+        templateRevision: current.templateSnapshot.revision,
+        riskLevel: current.templateSnapshot.riskLevel,
+        initiatorId: current.initiatorId,
+        formDataHash: hashApprovalJson(updatedFormData),
+      },
+    }), SESSION);
+    expect(JSON.stringify(deps.outbox.append.mock.calls[0]?.[0]))
+      .not.toMatch(/更新后的费用申请|更新后的私密说明/u);
+    expect(deps.actions.append).not.toHaveBeenCalled();
+    expect(deps.notifications.append).not.toHaveBeenCalled();
+  });
+
+  it('实例草稿更新拒绝非发起人且不产生任何持久化副作用', async () => {
+    const current = draftInstance();
+    const deps = dependencies();
+    deps.instances.findById.mockResolvedValue(current);
+
+    await expect(service(
+      deps,
+      trustedContext(['erp:approval:instance:submit'], 'actor-002'),
+    ).updateInstance(
+      current.id,
+      current.version,
+      'instance-update-denied-001',
+      { title: '越权修改', formData: { amount: 1 } },
+    )).rejects.toMatchObject({ response: { code: 'APPROVAL_DRAFT_UPDATE_DENIED' } });
+
+    expect(deps.instances.replace).not.toHaveBeenCalled();
+    expect(deps.outbox.append).not.toHaveBeenCalled();
+    expect(deps.actions.append).not.toHaveBeenCalled();
+    expect(deps.notifications.append).not.toHaveBeenCalled();
+  });
+
   it('提交在一个事务中更新聚合、追加动作和 Outbox', async () => {
     const deps = dependencies();
     deps.instances.findById.mockResolvedValue(draftInstance());
@@ -1215,6 +1279,75 @@ describe('ApprovalApplicationService', () => {
       definition: definition(),
     });
     expect(next.template).toMatchObject({ code: 'EXPENSE', revision: 2, status: 'draft' });
+  });
+
+  it('模板草稿更新保持编码与修订并通过强版本写入摘要事件', async () => {
+    const current = createApprovalTemplateDraft({
+      id: 'template-001',
+      tenantId: 'tenant-001',
+      code: 'EXPENSE',
+      name: '费用审批草稿',
+      riskLevel: 'R1',
+      definition: definition(),
+      actorId: 'editor-001',
+    }, NOW);
+    const deps = dependencies();
+    deps.templates.findById.mockResolvedValue(current);
+
+    const result = await service(deps).updateTemplate(
+      current.id,
+      current.version,
+      'template-update-001',
+      {
+        name: '费用审批草稿修订',
+        riskLevel: 'R2',
+        definition: definition(),
+      },
+    );
+
+    expect(result.template).toMatchObject({
+      id: current.id,
+      code: current.code,
+      revision: current.revision,
+      riskLevel: 'R2',
+      status: 'draft',
+      version: 2,
+    });
+    expect(deps.templates.replace).toHaveBeenCalledWith(expect.objectContaining({
+      code: current.code,
+      revision: current.revision,
+      name: '费用审批草稿修订',
+      version: 2,
+    }), 1, SESSION);
+    expect(deps.outbox.append).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'approval_template.draft_updated',
+      payload: {
+        code: current.code,
+        revision: current.revision,
+        riskLevel: 'R2',
+        definitionHash: hashApprovalJson(definition()),
+      },
+    }), SESSION);
+  });
+
+  it('模板发布后永久拒绝更新且不产生持久化副作用', async () => {
+    const current = template();
+    const deps = dependencies();
+    deps.templates.findById.mockResolvedValue(current);
+
+    await expect(service(deps).updateTemplate(
+      current.id,
+      current.version,
+      'template-update-denied-001',
+      {
+        name: '不得覆盖已发布模板',
+        riskLevel: 'R2',
+        definition: definition(),
+      },
+    )).rejects.toMatchObject({ response: { code: 'APPROVAL_TEMPLATE_IMMUTABLE' } });
+
+    expect(deps.templates.replace).not.toHaveBeenCalled();
+    expect(deps.outbox.append).not.toHaveBeenCalled();
   });
 
   it('发布新模板时原子退役旧发布版本并生成两条事件', async () => {

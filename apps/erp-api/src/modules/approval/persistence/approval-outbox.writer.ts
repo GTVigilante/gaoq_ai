@@ -146,6 +146,11 @@ const approvalEventSchema = z.discriminatedUnion('type', [
   }).strict(),
   z.object({
     ...eventBase,
+    type: z.literal('approval_template.draft_updated'),
+    payload: templateDraftPayloadSchema,
+  }).strict(),
+  z.object({
+    ...eventBase,
     type: z.literal('approval_template.published'),
     payload: templatePublishedPayloadSchema,
   }).strict(),
@@ -167,6 +172,11 @@ const approvalEventSchema = z.discriminatedUnion('type', [
   z.object({
     ...eventBase,
     type: z.literal('approval_instance.draft_created'),
+    payload: instanceDraftPayloadSchema,
+  }).strict(),
+  z.object({
+    ...eventBase,
+    type: z.literal('approval_instance.draft_updated'),
     payload: instanceDraftPayloadSchema,
   }).strict(),
   z.object({
@@ -218,11 +228,13 @@ const approvalEventSchema = z.discriminatedUnion('type', [
 type ApprovalEventType = ApprovalDomainEvent['type'];
 const EVENT_AGGREGATE_TYPES = Object.freeze({
   'approval_template.draft_created': 'approval.template',
+  'approval_template.draft_updated': 'approval.template',
   'approval_template.published': 'approval.template',
   'approval_template.retired': 'approval.template',
   'approval_template.migrated': 'approval.template',
   'approval_history.migrated': 'approval.history',
   'approval_instance.draft_created': 'approval.instance',
+  'approval_instance.draft_updated': 'approval.instance',
   'approval_instance.migrated': 'approval.instance',
   'approval_instance.submitted': 'approval.instance',
   'approval_instance.decided': 'approval.instance',

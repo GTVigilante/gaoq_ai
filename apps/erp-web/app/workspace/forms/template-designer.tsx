@@ -35,12 +35,19 @@ interface DesignerValues {
   readonly nodes: readonly { readonly id: string; readonly name: string; readonly roleCodes: string; readonly approvalMode: 'all' | 'any' }[];
 }
 
+interface RetryAttempt {
+  readonly signature: string;
+  readonly idempotencyKey: string;
+}
+
 /** 版本化表单设计器；创建与发布分成两个独立职责面板。 */
 export function TemplateDesigner() {
   const { message, modal } = AntApp.useApp();
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [created, setCreated] = useState<DraftResult['template'] | null>(null);
+  const [draftAttempt, setDraftAttempt] = useState<RetryAttempt | null>(null);
+  const [publishAttempt, setPublishAttempt] = useState<RetryAttempt | null>(null);
   const [publishForm] = Form.useForm();
 
   const create = async (values: DesignerValues) => {
@@ -63,14 +70,45 @@ export function TemplateDesigner() {
           resolver: { type: 'roles', roleCodes: node.roleCodes.split(',').map((item) => item.trim()).filter(Boolean), scope: 'tenant' },
         })),
       };
-      const result = await erpFetch<DraftResult>('/api/approvals/templates', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'idempotency-key': createIdempotencyKey('approval-template-create') },
-        body: JSON.stringify({ code: values.code, name: values.name, riskLevel: values.riskLevel, definition }),
+      const updating = created?.status === 'draft' && created.code === values.code;
+      const body = updating
+        ? { name: values.name, riskLevel: values.riskLevel, definition }
+        : { code: values.code, name: values.name, riskLevel: values.riskLevel, definition };
+      const signature = JSON.stringify({
+        operation: updating ? 'update' : 'create',
+        templateId: updating ? created.id : null,
+        version: updating ? created.version : null,
+        body,
       });
+      const attempt = draftAttempt?.signature === signature
+        ? draftAttempt
+        : {
+            signature,
+            idempotencyKey: createIdempotencyKey(
+              updating ? 'approval-template-update' : 'approval-template-create',
+            ),
+          };
+      setDraftAttempt(attempt);
+      const result = await erpFetch<DraftResult>(
+        updating
+          ? `/api/approvals/templates/${encodeURIComponent(created.id)}`
+          : '/api/approvals/templates',
+        {
+          method: updating ? 'PUT' : 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'idempotency-key': attempt.idempotencyKey,
+            ...(updating ? { 'if-match': strongEtag(created.version) } : {}),
+          },
+          body: JSON.stringify(body),
+        },
+      );
+      setDraftAttempt(null);
       setCreated(result.data.template);
       publishForm.setFieldsValue({ templateId: result.data.template.id, version: result.data.template.version });
-      void message.success(`模板 ${result.data.template.code} 修订 ${result.data.template.revision} 已保存为草稿`);
+      void message.success(
+        `模板 ${result.data.template.code} 修订 ${result.data.template.revision} 草稿已${updating ? '更新' : '创建'}`,
+      );
     } catch (value) {
       showError(modal, value, '模板草稿保存失败');
     } finally {
@@ -81,10 +119,19 @@ export function TemplateDesigner() {
   const publish = async ({ templateId, version }: { readonly templateId: string; readonly version: number }) => {
     setPublishing(true);
     try {
+      const signature = JSON.stringify({ templateId, version });
+      const attempt = publishAttempt?.signature === signature
+        ? publishAttempt
+        : {
+            signature,
+            idempotencyKey: createIdempotencyKey('approval-template-publish'),
+          };
+      setPublishAttempt(attempt);
       const result = await erpFetch<DraftResult>(`/api/approvals/templates/${encodeURIComponent(templateId)}/publish`, {
         method: 'POST',
-        headers: { 'if-match': strongEtag(version), 'idempotency-key': createIdempotencyKey('approval-template-publish') },
+        headers: { 'if-match': strongEtag(version), 'idempotency-key': attempt.idempotencyKey },
       });
+      setPublishAttempt(null);
       setCreated(result.data.template);
       void message.success('模板已发布');
     } catch (value) {
@@ -98,7 +145,7 @@ export function TemplateDesigner() {
     <div className="console-page-heading">
       <Typography.Text type="secondary"><FileAddOutlined /> Versioned Workflow Definition</Typography.Text>
       <Typography.Title id="forms-title" level={1}>表单与流程设计</Typography.Title>
-      <Typography.Paragraph>字段类型、敏感级别和审批人解析器全部使用白名单；每次保存产生不可变修订。</Typography.Paragraph>
+      <Typography.Paragraph>字段类型、敏感级别和审批人解析器全部使用白名单；草稿按强版本更新，发布后定义不可变且下一次保存创建新修订。</Typography.Paragraph>
     </div>
     <Row gutter={[20, 20]}>
       <Col xs={24} xl={16}>
@@ -109,7 +156,7 @@ export function TemplateDesigner() {
             initialValues={{ riskLevel: 'R1', fields: [{ type: 'text', required: true, sensitivity: 'L1', maximumLength: 200 }], nodes: [{ approvalMode: 'all', roleCodes: 'department_manager' }] }}
           >
             <Row gutter={16}>
-              <Col xs={24} md={8}><Form.Item name="code" label="模板编码" rules={[{ required: true }, { pattern: /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u, message: '编码不符合白名单' }]}><Input placeholder="expense_claim" /></Form.Item></Col>
+              <Col xs={24} md={8}><Form.Item name="code" label="模板编码" rules={[{ required: true }, { pattern: /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u, message: '编码不符合白名单' }]}><Input disabled={created?.status === 'draft'} placeholder="expense_claim" /></Form.Item></Col>
               <Col xs={24} md={10}><Form.Item name="name" label="模板名称" rules={[{ required: true, max: 128 }]}><Input placeholder="费用报销" /></Form.Item></Col>
               <Col xs={24} md={6}><Form.Item name="riskLevel" label="风险等级" rules={[{ required: true }]}><Select options={[{ value: 'R1', label: 'R1 常规审批' }, { value: 'R2', label: 'R2 强认证' }]} /></Form.Item></Col>
             </Row>
@@ -147,7 +194,7 @@ export function TemplateDesigner() {
                 <Form.ErrorList errors={errors} />
               </Space>}
             </Form.List>
-            <Flex justify="flex-end" className="console-form-actions"><Button type="primary" htmlType="submit" loading={saving}>保存新修订</Button></Flex>
+            <Flex justify="flex-end" className="console-form-actions"><Button type="primary" htmlType="submit" loading={saving}>{created?.status === 'draft' ? '更新当前草稿' : created?.status === 'published' ? '创建下一修订' : '创建首版草稿'}</Button></Flex>
           </Form>
         </Card>
       </Col>

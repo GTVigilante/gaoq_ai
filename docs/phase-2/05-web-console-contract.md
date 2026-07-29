@@ -17,30 +17,34 @@
 ## 写操作与风险控制
 
 - 所有组织、审批和模板写请求必须带一次性 `Idempotency-Key`。
+- 模板与实例草稿更新还必须带强 `If-Match`。同一正文在响应丢失或结果未知时
+  必须保留并复用原幂等键；正文、模板标识或版本任一变化时生成新键，禁止用新键
+  猜测重放旧请求。
 - PC 发起先创建草稿、再以草稿强版本和独立幂等键提交。创建成功但提交失败时必须保留草稿标识和原提交幂等键，只允许重试提交，禁止静默重复创建实例。
 - H5 发起遵循相同状态机：模板、表单正文、草稿和幂等键仅保留在页面内存；创建结果不确定时复用原正文与创建键，草稿提交失败时复用原版本与提交键。
-- 审批决策和模板发布必须带强 `If-Match`，并发版本冲突不得自动覆盖。
+- 审批决策、草稿更新和模板发布必须带强 `If-Match`，并发版本冲突不得自动覆盖。
 - R1 待办允许在 PC 工作台确认后提交；R2 待办在普通工作台中只读，必须转入绑定操作摘要、主体、租户和浏览器会话的 WebAuthn 受控确认流程。
 - R2 只读不是前端约定：普通 REST 决策、转交和加签在应用服务事务内读取不可变模板快照并返回 `APPROVAL_R2_STRONG_AUTH_REQUIRED`，不得产生动作、Outbox 或通知。只有已完成确认与强认证的 MCP 内部决策路径可以执行 R2。
 - R1 转交和加签必须同时具备细粒度 Scope、强 `If-Match` 和幂等键。PC 转交来源固定为当前可信主体；服务端仅允许主体本人或已验证的有效受托人操作，并复核目标为同租户有效 ERP 主体。加签只允许当前会签节点，或签和重复主体失败关闭。
 - 审批委托只允许当前可信主体为本人创建，代理人必须是同租户有效 ERP 主体；单次最长 30 天，同一委托人的有效期不得重叠。应用层先查重，UTC 覆盖日槽唯一多键索引对并发重叠最终兜底；同一 UTC 日内的相邻委托按保守策略视为冲突。撤销必须带强版本和独立幂等键。创建/撤销与最小披露 Outbox 事件同事务提交。
-- 模板创建与发布分成独立面板；服务端继续强制创建人不能发布自己的草稿。
+- 模板创建、当前草稿更新、下一修订创建与发布分成明确状态；服务端继续强制
+  已发布版本不可修改，且创建人不能发布自己的草稿。
 - ERP 是组织与员工唯一主数据源。工作台不直接调用钉钉、飞书或 OP；下游分发由事务 Outbox、队列和平台适配器执行。
 
 ## REST、事件、MCP 与审计一致性
 
 | 页面能力 | REST 应用服务 | 事件/集成 | MCP | 审计 |
 | --- | --- | --- | --- | --- |
-| 已发布模板目录与审批发起 | `GET /api/approvals/templates/published`、实例创建/提交均复用 `ApprovalApplicationService` | 创建与提交分别通过事务 Outbox；外部平台只消费事件 | `erp://approval/templates/published` Resource 读取相同最小投影；既有 R1 Tool 仅提交已存在草稿 | `approval.template.catalog.read`、`approval.instance.create/submit` |
+| 已发布模板目录与审批发起 | `GET /api/approvals/templates/published`、`PUT /api/approvals/instances/:id` 及实例创建/提交均复用 `ApprovalApplicationService` | 创建、草稿更新与提交分别通过事务 Outbox；外部平台只消费事件 | `erp://approval/templates/published` Resource 读取相同最小投影；既有 R1 Tool 仅提交已存在草稿，AI 不修改正文 | `approval.template.catalog.read`、`approval.instance.create/update/submit` |
 | 审批待办、详情与时间线 | `ApprovalApplicationService` | 无副作用；时间线读取追加日志投影 | `approval_get_inbox`、`approval_get`、`approval_timeline_get` | REST 时间线和 MCP Tool 分别记录 R0 读取审计 |
 | R1 审批决策 | 交互式 R1 应用服务边界 | 动作、Outbox、通知意图同事务 | AI 决策统一按 R2 prepare/execute 与强认证处理 | `approval.instance.decide` |
 | R1 转交与加签 | 交互式风险边界、`transferTask`、`addSigner` | 动作、Outbox、原待办取消与新待办通知同事务 | 当前不注册独立 Tool；AI 可从时间线读取结果 | `approval.instance.transfer/add_signer` |
 | 限期审批委托 | `GET/POST /api/approvals/delegations*` 与 `ApprovalApplicationService` | `approval_delegation.created/revoked` 最小事件 | `erp://approval/delegations/mine` R0 Resource；授权写入不注册 AI Tool | `approval.delegation.list/create/revoke` |
-| 模板草稿与发布 | `ApprovalApplicationService` | 发布事件进入 Outbox | 业务能力不由前端旁路 | `approval.template.create/publish` |
+| 模板草稿与发布 | `POST /api/approvals/templates`、`PUT /api/approvals/templates/:id` 与发布入口均复用 `ApprovalApplicationService` | 创建、草稿更新与发布事件进入事务 Outbox | 不注册模板写 Tool，业务能力不由前端或 AI 旁路 | `approval.template.create/update/publish` |
 | 组织浏览与创建 | `OrgApplicationService` | 组织版本事件进入 Outbox，下发钉钉/飞书/OP | 复用组织 R0/R1 工具 | `org.department.create`、`org.employee.create` |
 | 身份摘要与会话吊销 | 可信身份上下文与 `TokenGrantService` | 吊销不依赖外部平台成功 | OAuth/MCP 继续使用同一 Scope 模型 | `identity.profile.read`、`identity.session.revoke` |
 
-审批 Outbox 对上述模板、历史、实例和委托的十五类事件执行独立严格运行时契约。
+审批 Outbox 对上述模板、历史、实例和委托的十七类事件执行独立严格运行时契约。
 外层只接受 `type/tenantId/aggregateId/version/occurredAt/payload`，payload 按
 事件类型逐字段白名单；可信租户、聚合与版本在组装 CloudEvent data 时最后覆盖，
 因此调用方不能通过 payload 改写路由身份。事件时间必须为不晚于当前时刻的规范

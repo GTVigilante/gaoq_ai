@@ -48,6 +48,19 @@ const validEvents: readonly {
   {
     event: {
       ...base,
+      type: 'approval_template.draft_updated',
+      payload: {
+        code: 'leave_request',
+        revision: 1,
+        riskLevel: 'R2',
+        definitionHash: HASH,
+      },
+    },
+    aggregateType: 'approval.template',
+  },
+  {
+    event: {
+      ...base,
       type: 'approval_template.published',
       payload: {
         code: 'leave_request',
@@ -98,6 +111,20 @@ const validEvents: readonly {
     event: {
       ...base,
       type: 'approval_instance.draft_created',
+      payload: {
+        initiatorId: 'employee-001',
+        templateCode: 'leave_request',
+        templateRevision: 1,
+        riskLevel: 'R1',
+        formDataHash: HASH,
+      },
+    },
+    aggregateType: 'approval.instance',
+  },
+  {
+    event: {
+      ...base,
+      type: 'approval_instance.draft_updated',
       payload: {
         initiatorId: 'employee-001',
         templateCode: 'leave_request',
@@ -218,6 +245,12 @@ const validEvents: readonly {
   },
 ];
 
+function validEvent(type: ApprovalDomainEvent['type']): ApprovalDomainEvent {
+  const matched = validEvents.find(({ event }) => event.type === type);
+  if (matched === undefined) throw new Error(`缺少审批事件测试样例：${type}`);
+  return matched.event;
+}
+
 function setup(): {
   readonly context: TenantContextService;
   readonly create: ReturnType<typeof vi.fn>;
@@ -309,7 +342,7 @@ describe('ApprovalOutboxWriter', () => {
   it('拒绝跨租户事件且不写 Outbox', async () => {
     const { context, create, writer } = setup();
     const event = {
-      ...validEvents[0]?.event,
+      ...validEvent('approval_template.draft_created'),
       tenantId: 'tenant-002',
     };
 
@@ -321,16 +354,28 @@ describe('ApprovalOutboxWriter', () => {
 
   it.each([
     ['未知事件类型', { ...base, type: 'approval_instance.deleted', payload: {} }],
-    ['事件未知字段', { ...validEvents[0]?.event, actorId: 'attacker-001' }],
-    ['非法租户', { ...validEvents[0]?.event, tenantId: '../tenant' }],
-    ['非法聚合标识', { ...validEvents[0]?.event, aggregateId: 'approval/001' }],
-    ['零版本', { ...validEvents[0]?.event, version: 0 }],
-    ['非整数版本', { ...validEvents[0]?.event, version: 1.5 }],
-    ['超安全整数版本', { ...validEvents[0]?.event, version: Number.MAX_SAFE_INTEGER + 1 }],
-    ['非规范时间', { ...validEvents[0]?.event, occurredAt: '2026-07-22T10:00:00Z' }],
-    ['无效日历时间', { ...validEvents[0]?.event, occurredAt: '2026-02-30T10:00:00.000Z' }],
-    ['未来时间', { ...validEvents[0]?.event, occurredAt: '2999-01-01T00:00:00.000Z' }],
-    ['空载荷', { ...validEvents[0]?.event, payload: null }],
+    ['事件未知字段', {
+      ...validEvent('approval_template.draft_created'), actorId: 'attacker-001',
+    }],
+    ['非法租户', { ...validEvent('approval_template.draft_created'), tenantId: '../tenant' }],
+    ['非法聚合标识', {
+      ...validEvent('approval_template.draft_created'), aggregateId: 'approval/001',
+    }],
+    ['零版本', { ...validEvent('approval_template.draft_created'), version: 0 }],
+    ['非整数版本', { ...validEvent('approval_template.draft_created'), version: 1.5 }],
+    ['超安全整数版本', {
+      ...validEvent('approval_template.draft_created'), version: Number.MAX_SAFE_INTEGER + 1,
+    }],
+    ['非规范时间', {
+      ...validEvent('approval_template.draft_created'), occurredAt: '2026-07-22T10:00:00Z',
+    }],
+    ['无效日历时间', {
+      ...validEvent('approval_template.draft_created'), occurredAt: '2026-02-30T10:00:00.000Z',
+    }],
+    ['未来时间', {
+      ...validEvent('approval_template.draft_created'), occurredAt: '2999-01-01T00:00:00.000Z',
+    }],
+    ['空载荷', { ...validEvent('approval_template.draft_created'), payload: null }],
   ])('拒绝%s', async (_label, event) => {
     const { context, create, writer } = setup();
 
@@ -343,7 +388,7 @@ describe('ApprovalOutboxWriter', () => {
   it.each([
     [
       '模板事件保留字段覆盖',
-      validEvents[0]?.event,
+      validEvent('approval_template.draft_created'),
       {
         code: 'leave_request',
         revision: 1,
@@ -354,7 +399,7 @@ describe('ApprovalOutboxWriter', () => {
     ],
     [
       '模板发布缺少规范审批人',
-      validEvents[1]?.event,
+      validEvent('approval_template.published'),
       {
         code: 'leave_request',
         revision: 1,
@@ -365,12 +410,12 @@ describe('ApprovalOutboxWriter', () => {
     ],
     [
       '模板退役修订号非法',
-      validEvents[2]?.event,
+      validEvent('approval_template.retired'),
       { code: 'leave_request', revision: 0 },
     ],
     [
       '模板迁移状态非法',
-      validEvents[3]?.event,
+      validEvent('approval_template.migrated'),
       {
         code: 'leave_request',
         revision: 1,
@@ -381,7 +426,7 @@ describe('ApprovalOutboxWriter', () => {
     ],
     [
       '历史迁移摘要非法',
-      validEvents[4]?.event,
+      validEvent('approval_history.migrated'),
       {
         templateCode: 'leave_request',
         templateRevision: 1,
@@ -391,54 +436,54 @@ describe('ApprovalOutboxWriter', () => {
     ],
     [
       '草稿事件夹带表单正文',
-      validEvents[5]?.event,
+      validEvent('approval_instance.draft_created'),
       {
-        ...(validEvents[5]?.event.payload ?? {}),
+        ...validEvent('approval_instance.draft_created').payload,
         formData: { salary: 100 },
       },
     ],
     [
       '运行中迁移动作数为零',
-      validEvents[6]?.event,
+      validEvent('approval_instance.migrated'),
       {
-        ...(validEvents[6]?.event.payload ?? {}),
+        ...validEvent('approval_instance.migrated').payload,
         actionCount: 0,
       },
     ],
     [
       '提交事件夹带表单摘要外字段',
-      validEvents[7]?.event,
+      validEvent('approval_instance.submitted'),
       { actorId: 'employee-001', formDataHash: HASH },
     ],
     [
       '拒绝决策与终态冲突',
-      validEvents[8]?.event,
+      validEvent('approval_instance.decided'),
       {
-        ...(validEvents[8]?.event.payload ?? {}),
+        ...validEvent('approval_instance.decided').payload,
         outcome: 'rejected',
         resultingStatus: 'approved',
       },
     ],
     [
       '批准决策伪装为拒绝终态',
-      validEvents[8]?.event,
+      validEvent('approval_instance.decided'),
       {
-        ...(validEvents[8]?.event.payload ?? {}),
+        ...validEvent('approval_instance.decided').payload,
         outcome: 'approved',
         resultingStatus: 'rejected',
       },
     ],
     [
       '代理标记与执行主体冲突',
-      validEvents[8]?.event,
+      validEvent('approval_instance.decided'),
       {
-        ...(validEvents[8]?.event.payload ?? {}),
+        ...validEvent('approval_instance.decided').payload,
         delegated: false,
       },
     ],
     [
       '转交来源与目标相同',
-      validEvents[9]?.event,
+      validEvent('approval_instance.approver_transferred'),
       {
         actorId: 'approver-001',
         nodeId: 'node-001',
@@ -448,7 +493,7 @@ describe('ApprovalOutboxWriter', () => {
     ],
     [
       '加签主体非法',
-      validEvents[10]?.event,
+      validEvent('approval_instance.approver_added'),
       {
         actorId: 'approver-001',
         nodeId: 'node-001',
@@ -457,7 +502,7 @@ describe('ApprovalOutboxWriter', () => {
     ],
     [
       '撤回取消列表重复',
-      validEvents[11]?.event,
+      validEvent('approval_instance.withdrawn'),
       {
         actorId: 'employee-001',
         canceledApproverIds: ['approver-001', 'approver-001'],
@@ -465,12 +510,12 @@ describe('ApprovalOutboxWriter', () => {
     ],
     [
       '归档事件夹带审批正文',
-      validEvents[12]?.event,
+      validEvent('approval_instance.archived'),
       { actorId: 'archivist-001', comment: 'sensitive' },
     ],
     [
       '委托人为本人代理',
-      validEvents[13]?.event,
+      validEvent('approval_delegation.created'),
       {
         principalApproverId: 'approver-001',
         delegateId: 'approver-001',
@@ -480,7 +525,7 @@ describe('ApprovalOutboxWriter', () => {
     ],
     [
       '委托截止时间早于开始时间',
-      validEvents[13]?.event,
+      validEvent('approval_delegation.created'),
       {
         principalApproverId: 'approver-001',
         delegateId: 'delegate-001',
@@ -490,7 +535,7 @@ describe('ApprovalOutboxWriter', () => {
     ],
     [
       '委托超过三十天',
-      validEvents[13]?.event,
+      validEvent('approval_delegation.created'),
       {
         principalApproverId: 'approver-001',
         delegateId: 'delegate-001',
@@ -500,7 +545,7 @@ describe('ApprovalOutboxWriter', () => {
     ],
     [
       '撤销主体不是委托人',
-      validEvents[14]?.event,
+      validEvent('approval_delegation.revoked'),
       {
         principalApproverId: 'approver-001',
         delegateId: 'delegate-001',
@@ -518,7 +563,7 @@ describe('ApprovalOutboxWriter', () => {
 
   it('草稿迁移只接受零动作，运行中迁移只接受正动作', async () => {
     const { context, create, writer } = setup();
-    const running = validEvents[6]?.event;
+    const running = validEvent('approval_instance.migrated');
     const draft = {
       ...running,
       payload: {
@@ -540,7 +585,7 @@ describe('ApprovalOutboxWriter', () => {
 
   it('从可变输入生成独立规范副本，不允许调用方事后改写记录', async () => {
     const { context, create, writer } = setup();
-    const event = structuredClone(validEvents[7]?.event) as {
+    const event = structuredClone(validEvent('approval_instance.submitted')) as {
       payload: { actorId: string };
     };
 
@@ -557,7 +602,11 @@ describe('ApprovalOutboxWriter', () => {
     const { context, create, writer } = setup();
     create.mockRejectedValueOnce(new Error('MONGO_WRITE_FAILED'));
 
-    await expect(append(context, writer, validEvents[0]?.event)).rejects.toThrow(
+    await expect(append(
+      context,
+      writer,
+      validEvent('approval_template.draft_created'),
+    )).rejects.toThrow(
       'MONGO_WRITE_FAILED',
     );
     expect(create).toHaveBeenCalledOnce();
