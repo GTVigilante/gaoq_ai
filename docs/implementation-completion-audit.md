@@ -94,11 +94,12 @@ GitHub Hosted OIDC 和 Phase 0 三方签署要求。该模型不替代真实 DAS
 
 `pnpm contracts:openapi:self-test` 会验证正负场景，
 `pnpm contracts:openapi:validate` 会重新生成并逐字节拒绝漂移，两者通过
-`pretypecheck` 接入 `pnpm check`。复杂 DTO 当前以 `x-typescript-type` 保守
-表达，字段级白名单、嵌套约束和业务不变量仍由 DTO、全局 `ValidationPipe`、
-应用服务与契约测试执行；在字段级 Schema 完全展开前，不把本契约单独作为
-生产写客户端生成或外部验收证据。GitHub Hosted Actions 尚未启动 Runner，
-远端 CI 仍为 No-Go。
+`pretypecheck` 接入 `pnpm check`。103 个 class-validator DTO 已展开字段级
+Schema，85/116 个 Body 通过组件 `$ref` 绑定；生成器校验必填、nullable、
+继承、嵌套、长度、范围、静态枚举、数组约束及悬空引用。剩余 3 个内联类型和
+28 个 `unknown` Body 由端点专用严格解析器校验，部分响应也仍由 TypeScript
+推断；在这些入口显式化前，不把本契约单独作为全部生产写客户端生成或外部验收
+证据。GitHub Hosted Actions 尚未启动 Runner，远端 CI 仍为 No-Go。
 
 ### 2.7 AsyncAPI 与 CloudEvents 机器契约
 

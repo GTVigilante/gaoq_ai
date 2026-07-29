@@ -66,12 +66,13 @@
 - 2026-07-30 已建立源码确定性生成的 OpenAPI 3.1 REST 基线：47 个
   Controller、225 个 Nest 路由声明、218 个 Path 和 231 个 Operation 均记录
   精确 OAuth Scope、公开状态、Guard、Header/Query/Path/Body 类型、响应类型
-  与源码位置；MCP `@All` 的七方法展开保留原始语义。生成器拒绝动态路由/
-  Scope、重复操作、路径参数漂移和公开/Scope 冲突，自测与逐字节漂移校验通过
-  `pretypecheck` 接入 `pnpm check`。复杂 DTO 目前只保留
-  `x-typescript-type`，字段级约束仍以 DTO、ValidationPipe 和协议测试为准，
-  因此不得把该基线单独宣称为生产写客户端的完整 Schema；GitHub Hosted
-  Actions 仍受账号付款或 Spending limit 阻塞。
+  与源码位置；103 个 class-validator DTO 已展开字段、必填、nullable、继承、
+  嵌套、长度、范围、枚举和数组约束，85/116 个 Body 绑定组件 Schema。MCP
+  `@All` 的七方法展开保留原始语义。生成器拒绝动态路由/Scope、重复操作、路径
+  参数漂移、公开/Scope 冲突、DTO 名称重复和悬空引用，自测与逐字节漂移校验通过
+  `pretypecheck` 接入 `pnpm check`。其余 3 个内联和 28 个 `unknown` 严格解析
+  Body 及部分推断响应仍需显式化，不能把该基线单独宣称为全部生产客户端的完整
+  Schema；GitHub Hosted Actions 仍受账号付款或 Spending limit 阻塞。
 - 2026-07-30 已建立 AsyncAPI 3.0 / CloudEvents 1.0 机器契约：从固定生产
   Outbox 与专业算薪平台契约确定性收集 184 个现行事件，其中 ERP/平台出站
   180 个、专业算薪入站 4 个；每项声明固定 source、方向、权威系统、分级、

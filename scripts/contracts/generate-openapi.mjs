@@ -22,6 +22,35 @@ const globalPrefixExclusions = new Set([
   '.well-known/oauth-authorization-server',
   '.well-known/jwks.json',
 ]);
+const validationDecorators = new Set([
+  'ArrayMaxSize',
+  'ArrayMinSize',
+  'ArrayNotEmpty',
+  'ArrayUnique',
+  'IsArray',
+  'IsBoolean',
+  'IsDateString',
+  'IsDefined',
+  'IsEmail',
+  'IsEnum',
+  'IsISO8601',
+  'IsIn',
+  'IsInt',
+  'IsObject',
+  'IsOptional',
+  'IsString',
+  'Length',
+  'Matches',
+  'Max',
+  'MaxLength',
+  'Min',
+  'MinLength',
+  'Type',
+  'ValidateNested',
+]);
+
+/** 将文件路径规范化为仓库内跨平台形式。 */
+const normalizedPath = (value) => value.split(sep).join('/');
 
 /** 按字典序递归寻找 Controller 源文件，确保生成结果与文件系统遍历顺序无关。 */
 const findControllerFiles = async (directory) => {
@@ -35,6 +64,23 @@ const findControllerFiles = async (directory) => {
           return findControllerFiles(entryPath);
         }
         return entry.name.endsWith('.controller.ts') ? [entryPath] : [];
+      }),
+  );
+  return nested.flat();
+};
+
+/** 递归寻找生产 TypeScript 文件，排除测试、迁移和构建产物。 */
+const findProductionTypeScriptFiles = async (directory) => {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const nested = await Promise.all(
+    entries
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .map(async (entry) => {
+        const entryPath = resolve(directory, entry.name);
+        if (entry.isDirectory()) {
+          return entry.name === 'migrations' ? [] : findProductionTypeScriptFiles(entryPath);
+        }
+        return entry.name.endsWith('.ts') && !entry.name.endsWith('.spec.ts') ? [entryPath] : [];
       }),
   );
   return nested.flat();
@@ -105,7 +151,7 @@ const tagFor = (filePath) => {
 };
 
 /** 将源码类型保守映射为 OpenAPI Schema，并保留原始 TypeScript 类型。 */
-const schemaForType = (typeText, { required = false } = {}) => {
+const schemaForType = (typeText, { required = false, knownSchemaNames = new Set() } = {}) => {
   const compact = typeText.replace(/\s+/gu, ' ').trim();
   const withoutUndefined = compact
     .split('|')
@@ -126,11 +172,18 @@ const schemaForType = (typeText, { required = false } = {}) => {
   if (normalized === 'Date') {
     return { type: 'string', format: 'date-time', ...extension };
   }
-  if (normalized.endsWith('[]') || /^ReadonlyArray<.+>$/u.test(normalized)) {
+  if (
+    normalized.endsWith('[]') ||
+    /^(?:Readonly)?Array<.+>$/u.test(normalized)
+  ) {
     const itemType = normalized.endsWith('[]')
       ? normalized.slice(0, -2)
-      : normalized.slice('ReadonlyArray<'.length, -1);
-    return { type: 'array', items: schemaForType(itemType), ...extension };
+      : normalized.slice(normalized.indexOf('<') + 1, -1);
+    return {
+      type: 'array',
+      items: schemaForType(itemType, { knownSchemaNames }),
+      ...extension,
+    };
   }
   if (normalized === 'void' || normalized === 'undefined') {
     return extension;
@@ -143,12 +196,234 @@ const schemaForType = (typeText, { required = false } = {}) => {
   if (literalValues.length > 0 && literalValues.length === normalized.split('|').length) {
     return { type: 'string', enum: literalValues, ...extension };
   }
+  const unionParts = normalized
+    .split('|')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (unionParts.length > 1) {
+    return {
+      anyOf: unionParts.map((part) =>
+        part === 'null'
+          ? { type: 'null' }
+          : schemaForType(part, { knownSchemaNames }),
+      ),
+      ...extension,
+    };
+  }
+  if (knownSchemaNames.has(normalized)) {
+    return { $ref: `#/components/schemas/${normalized}`, ...extension };
+  }
   return {
     type: 'object',
     additionalProperties: true,
     ...extension,
     ...(required ? { 'x-runtime-validation': 'ValidationPipe' } : {}),
   };
+};
+
+/** 解析静态数字参数。 */
+const staticNumber = (node, sourceFile) => {
+  if (node === undefined) {
+    return undefined;
+  }
+  const value = Number(node.getText(sourceFile).replaceAll('_', ''));
+  return Number.isFinite(value) ? value : undefined;
+};
+
+/** 解析装饰器中的静态字符串数组。 */
+const staticStringArray = (node) => {
+  if (!ts.isArrayLiteralExpression(node)) {
+    return undefined;
+  }
+  const values = [];
+  for (const element of node.elements) {
+    if (!ts.isStringLiteral(element)) {
+      return undefined;
+    }
+    values.push(element.text);
+  }
+  return values;
+};
+
+/** 从 Type(() => NestedDto) 读取嵌套 DTO 名称。 */
+const nestedDtoName = (calls, sourceFile) => {
+  const typeCall = calls.find(({ name }) => name === 'Type');
+  const argument = typeCall?.args[0];
+  if (argument === undefined || !ts.isArrowFunction(argument)) {
+    return undefined;
+  }
+  const body = argument.body;
+  return ts.isIdentifier(body) ? body.text : body.getText(sourceFile);
+};
+
+/** 将 class-validator 属性约束转换为 JSON Schema 2020-12。 */
+const dtoPropertySchema = (property, sourceFile, knownSchemaNames) => {
+  const calls = decoratorsOf(property).map((decorator) => decoratorCall(decorator, sourceFile));
+  const callNames = new Set(calls.map(({ name }) => name));
+  const typeText = property.type?.getText(sourceFile) ?? 'unknown';
+  const nestedName = nestedDtoName(calls, sourceFile);
+  let schema = schemaForType(typeText, { knownSchemaNames });
+  if (callNames.has('IsString')) {
+    schema = { type: 'string', 'x-typescript-type': typeText };
+  } else if (callNames.has('IsInt')) {
+    schema = { type: 'integer', 'x-typescript-type': typeText };
+  } else if (callNames.has('IsBoolean')) {
+    schema = { type: 'boolean', 'x-typescript-type': typeText };
+  } else if (callNames.has('IsObject')) {
+    schema = {
+      type: 'object',
+      additionalProperties: true,
+      'x-typescript-type': typeText,
+    };
+  }
+  if (callNames.has('IsArray')) {
+    const itemType = typeText.endsWith('[]') ? typeText.slice(0, -2) : 'unknown';
+    schema = {
+      type: 'array',
+      items:
+        nestedName !== undefined && knownSchemaNames.has(nestedName)
+          ? { $ref: `#/components/schemas/${nestedName}` }
+          : schemaForType(itemType, { knownSchemaNames }),
+      'x-typescript-type': typeText,
+    };
+  } else if (nestedName !== undefined && knownSchemaNames.has(nestedName)) {
+    schema = {
+      $ref: `#/components/schemas/${nestedName}`,
+      'x-typescript-type': typeText,
+    };
+  }
+
+  for (const call of calls) {
+    const firstNumber = staticNumber(call.args[0], sourceFile);
+    if (call.name === 'Min' && firstNumber !== undefined) schema.minimum = firstNumber;
+    if (call.name === 'Max' && firstNumber !== undefined) schema.maximum = firstNumber;
+    if (call.name === 'MinLength' && firstNumber !== undefined) schema.minLength = firstNumber;
+    if (call.name === 'MaxLength' && firstNumber !== undefined) schema.maxLength = firstNumber;
+    if (call.name === 'ArrayMinSize' && firstNumber !== undefined) schema.minItems = firstNumber;
+    if (call.name === 'ArrayMaxSize' && firstNumber !== undefined) schema.maxItems = firstNumber;
+    if (call.name === 'ArrayNotEmpty') schema.minItems = Math.max(schema.minItems ?? 0, 1);
+    if (call.name === 'ArrayUnique') schema.uniqueItems = true;
+    if (call.name === 'Length') {
+      const secondNumber = staticNumber(call.args[1], sourceFile);
+      if (firstNumber !== undefined) schema.minLength = firstNumber;
+      if (secondNumber !== undefined) schema.maxLength = secondNumber;
+    }
+    if (call.name === 'IsEmail') schema.format = 'email';
+    if (call.name === 'IsISO8601' || call.name === 'IsDateString') {
+      schema['x-class-validator-format'] = 'ISO8601';
+    }
+    if (call.name === 'IsIn') {
+      const values = staticStringArray(call.args[0]);
+      if (values !== undefined) schema.enum = values;
+    }
+    if (call.name === 'IsEnum') {
+      const values = staticStringArray(call.args[0]);
+      if (values !== undefined) {
+        schema.enum = values;
+      } else if (call.args[0] !== undefined) {
+        schema['x-class-validator-enum'] = call.args[0].getText(sourceFile);
+      }
+    }
+    if (call.name === 'Matches' && call.args[0] !== undefined) {
+      const argumentText = call.args[0].getText(sourceFile);
+      const regex = argumentText.match(/^\/(.*)\/[a-z]*$/u);
+      if (regex?.[1] !== undefined) {
+        schema.pattern = regex[1];
+      } else {
+        schema['x-class-validator-pattern'] = argumentText;
+      }
+    }
+  }
+  schema['x-class-validator'] = calls
+    .filter(({ name }) => validationDecorators.has(name) && name !== 'Type')
+    .map(({ name }) => name)
+    .sort();
+  return schema;
+};
+
+/** 从 DTO 类生成字段级 JSON Schema，并保留继承关系。 */
+const collectDtoSchemas = async () => {
+  const definitions = new Map();
+  for (const filePath of await findProductionTypeScriptFiles(sourceRoot)) {
+    const sourceText = await readFile(filePath, 'utf8');
+    const sourceFile = ts.createSourceFile(
+      filePath,
+      sourceText,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    for (const statement of sourceFile.statements) {
+      if (!ts.isClassDeclaration(statement) || statement.name === undefined) {
+        continue;
+      }
+      const properties = statement.members.filter(ts.isPropertyDeclaration);
+      const hasValidationDecorator = properties.some((property) =>
+        decoratorsOf(property)
+          .map((decorator) => decoratorCall(decorator, sourceFile).name)
+          .some((name) => validationDecorators.has(name)),
+      );
+      if (!statement.name.text.endsWith('Dto') && !hasValidationDecorator) {
+        continue;
+      }
+      if (definitions.has(statement.name.text)) {
+        throw new Error(`DTO Schema 名称重复：${statement.name.text}`);
+      }
+      const baseName = statement.heritageClauses
+        ?.find(({ token }) => token === ts.SyntaxKind.ExtendsKeyword)
+        ?.types[0]?.expression.getText(sourceFile);
+      definitions.set(statement.name.text, {
+        name: statement.name.text,
+        baseName,
+        properties,
+        sourceFile,
+        filePath,
+      });
+    }
+  }
+  const knownSchemaNames = new Set(definitions.keys());
+  const schemas = {};
+  for (const definition of [...definitions.values()].sort((left, right) =>
+    left.name.localeCompare(right.name),
+  )) {
+    const properties = {};
+    const required = [];
+    for (const property of definition.properties) {
+      if (!ts.isIdentifier(property.name) && !ts.isStringLiteral(property.name)) {
+        throw new Error(`${definition.name} 含动态 DTO 字段名`);
+      }
+      const name = property.name.text;
+      const calls = decoratorsOf(property).map((decorator) =>
+        decoratorCall(decorator, definition.sourceFile),
+      );
+      properties[name] = dtoPropertySchema(property, definition.sourceFile, knownSchemaNames);
+      const optional =
+        property.questionToken !== undefined ||
+        property.type?.getText(definition.sourceFile).includes('undefined') ||
+        calls.some((call) => call.name === 'IsOptional');
+      if (!optional || calls.some((call) => call.name === 'IsDefined')) {
+        required.push(name);
+      }
+    }
+    const ownSchema = {
+      type: 'object',
+      additionalProperties: false,
+      properties,
+      ...(required.length === 0 ? {} : { required: required.sort() }),
+      'x-source': normalizedPath(relative(repoRoot, definition.filePath)),
+      'x-runtime-validation': 'class-validator + ValidationPipe',
+    };
+    schemas[definition.name] =
+      definition.baseName !== undefined && knownSchemaNames.has(definition.baseName)
+        ? {
+            allOf: [
+              { $ref: `#/components/schemas/${definition.baseName}` },
+              ownSchema,
+            ],
+          }
+        : ownSchema;
+  }
+  return schemas;
 };
 
 /** 解开 Promise 返回类型并去掉多余空白。 */
@@ -181,7 +456,7 @@ const securityMetadata = (decorators, sourceFile) => {
 };
 
 /** 把 Controller 方法参数转换为 OpenAPI 参数、请求体和运行时类型扩展。 */
-const requestContractOf = (method, sourceFile) => {
+const requestContractOf = (method, sourceFile, knownSchemaNames) => {
   const parameters = [];
   let requestBody;
   const runtimeParameters = [];
@@ -211,7 +486,10 @@ const requestContractOf = (method, sourceFile) => {
           required: !optional,
           content: {
             'application/json': {
-              schema: schemaForType(typeText, { required: !optional }),
+              schema: schemaForType(typeText, {
+                required: !optional,
+                knownSchemaNames,
+              }),
             },
           },
         };
@@ -220,7 +498,7 @@ const requestContractOf = (method, sourceFile) => {
           name: declaredName,
           in: 'path',
           required: true,
-          schema: schemaForType(typeText),
+          schema: schemaForType(typeText, { knownSchemaNames }),
         });
       } else if (call.name === 'Query') {
         parameters.push(
@@ -229,7 +507,7 @@ const requestContractOf = (method, sourceFile) => {
                 name: declaredName,
                 in: 'query',
                 required: !optional,
-                schema: schemaForType(typeText),
+                schema: schemaForType(typeText, { knownSchemaNames }),
               }
             : {
                 name: parameterName,
@@ -237,7 +515,7 @@ const requestContractOf = (method, sourceFile) => {
                 required: false,
                 style: 'deepObject',
                 explode: true,
-                schema: schemaForType(typeText),
+                schema: schemaForType(typeText, { knownSchemaNames }),
                 'x-object-query': true,
               },
         );
@@ -246,7 +524,7 @@ const requestContractOf = (method, sourceFile) => {
           name: declaredName,
           in: 'header',
           required: !optional,
-          schema: schemaForType(typeText),
+          schema: schemaForType(typeText, { knownSchemaNames }),
         });
       }
     }
@@ -287,6 +565,7 @@ const buildOperation = ({
   nestMethod,
   path,
   classSecurity,
+  knownSchemaNames,
 }) => {
   const methodDecorators = decoratorsOf(method);
   const methodSecurity = securityMetadata(methodDecorators, sourceFile);
@@ -296,7 +575,11 @@ const buildOperation = ({
   if (isPublic && scopes.length > 0) {
     throw new Error(`${relative(repoRoot, filePath)}:${methodName} 同时声明 PublicRoute 和 Scope`);
   }
-  const { parameters, requestBody, runtimeParameters } = requestContractOf(method, sourceFile);
+  const { parameters, requestBody, runtimeParameters } = requestContractOf(
+    method,
+    sourceFile,
+    knownSchemaNames,
+  );
   const pathVariables = [...path.matchAll(/\{([^}]+)\}/gu)].map((match) => match[1]);
   const declaredPathVariables = parameters
     .filter((parameter) => parameter.in === 'path')
@@ -323,7 +606,7 @@ const buildOperation = ({
           description: '请求成功。',
           content: {
             'application/json': {
-              schema: schemaForType(responseType),
+              schema: schemaForType(responseType, { knownSchemaNames }),
             },
           },
         };
@@ -357,7 +640,7 @@ const buildOperation = ({
 };
 
 /** 扫描 Controller AST 并生成按路径和方法排序的操作集合。 */
-const collectOperations = async (files) => {
+const collectOperations = async (files, knownSchemaNames) => {
   const operations = [];
   for (const filePath of files) {
     const sourceText = await readFile(filePath, 'utf8');
@@ -417,6 +700,7 @@ const collectOperations = async (files) => {
               nestMethod: route.name,
               path,
               classSecurity,
+              knownSchemaNames,
             }),
           });
         }
@@ -436,7 +720,9 @@ const validateDocument = (document) => {
     errors.push('openapi 必须为 3.1.0');
   }
   const operationIds = new Set();
+  const schemas = document.components?.schemas ?? {};
   let operationCount = 0;
+  let dtoRequestRefCount = 0;
   for (const [path, pathItem] of Object.entries(document.paths ?? {})) {
     if (!path.startsWith('/')) {
       errors.push(`路径必须以 / 开头：${path}`);
@@ -456,12 +742,31 @@ const validateDocument = (document) => {
       if (Object.keys(operation.responses ?? {}).length === 0) {
         errors.push(`${method.toUpperCase()} ${path} 缺少响应定义`);
       }
+      const requestSchema = operation.requestBody?.content?.['application/json']?.schema;
+      if (typeof requestSchema?.$ref === 'string') {
+        const schemaName = requestSchema.$ref.replace('#/components/schemas/', '');
+        dtoRequestRefCount += 1;
+        if (schemas[schemaName] === undefined) {
+          errors.push(`${method.toUpperCase()} ${path} 引用不存在的 DTO Schema ${schemaName}`);
+        }
+      } else if (
+        typeof requestSchema?.['x-typescript-type'] === 'string' &&
+        requestSchema['x-typescript-type'].endsWith('Dto')
+      ) {
+        errors.push(`${method.toUpperCase()} ${path} 的 DTO 请求体未绑定组件 Schema`);
+      }
     }
   }
   if (operationCount !== document['x-operation-count']) {
     errors.push(
       `x-operation-count 不一致：声明 ${document['x-operation-count']}，实际 ${operationCount}`,
     );
+  }
+  if (Object.keys(schemas).length - 1 !== document['x-dto-schema-count']) {
+    errors.push('x-dto-schema-count 与 components.schemas 不一致');
+  }
+  if (dtoRequestRefCount !== document['x-dto-request-ref-count']) {
+    errors.push('x-dto-request-ref-count 与请求体引用数量不一致');
   }
   if (errors.length > 0) {
     throw new Error(`OpenAPI 校验失败：\n- ${errors.join('\n- ')}`);
@@ -471,7 +776,8 @@ const validateDocument = (document) => {
 /** 组装最终 OpenAPI 3.1 文档。 */
 const buildDocument = async () => {
   const controllerFiles = await findControllerFiles(sourceRoot);
-  const operations = await collectOperations(controllerFiles);
+  const dtoSchemas = await collectDtoSchemas();
+  const operations = await collectOperations(controllerFiles, new Set(Object.keys(dtoSchemas)));
   const paths = {};
   const scopes = new Set();
   for (const { path, httpMethod, operation } of operations) {
@@ -538,6 +844,7 @@ const buildDocument = async () => {
             traceId: { type: 'string' },
           },
         },
+        ...dtoSchemas,
       },
       responses: {
         Problem: {
@@ -559,8 +866,13 @@ const buildDocument = async () => {
         operation['x-nest-method'] !== 'ALL' || operation.operationId.endsWith('.get'),
     ).length,
     'x-operation-count': operations.length,
+    'x-dto-schema-count': Object.keys(dtoSchemas).length,
+    'x-dto-request-ref-count': operations.filter(
+      ({ operation }) =>
+        typeof operation.requestBody?.content?.['application/json']?.schema?.$ref === 'string',
+    ).length,
     'x-contract-limitations': [
-      '对象字段级约束未在当前生成器中展开；消费者必须读取 x-typescript-type，并以 DTO、ValidationPipe 和契约测试为最终字段约束。',
+      '103 个 class-validator DTO 已展开字段级 Schema；unknown 或控制器内联解析请求继续以 x-typescript-type 和运行时解析器为准。',
       '@All 路由展开为 OpenAPI 支持的七种 HTTP 方法，x-nest-method 保留原始 ALL 语义。',
       '生产域名和 OAuth 客户端注册属于环境配置，不写入仓库。',
     ],
@@ -573,6 +885,7 @@ const buildDocument = async () => {
 const runSelfTest = () => {
   const fixture = {
     openapi: '3.1.0',
+    components: { schemas: { Problem: {} } },
     paths: {
       '/api/health': {
         get: {
@@ -584,6 +897,8 @@ const runSelfTest = () => {
       },
     },
     'x-operation-count': 1,
+    'x-dto-schema-count': 0,
+    'x-dto-request-ref-count': 0,
   };
   validateDocument(fixture);
   const failures = [
@@ -627,7 +942,7 @@ if (args.has('--self-test')) {
     await mkdir(dirname(outputPath), { recursive: true });
     await writeFile(outputPath, serialized, 'utf8');
     process.stdout.write(
-      `OpenAPI 已生成：${relative(repoRoot, outputPath)}，${document['x-controller-count']} 个 Controller，${document['x-route-declaration-count']} 个路由声明，${document['x-operation-count']} 个操作。\n`,
+      `OpenAPI 已生成：${relative(repoRoot, outputPath)}，${document['x-controller-count']} 个 Controller，${document['x-route-declaration-count']} 个路由声明，${document['x-operation-count']} 个操作，${document['x-dto-schema-count']} 个 DTO Schema。\n`,
     );
   } else {
     const existing = await readFile(outputPath, 'utf8').catch(() => '');
@@ -637,7 +952,7 @@ if (args.has('--self-test')) {
       );
     }
     process.stdout.write(
-      `OpenAPI 契约校验通过：${document['x-route-declaration-count']} 个路由声明，${document['x-operation-count']} 个操作。\n`,
+      `OpenAPI 契约校验通过：${document['x-route-declaration-count']} 个路由声明，${document['x-operation-count']} 个操作，${document['x-dto-schema-count']} 个 DTO Schema。\n`,
     );
   }
 }

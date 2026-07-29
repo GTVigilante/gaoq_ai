@@ -41,6 +41,9 @@ pnpm contracts:openapi:validate
 | 公开 Operation | 27 | 必须显式 `PublicRoute` |
 | Scope 保护 Operation | 203 | 每项写入精确 scope |
 | 已认证无 Scope Operation | 1 | 当前会话撤销，仅要求已认证主体 |
+| class-validator DTO Schema | 103 | 字段、必填、类型、长度、范围、枚举、数组与继承 |
+| 绑定 DTO Schema 的 Body | 85 / 116 | 使用组件 `$ref`，漂移时失败 |
+| 内联或运行时解析 Body | 31 / 116 | 3 个内联类型、28 个 `unknown` 严格解析入口 |
 
 生成器拒绝动态路由字符串、动态 Scope、重复 Method + Path、重复
 `operationId`、路径占位符与 `@Param` 不一致、公开路由同时声明 Scope、缺少
@@ -48,13 +51,19 @@ pnpm contracts:openapi:validate
 
 ## 4. 字段约束边界
 
-当前生成器对 `string/number/boolean/Date/array/string literal union` 生成标准
-Schema；复杂 DTO 和响应对象保留 `x-typescript-type`、运行时参数清单和
-`ValidationPipe` 标记。字段级白名单、嵌套校验、长度、枚举和业务不变量仍以
-DTO、全局 `ValidationPipe`、应用服务及契约测试为准。
+当前生成器已扫描 103 个 class-validator DTO，生成字段级 JSON Schema
+2020-12：必填/可选、原始类型、nullable union、继承、嵌套 DTO、长度/范围、
+数组大小/唯一性、静态枚举、格式和正则来源均进入组件；85 个请求体通过 `$ref`
+绑定 DTO。生成器会拒绝名称重复、动态字段名、悬空 DTO 引用和 DTO 请求体未绑定。
 
-因此，本基线可以作为路由、鉴权和载荷类型的机器发现入口，但在字段级 Schema
-完全展开前，禁止宣称它单独足以生成生产写客户端。外部写集成仍必须同时评审：
+另外 31 个请求体中，3 个使用 Controller 内联 TypeScript 类型，28 个以
+`unknown` 接收后交由端点专用严格运行时解析器校验。这些入口保留
+`x-typescript-type` 与 `x-runtime-parameters`，但当前无法从 Controller 参数
+无损生成字段 Schema。响应对象也可能由 TypeScript 推断而非显式 DTO。
+
+因此，本基线可以生成已绑定 DTO 的客户端骨架，但在剩余运行时解析入口与响应
+Schema 显式化前，禁止宣称它单独足以生成全部生产写客户端。外部写集成仍必须
+同时评审：
 
 1. 对应 DTO 和供应商字段映射；
 2. 幂等键、`If-Match`、签名与回执规则；
