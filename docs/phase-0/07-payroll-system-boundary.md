@@ -69,6 +69,10 @@
   输入解释、审批、强认证、生产授权、Mongo、加密、WORM、银行/税务网关或
   Inbox 前失败关闭。调用方经过 Controller、Worker 或上层应用服务不构成绕过
   边界的理由。
+- 管理驾驶舱的 REST、MCP 与异步导出统一经过
+  `LegacyPayrollDashboardSource`。默认 `external` 模式在构造 Mongo 查询前
+  返回禁用结果，薪资聚合、新鲜度与来源声明均为空；只有显式 `legacy` 兼容模式
+  才可读取最小工资期投影，防止分析 Worker 成为旧工资事实源旁路。
 - ERP 门户只进行统一登录和受控跳转；工资明细不复制到 ERP。
 - 本人工资条由专业算薪系统自己的 OAuth Resource 和标准 MCP 提供；访问令牌中的
   `employee_id` 必须由服务端身份映射产生。ERP 不使用服务令牌加请求体

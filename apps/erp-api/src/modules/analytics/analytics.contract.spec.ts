@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ANALYTICS_DASHBOARD_SOURCES,
+  ANALYTICS_EXTERNAL_DASHBOARD_SOURCES,
   analyticsExportArtifactSchema,
   analyticsExportViewSchema,
   managementDashboardSchema,
@@ -42,6 +43,28 @@ describe('管理分析共享契约', () => {
     expect(() => managementDashboardSchema.parse({
       ...dashboard(), displayName: '越权字段',
     })).toThrow();
+  });
+
+  it('external 工资事实源只允许省略旧 payroll_periods 的固定来源序列', () => {
+    const external = {
+      ...dashboard(),
+      freshness: {
+        transactional: 'live',
+        operatingSummaryDate: '2026-07-21',
+        payrollPeriod: null,
+      },
+      sources: [...ANALYTICS_EXTERNAL_DASHBOARD_SOURCES],
+    };
+    expect(managementDashboardSchema.parse(external).sources)
+      .toEqual(ANALYTICS_EXTERNAL_DASHBOARD_SOURCES);
+    expect(() => managementDashboardSchema.parse({
+      ...external,
+      sources: ['org_employees', 'op_operating_summaries'],
+    })).toThrow();
+    expect(() => managementDashboardSchema.parse({
+      ...external,
+      payroll: { period: '2026-07', status: 'locked', employeeCount: 1 },
+    })).toThrow('未声明 ERP 旧工资来源时不得返回工资聚合或新鲜度');
   });
 
   it('导出产物固定版本且拒绝嵌套个人字段', () => {

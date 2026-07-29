@@ -4,6 +4,7 @@ import { z } from 'zod';
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 
+/** 显式 legacy 模式允许声明的固定驾驶舱来源。 */
 export const ANALYTICS_DASHBOARD_SOURCES = Object.freeze([
   'org_employees',
   'approval_instances',
@@ -12,6 +13,17 @@ export const ANALYTICS_DASHBOARD_SOURCES = Object.freeze([
   'recruitment_applications',
   'knowledge_training_assignments',
   'payroll_periods',
+  'op_operating_summaries',
+] as const);
+
+/** 默认 external 模式的固定驾驶舱来源，禁止声明 ERP 旧工资集合。 */
+export const ANALYTICS_EXTERNAL_DASHBOARD_SOURCES = Object.freeze([
+  'org_employees',
+  'approval_instances',
+  'approval_actions',
+  'recruitment_positions',
+  'recruitment_applications',
+  'knowledge_training_assignments',
   'op_operating_summaries',
 ] as const);
 
@@ -67,17 +79,45 @@ export const managementDashboardSchema = z.object({
     paidOrderCount: z.number().int().nonnegative().nullable(),
     refundMinor: z.number().int().nonnegative().nullable(),
   }).strict(),
-  sources: z.tuple([
-    z.literal('org_employees'),
-    z.literal('approval_instances'),
-    z.literal('approval_actions'),
-    z.literal('recruitment_positions'),
-    z.literal('recruitment_applications'),
-    z.literal('knowledge_training_assignments'),
-    z.literal('payroll_periods'),
-    z.literal('op_operating_summaries'),
+  sources: z.union([
+    z.tuple([
+      z.literal('org_employees'),
+      z.literal('approval_instances'),
+      z.literal('approval_actions'),
+      z.literal('recruitment_positions'),
+      z.literal('recruitment_applications'),
+      z.literal('knowledge_training_assignments'),
+      z.literal('op_operating_summaries'),
+    ]),
+    z.tuple([
+      z.literal('org_employees'),
+      z.literal('approval_instances'),
+      z.literal('approval_actions'),
+      z.literal('recruitment_positions'),
+      z.literal('recruitment_applications'),
+      z.literal('knowledge_training_assignments'),
+      z.literal('payroll_periods'),
+      z.literal('op_operating_summaries'),
+    ]),
   ]),
-}).strict();
+}).strict().superRefine((value, context) => {
+  const declaresLegacyPayroll = value.sources.some((source) => source === 'payroll_periods');
+  if (
+    !declaresLegacyPayroll
+    && (
+      value.freshness.payrollPeriod !== null
+      || value.payroll.period !== null
+      || value.payroll.status !== null
+      || value.payroll.employeeCount !== null
+    )
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['payroll'],
+      message: '未声明 ERP 旧工资来源时不得返回工资聚合或新鲜度',
+    });
+  }
+});
 
 export type ManagementDashboardView = z.infer<typeof managementDashboardSchema>;
 

@@ -13,8 +13,14 @@ import type { AppEnvironment } from '../../config/environment.js';
 export class LegacyPayrollBoundaryService {
   constructor(private readonly config: ConfigService<AppEnvironment, true>) {}
 
+  /** 仅显式 legacy 兼容模式允许读取 ERP 旧工资与资金事实。 */
+  isLegacyEnabled(): boolean {
+    return this.config.get('PAYROLL_SYSTEM_MODE', { infer: true }) === 'legacy';
+  }
+
+  /** 对任何不允许旧事实源的运行模式稳定返回 410。 */
   assertLegacy(): void {
-    if (this.config.get('PAYROLL_SYSTEM_MODE', { infer: true }) === 'legacy') return;
+    if (this.isLegacyEnabled()) return;
     throw new GoneException({
       code: 'PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM',
       message: '工资能力已迁移至专业算薪系统',

@@ -22,10 +22,6 @@ import {
   type OrgEmployeeDocument,
 } from '../../org/persistence/org.schemas.js';
 import {
-  PayrollPeriodRecord,
-  type PayrollPeriodDocument,
-} from '../../payroll/persistence/payroll.schemas.js';
-import {
   CandidateApplicationRecord,
   type CandidateApplicationDocument,
   RecruitmentPositionRecord,
@@ -33,9 +29,11 @@ import {
 } from '../../recruitment/persistence/recruitment.schemas.js';
 import {
   ANALYTICS_DASHBOARD_SOURCES,
+  ANALYTICS_EXTERNAL_DASHBOARD_SOURCES,
   managementDashboardSchema,
   type ManagementDashboardView,
 } from '../analytics.contract.js';
+import { LegacyPayrollDashboardSource } from '../integration/legacy-payroll-dashboard.source.js';
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -54,7 +52,7 @@ export class ManagementDashboardService {
     private readonly applications: Model<CandidateApplicationDocument>,
     @InjectModel(KnowledgeTrainingAssignmentRecord.name)
     private readonly assignments: Model<KnowledgeTrainingAssignmentDocument>,
-    @InjectModel(PayrollPeriodRecord.name) private readonly payrollPeriods: Model<PayrollPeriodDocument>,
+    private readonly legacyPayroll: LegacyPayrollDashboardSource,
     @InjectModel(OpOperatingSummaryRecord.name)
     private readonly operatingSummaries: Model<OpOperatingSummaryDocument>,
   ) {}
@@ -78,7 +76,7 @@ export class ManagementDashboardService {
     };
     const [active, probation, suspended, running, overdue, completed, approved,
       openPositions, activeApplications, hired, mandatory, completedMandatory, expiredMandatory,
-      payroll, operating] = await Promise.all([
+      payrollResult, operating] = await Promise.all([
       this.employees.countDocuments({ tenantId, status: 'active' }),
       this.employees.countDocuments({ tenantId, status: 'probation' }),
       this.employees.countDocuments({ tenantId, status: 'suspended' }),
@@ -108,10 +106,7 @@ export class ManagementDashboardService {
       this.assignments.countDocuments({ tenantId, mandatory: true }),
       this.assignments.countDocuments({ tenantId, mandatory: true, status: 'completed' }),
       this.assignments.countDocuments({ tenantId, mandatory: true, status: 'expired' }),
-      this.payrollPeriods.findOne(
-        { tenantId, period: { $lte: asOf.slice(0, 7) } },
-        { period: 1, status: 1, employeeCount: 1, _id: 0 },
-      ).sort({ period: -1 }).lean().exec(),
+      this.legacyPayroll.getLatest(tenantId, asOf.slice(0, 7)),
       this.operatingSummaries.findOne(
         { tenantId, summaryDate: { $lte: asOf } },
         {
@@ -121,6 +116,7 @@ export class ManagementDashboardService {
       ).sort({ summaryDate: -1, revision: -1 }).lean().exec(),
     ]);
     const position = openPositions[0];
+    const payroll = payrollResult.snapshot;
     const parsed = managementDashboardSchema.safeParse({
       asOf, window: Object.freeze({
         from: formatDate(range.from), to: asOf, timezone: 'Asia/Shanghai' as const,
@@ -158,7 +154,11 @@ export class ManagementDashboardService {
         paidOrderCount: operating?.paidOrderCount ?? null,
         refundMinor: operating?.refundMinor ?? null,
       }),
-      sources: [...ANALYTICS_DASHBOARD_SOURCES],
+      sources: [
+        ...(payrollResult.enabled
+          ? ANALYTICS_DASHBOARD_SOURCES
+          : ANALYTICS_EXTERNAL_DASHBOARD_SOURCES),
+      ],
     });
     if (!parsed.success) throw new Error('ANALYTICS_SOURCE_INVALID');
     return freezeDashboard(parsed.data);

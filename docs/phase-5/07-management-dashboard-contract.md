@@ -2,7 +2,7 @@
 
 ## 1. 目标与使用场景
 
-首切片服务管理层、HR 与运营负责人每日查看经营和组织健康度，周会复核趋势与异常。驾驶舱只呈现组织级固定聚合，不提供个人排名、个体绩效推断、候选人明细、工资金额或审批正文。所有指标来自 ERP 权威集合或已验签入库的 OP 日摘要，不使用前端模拟数据。
+首切片服务管理层、HR 与运营负责人每日查看经营和组织健康度，周会复核趋势与异常。驾驶舱只呈现组织级固定聚合，不提供个人排名、个体绩效推断、候选人明细、工资金额或审批正文。所有已启用指标来自当前权威集合或已验签入库的 OP 日摘要，不使用前端模拟数据；专业算薪是工资事实源时，ERP 旧工资聚合必须省略。
 
 当前没有经批准的年度目标与历史基线来源，因此首版不展示目标达成率、红黄绿阈值或因果结论。目标值必须在后续版本由有版本、责任人、生效期和审计记录的目标主数据提供。
 
@@ -22,7 +22,7 @@
 | 招聘 | 30 日入职 | 窗口内阶段为 `hired` 且有结束时间 | `recruitment_applications` |
 | 学习 | 必修/完成/过期 | `mandatory=true`，分别按全部、`completed`、`expired` 计数 | `knowledge_training_assignments` |
 | 学习 | 必修完成率 | 已完成必修 ÷ 全部必修，整数基点；分母为零返回 `null` | `knowledge_training_assignments` |
-| 薪资 | 最新周期状态 | 不晚于口径月的最新周期、状态与覆盖人数，不返回任何金额 | `payroll_periods` |
+| 薪资 | 最新周期状态 | 仅显式 `legacy` 兼容模式读取不晚于口径月的最新周期、状态与覆盖人数，不返回任何金额；默认 `external` 模式固定为空 | `payroll_periods`（仅 legacy） |
 | 经营 | 最新日摘要 | 不晚于口径日的最高修订版 GMV、订单数与退款额 | `op_operating_summaries` |
 
 ## 3. 接口与 AI 对接
@@ -38,15 +38,16 @@
 - MCP 导出：`management_dashboard_export_prepare` 固化口径并生成 R2 确认单；`management_dashboard_export_execute` 只消费经 Passkey 确认的一次性凭据，返回 `erp://analytics/exports/{id}` Resource Link。
 
 REST、MCP 与异步导出复用 `analytics.contract.ts` 中同一组递归严格 Zod
-Schema 和同一应用服务；来源数组的值与顺序固定，包含
-`approval_instances` 与 `approval_actions`。应用服务会再次验证最小 Scope，
+Schema 和同一应用服务；来源数组只允许两组固定顺序，均包含
+`approval_instances` 与 `approval_actions`，只有显式 `legacy` 模式包含
+`payroll_periods`。应用服务会再次验证最小 Scope，
 不能依赖 REST 装饰器或 MCP 注册元数据代替业务授权。调用方不得传 tenantId、
 字段名、Mongo 条件、排序或任意聚合表达式；租户只能来自服务端已验证身份。
 
 ## 4. 数据分级、展示与新鲜度
 
 - 输出整体为 L2 内部管理数据；薪资明细、候选人 PII、员工姓名/工号、审批标题/表单/意见属于禁止输出字段。
-- `generatedAt` 是计算时点；`freshness.transactional=live` 表示交易集合实时聚合；`operatingSummaryDate` 与 `payrollPeriod` 明示非实时来源覆盖范围。
+- `generatedAt` 是计算时点；`freshness.transactional=live` 表示交易集合实时聚合；`operatingSummaryDate` 与 `payrollPeriod` 明示非实时来源覆盖范围。默认 `external` 模式必须返回 `payrollPeriod=null` 和全空 `payroll`，且来源清单不得宣称 `payroll_periods`。
 - 空分母比例返回 `null`，前端显示“暂无基数”；缺少 OP 或薪资覆盖时返回 `null`，不得填零。
 - 页面必须具备加载、空值、未授权、异常和重试状态，不展示服务端原始错误。
 
@@ -63,6 +64,8 @@ BullMQ Worker 生成严格的 `management-dashboard-export.v1` 聚合产物及 S
 不能被 BullMQ 保留的旧失败 Job 去重。Worker 使用最小读取 Scope 的
 `system_job` 身份，不模拟发起用户；五分钟执行租约同时绑定 generation、JobId
 和随机 token，同一任务恢复或陈旧租约接管后，旧 Worker 无权写入终态。
+Worker 与 REST/MCP 复用 `LegacyPayrollDashboardSource`；默认 `external` 模式
+在构造 Mongo 查询前返回禁用结果，因此异步导出不能旁路读取 ERP 旧工资期。
 
 ready/failed 终态先以完整 fencing 条件提交，再执行最佳努力系统审计；提交后的
 审计故障只记录稳定告警，不得把已成功产物反向写成失败。持久化和资源读取都会
@@ -78,7 +81,7 @@ ready/failed 终态先以完整 fencing 条件提交，再执行最佳努力系�
 - 固定查询使用租户前缀索引；新增索引按 [管理分析索引迁移运行手册](./08-analytics-index-migration-runbook.md) 追加上线并核对 explain。
 - 验收包括：跨租户隔离、非法日期、零分母、缺数据、新鲜度、字段泄漏、官方 MCP Client 发现/调用、375px/768px/桌面可用性、键盘与读屏、性能预算和审计证据。
 - 独立门禁 `pnpm quality:analytics-management-coverage` 覆盖共享契约、看板应用
-  服务、导出服务、Worker 入口、REST 入口、持久化组合约束和 v2 索引清单；当前
-  52 项测试达到 99.59%/98.23%/100%/99.56%（语句/分支/函数/行），七个目标
-  生产文件逐文件四维均不低于 90%。
+  服务、旧工资事实源适配器、导出服务、Worker 入口、REST 入口、持久化组合约束
+  和 v2 索引清单；当前 57 项测试达到 99.61%/98.36%/100%/99.58%
+  （语句/分支/函数/行），八个目标生产文件逐文件四维均不低于 90%。
 - OP 沙箱数据覆盖、生产规模压测与管理层指标签字完成前，本切片保持“内部预验收”，不得宣称生产验收完成。

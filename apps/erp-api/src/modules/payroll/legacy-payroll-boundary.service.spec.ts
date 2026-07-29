@@ -21,6 +21,7 @@ describe('LegacyPayrollBoundaryService', () => {
     '%s 模式统一关闭旧工资与资金应用服务',
     (mode) => {
       const store = assemble(mode);
+      expect(store.service.isLegacyEnabled()).toBe(false);
       let failure: unknown;
       try {
         store.service.assertLegacy();
@@ -39,7 +40,8 @@ describe('LegacyPayrollBoundaryService', () => {
 
   it('只有显式 legacy 模式允许旧事实源执行', () => {
     const store = assemble('legacy');
+    expect(store.service.isLegacyEnabled()).toBe(true);
     expect(store.service.assertLegacy()).toBeUndefined();
-    expect(store.get.mock.calls).toHaveLength(1);
+    expect(store.get.mock.calls).toHaveLength(2);
   });
 });

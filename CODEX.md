@@ -48,6 +48,11 @@
   人工签署。
 - 2026-07-27 已冻结独立专业算薪边界：ERP 负责统一身份与组织主数据，专业算薪
   负责工资唯一事实源；`PAYROLL_SYSTEM_MODE=external` 关闭 ERP 旧工资/资金 REST。
+- 2026-07-29 已关闭 Issue #30 的管理分析 Worker 旁路：驾驶舱 REST、标准 MCP
+  和 R2 异步导出统一通过 `LegacyPayrollDashboardSource`；默认 `external`
+  模式在构造 Mongo 查询前停止，返回空薪资聚合/新鲜度并从来源声明移除
+  `payroll_periods`，只有显式 `legacy` 兼容模式可读取旧工资期最小投影。该仓库
+  边界不替代专业算薪 OAuth/MCP、共享事件、两个影子周期与财务 UAT。
 - 2026-07-29 已把上述边界下沉到 REST 与标准 MCP 共用的本人薪资单应用服务：
   `external` 模式在身份画像、Mongo 与 L4 解密前稳定失败关闭，MCP 返回
   `PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM` 并记录 R1 拒绝审计；兼容模式再次

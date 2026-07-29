@@ -9,12 +9,15 @@ import type {
 import type { KnowledgeTrainingAssignmentDocument } from '../../knowledge/persistence/knowledge.schemas.js';
 import type { OpOperatingSummaryDocument } from '../../op/persistence/op.schemas.js';
 import type { OrgEmployeeDocument } from '../../org/persistence/org.schemas.js';
-import type { PayrollPeriodDocument } from '../../payroll/persistence/payroll.schemas.js';
 import type {
   CandidateApplicationDocument,
   RecruitmentPositionDocument,
 } from '../../recruitment/persistence/recruitment.schemas.js';
-import { ANALYTICS_DASHBOARD_SOURCES } from '../analytics.contract.js';
+import {
+  ANALYTICS_DASHBOARD_SOURCES,
+  ANALYTICS_EXTERNAL_DASHBOARD_SOURCES,
+} from '../analytics.contract.js';
+import type { LegacyPayrollDashboardSource } from '../integration/legacy-payroll-dashboard.source.js';
 import { ManagementDashboardService } from './management-dashboard.service.js';
 
 function latest(value: unknown) {
@@ -29,6 +32,7 @@ function fixture(input?: {
   readonly employeeCounts?: readonly number[];
   readonly actionCounts?: readonly number[];
   readonly assignmentCounts?: readonly number[];
+  readonly legacyPayrollEnabled?: boolean;
 }) {
   const context = new TenantContextService();
   const employees = {
@@ -57,11 +61,14 @@ function fixture(input?: {
       .mockResolvedValueOnce(input?.assignmentCounts?.[1] ?? 85)
       .mockResolvedValueOnce(input?.assignmentCounts?.[2] ?? 2),
   };
-  const payroll = { findOne: vi.fn().mockReturnValue(latest(
-    input !== undefined && 'payroll' in input
-      ? input.payroll
-      : { period: '2026-07', status: 'review', employeeCount: 295 },
-  )) };
+  const payroll = {
+    getLatest: vi.fn().mockResolvedValue({
+      enabled: input?.legacyPayrollEnabled ?? true,
+      snapshot: input !== undefined && 'payroll' in input
+        ? input.payroll
+        : { period: '2026-07', status: 'review', employeeCount: 295 },
+    }),
+  };
   const operating = { findOne: vi.fn().mockReturnValue(latest(
     input !== undefined && 'operating' in input
       ? input.operating
@@ -78,7 +85,7 @@ function fixture(input?: {
     positions as unknown as Model<RecruitmentPositionDocument>,
     applications as unknown as Model<CandidateApplicationDocument>,
     assignments as unknown as Model<KnowledgeTrainingAssignmentDocument>,
-    payroll as unknown as Model<PayrollPeriodDocument>,
+    payroll as unknown as LegacyPayrollDashboardSource,
     operating as unknown as Model<OpOperatingSummaryDocument>,
   );
   const run = <T>(action: () => T): T => context.run({
@@ -170,6 +177,19 @@ describe('ManagementDashboardService', () => {
       summaryDate: null, revision: null, currency: null,
       gmvMinor: null, paidOrderCount: null, refundMinor: null,
     });
+  });
+
+  it('external 模式不声明或返回 ERP 旧工资事实', async () => {
+    const store = fixture({
+      legacyPayrollEnabled: false,
+      payroll: null,
+    });
+    const result = await store.run(() => store.service.get('2026-07-22'));
+    expect(store.payroll.getLatest).toHaveBeenCalledWith('tenant-001', '2026-07');
+    expect(result.freshness.payrollPeriod).toBeNull();
+    expect(result.payroll).toEqual({ period: null, status: null, employeeCount: null });
+    expect(result.sources).toEqual(ANALYTICS_EXTERNAL_DASHBOARD_SOURCES);
+    expect(result.sources).not.toContain('payroll_periods');
   });
 
   it('应用服务拒绝缺少读取范围的调用，即使绕过 REST 装饰器也失败关闭', async () => {

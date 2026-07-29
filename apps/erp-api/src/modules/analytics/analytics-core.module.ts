@@ -13,6 +13,7 @@ import {
 import { KnowledgeTrainingAssignmentRecord, KnowledgeTrainingAssignmentRecordSchema } from '../knowledge/persistence/knowledge.schemas.js';
 import { OpOperatingSummaryRecord, OpOperatingSummaryRecordSchema } from '../op/persistence/op.schemas.js';
 import { OrgEmployeeRecord, OrgEmployeeRecordSchema } from '../org/persistence/org.schemas.js';
+import { LegacyPayrollBoundaryService } from '../payroll/legacy-payroll-boundary.service.js';
 import { PayrollPeriodRecord, PayrollPeriodRecordSchema } from '../payroll/persistence/payroll.schemas.js';
 import {
   CandidateApplicationRecord, CandidateApplicationRecordSchema,
@@ -21,6 +22,7 @@ import {
 import { ANALYTICS_EXPORT_QUEUE } from './analytics-export.queue.js';
 import { AnalyticsExportService } from './application/analytics-export.service.js';
 import { ManagementDashboardService } from './application/management-dashboard.service.js';
+import { LegacyPayrollDashboardSource } from './integration/legacy-payroll-dashboard.source.js';
 import {
   AnalyticsManagementExportRecord,
   AnalyticsManagementExportRecordSchema,
@@ -42,7 +44,12 @@ import {
       { name: AnalyticsManagementExportRecord.name, schema: AnalyticsManagementExportRecordSchema },
     ]),
   ],
-  providers: [ManagementDashboardService, AnalyticsExportService],
+  providers: [
+    LegacyPayrollBoundaryService,
+    LegacyPayrollDashboardSource,
+    ManagementDashboardService,
+    AnalyticsExportService,
+  ],
   exports: [ManagementDashboardService, AnalyticsExportService],
 })
 export class AnalyticsCoreModule {}
