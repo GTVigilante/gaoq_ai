@@ -283,11 +283,14 @@ downloadSignedFile / verifySignedFile`；入站验签由独立 Webhook 边界完
 ### 5.4 Offer 审批、发送与证据契约
 
 - 管理端端点固定为 `POST /recruitment/applications/:applicationId/offers`、`GET /recruitment/offers/:id`、`POST /recruitment/offers/:id/submit`、`POST /recruitment/offers/:id/sync-approval` 和 `POST /recruitment/offers/:id/send`。所有写接口强制 `Idempotency-Key` 与强 `If-Match`；发送返回 202 和 `sending`，不接收客户端提交的投递证据。
+- 资源标识必须为规范 ULID，`If-Match` 只接受安全正整数强 ETag，幂等键只接受 8–128 位可见白名单字符。`submit`、`sync-approval` 与 `send` 只允许缺失正文或严格空普通对象；数组、`null`、自定义原型和任意未知字段均失败关闭，禁止静默忽略正文。
 - Approval 必须预先发布唯一编码 `recruitment_offer` 的 R2 模板。字段固定为 `offer_id`、`application_id`、`department_id`、`currency`、`monthly_base_salary_minor`、`salary_months`、`annual_variable_target_minor`、`signing_bonus_minor`、`proposed_start_date`、`probation_months`、`employment_type`、`work_location`、`benefits_summary`。薪酬、地点和福利字段按 L4 配置；审批实例正文加密，Recruitment 只从专用状态接口读取终态摘要。
 - 当前财务值对象只启用 ISO 4217 `CNY`；金额字段均为非负安全整数分，月基本工资必须大于零。扩展其他币种前必须同时补充最小货币单位、舍入、汇率权威源和财务对账规则，不能只放宽三字母正则。
+- 条款必须为精确普通对象并只包含固定字段；拟入职日必须是真实 `YYYY-MM-DD` 日历日期，失效与保留时间必须为规范毫秒级 UTC。DTO 与领域模型均执行同一边界，领域版本不得溢出安全整数，事实时间不得早于聚合现有时间。
 - Offer 条款使用 Recruitment L4 密钥域 AES-256-GCM 整体加密，AAD 绑定租户、`offer_terms` 和 Offer ID。数据库、列表、REST 响应、审计、Outbox、日志及 MCP 均不得保存或返回条款原文。
 - 创建 Offer 必须以申请强版本引用该申请已完成面试；提交审批在同一 Recruitment 事务内将申请推进到 `offer_approval`。审批拒绝将申请推进到 `rejected`；可信投递证据将申请推进到 `offer_sent`；候选人接受/拒绝分别推进到 `offer_accepted`/`withdrawn`。
 - 审批创建、审批提交和 Offer 绑定由客户端根幂等键派生三个不同幂等键；通用幂等层只保存请求 SHA-256 与脱敏响应，不保存 L4 请求正文。投递、候选人决定和 eSign 完成仅通过应用服务的专用内部 Scope 调用，不注册普通管理端 REST。
+- 写操作业务失败时记录不含 L4 正文的 R2 失败审计，失败审计自身异常不得覆盖原始业务异常；事务提交后的成功审计异常只形成稳定低敏告警，不改变响应状态、ETag 或业务终态。
 - 投递与候选人决定写入 `recruitment_offer_evidence` 不可变账本。调用方只能提交 SHA-256 base64url 回执摘要、外部事实时间及必要内部引用；证据 ID 由 Recruitment 生成，客户端不得自报。每个 Offer 最多一条投递证据和一条候选人决定证据，摘要在租户内不可复用；候选人决定还必须匹配 Offer 的 `candidateId` 并引用门户认证证据。
 
 ### 5.5 Recruitment MCP 首批能力

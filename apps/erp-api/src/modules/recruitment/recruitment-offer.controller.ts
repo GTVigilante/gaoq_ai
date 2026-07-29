@@ -5,6 +5,7 @@ import {
   Get,
   Headers,
   HttpCode,
+  Logger,
   Param,
   Post,
   Res,
@@ -21,10 +22,13 @@ import {
 
 const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 const IF_MATCH_PATTERN = /^"([1-9][0-9]*)"$/;
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
 
 /** Offer REST 边界；L4 条款只进加密应用服务，不出现在响应、审计或事件。 */
 @Controller('recruitment')
 export class RecruitmentOfferController {
+  private readonly logger = new Logger(RecruitmentOfferController.name);
+
   constructor(
     private readonly offers: RecruitmentOfferService,
     private readonly audit: AuditService,
@@ -39,8 +43,15 @@ export class RecruitmentOfferController {
     @Body() body: CreateRecruitmentOfferDto,
     @Res({ passthrough: true }) response: Response,
   ): Promise<{ readonly offer: RecruitmentOfferSummary }> {
-    const result = await this.offers.create(
-      this.requireUlid(applicationId), this.requireVersion(ifMatch), this.requireKey(key), body,
+    const resourceId = this.requireUlid(applicationId);
+    const expectedVersion = this.requireVersion(ifMatch);
+    const idempotencyKey = this.requireKey(key);
+    const result = await this.executeWrite(
+      'recruitment.offer.create',
+      'recruitment_application',
+      resourceId,
+      expectedVersion,
+      () => this.offers.create(resourceId, expectedVersion, idempotencyKey, body),
     );
     this.setVersion(response, result.offer.version);
     await this.auditSuccess('recruitment.offer.create', result.offer);
@@ -65,10 +76,19 @@ export class RecruitmentOfferController {
     @Param('id') id: string,
     @Headers('if-match') ifMatch: string | undefined,
     @Headers('idempotency-key') key: string | undefined,
+    @Body() body: unknown,
     @Res({ passthrough: true }) response: Response,
   ): Promise<{ readonly offer: RecruitmentOfferSummary }> {
-    const result = await this.offers.submit(
-      this.requireUlid(id), this.requireVersion(ifMatch), this.requireKey(key),
+    const resourceId = this.requireUlid(id);
+    const expectedVersion = this.requireVersion(ifMatch);
+    const idempotencyKey = this.requireKey(key);
+    this.requireEmptyBody(body);
+    const result = await this.executeWrite(
+      'recruitment.offer.submit',
+      'recruitment_offer',
+      resourceId,
+      expectedVersion,
+      () => this.offers.submit(resourceId, expectedVersion, idempotencyKey),
     );
     this.setVersion(response, result.offer.version);
     await this.auditSuccess('recruitment.offer.submit', result.offer);
@@ -82,10 +102,19 @@ export class RecruitmentOfferController {
     @Param('id') id: string,
     @Headers('if-match') ifMatch: string | undefined,
     @Headers('idempotency-key') key: string | undefined,
+    @Body() body: unknown,
     @Res({ passthrough: true }) response: Response,
   ): Promise<{ readonly offer: RecruitmentOfferSummary }> {
-    const result = await this.offers.syncApproval(
-      this.requireUlid(id), this.requireVersion(ifMatch), this.requireKey(key),
+    const resourceId = this.requireUlid(id);
+    const expectedVersion = this.requireVersion(ifMatch);
+    const idempotencyKey = this.requireKey(key);
+    this.requireEmptyBody(body);
+    const result = await this.executeWrite(
+      'recruitment.offer.sync_approval',
+      'recruitment_offer',
+      resourceId,
+      expectedVersion,
+      () => this.offers.syncApproval(resourceId, expectedVersion, idempotencyKey),
     );
     this.setVersion(response, result.offer.version);
     await this.auditSuccess('recruitment.offer.sync_approval', result.offer);
@@ -99,48 +128,120 @@ export class RecruitmentOfferController {
     @Param('id') id: string,
     @Headers('if-match') ifMatch: string | undefined,
     @Headers('idempotency-key') key: string | undefined,
+    @Body() body: unknown,
     @Res({ passthrough: true }) response: Response,
   ): Promise<{ readonly offer: RecruitmentOfferSummary }> {
-    const result = await this.offers.requestSend(
-      this.requireUlid(id), this.requireVersion(ifMatch), this.requireKey(key),
+    const resourceId = this.requireUlid(id);
+    const expectedVersion = this.requireVersion(ifMatch);
+    const idempotencyKey = this.requireKey(key);
+    this.requireEmptyBody(body);
+    const result = await this.executeWrite(
+      'recruitment.offer.request_send',
+      'recruitment_offer',
+      resourceId,
+      expectedVersion,
+      () => this.offers.requestSend(resourceId, expectedVersion, idempotencyKey),
     );
     this.setVersion(response, result.offer.version);
     await this.auditSuccess('recruitment.offer.request_send', result.offer);
     return result;
   }
 
-  private requireKey(value: string | undefined): string {
-    if (value === undefined || value.length === 0) throw new BadRequestException({
+  private requireKey(value: unknown): string {
+    if (typeof value !== 'string' || !IDEMPOTENCY_KEY_PATTERN.test(value)) {
+      throw new BadRequestException({
       code: 'IDEMPOTENCY_KEY_REQUIRED', message: '写接口必须提供 Idempotency-Key',
-    });
+      });
+    }
     return value;
   }
 
-  private requireVersion(value: string | undefined): number {
-    const match = IF_MATCH_PATTERN.exec(value ?? '');
+  private requireVersion(value: unknown): number {
+    const match = typeof value === 'string' ? IF_MATCH_PATTERN.exec(value) : null;
     const version = Number(match?.[1]);
-    if (match?.[1] === undefined || !Number.isSafeInteger(version)) throw new BadRequestException({
-      code: 'RECRUITMENT_IF_MATCH_REQUIRED', message: '写接口必须提供强 If-Match 版本，例如 "3"',
-    });
+    if (
+      match?.[1] === undefined ||
+      !Number.isSafeInteger(version) ||
+      version >= Number.MAX_SAFE_INTEGER
+    ) {
+      throw new BadRequestException({
+        code: 'RECRUITMENT_IF_MATCH_REQUIRED',
+        message: '写接口必须提供强 If-Match 版本，例如 "3"',
+      });
+    }
     return version;
   }
 
-  private requireUlid(value: string): string {
-    if (!ULID_PATTERN.test(value)) throw new BadRequestException({
+  private requireUlid(value: unknown): string {
+    if (typeof value !== 'string' || !ULID_PATTERN.test(value)) throw new BadRequestException({
       code: 'RECRUITMENT_INVALID_ID', message: '招聘资源标识必须为严格 ULID',
     });
     return value;
+  }
+
+  private requireEmptyBody(value: unknown): void {
+    if (value === undefined) return;
+    if (
+      typeof value !== 'object' ||
+      value === null ||
+      Array.isArray(value) ||
+      Object.getPrototypeOf(value) !== Object.prototype ||
+      Object.keys(value).length !== 0
+    ) {
+      throw new BadRequestException({
+        code: 'RECRUITMENT_OFFER_BODY_FORBIDDEN',
+        message: '该 Offer 写接口不接受请求正文',
+      });
+    }
   }
 
   private setVersion(response: Response, version: number): void {
     response.setHeader('ETag', `"${version}"`);
   }
 
+  private async executeWrite<T>(
+    action: string,
+    resourceType: 'recruitment_application' | 'recruitment_offer',
+    resourceId: string,
+    expectedVersion: number,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      try {
+        await this.audit.record({
+          action,
+          resourceType,
+          resourceId,
+          riskLevel: 'R2',
+          outcome: 'failure',
+          metadata: { expectedVersion },
+        });
+      } catch {
+        this.logger.error({
+          code: 'RECRUITMENT_OFFER_FAILURE_AUDIT_FAILED',
+          action,
+          resourceId,
+        });
+      }
+      throw error;
+    }
+  }
+
   private async auditSuccess(action: string, offer: RecruitmentOfferSummary): Promise<void> {
-    await this.audit.record({
-      action, resourceType: 'recruitment_offer', resourceId: offer.id,
-      riskLevel: 'R2', outcome: 'success',
-      metadata: { version: offer.version, status: offer.status },
-    });
+    try {
+      await this.audit.record({
+        action, resourceType: 'recruitment_offer', resourceId: offer.id,
+        riskLevel: 'R2', outcome: 'success',
+        metadata: { version: offer.version, status: offer.status },
+      });
+    } catch {
+      this.logger.error({
+        code: 'RECRUITMENT_OFFER_AUDIT_AFTER_COMMIT_FAILED',
+        action,
+        resourceId: offer.id,
+      });
+    }
   }
 }

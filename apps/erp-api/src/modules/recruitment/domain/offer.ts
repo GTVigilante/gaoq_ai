@@ -60,6 +60,19 @@ export interface RecruitmentOffer {
   readonly updatedAt: string;
 }
 
+const OFFER_TERM_FIELDS = Object.freeze([
+  'annualVariableTargetMinor',
+  'benefitsSummary',
+  'currency',
+  'employmentType',
+  'monthlyBaseSalaryMinor',
+  'probationMonths',
+  'proposedStartDate',
+  'salaryMonths',
+  'signingBonusMinor',
+  'workLocation',
+] as const);
+
 export function createRecruitmentOffer(
   input: {
     readonly id: string;
@@ -156,6 +169,7 @@ export function restoreRecruitmentOfferFromMigration(
   const updatedAt = strictOfferMigrationIso(input.updatedAt);
   const expiresAt = strictOfferMigrationIso(input.expiresAt);
   const retentionExpiresAt = strictOfferMigrationIso(input.retentionExpiresAt);
+  toRecruitmentIso(now);
   if (createdAt > updatedAt || Date.parse(updatedAt) > now.getTime() + 5 * 60 * 1_000 ||
     Date.parse(expiresAt) <= Date.parse(createdAt) ||
     Date.parse(retentionExpiresAt) <= Date.parse(expiresAt) ||
@@ -256,6 +270,13 @@ export function applyRecruitmentOfferApprovalOutcome(
   now: Date,
 ): RecruitmentOffer {
   assertCommand(offer, input.tenantId, input.expectedVersion);
+  assertRecruitmentId(input.approvalInstanceId, 'approvalInstanceId');
+  if (input.outcome !== 'approved' && input.outcome !== 'rejected') {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_OFFER_APPROVAL_OUTCOME_INVALID',
+      'Offer 审批结果必须为 approved 或 rejected',
+    );
+  }
   if (
     offer.status !== 'pending_approval' || !input.approvalVerified ||
     offer.approvalInstanceId !== input.approvalInstanceId
@@ -296,6 +317,7 @@ export function recordRecruitmentOfferSent(
   now: Date,
 ): RecruitmentOffer {
   assertCommand(offer, input.tenantId, input.expectedVersion);
+  assertRecruitmentId(input.sendRequestId, 'sendRequestId');
   assertRecruitmentId(input.sentEvidenceId, 'sentEvidenceId');
   if (
     offer.status !== 'sending' || !input.deliveryVerified ||
@@ -321,6 +343,12 @@ export function recordRecruitmentOfferDecision(
 ): RecruitmentOffer {
   assertCommand(offer, input.tenantId, input.expectedVersion);
   assertRecruitmentId(input.acceptanceEvidenceId, 'acceptanceEvidenceId');
+  if (input.decision !== 'accepted' && input.decision !== 'declined') {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_OFFER_DECISION_INVALID',
+      'Offer 候选人决定必须为 accepted 或 declined',
+    );
+  }
   if (offer.status !== 'sent' || !input.candidateEvidenceVerified) {
     throw new RecruitmentDomainError(
       'RECRUITMENT_OFFER_ACCEPTANCE_EVIDENCE_INVALID',
@@ -375,6 +403,10 @@ export function expireRecruitmentOffer(
 export function validateRecruitmentOfferTerms(
   terms: RecruitmentOfferTerms,
 ): RecruitmentOfferTerms {
+  if (!isExactOfferTerms(terms)) throw new RecruitmentDomainError(
+    'RECRUITMENT_OFFER_TERMS_INVALID',
+    'Offer 条款必须使用严格字段白名单',
+  );
   if (terms.currency !== 'CNY') throw new RecruitmentDomainError(
     'RECRUITMENT_OFFER_CURRENCY_INVALID', '当前 Offer 币种只允许 ISO 4217 CNY',
   );
@@ -401,8 +433,7 @@ export function validateRecruitmentOfferTerms(
   ) throw new RecruitmentDomainError(
     'RECRUITMENT_OFFER_PROBATION_INVALID', '试用期月数必须为 0..12 的整数',
   );
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(terms.proposedStartDate) ||
-    Number.isNaN(Date.parse(`${terms.proposedStartDate}T00:00:00.000Z`))) {
+  if (!isRealBusinessDate(terms.proposedStartDate)) {
     throw new RecruitmentDomainError(
       'RECRUITMENT_OFFER_START_DATE_INVALID', '预计入职日期必须为有效 YYYY-MM-DD',
     );
@@ -410,8 +441,15 @@ export function validateRecruitmentOfferTerms(
   assertRecruitmentCode(terms.employmentType, 'employmentType');
   assertRecruitmentLabel(terms.workLocation, 'workLocation', 256);
   assertRecruitmentLabel(terms.benefitsSummary, 'benefitsSummary', 4_096);
-  return deepFreezeRecruitment({
-    ...terms,
+  return deepFreezeRecruitment<RecruitmentOfferTerms>({
+    currency: terms.currency,
+    monthlyBaseSalaryMinor: terms.monthlyBaseSalaryMinor,
+    salaryMonths: terms.salaryMonths,
+    annualVariableTargetMinor: terms.annualVariableTargetMinor,
+    signingBonusMinor: terms.signingBonusMinor,
+    proposedStartDate: terms.proposedStartDate,
+    probationMonths: terms.probationMonths,
+    employmentType: terms.employmentType,
     workLocation: terms.workLocation.trim(),
     benefitsSummary: terms.benefitsSummary.trim(),
   });
@@ -440,11 +478,20 @@ function advance<T extends Partial<RecruitmentOffer>>(
   now: Date,
   patch: T,
 ): RecruitmentOffer {
+  const updatedAt = toRecruitmentIso(now);
+  if (offer.version >= Number.MAX_SAFE_INTEGER) throw new RecruitmentDomainError(
+    'RECRUITMENT_OFFER_VERSION_EXHAUSTED',
+    'Offer 版本已达到安全整数上限',
+  );
+  if (updatedAt < offer.updatedAt) throw new RecruitmentDomainError(
+    'RECRUITMENT_OFFER_TIMELINE_INVALID',
+    'Offer 更新时间不能早于当前版本',
+  );
   return deepFreezeRecruitment({
     ...offer,
     ...patch,
     version: offer.version + 1,
-    updatedAt: toRecruitmentIso(now),
+    updatedAt,
   });
 }
 
@@ -462,4 +509,29 @@ function strictOfferMigrationIso(value: string): string {
     );
   }
   return value;
+}
+
+function isExactOfferTerms(value: unknown): value is RecruitmentOfferTerms {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    Array.isArray(value) ||
+    Object.getPrototypeOf(value) !== Object.prototype
+  ) return false;
+  const keys = Object.keys(value).sort();
+  return keys.length === OFFER_TERM_FIELDS.length &&
+    keys.every((key, index) => {
+      if (key !== OFFER_TERM_FIELDS[index]) return false;
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      return descriptor !== undefined &&
+        descriptor.enumerable &&
+        Object.hasOwn(descriptor, 'value');
+    }) &&
+    Object.getOwnPropertySymbols(value).length === 0;
+}
+
+function isRealBusinessDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }

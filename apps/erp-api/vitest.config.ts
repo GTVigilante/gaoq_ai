@@ -892,6 +892,24 @@ export default defineConfig({
           lines: 90,
           statements: 90,
         },
+        'src/modules/recruitment/recruitment-offer.controller.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/recruitment/application/recruitment-offer.dto.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/modules/recruitment/domain/offer.ts': {
+          branches: 90,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
         'src/modules/approval/persistence/approval-data-crypto.service.ts': {
           branches: 90,
           functions: 90,
