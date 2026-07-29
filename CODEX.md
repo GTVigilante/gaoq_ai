@@ -599,11 +599,11 @@
   新增 Phase 3 Issue 已归入唯一 Milestone。GitHub Project 仍由 Issue #41 跟踪，
   因当前令牌缺少最小 `project` 权限而保持阻塞；详见
   `docs/implementation-completion-audit.md`。
-- 2026-07-29 ERP API 覆盖率已修正为显式纳入 `src/**/*.ts` 全部生产源码，
+- 2026-07-30 ERP API 覆盖率已修正为显式纳入 `src/**/*.ts` 全部生产源码，
   包括测试未加载的启动、Worker、Controller、迁移和适配器文件，并把全量覆盖
-  命令接入 `pnpm check`。合并 Phase 4 工资调整结算闭环后的当前真实基线为
-  语句 93.18%、分支 91.01%、函数 93.25%、行 94.20%，436 个测试文件、
-  7,140 项测试全部通过并达到全仓四维 80% 强制门槛；完整 `pnpm check`、
+  命令接入 `pnpm check`。补齐年度个税可信接入后的当前真实基线为
+  语句 93.23%、分支 91.02%、函数 93.37%、行 94.25%，438 个测试文件、
+  7,209 项测试全部通过并达到全仓四维 80% 强制门槛；完整 `pnpm check`、
   显式公开 Origin 的 `pnpm build` 与 `pnpm audit --audit-level high` 同日
   通过，依赖审计未发现已知漏洞。
 - 2026-07-28 已加固 Talent Lifecycle 的 Recruitment、Onboarding、Org 与
@@ -1202,10 +1202,20 @@
   申报或收付能力。税务 HTTP 151 项和年度/调整
   306 项专项测试通过，新适配器覆盖率为 93.75%/92.59%/100%/96.22%。
   真实税局沙箱、密钥轮换、断连恢复、现场金样例与薪税签署仍未完成。
-- GitHub PR #103、#109、#111 与 #113 的 Hosted Actions 当前在任何步骤执行前被账户
-  付款或 Spending limit 拦截；代表 Job 的 Runner 与 Steps 均为空。这是外部门禁
-  未执行，不得记为代码测试失败或门禁通过；按零付费约束不使用 NAS、自建 Runner
-  或虚拟机绕过。
+- 2026-07-30 在提交 `cdcef767fbbbd5c9dc5111456c1acdfa55c48bf9` 上重新执行
+  Kimi Code CLI 0.28.1 正式 ACP 探针和 MCP Inspector CLI 2.0.0 正式目录
+  探针。Kimi 连接 stdio 并发现 50 个 Tool；Inspector 逐项发现 50 个 Tool、
+  4 个静态 Resource、27 个 Resource Template 和 25 个 Prompt，二者共同绑定
+  `catalogHash=sha256:22316539594c425ab2a3547b0d5899196d8cbd11a7bf205e56250a602e1bbd91`，
+  Inspector 另绑定
+  `runtimeContractHash=sha256:61c70d725186519dd7473857f69cd2e85e4846232930f60aab2e608e166b14a9`。
+  两个探针均未调用模型或业务 Tool；Claude/Cursor 未安装，不能据此宣称实体
+  客户端通过。
+- Draft PR #129 的上述提交自然触发 Hosted Actions run
+  `30493181184`、`30493181191`、`30493181203` 和 `30493181220`，全部在任何
+  步骤执行前被账户付款或 Spending limit 拦截；代表 Job 的 `steps` 为空。
+  这是外部门禁未执行，不得记为代码测试失败或门禁通过；按零付费约束不重跑，
+  不使用 NAS、自建 Runner 或虚拟机绕过。
 
 ## 目录约定
 

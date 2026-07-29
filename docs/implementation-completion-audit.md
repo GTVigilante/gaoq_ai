@@ -69,11 +69,11 @@
 
 ## 5. 覆盖率边界
 
-2026-07-29 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，436 个测试文件、7,140 项测试全部
+2026-07-30 在 Node 22 与锁定依赖下执行
+`pnpm --filter @gaoq/erp-api test:coverage`，438 个测试文件、7,209 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-93.18%、分支 91.01%、函数 93.25%、行 94.20%。全仓四维已达到 Phase 0
+93.23%、分支 91.02%、函数 93.37%、行 94.25%。全仓四维已达到 Phase 0
 规定的 80% 门槛。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
@@ -120,6 +120,16 @@ Template 与 25 个 Prompt；
 并把结果绑定当前 `catalogHash`。这只证明 Kimi 当前版本可启动标准入口并发现
 50 个 Tool，不证明真实短时 Token、Resource/Prompt、R0/R1/R2、撤销/重连或
 业务 UAT；Issue #36 和 Kimi 整体仍保持外部验收状态。
+
+2026-07-30 在提交 `cdcef767fbbbd5c9dc5111456c1acdfa55c48bf9` 上重新执行
+Kimi 与 Inspector 实体目录探针。Kimi 再次通过 stdio 发现 50 个 Tool；
+Inspector 再次逐项发现 50 个 Tool、4 个静态 Resource、27 个 Resource
+Template 和 25 个 Prompt。两者绑定同一
+`catalogHash=sha256:22316539594c425ab2a3547b0d5899196d8cbd11a7bf205e56250a602e1bbd91`，
+Inspector 另绑定
+`runtimeContractHash=sha256:61c70d725186519dd7473857f69cd2e85e4846232930f60aab2e608e166b14a9`。
+两个探针均未调用模型或业务 Tool。当前主机未安装 Claude/Cursor，因此这些
+客户端没有实体证据，不能从协议通用性或其他客户端结果推导为通过。
 
 同日完整 MCP 目录门禁已从仅覆盖 Tool 升级为实时解析 50 个 Tool、4 个静态
 Resource、27 个 Resource Template 和 25 个 Prompt，并把四类目录与忽略注释/
