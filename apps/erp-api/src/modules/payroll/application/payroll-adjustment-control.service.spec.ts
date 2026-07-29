@@ -137,6 +137,7 @@ function assemble(current: ReturnType<typeof record>) {
   const service = new PayrollAdjustmentService(
     idempotency as never,
     context,
+    { assertLegacy: vi.fn() } as never,
     approvals as never,
     strongAuth as never,
     {} as never,

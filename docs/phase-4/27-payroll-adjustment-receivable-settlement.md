@@ -3,6 +3,9 @@
 本切片把 `type=reversal / status=locked / cashSettlementStatus=pending` 的负向工资
 差额转为唯一员工应收。它绝不生成负数银行指令，也不允许客户端重新指定员工或
 应收金额。
+默认 `PAYROLL_SYSTEM_MODE=external` 时，建账、恢复和读取在访问调整来源、
+应收/恢复集合、加密服务或 Outbox 前返回
+`PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM`。
 
 ## 权威来源与职责分离
 

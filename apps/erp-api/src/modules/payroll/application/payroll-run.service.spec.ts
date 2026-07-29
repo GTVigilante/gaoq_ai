@@ -95,6 +95,13 @@ describe('PayrollRunService 信任边界', () => {
         ['erp:migration:execute', 'erp:treasury:migration:write'],
         'service',
       ), (store) => store.service.getLockedDisbursementSourceForMigration('invalid', 0)],
+      [actor([], 'service'), (store) => store.service.calculateAdjustmentCandidate(
+        {} as never,
+        'invalid',
+        0,
+        {} as never,
+        session,
+      )],
     ];
     for (const [principal, execute] of cases) {
       const store = assemble();

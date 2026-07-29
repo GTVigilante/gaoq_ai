@@ -2,6 +2,10 @@
 
 本切片建立员工维度的年度工资代扣核对，但不把 ERP 包装成个人所得税申报客户端。税局年度评估是外部权威输入；ERP 不自行推断员工其他单位收入、劳务报酬、特许权使用费、专项扣除或家庭税务选择。
 
+默认 `PAYROLL_SYSTEM_MODE=external` 时，制备与控制摘要读取在扫描工资期、输入、
+计算行或税表集合前返回 `PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM`。标准 MCP
+读取控制摘要也只复用该应用服务，不直连年度记录。
+
 ## 权威来源
 
 `POST /payroll/annual-reconciliations/prepare` 只允许具备 `erp:payroll:annual:prepare` 的 `service / system_job` 调用。请求只包含员工 ID、税年，以及可选的税局评估 ID、证据 ID、已评估税额和来源摘要。

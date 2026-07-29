@@ -71,6 +71,7 @@ function assemble(
     'adjustment-approver',
   ],
   gatewayMode: 'sandbox' | 'production' = 'sandbox',
+  boundary = { assertLegacy: vi.fn() },
 ) {
   const context = new TenantContextService();
   let correction: Record<string, unknown> | null = null;
@@ -158,6 +159,7 @@ function assemble(
   const service = new PayrollAdjustmentTaxCorrectionService(
     idempotency as never,
     context,
+    boundary as never,
     adjustments as never,
     strongAuth as never,
     crypto as never,
@@ -170,6 +172,7 @@ function assemble(
   );
   return {
     context,
+    boundary,
     service,
     idempotency,
     adjustments,
@@ -214,6 +217,22 @@ async function approveCorrection(
 }
 
 describe('PayrollAdjustmentTaxCorrectionService', () => {
+  it('专业算薪模式在读取调整或创建更正记录前稳定短路', async () => {
+    const boundary = {
+      assertLegacy: vi.fn(() => {
+        throw new Error('PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM');
+      }),
+    };
+    const store = assemble(undefined, 'sandbox', boundary);
+
+    await expect(store.context.run({ tenant, actor: maker }, () =>
+      store.service.prepare('tax-correction-boundary', adjustmentId, 4)))
+      .rejects.toThrow('PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM');
+    expect(boundary.assertLegacy).toHaveBeenCalledOnce();
+    expect(store.adjustments.getLockedTaxCorrectionSource).not.toHaveBeenCalled();
+    expect(store.idempotency.execute).not.toHaveBeenCalled();
+  });
+
   it('完成 WORM 制备、独立强认证审批、税局提交并回写调整终态', async () => {
     const store = assemble();
     const prepared = await store.context.run({ tenant, actor: maker }, () =>

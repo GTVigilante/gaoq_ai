@@ -71,7 +71,7 @@ function query<T>(value: T | (() => T)) {
   return result;
 }
 
-function assemble() {
+function assemble(boundary = { assertLegacy: vi.fn() }) {
   const context = new TenantContextService();
   let annualRecord: Record<string, unknown> | null = null;
   let annualBundle: unknown = null;
@@ -148,12 +148,14 @@ function assemble() {
   };
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
   const service = new PayrollAnnualReconciliationService(
-    idempotency as never, context, crypto as never, outbox as never,
+    idempotency as never, context, boundary as never,
+    crypto as never, outbox as never,
     periods as never, inputs as never, results as never, filings as never,
     annualRecords as never,
   );
   return {
     context,
+    boundary,
     service,
     idempotency,
     periods,
@@ -186,6 +188,22 @@ async function prepare(
 }
 
 describe('PayrollAnnualReconciliationService', () => {
+  it('专业算薪模式在扫描旧年度工资事实前稳定短路', async () => {
+    const boundary = {
+      assertLegacy: vi.fn(() => {
+        throw new Error('PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM');
+      }),
+    };
+    const store = assemble(boundary);
+
+    await expect(prepare(store)).rejects.toThrow(
+      'PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM',
+    );
+    expect(boundary.assertLegacy).toHaveBeenCalledOnce();
+    expect(store.periods.find).not.toHaveBeenCalled();
+    expect(store.idempotency.execute).not.toHaveBeenCalled();
+  });
+
   it('重放锁定工资并核对逐月已提交税表后追加年度证据', async () => {
     const store = assemble();
     const result = await store.context.run({ tenant, actor: actor() }, () =>

@@ -17,6 +17,7 @@ import { TenantContextService } from '../../../core/tenant/tenant-context.servic
 import { ApprovalApplicationService } from '../../approval/application/approval-application.service.js';
 import type { VerifiedAccessToken } from '../../identity/auth.types.js';
 import { WebAuthnService } from '../../identity/strong-auth/webauthn.service.js';
+import { LegacyPayrollBoundaryService } from '../legacy-payroll-boundary.service.js';
 import {
   applyPayrollAdjustmentApproval,
   createPayrollAdjustment,
@@ -198,6 +199,7 @@ export class PayrollAdjustmentService {
   constructor(
     private readonly idempotency: IdempotencyService,
     private readonly context: TenantContextService,
+    private readonly boundary: LegacyPayrollBoundaryService,
     private readonly approvals: ApprovalApplicationService,
     private readonly strongAuth: WebAuthnService,
     private readonly runs: PayrollRunService,
@@ -216,6 +218,7 @@ export class PayrollAdjustmentService {
     input: PreparePayrollAdjustmentInput,
   ): Promise<PayrollAdjustmentSummary> {
     this.assertPrepareActor();
+    this.boundary.assertLegacy();
     assertPrepareInput(input);
     return this.run(() => this.idempotency.execute(
       'payroll.adjustment.prepare', key, input, async (session) => {
@@ -340,6 +343,7 @@ export class PayrollAdjustmentService {
       code: 'PAYROLL_ADJUSTMENT_APPROVAL_HUMAN_REQUIRED',
       message: '工资调整送审只能由已验证人员执行',
     });
+    this.boundary.assertLegacy();
     const current = await this.requireAdjustment(id);
     assertApprovalRequestState(controlFromRecord(current), expectedVersion, actor.actorId);
     const created = await this.approvals.createInstance(deriveKey(key, 'create'), {
@@ -405,6 +409,7 @@ export class PayrollAdjustmentService {
         message: '工资调整审批同步只允许受信任服务执行',
       });
     }
+    this.boundary.assertLegacy();
     const decision = await this.approvals.getPayrollAdjustmentDecision(approvalInstanceId);
     return this.run(() => this.idempotency.execute(
       'payroll.adjustment.approval.apply',
@@ -465,6 +470,7 @@ export class PayrollAdjustmentService {
       code: 'PAYROLL_ADJUSTMENT_LOCK_IDENTITY_INVALID',
       message: '工资调整锁定身份上下文非法',
     });
+    this.boundary.assertLegacy();
     if (!ULID.test(id) || !ULID.test(evidenceId)) throw new BadRequestException({
       code: 'PAYROLL_ADJUSTMENT_LOCK_EVIDENCE_INVALID',
       message: '工资调整或强认证证据标识非法',
@@ -539,6 +545,7 @@ export class PayrollAdjustmentService {
 
   async get(id: string): Promise<PayrollAdjustmentSummary> {
     this.assertScope('erp:payroll:adjustment:read');
+    this.boundary.assertLegacy();
     return this.run(async () => summary(await this.requireVerifiedAdjustment(id)));
   }
 
@@ -549,6 +556,7 @@ export class PayrollAdjustmentService {
     session?: ClientSession,
   ): Promise<LockedPayrollSupplementSource> {
     this.assertScope('erp:treasury:adjustment:source:read');
+    this.boundary.assertLegacy();
     const record = await this.requireVerifiedAdjustment(id, session);
     if (
       record.status !== 'locked' ||
@@ -591,6 +599,7 @@ export class PayrollAdjustmentService {
     session: ClientSession,
   ): Promise<LockedPayrollReversalSource> {
     this.assertScope('erp:payroll:adjustment:receivable:source:read');
+    this.boundary.assertLegacy();
     const record = await this.requireVerifiedAdjustment(id, session);
     if (
       record.status !== 'locked' ||
@@ -629,6 +638,7 @@ export class PayrollAdjustmentService {
     session: ClientSession,
   ): Promise<LockedPayrollTaxCorrectionSource> {
     this.assertScope('erp:payroll:adjustment:tax_correction:source:read');
+    this.boundary.assertLegacy();
     const { record, bundle } = await this.requireVerifiedAdjustmentBundle(id, session);
     if (
       record.status !== 'locked' ||
@@ -684,6 +694,7 @@ export class PayrollAdjustmentService {
       code: 'PAYROLL_ADJUSTMENT_TAX_CORRECTION_PREPARER_DENIED',
       message: '工资调整税务更正只能由受控人工税务制备人绑定',
     });
+    this.boundary.assertLegacy();
     if (
       !ULID.test(input.adjustmentId) ||
       !HASH.test(input.adjustmentHash) ||
@@ -747,6 +758,7 @@ export class PayrollAdjustmentService {
       code: 'PAYROLL_ADJUSTMENT_TAX_CORRECTION_SUBMITTER_DENIED',
       message: '工资调整税务终态只接受受信任税务连接器',
     });
+    this.boundary.assertLegacy();
     if (
       !ULID.test(input.adjustmentId) ||
       !HASH.test(input.adjustmentHash) ||
@@ -802,6 +814,7 @@ export class PayrollAdjustmentService {
     },
     session: ClientSession,
   ): Promise<void> {
+    this.boundary.assertLegacy();
     if (
       !ULID.test(input.adjustmentId) ||
       !HASH.test(input.adjustmentHash) ||
@@ -863,6 +876,7 @@ export class PayrollAdjustmentService {
     },
     session: ClientSession,
   ): Promise<void> {
+    this.boundary.assertLegacy();
     if (
       !ULID.test(input.adjustmentId) ||
       !HASH.test(input.adjustmentHash) ||
@@ -937,6 +951,7 @@ export class PayrollAdjustmentService {
       code: 'PAYROLL_ADJUSTMENT_SETTLEMENT_WRITER_DENIED',
       message: '工资调整现金结算只接受受信任 Treasury 回盘服务',
     });
+    this.boundary.assertLegacy();
     if (
       !ULID.test(input.adjustmentId) ||
       !HASH.test(input.adjustmentHash) ||

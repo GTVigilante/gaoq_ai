@@ -173,6 +173,7 @@ function assemble(correctedAmountMinor = 1_100_000) {
   const service = new PayrollAdjustmentService(
     {} as never,
     context,
+    { assertLegacy: vi.fn() } as never,
     {} as never,
     {} as never,
     {} as never,

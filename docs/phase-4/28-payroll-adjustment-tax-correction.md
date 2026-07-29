@@ -3,6 +3,9 @@
 本切片处理 `taxCorrectionStatus=pending` 的已锁定工资调整。更正清单使用
 `CN_IIT_WITHHOLDING_CORRECTION_V1`，只从调整密文中的原结果、更正结果和确定性
 差额生成；客户端不能提交员工、税额或税务正文。
+默认 `PAYROLL_SYSTEM_MODE=external` 时，制备、强认证审批、生产提交和控制摘要
+读取在访问调整、更正集合、WORM、生产授权或税局网关前返回
+`PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM`。
 
 ## 两阶段制备与 WORM
 

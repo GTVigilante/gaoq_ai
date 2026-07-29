@@ -55,7 +55,7 @@ function query<T>(value: T) {
   return result;
 }
 
-function assemble() {
+function assemble(boundary = { assertLegacy: vi.fn() }) {
   const context = new TenantContextService();
   const original = calculatePayroll(base);
   const correctedInput: PayrollCalculationInput = {
@@ -93,12 +93,14 @@ function assemble() {
   const approvals = {};
   const strongAuth = {};
   const service = new PayrollAdjustmentService(
-    idempotency as never, context, approvals as never, strongAuth as never,
+    idempotency as never, context, boundary as never,
+    approvals as never, strongAuth as never,
     runs as never, crypto as never, outbox as never,
     periods as never, calculationLines as never, adjustments as never,
   );
   return {
     context,
+    boundary,
     service,
     idempotency,
     periods,
@@ -138,6 +140,22 @@ async function prepare(
 }
 
 describe('PayrollAdjustmentService', () => {
+  it('专业算薪模式在访问旧周期集合前稳定短路', async () => {
+    const boundary = {
+      assertLegacy: vi.fn(() => {
+        throw new Error('PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM');
+      }),
+    };
+    const store = assemble(boundary);
+
+    await expect(prepare(store)).rejects.toThrow(
+      'PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM',
+    );
+    expect(boundary.assertLegacy).toHaveBeenCalledOnce();
+    expect(store.periods.findOne).not.toHaveBeenCalled();
+    expect(store.idempotency.execute).not.toHaveBeenCalled();
+  });
+
   it('从活动锁定工资行与服务端重算结果准备补发差额', async () => {
     const store = assemble();
     const result = await store.context.run({ tenant, actor: actor() }, () =>

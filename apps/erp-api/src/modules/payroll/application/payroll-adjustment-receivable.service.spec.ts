@@ -35,7 +35,7 @@ function query<T>(read: () => T) {
   return result;
 }
 
-function assemble() {
+function assemble(boundary = { assertLegacy: vi.fn() }) {
   const context = new TenantContextService();
   let receivable: Record<string, unknown> | null = null;
   let protectedValue: Record<string, unknown> | null = null;
@@ -91,6 +91,7 @@ function assemble() {
   const service = new PayrollAdjustmentReceivableService(
     idempotency as never,
     context,
+    boundary as never,
     adjustments as never,
     crypto as never,
     outbox as never,
@@ -99,6 +100,7 @@ function assemble() {
   );
   return {
     context,
+    boundary,
     service,
     adjustments,
     crypto,
@@ -150,6 +152,30 @@ function recoveryInput(
 }
 
 describe('PayrollAdjustmentReceivableService', () => {
+  it('专业算薪模式在读取负向调整或创建员工应收前稳定短路', async () => {
+    const boundary = {
+      assertLegacy: vi.fn(() => {
+        throw new Error('PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM');
+      }),
+    };
+    const store = assemble(boundary);
+
+    await expect(store.context.run({
+      tenant,
+      actor: actor('user', 'receivable-opener', [
+        'erp:payroll:adjustment:receivable:open',
+        'erp:payroll:adjustment:receivable:source:read',
+      ]),
+    }, () => store.service.open(
+      'receivable-boundary',
+      adjustmentId,
+      { expectedAdjustmentVersion: 4 },
+    ))).rejects.toThrow('PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM');
+    expect(boundary.assertLegacy).toHaveBeenCalledOnce();
+    expect(store.adjustments.getLockedReversalSource).not.toHaveBeenCalled();
+    expect(store.idempotency.execute).not.toHaveBeenCalled();
+  });
+
   it('只从已锁定负向调整建立唯一应收且不泄露员工身份到事件', async () => {
     const store = assemble();
     const result = await store.context.run({

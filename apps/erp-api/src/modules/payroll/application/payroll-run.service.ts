@@ -576,6 +576,7 @@ export class PayrollRunService {
     line: PayrollRunLineInput,
     session: ClientSession,
   ): Promise<PayrollAdjustmentCalculationCandidate> {
+    this.boundary.assertLegacy();
     const rulePack = await this.requireEffectiveRulePack(
       period, rulePackId, rulePackVersion, session,
     );

@@ -56,7 +56,7 @@ function principal(
   };
 }
 
-function assemble() {
+function assemble(boundary = { assertLegacy: vi.fn() }) {
   const context = new TenantContextService();
   const idempotency = {
     execute: vi.fn(async (
@@ -176,6 +176,7 @@ function assemble() {
   const service = new TreasuryAdjustmentSupplementService(
     idempotency as never,
     context,
+    boundary as never,
     payrollAdjustments as never,
     crypto as never,
     outbox as never,
@@ -186,6 +187,7 @@ function assemble() {
   );
   return {
     context,
+    boundary,
     service,
     idempotency,
     payrollAdjustments,
@@ -217,6 +219,22 @@ async function prepare(
 }
 
 describe('TreasuryAdjustmentSupplementService', () => {
+  it('专业算薪模式在读取工资调整和原批次前稳定短路', async () => {
+    const boundary = {
+      assertLegacy: vi.fn(() => {
+        throw new Error('PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM');
+      }),
+    };
+    const store = assemble(boundary);
+
+    await expect(prepare(store)).rejects.toThrow(
+      'PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM',
+    );
+    expect(boundary.assertLegacy).toHaveBeenCalledOnce();
+    expect(store.payrollAdjustments.getLockedSupplementSource).not.toHaveBeenCalled();
+    expect(store.idempotency.execute).not.toHaveBeenCalled();
+  });
+
   it('从已锁定正差与原代发控制链创建唯一单行补发子批次', async () => {
     const store = assemble();
     const requestedExecutionDate = new Date().toISOString().slice(0, 10);

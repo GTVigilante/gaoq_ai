@@ -18,6 +18,7 @@ import {
   type LockedPayrollSupplementSource,
 } from '../../payroll/application/payroll-adjustment.service.js';
 import { payrollDigest } from '../../payroll/domain/index.js';
+import { LegacyPayrollBoundaryService } from '../../payroll/legacy-payroll-boundary.service.js';
 import { TreasuryDataCryptoService } from '../persistence/treasury-data-crypto.service.js';
 import { TreasuryOutboxWriter } from '../persistence/treasury-outbox.writer.js';
 import {
@@ -65,6 +66,7 @@ export class TreasuryAdjustmentSupplementService {
   constructor(
     private readonly idempotency: IdempotencyService,
     private readonly context: TenantContextService,
+    private readonly boundary: LegacyPayrollBoundaryService,
     private readonly payrollAdjustments: PayrollAdjustmentService,
     private readonly crypto: TreasuryDataCryptoService,
     private readonly outbox: TreasuryOutboxWriter,
@@ -91,6 +93,7 @@ export class TreasuryAdjustmentSupplementService {
       code: 'TREASURY_ADJUSTMENT_PREPARER_DENIED',
       message: '工资补发子批次只允许受控人工资金制备人执行',
     });
+    this.boundary.assertLegacy();
     if (!DATE.test(input.requestedExecutionDate) ||
       !Number.isSafeInteger(input.expectedAdjustmentVersion) ||
       input.expectedAdjustmentVersion < 1) throw new BadRequestException({

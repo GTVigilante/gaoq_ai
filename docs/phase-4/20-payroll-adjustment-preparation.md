@@ -2,6 +2,11 @@
 
 本切片为已经 `locked / disbursing / reconciling / reconciled` 的活动工资行建立追加式更正记录。它只准备确定性差额，不执行银行补发、员工扣款、后续工资抵扣或税务重报。
 
+默认 `PAYROLL_SYSTEM_MODE=external` 时，调账准备、送审、审批同步、强认证锁定、
+内部来源读取和结算回写均在访问旧工资事实或外部控制面前返回
+`PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM`；REST、MCP、Treasury 或其他应用服务
+已经授权不能替代本服务自己的边界校验。
+
 ## 权威重算链
 
 `POST /payroll/adjustments/prepare` 只允许具备 `erp:payroll:adjustment:prepare` 的 `service / system_job` 调用，并且只接收：

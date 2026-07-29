@@ -3,6 +3,8 @@
 本切片把 `type=supplement / status=locked / cashSettlementStatus=pending` 的正向
 工资调整接入既有 Treasury WORM、ISO 20022、独立导出批准、银行提交和隔离回盘
 链。它不复用普通工资运行重新计算金额，也不允许客户端选择员工、金额或账户。
+默认 `PAYROLL_SYSTEM_MODE=external` 时，本服务在读取工资调整、原代发批次、
+账户、支付指令或调用 WORM 前返回 `PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM`。
 
 ## 服务端权威来源
 

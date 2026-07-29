@@ -23,6 +23,7 @@ import { IdempotencyService } from '../../../core/idempotency/idempotency.servic
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import type { VerifiedAccessToken } from '../../identity/auth.types.js';
 import { WebAuthnService } from '../../identity/strong-auth/webauthn.service.js';
+import { LegacyPayrollBoundaryService } from '../legacy-payroll-boundary.service.js';
 import {
   PayrollTaxGateway,
   PayrollTaxImmutableArchive,
@@ -111,6 +112,7 @@ export class PayrollAdjustmentTaxCorrectionService {
   constructor(
     private readonly idempotency: IdempotencyService,
     private readonly context: TenantContextService,
+    private readonly boundary: LegacyPayrollBoundaryService,
     private readonly adjustments: PayrollAdjustmentService,
     private readonly strongAuth: WebAuthnService,
     private readonly crypto: PayrollDataCryptoService,
@@ -137,6 +139,7 @@ export class PayrollAdjustmentTaxCorrectionService {
       code: 'PAYROLL_ADJUSTMENT_TAX_CORRECTION_PREPARER_DENIED',
       message: '工资调整税务更正只允许受控人工税务制备人执行',
     });
+    this.boundary.assertLegacy();
     if (
       !ULID.test(adjustmentId) ||
       !Number.isSafeInteger(expectedAdjustmentVersion) ||
@@ -202,6 +205,7 @@ export class PayrollAdjustmentTaxCorrectionService {
       code: 'PAYROLL_ADJUSTMENT_TAX_CORRECTION_APPROVER_DENIED',
       message: '工资调整税务更正审批身份上下文非法',
     });
+    this.boundary.assertLegacy();
     assertVersionCommand(filingId, expectedVersion, evidenceId);
     const evidence = await this.strongAuth.requireVerifiedEvidence({
       evidenceId,
@@ -288,6 +292,7 @@ export class PayrollAdjustmentTaxCorrectionService {
       code: 'PAYROLL_ADJUSTMENT_TAX_CORRECTION_SUBMITTER_DENIED',
       message: '工资调整税务更正只允许受信任税务连接器提交',
     });
+    this.boundary.assertLegacy();
     assertVersionCommand(filingId, expectedVersion);
     const authorization = await this.authorizeProductionSubmission(
       filingId,
@@ -430,6 +435,7 @@ export class PayrollAdjustmentTaxCorrectionService {
 
   async get(id: string): Promise<PayrollAdjustmentTaxCorrectionSummary> {
     this.assertScope('erp:payroll:adjustment:tax_correction:read');
+    this.boundary.assertLegacy();
     return this.run(async () => summary(await this.requireVerifiedCorrection(id)));
   }
 

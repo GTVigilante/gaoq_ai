@@ -12,6 +12,7 @@ import { z } from 'zod';
 
 import { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
+import { LegacyPayrollBoundaryService } from '../legacy-payroll-boundary.service.js';
 import {
   AnnualPayrollReconciliationError,
   reconcileAnnualPayrollWithholding,
@@ -156,6 +157,7 @@ export class PayrollAnnualReconciliationService {
   constructor(
     private readonly idempotency: IdempotencyService,
     private readonly context: TenantContextService,
+    private readonly boundary: LegacyPayrollBoundaryService,
     private readonly crypto: PayrollDataCryptoService,
     private readonly outbox: PayrollOutboxWriter,
     @InjectModel(PayrollPeriodRecord.name)
@@ -175,6 +177,7 @@ export class PayrollAnnualReconciliationService {
     input: PrepareAnnualPayrollReconciliationInput,
   ): Promise<AnnualPayrollReconciliationSummary> {
     this.assertPrepareActor();
+    this.boundary.assertLegacy();
     assertInput(input);
     return this.run(() => this.idempotency.execute(
       'payroll.annual_reconciliation.prepare', key, input, async (session) => {
@@ -301,6 +304,7 @@ export class PayrollAnnualReconciliationService {
 
   async get(id: string): Promise<AnnualPayrollReconciliationSummary> {
     this.assertScope('erp:payroll:annual:read');
+    this.boundary.assertLegacy();
     if (!ULID.test(id)) throw new BadRequestException({
       code: 'PAYROLL_ANNUAL_ID_INVALID', message: '年度工资代扣核对标识非法',
     });

@@ -14,6 +14,7 @@ import { z } from 'zod';
 
 import { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
+import { LegacyPayrollBoundaryService } from '../legacy-payroll-boundary.service.js';
 import { PayrollDataCryptoService } from '../persistence/payroll-data-crypto.service.js';
 import { PayrollOutboxWriter } from '../persistence/payroll-outbox.writer.js';
 import {
@@ -79,6 +80,7 @@ export class PayrollAdjustmentReceivableService {
   constructor(
     private readonly idempotency: IdempotencyService,
     private readonly context: TenantContextService,
+    private readonly boundary: LegacyPayrollBoundaryService,
     private readonly adjustments: PayrollAdjustmentService,
     private readonly crypto: PayrollDataCryptoService,
     private readonly outbox: PayrollOutboxWriter,
@@ -102,6 +104,7 @@ export class PayrollAdjustmentReceivableService {
       code: 'PAYROLL_ADJUSTMENT_RECEIVABLE_OPENER_DENIED',
       message: '员工应收只允许受控人工财务人员建立',
     });
+    this.boundary.assertLegacy();
     if (
       !ULID.test(adjustmentId) ||
       !Number.isSafeInteger(input.expectedAdjustmentVersion) ||
@@ -135,6 +138,7 @@ export class PayrollAdjustmentReceivableService {
     input: RecordPayrollAdjustmentRecoveryInput,
   ): Promise<PayrollAdjustmentReceivableSummary> {
     this.assertRecoveryActor(input.method);
+    this.boundary.assertLegacy();
     assertRecoveryInput(receivableId, input);
     return this.run(() => this.idempotency.execute(
       'payroll.adjustment_receivable.record_recovery',
@@ -231,6 +235,7 @@ export class PayrollAdjustmentReceivableService {
 
   async get(id: string): Promise<PayrollAdjustmentReceivableSummary> {
     this.assertScope('erp:payroll:adjustment:receivable:read');
+    this.boundary.assertLegacy();
     return this.run(async () => summary(await this.requireVerifiedReceivable(id)));
   }
 

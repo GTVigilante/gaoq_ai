@@ -64,11 +64,16 @@
   `PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM`，不得读取 ERP 旧工资集合或解密快照。
 - 当前共享 `LegacyPayrollBoundaryService` 已由 REST Guard、全部旧 Payroll
   应用服务和全部 Treasury 应用服务复用。算薪运行、本人薪资单、审批、主数据、
-  税务、Payroll/Treasury 对账、影子周期、银行账户、代发、回盘和失败恢复的
-  在线、MCP 只读、迁移及内部跨域入口均自行先校验可信主体与最小 Scope，再在
-  输入解释、审批、强认证、生产授权、Mongo、加密、WORM、银行/税务网关或
-  Inbox 前失败关闭。调用方经过 Controller、Worker 或上层应用服务不构成绕过
-  边界的理由。
+  税务、Payroll/Treasury 对账、影子周期、工资调账、员工应收、调账税务更正、
+  年度汇算、银行账户、代发、调账补发、回盘和失败恢复的在线、MCP 只读、迁移
+  及内部跨域入口均自行先校验可信主体与最小 Scope，再在输入解释、审批、强认证、
+  生产授权、Mongo、加密、WORM、银行/税务网关或 Inbox 前失败关闭。直接供
+  调账服务调用的 `calculateAdjustmentCandidate` 也必须自行校验，调用方经过
+  Controller、Worker 或上层应用服务不构成绕过边界的理由。
+- 仓库门禁扫描旧 Payroll/Treasury 的全部应用服务和公开异步入口；任何新增服务
+  未强制注入共享边界，或公开入口未显式校验/仅委托给已校验读取入口，均阻断
+  `precheck/check`。该静态门禁与逐入口负向测试共同证明失败关闭顺序，不替代
+  专业算薪、银行或税局的现场联调。
 - 管理驾驶舱的 REST、MCP 与异步导出统一经过
   `LegacyPayrollDashboardSource`。默认 `external` 模式在构造 Mongo 查询前
   返回禁用结果，薪资聚合、新鲜度与来源声明均为空；只有显式 `legacy` 兼容模式
