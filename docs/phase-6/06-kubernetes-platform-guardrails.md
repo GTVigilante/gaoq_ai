@@ -8,7 +8,10 @@
 
 ## 2. 身份和命名空间模型
 
-平台必须从企业身份提供方签发短期 OIDC 身份，并把不可伪造的 Group claim 映射到两类单次 Runner。不得使用长期 kubeconfig、ServiceAccount token、共享管理员身份或客户端自报 Group。
+平台必须验证 GitHub OIDC JWT，并依据已验签的仓库 ID、`main` commit、workflow、
+policy、audience 和 Hosted Runner claims，把 Plan/Apply 映射到不同的短期
+Kubernetes Group。不得使用长期 kubeconfig、ServiceAccount token、共享管理员
+身份或客户端自报 Group。
 
 | 边界 | Plan OIDC Group | Apply OIDC Group |
 |---|---|---|
@@ -56,7 +59,7 @@ helm upgrade --install gaoq-platform-guardrails deploy/helm/gaoq-platform-guardr
 
 ## 5. 目标集群正反例
 
-平台与安全负责人必须在隔离的生产等价集群执行下表测试，保存请求身份、命令、退出码、API 响应、审计事件和资源前后状态。只有全部符合预期才允许配置生产 Environment。
+平台与安全负责人必须在隔离的生产等价集群执行下表测试，保存请求身份、命令、退出码、API 响应、审计事件和资源前后状态。只有全部符合预期才允许启用生产 workflow policy。
 
 | 用例 | 身份 | 操作 | 预期 |
 |---|---|---|---|
@@ -78,9 +81,13 @@ helm upgrade --install gaoq-platform-guardrails deploy/helm/gaoq-platform-guardr
 
 - 每次应用发布前运行 `kubectl auth can-i` 负权限断言；发布后核对准入拒绝、RBAC 拒绝和异常 Group 使用告警。
 - 平台持续比较 Git 批准清单、Helm release 和集群实际对象；Namespace 标签、Role/Binding、VAP/Binding、Quota 或 LimitRange 漂移立即阻断下一次发布。
-- OIDC Group、release 名、命名空间、运行时 ConfigMap 或资源种类变化时，必须重新完成威胁建模、正反例和双人审批，不能只改 Environment Variable。
+- OIDC Group、release 名、命名空间、运行时 ConfigMap 或资源种类变化时，必须重新完成威胁建模、正反例和双人审批，不能只改 Repository Variable。
 - 准入策略故障应停止发布并由平台恢复；不得临时删除策略继续上线。
 
 ## 7. 当前阻断
 
-截至仓库交付时，GitHub 尚无 `phase-6-production-plan`、`phase-6-production-deployment` Environment 或相应 self-hosted Runner，也没有目标集群、OIDC Group、生产命名空间和管理员审批。因此本 Chart 仅完成仓库侧契约与严格 schema 验证，尚未完成目标 API Server 的 CEL 编译、正反例、实际安装或漂移验证；这些结果不得在 Issue 中标记为已完成。
+截至仓库交付时，Hosted 工作流与 OIDC 客户端契约已经落地，但企业证据/凭据
+代理、外部双人签名服务、目标集群、OIDC Group、生产命名空间和管理员审批尚未
+提供。因此本
+Chart 仅完成仓库侧契约与严格 schema 验证，尚未完成目标 API Server 的 CEL
+编译、正反例、实际安装或漂移验证；这些结果不得在 Issue 中标记为已完成。

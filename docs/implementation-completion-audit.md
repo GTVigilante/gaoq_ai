@@ -123,6 +123,20 @@ MCP Inspector CLI 2.0.0 已通过正式 CLI 层依次执行四个 list 方法，
 不替代正式 Token、授权读写、远程 OAuth、撤销/重连、安全复核或业务 UAT，
 Inspector 整体仍保持外部验收状态。
 
+同日已关闭 GitHub-only 规范与 Phase 5/6 旧 self-hosted 运行手册之间的冲突。
+全部 workflow 现均使用 GitHub Hosted `ubuntu-latest`；Phase 5 验收、
+Phase 6 Cutover/Hypercare 及生产 Plan/Apply 通过 workflow/policy 专用
+`id-token: write` 获取单次 GitHub OIDC 身份。通用下载器复核仓库 ID、`main`
+commit、workflow、policy、audience 与 Hosted Runner claims，并对 HTTPS
+脱敏输入执行无重定向、媒体类型、大小、响应 Header 摘要及实际字节摘要校验。
+Kubernetes kubeconfig 不含静态凭据，ExecCredential 插件只接受最长 15 分钟
+Token；Plan/Apply 使用不同 workflow、audience 与 RBAC Group。生产 Apply 还
+验证外部双人 Ed25519 签名授权和独立 Plan 产物。四个入口的
+专项负向自测已接入根 `test/check`，Phase 5/6 工作流静态门禁会拒绝
+self-hosted 标签、本地挂载、长期 Secret 与未固定工具链。该仓库实现不证明企业
+证据/凭据代理、外部签名服务、目标集群 OIDC 信任或 Hosted Actions 已可用；
+当前账户仍在 Runner 分配前被计费状态阻塞，生产验收保持 No-Go。
+
 2026-07-29 本人薪资单边界已下沉到 REST 与标准 MCP 共用的应用服务；
 `PAYROLL_SYSTEM_MODE=external` 在读取身份画像、Mongo 或 L4 密文前稳定失败
 关闭，MCP 返回 `PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM` 并写 R1 拒绝审计。

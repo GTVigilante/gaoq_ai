@@ -48,22 +48,33 @@
 
 ## 受保护验收工作流
 
-`.github/workflows/phase-5-resilience.yml` 只能手工启动，并且只接受 `main` 上已合并的受信任代码。现场验收绑定有 Required Reviewers 的 `phase-5-resilience` GitHub Environment，并使用带 `self-hosted`、`linux`、`x64`、`phase-5-resilience` 标签的单次、隔离 Runner。Runner 不得承接 Pull Request 工作负载，任务后由平台销毁。
+`.github/workflows/phase-5-resilience.yml` 只能手工启动，并且只接受 `main` 上
+已合并的受信任代码。现场验收使用 `phase-5-resilience` workflow policy，并只使用 GitHub Hosted
+`ubuntu-latest`。作业授予最小 `contents: read` 与 `id-token: write`，不响应
+Pull Request、push 或 `workflow_call`，不保存任何长期凭据。
 
-Environment 只配置非敏感变量：
+Repository Variables 只配置非敏感值：
 
 - `RESILIENCE_ENVIRONMENT_NAME`：固定恢复环境名，必须带 `dr/recovery/resilience/stage/staging/preprod/uat` 独立标签；
 - `RESILIENCE_REGION`：固定隔离区域名；
 - `RESILIENCE_API_IMAGE_DIGEST`、`RESILIENCE_WORKER_IMAGE_DIGEST`、`RESILIENCE_WEB_IMAGE_DIGEST`、`RESILIENCE_WEBSITE_IMAGE_DIGEST`：现场实际部署的四类不可变镜像 SHA-256；
 - `RESILIENCE_DEPLOYMENT_MANIFEST_SHA256`：本次隔离环境部署清单 SHA-256。
 
-受控编排平台把严格白名单的证据摘要以只读普通文件放置在 `/var/lib/gaoq/resilience/phase-5-resilience.json`。文件不得是符号链接，不得允许组或其他用户写入，最大 512 KiB。GitHub 只上传校验结论，不上传原始备份、恢复日志、员工数据、工资行、外部报文、Token、证书或密钥；完整原始证据必须在企业 WORM 中按证据 ID 和 SHA-256 管理。
+受控证据网关只向匹配当前仓库 ID、`main` commit、workflow、policy、
+专用 audience 和 Hosted Runner claim 的 GitHub OIDC 主体返回严格白名单摘要。
+响应必须为 `application/json`，在 Header 返回批准的 SHA-256，正文不得超过
+512 KiB；Runner 再核对 Repository Variable 中的预期摘要并以 `0600` 写入
+`$RUNNER_TEMP`。GitHub 只上传校验结论，不上传原始备份、恢复日志、员工数据、
+工资行、外部报文、Token、证书或密钥；完整原始证据必须在企业 WORM 中按证据
+ID 和 SHA-256 管理。
 
 ```bash
 pnpm resilience:validate-evidence -- /secure/resilience/phase-5-resilience.json
 ```
 
-现场工作流额外使用 `--enforce-environment`，把证据中的环境、区域、当前 `main` commit、四类镜像和部署清单与 GitHub Environment 精确绑定，防止拿其他环境或旧版本的通过报告冒充本次演练。
+现场工作流额外使用 `--enforce-environment`，把证据中的业务环境、区域、当前
+`main` commit、四类镜像和部署清单与当前 workflow policy 精确绑定，防止拿其他
+环境或旧版本的通过报告冒充本次演练。
 
 ## 证据与签署
 

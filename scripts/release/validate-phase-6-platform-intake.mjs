@@ -72,6 +72,13 @@ function expectedFromEnvironment(raw) {
     planGroup: process.env.PHASE6_DEPLOYMENT_PLAN_GROUP,
     applyGroup: process.env.PHASE6_DEPLOYMENT_APPLY_GROUP,
     kubectlVersion: process.env.PHASE6_DEPLOYMENT_KUBECTL_VERSION,
+    githubPolicy: process.env.GAOQ_OIDC_POLICY,
+    evidenceOidcAudienceHash: process.env.PHASE6_DEPLOYMENT_INPUT_OIDC_AUDIENCE === undefined
+      ? undefined
+      : digest(process.env.PHASE6_DEPLOYMENT_INPUT_OIDC_AUDIENCE),
+    kubernetesOidcAudienceHash: process.env.PHASE6_KUBERNETES_OIDC_AUDIENCE === undefined
+      ? undefined
+      : digest(process.env.PHASE6_KUBERNETES_OIDC_AUDIENCE),
   });
   pattern(expected.checksum, SHA256, 'PHASE6_PLATFORM_INTAKE_EXPECTED_INVALID');
   equal(digest(raw), expected.checksum, 'PHASE6_PLATFORM_INTAKE_CHECKSUM_MISMATCH');
@@ -87,6 +94,19 @@ function expectedFromEnvironment(raw) {
   for (const value of [expected.planGroup, expected.applyGroup]) {
     pattern(value, GROUP, 'PHASE6_PLATFORM_INTAKE_EXPECTED_INVALID');
   }
+  if (![
+    'phase-6-deployment-plan', 'phase-6-deployment-apply',
+  ].includes(expected.githubPolicy)) fail('PHASE6_PLATFORM_INTAKE_EXPECTED_INVALID');
+  pattern(
+    expected.evidenceOidcAudienceHash,
+    SHA256,
+    'PHASE6_PLATFORM_INTAKE_EXPECTED_INVALID',
+  );
+  pattern(
+    expected.kubernetesOidcAudienceHash,
+    SHA256,
+    'PHASE6_PLATFORM_INTAKE_EXPECTED_INVALID',
+  );
   kubernetesVersion(expected.kubectlVersion);
   return expected;
 }
@@ -166,7 +186,7 @@ function validateOidc(oidc) {
   pattern(oidc.applyGroup, GROUP, 'PHASE6_PLATFORM_INTAKE_OIDC_INVALID');
   if (oidc.planGroup === oidc.applyGroup) fail('PHASE6_PLATFORM_INTAKE_OIDC_NOT_SEPARATED');
   equal(oidc.shortLived, true, 'PHASE6_PLATFORM_INTAKE_OIDC_INVALID');
-  integer(oidc.maximumCredentialMinutes, 1, 60, 'PHASE6_PLATFORM_INTAKE_OIDC_INVALID');
+  integer(oidc.maximumCredentialMinutes, 1, 15, 'PHASE6_PLATFORM_INTAKE_OIDC_INVALID');
   equal(oidc.serviceAccountTokens, false, 'PHASE6_PLATFORM_INTAKE_SERVICE_ACCOUNT_FORBIDDEN');
 }
 
@@ -176,28 +196,70 @@ function validateGithub(github) {
   ], 'PHASE6_PLATFORM_INTAKE_GITHUB_INVALID');
   pattern(github.repositoryId, /^[1-9][0-9]{3,15}$/u, 'PHASE6_PLATFORM_INTAKE_GITHUB_INVALID');
   equal(github.defaultBranch, 'main', 'PHASE6_PLATFORM_INTAKE_GITHUB_INVALID');
-  validateGithubEnvironment(github.plan, 'phase-6-production-plan', 1,
-    'phase-6-deployment-plan');
-  validateGithubEnvironment(github.apply, 'phase-6-production-deployment', 2,
-    'phase-6-deployment-apply');
+  validateGithubWorkflow(github.plan, {
+    name: 'phase-6-deployment-plan',
+    workflowRef:
+      'GTVigilante/gaoq_ai/.github/workflows/phase-6-deployment-plan.yml@refs/heads/main',
+    authorizationMode: 'read-only-plan',
+    minimumExternalApprovals: 0,
+  });
+  validateGithubWorkflow(github.apply, {
+    name: 'phase-6-deployment-apply',
+    workflowRef:
+      'GTVigilante/gaoq_ai/.github/workflows/phase-6-deployment-apply.yml@refs/heads/main',
+    authorizationMode: 'external-signed-evidence',
+    minimumExternalApprovals: 2,
+  });
+  if (
+    github.plan.evidenceAudienceHash === github.apply.evidenceAudienceHash ||
+    github.plan.kubernetesAudienceHash === github.apply.kubernetesAudienceHash
+  ) {
+    fail('PHASE6_PLATFORM_INTAKE_OIDC_AUDIENCE_NOT_SEPARATED');
+  }
   equal(github.runnersSeparated, true, 'PHASE6_PLATFORM_INTAKE_RUNNERS_NOT_SEPARATED');
   pattern(github.evidenceHash, SHA256, 'PHASE6_PLATFORM_INTAKE_GITHUB_INVALID');
 }
 
-function validateGithubEnvironment(environment, name, minimumReviewers, runnerLabel) {
-  object(environment, [
-    'name', 'requiredReviewers', 'runnerLabels', 'ephemeralRunner', 'secretReadPermission',
-  ], 'PHASE6_PLATFORM_INTAKE_GITHUB_ENV_INVALID');
-  equal(environment.name, name, 'PHASE6_PLATFORM_INTAKE_GITHUB_ENV_INVALID');
-  integer(environment.requiredReviewers, minimumReviewers, 20,
-    'PHASE6_PLATFORM_INTAKE_REVIEWERS_INSUFFICIENT');
-  const requiredLabels = ['self-hosted', 'linux', 'x64', runnerLabel];
-  if (
-    !Array.isArray(environment.runnerLabels) ||
-    canonical([...environment.runnerLabels].sort()) !== canonical(requiredLabels.sort())
-  ) fail('PHASE6_PLATFORM_INTAKE_RUNNER_LABELS_INVALID');
-  equal(environment.ephemeralRunner, true, 'PHASE6_PLATFORM_INTAKE_RUNNER_NOT_EPHEMERAL');
-  equal(environment.secretReadPermission, false, 'PHASE6_PLATFORM_INTAKE_SECRET_READ_FORBIDDEN');
+function validateGithubWorkflow(workflow, contract) {
+  object(workflow, [
+    'name', 'workflowRef', 'authorizationMode', 'minimumExternalApprovals',
+    'runnerEnvironment', 'runnerImage', 'evidenceAudienceHash',
+    'kubernetesAudienceHash', 'ephemeralRunner', 'secretReadPermission',
+  ], 'PHASE6_PLATFORM_INTAKE_GITHUB_WORKFLOW_INVALID');
+  equal(workflow.name, contract.name, 'PHASE6_PLATFORM_INTAKE_GITHUB_WORKFLOW_INVALID');
+  equal(
+    workflow.workflowRef,
+    contract.workflowRef,
+    'PHASE6_PLATFORM_INTAKE_GITHUB_WORKFLOW_INVALID',
+  );
+  equal(
+    workflow.authorizationMode,
+    contract.authorizationMode,
+    'PHASE6_PLATFORM_INTAKE_GITHUB_AUTHORIZATION_INVALID',
+  );
+  equal(
+    workflow.minimumExternalApprovals,
+    contract.minimumExternalApprovals,
+    'PHASE6_PLATFORM_INTAKE_GITHUB_AUTHORIZATION_INVALID',
+  );
+  equal(workflow.runnerEnvironment, 'github-hosted',
+    'PHASE6_PLATFORM_INTAKE_RUNNER_ENVIRONMENT_INVALID');
+  equal(workflow.runnerImage, 'ubuntu-latest', 'PHASE6_PLATFORM_INTAKE_RUNNER_IMAGE_INVALID');
+  pattern(
+    workflow.evidenceAudienceHash,
+    SHA256,
+    'PHASE6_PLATFORM_INTAKE_OIDC_AUDIENCE_INVALID',
+  );
+  pattern(
+    workflow.kubernetesAudienceHash,
+    SHA256,
+    'PHASE6_PLATFORM_INTAKE_OIDC_AUDIENCE_INVALID',
+  );
+  if (workflow.evidenceAudienceHash === workflow.kubernetesAudienceHash) {
+    fail('PHASE6_PLATFORM_INTAKE_OIDC_AUDIENCE_NOT_SEPARATED');
+  }
+  equal(workflow.ephemeralRunner, true, 'PHASE6_PLATFORM_INTAKE_RUNNER_NOT_EPHEMERAL');
+  equal(workflow.secretReadPermission, false, 'PHASE6_PLATFORM_INTAKE_SECRET_READ_FORBIDDEN');
 }
 
 function validateServices(services) {
@@ -287,6 +349,19 @@ function validateExpected(document, expected) {
     'PHASE6_PLATFORM_INTAKE_APPLY_GROUP_MISMATCH');
   equal(kubernetesMinor(document.cluster.version), kubernetesMinor(expected.kubectlVersion),
     'PHASE6_PLATFORM_INTAKE_KUBERNETES_VERSION_MISMATCH');
+  const githubWorkflow = expected.githubPolicy === 'phase-6-deployment-plan'
+    ? document.github.plan
+    : document.github.apply;
+  equal(
+    githubWorkflow.evidenceAudienceHash,
+    expected.evidenceOidcAudienceHash,
+    'PHASE6_PLATFORM_INTAKE_OIDC_AUDIENCE_MISMATCH',
+  );
+  equal(
+    githubWorkflow.kubernetesAudienceHash,
+    expected.kubernetesOidcAudienceHash,
+    'PHASE6_PLATFORM_INTAKE_OIDC_AUDIENCE_MISMATCH',
+  );
 }
 
 function ensureNoSensitiveMaterial(value, path = '$') {
@@ -325,7 +400,7 @@ function runSelfTest() {
       targetNamespace: 'gaoq-erp-prod',
       oidc: {
         issuerHash: hash('d'), planGroup: 'gaoq:phase6-plan', applyGroup: 'gaoq:phase6-apply',
-        shortLived: true, maximumCredentialMinutes: 30, serviceAccountTokens: false,
+        shortLived: true, maximumCredentialMinutes: 15, serviceAccountTokens: false,
       },
       controls: {
         podSecurityRestricted: true, validatingAdmissionPolicy: true,
@@ -337,13 +412,21 @@ function runSelfTest() {
     github: {
       repositoryId: '123456789', defaultBranch: 'main', runnersSeparated: true,
       plan: {
-        name: 'phase-6-production-plan', requiredReviewers: 1,
-        runnerLabels: ['self-hosted', 'linux', 'x64', 'phase-6-deployment-plan'],
+        name: 'phase-6-deployment-plan',
+        workflowRef:
+          'GTVigilante/gaoq_ai/.github/workflows/phase-6-deployment-plan.yml@refs/heads/main',
+        authorizationMode: 'read-only-plan', minimumExternalApprovals: 0,
+        runnerEnvironment: 'github-hosted', runnerImage: 'ubuntu-latest',
+        evidenceAudienceHash: hash('7'), kubernetesAudienceHash: hash('8'),
         ephemeralRunner: true, secretReadPermission: false,
       },
       apply: {
-        name: 'phase-6-production-deployment', requiredReviewers: 2,
-        runnerLabels: ['self-hosted', 'linux', 'x64', 'phase-6-deployment-apply'],
+        name: 'phase-6-deployment-apply',
+        workflowRef:
+          'GTVigilante/gaoq_ai/.github/workflows/phase-6-deployment-apply.yml@refs/heads/main',
+        authorizationMode: 'external-signed-evidence', minimumExternalApprovals: 2,
+        runnerEnvironment: 'github-hosted', runnerImage: 'ubuntu-latest',
+        evidenceAudienceHash: hash('9'), kubernetesAudienceHash: hash('a'),
         ephemeralRunner: true, secretReadPermission: false,
       },
       evidenceHash: hash('f'),
@@ -374,12 +457,23 @@ function runSelfTest() {
     planGroup: evidence.cluster.oidc.planGroup,
     applyGroup: evidence.cluster.oidc.applyGroup,
     kubectlVersion: 'v1.30.12',
+    githubPolicy: 'phase-6-deployment-plan',
+    evidenceOidcAudienceHash: evidence.github.plan.evidenceAudienceHash,
+    kubernetesOidcAudienceHash: evidence.github.plan.kubernetesAudienceHash,
   });
   validateEvidence(evidence, expected, now);
   for (const mutate of [
     (copy) => { copy.cluster.targetNamespace = copy.cluster.controlNamespace; },
     (copy) => { copy.cluster.oidc.applyGroup = copy.cluster.oidc.planGroup; },
-    (copy) => { copy.github.apply.requiredReviewers = 1; },
+    (copy) => { copy.github.apply.minimumExternalApprovals = 1; },
+    (copy) => { copy.github.apply.workflowRef = copy.github.plan.workflowRef; },
+    (copy) => { copy.github.plan.runnerEnvironment = 'self-hosted'; },
+    (copy) => {
+      copy.github.apply.evidenceAudienceHash = copy.github.plan.evidenceAudienceHash;
+    },
+    (copy) => {
+      copy.github.plan.kubernetesAudienceHash = copy.github.plan.evidenceAudienceHash;
+    },
     (copy) => { copy.services[0].tls = false; },
     (copy) => { copy.approvals[1].actorHash = copy.approvals[0].actorHash; },
     (copy) => { copy.decision.outcome = 'BLOCKED'; },

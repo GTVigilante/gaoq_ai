@@ -3,21 +3,29 @@
 - 文档编号：phase-6/02
 - 状态：执行模板已交付；仅能在获批生产窗口使用
 
-## GitHub 受保护环境
+## GitHub Free 受保护入口
 
-仓库需要以下 Required Reviewers 保护的 Environment：
+仓库使用四个 workflow/policy：
 
-- `phase-6-production-plan`：只读生成 Kubernetes server-side dry-run 与 diff；
-- `phase-6-production-deployment`：由独立 Runner 执行获批的 Helm 原子发布；
-- `phase-6-cutover-acceptance`：只读挂载 `/var/lib/gaoq/phase-6/cutover.json`；
-- `phase-6-hypercare-acceptance`：只读挂载 `/var/lib/gaoq/phase-6/hypercare.json`。
+- `phase-6-deployment-plan`：以 Plan 专用 OIDC audience 和最小 Kubernetes
+  Group 生成只读计划与 diff；
+- `phase-6-deployment-apply`：验收变更负责人和 SRE 的外部 Ed25519 双人签名后，
+  以 Apply 专用 OIDC audience 和独立最小 Group 执行 Helm 原子发布；
+- `phase-6-cutover-acceptance`：通过 OIDC 证据网关读取脱敏 `cutover.json`；
+- `phase-6-hypercare-acceptance`：通过 OIDC 证据网关读取脱敏 `hypercare.json`。
 
-两个 Environment 使用不同的隔离单次 self-hosted Runner。PR、push、`workflow_call` 和普通云 Runner 不能读取现场证据。Runner 不保存生产密钥，作业结束后销毁；证据文件不得为符号链接、不得允许组或其他用户写入，最大 1 MiB。
+四个入口均使用 GitHub Hosted `ubuntu-latest`，只允许 `main` 上的
+`workflow_dispatch`。PR、push 和 `workflow_call` 不能触发；Runner 不保存生产
+密钥。GitHub Free 私有仓库不依赖 Environment 或 Required Reviewers；证据 URL、
+专用 audience 和预期 SHA-256 是非敏感 Repository Variables，临时输入以 `0600`
+写入 `$RUNNER_TEMP`，作业结束即清除。完整交换标准见
+[GitHub Hosted OIDC 证据交换标准](../phase-5/21-github-oidc-evidence-exchange.md)。
 
 ## 执行次序
 
 1. 在默认分支完成 Phase 5 Go/No-Go，并冻结 commit、三份镜像摘要和部署清单。
-2. 按[受保护生产部署工作流](./05-protected-production-deployment.md)生成计划，经 Required Reviewers 批准后部署当前 release；此步骤不切流。
+2. 按[受保护生产部署工作流](./05-protected-production-deployment.md)运行独立
+   Plan，复核计划包并取得外部双人签名，再手工运行独立 Apply；此步骤不切流。
 3. 现场团队执行三次全量演练及生产级回滚演练，将原始证据写入企业 WORM。
 4. 数据负责人导出脱敏的 `cutover.json`；在默认分支手工运行 `Phase 6 统一切换证据验收`。
 5. 现场变更负责人按[生产资金执行授权契约](./03-production-execution-authorization.md)启用独立授权域；每个真实银行或税务对象仍需单独短时授权。

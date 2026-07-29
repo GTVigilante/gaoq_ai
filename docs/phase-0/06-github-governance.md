@@ -198,6 +198,10 @@ Backlog → Ready → In Progress → In Review → Security Review → UAT → 
   `GOV-*` 码与资源编号，禁止输出 Token 或 API 响应正文。
 - Hosted Actions 因账号付费或 Spending limit 在 Runner 分配前被拦截时，只能
   记录“工作流未执行”；本地实时校验通过不能冒充 Hosted Actions 通过。
+- 全部工作流只允许 GitHub Hosted `ubuntu-latest`；受保护 workflow/policy
+  通过 `id-token: write` 获取单次 OIDC 身份。GitHub Free 私有仓库不依赖付费
+  Environment；禁止 NAS、自建/虚拟机 Runner、本地证据挂载和长期云/Kubernetes
+  凭据。
 
 ---
 

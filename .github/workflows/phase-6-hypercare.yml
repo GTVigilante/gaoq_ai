@@ -36,15 +36,16 @@ jobs:
   evidence:
     name: 验收二十八天生产稳定期与归档证据
     needs: contract
-    runs-on:
-      - self-hosted
-      - linux
-      - x64
-      - phase-6-hypercare
+    runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: phase-6-hypercare-acceptance
+    permissions:
+      contents: read
+      id-token: write
     env:
-      PHASE6_HYPERCARE_EVIDENCE_PATH: /var/lib/gaoq/phase-6/hypercare.json
+      GAOQ_OIDC_POLICY: phase-6-hypercare-acceptance
+      PHASE6_HYPERCARE_EVIDENCE_OIDC_AUDIENCE: ${{ vars.PHASE6_HYPERCARE_EVIDENCE_OIDC_AUDIENCE }}
+      PHASE6_HYPERCARE_EVIDENCE_URL: ${{ vars.PHASE6_HYPERCARE_EVIDENCE_URL }}
+      PHASE6_HYPERCARE_EVIDENCE_SHA256: ${{ vars.PHASE6_HYPERCARE_EVIDENCE_SHA256 }}
       PHASE6_HYPERCARE_EXPECTED_ENVIRONMENT: ${{ vars.PHASE6_HYPERCARE_ENVIRONMENT_NAME }}
       PHASE6_HYPERCARE_EXPECTED_REGION: ${{ vars.PHASE6_HYPERCARE_REGION }}
       PHASE6_HYPERCARE_EXPECTED_COMMIT: ${{ github.sha }}
@@ -60,6 +61,24 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22
+
+      - name: 固定 Runner 临时证据路径
+        shell: bash
+        run: >-
+          printf 'PHASE6_HYPERCARE_EVIDENCE_PATH=%s\n'
+          "$RUNNER_TEMP/phase-6-hypercare.json"
+          >> "$GITHUB_ENV"
+
+      - name: 通过 GitHub OIDC 拉取脱敏稳定期证据
+        run: >-
+          node scripts/github/fetch-oidc-protected-input.mjs
+          --url "$PHASE6_HYPERCARE_EVIDENCE_URL"
+          --audience "$PHASE6_HYPERCARE_EVIDENCE_OIDC_AUDIENCE"
+          --policy "$GAOQ_OIDC_POLICY"
+          --output "$PHASE6_HYPERCARE_EVIDENCE_PATH"
+          --sha256 "$PHASE6_HYPERCARE_EVIDENCE_SHA256"
+          --max-bytes 1048576
+          --media-type application/json
 
       - name: 验证稳定期连续性与归档批准
         env:

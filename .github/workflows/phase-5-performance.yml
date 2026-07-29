@@ -36,17 +36,20 @@ jobs:
   evidence:
     name: 验收生产等价隔离环境的三次容量证据
     needs: contract
-    runs-on:
-      - self-hosted
-      - linux
-      - x64
-      - phase-5-performance
+    runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: phase-5-performance
+    permissions:
+      contents: read
+      id-token: write
     env:
-      PERFORMANCE_EVIDENCE_RUN_1_PATH: /var/lib/gaoq/performance/run-1.json
-      PERFORMANCE_EVIDENCE_RUN_2_PATH: /var/lib/gaoq/performance/run-2.json
-      PERFORMANCE_EVIDENCE_RUN_3_PATH: /var/lib/gaoq/performance/run-3.json
+      GAOQ_OIDC_POLICY: phase-5-performance
+      PERFORMANCE_EVIDENCE_OIDC_AUDIENCE: ${{ vars.PERFORMANCE_EVIDENCE_OIDC_AUDIENCE }}
+      PERFORMANCE_EVIDENCE_RUN_1_URL: ${{ vars.PERFORMANCE_EVIDENCE_RUN_1_URL }}
+      PERFORMANCE_EVIDENCE_RUN_1_SHA256: ${{ vars.PERFORMANCE_EVIDENCE_RUN_1_SHA256 }}
+      PERFORMANCE_EVIDENCE_RUN_2_URL: ${{ vars.PERFORMANCE_EVIDENCE_RUN_2_URL }}
+      PERFORMANCE_EVIDENCE_RUN_2_SHA256: ${{ vars.PERFORMANCE_EVIDENCE_RUN_2_SHA256 }}
+      PERFORMANCE_EVIDENCE_RUN_3_URL: ${{ vars.PERFORMANCE_EVIDENCE_RUN_3_URL }}
+      PERFORMANCE_EVIDENCE_RUN_3_SHA256: ${{ vars.PERFORMANCE_EVIDENCE_RUN_3_SHA256 }}
       PERFORMANCE_EXPECTED_ENVIRONMENT: ${{ vars.PERFORMANCE_ENVIRONMENT_NAME }}
       PERFORMANCE_EXPECTED_REGION: ${{ vars.PERFORMANCE_REGION }}
       PERFORMANCE_EXPECTED_COMMIT: ${{ github.sha }}
@@ -65,6 +68,43 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22
+
+      - name: 固定 Runner 临时证据路径
+        shell: bash
+        run: |
+          printf 'PERFORMANCE_EVIDENCE_RUN_1_PATH=%s\n' \
+            "$RUNNER_TEMP/phase-5-performance-run-1.json" >> "$GITHUB_ENV"
+          printf 'PERFORMANCE_EVIDENCE_RUN_2_PATH=%s\n' \
+            "$RUNNER_TEMP/phase-5-performance-run-2.json" >> "$GITHUB_ENV"
+          printf 'PERFORMANCE_EVIDENCE_RUN_3_PATH=%s\n' \
+            "$RUNNER_TEMP/phase-5-performance-run-3.json" >> "$GITHUB_ENV"
+
+      - name: 通过 GitHub OIDC 拉取三份脱敏容量证据
+        run: |
+          node scripts/github/fetch-oidc-protected-input.mjs \
+            --url "$PERFORMANCE_EVIDENCE_RUN_1_URL" \
+            --audience "$PERFORMANCE_EVIDENCE_OIDC_AUDIENCE" \
+            --policy "$GAOQ_OIDC_POLICY" \
+            --output "$PERFORMANCE_EVIDENCE_RUN_1_PATH" \
+            --sha256 "$PERFORMANCE_EVIDENCE_RUN_1_SHA256" \
+            --max-bytes 262144 \
+            --media-type application/json
+          node scripts/github/fetch-oidc-protected-input.mjs \
+            --url "$PERFORMANCE_EVIDENCE_RUN_2_URL" \
+            --audience "$PERFORMANCE_EVIDENCE_OIDC_AUDIENCE" \
+            --policy "$GAOQ_OIDC_POLICY" \
+            --output "$PERFORMANCE_EVIDENCE_RUN_2_PATH" \
+            --sha256 "$PERFORMANCE_EVIDENCE_RUN_2_SHA256" \
+            --max-bytes 262144 \
+            --media-type application/json
+          node scripts/github/fetch-oidc-protected-input.mjs \
+            --url "$PERFORMANCE_EVIDENCE_RUN_3_URL" \
+            --audience "$PERFORMANCE_EVIDENCE_OIDC_AUDIENCE" \
+            --policy "$GAOQ_OIDC_POLICY" \
+            --output "$PERFORMANCE_EVIDENCE_RUN_3_PATH" \
+            --sha256 "$PERFORMANCE_EVIDENCE_RUN_3_SHA256" \
+            --max-bytes 262144 \
+            --media-type application/json
 
       - name: 验证环境绑定与三次独立容量证据
         env:

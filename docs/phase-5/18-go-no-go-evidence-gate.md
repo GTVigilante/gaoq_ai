@@ -43,9 +43,16 @@ R0 23、R1 16、R2 8、R3 0。陈旧哈希、遗漏 Resource Template 或只满�
 
 ## 受保护工作流
 
-`.github/workflows/phase-5-go-no-go.yml` 只能在 `main` 手工启动，绑定 Required Reviewers 保护的 `phase-5-go-no-go` Environment，并进入带 `self-hosted`、`linux`、`x64`、`phase-5-go-no-go` 标签的隔离单次 Runner。PR 代码不能触达该 Runner，Runner 不承担生产部署。
+`.github/workflows/phase-5-go-no-go.yml` 只能在 `main` 手工启动，使用
+`phase-5-go-no-go` workflow policy 和 GitHub Hosted `ubuntu-latest`。PR、push
+与 `workflow_call` 不能触发该工作流；验收作业只读
+代码和证据，不承担生产部署。
 
-Environment 配置以下非敏感变量：环境名、区域、API/Worker/ERP Web/Website 镜像 SHA-256 和部署清单 SHA-256。工作流把这些值及当前 `main` commit 与证据精确绑定。只读证据文件固定为 `/var/lib/gaoq/go-no-go/phase-5-go-no-go.json`，不得是符号链接、不得允许组或其他用户写入，最大 512 KiB。
+Repository Variables 配置以下非敏感值：环境名、区域、API/Worker/ERP Web/Website
+镜像 SHA-256、部署清单 SHA-256、证据 HTTPS URL、专用 OIDC audience 和预期
+证据 SHA-256。工作流把这些值及当前 `main` commit 与证据精确绑定，以单次
+GitHub OIDC 身份读取最多 1 MiB 的脱敏 JSON，并在 `$RUNNER_TEMP` 以 `0600`
+保存到作业结束。
 
 ```bash
 pnpm release:go-no-go:validate-evidence -- /secure/release/phase-5-go-no-go.json

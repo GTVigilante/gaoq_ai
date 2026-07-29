@@ -79,7 +79,13 @@ OP、钉钉、飞书、e签宝、银行、税务、附件和 WORM 只通过应�
 
 工具自测和本目录不等于联调完成。最终 `integration-mcp` verdict 必须绑定 commit、API/Worker/ERP Web/Website 四类镜像、`catalogHash`、三类客户端原始协议记录、八类外部沙箱证据、跨租户拒绝、审计和安全签署，随后才能进入[跨职能 Go/No-Go 门禁](./18-go-no-go-evidence-gate.md)。
 
-`.github/workflows/phase-5-mcp-integration.yml` 只允许 `main` 手工启动，绑定 Required Reviewers 保护的 `phase-5-mcp-integration` Environment 和同名隔离单次 Runner 标签。Environment 配置固定环境名及 API/Worker/ERP Web/Website 镜像 SHA-256；现场摘要文件固定为 `/var/lib/gaoq/mcp/phase-5-mcp-integration.json`。工作流把证据与当前 commit、镜像和实时解析的 `catalogHash` 精确绑定，只上传脱敏 verdict，不上传 OAuth Token、协议正文、业务数据或供应商凭据。
+`.github/workflows/phase-5-mcp-integration.yml` 只允许 `main` 手工启动，使用
+`phase-5-mcp-integration` workflow policy 和 GitHub Hosted `ubuntu-latest`。
+Repository Variables 配置固定环境名、API/Worker/ERP Web/Website 镜像
+SHA-256、脱敏摘要 HTTPS URL、预期文件 SHA-256 和专用 OIDC audience。工作流
+以当前 policy 的单次 GitHub OIDC 身份取得最多 1 MiB 的严格 JSON，把证据
+与当前 commit、镜像和实时解析的 `catalogHash` 精确绑定，只上传脱敏 verdict，
+不上传 OAuth Token、协议正文、业务数据或供应商凭据。
 
 证据必须覆盖三类客户端各至少 10 次 Tool 调用、全部 47 个 Tool、4 个 Resource、
 24 个 Resource Template 和 22 个 Prompt 的一致目录；OP、钉钉、飞书、e签宝、

@@ -49,7 +49,15 @@ pnpm migration:rehearsal:validate-evidence -- \
   /secure/migration/phase-5-rehearsal.json
 ```
 
-`.github/workflows/phase-5-migration-rehearsal.yml` 只允许在 `main` 手工启动，绑定 Required Reviewers 保护的 `phase-5-migration-rehearsal` Environment，并使用带同名标签的隔离单次 self-hosted Runner。只读现场摘要固定为 `/var/lib/gaoq/migration/phase-5-rehearsal.json`，不得为符号链接、不得允许组或其他用户写入，最大 1 MiB。Environment 固定环境、区域、四类镜像、部署清单、来源快照和来源包清单摘要；GitHub 只上传脱敏 verdict，原始 NDJSON、业务数据、附件和签署材料留在企业 WORM。
+`.github/workflows/phase-5-migration-rehearsal.yml` 只允许在 `main` 手工启动，
+使用 `phase-5-migration-rehearsal` workflow policy 和 GitHub Hosted
+`ubuntu-latest`。Repository Variables 配置非敏感证据网关 HTTPS URL、
+policy 专用 OIDC audience、预期文件 SHA-256、环境、区域、四类镜像、部署清单、来源
+快照和来源包清单摘要。Runner 以 `id-token: write` 取得单次 GitHub OIDC 身份，
+从网关读取最多 1 MiB 的严格脱敏聚合 JSON；下载器复核 policy、仓库 ID、
+当前 `main` commit、workflow、Hosted Runner claim、媒体类型、响应头摘要和实际
+字节摘要，并以 `0600` 写入 `$RUNNER_TEMP`。GitHub 只上传脱敏 verdict，原始
+NDJSON、业务数据、附件和签署材料留在企业 WORM。
 
 ## 人工与外部门禁
 

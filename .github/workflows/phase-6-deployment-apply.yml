@@ -1,0 +1,287 @@
+name: Phase 6 生产部署执行
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-6-production-deployment-apply
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    name: 验证外部签名授权并原子部署
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GAOQ_OIDC_POLICY: phase-6-deployment-apply
+      PHASE6_DEPLOYMENT_INPUT_OIDC_AUDIENCE: ${{ vars.PHASE6_DEPLOYMENT_APPLY_INPUT_OIDC_AUDIENCE }}
+      PHASE6_DEPLOYMENT_VALUES_URL: ${{ vars.PHASE6_DEPLOYMENT_VALUES_URL }}
+      PHASE6_DEPLOYMENT_VALUES_SHA256: ${{ vars.PHASE6_DEPLOYMENT_VALUES_SHA256 }}
+      PHASE6_DEPLOYMENT_GO_NO_GO_URL: ${{ vars.PHASE6_DEPLOYMENT_GO_NO_GO_URL }}
+      PHASE6_DEPLOYMENT_GO_NO_GO_SHA256: ${{ vars.PHASE6_DEPLOYMENT_GO_NO_GO_SHA256 }}
+      PHASE6_DEPLOYMENT_PLATFORM_INTAKE_URL: ${{ vars.PHASE6_DEPLOYMENT_PLATFORM_INTAKE_URL }}
+      PHASE6_DEPLOYMENT_PLATFORM_INTAKE_SHA256: ${{ vars.PHASE6_DEPLOYMENT_PLATFORM_INTAKE_SHA256 }}
+      PHASE6_DEPLOYMENT_AUTHORIZATION_URL: ${{ vars.PHASE6_DEPLOYMENT_AUTHORIZATION_URL }}
+      PHASE6_DEPLOYMENT_AUTHORIZATION_SHA256: ${{ vars.PHASE6_DEPLOYMENT_AUTHORIZATION_SHA256 }}
+      PHASE6_DEPLOYMENT_AUTHORIZATION_PUBLIC_KEY_PEM_BASE64: ${{ vars.PHASE6_DEPLOYMENT_AUTHORIZATION_PUBLIC_KEY_PEM_BASE64 }}
+      PHASE6_DEPLOYMENT_AUTHORIZATION_PUBLIC_KEY_SHA256: ${{ vars.PHASE6_DEPLOYMENT_AUTHORIZATION_PUBLIC_KEY_SHA256 }}
+      PHASE6_DEPLOYMENT_AUTHORIZED_PLAN_RUN_ID: ${{ vars.PHASE6_DEPLOYMENT_AUTHORIZED_PLAN_RUN_ID }}
+      PHASE6_DEPLOYMENT_AUTHORIZED_PLAN_RUN_ATTEMPT: ${{ vars.PHASE6_DEPLOYMENT_AUTHORIZED_PLAN_RUN_ATTEMPT }}
+      PHASE6_DEPLOYMENT_AUTHORIZED_PLAN_ARTIFACT_SHA256: ${{ vars.PHASE6_DEPLOYMENT_AUTHORIZED_PLAN_ARTIFACT_SHA256 }}
+      PHASE6_DEPLOYMENT_CLUSTER_SHA256: ${{ vars.PHASE6_DEPLOYMENT_CLUSTER_SHA256 }}
+      PHASE6_KUBERNETES_SERVER: ${{ vars.PHASE6_KUBERNETES_SERVER }}
+      PHASE6_KUBERNETES_CA_BASE64: ${{ vars.PHASE6_KUBERNETES_CA_BASE64 }}
+      PHASE6_KUBERNETES_CA_SHA256: ${{ vars.PHASE6_KUBERNETES_CA_SHA256 }}
+      PHASE6_KUBERNETES_CREDENTIAL_URL: ${{ vars.PHASE6_KUBERNETES_CREDENTIAL_URL }}
+      PHASE6_KUBERNETES_OIDC_AUDIENCE: ${{ vars.PHASE6_DEPLOYMENT_APPLY_KUBERNETES_OIDC_AUDIENCE }}
+      PHASE6_DEPLOYMENT_GUARDRAILS_MANIFEST_SHA256: ${{ vars.PHASE6_DEPLOYMENT_GUARDRAILS_MANIFEST_SHA256 }}
+      PHASE6_DEPLOYMENT_RELEASE_NAME: ${{ vars.PHASE6_DEPLOYMENT_RELEASE_NAME }}
+      PHASE6_DEPLOYMENT_CONTROL_NAMESPACE: ${{ vars.PHASE6_DEPLOYMENT_CONTROL_NAMESPACE }}
+      PHASE6_DEPLOYMENT_TARGET_NAMESPACE: ${{ vars.PHASE6_DEPLOYMENT_TARGET_NAMESPACE }}
+      PHASE6_DEPLOYMENT_PLATFORM_NAMESPACE: ${{ vars.PHASE6_DEPLOYMENT_PLATFORM_NAMESPACE }}
+      PHASE6_DEPLOYMENT_KUBECTL_VERSION: ${{ vars.PHASE6_DEPLOYMENT_KUBECTL_VERSION }}
+      PHASE6_DEPLOYMENT_PLAN_GROUP: ${{ vars.PHASE6_DEPLOYMENT_PLAN_GROUP }}
+      PHASE6_DEPLOYMENT_APPLY_GROUP: ${{ vars.PHASE6_DEPLOYMENT_APPLY_GROUP }}
+      HELM_DRIVER: configmap
+      PHASE6_DEPLOYMENT_EXPECTED_COMMIT: ${{ github.sha }}
+      PHASE6_DEPLOYMENT_EXPECTED_API_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_API_IMAGE_DIGEST }}
+      PHASE6_DEPLOYMENT_EXPECTED_WORKER_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_WORKER_IMAGE_DIGEST }}
+      PHASE6_DEPLOYMENT_EXPECTED_WEB_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_WEB_IMAGE_DIGEST }}
+      PHASE6_DEPLOYMENT_EXPECTED_WEBSITE_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_WEBSITE_IMAGE_DIGEST }}
+      PHASE6_DEPLOYMENT_EXPECTED_MANIFEST: ${{ vars.PHASE6_DEPLOYMENT_MANIFEST_SHA256 }}
+      PHASE6_DEPLOYMENT_WEBSITE_PUBLIC_CONFIG_SHA256: ${{ vars.PHASE6_DEPLOYMENT_WEBSITE_PUBLIC_CONFIG_SHA256 }}
+      PHASE6_DEPLOYMENT_EXPECTED_ROLLOUT_ID: ${{ vars.PHASE6_DEPLOYMENT_ROLLOUT_ID }}
+      PHASE6_DEPLOYMENT_API_CONFIG_MAP: ${{ vars.PHASE6_DEPLOYMENT_API_CONFIG_MAP }}
+      PHASE6_DEPLOYMENT_API_SECRET: ${{ vars.PHASE6_DEPLOYMENT_API_SECRET }}
+      PHASE6_DEPLOYMENT_WORKER_CONFIG_MAP: ${{ vars.PHASE6_DEPLOYMENT_WORKER_CONFIG_MAP }}
+      PHASE6_DEPLOYMENT_WORKER_SECRET: ${{ vars.PHASE6_DEPLOYMENT_WORKER_SECRET }}
+      PHASE6_DEPLOYMENT_WEB_CONFIG_MAP: ${{ vars.PHASE6_DEPLOYMENT_WEB_CONFIG_MAP }}
+      PHASE6_DEPLOYMENT_WEB_SECRET: ${{ vars.PHASE6_DEPLOYMENT_WEB_SECRET }}
+      PHASE6_DEPLOYMENT_WEBSITE_CONFIG_MAP: ${{ vars.PHASE6_DEPLOYMENT_WEBSITE_CONFIG_MAP }}
+      PHASE6_DEPLOYMENT_WEBSITE_SECRET: ${{ vars.PHASE6_DEPLOYMENT_WEBSITE_SECRET }}
+      GO_NO_GO_EXPECTED_ENVIRONMENT: ${{ vars.PHASE6_DEPLOYMENT_GO_NO_GO_ENVIRONMENT }}
+      GO_NO_GO_EXPECTED_REGION: ${{ vars.PHASE6_DEPLOYMENT_GO_NO_GO_REGION }}
+      GO_NO_GO_EXPECTED_COMMIT: ${{ github.sha }}
+      GO_NO_GO_EXPECTED_API_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_API_IMAGE_DIGEST }}
+      GO_NO_GO_EXPECTED_WORKER_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_WORKER_IMAGE_DIGEST }}
+      GO_NO_GO_EXPECTED_WEB_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_WEB_IMAGE_DIGEST }}
+      GO_NO_GO_EXPECTED_WEBSITE_IMAGE: ${{ vars.PHASE6_DEPLOYMENT_WEBSITE_IMAGE_DIGEST }}
+      GO_NO_GO_EXPECTED_DEPLOYMENT_MANIFEST: ${{ vars.PHASE6_DEPLOYMENT_MANIFEST_SHA256 }}
+    steps:
+      - name: 只允许默认分支执行
+        shell: bash
+        run: test "$GITHUB_REF" = 'refs/heads/main'
+
+      - name: 检出受信任代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装固定 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22.23.1
+
+      - name: 执行部署授权与身份契约自测
+        run: |
+          node scripts/github/fetch-oidc-protected-input.mjs --self-test
+          node scripts/github/github-oidc-kubernetes-credential.mjs --self-test
+          node scripts/github/write-oidc-kubeconfig.mjs --self-test
+          node scripts/release/validate-phase-6-deployment-plan.mjs --self-test
+          node scripts/release/validate-phase-6-platform-intake.mjs --self-test
+          node scripts/release/validate-phase-6-deployment-authorization.mjs --self-test
+
+      - name: 固定 Runner 临时输入与 kubeconfig 路径
+        shell: bash
+        run: |
+          printf 'PHASE6_DEPLOYMENT_VALUES_PATH=%s\n' \
+            "$RUNNER_TEMP/production-values.yaml" >> "$GITHUB_ENV"
+          printf 'PHASE6_DEPLOYMENT_GO_NO_GO_PATH=%s\n' \
+            "$RUNNER_TEMP/phase-5-go-no-go.json" >> "$GITHUB_ENV"
+          printf 'PHASE6_DEPLOYMENT_PLATFORM_INTAKE_PATH=%s\n' \
+            "$RUNNER_TEMP/phase-6-platform-intake.json" >> "$GITHUB_ENV"
+          printf 'PHASE6_DEPLOYMENT_AUTHORIZATION_PATH=%s\n' \
+            "$RUNNER_TEMP/phase-6-deployment-authorization.json" >> "$GITHUB_ENV"
+          printf 'KUBECONFIG=%s\n' \
+            "$RUNNER_TEMP/phase-6-kubeconfig.json" >> "$GITHUB_ENV"
+
+      - name: 通过 GitHub OIDC 拉取四份受保护输入
+        shell: bash
+        run: |
+          node scripts/github/fetch-oidc-protected-input.mjs \
+            --url "$PHASE6_DEPLOYMENT_VALUES_URL" \
+            --audience "$PHASE6_DEPLOYMENT_INPUT_OIDC_AUDIENCE" \
+            --policy "$GAOQ_OIDC_POLICY" \
+            --output "$PHASE6_DEPLOYMENT_VALUES_PATH" \
+            --sha256 "$PHASE6_DEPLOYMENT_VALUES_SHA256" \
+            --max-bytes 1048576 \
+            --media-type application/yaml
+          node scripts/github/fetch-oidc-protected-input.mjs \
+            --url "$PHASE6_DEPLOYMENT_GO_NO_GO_URL" \
+            --audience "$PHASE6_DEPLOYMENT_INPUT_OIDC_AUDIENCE" \
+            --policy "$GAOQ_OIDC_POLICY" \
+            --output "$PHASE6_DEPLOYMENT_GO_NO_GO_PATH" \
+            --sha256 "$PHASE6_DEPLOYMENT_GO_NO_GO_SHA256" \
+            --max-bytes 1048576 \
+            --media-type application/json
+          node scripts/github/fetch-oidc-protected-input.mjs \
+            --url "$PHASE6_DEPLOYMENT_PLATFORM_INTAKE_URL" \
+            --audience "$PHASE6_DEPLOYMENT_INPUT_OIDC_AUDIENCE" \
+            --policy "$GAOQ_OIDC_POLICY" \
+            --output "$PHASE6_DEPLOYMENT_PLATFORM_INTAKE_PATH" \
+            --sha256 "$PHASE6_DEPLOYMENT_PLATFORM_INTAKE_SHA256" \
+            --max-bytes 524288 \
+            --media-type application/json
+          node scripts/github/fetch-oidc-protected-input.mjs \
+            --url "$PHASE6_DEPLOYMENT_AUTHORIZATION_URL" \
+            --audience "$PHASE6_DEPLOYMENT_INPUT_OIDC_AUDIENCE" \
+            --policy "$GAOQ_OIDC_POLICY" \
+            --output "$PHASE6_DEPLOYMENT_AUTHORIZATION_PATH" \
+            --sha256 "$PHASE6_DEPLOYMENT_AUTHORIZATION_SHA256" \
+            --max-bytes 262144 \
+            --media-type application/json
+          node scripts/github/write-oidc-kubeconfig.mjs --output "$KUBECONFIG"
+
+      - name: 安装固定部署工具
+        shell: bash
+        run: |
+          mkdir --parents "$RUNNER_TEMP/phase6-bin" "$RUNNER_TEMP/phase6-tools"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            https://get.helm.sh/helm-v4.2.0-linux-amd64.tar.gz \
+            --output "$RUNNER_TEMP/phase6-tools/helm.tar.gz"
+          echo '97dbeb971be4ac4b27e3839976d9564c0fb35c6f3b1da89dd1e292d236af4096  '"$RUNNER_TEMP"'/phase6-tools/helm.tar.gz' \
+            | sha256sum --check
+          tar --extract --gzip --file "$RUNNER_TEMP/phase6-tools/helm.tar.gz" \
+            --directory "$RUNNER_TEMP/phase6-tools"
+          install --mode 0755 "$RUNNER_TEMP/phase6-tools/linux-amd64/helm" \
+            "$RUNNER_TEMP/phase6-bin/helm"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz \
+            --output "$RUNNER_TEMP/phase6-tools/kubeconform.tar.gz"
+          echo 'c31518ddd122663b3f3aa874cfe8178cb0988de944f29c74a0b9260920d115d3  '"$RUNNER_TEMP"'/phase6-tools/kubeconform.tar.gz' \
+            | sha256sum --check
+          tar --extract --gzip --file "$RUNNER_TEMP/phase6-tools/kubeconform.tar.gz" \
+            --directory "$RUNNER_TEMP/phase6-tools" kubeconform
+          install --mode 0755 "$RUNNER_TEMP/phase6-tools/kubeconform" \
+            "$RUNNER_TEMP/phase6-bin/kubeconform"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            https://dl.k8s.io/release/v1.30.12/bin/linux/amd64/kubectl \
+            --output "$RUNNER_TEMP/phase6-tools/kubectl"
+          echo '261a3c4eb12e09207b9e08f0b43d547220569317ed8d7a22638572100ace5b80  '"$RUNNER_TEMP"'/phase6-tools/kubectl' \
+            | sha256sum --check
+          install --mode 0755 "$RUNNER_TEMP/phase6-tools/kubectl" \
+            "$RUNNER_TEMP/phase6-bin/kubectl"
+          echo "$RUNNER_TEMP/phase6-bin" >> "$GITHUB_PATH"
+
+      - name: 重新绑定工具链、输入和生产授权
+        shell: bash
+        run: |
+          test "$(node --version)" = 'v22.23.1'
+          test "$(helm version --short)" = 'v4.2.0+g0646808'
+          test "$(kubeconform -v)" = 'v0.7.0'
+          test -f "$PHASE6_DEPLOYMENT_VALUES_PATH"
+          test ! -L "$PHASE6_DEPLOYMENT_VALUES_PATH"
+          test "$(stat --format='%s' "$PHASE6_DEPLOYMENT_VALUES_PATH")" -le 1048576
+          file_mode=$(stat --format='%a' "$PHASE6_DEPLOYMENT_VALUES_PATH")
+          test $((8#$file_mode & 8#22)) -eq 0
+          node scripts/release/validate-phase-6-deployment-plan.mjs --validate-environment
+          kubectl version --client --output=json > "$RUNNER_TEMP/kubectl-version.json"
+          node --input-type=module --eval "import{readFileSync}from'node:fs';const v=JSON.parse(readFileSync(process.argv[1],'utf8')).clientVersion.gitVersion;if(v!==process.env.PHASE6_DEPLOYMENT_KUBECTL_VERSION)process.exit(1)" "$RUNNER_TEMP/kubectl-version.json"
+          node scripts/release/validate-phase-5-go-no-go-evidence.mjs \
+            --enforce-environment "$PHASE6_DEPLOYMENT_GO_NO_GO_PATH" \
+            > "$RUNNER_TEMP/go-no-go-verdict.json"
+          node scripts/release/validate-phase-6-platform-intake.mjs \
+            --enforce-environment "$PHASE6_DEPLOYMENT_PLATFORM_INTAKE_PATH" \
+            > "$RUNNER_TEMP/platform-intake-verdict.json"
+          helm template "$PHASE6_DEPLOYMENT_RELEASE_NAME" deploy/helm/gaoq-erp \
+            --namespace "$PHASE6_DEPLOYMENT_CONTROL_NAMESPACE" \
+            --values "$PHASE6_DEPLOYMENT_VALUES_PATH" \
+            > "$RUNNER_TEMP/production-rendered.yaml"
+          chmod 0600 "$RUNNER_TEMP/production-rendered.yaml"
+          rendered_hash=$(sha256sum "$RUNNER_TEMP/production-rendered.yaml" | cut --delimiter=' ' --fields=1)
+          printf 'PHASE6_DEPLOYMENT_EXPECTED_RENDERED_SHA256=sha256:%s\n' \
+            "$rendered_hash" >> "$GITHUB_ENV"
+
+      - name: 验证双人 Ed25519 签名部署授权
+        run: >-
+          node scripts/release/validate-phase-6-deployment-authorization.mjs
+          --enforce-environment
+          "$PHASE6_DEPLOYMENT_AUTHORIZATION_PATH"
+          > "$RUNNER_TEMP/deployment-authorization-verdict.json"
+
+      - name: 执行服务端预检和最小权限复核
+        shell: bash
+        run: |
+          node scripts/validate-kubernetes-deployment.mjs \
+            "$RUNNER_TEMP/production-rendered.yaml"
+          node scripts/release/validate-phase-6-deployment-plan.mjs \
+            --enforce-environment "$RUNNER_TEMP/production-rendered.yaml" \
+            > "$RUNNER_TEMP/deployment-plan-verdict.json"
+          kubeconform -strict -summary -kubernetes-version 1.30.0 \
+            -schema-location 'https://raw.githubusercontent.com/yannh/kubernetes-json-schema/987aa4ee419358d6ae108f54f6c42f4e90f22b70/{{.NormalizedKubernetesVersion}}-standalone-strict/{{.ResourceKind}}.json' \
+            "$RUNNER_TEMP/production-rendered.yaml"
+          kubectl get namespace "$PHASE6_DEPLOYMENT_CONTROL_NAMESPACE" > /dev/null
+          kubectl get namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE" > /dev/null
+          kubectl get configmap "$PHASE6_DEPLOYMENT_API_CONFIG_MAP" \
+            --namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE" > /dev/null
+          kubectl get configmap "$PHASE6_DEPLOYMENT_WORKER_CONFIG_MAP" \
+            --namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE" > /dev/null
+          kubectl get configmap "$PHASE6_DEPLOYMENT_WEB_CONFIG_MAP" \
+            --namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE" > /dev/null
+          kubectl get configmap "$PHASE6_DEPLOYMENT_WEBSITE_CONFIG_MAP" \
+            --namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE" > /dev/null
+          if kubectl auth can-i get secrets --namespace "$PHASE6_DEPLOYMENT_CONTROL_NAMESPACE"; then exit 1; fi
+          if kubectl auth can-i get secrets --namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE"; then exit 1; fi
+          kubectl apply --server-side --dry-run=server \
+            --field-manager=gaoq-phase6-deploy \
+            --namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE" \
+            --filename "$RUNNER_TEMP/production-rendered.yaml" > /dev/null
+
+      - name: 执行原子部署
+        shell: bash
+        run: |
+          helm upgrade --install "$PHASE6_DEPLOYMENT_RELEASE_NAME" deploy/helm/gaoq-erp \
+            --namespace "$PHASE6_DEPLOYMENT_CONTROL_NAMESPACE" \
+            --values "$PHASE6_DEPLOYMENT_VALUES_PATH" \
+            --atomic --wait --timeout 15m --history-max 10
+
+      - name: 只读验证实际发布状态
+        shell: bash
+        run: |
+          kubectl rollout status deployment \
+            --selector="app.kubernetes.io/instance=$PHASE6_DEPLOYMENT_RELEASE_NAME,app.kubernetes.io/part-of=gaoq-os" \
+            --namespace "$PHASE6_DEPLOYMENT_TARGET_NAMESPACE" --timeout=10m
+          helm get manifest "$PHASE6_DEPLOYMENT_RELEASE_NAME" \
+            --namespace "$PHASE6_DEPLOYMENT_CONTROL_NAMESPACE" \
+            > "$RUNNER_TEMP/applied-manifest.yaml"
+          node scripts/validate-kubernetes-deployment.mjs \
+            "$RUNNER_TEMP/applied-manifest.yaml"
+          node scripts/release/validate-phase-6-deployment-plan.mjs \
+            --enforce-environment "$RUNNER_TEMP/applied-manifest.yaml" \
+            > "$RUNNER_TEMP/deployment-evidence.json"
+          helm status "$PHASE6_DEPLOYMENT_RELEASE_NAME" \
+            --namespace "$PHASE6_DEPLOYMENT_CONTROL_NAMESPACE" --output json \
+            > "$RUNNER_TEMP/helm-status.json"
+
+      - name: 保存生产部署脱敏证据
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: phase-6-production-deployment-${{ github.sha }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/go-no-go-verdict.json
+            ${{ runner.temp }}/platform-intake-verdict.json
+            ${{ runner.temp }}/deployment-authorization-verdict.json
+            ${{ runner.temp }}/deployment-plan-verdict.json
+            ${{ runner.temp }}/deployment-evidence.json
+            ${{ runner.temp }}/helm-status.json
+          if-no-files-found: error
+          retention-days: 90

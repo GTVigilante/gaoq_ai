@@ -354,11 +354,18 @@
   专项测试达到 99.59%/98.23%/100%/99.56%（语句/分支/函数/行），七个生产
   文件逐文件四维均不低于 90%；真实 OP 数据覆盖、生产 explain/容量测试和管理
   UAT 仍待外部验收。
-- 用户已明确不使用 NAS、自建 Runner 或虚拟机，后续 CI/CD 只采用 GitHub 官方
-  托管 Runner。现有 Phase 5/6 self-hosted 手工验收定义在迁移完成前视为停用，
-  不得接入 NAS；仓库当前为 Private，Hosted Actions 在任何步骤执行前被账户付款
-  或 Spending limit 拦截。在免费额度恢复或用户明确批准公开仓库前，外部门禁
-  保持未执行，不得记为代码测试失败或门禁通过。
+- 用户已明确不使用 NAS、自建 Runner 或虚拟机，CI/CD 只采用 GitHub Hosted
+  `ubuntu-latest`。2026-07-29 已把全部 Phase 5/6 手工验收和生产 Plan/Apply
+  工作流从本地挂载迁移为 workflow/policy 专用 OIDC：三个失败关闭客户端逐项
+  复核仓库、commit、workflow、policy、audience 与 Hosted Runner claims，
+  通过批准的 HTTPS 网关读取固定摘要脱敏证据，并以不含静态 Token 的
+  ExecCredential 接入 Kubernetes；Plan/Apply 使用不同 audience 和 RBAC Group。
+  仓库为 GitHub Free Private，不能依赖付费 Environment/Required Reviewers；
+  生产 Plan/Apply 已拆成不可自动串联的独立工作流，Apply 额外验收变更负责人
+  与 SRE 的 Ed25519 双人签名、Plan run/计划包和两小时有效期。全部 workflow
+  已无 self-hosted 标签。Hosted Actions
+  仍在任何步骤执行前被账户付款或 Spending limit 拦截；在免费额度或账号状态
+  恢复前，外部门禁保持未执行，不得记为代码测试失败或门禁通过。
 - 2026-07-29 已把 GitHub 元数据规范转为只读失败关闭门禁：
   `scripts/github/validate-repository-governance.mjs` 校验固定七个 Milestone、
   Issue 标签/状态/Epic 子项，以及 PR 唯一 Milestone、Ready 前 CR、真实 Issue

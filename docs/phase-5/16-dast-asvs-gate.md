@@ -13,9 +13,11 @@ DAST 使用 [ZAP 2.17.0 Full Scan](https://www.zaproxy.org/docs/docker/full-scan
 
 ## 主动扫描安全边界
 
-`.github/workflows/phase-5-dast.yml` 只能通过 `workflow_dispatch` 启动，并绑定受保护的 `phase-5-dast` GitHub Environment。环境必须配置 Required Reviewers，并提供：
+`.github/workflows/phase-5-dast.yml` 只能通过 `workflow_dispatch` 在 `main` 启动，
+使用 GitHub Hosted Runner、`phase-5-dast` policy 和单次 OIDC。GitHub Free
+私有仓库不依赖 Environment 或 Required Reviewers；Repository Variables 提供：
 
-- Secret：`DAST_BASE_URL`、`DAST_AUTH_TOKEN`；Token 是专用低权限测试身份，不带 `Bearer ` 前缀；
+- `DAST_CONFIG_URL`、`DAST_CONFIG_SHA256`、`DAST_CONFIG_OIDC_AUDIENCE`；网关返回最长四小时的严格 JSON，包含目标和专用低权限 Token，原始配置不得上传；
 - Variable：`DAST_ENVIRONMENT_NAME`、`DAST_ALLOWED_HOST_SUFFIX`、`DAST_PRODUCTION_EQUIVALENT=true`、`DAST_PRODUCTION_TRAFFIC=false`、`DAST_ACTIVE_SCAN_APPROVED=true`；
 - 目标必须是带 `dast/preprod/security/stage/staging/uat` 独立标签的 HTTPS FQDN，只允许根路径、默认 443 端口和显式批准的域名后缀；禁止凭据、IP、路径、查询与 fragment。
 

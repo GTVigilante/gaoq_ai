@@ -2,6 +2,12 @@
 
 Phase 6 只接受真实生产证据，不把 CI 自测、模拟数据或 AI 结论当作上线结果。统一切换、回滚和旧系统归档均为 R3 人工治理动作，永久不注册为 MCP Tool；MCP 只能读取脱敏状态与证据摘要。
 
+全部 Phase 6 工作流只使用 GitHub Hosted `ubuntu-latest`。受保护输入和
+Kubernetes 身份按[GitHub Hosted OIDC 证据交换标准](../phase-5/21-github-oidc-evidence-exchange.md)
+通过 workflow/policy 专用 audience 获取；生产 Apply 另需外部双人 Ed25519
+签名授权。禁止 NAS、虚拟机、self-hosted Runner、
+本地证据挂载和长期 kubeconfig。
+
 ## 交付物
 
 - [统一切换控制契约](./00-unified-cutover-contract.md)

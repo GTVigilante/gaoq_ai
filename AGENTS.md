@@ -480,3 +480,19 @@
   隐式升级既有测试工具链；上游 peer、废弃依赖和构建脚本警告必须如实保留。
 - [ ] `list` 方法实体通过只证明目录兼容；未执行 Resource 读取、Prompt 渲染、
   授权 Tool、OAuth、撤销/重连和 UAT 时，禁止把客户端整体标记为已验收。
+
+### 来自 CR #45
+
+- [ ] Phase 5/6 CI、受保护证据验收和生产 Plan/Apply 只使用 GitHub Hosted
+  Runner；禁止回退 NAS、虚拟机、本地挂载或 self-hosted 标签。
+- [ ] OIDC 证据代理必须验签并绑定 audience、workflow/policy、仓库不可变 ID、
+  `main` commit、workflow、事件、Hosted Runner 与单次 `jti`；客户端 Header
+  或 Repository Variable 不得作为服务端授权事实。
+- [ ] GitHub 只接收严格脱敏摘要和 verdict；原始业务数据、日志、备份、工资、
+  银行、Token、私钥和签署正文留在企业事实源/WORM，下载输入不得上传 Artifact。
+- [ ] Kubernetes kubeconfig 禁止静态 Token、客户端证书、ServiceAccount Token
+  或管理员凭据；Plan/Apply 使用不同 workflow/policy、audience、短期
+  ExecCredential 和最小 RBAC Group，并在每次执行重新绑定证据摘要。
+- [ ] GitHub Free 私有仓库不得虚构 Environment/Required Reviewers 门禁；Plan
+  与 Apply 必须是不可自动串联的独立工作流，Apply 逐字段验证双人 Ed25519
+  外部签名授权、Plan run/产物摘要、目标集群和不超过两小时的有效期。

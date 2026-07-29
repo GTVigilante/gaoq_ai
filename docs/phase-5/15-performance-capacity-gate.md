@@ -47,7 +47,14 @@ pnpm performance:validate -- \
 
 校验器仅输出运行 ID、commit 和 `comparisonChecksum`。任一阈值失败、环境不一致、证据重复、缺少签署或出现外部副作用，三次计数全部重新开始。
 
-`.github/workflows/phase-5-performance.yml` 只允许在 `main` 手工启动，绑定 Required Reviewers 保护的 `phase-5-performance` Environment，并使用带 `self-hosted`、`linux`、`x64`、`phase-5-performance` 标签的隔离单次 Runner。Environment 配置环境名、区域、API/Worker/ERP Web/Website 镜像 SHA-256 和部署清单 SHA-256；三个只读证据文件固定为 `/var/lib/gaoq/performance/run-1.json`、`run-2.json`、`run-3.json`。文件不得为符号链接、不得允许组或其他用户写入，单份最大 256 KiB。工作流只上传脱敏比较结论，不上传原始负载、工资、监控、日志或签署材料。
+`.github/workflows/phase-5-performance.yml` 只允许在 `main` 手工启动，使用
+`phase-5-performance` workflow policy 和 GitHub Hosted `ubuntu-latest`。
+Repository Variables 配置环境名、区域、API/Worker/ERP Web/Website
+镜像 SHA-256、部署清单 SHA-256，以及三份脱敏证据各自的 HTTPS URL、预期
+SHA-256 和共同专用 OIDC audience。工作流以当前 policy 的单次 GitHub
+OIDC 身份拉取三份 JSON，逐份限制 256 KiB、严格复核媒体类型与传输/字节摘要，
+并以 `0600` 写入 `$RUNNER_TEMP`。工作流只上传脱敏比较结论，不上传原始负载、
+工资、监控、日志、Token 或签署材料。
 
 ## Go/No-Go
 

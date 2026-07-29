@@ -100,10 +100,19 @@ if (performanceActionReferences.length !== 5 || performanceActionReferences.some
 
 for (const marker of [
   'workflow_dispatch:', "test \"$GITHUB_REF\" = 'refs/heads/main'",
-  'environment: phase-5-performance', '- phase-5-performance',
-  'PERFORMANCE_EVIDENCE_RUN_1_PATH: /var/lib/gaoq/performance/run-1.json',
-  'PERFORMANCE_EVIDENCE_RUN_2_PATH: /var/lib/gaoq/performance/run-2.json',
-  'PERFORMANCE_EVIDENCE_RUN_3_PATH: /var/lib/gaoq/performance/run-3.json',
+  'runs-on: ubuntu-latest', 'id-token: write',
+  'GAOQ_OIDC_POLICY: phase-5-performance', '--policy "$GAOQ_OIDC_POLICY"',
+  'PERFORMANCE_EVIDENCE_OIDC_AUDIENCE: ${{ vars.PERFORMANCE_EVIDENCE_OIDC_AUDIENCE }}',
+  'PERFORMANCE_EVIDENCE_RUN_1_URL: ${{ vars.PERFORMANCE_EVIDENCE_RUN_1_URL }}',
+  'PERFORMANCE_EVIDENCE_RUN_1_SHA256: ${{ vars.PERFORMANCE_EVIDENCE_RUN_1_SHA256 }}',
+  '$RUNNER_TEMP/phase-5-performance-run-1.json',
+  'PERFORMANCE_EVIDENCE_RUN_2_URL: ${{ vars.PERFORMANCE_EVIDENCE_RUN_2_URL }}',
+  'PERFORMANCE_EVIDENCE_RUN_2_SHA256: ${{ vars.PERFORMANCE_EVIDENCE_RUN_2_SHA256 }}',
+  '$RUNNER_TEMP/phase-5-performance-run-2.json',
+  'PERFORMANCE_EVIDENCE_RUN_3_URL: ${{ vars.PERFORMANCE_EVIDENCE_RUN_3_URL }}',
+  'PERFORMANCE_EVIDENCE_RUN_3_SHA256: ${{ vars.PERFORMANCE_EVIDENCE_RUN_3_SHA256 }}',
+  '$RUNNER_TEMP/phase-5-performance-run-3.json',
+  'scripts/github/fetch-oidc-protected-input.mjs',
   'PERFORMANCE_EXPECTED_ENVIRONMENT: ${{ vars.PERFORMANCE_ENVIRONMENT_NAME }}',
   'PERFORMANCE_EXPECTED_REGION: ${{ vars.PERFORMANCE_REGION }}',
   'PERFORMANCE_EXPECTED_COMMIT: ${{ github.sha }}',
@@ -121,10 +130,14 @@ for (const marker of [
 }
 for (const forbidden of [
   'pull_request:', 'push:', 'workflow_call:', '${{ inputs.', '${{ secrets.',
+  'self-hosted', '/var/lib/gaoq', 'environment:',
 ]) {
   if (performanceWorkflow.includes(forbidden)) {
     throw new Error('PHASE5_PERFORMANCE_WORKFLOW_UNSAFE');
   }
+}
+if ((performanceWorkflow.match(/runs-on: ubuntu-latest/gu) ?? []).length !== 2) {
+  throw new Error('PHASE5_PERFORMANCE_HOSTED_RUNNER_INVALID');
 }
 
 const migrationRehearsalActionReferences = [
@@ -136,8 +149,13 @@ if (migrationRehearsalActionReferences.length !== 5 ||
   )) throw new Error('PHASE5_MIGRATION_REHEARSAL_ACTION_NOT_PINNED');
 for (const marker of [
   'workflow_dispatch:', "test \"$GITHUB_REF\" = 'refs/heads/main'",
-  'environment: phase-5-migration-rehearsal', '- phase-5-migration-rehearsal',
-  'MIGRATION_REHEARSAL_EVIDENCE_PATH: /var/lib/gaoq/migration/phase-5-rehearsal.json',
+  'runs-on: ubuntu-latest', 'id-token: write',
+  'GAOQ_OIDC_POLICY: phase-5-migration-rehearsal', '--policy "$GAOQ_OIDC_POLICY"',
+  'MIGRATION_REHEARSAL_EVIDENCE_OIDC_AUDIENCE: ${{ vars.MIGRATION_REHEARSAL_EVIDENCE_OIDC_AUDIENCE }}',
+  'MIGRATION_REHEARSAL_EVIDENCE_URL: ${{ vars.MIGRATION_REHEARSAL_EVIDENCE_URL }}',
+  'MIGRATION_REHEARSAL_EVIDENCE_SHA256: ${{ vars.MIGRATION_REHEARSAL_EVIDENCE_SHA256 }}',
+  '$RUNNER_TEMP/phase-5-migration-rehearsal.json',
+  'scripts/github/fetch-oidc-protected-input.mjs',
   'MIGRATION_REHEARSAL_EXPECTED_ENVIRONMENT: ${{ vars.MIGRATION_REHEARSAL_ENVIRONMENT_NAME }}',
   'MIGRATION_REHEARSAL_EXPECTED_REGION: ${{ vars.MIGRATION_REHEARSAL_REGION }}',
   'MIGRATION_REHEARSAL_EXPECTED_COMMIT: ${{ github.sha }}',
@@ -157,10 +175,14 @@ for (const marker of [
 }
 for (const forbidden of [
   'pull_request:', 'push:', 'workflow_call:', '${{ inputs.', '${{ secrets.',
+  'self-hosted', '/var/lib/gaoq', 'environment:',
 ]) {
   if (migrationRehearsalWorkflow.includes(forbidden)) {
     throw new Error('PHASE5_MIGRATION_REHEARSAL_WORKFLOW_UNSAFE');
   }
+}
+if ((migrationRehearsalWorkflow.match(/runs-on: ubuntu-latest/gu) ?? []).length !== 2) {
+  throw new Error('PHASE5_MIGRATION_REHEARSAL_HOSTED_RUNNER_INVALID');
 }
 
 const resilienceActionReferences = [
@@ -173,9 +195,15 @@ if (resilienceActionReferences.length !== 5 || resilienceActionReferences.some(
 for (const marker of [
   'workflow_dispatch:',
   "test \"$GITHUB_REF\" = 'refs/heads/main'",
-  'environment: phase-5-resilience',
-  '- phase-5-resilience',
-  'RESILIENCE_EVIDENCE_PATH: /var/lib/gaoq/resilience/phase-5-resilience.json',
+  'runs-on: ubuntu-latest',
+  'id-token: write',
+  'GAOQ_OIDC_POLICY: phase-5-resilience',
+  '--policy "$GAOQ_OIDC_POLICY"',
+  'RESILIENCE_EVIDENCE_OIDC_AUDIENCE: ${{ vars.RESILIENCE_EVIDENCE_OIDC_AUDIENCE }}',
+  'RESILIENCE_EVIDENCE_URL: ${{ vars.RESILIENCE_EVIDENCE_URL }}',
+  'RESILIENCE_EVIDENCE_SHA256: ${{ vars.RESILIENCE_EVIDENCE_SHA256 }}',
+  '$RUNNER_TEMP/phase-5-resilience.json',
+  'scripts/github/fetch-oidc-protected-input.mjs',
   'RESILIENCE_EXPECTED_ENVIRONMENT: ${{ vars.RESILIENCE_ENVIRONMENT_NAME }}',
   'RESILIENCE_EXPECTED_REGION: ${{ vars.RESILIENCE_REGION }}',
   'RESILIENCE_EXPECTED_COMMIT: ${{ github.sha }}',
@@ -192,10 +220,14 @@ for (const marker of [
 }
 for (const forbidden of [
   'pull_request:', 'push:', 'workflow_call:', '${{ inputs.', '${{ secrets.',
+  'self-hosted', '/var/lib/gaoq', 'environment:',
 ]) {
   if (resilienceWorkflow.includes(forbidden)) {
     throw new Error('PHASE5_RESILIENCE_WORKFLOW_UNSAFE');
   }
+}
+if ((resilienceWorkflow.match(/runs-on: ubuntu-latest/gu) ?? []).length !== 2) {
+  throw new Error('PHASE5_RESILIENCE_HOSTED_RUNNER_INVALID');
 }
 
 const readinessActionReferences = [
@@ -206,8 +238,13 @@ if (readinessActionReferences.length !== 5 || readinessActionReferences.some(
 )) throw new Error('PHASE5_READINESS_ACTION_NOT_PINNED');
 for (const marker of [
   'workflow_dispatch:', "test \"$GITHUB_REF\" = 'refs/heads/main'",
-  'environment: phase-5-readiness', '- phase-5-readiness',
-  'READINESS_EVIDENCE_PATH: /var/lib/gaoq/readiness/phase-5-readiness.json',
+  'runs-on: ubuntu-latest', 'id-token: write',
+  'GAOQ_OIDC_POLICY: phase-5-readiness', '--policy "$GAOQ_OIDC_POLICY"',
+  'READINESS_EVIDENCE_OIDC_AUDIENCE: ${{ vars.READINESS_EVIDENCE_OIDC_AUDIENCE }}',
+  'READINESS_EVIDENCE_URL: ${{ vars.READINESS_EVIDENCE_URL }}',
+  'READINESS_EVIDENCE_SHA256: ${{ vars.READINESS_EVIDENCE_SHA256 }}',
+  '$RUNNER_TEMP/phase-5-readiness.json',
+  'scripts/github/fetch-oidc-protected-input.mjs',
   'READINESS_EXPECTED_ENVIRONMENT: ${{ vars.READINESS_ENVIRONMENT_NAME }}',
   'READINESS_EXPECTED_REGION: ${{ vars.READINESS_REGION }}',
   'READINESS_EXPECTED_COMMIT: ${{ github.sha }}',
@@ -225,10 +262,14 @@ for (const marker of [
 }
 for (const forbidden of [
   'pull_request:', 'push:', 'workflow_call:', '${{ inputs.', '${{ secrets.',
+  'self-hosted', '/var/lib/gaoq', 'environment:',
 ]) {
   if (readinessWorkflow.includes(forbidden)) {
     throw new Error('PHASE5_READINESS_WORKFLOW_UNSAFE');
   }
+}
+if ((readinessWorkflow.match(/runs-on: ubuntu-latest/gu) ?? []).length !== 2) {
+  throw new Error('PHASE5_READINESS_HOSTED_RUNNER_INVALID');
 }
 
 const goNoGoActionReferences = [
@@ -241,9 +282,15 @@ if (goNoGoActionReferences.length !== 5 || goNoGoActionReferences.some(
 for (const marker of [
   'workflow_dispatch:',
   "test \"$GITHUB_REF\" = 'refs/heads/main'",
-  'environment: phase-5-go-no-go',
-  '- phase-5-go-no-go',
-  'GO_NO_GO_EVIDENCE_PATH: /var/lib/gaoq/go-no-go/phase-5-go-no-go.json',
+  'runs-on: ubuntu-latest',
+  'id-token: write',
+  'GAOQ_OIDC_POLICY: phase-5-go-no-go',
+  '--policy "$GAOQ_OIDC_POLICY"',
+  'GO_NO_GO_EVIDENCE_OIDC_AUDIENCE: ${{ vars.GO_NO_GO_EVIDENCE_OIDC_AUDIENCE }}',
+  'GO_NO_GO_EVIDENCE_URL: ${{ vars.GO_NO_GO_EVIDENCE_URL }}',
+  'GO_NO_GO_EVIDENCE_SHA256: ${{ vars.GO_NO_GO_EVIDENCE_SHA256 }}',
+  '$RUNNER_TEMP/phase-5-go-no-go.json',
+  'scripts/github/fetch-oidc-protected-input.mjs',
   'GO_NO_GO_EXPECTED_ENVIRONMENT: ${{ vars.GO_NO_GO_ENVIRONMENT_NAME }}',
   'GO_NO_GO_EXPECTED_REGION: ${{ vars.GO_NO_GO_REGION }}',
   'GO_NO_GO_EXPECTED_COMMIT: ${{ github.sha }}',
@@ -260,8 +307,12 @@ for (const marker of [
 }
 for (const forbidden of [
   'pull_request:', 'push:', 'workflow_call:', '${{ inputs.', '${{ secrets.',
+  'self-hosted', '/var/lib/gaoq', 'environment:',
 ]) {
   if (goNoGoWorkflow.includes(forbidden)) throw new Error('PHASE5_GO_NO_GO_WORKFLOW_UNSAFE');
+}
+if ((goNoGoWorkflow.match(/runs-on: ubuntu-latest/gu) ?? []).length !== 2) {
+  throw new Error('PHASE5_GO_NO_GO_HOSTED_RUNNER_INVALID');
 }
 
 const mcpIntegrationActions = [
@@ -272,8 +323,13 @@ if (mcpIntegrationActions.length !== 7 || mcpIntegrationActions.some(
 )) throw new Error('PHASE5_MCP_INTEGRATION_ACTION_NOT_PINNED');
 for (const marker of [
   'workflow_dispatch:', "test \"$GITHUB_REF\" = 'refs/heads/main'",
-  'environment: phase-5-mcp-integration', 'phase-5-mcp-integration]',
-  'MCP_INTEGRATION_EVIDENCE_PATH: /var/lib/gaoq/mcp/phase-5-mcp-integration.json',
+  'runs-on: ubuntu-latest', 'id-token: write',
+  'GAOQ_OIDC_POLICY: phase-5-mcp-integration', '--policy "$GAOQ_OIDC_POLICY"',
+  'MCP_INTEGRATION_EVIDENCE_OIDC_AUDIENCE: ${{ vars.MCP_INTEGRATION_EVIDENCE_OIDC_AUDIENCE }}',
+  'MCP_INTEGRATION_EVIDENCE_URL: ${{ vars.MCP_INTEGRATION_EVIDENCE_URL }}',
+  'MCP_INTEGRATION_EVIDENCE_SHA256: ${{ vars.MCP_INTEGRATION_EVIDENCE_SHA256 }}',
+  '$RUNNER_TEMP/phase-5-mcp-integration.json',
+  'scripts/github/fetch-oidc-protected-input.mjs',
   'MCP_INTEGRATION_EXPECTED_COMMIT: ${{ github.sha }}',
   'MCP_INTEGRATION_EXPECTED_API_IMAGE: ${{ vars.MCP_INTEGRATION_API_IMAGE_DIGEST }}',
   'MCP_INTEGRATION_EXPECTED_WORKER_IMAGE: ${{ vars.MCP_INTEGRATION_WORKER_IMAGE_DIGEST }}',
@@ -286,10 +342,16 @@ for (const marker of [
     throw new Error('PHASE5_MCP_INTEGRATION_WORKFLOW_INCOMPLETE');
   }
 }
-for (const forbidden of ['pull_request:', 'push:', 'workflow_call:', '${{ inputs.', '${{ secrets.']) {
+for (const forbidden of [
+  'pull_request:', 'push:', 'workflow_call:', '${{ inputs.', '${{ secrets.',
+  'self-hosted', '/var/lib/gaoq', 'environment:',
+]) {
   if (mcpIntegrationWorkflow.includes(forbidden)) {
     throw new Error('PHASE5_MCP_INTEGRATION_WORKFLOW_UNSAFE');
   }
+}
+if ((mcpIntegrationWorkflow.match(/runs-on: ubuntu-latest/gu) ?? []).length !== 2) {
+  throw new Error('PHASE5_MCP_INTEGRATION_HOSTED_RUNNER_INVALID');
 }
 
 if (workflow.includes('actions/dependency-review-action@')) {

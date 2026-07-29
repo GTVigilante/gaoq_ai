@@ -24,6 +24,12 @@ pnpm --silent release:readiness:print-contract > /secure/readiness/contract.json
 pnpm release:readiness:validate-evidence -- /secure/readiness/phase-5-readiness.json
 ```
 
-`.github/workflows/phase-5-readiness.yml` 只允许 `main` 手工启动，绑定 Required Reviewers 保护的 `phase-5-readiness` Environment，并使用带同名标签的隔离单次 self-hosted Runner。现场摘要固定为 `/var/lib/gaoq/readiness/phase-5-readiness.json`，不得为符号链接、不得允许组或其他用户写入，最大 1 MiB。Environment 固定环境、区域、当前 commit、四类镜像和部署清单；工作流只上传七类脱敏 verdict bundle，原始测试、扫描、业务 UAT、PIA、签名与生产配置留在企业 WORM。
+`.github/workflows/phase-5-readiness.yml` 只允许 `main` 手工启动，使用
+`phase-5-readiness` workflow policy 和 GitHub Hosted `ubuntu-latest`。
+Repository Variables 固定环境、区域、当前 commit、四类镜像、部署清单、
+脱敏摘要 HTTPS URL、预期 SHA-256 和专用 OIDC audience。工作流以当前
+policy 的单次 GitHub OIDC 身份拉取最多 1 MiB 的严格 JSON，复核传输和
+文件摘要后只上传七类脱敏 verdict bundle；原始测试、扫描、业务 UAT、PIA、
+签名与生产配置留在企业 WORM。
 
 任一签署缺失、证据过期、版本错配、跨租户成功、未解释差异、隐私发现、未批准跨境传输、未签名镜像、高危漏洞或生产副作用都会失败关闭。该门禁不触发部署、不签署 `GO`，也不向 MCP 注册批准能力。

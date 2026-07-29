@@ -26,6 +26,7 @@ const requiredDocuments = [
   'docs/phase-5/18-go-no-go-evidence-gate.md',
   'docs/phase-5/19-mcp-capability-catalog.md',
   'docs/phase-5/20-mcp-stdio-client-onboarding.md',
+  'docs/phase-5/21-github-oidc-evidence-exchange.md',
   'docs/phase-6/README.md',
   'docs/phase-6/00-unified-cutover-contract.md',
   'docs/phase-6/01-hypercare-archive-contract.md',
@@ -38,6 +39,10 @@ const requiredDocuments = [
   'deploy/helm/gaoq-erp/README.md',
   'deploy/helm/gaoq-platform-guardrails/README.md',
   'scripts/github/validate-repository-governance.mjs',
+  'scripts/github/fetch-oidc-protected-input.mjs',
+  'scripts/github/github-oidc-kubernetes-credential.mjs',
+  'scripts/github/write-oidc-kubeconfig.mjs',
+  'scripts/release/validate-phase-6-deployment-authorization.mjs',
   'scripts/mcp/validate-kimi-mcp-client.mjs',
   'scripts/mcp/validate-mcp-inspector-client.mjs',
   'apps/erp-api/scripts/mcp-catalog-stdio-fixture.mjs',
@@ -157,6 +162,65 @@ const requiredMcpClientCompatibilityMarkers = new Map([
     ],
   ],
 ]);
+const requiredHostedOidcMarkers = new Map([
+  [
+    'docs/phase-5/21-github-oidc-evidence-exchange.md',
+    [
+      'GitHub Hosted `ubuntu-latest`',
+      '`id-token: write`',
+      '`runner_environment`',
+      'X-GaoQ-Content-SHA256',
+      'ExecCredential',
+      '最长有效期 15 分钟',
+    ],
+  ],
+  [
+    'scripts/github/fetch-oidc-protected-input.mjs',
+    [
+      'gaoq.github.oidc-protected-input.receipt.v1',
+      'runner_environment',
+      'github-hosted',
+      'x-gaoq-content-sha256',
+      "mode: 0o600",
+    ],
+  ],
+  [
+    'scripts/github/github-oidc-kubernetes-credential.mjs',
+    [
+      'client.authentication.k8s.io/v1',
+      'MAX_CREDENTIAL_SECONDS',
+      'PHASE6_KUBERNETES_CREDENTIAL_URL',
+    ],
+  ],
+  [
+    'scripts/github/write-oidc-kubeconfig.mjs',
+    [
+      'staticCredentialWritten: false',
+      'certificate-authority-data',
+      'github-oidc-kubernetes-credential.mjs',
+    ],
+  ],
+  [
+    'scripts/release/validate-phase-6-deployment-authorization.mjs',
+    [
+      'gaoq.phase6.deployment-authorization.v1',
+      'Ed25519',
+      'change_owner',
+      'sre_owner',
+      'PLAN_WORKFLOW_REF',
+      'maximumLifetimeMinutes: 120',
+    ],
+  ],
+  [
+    'docs/phase-6/05-protected-production-deployment.md',
+    [
+      'GitHub Hosted `ubuntu-latest`',
+      'Plan 专用 OIDC audience',
+      'Apply 专用 OIDC audience',
+      '管理员 kubeconfig',
+    ],
+  ],
+]);
 
 /**
  * 判断Markdown链接是否为需要在仓库内校验的相对文件。
@@ -209,6 +273,9 @@ for (const relativePath of requiredDocuments) {
 }
 
 for (const relativePath of requiredDocuments) {
+  if (!relativePath.endsWith('.md')) {
+    continue;
+  }
   try {
     errors.push(...await validateLinks(relativePath));
   } catch {
@@ -282,6 +349,22 @@ for (const [relativePath, markers] of requiredMcpClientCompatibilityMarkers) {
     for (const marker of markers) {
       if (!content.includes(marker)) {
         errors.push(`${relativePath}: 缺少 MCP 实体客户端门禁标记 ${marker}`);
+      }
+    }
+  } catch {
+    // 缺失文件已在第一阶段报告。
+  }
+}
+
+for (const [relativePath, markers] of requiredHostedOidcMarkers) {
+  try {
+    const content = await readFile(resolve(repoRoot, relativePath), 'utf8');
+    if (content.includes('/var/lib/gaoq')) {
+      errors.push(`${relativePath}: 仍包含已废弃的本地证据挂载`);
+    }
+    for (const marker of markers) {
+      if (!content.includes(marker)) {
+        errors.push(`${relativePath}: 缺少 GitHub Hosted OIDC 标记 ${marker}`);
       }
     }
   } catch {
