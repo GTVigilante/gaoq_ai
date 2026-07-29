@@ -1178,11 +1178,17 @@ Controller 与 DTO 的 73 项测试四维 100%；领域 66 项测试达到
 
 ## 6. 架构边界
 
-`docs/phase-4/05-payroll-core-implementation.md` 记录的月中多次变更、跨法域拆分、
-补充/冲正和年度汇算是旧 ERP 算薪基线的未实现能力。根据
-`docs/phase-0/07-payroll-system-boundary.md`，专业算薪系统已经成为工资唯一事实源，
-ERP 默认以 `PAYROLL_SYSTEM_MODE=external` 关闭旧工资/资金 REST。因此这些能力
-不是当前 ERP 仓库的遗漏；若要重新纳入，必须先以新 ADR 替代现有系统边界。
+月中多次变更、跨法域自然日拆分、工资调整收付与税务结算闭环、年度工资代扣/
+税表/税局评估核对现均已作为旧 ERP 的迁移与兼容基线交付，并具备独立应用服务、
+REST/事件/MCP 边界、追加式迁移和逐文件四维 90% 门禁。官方个人综合所得申报
+不属于 ERP 自动执行范围，必须由法定申报主体在外部税务系统办理并回传受控证据。
+
+根据 `docs/phase-0/07-payroll-system-boundary.md`，独立专业算薪系统是工资唯一
+生产事实源；ERP 默认以 `PAYROLL_SYSTEM_MODE=external` 在应用服务层关闭旧
+Payroll/Treasury 在线、MCP、Worker、迁移和内部调用旁路。因此“代码已交付”
+只证明迁移/兼容闭环存在，不表示 ERP 可以恢复生产发薪。若要改变事实源边界，
+必须先以新 ADR 替代现有架构决策，并重新执行两个影子周期、银行/税务联调、
+回滚演练、财务 UAT 与签署。
 
 ## 7. 后续执行顺序
 

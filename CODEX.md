@@ -376,6 +376,12 @@
   （Milestone/Issue/PR）通过。专用 Hosted Actions 工作流只申请 contents、
   issues、pull-requests 读权限；付费门禁仍在 Runner 分配前拦截，不能记为远端
   通过。
+- 2026-07-29 已按当前提交候选的实现、迁移、MCP 协议与专项覆盖证据同步
+  Issue #123–#126：四个 Story 的仓库验收项已逐项标记完成，真实通知/CRM/
+  校友渠道、搜索集群、评分服务、代表性数据和业务 UAT 继续保持未完成与
+  `status:external-acceptance`。同时修正 Phase 4 完成度审计中把已交付的月中
+  拆分、工资调整结算和年度核对写成“未实现”的过期表述，并由文档校验器拒绝
+  该状态回退；官方个人综合所得申报仍属于外部法定系统职责。
 - 2026-07-27 已完成开放 Issue 与 Phase 0–6 仓库实施证据审计，并正式定义
   `status:implementation-delivered` 与 `status:external-acceptance` 的并存规则；
   新增 Phase 3 Issue 已归入唯一 Milestone。GitHub Project 仍由 Issue #41 跟踪，

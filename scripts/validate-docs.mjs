@@ -76,18 +76,34 @@ const deliveryBoundaryDocuments = [
   'docs/phase-0/06-github-governance.md',
   'docs/implementation-completion-audit.md',
   'docs/phase-3/README.md',
+  'docs/phase-4/05-payroll-core-implementation.md',
 ];
 const forbiddenDeliveryBoundaryPatterns = [
   /状态更正/u,
   /校友下游数据删除证明仍未交付/u,
+  /补充\/冲正和年度汇算是旧 ERP 算薪基线的未实现能力/u,
+  /它不包含审批锁定、工资单、银行代发或税务申报/u,
 ];
 const requiredDeliveryBoundaryMarkers = new Map([
   ['docs/phase-0/06-github-governance.md',
     ['status:implementation-delivered', 'status:external-acceptance', 'Issue #41']],
   ['docs/implementation-completion-audit.md',
-    ['仓库实施已交付', '外部验收待完成', '生产完成', 'PAYROLL_SYSTEM_MODE=external']],
+    [
+      '仓库实施已交付',
+      '外部验收待完成',
+      '生产完成',
+      'PAYROLL_SYSTEM_MODE=external',
+      '工资调整收付与税务结算闭环',
+    ]],
   ['docs/phase-3/README.md',
     ['Phase 3 只能标记“代码已交付”', '不得标记生产完成']],
+  ['docs/phase-4/05-payroll-core-implementation.md',
+    [
+      '后续 Phase 4 切片交付',
+      '月中薪酬变更与跨法域自然日拆分已实现',
+      '锁定工资的确定性差额',
+      '不属于 ERP 自动执行范围',
+    ]],
 ]);
 const requiredRepositoryGovernanceMarkers = new Map([
   [
