@@ -133,12 +133,12 @@ export function OrganizationConsole() {
 
   const departmentOptions = chart.departments.filter((item) => item.status === 'active').map((item) => ({ value: item.id, label: `${item.name}（${item.code}）` }));
 
-  return <main aria-labelledby="org-title">
+  return <main aria-labelledby="org-title" aria-busy={loading}>
     <Flex className="console-page-heading" justify="space-between" align="flex-end" gap={20} wrap>
       <div><Typography.Text type="secondary"><ApartmentOutlined /> Master Data Authority</Typography.Text><Typography.Title id="org-title" level={1}>组织主数据</Typography.Title><Typography.Paragraph>ERP 是组织与员工的唯一事实源；当前视图已按令牌中的部门范围裁剪。</Typography.Paragraph></div>
       <Space><Button icon={<ReloadOutlined />} loading={loading} onClick={() => { void load(); }}>刷新</Button><Button icon={<PlusOutlined />} onClick={() => setDepartmentOpen(true)}>新建部门</Button><Button type="primary" icon={<UserAddOutlined />} disabled={chart.departments.length === 0} onClick={() => setEmployeeOpen(true)}>新建员工</Button></Space>
     </Flex>
-    {error === null ? null : <Alert className="console-alert" type="error" showIcon message={error.message} description={error.traceId === null ? '请检查数据范围授权。' : `追踪标识：${error.traceId}`} />}
+    {error === null ? null : <Alert role="alert" className="console-alert" type="error" showIcon message={error.message} description={error.traceId === null ? '请检查数据范围授权。' : `追踪标识：${error.traceId}`} />}
     <Row gutter={[18, 18]} className="console-stat-row">
       <Col xs={12} md={6}><Card bordered={false}><Statistic title="可见部门" value={chart.departments.length} /></Card></Col>
       <Col xs={12} md={6}><Card bordered={false}><Statistic title="可见员工" value={chart.employees.length} /></Card></Col>

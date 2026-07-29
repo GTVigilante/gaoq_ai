@@ -387,6 +387,11 @@
   随后统一监管 API、Worker、ERP Web 与官网；对象存储高熵凭据仅以 `0600`
   写入 Git 忽略目录，任一应用退出会收敛其余进程。`pnpm dev:down` 只停止
   容器并保留卷；本地 MinIO 明确不替代 WORM/KMS/扫描、GitHub CI 或生产验收。
+- 2026-07-29 已补齐 Issue #11 的 ERP Web 基础无障碍仓库门禁：根布局增加
+  主内容跳转，PC/H5 统一高可见焦点与减少动画策略，登录和组织入口显式暴露
+  busy/alert 语义；独立 Vitest 固定语言、视口、地标、标题、导航名称、断点、
+  traceId、可信服务端权限文案及禁止浏览器持久化身份数据。375px/768px/桌面
+  实体浏览器、200% 缩放、读屏器和 WCAG 2.2 AA 扫描仍属于外部验收。
 - 2026-07-27 已完成开放 Issue 与 Phase 0–6 仓库实施证据审计，并正式定义
   `status:implementation-delivered` 与 `status:external-acceptance` 的并存规则；
   新增 Phase 3 Issue 已归入唯一 Milestone。GitHub Project 仍由 Issue #41 跟踪，
