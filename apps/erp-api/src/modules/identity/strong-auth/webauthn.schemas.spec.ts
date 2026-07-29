@@ -49,6 +49,13 @@ describe('WebAuthnSchemas', () => {
   it('已验证仪式必须保留凭据标识和验证时间', async () => {
     await expect(new CeremonyModel({ ...ceremony(), status: 'verified' }).validate())
       .rejects.toThrow('已验证仪式必须记录凭据与时间');
+    await expect(new CeremonyModel({
+      ...ceremony(), status: 'verified', credentialId: 'credential-001',
+      verifiedAt: new Date('2026-07-21T00:01:00.000Z'),
+    }).validate()).resolves.toBeUndefined();
+    await expect(new CeremonyModel({
+      ...ceremony(), type: 'registration', operationId: null,
+    }).validate()).resolves.toBeUndefined();
   });
 
   it('凭据和仪式都有唯一标识及过期清理索引', () => {

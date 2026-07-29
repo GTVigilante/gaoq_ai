@@ -18,5 +18,9 @@ describe('审批通知重试策略', () => {
   it('非法次数和随机源失败关闭', () => {
     expect(() => nextApprovalNotificationAttemptAt(0, new Date())).toThrow();
     expect(() => nextApprovalNotificationAttemptAt(1, new Date(), () => 1)).toThrow();
+    expect(() => nextApprovalNotificationAttemptAt(1, new Date('invalid'))).toThrow(
+      '审批通知重试基准时间非法',
+    );
+    expect(() => nextApprovalNotificationAttemptAt(1, new Date(), () => Number.NaN)).toThrow();
   });
 });

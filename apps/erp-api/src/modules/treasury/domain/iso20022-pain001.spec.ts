@@ -59,4 +59,50 @@ describe('ISO 20022 pain.001 代发生成器', () => {
       ...input, lines: [{ ...input.lines[0]!, amountMinor: 0 }],
     })).toThrow(/代发行格式非法/u);
   });
+
+  it.each([
+    ['报文标识', { messageId: '<invalid>' }],
+    ['付款标识', { paymentInformationId: '' }],
+    ['非规范时间', { creationDateTime: '2026-07-31T10:00:00Z' }],
+    ['不存在日期', { requestedExecutionDate: '2026-02-30' }],
+    ['付款账号', { debtorAccount: 'ABC' }],
+    ['清算行号', { debtorAgentClearingCode: 'lowercase' }],
+    ['空批次', { lines: [] }],
+  ])('拒绝非法%s', (_label, changes) => {
+    expect(() => generatePain001({ ...input, ...changes }))
+      .toThrow(/报文标识非法|报文头或批量范围非法/u);
+  });
+
+  it.each([
+    ['指令标识', { instructionId: '<invalid>' }],
+    ['收款账号', { creditorAccount: 'ABC' }],
+    ['清算行号', { creditorAgentClearingCode: 'short' }],
+    ['用途码', { purposeCode: 'x' }],
+    ['非整数金额', { amountMinor: 1.5 }],
+  ])('拒绝非法行%s', (_label, changes) => {
+    expect(() => generatePain001({
+      ...input, lines: [{ ...input.lines[0]!, ...changes }],
+    })).toThrow(/代发行格式非法/u);
+  });
+
+  it('拒绝空白或超长名称、超量批次与控制总额溢出', () => {
+    expect(() => generatePain001({ ...input, debtorName: '   ' })).toThrow(/文本字段非法/u);
+    expect(() => generatePain001({
+      ...input, lines: [{ ...input.lines[0]!, creditorName: '名'.repeat(141) }],
+    })).toThrow(/文本字段非法/u);
+    const template = input.lines[0]!;
+    const tooMany = Array.from({ length: 5_001 }, (_, index) => ({
+      ...template,
+      instructionId: `L${String(index).padStart(4, '0')}`,
+      creditorAccount: String(10_000_000 + index),
+    }));
+    expect(() => generatePain001({ ...input, lines: tooMany })).toThrow(/批量范围非法/u);
+    expect(() => generatePain001({
+      ...input,
+      lines: [
+        { ...template, amountMinor: Number.MAX_SAFE_INTEGER },
+        { ...input.lines[1]!, amountMinor: 1 },
+      ],
+    })).toThrow(/总额溢出/u);
+  });
 });

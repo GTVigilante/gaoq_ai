@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   calculatePayroll,
   payrollDigest,
+  type PayrollCalculationError,
   type PayrollCalculationInput,
 } from './payroll-calculation.js';
 
@@ -95,6 +96,27 @@ describe('累计预扣确定性计算内核', () => {
     expect(() => payrollDigest(cyclic)).toThrow(/循环引用/u);
   });
 
+  it('规范摘要覆盖所有允许类型并拒绝越界、深层及不可序列化值', () => {
+    expect(payrollDigest({
+      array: [null, true, 'text', 1],
+      nullable: null,
+      omitted: undefined,
+    })).toBe(payrollDigest({
+      nullable: null,
+      array: [null, true, 'text', 1],
+    }));
+    const nullPrototype = Object.create(null) as Record<string, unknown>;
+    nullPrototype.safe = 1;
+    expect(payrollDigest(nullPrototype)).toHaveLength(43);
+    expect(() => payrollDigest(Number.MAX_SAFE_INTEGER + 1))
+      .toThrow('规范摘要只接受安全整数');
+    expect(() => payrollDigest(undefined)).toThrow('包含不支持的值');
+    expect(() => payrollDigest(Symbol('invalid'))).toThrow('包含不支持的值');
+    let deep: unknown = 'leaf';
+    for (let index = 0; index < 22; index += 1) deep = [deep];
+    expect(() => payrollDigest(deep)).toThrow('嵌套深度超限');
+  });
+
   it('累计已扣税高于当前累计税额时形成负税额调整并增加实发', () => {
     const result = calculatePayroll({
       ...base,
@@ -122,5 +144,100 @@ describe('累计预扣确定性计算内核', () => {
     expect(() => calculatePayroll({
       ...base, postTaxDeductionMinor: 900_000,
     })).toThrow(/实发金额不能为负/u);
+  });
+
+  it('对标识、税率连续性、组件和金额边界逐项失败关闭', () => {
+    const invalidCases: readonly [
+      PayrollCalculationInput,
+      string,
+    ][] = [
+      [{ ...base, tenantId: '@' }, 'PAYROLL_IDENTIFIER_INVALID'],
+      [{ ...base, period: '2026-13' }, 'PAYROLL_PERIOD_INVALID'],
+      [{ ...base, rulePack: { ...base.rulePack, version: 0 } }, 'PAYROLL_RULE_VERSION_INVALID'],
+      [{ ...base, employeeHousingFundMinor: -1 }, 'PAYROLL_AMOUNT_INVALID'],
+      [{
+        ...base,
+        rulePack: { ...base.rulePack, roundingMode: 'BANKERS' as never },
+      }, 'PAYROLL_ROUNDING_MODE_UNSUPPORTED'],
+      [{
+        ...base,
+        rulePack: { ...base.rulePack, taxBrackets: [] },
+      }, 'PAYROLL_TAX_BRACKETS_INVALID'],
+      [{
+        ...base,
+        rulePack: {
+          ...base.rulePack,
+          taxBrackets: [{ upperBoundMinor: null, rateBps: 10_001, quickDeductionMinor: 0 }],
+        },
+      }, 'PAYROLL_TAX_RATE_INVALID'],
+      [{
+        ...base,
+        rulePack: {
+          ...base.rulePack,
+          taxBrackets: [
+            { upperBoundMinor: null, rateBps: 300, quickDeductionMinor: 0 },
+            { upperBoundMinor: null, rateBps: 300, quickDeductionMinor: 0 },
+          ],
+        },
+      }, 'PAYROLL_TAX_BRACKETS_INVALID'],
+      [{
+        ...base,
+        rulePack: {
+          ...base.rulePack,
+          taxBrackets: [
+            { upperBoundMinor: 100, rateBps: 300, quickDeductionMinor: 0 },
+            { upperBoundMinor: 100, rateBps: 300, quickDeductionMinor: 0 },
+            { upperBoundMinor: null, rateBps: 300, quickDeductionMinor: 0 },
+          ],
+        },
+      }, 'PAYROLL_TAX_BRACKETS_INVALID'],
+      [{
+        ...base,
+        rulePack: {
+          ...base.rulePack,
+          taxBrackets: [
+            { upperBoundMinor: 100, rateBps: 300, quickDeductionMinor: 0 },
+            { upperBoundMinor: null, rateBps: 200, quickDeductionMinor: 0 },
+          ],
+        },
+      }, 'PAYROLL_TAX_BRACKETS_INVALID'],
+      [{
+        ...base,
+        rulePack: {
+          ...base.rulePack,
+          taxBrackets: [
+            { upperBoundMinor: 100, rateBps: 300, quickDeductionMinor: 0 },
+            { upperBoundMinor: null, rateBps: 1_000, quickDeductionMinor: 0 },
+          ],
+        },
+      }, 'PAYROLL_TAX_BRACKETS_INVALID'],
+      [{
+        ...base,
+        taxableEarnings: [{ code: 'bad-code', amountMinor: 1 }],
+      }, 'PAYROLL_COMPONENT_CODE_INVALID'],
+      [{
+        ...base,
+        taxableEarnings: [{ code: 'BASE', amountMinor: -1 }],
+      }, 'PAYROLL_AMOUNT_INVALID'],
+      [{
+        ...base,
+        taxableEarnings: [
+          { code: 'BASE', amountMinor: Number.MAX_SAFE_INTEGER },
+          { code: 'BONUS', amountMinor: 1 },
+        ],
+      }, 'PAYROLL_AMOUNT_OVERFLOW'],
+      [{
+        ...base,
+        cumulativeBefore: {
+          ...base.cumulativeBefore,
+          taxableIncomeMinor: Number.MAX_SAFE_INTEGER,
+        },
+      }, 'PAYROLL_AMOUNT_OVERFLOW'],
+    ];
+    for (const [input, code] of invalidCases) {
+      expect(() => calculatePayroll(input)).toThrow(
+        expect.objectContaining<Partial<PayrollCalculationError>>({ code }),
+      );
+    }
   });
 });

@@ -50,6 +50,9 @@ describe('ApprovalNotificationRecordSchema', () => {
     await new NotificationModel({
       ...record(), status: 'processing', lockedAt: new Date(), lockedBy: 'worker-001',
     }).validate();
+    await expect(new NotificationModel({
+      ...record(), status: 'pending', lockedAt: new Date(), lockedBy: 'worker-001',
+    }).validate()).rejects.toThrow('非处理中通知不能持有租约');
   });
 
   it('已发送记录必须包含平台消息标识和发送时间', async () => {

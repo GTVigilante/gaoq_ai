@@ -47,6 +47,14 @@ describe('Treasury 持久化契约', () => {
       .rejects.toThrow(/dataIv/u);
     await expect(new AccountModel({ ...stored, dataIv: 'c'.repeat(17) }).validate())
       .rejects.toThrow(/dataIv/u);
+    await expect(new AccountModel({
+      ...stored, migrationEvidenceChecksum: 'm'.repeat(43),
+    }).validate()).rejects.toThrow('必须成对出现');
+    await expect(new AccountModel({
+      ...stored,
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/account-001',
+    }).validate()).rejects.toThrow('必须成对出现');
   });
 
   it('所有身份、防重和业务唯一索引均以可信租户为首字段', () => {
@@ -116,6 +124,19 @@ describe('Treasury 持久化契约', () => {
     await expect(new BatchModel({
       ...base, strongAuthEvidenceId: null,
     }).validate()).rejects.toThrow('代发批准证据类型与标识必须成对出现');
+    await expect(new BatchModel({
+      ...base, migrationEvidenceRef: null,
+    }).validate()).rejects.toThrow('代发迁移证据引用与校验和必须成对出现');
+    await expect(new BatchModel({
+      ...base, strongAuthReferenceType: 'migration_export_approval_evidence',
+      migrationEvidenceRef: null, migrationEvidenceChecksum: null,
+    }).validate()).rejects.toThrow('历史导出审批批次必须绑定迁移证据');
+    const online = new BatchModel({
+      ...base, strongAuthReferenceType: null,
+      migrationEvidenceRef: null, migrationEvidenceChecksum: null,
+    });
+    await expect(online.validate()).resolves.toBeUndefined();
+    expect(online.strongAuthReferenceType).toBe('webauthn_evidence');
   });
 
   it('历史审批账户必须成对绑定迁移 WORM 引用和摘要', async () => {
@@ -171,6 +192,17 @@ describe('Treasury 持久化契约', () => {
     await expect(new ReturnModel({
       ...base, migrationEvidenceRef: base.objectRef,
       migrationEvidenceChecksum: 'm'.repeat(43),
+    }).validate()).resolves.toBeUndefined();
+    await expect(new ReturnModel({
+      ...base, evidenceReferenceType: 'online_inbox',
+      migrationEvidenceRef: base.objectRef,
+    }).validate()).rejects.toThrow('必须成对出现');
+    await expect(new ReturnModel({
+      ...base, evidenceReferenceType: 'online_inbox',
+      migrationEvidenceChecksum: 'm'.repeat(43),
+    }).validate()).rejects.toThrow('必须成对出现');
+    await expect(new ReturnModel({
+      ...base, evidenceReferenceType: 'online_inbox',
     }).validate()).resolves.toBeUndefined();
   });
 });

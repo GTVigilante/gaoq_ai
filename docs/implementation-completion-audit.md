@@ -4,8 +4,9 @@
 - 审计对象：Phase 0–6、开放 Issue、当前堆叠 Draft PR 与 GitHub 治理配置
 - 结论：应用、契约、迁移控制面、生产门禁、Helm/Kubernetes 编排和标准 MCP
   已形成仓库实施基线；真实外部联调、目标环境演练、UAT、切换与 Hypercare
-  尚未完成。Phase 0 的 GitHub Project 因最小权限未授权而未配置，其余关键
-  链路 90% 证据也尚未全部建立，因此所有 Phase 均不得标记生产完成。
+  尚未完成。全量 80% 与专项生产文件逐文件 90% 仓库门禁已经建立；Phase 0
+  的 GitHub Project 因最小权限未授权而未配置，GitHub Hosted Actions 及
+  架构/安全/业务签署尚无有效证据，因此所有 Phase 均不得标记生产完成。
 
 本审计只判断“仓库是否已有可执行实现”，不把本地自测、静态校验器或模拟证据
 冒充现场验收。Issue 在外部证据齐全前保持 OPEN。
@@ -23,7 +24,7 @@
 
 | Phase | 仓库实施证据 | 尚缺外部证据 | 结论 |
 |---|---|---|---|
-| 0 | `docs/phase-0/`、Issue 模板、7 个 Milestone、标签及 Draft PR 流程 | Issue #41 的 GitHub Project 需要 `project` 权限；全仓覆盖率已达到 80%，其余关键链路 90% 证据尚未全部建立 | 未满足退出条件 |
+| 0 | `docs/phase-0/`、Issue 模板、7 个 Milestone、标签、Draft PR 流程、全量四维 80% 与 323 个生产文件逐文件四维 90% 门禁 | Issue #41 的 GitHub Project 需要 `project` 权限；Hosted Actions 真实执行及架构/安全/业务签署尚未取得 | 仓库实施已交付，外部/治理验收待完成 |
 | 1 | `apps/erp-api/src/modules/auth/`、`org/`、`security/`、`integration/`，`deploy/helm/`，Phase 1 工作流 | 境内云 VPC、WAF/KMS、真实 SSO/组织下发、监控告警、备份恢复与 RPO/RTO 演练 | 实施已交付，外部验收待完成 |
 | 2 | `apps/erp-api/src/modules/approval/`、审批前端、通知、迁移与 MCP 能力 | 氚云模板/历史/在途审批真实盘点迁移、三次演练和业务签署 | 实施已交付，外部验收待完成 |
 | 3 | 招聘、eSign、Onboarding、Knowledge、Care、Talent Lifecycle 360 及对应 REST/事件/MCP | 真实渠道、e签宝、对象/WORM、OpenAI/搜索/评分/通知、CRM/校友平台与跨角色 UAT | 实施已交付，外部验收待完成 |
@@ -62,14 +63,26 @@
 ## 5. 覆盖率边界
 
 2026-07-29 在 Node 22 与锁定依赖下执行
-`pnpm --filter @gaoq/erp-api test:coverage`，408 个测试文件、6,700 项测试全部
+`pnpm --filter @gaoq/erp-api test:coverage`，410 个测试文件、6,754 项测试全部
 通过。`vitest.config.ts` 已显式 `include: ['src/**/*.ts']`，因此测试未加载的
 启动、Worker、Controller、迁移和适配器文件也进入分母；覆盖率为语句
-92.91%（31,394/33,788）、分支 90.47%（21,619/23,896）、函数
-93.53%（5,573/5,958）、行 94.01%（28,686/30,512）。全仓四维已达到 Phase 0
+93.37%（31,550/33,788）、分支 91.29%（21,816/23,896）、函数
+93.62%（5,578/5,958）、行 94.40%（28,805/30,512）。全仓四维已达到 Phase 0
 规定的 80% 门槛。全量命令通过
 `pnpm quality:erp-api-global-coverage` 接入 `pnpm check`；禁止用默认的
 “仅统计已加载文件”口径、排除生产文件、降低阈值或局部高覆盖率维持达标。
+
+`scripts/validate-critical-coverage-policy.mjs` 进一步从 `precheck/check` 递归
+解析 132 个可达 ERP API 专项脚本，展开全部 `--coverage.include` glob，并要求
+323 个目标生产文件与 `vitest.config.ts` 的显式逐文件四维 90% 阈值一一闭合。
+租户、Identity、Approval、Payroll、Treasury 与 MCP 六类章程关键域按统一排除
+规则形成 117 个权威生产文件；未来新增关键文件若未进入专项脚本会立即失败。
+校验器同时拒绝缺失文件、未匹配 glob、重复属性、低阈值、只有阈值没有专项、
+只有专项没有阈值、关键域分类遗漏及未接入 `precheck`，并以六类负向自测证明
+失败关闭。本轮据此补齐 34 个此前仅受全量报告约束的关键文件，以及租户上下文
+Service、招聘渠道人工运维 Service/Controller 三个组合报告下的单文件缺口。
+由此关闭的是仓库质量策略缺口；GitHub CI 真实执行和 Phase 0 人工签署仍属于
+独立验收条件。
 
 2026-07-29 本人薪资单边界已下沉到 REST 与标准 MCP 共用的应用服务；
 `PAYROLL_SYSTEM_MODE=external` 在读取身份画像、Mongo 或 L4 密文前稳定失败

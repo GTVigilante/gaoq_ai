@@ -53,6 +53,13 @@ describe('Payroll 持久化契约', () => {
         'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/profile-001',
       migrationEvidenceChecksum: null,
     }).validate()).rejects.toThrow('必须成对出现');
+    await expect(new ProfileModel({
+      ...document.toObject(), migrationEvidenceRef: null,
+      migrationEvidenceChecksum: 'm'.repeat(43),
+    }).validate()).rejects.toThrow('必须成对出现');
+    await expect(new ProfileModel({
+      ...document.toObject(), migrationEvidenceRef: null, migrationEvidenceChecksum: null,
+    }).validate()).resolves.toBeUndefined();
   });
 
   it('迁移规则包要求 WORM 引用与校验和成对出现', async () => {
@@ -73,6 +80,12 @@ describe('Payroll 持久化契约', () => {
     await expect(new RuleModel({
       ...valid, migrationEvidenceChecksum: null,
     }).validate()).rejects.toThrow('必须成对出现');
+    await expect(new RuleModel({
+      ...valid, migrationEvidenceRef: null,
+    }).validate()).rejects.toThrow('必须成对出现');
+    await expect(new RuleModel({
+      ...valid, migrationEvidenceRef: null, migrationEvidenceChecksum: null,
+    }).validate()).resolves.toBeUndefined();
   });
 
   it('迁移工资周期与计算运行要求唯一且成对的 WORM 证据', async () => {
@@ -85,6 +98,11 @@ describe('Payroll 持久化契约', () => {
       currency: 'CNY', status: 'collecting', preparedBy: 'actor-001', version: 2,
       migrationEvidenceRef: evidenceRef, migrationEvidenceChecksum: null,
     }).validate()).rejects.toThrow('必须成对出现');
+    await expect(new PeriodModel({
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4P1', tenantId: 'tenant-001', period: '2026-06',
+      currency: 'CNY', status: 'collecting', preparedBy: 'actor-001', version: 2,
+      migrationEvidenceRef: null, migrationEvidenceChecksum: 'm'.repeat(43),
+    }).validate()).rejects.toThrow('必须成对出现');
     await expect(new RunModel({
       id: '01J8ZQK7V0A2M4N6P8R0T2W4R1', tenantId: 'tenant-001',
       periodId: '01J8ZQK7V0A2M4N6P8R0T2W4P1', period: '2026-06', runNumber: 1,
@@ -94,6 +112,16 @@ describe('Payroll 持久化契约', () => {
       employeeCount: 1, totalGrossMinor: 1, totalTaxMinor: 0, totalNetMinor: 1,
       completedAt: new Date('2026-06-03T00:00:00.000Z'),
       migrationEvidenceRef: evidenceRef, migrationEvidenceChecksum: null,
+    }).validate()).rejects.toThrow('必须成对出现');
+    await expect(new RunModel({
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4R1', tenantId: 'tenant-001',
+      periodId: '01J8ZQK7V0A2M4N6P8R0T2W4P1', period: '2026-06', runNumber: 1,
+      engineVersion: 'cn-cumulative-withholding-v1',
+      rulePackId: '01J8ZQK7V0A2M4N6P8R0T2W4T1', rulePackVersion: 1,
+      status: 'completed', inputSnapshotHash: 'i'.repeat(43), resultHash: 'r'.repeat(43),
+      employeeCount: 1, totalGrossMinor: 1, totalTaxMinor: 0, totalNetMinor: 1,
+      completedAt: new Date('2026-06-03T00:00:00.000Z'),
+      migrationEvidenceRef: null, migrationEvidenceChecksum: 'm'.repeat(43),
     }).validate()).rejects.toThrow('必须成对出现');
     for (const schema of [PayrollPeriodRecordSchema, PayrollCalculationRunRecordSchema]) {
       expect(schema.indexes()).toContainEqual([
@@ -113,9 +141,23 @@ describe('Payroll 持久化契约', () => {
     const compatible = new PeriodModel(base);
     await expect(compatible.validate()).resolves.toBeUndefined();
     expect(compatible.approvalReferenceType).toBe('approval_instance');
+    const withStrongAuth = new PeriodModel({
+      ...base, strongAuthEvidenceId: 'webauthn-evidence-001',
+    });
+    await expect(withStrongAuth.validate()).resolves.toBeUndefined();
+    expect(withStrongAuth.strongAuthReferenceType).toBe('webauthn_evidence');
     await expect(new PeriodModel({
       ...base, approvalInstanceId: null, approvalReferenceType: 'legacy_history',
     }).validate()).rejects.toThrow('必须成对出现');
+    await expect(new PeriodModel({
+      ...base, approvalInstanceId: null, approvalReferenceType: null,
+      strongAuthReferenceType: 'migration_lock_evidence',
+    }).validate()).rejects.toThrow('必须成对出现');
+    await expect(new PeriodModel({
+      ...base, approvalInstanceId: null, approvalReferenceType: null,
+      strongAuthEvidenceId: 'migration-lock-001',
+      strongAuthReferenceType: 'migration_lock_evidence',
+    }).validate()).resolves.toBeUndefined();
   });
 
   it('工资批准与锁定迁移证据为租户唯一 WORM 控制记录', async () => {
@@ -209,6 +251,24 @@ describe('Payroll 持久化契约', () => {
       ...document.toObject(), totalTaxableEarningsMinor: Number.MAX_SAFE_INTEGER + 1,
     });
     await expect(unsafe.validate()).rejects.toThrow(/totalTaxableEarningsMinor/);
+    const onlineApproved = new TaxFilingModel({
+      ...document.toObject(), status: 'approved', approvedBy: 'tax-approver',
+      strongAuthEvidenceId: 'webauthn-evidence-001',
+    });
+    await expect(onlineApproved.validate()).resolves.toBeUndefined();
+    expect(onlineApproved.strongAuthReferenceType).toBe('webauthn_evidence');
+    await expect(new TaxFilingModel({
+      ...document.toObject(), strongAuthReferenceType: 'webauthn_evidence',
+    }).validate()).rejects.toThrow('必须成对出现');
+    await expect(new TaxFilingModel({
+      ...document.toObject(),
+      migrationEvidenceChecksum: 'm'.repeat(43),
+    }).validate()).rejects.toThrow('必须成对出现');
+    await expect(new TaxFilingModel({
+      ...document.toObject(),
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/tax-001',
+    }).validate()).rejects.toThrow('必须成对出现');
     const migrated = new TaxFilingModel({
       ...document.toObject(), status: 'submitted', version: 4,
       approvedBy: 'tax-approver', strongAuthEvidenceId: 'migration-evidence-001',
@@ -259,6 +319,14 @@ describe('Payroll 持久化契约', () => {
         'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/recon-001',
       migrationEvidenceChecksum: 'm'.repeat(43),
     }).validate()).resolves.toBeUndefined();
+    await expect(new ReconciliationModel({
+      ...base,
+      migrationEvidenceRef:
+        'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F1/attachments/recon-001',
+    }).validate()).rejects.toThrow('必须成对出现');
+    await expect(new ReconciliationModel({
+      ...base, migrationEvidenceChecksum: 'm'.repeat(43),
+    }).validate()).rejects.toThrow('必须成对出现');
     await expect(new ReconciliationModel({
       ...base, status: 'frozen', differences: ['UNCONTROLLED_DIFFERENCE'],
     }).validate()).rejects.toThrow(/differences/);

@@ -79,4 +79,51 @@ describe('审批受限条件 DSL', () => {
       { op: 'is_empty', field: 'amount' }, inherited as ApprovalFormData, FIELDS,
     )).toBe(true);
   });
+
+  it('完整覆盖标量、空值、逻辑短路与数值比较语义', () => {
+    const data: ApprovalFormData = {
+      amount: 100, category: 'travel', tags: [], remark: null,
+    };
+    const cases: Array<[ApprovalCondition, boolean]> = [
+      [{ op: 'or', conditions: [
+        { op: 'eq', field: 'category', value: 'other' },
+        { op: 'ne', field: 'category', value: 'other' },
+      ] }, true],
+      [{ op: 'is_empty', field: 'remark' }, true],
+      [{ op: 'is_empty', field: 'tags' }, true],
+      [{ op: 'is_empty', field: 'category' }, false],
+      [{ op: 'in', field: 'category', values: ['purchase'] }, false],
+      [{ op: 'in', field: 'remark', values: [null] }, true],
+      [{ op: 'gt', field: 'amount', value: 99 }, true],
+      [{ op: 'gte', field: 'amount', value: 100 }, true],
+      [{ op: 'lt', field: 'amount', value: 101 }, true],
+      [{ op: 'lte', field: 'amount', value: 100 }, true],
+      [{ op: 'gt', field: 'category', value: 1 }, false],
+      [{ op: 'eq', field: 'tags', value: 'not-array' }, false],
+    ];
+    for (const [condition, expected] of cases) {
+      expect(evaluateApprovalCondition(condition, data, FIELDS)).toBe(expected);
+    }
+  });
+
+  it('拒绝非纯对象、空逻辑、非法 not/in/标量和超长条件数组', () => {
+    const inherited = Object.create({ op: 'eq' }) as ApprovalCondition;
+    const invalid: unknown[] = [
+      null,
+      [],
+      inherited,
+      { op: 'and', conditions: [] },
+      { op: 'not', condition: null },
+      { op: 'in', field: 'category', values: [] },
+      { op: 'in', field: 'category', values: Array.from({ length: 51 }, () => 'x') },
+      { op: 'eq', field: 'category', value: { unsafe: true } },
+      { op: 'eq', field: 'tags', value: Array.from({ length: 201 }, () => 'x') },
+      { op: 'eq', field: 'tags', value: [Number.POSITIVE_INFINITY] },
+      { op: 'eq', field: 'BadField', value: 'x' },
+    ];
+    for (const condition of invalid) {
+      expect(() => validateApprovalCondition(condition as ApprovalCondition, FIELDS))
+        .toThrowError(ApprovalDomainError);
+    }
+  });
 });
