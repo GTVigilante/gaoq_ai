@@ -17,6 +17,8 @@ const requiredDocuments = [
   'docs/phase-0/04-mcp-service-standard.md',
   'docs/phase-0/05-security-quality-cutover.md',
   'docs/phase-0/06-github-governance.md',
+  'docs/phase-0/07-payroll-system-boundary.md',
+  'docs/phase-0/08-data-processing-register.md',
   'docs/implementation-completion-audit.md',
   'apps/erp-api/src/modules/integration/adapters/README.md',
   'apps/erp-api/src/modules/integration/adapters/dingtalk/mapping.md',
@@ -202,6 +204,22 @@ const requiredAdapterMappingMarkers = new Map([
   [
     'apps/erp-api/src/modules/integration/adapters/notification/mapping.md',
     ['externalMessageId', 'recipientRef', '短信和邮件'],
+  ],
+]);
+const requiredDataProcessingRegisterMarkers = new Map([
+  [
+    'docs/phase-0/08-data-processing-register.md',
+    [
+      '收集/处理目的',
+      '依据（待现场确认）',
+      '来源',
+      '共享对象',
+      '存储位置',
+      '保留与删除/匿名化',
+      '负责人',
+      'MCP/OAuth 调用、确认账本和客户端目录证据',
+      '任何未签署活动',
+    ],
   ],
 ]);
 const requiredMcpClientCompatibilityMarkers = new Map([
@@ -682,6 +700,19 @@ for (const [relativePath, markers] of requiredAdapterMappingMarkers) {
     for (const marker of markers) {
       if (!content.includes(marker)) {
         errors.push(`${relativePath}: 缺少外部适配器映射标记 ${marker}`);
+      }
+    }
+  } catch {
+    // 缺失文件已在第一阶段报告。
+  }
+}
+
+for (const [relativePath, markers] of requiredDataProcessingRegisterMarkers) {
+  try {
+    const content = await readFile(resolve(repoRoot, relativePath), 'utf8');
+    for (const marker of markers) {
+      if (!content.includes(marker)) {
+        errors.push(`${relativePath}: 缺少数据处理登记标记 ${marker}`);
       }
     }
   } catch {

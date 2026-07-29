@@ -24,7 +24,7 @@
 
 | Phase | 仓库实施证据 | 尚缺外部证据 | 结论 |
 |---|---|---|---|
-| 0 | `docs/phase-0/`、Issue 模板、7 个 Milestone、标签、Draft PR、只读治理自动化、全量四维 80% 与 336 个生产文件逐文件四维 90% 门禁 | Issue #41 的 GitHub Project 需要 `project` 权限；Hosted Actions 真实执行及架构/安全/业务签署尚未取得 | 仓库实施已交付，外部/治理验收待完成 |
+| 0 | `docs/phase-0/`、数据处理活动登记册、Issue 模板、7 个 Milestone、标签、Draft PR、只读治理自动化、全量四维 80% 与 336 个生产文件逐文件四维 90% 门禁 | Issue #41 的 GitHub Project 需要 `project` 权限；Hosted Actions 真实执行及架构/安全/业务/数据/法务签署尚未取得 | 仓库实施已交付，外部/治理验收待完成 |
 | 1 | `apps/erp-api/src/modules/auth/`、`org/`、`security/`、`integration/`，`deploy/helm/`，Phase 1 工作流 | 境内云 VPC、WAF/KMS、真实 SSO/组织下发、监控告警、备份恢复与 RPO/RTO 演练 | 实施已交付，外部验收待完成 |
 | 2 | `apps/erp-api/src/modules/approval/`、审批前端、通知、迁移与 MCP 能力 | 氚云模板/历史/在途审批真实盘点迁移、三次演练和业务签署 | 实施已交付，外部验收待完成 |
 | 3 | 招聘、eSign、Onboarding、Knowledge、Care、Talent Lifecycle 360 及对应 REST/事件/MCP | 真实渠道、e签宝、对象/WORM、OpenAI/搜索/评分/通知、CRM/校友平台与跨角色 UAT | 实施已交付，外部验收待完成 |
@@ -53,6 +53,16 @@
 必需文档和关键契约标记，字段变化必须与运行时 schema、协议测试在同一 PR 更新。
 该证据关闭的是规范要求的仓库映射缺口，不证明任何真实企业租户、银行/税局、
 e签或通知服务已联调。
+
+### 2.3 数据处理活动登记
+
+2026-07-30 已新增 `docs/phase-0/08-data-processing-register.md`，以 19 类数据活动
+登记分级、目的、待现场确认的依据、来源、共享对象、存储位置、保留与
+删除/匿名化方式及负责人，覆盖 ERP、Web、Worker、迁移、外部集成、MCP、审计
+和发布证据。登记册明确 ERP 主数据权威、专业算薪生产事实源、L3/L4 最小共享、
+跨境/用途扩张变更、数据主体请求和备份删除边界；文档门禁会检查全部必需列和
+关键治理声明。法务依据、PIA、真实接收方、具体期限和四方逐行签署仍属于外部
+验收，未签署时 Phase 5 privacy-compliance 与总 Go/No-Go 必须失败。
 
 ## 3. 未完成 Issue 的实施证据
 

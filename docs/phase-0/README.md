@@ -14,6 +14,7 @@
 | 05 | [安全、质量与切换规范](./05-security-quality-cutover.md) | 规定安全基线、测试门禁、灾备、迁移和统一大切换 |
 | 06 | [GitHub 治理规范](./06-github-governance.md) | 规定 Milestone、Issue、分支、PR、DoR 和 DoD |
 | 07 | [专业算薪系统边界](./07-payroll-system-boundary.md) | 规定 ERP 主数据、统一身份与独立工资事实源边界 |
+| 08 | [数据处理活动登记册](./08-data-processing-register.md) | 登记目的、依据、来源、共享、存储、保留、删除和负责人 |
 
 跨阶段的仓库实现、外部验收和 GitHub 阻塞边界统一见
 [仓库实施完成度审计](../implementation-completion-audit.md)。该审计是状态索引，
