@@ -16,6 +16,7 @@
 | 07 | [专业算薪系统边界](./07-payroll-system-boundary.md) | 规定 ERP 主数据、统一身份与独立工资事实源边界 |
 | 08 | [数据处理活动登记册](./08-data-processing-register.md) | 登记目的、依据、来源、共享、存储、保留、删除和负责人 |
 | 09 | [企业威胁模型](./09-threat-model.md) | 登记资产、信任边界、STRIDE 威胁、滥用场景和残余风险 |
+| 10 | [REST OpenAPI 3.1 契约](./10-openapi-contract.md) | 生成、校验并治理 REST 路由、鉴权与参数机器契约 |
 
 跨阶段的仓库实现、外部验收和 GitHub 阻塞边界统一见
 [仓库实施完成度审计](../implementation-completion-audit.md)。该审计是状态索引，

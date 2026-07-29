@@ -20,6 +20,9 @@ const requiredDocuments = [
   'docs/phase-0/07-payroll-system-boundary.md',
   'docs/phase-0/08-data-processing-register.md',
   'docs/phase-0/09-threat-model.md',
+  'docs/phase-0/10-openapi-contract.md',
+  'contracts/openapi/erp-api.openapi.json',
+  'scripts/contracts/generate-openapi.mjs',
   'docs/adr/README.md',
   'docs/adr/0001-modular-monolith-and-runtime.md',
   'docs/adr/0002-erp-master-data-and-platform-adapters.md',
@@ -256,6 +259,47 @@ const requiredThreatModelMarkers = new Map([
       'Prompt injection',
       'GitHub Hosted OIDC',
       'Phase 0 退出需要架构、安全和业务',
+    ],
+  ],
+]);
+const requiredOpenApiContractMarkers = new Map([
+  [
+    'docs/phase-0/10-openapi-contract.md',
+    [
+      'contracts/openapi/erp-api.openapi.json',
+      'pnpm contracts:openapi:validate',
+      '47',
+      '225',
+      '231',
+      'x-typescript-type',
+      'GitHub Hosted Actions',
+    ],
+  ],
+  [
+    'scripts/contracts/generate-openapi.mjs',
+    [
+      "openapi: '3.1.0'",
+      'x-required-scopes',
+      'x-operation-count',
+      'OpenAPI 契约已漂移',
+    ],
+  ],
+  [
+    'contracts/openapi/erp-api.openapi.json',
+    [
+      '"openapi": "3.1.0"',
+      '"x-controller-count": 47',
+      '"x-route-declaration-count": 225',
+      '"x-operation-count": 231',
+    ],
+  ],
+  [
+    'package.json',
+    [
+      '"contracts:openapi:generate"',
+      '"contracts:openapi:self-test"',
+      '"contracts:openapi:validate"',
+      '"pretypecheck"',
     ],
   ],
 ]);
@@ -780,6 +824,19 @@ for (const [relativePath, markers] of requiredThreatModelMarkers) {
     }
   } catch {
     // 缺失文件已在第一阶段报告。
+  }
+}
+
+for (const [relativePath, markers] of requiredOpenApiContractMarkers) {
+  try {
+    const content = await readFile(resolve(repoRoot, relativePath), 'utf8');
+    for (const marker of markers) {
+      if (!content.includes(marker)) {
+        errors.push(`${relativePath}: 缺少 OpenAPI 契约标记 ${marker}`);
+      }
+    }
+  } catch {
+    errors.push(`${relativePath}: 无法读取 OpenAPI 契约门禁文件`);
   }
 }
 

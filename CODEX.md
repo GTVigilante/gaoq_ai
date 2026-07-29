@@ -63,6 +63,15 @@
   DoS、MCP/提示注入、工资资金与供应链；每项分别列仓库控制和现场残余风险。
   文档门禁锁定核心威胁与 Phase 0 三方签署要求；真实 DAST/ASVS、红队、角色
   矩阵、外部密钥轮换和三方签署仍未完成。
+- 2026-07-30 已建立源码确定性生成的 OpenAPI 3.1 REST 基线：47 个
+  Controller、225 个 Nest 路由声明、218 个 Path 和 231 个 Operation 均记录
+  精确 OAuth Scope、公开状态、Guard、Header/Query/Path/Body 类型、响应类型
+  与源码位置；MCP `@All` 的七方法展开保留原始语义。生成器拒绝动态路由/
+  Scope、重复操作、路径参数漂移和公开/Scope 冲突，自测与逐字节漂移校验通过
+  `pretypecheck` 接入 `pnpm check`。复杂 DTO 目前只保留
+  `x-typescript-type`，字段级约束仍以 DTO、ValidationPipe 和协议测试为准，
+  因此不得把该基线单独宣称为生产写客户端的完整 Schema；GitHub Hosted
+  Actions 仍受账号付款或 Spending limit 阻塞。
 - 2026-07-29 已关闭审批 MCP 的 Schema 方言与机器可读风险分级缺口：锁定的
   `@modelcontextprotocol/sdk 1.29.0` 原本把 Zod Tool Schema 显式发现为
   Draft-07，现通过受控依赖补丁统一输出 JSON Schema 2020-12；9 个审批 Tool

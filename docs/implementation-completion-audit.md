@@ -82,6 +82,24 @@ Hosted Actions、现场联调或生产验收通过；未来改变结论必须新
 GitHub Hosted OIDC 和 Phase 0 三方签署要求。该模型不替代真实 DAST/ASVS、
 角色矩阵、供应商密钥轮换、断连恢复、红队或三方签署，当前仍为 No-Go。
 
+### 2.6 REST OpenAPI 机器契约
+
+2026-07-30 已新增 `scripts/contracts/generate-openapi.mjs` 和
+`contracts/openapi/erp-api.openapi.json`。生成器从 47 个生产 Controller
+确定性提取 225 个 Nest 路由声明，形成 218 个 Path、231 个 Operation 和
+165 个 OAuth Scope；27 个公开 Operation、203 个 Scope 保护 Operation 与
+1 个已认证会话撤销 Operation 均有显式安全策略。路径、Header、Query、Body、
+响应类型、Guard、源码定位及 `/api` 前缀例外均进入契约，MCP `@All` 展开时
+保留 `x-nest-method` 原始语义。
+
+`pnpm contracts:openapi:self-test` 会验证正负场景，
+`pnpm contracts:openapi:validate` 会重新生成并逐字节拒绝漂移，两者通过
+`pretypecheck` 接入 `pnpm check`。复杂 DTO 当前以 `x-typescript-type` 保守
+表达，字段级白名单、嵌套约束和业务不变量仍由 DTO、全局 `ValidationPipe`、
+应用服务与契约测试执行；在字段级 Schema 完全展开前，不把本契约单独作为
+生产写客户端生成或外部验收证据。GitHub Hosted Actions 尚未启动 Runner，
+远端 CI 仍为 No-Go。
+
 ## 3. 未完成 Issue 的实施证据
 
 下表列出此前只有外部验收标签、但仓库已经具备实施控制面的工作项。添加
