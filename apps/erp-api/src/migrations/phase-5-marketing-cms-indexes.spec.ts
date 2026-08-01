@@ -29,5 +29,9 @@ describe('Phase 5 Marketing CMS 索引迁移', () => {
       collection: 'marketing_side_effect_outbox',
       key: { status: 1, nextAttemptAt: 1, createdAt: 1 },
     }));
+    expect(manifest).toContainEqual(expect.objectContaining({
+      collection: 'marketing_side_effect_outbox',
+      key: { kind: 1, status: 1, dueAt: 1 },
+    }));
   });
 });

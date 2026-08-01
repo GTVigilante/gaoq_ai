@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { createEventId } from '@gaoq/shared-utils';
 import type { Connection, Model } from 'mongoose';
@@ -19,6 +19,8 @@ const MAX_APPEND_ATTEMPTS = 3;
 /** MongoDB 事务型审计出口；业务调用必须等待追加成功，禁止降级为普通日志。 */
 @Injectable()
 export class MongoAuditEventSink extends AuditEventSink {
+  private readonly logger = new Logger(MongoAuditEventSink.name);
+
   constructor(
     @InjectConnection() private readonly connection: Connection,
     @InjectModel(AuditEventRecord.name)
@@ -38,6 +40,7 @@ export class MongoAuditEventSink extends AuditEventSink {
       const eventId = createEventId();
       for (let attempt = 1; attempt <= MAX_APPEND_ATTEMPTS; attempt += 1) {
         const session = await this.connection.startSession();
+        let committed = false;
         try {
           await session.withTransaction(async () => {
             const head = await this.heads.findOne(
@@ -83,13 +86,25 @@ export class MongoAuditEventSink extends AuditEventSink {
               throw new Error('AUDIT_CHAIN_CONFLICT');
             }
           });
-          this.metrics.recordAuditAppend('success', elapsedSeconds(startedAt));
-          return;
+          committed = true;
         } catch (error) {
           if (attempt >= MAX_APPEND_ATTEMPTS || !isConcurrencyError(error)) throw error;
           this.metrics.recordAuditTransactionRetry();
         } finally {
-          await session.endSession();
+          if (committed) {
+            try {
+              await session.endSession();
+            } catch {
+              // Mongo 已确认提交后，会话清理故障不得把已落盘审计暴露为失败并诱发重复追加。
+              this.logger.error({ code: 'AUDIT_SESSION_CLEANUP_AFTER_COMMIT_FAILED' });
+            }
+          } else {
+            await session.endSession();
+          }
+        }
+        if (committed) {
+          this.metrics.recordAuditAppend('success', elapsedSeconds(startedAt));
+          return;
         }
       }
     } catch (error) {

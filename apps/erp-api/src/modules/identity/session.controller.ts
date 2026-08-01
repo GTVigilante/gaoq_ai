@@ -1,4 +1,5 @@
-import { Controller, Post, Req, Res, UnauthorizedException } from '@nestjs/common';
+import { Controller, Logger, Post, Req, Res, UnauthorizedException } from '@nestjs/common';
+import { createTraceId } from '@gaoq/shared-utils';
 import type { Response } from 'express';
 
 import { AuditService } from '../../core/audit/audit.service.js';
@@ -8,6 +9,8 @@ import { TokenGrantService } from './token-grant.service.js';
 
 @Controller('auth/sessions')
 export class SessionController {
+  private readonly logger = new Logger(SessionController.name);
+
   constructor(
     private readonly grants: TokenGrantService,
     private readonly cookies: BrowserRefreshCookieService,
@@ -26,13 +29,22 @@ export class SessionController {
     }
     const revoked = await this.grants.revokeSession(token.tenantId, token.sessionId);
     this.cookies.clear(response);
-    await this.audit.record({
-      action: 'identity.session.revoke',
-      resourceType: 'identity_session',
-      resourceId: token.sessionId,
-      riskLevel: 'R1',
-      outcome: revoked ? 'success' : 'failure',
-    });
+    try {
+      await this.audit.recordTrustedUser(token.tenantId, {
+        actorId: token.actorId,
+        traceId: request.traceId ?? createTraceId(),
+        action: 'identity.session.revoke',
+        resourceType: 'identity_session',
+        resourceId: token.sessionId,
+        riskLevel: 'R1',
+        outcome: revoked ? 'success' : 'failure',
+      });
+    } catch {
+      this.logger.error({
+        code: 'IDENTITY_SESSION_REVOKE_AUDIT_AFTER_COMMIT_FAILED',
+        tenantId: token.tenantId,
+      });
+    }
     return { revoked };
   }
 }

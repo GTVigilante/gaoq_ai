@@ -24,7 +24,10 @@ const SCHEMAS = Object.freeze([
 ]);
 
 export function buildPhaseThreeKnowledgeIndexManifest() {
-  return buildIndexManifestFromSchemas(SCHEMAS);
+  // v1 发布后的人工复核证据唯一索引由独立考试编排追加迁移持有，禁止改写历史 checksum。
+  return Object.freeze(buildIndexManifestFromSchemas(SCHEMAS).filter((item) =>
+    item.key.manualReviewEvidenceId !== 1,
+  ));
 }
 
 export async function runPhaseThreeKnowledgeIndexMigration(

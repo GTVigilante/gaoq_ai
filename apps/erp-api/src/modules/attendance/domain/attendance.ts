@@ -30,6 +30,7 @@ export interface AttendanceSourceFact {
   readonly occurredAt: string;
   readonly timeZone: string;
   readonly businessDate: string;
+  readonly shiftPlanId?: string | null;
   readonly impact: AttendanceImpact;
   readonly sourceObservedAt: string;
   readonly createdAt: string;
@@ -58,6 +59,13 @@ export interface AttendanceDailySummary extends AttendanceImpact {
   readonly digest: string;
 }
 
+export interface AttendanceSourceWatermark {
+  readonly providerCode: string;
+  readonly throughDate: string;
+  readonly lastPolledAt: string;
+  readonly completedInboxCount: number;
+}
+
 export interface AttendanceMonthlySnapshot extends AttendanceImpact {
   readonly id: string;
   readonly tenantId: string;
@@ -66,6 +74,8 @@ export interface AttendanceMonthlySnapshot extends AttendanceImpact {
   readonly snapshotVersion: number;
   readonly rulesetVersion: string;
   readonly sourceCutoffAt: string;
+  readonly sourceProviderCount: number;
+  readonly sourceWatermarkDigest: string;
   readonly sourceFactCount: number;
   readonly correctionCount: number;
   readonly dailySummaries: readonly AttendanceDailySummary[];
@@ -105,14 +115,26 @@ export function createAttendanceSourceFact(
   assertId(input.employeeId, 'ATTENDANCE_EMPLOYEE_INVALID');
   assertId(input.providerCode, 'ATTENDANCE_PROVIDER_INVALID');
   assertFactType(input.factType);
+  if (input.shiftPlanId !== undefined && input.shiftPlanId !== null) {
+    assertId(input.shiftPlanId, 'ATTENDANCE_SHIFT_PLAN_REFERENCE_INVALID');
+    if (input.factType !== 'shift' || input.providerCode !== 'attendance_rules') {
+      fail(
+        'ATTENDANCE_SHIFT_DERIVATION_INVALID',
+        '只有 Attendance 规则引擎派生的 shift 事实可以绑定班次计划',
+      );
+    }
+  }
   const sourceObservedAt = parseInstant(input.sourceObservedAt, 'ATTENDANCE_SOURCE_TIME_INVALID');
   const occurredAt = parseInstant(input.occurredAt, 'ATTENDANCE_OCCURRED_AT_INVALID');
-  if (sourceObservedAt.getTime() < occurredAt.getTime()) {
-    fail('ATTENDANCE_SOURCE_TIME_INVALID', '源系统观测时间不得早于事实发生时间');
+  if (!Number.isFinite(now.getTime())) fail('ATTENDANCE_NOW_INVALID', '当前时间非法');
+  if (
+    sourceObservedAt.getTime() < occurredAt.getTime() ||
+    sourceObservedAt.getTime() > now.getTime()
+  ) {
+    fail('ATTENDANCE_SOURCE_TIME_INVALID', '源系统观测时间必须位于事实发生与 ERP 登记之间');
   }
   const businessDate = businessDateAt(input.occurredAt, input.timeZone);
   assertImpact(input.impact);
-  if (!Number.isFinite(now.getTime())) fail('ATTENDANCE_NOW_INVALID', '当前时间非法');
   return Object.freeze({
     ...input,
     impact: freezeImpact(input.impact),
@@ -162,7 +184,7 @@ export function createAttendanceCorrection(
     fail('ATTENDANCE_CORRECTION_APPROVAL_REFERENCE_INVALID', '考勤修订审批引用类型或证据绑定无效');
   }
   assertId(approvalReferenceId, 'ATTENDANCE_CORRECTION_REFERENCE_INVALID');
-  if (!DATE_PATTERN.test(input.businessDate)) {
+  if (!isStrictDate(input.businessDate)) {
     fail('ATTENDANCE_BUSINESS_DATE_INVALID', '考勤业务日期非法');
   }
   if (!/^[A-Z][A-Z0-9_]{1,63}$/.test(input.reasonCode)) {
@@ -208,8 +230,10 @@ export function closeAttendanceMonth(input: {
   readonly snapshotVersion: number;
   readonly rulesetVersion: string;
   readonly sourceCutoffAt: string;
+  readonly sourceWatermarks?: readonly AttendanceSourceWatermark[];
   readonly facts: readonly AttendanceSourceFact[];
   readonly corrections: readonly AttendanceCorrection[];
+  readonly evaluatedDailySummaries?: readonly AttendanceDailySummary[];
   readonly previousSnapshotId: string | null;
   readonly supersessionEvidenceId: string | null;
 }, now: Date): AttendanceMonthlySnapshot {
@@ -253,14 +277,67 @@ export function closeAttendanceMonth(input: {
     }
     correctionByFact.set(correction.sourceFactId, correction);
   }
+  const sourceWatermarks = normalizeSourceWatermarks(input.sourceWatermarks ?? [], cutoff);
+  const sourceWatermarkDigest = hashCanonical(sourceWatermarks);
 
+  const dailySummaries = input.evaluatedDailySummaries === undefined
+    ? summarizeLegacyFacts(input.facts, correctionByFact)
+    : validateEvaluatedDailySummaries(
+        input.month,
+        input.facts.length,
+        input.corrections.length,
+        input.evaluatedDailySummaries,
+      );
+  const totals = dailySummaries.reduce<AttendanceImpact>(
+    (value, day) => addImpact(value, day),
+    zeroImpact(),
+  );
+  const snapshotHash = hashCanonical({
+    tenantId: input.tenantId,
+    employeeId: input.employeeId,
+    month: input.month,
+    snapshotVersion: input.snapshotVersion,
+    rulesetVersion: input.rulesetVersion,
+    sourceCutoffAt: cutoff.toISOString(),
+    sourceWatermarks,
+    totals,
+    dailySummaries,
+    previousSnapshotId: input.previousSnapshotId,
+    supersessionEvidenceId: input.supersessionEvidenceId,
+  });
+  return Object.freeze({
+    id: input.id,
+    tenantId: input.tenantId,
+    employeeId: input.employeeId,
+    month: input.month,
+    snapshotVersion: input.snapshotVersion,
+    rulesetVersion: input.rulesetVersion,
+    sourceCutoffAt: cutoff.toISOString(),
+    sourceProviderCount: sourceWatermarks.length,
+    sourceWatermarkDigest,
+    ...totals,
+    sourceFactCount: input.facts.length,
+    correctionCount: input.corrections.length,
+    dailySummaries,
+    snapshotHash,
+    status: 'active',
+    previousSnapshotId: input.previousSnapshotId,
+    supersessionEvidenceId: input.supersessionEvidenceId,
+    closedAt: now.toISOString(),
+  });
+}
+
+function summarizeLegacyFacts(
+  facts: readonly AttendanceSourceFact[],
+  correctionByFact: ReadonlyMap<string, AttendanceCorrection>,
+): readonly AttendanceDailySummary[] {
   const days = new Map<string, {
     impact: AttendanceImpact;
     facts: number;
     corrections: number;
     inputs: string[];
   }>();
-  for (const fact of [...input.facts].sort(compareFacts)) {
+  for (const fact of [...facts].sort(compareFacts)) {
     const correction = correctionByFact.get(fact.id);
     const impact = correction?.replacementImpact ?? fact.impact;
     const day = days.get(fact.businessDate) ?? {
@@ -271,6 +348,7 @@ export function closeAttendanceMonth(input: {
     day.corrections += correction === undefined ? 0 : 1;
     day.inputs.push(hashCanonical([
       fact.id,
+      fact.shiftPlanId ?? null,
       fact.factType,
       fact.occurredAt,
       fact.impact,
@@ -285,8 +363,7 @@ export function closeAttendanceMonth(input: {
     ]));
     days.set(fact.businessDate, day);
   }
-
-  const dailySummaries = Object.freeze([...days.entries()]
+  return Object.freeze([...days.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([businessDate, day]) => Object.freeze({
       businessDate,
@@ -295,40 +372,77 @@ export function closeAttendanceMonth(input: {
       correctionCount: day.corrections,
       digest: hashCanonical([businessDate, ...day.inputs]),
     })));
-  const totals = dailySummaries.reduce<AttendanceImpact>(
-    (value, day) => addImpact(value, day),
-    zeroImpact(),
-  );
-  const snapshotHash = hashCanonical({
-    tenantId: input.tenantId,
-    employeeId: input.employeeId,
-    month: input.month,
-    snapshotVersion: input.snapshotVersion,
-    rulesetVersion: input.rulesetVersion,
-    sourceCutoffAt: cutoff.toISOString(),
-    totals,
-    dailySummaries,
-    previousSnapshotId: input.previousSnapshotId,
-    supersessionEvidenceId: input.supersessionEvidenceId,
+}
+
+function validateEvaluatedDailySummaries(
+  month: string,
+  factCount: number,
+  correctionCount: number,
+  summaries: readonly AttendanceDailySummary[],
+): readonly AttendanceDailySummary[] {
+  const dates = new Set<string>();
+  let resolvedFactCount = 0;
+  let resolvedCorrectionCount = 0;
+  const normalized = summaries.map((summary) => {
+    if (
+      !isStrictDate(summary.businessDate) ||
+      !summary.businessDate.startsWith(`${month}-`) ||
+      dates.has(summary.businessDate)
+    ) fail('ATTENDANCE_RULE_EVALUATION_DATE_INVALID', '规则计算日摘要日期非法或重复');
+    dates.add(summary.businessDate);
+    assertImpact(summary);
+    if (
+      !Number.isSafeInteger(summary.sourceFactCount) ||
+      summary.sourceFactCount < 0 ||
+      !Number.isSafeInteger(summary.correctionCount) ||
+      summary.correctionCount < 0 ||
+      !/^[A-Za-z0-9_-]{43}$/.test(summary.digest)
+    ) fail('ATTENDANCE_RULE_EVALUATION_INVALID', '规则计算日摘要计数或摘要非法');
+    resolvedFactCount += summary.sourceFactCount;
+    resolvedCorrectionCount += summary.correctionCount;
+    return Object.freeze({ ...summary });
   });
-  return Object.freeze({
-    id: input.id,
-    tenantId: input.tenantId,
-    employeeId: input.employeeId,
-    month: input.month,
-    snapshotVersion: input.snapshotVersion,
-    rulesetVersion: input.rulesetVersion,
-    sourceCutoffAt: cutoff.toISOString(),
-    ...totals,
-    sourceFactCount: input.facts.length,
-    correctionCount: input.corrections.length,
-    dailySummaries,
-    snapshotHash,
-    status: 'active',
-    previousSnapshotId: input.previousSnapshotId,
-    supersessionEvidenceId: input.supersessionEvidenceId,
-    closedAt: now.toISOString(),
-  });
+  if (resolvedFactCount !== factCount || resolvedCorrectionCount !== correctionCount) {
+    fail('ATTENDANCE_RULE_EVALUATION_COUNT_MISMATCH', '规则计算日摘要与源事实或修订计数不一致');
+  }
+  return Object.freeze(normalized.sort((left, right) =>
+    left.businessDate.localeCompare(right.businessDate)));
+}
+
+function normalizeSourceWatermarks(
+  values: readonly AttendanceSourceWatermark[],
+  cutoff: Date,
+): readonly AttendanceSourceWatermark[] {
+  const providers = new Set<string>();
+  return Object.freeze([...values]
+    .sort((left, right) => left.providerCode.localeCompare(right.providerCode))
+    .map((value) => {
+      assertId(value.providerCode, 'ATTENDANCE_SOURCE_PROVIDER_INVALID');
+      if (providers.has(value.providerCode)) {
+        fail('ATTENDANCE_SOURCE_WATERMARK_DUPLICATE', '同一来源存在多个关账水位');
+      }
+      providers.add(value.providerCode);
+      if (!DATE_PATTERN.test(value.throughDate)) {
+        fail('ATTENDANCE_SOURCE_WATERMARK_INVALID', '来源水位日期非法');
+      }
+      const lastPolledAt = parseInstant(
+        value.lastPolledAt,
+        'ATTENDANCE_SOURCE_WATERMARK_INVALID',
+      );
+      if (lastPolledAt.getTime() > cutoff.getTime()) {
+        fail('ATTENDANCE_SOURCE_WATERMARK_AFTER_CUTOFF', '来源水位晚于关账截止时间');
+      }
+      if (!Number.isSafeInteger(value.completedInboxCount) ||
+        value.completedInboxCount < 0) {
+        fail('ATTENDANCE_SOURCE_WATERMARK_INVALID', '来源已处理记录数非法');
+      }
+      return Object.freeze({
+        providerCode: value.providerCode,
+        throughDate: value.throughDate,
+        lastPolledAt: lastPolledAt.toISOString(),
+        completedInboxCount: value.completedInboxCount,
+      });
+    }));
 }
 
 /** 数据迁移专用：使用现有算法重算快照，并保留严格历史关账时间。 */
@@ -355,6 +469,7 @@ function assertSnapshotFact(
   if (
     fact.tenantId !== snapshot.tenantId ||
     fact.employeeId !== snapshot.employeeId ||
+    !isStrictDate(fact.businessDate) ||
     !fact.businessDate.startsWith(`${snapshot.month}-`)
   ) fail('ATTENDANCE_FACT_OUT_OF_SCOPE', '源事实不属于当前租户、员工或月份');
   if (Date.parse(fact.sourceObservedAt) > cutoff.getTime()) {
@@ -447,10 +562,23 @@ function assertTimeZone(value: string): void {
 
 function parseInstant(value: string, code: string): Date {
   const parsed = new Date(value);
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value) || !Number.isFinite(parsed.getTime())) {
+  const canonical = value.endsWith('Z') && !value.includes('.')
+    ? value.replace(/Z$/, '.000Z')
+    : value;
+  if (
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value) ||
+    !Number.isFinite(parsed.getTime()) ||
+    parsed.toISOString() !== canonical
+  ) {
     fail(code, '时间必须为 UTC ISO-8601 instant');
   }
   return parsed;
+}
+
+function isStrictDate(value: string): boolean {
+  if (!DATE_PATTERN.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
 function strictMigrationInstant(value: string): string {

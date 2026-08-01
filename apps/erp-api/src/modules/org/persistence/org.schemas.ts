@@ -235,6 +235,27 @@ export class OrgPersonRecord {
   @Prop({ type: String, required: true, immutable: true, maxlength: MAX_ID_LENGTH })
   identityEvidenceId!: string;
 
+  @Prop({ type: String, default: null, maxlength: MAX_ID_LENGTH })
+  birthdayEvidenceId!: string | null;
+
+  @Prop({
+    type: [String],
+    default: [],
+    validate: {
+      validator: (value: string[]): boolean =>
+        value.length <= 5 &&
+        new Set(value).size === value.length &&
+        value.every((item) =>
+          /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.[A-Za-z0-9_-]{43}$/.test(item),
+        ),
+      message: '生日盲索引必须是去重的受控 HMAC 指纹',
+    },
+  })
+  birthdayBlindIndexes!: string[];
+
+  @Prop({ type: Date, default: null })
+  birthdayAttestedAt!: Date | null;
+
   @Prop({ type: String, enum: ['active'], required: true })
   status!: 'active';
 
@@ -247,9 +268,34 @@ export class OrgPersonRecord {
 
 export type OrgPersonDocument = HydratedDocument<OrgPersonRecord>;
 export const OrgPersonRecordSchema = SchemaFactory.createForClass(OrgPersonRecord);
+OrgPersonRecordSchema.pre('validate', function validateBirthdayProjection() {
+  const absent =
+    this.birthdayEvidenceId === null &&
+    this.birthdayAttestedAt === null &&
+    this.birthdayBlindIndexes.length === 0;
+  const attested =
+    this.birthdayEvidenceId !== null &&
+    this.birthdayAttestedAt instanceof Date &&
+    this.birthdayBlindIndexes.length >= 1 &&
+    this.birthdayBlindIndexes.length <= 5;
+  if (!absent && !attested) {
+    this.invalidate('birthdayEvidenceId', '生日证明、时间和盲索引必须成套存在');
+  }
+});
 OrgPersonRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 OrgPersonRecordSchema.index({ tenantId: 1, sourceCandidateId: 1 }, { unique: true });
 OrgPersonRecordSchema.index({ tenantId: 1, identityEvidenceId: 1 }, { unique: true });
+OrgPersonRecordSchema.index(
+  { tenantId: 1, birthdayEvidenceId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { birthdayEvidenceId: { $type: 'string' } },
+  },
+);
+OrgPersonRecordSchema.index(
+  { tenantId: 1, birthdayBlindIndexes: 1 },
+  { partialFilterExpression: { birthdayEvidenceId: { $type: 'string' } } },
+);
 
 /** 劳动关系记录（集合 org_employments），与员工组织视图分离。 */
 @Schema({ collection: 'org_employments', timestamps: true, versionKey: false, id: false })

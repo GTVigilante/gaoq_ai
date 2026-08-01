@@ -1,9 +1,11 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import type { Model } from 'mongoose';
 
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import {
+  ApprovalActionRecord,
+  type ApprovalActionDocument,
   ApprovalInstanceRecord,
   type ApprovalInstanceDocument,
 } from '../../approval/persistence/approval.schemas.js';
@@ -20,66 +22,20 @@ import {
   type OrgEmployeeDocument,
 } from '../../org/persistence/org.schemas.js';
 import {
-  PayrollPeriodRecord,
-  type PayrollPeriodDocument,
-} from '../../payroll/persistence/payroll.schemas.js';
-import type { PayrollPeriodStatus } from '../../payroll/domain/payroll-period.js';
-import {
   CandidateApplicationRecord,
   type CandidateApplicationDocument,
   RecruitmentPositionRecord,
   type RecruitmentPositionDocument,
 } from '../../recruitment/persistence/recruitment.schemas.js';
+import {
+  ANALYTICS_DASHBOARD_SOURCES,
+  ANALYTICS_EXTERNAL_DASHBOARD_SOURCES,
+  managementDashboardSchema,
+  type ManagementDashboardView,
+} from '../analytics.contract.js';
+import { LegacyPayrollDashboardSource } from '../integration/legacy-payroll-dashboard.source.js';
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
-
-export interface ManagementDashboardView {
-  readonly asOf: string;
-  readonly window: { readonly from: string; readonly to: string; readonly timezone: 'Asia/Shanghai' };
-  readonly generatedAt: string;
-  readonly freshness: {
-    readonly transactional: 'live';
-    readonly operatingSummaryDate: string | null;
-    readonly payrollPeriod: string | null;
-  };
-  readonly workforce: {
-    readonly activeHeadcount: number;
-    readonly probationHeadcount: number;
-    readonly suspendedHeadcount: number;
-  };
-  readonly approvals: {
-    readonly running: number;
-    readonly overdue48h: number;
-    readonly completed30d: number;
-    readonly approvalRateBps: number | null;
-  };
-  readonly recruitment: {
-    readonly openPositionCount: number;
-    readonly openHeadcount: number;
-    readonly activeApplicationCount: number;
-    readonly hired30d: number;
-  };
-  readonly learning: {
-    readonly mandatoryAssignments: number;
-    readonly completedMandatoryAssignments: number;
-    readonly expiredMandatoryAssignments: number;
-    readonly completionRateBps: number | null;
-  };
-  readonly payroll: {
-    readonly period: string | null;
-    readonly status: PayrollPeriodStatus | null;
-    readonly employeeCount: number | null;
-  };
-  readonly operating: {
-    readonly summaryDate: string | null;
-    readonly revision: number | null;
-    readonly currency: 'CNY' | null;
-    readonly gmvMinor: number | null;
-    readonly paidOrderCount: number | null;
-    readonly refundMinor: number | null;
-  };
-  readonly sources: readonly string[];
-}
 
 /** 管理驾驶舱唯一指标口径层；固定聚合、可信租户、无个人明细和动态字段。 */
 @Injectable()
@@ -88,34 +44,55 @@ export class ManagementDashboardService {
     private readonly context: TenantContextService,
     @InjectModel(OrgEmployeeRecord.name) private readonly employees: Model<OrgEmployeeDocument>,
     @InjectModel(ApprovalInstanceRecord.name) private readonly approvals: Model<ApprovalInstanceDocument>,
+    @InjectModel(ApprovalActionRecord.name)
+    private readonly approvalActions: Model<ApprovalActionDocument>,
     @InjectModel(RecruitmentPositionRecord.name)
     private readonly positions: Model<RecruitmentPositionDocument>,
     @InjectModel(CandidateApplicationRecord.name)
     private readonly applications: Model<CandidateApplicationDocument>,
     @InjectModel(KnowledgeTrainingAssignmentRecord.name)
     private readonly assignments: Model<KnowledgeTrainingAssignmentDocument>,
-    @InjectModel(PayrollPeriodRecord.name) private readonly payrollPeriods: Model<PayrollPeriodDocument>,
+    private readonly legacyPayroll: LegacyPayrollDashboardSource,
     @InjectModel(OpOperatingSummaryRecord.name)
     private readonly operatingSummaries: Model<OpOperatingSummaryDocument>,
   ) {}
 
   async get(asOf: string): Promise<ManagementDashboardView> {
+    if (!this.context.getActorRequired().scopes.includes('erp:analytics:management:read')) {
+      throw new ForbiddenException({
+        code: 'ANALYTICS_MANAGEMENT_READ_DENIED',
+        message: '当前身份无权读取管理驾驶舱',
+      });
+    }
     const range = dateRange(asOf);
     const tenantId = this.context.getTenantRequired().tenantId;
+    const runningAtCutoff = {
+      tenantId,
+      submittedAt: { $lt: range.effectiveTo },
+      $or: [
+        { completedAt: null },
+        { completedAt: { $gte: range.effectiveTo } },
+      ],
+    };
     const [active, probation, suspended, running, overdue, completed, approved,
       openPositions, activeApplications, hired, mandatory, completedMandatory, expiredMandatory,
-      payroll, operating] = await Promise.all([
+      payrollResult, operating] = await Promise.all([
       this.employees.countDocuments({ tenantId, status: 'active' }),
       this.employees.countDocuments({ tenantId, status: 'probation' }),
       this.employees.countDocuments({ tenantId, status: 'suspended' }),
-      this.approvals.countDocuments({ tenantId, status: 'running' }),
-      this.approvals.countDocuments({ tenantId, status: 'running', submittedAt: { $lt: range.overdueCutoff } }),
+      this.approvals.countDocuments(runningAtCutoff),
       this.approvals.countDocuments({
-        tenantId, status: { $in: ['approved', 'rejected'] },
-        completedAt: { $gte: range.from, $lt: range.to },
+        ...runningAtCutoff,
+        submittedAt: { $lt: range.overdueCutoff },
       }),
-      this.approvals.countDocuments({
-        tenantId, status: 'approved', completedAt: { $gte: range.from, $lt: range.to },
+      this.approvalActions.countDocuments({
+        tenantId, actionType: 'instance.decided',
+        resultingStatus: { $in: ['approved', 'rejected'] },
+        occurredAt: { $gte: range.from, $lt: range.effectiveTo },
+      }),
+      this.approvalActions.countDocuments({
+        tenantId, actionType: 'instance.decided', resultingStatus: 'approved',
+        occurredAt: { $gte: range.from, $lt: range.effectiveTo },
       }),
       this.positions.aggregate<{ count: number; headcount: number }>([
         { $match: { tenantId, status: 'open' } },
@@ -124,15 +101,12 @@ export class ManagementDashboardService {
       ]).exec(),
       this.applications.countDocuments({ tenantId, active: true }),
       this.applications.countDocuments({
-        tenantId, stage: 'hired', endedAt: { $gte: range.from, $lt: range.to },
+        tenantId, stage: 'hired', endedAt: { $gte: range.from, $lt: range.effectiveTo },
       }),
       this.assignments.countDocuments({ tenantId, mandatory: true }),
       this.assignments.countDocuments({ tenantId, mandatory: true, status: 'completed' }),
       this.assignments.countDocuments({ tenantId, mandatory: true, status: 'expired' }),
-      this.payrollPeriods.findOne(
-        { tenantId, period: { $lte: asOf.slice(0, 7) } },
-        { period: 1, status: 1, employeeCount: 1, _id: 0 },
-      ).sort({ period: -1 }).lean().exec(),
+      this.legacyPayroll.getLatest(tenantId, asOf.slice(0, 7)),
       this.operatingSummaries.findOne(
         { tenantId, summaryDate: { $lte: asOf } },
         {
@@ -142,7 +116,8 @@ export class ManagementDashboardService {
       ).sort({ summaryDate: -1, revision: -1 }).lean().exec(),
     ]);
     const position = openPositions[0];
-    return Object.freeze({
+    const payroll = payrollResult.snapshot;
+    const parsed = managementDashboardSchema.safeParse({
       asOf, window: Object.freeze({
         from: formatDate(range.from), to: asOf, timezone: 'Asia/Shanghai' as const,
       }),
@@ -179,16 +154,26 @@ export class ManagementDashboardService {
         paidOrderCount: operating?.paidOrderCount ?? null,
         refundMinor: operating?.refundMinor ?? null,
       }),
-      sources: Object.freeze([
-        'org_employees', 'approval_instances', 'recruitment_positions',
-        'recruitment_applications', 'knowledge_training_assignments',
-        'payroll_periods', 'op_operating_summaries',
-      ]),
+      sources: [
+        ...(payrollResult.enabled
+          ? ANALYTICS_DASHBOARD_SOURCES
+          : ANALYTICS_EXTERNAL_DASHBOARD_SOURCES),
+      ],
     });
+    if (!parsed.success) throw new Error('ANALYTICS_SOURCE_INVALID');
+    return freezeDashboard(parsed.data);
+  }
+
+  validateAsOf(asOf: string): void {
+    dateRange(asOf);
   }
 }
 
-function dateRange(asOf: string): { readonly from: Date; readonly to: Date; readonly overdueCutoff: Date } {
+function dateRange(asOf: string): {
+  readonly from: Date;
+  readonly effectiveTo: Date;
+  readonly overdueCutoff: Date;
+} {
   if (!DATE.test(asOf)) throw invalidDate();
   const start = new Date(`${asOf}T00:00:00+08:00`);
   const now = new Date();
@@ -198,7 +183,8 @@ function dateRange(asOf: string): { readonly from: Date; readonly to: Date; read
   const to = new Date(start.getTime() + 24 * 60 * 60 * 1_000);
   const effectiveTo = Math.min(to.getTime(), now.getTime());
   return {
-    from: new Date(start.getTime() - 29 * 24 * 60 * 60 * 1_000), to,
+    from: new Date(start.getTime() - 29 * 24 * 60 * 60 * 1_000),
+    effectiveTo: new Date(effectiveTo),
     overdueCutoff: new Date(effectiveTo - 48 * 60 * 60 * 1_000),
   };
 }
@@ -217,4 +203,17 @@ function invalidDate(): BadRequestException {
   return new BadRequestException({
     code: 'ANALYTICS_AS_OF_INVALID', message: 'asOf 必须是不晚于今天的有效 YYYY-MM-DD 日期',
   });
+}
+
+function freezeDashboard(value: ManagementDashboardView): ManagementDashboardView {
+  Object.freeze(value.window);
+  Object.freeze(value.freshness);
+  Object.freeze(value.workforce);
+  Object.freeze(value.approvals);
+  Object.freeze(value.recruitment);
+  Object.freeze(value.learning);
+  Object.freeze(value.payroll);
+  Object.freeze(value.operating);
+  Object.freeze(value.sources);
+  return Object.freeze(value);
 }

@@ -11,7 +11,7 @@ import type { RecruitmentCalendarOutboxRelayService } from './recruitment-calend
 import type { RecruitmentCalendarDeliveryService } from './recruitment-calendar-delivery.service.js';
 
 function job(name: OrgIntegrationJobName): Job<Record<string, never>, unknown, OrgIntegrationJobName> {
-  return { name } as Job<Record<string, never>, unknown, OrgIntegrationJobName>;
+  return { name, data: {} } as Job<Record<string, never>, unknown, OrgIntegrationJobName>;
 }
 
 describe('OrgIntegrationProcessor', () => {
@@ -68,5 +68,25 @@ describe('OrgIntegrationProcessor', () => {
       expect.stringMatching(/^org-worker-/),
       25,
     );
+  });
+
+  it('拒绝携带未声明字段的队列载荷和未知任务名', async () => {
+    const processor = new OrgIntegrationProcessor(
+      { relayBatch: vi.fn() } as unknown as OrgOutboxRelayService,
+      { relayBatch: vi.fn() } as unknown as RecruitmentCalendarOutboxRelayService,
+      { processBatch: vi.fn() } as unknown as RecruitmentCalendarDeliveryService,
+      { processBatch: vi.fn() } as unknown as OrgDeliveryService,
+      { processBatch: vi.fn() } as unknown as OrgEmployeeProvisioningService,
+      { runDaily: vi.fn() } as unknown as OrgReconciliationService,
+    );
+
+    await expect(processor.process({
+      name: 'relay',
+      data: { tenantId: 'attacker-tenant' },
+    } as never)).rejects.toMatchObject({ name: 'ZodError' });
+    await expect(processor.process({
+      name: 'unknown',
+      data: {},
+    } as never)).rejects.toThrow('ORG_INTEGRATION_JOB_UNKNOWN');
   });
 });

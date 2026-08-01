@@ -26,5 +26,6 @@ describe('Phase 4 Attendance 索引追加迁移', () => {
       item.collection === 'attendance_monthly_snapshots' && item.key.month === 1 &&
       item.options.unique === true && item.options.partialFilterExpression !== undefined,
     )).toBe(true);
+    expect(manifest.some((item) => item.key.shiftPlanId === 1)).toBe(false);
   });
 });

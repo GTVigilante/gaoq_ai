@@ -420,6 +420,7 @@ ApprovalActionRecordSchema.index(
   { unique: true },
 );
 ApprovalActionRecordSchema.index({ tenantId: 1, actorId: 1, occurredAt: -1 });
+ApprovalActionRecordSchema.index({ tenantId: 1, resultingStatus: 1, occurredAt: -1 });
 
 /** 服务端验证的审批委托关系。 */
 @Schema({ collection: 'approval_delegations', timestamps: true, versionKey: false, id: false })

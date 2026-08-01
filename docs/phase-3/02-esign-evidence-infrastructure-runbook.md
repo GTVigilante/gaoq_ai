@@ -42,9 +42,28 @@ WORM 请求同样使用原始 PDF 正文，并携带 `x-object-key`、`x-content
 4. 轮换两个 Bearer Token，验证旧 Token 在重叠窗口后失效，ERP 日志与错误中不出现 Token、PDF、对象正文或下载短链。
 5. 注入 HTTP 429/500、连接中断和回执截断，确认 Worker 可重试且 Offer/Flow 保持在 `provider_completed`。
 6. 从 WORM 抽样回读对象，在独立环境复算 SHA-256，并与 `integration_esign_evidence` 的摘要和回执核对。
+7. 让证据任务耗尽全部重试，确认失败 Job 被移除；保持 Flow 为
+   `provider_completed` 超过十分钟，等待下一轮十五分钟对账，确认以同一
+   `tenantId + flowId` 确定性任务标识重新投递并最终归档。
+8. 人为暂停旧 Worker 超过十五分钟并启动新 Worker 重领同一 Inbox；旧 Worker
+   恢复后必须因 `attempts + processingToken + processingJobId` 不匹配而报
+   `ESIGN_WEBHOOK_INBOX_LEASE_LOST`，不得覆盖新 Worker 终态。
+9. 对同一 Flow 重放三次未知供应商状态和三次冲突终态；第一次只设置受控人工
+   复核，后续投影必须 `changed=false`，不得重复增加 Flow 版本。已 `completed`
+   Flow 收到正常完成回执时必须保留既有 `reviewCode`，未知/冲突状态不得覆盖
+   已可信的终态 `providerStatus`。
 
 ## 4. Go/No-Go 与恢复
 
 - 扫描误放、摘要未绑定、WORM 可覆盖/删除、保留期不足、跨租户对象键冲突或凭据泄露任一出现即 No-Go。
+- 首次部署租约令牌版本前先暂停 eSign 队列并等待旧 Worker 的 active Job 清零，
+  再整体升级 Worker，最后恢复队列；禁止新旧 Worker 混跑。既有
+  `pending/failed` 记录会在新认领时补齐租约字段，滞留 `processing` 记录在
+  十五分钟租约过期后由新 Worker 安全重领。
 - 网关不可用时禁止人工把流程改成 `completed`；恢复后用原 Flow ID 重新执行归档，确定性对象键和幂等键必须回到同一证据。
 - Token 疑似泄露时先停用归档 Worker、吊销旧凭据、检查网关访问日志和对象写入差异，再恢复队列；不得删除已形成的证据账本。
+- `ESIGN_EVIDENCE_AUDIT_AFTER_COMMIT_FAILED`、
+  `ESIGN_RECONCILIATION_AUDIT_AFTER_COMMIT_FAILED` 或
+  `ESIGN_WEBHOOK_APPLY_AUDIT_AFTER_COMMIT_FAILED` 表示业务可能已经提交，禁止
+  通过通用失败处理回滚或重放外部创建；先核对 Flow、Offer、证据账本和 WORM
+  回执，再恢复审计链。

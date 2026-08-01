@@ -1,9 +1,16 @@
-import { createHash } from 'node:crypto';
+import {
+  createHash,
+  createPublicKey,
+  generateKeyPairSync,
+  sign,
+  verify,
+} from 'node:crypto';
 import { lstat, readFile } from 'node:fs/promises';
 
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
 const COMMIT = /^[a-f0-9]{40}$/u;
 const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/u;
+const SIGNATURE = /^[A-Za-z0-9_-]{86}$/u;
 const ENVIRONMENT_NAME = /^[a-z][a-z0-9-]{2,31}$/u;
 const REGION = /^[a-z0-9-]{2,32}$/u;
 const DOMAIN_NAMES = [
@@ -16,13 +23,30 @@ const INTEGRATION_PROFILES = Object.freeze({
   esign: 'bidirectional',
   feishu: 'bidirectional',
   op: 'bidirectional',
+  'professional-payroll': 'bidirectional',
   tax: 'bidirectional',
   worm: 'request-response',
 });
+const PROFESSIONAL_PAYROLL_TOOLS = Object.freeze([
+  'payroll_payslip_get_self',
+  'payroll_period_get',
+  'payroll_reconciliation_get',
+  'payroll_tax_filing_get',
+]);
+const PROFESSIONAL_PAYROLL_RESOURCES = Object.freeze([
+  'payroll://payslips/self/{period}',
+  'payroll://periods/{period}',
+]);
+const PROFESSIONAL_PAYROLL_PROMPTS = Object.freeze([
+  'payroll_payslip_explain_self',
+  'payroll_period_status_guide',
+]);
 const SIGNOFF_ROLES = [
   'business_continuity_owner', 'data_owner', 'integration_owner', 'platform_owner',
   'qa_owner', 'security_owner', 'sre_owner',
 ];
+const SIGNOFF_SIGNATURE_SUITE = 'gaoq.phase5.resilience.signoff.v1';
+const SIGNOFF_WINDOW_MS = 24 * 60 * 60 * 1_000;
 const HARNESS_FILES = [
   ['./validate-phase-5-resilience-evidence.mjs', new URL(import.meta.url)],
   ['../../.github/workflows/phase-5-resilience.yml',
@@ -36,6 +60,41 @@ const argumentsList = process.argv.slice(2);
 if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
   runSelfTest();
   process.stdout.write('Phase 5 容灾恢复与外部断连证据门禁自测通过。\n');
+} else if (argumentsList.length === 1 && argumentsList[0] === '--print-contract') {
+  process.stdout.write(`${JSON.stringify({
+    formatVersion: 4,
+    suite: 'gaoq.phase5.resilience.contract',
+    evidenceSuite: 'gaoq.phase5.resilience.v4',
+    verdictSuite: 'gaoq.phase5.resilience.verdict',
+    domainNames: DOMAIN_NAMES,
+    integrationProfiles: INTEGRATION_PROFILES,
+    professionalPayroll: {
+      platformContractVersion: '1.0.0',
+      protocolVersion: '2025-11-25',
+      transport: 'streamable-http',
+      oauthProfile: 'oauth-2.1-resource-server',
+      requiredTools: PROFESSIONAL_PAYROLL_TOOLS,
+      requiredResourceTemplates: PROFESSIONAL_PAYROLL_RESOURCES,
+      requiredPrompts: PROFESSIONAL_PAYROLL_PROMPTS,
+      requiredEventTypes: 7,
+    },
+    signoffRoles: SIGNOFF_ROLES,
+    signatureSuite: SIGNOFF_SIGNATURE_SUITE,
+    signatureAlgorithm: 'Ed25519',
+    signatureEncoding: 'base64url-unpadded',
+    publicKeyEncoding: 'base64-spki-der',
+    keyId: 'sha256:<lowercase-hex-of-spki-der>',
+    signerKeysetCanonicalFields: ['role', 'keyId'],
+    signerKeysetOrder: 'role-ascending',
+    maximumSignoffAgeHours: 24,
+    objectives: {
+      rpoTargetSeconds: 900,
+      rtoTargetSeconds: 14_400,
+      integrationOutageTargetSeconds: 7_200,
+      catchUpTargetSeconds: 3_600,
+    },
+    harnessSha256: HARNESS_DIGEST,
+  }, null, 2)}\n`);
 } else {
   const enforceEnvironment = argumentsList[0] === '--enforce-environment';
   const evidencePath = argumentsList[enforceEnvironment ? 1 : 0];
@@ -51,10 +110,16 @@ if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
   const document = parseDocument(await readFile(evidencePath, 'utf8'));
   const summary = validateEvidence(document, enforceEnvironment);
   process.stdout.write(`${JSON.stringify({
-    formatVersion: 1,
+    formatVersion: 4,
     suite: 'gaoq.phase5.resilience.verdict',
     runId: summary.runId,
     commitSha: summary.commitSha,
+    professionalPayrollResource: summary.professionalPayroll.resource,
+    professionalPayrollCatalogHash: summary.professionalPayroll.catalogHash,
+    professionalPayrollEventContractHash:
+      summary.professionalPayroll.eventContractHash,
+    signerKeysetHash: summary.signerKeysetHash,
+    approvalPayloadHash: summary.approvalPayloadHash,
     evidenceChecksum: digest(canonical(summary)),
   }, null, 2)}\n`);
 }
@@ -62,17 +127,36 @@ if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
 function validateEvidence(document, enforceEnvironment = false) {
   object(document, [
     'formatVersion', 'suite', 'runId', 'environment', 'source', 'objectives',
-    'disasterRecovery', 'consistency', 'integrations', 'safety', 'artifacts', 'signoffs',
+    'disasterRecovery', 'consistency', 'professionalPayroll', 'integrations',
+    'safety', 'artifacts', 'signingAuthorities', 'signoffs',
   ], 'PHASE5_RESILIENCE_DOCUMENT_INVALID');
-  equal(document.formatVersion, 1, 'PHASE5_RESILIENCE_FORMAT_INVALID');
-  equal(document.suite, 'gaoq.phase5.resilience.v1', 'PHASE5_RESILIENCE_SUITE_INVALID');
+  equal(document.formatVersion, 4, 'PHASE5_RESILIENCE_FORMAT_INVALID');
+  equal(document.suite, 'gaoq.phase5.resilience.v4', 'PHASE5_RESILIENCE_SUITE_INVALID');
   pattern(document.runId, ULID, 'PHASE5_RESILIENCE_RUN_ID_INVALID');
 
   const environment = validateEnvironment(document.environment, enforceEnvironment);
   const source = validateSource(document.source, enforceEnvironment);
+  const authorities = validateSigningAuthorities(document.signingAuthorities);
+  if (enforceEnvironment) {
+    pattern(
+      process.env.RESILIENCE_EXPECTED_SIGNER_KEYSET_SHA256,
+      SHA256,
+      'PHASE5_RESILIENCE_EXPECTED_SIGNER_KEYSET_REQUIRED',
+    );
+    equal(
+      authorities.keysetHash,
+      process.env.RESILIENCE_EXPECTED_SIGNER_KEYSET_SHA256,
+      'PHASE5_RESILIENCE_SIGNER_KEYSET_MISMATCH',
+    );
+  }
   const objectives = validateObjectives(document.objectives);
   const recovery = validateRecovery(document.disasterRecovery, environment, objectives);
   const consistency = validateConsistency(document.consistency);
+  const professionalPayroll = validateProfessionalPayroll(
+    document.professionalPayroll,
+    source,
+    enforceEnvironment,
+  );
   const integrations = validateIntegrations(
     document.integrations,
     environment,
@@ -80,7 +164,17 @@ function validateEvidence(document, enforceEnvironment = false) {
   );
   validateSafety(document.safety);
   const artifacts = validateArtifacts(document.artifacts);
-  const signoffEvidenceIds = validateSignoffs(document.signoffs, environment.endedAt);
+  validateSignoffMetadata(document.signoffs, environment.endedAt);
+  const approvalPayloadHash = digest(resilienceApprovalPayload(
+    document,
+    authorities.keysetHash,
+  ));
+  const signoffEvidenceIds = validateSignoffSignatures(
+    document.signoffs,
+    authorities.byRole,
+    approvalPayloadHash,
+    environment.endedAt,
+  );
 
   return Object.freeze({
     runId: document.runId,
@@ -90,10 +184,13 @@ function validateEvidence(document, enforceEnvironment = false) {
     objectives,
     recovery,
     consistency,
+    professionalPayroll,
     integrations,
     safety: document.safety,
     artifacts,
     signoffEvidenceIds,
+    signerKeysetHash: authorities.keysetHash,
+    approvalPayloadHash,
   });
 }
 
@@ -134,7 +231,8 @@ function validateEnvironment(environment, enforceEnvironment) {
 
 function validateSource(source, enforceEnvironment) {
   object(source, [
-    'commitSha', 'images', 'rehearsalPlanVersion', 'harnessSha256', 'deploymentManifestHash',
+    'commitSha', 'images', 'professionalPayrollImage', 'rehearsalPlanVersion',
+    'harnessSha256', 'deploymentManifestHash',
   ], 'PHASE5_RESILIENCE_SOURCE_INVALID');
   pattern(source.commitSha, COMMIT, 'PHASE5_RESILIENCE_COMMIT_INVALID');
   object(
@@ -144,10 +242,17 @@ function validateSource(source, enforceEnvironment) {
   );
   const imageDigests = Object.values(source.images);
   for (const image of imageDigests) pattern(image, SHA256, 'PHASE5_RESILIENCE_IMAGE_INVALID');
-  if (new Set(imageDigests).size !== 4) fail('PHASE5_RESILIENCE_IMAGES_NOT_INDEPENDENT');
+  pattern(
+    source.professionalPayrollImage,
+    SHA256,
+    'PHASE5_RESILIENCE_PAYROLL_IMAGE_INVALID',
+  );
+  if (
+    new Set([...imageDigests, source.professionalPayrollImage]).size !== 5
+  ) fail('PHASE5_RESILIENCE_IMAGES_NOT_INDEPENDENT');
   equal(
     source.rehearsalPlanVersion,
-    'phase-5-resilience-v1',
+    'phase-5-resilience-v4',
     'PHASE5_RESILIENCE_PLAN_VERSION_INVALID',
   );
   equal(source.harnessSha256, HARNESS_DIGEST, 'PHASE5_RESILIENCE_HARNESS_INVALID');
@@ -167,10 +272,13 @@ function validateExpectedSource(source) {
     worker: process.env.RESILIENCE_EXPECTED_WORKER_IMAGE,
     web: process.env.RESILIENCE_EXPECTED_WEB_IMAGE,
     website: process.env.RESILIENCE_EXPECTED_WEBSITE_IMAGE,
+    professionalPayroll: process.env.RESILIENCE_EXPECTED_PAYROLL_IMAGE,
     deploymentManifestHash: process.env.RESILIENCE_EXPECTED_DEPLOYMENT_MANIFEST,
   };
   pattern(expected.commitSha, COMMIT, 'PHASE5_RESILIENCE_EXPECTED_SOURCE_REQUIRED');
-  for (const field of ['api', 'worker', 'web', 'website', 'deploymentManifestHash']) {
+  for (const field of [
+    'api', 'worker', 'web', 'website', 'professionalPayroll', 'deploymentManifestHash',
+  ]) {
     pattern(expected[field], SHA256, 'PHASE5_RESILIENCE_EXPECTED_SOURCE_REQUIRED');
   }
   equal(source.commitSha, expected.commitSha, 'PHASE5_RESILIENCE_COMMIT_MISMATCH');
@@ -178,6 +286,11 @@ function validateExpectedSource(source) {
   equal(source.images.worker, expected.worker, 'PHASE5_RESILIENCE_IMAGE_MISMATCH');
   equal(source.images.web, expected.web, 'PHASE5_RESILIENCE_IMAGE_MISMATCH');
   equal(source.images.website, expected.website, 'PHASE5_RESILIENCE_IMAGE_MISMATCH');
+  equal(
+    source.professionalPayrollImage,
+    expected.professionalPayroll,
+    'PHASE5_RESILIENCE_PAYROLL_IMAGE_MISMATCH',
+  );
   equal(
     source.deploymentManifestHash,
     expected.deploymentManifestHash,
@@ -204,6 +317,147 @@ function validateObjectives(objectives) {
     'PHASE5_RESILIENCE_CATCHUP_TARGET_INVALID',
   );
   return objectives;
+}
+
+function validateProfessionalPayroll(value, source, enforceEnvironment) {
+  object(value, [
+    'resource', 'mcpEndpoint', 'authorizationServer', 'imageDigest',
+    'platformContractVersion', 'eventContractHash', 'protocolVersion', 'transport',
+    'oauthProfile', 'catalogHash', 'requiredTools', 'requiredResourceTemplates',
+    'requiredPrompts', 'eventTypesReplayed', 'artifacts',
+  ], 'PHASE5_RESILIENCE_PAYROLL_BOUNDARY_INVALID');
+  const resource = httpsOrigin(
+    value.resource,
+    'PHASE5_RESILIENCE_PAYROLL_RESOURCE_INVALID',
+  );
+  const authorizationServer = httpsOrigin(
+    value.authorizationServer,
+    'PHASE5_RESILIENCE_PAYROLL_AUTHORIZATION_SERVER_INVALID',
+  );
+  if (resource === authorizationServer) {
+    fail('PHASE5_RESILIENCE_PAYROLL_TRUST_DOMAINS_NOT_SEPARATE');
+  }
+  equal(
+    value.mcpEndpoint,
+    `${resource}/mcp`,
+    'PHASE5_RESILIENCE_PAYROLL_ENDPOINT_INVALID',
+  );
+  pattern(value.imageDigest, SHA256, 'PHASE5_RESILIENCE_PAYROLL_IMAGE_INVALID');
+  equal(
+    value.imageDigest,
+    source.professionalPayrollImage,
+    'PHASE5_RESILIENCE_PAYROLL_IMAGE_MISMATCH',
+  );
+  equal(
+    value.platformContractVersion,
+    '1.0.0',
+    'PHASE5_RESILIENCE_PAYROLL_CONTRACT_VERSION_INVALID',
+  );
+  pattern(
+    value.eventContractHash,
+    SHA256,
+    'PHASE5_RESILIENCE_PAYROLL_CONTRACT_INVALID',
+  );
+  equal(
+    value.protocolVersion,
+    '2025-11-25',
+    'PHASE5_RESILIENCE_PAYROLL_PROTOCOL_INVALID',
+  );
+  equal(
+    value.transport,
+    'streamable-http',
+    'PHASE5_RESILIENCE_PAYROLL_TRANSPORT_INVALID',
+  );
+  equal(
+    value.oauthProfile,
+    'oauth-2.1-resource-server',
+    'PHASE5_RESILIENCE_PAYROLL_OAUTH_INVALID',
+  );
+  pattern(value.catalogHash, SHA256, 'PHASE5_RESILIENCE_PAYROLL_CATALOG_INVALID');
+  exactStringArray(
+    value.requiredTools,
+    PROFESSIONAL_PAYROLL_TOOLS,
+    'PHASE5_RESILIENCE_PAYROLL_CATALOG_INVALID',
+  );
+  exactStringArray(
+    value.requiredResourceTemplates,
+    PROFESSIONAL_PAYROLL_RESOURCES,
+    'PHASE5_RESILIENCE_PAYROLL_CATALOG_INVALID',
+  );
+  exactStringArray(
+    value.requiredPrompts,
+    PROFESSIONAL_PAYROLL_PROMPTS,
+    'PHASE5_RESILIENCE_PAYROLL_CATALOG_INVALID',
+  );
+  equal(
+    value.eventTypesReplayed,
+    7,
+    'PHASE5_RESILIENCE_PAYROLL_EVENT_COVERAGE_INVALID',
+  );
+  object(value.artifacts, [
+    'oauthMetadataHash', 'mcpCatalogArtifactHash', 'capabilityProbeHash',
+    'eventReplayHash',
+  ], 'PHASE5_RESILIENCE_PAYROLL_ARTIFACT_INVALID');
+  const artifactHashes = Object.values(value.artifacts);
+  for (const hash of artifactHashes) {
+    pattern(hash, SHA256, 'PHASE5_RESILIENCE_PAYROLL_ARTIFACT_INVALID');
+  }
+  if (new Set(artifactHashes).size !== artifactHashes.length) {
+    fail('PHASE5_RESILIENCE_PAYROLL_ARTIFACT_REUSED');
+  }
+  if (enforceEnvironment) {
+    const expected = {
+      resource: process.env.RESILIENCE_EXPECTED_PAYROLL_RESOURCE,
+      authorizationServer:
+        process.env.RESILIENCE_EXPECTED_PAYROLL_AUTHORIZATION_SERVER,
+      eventContractHash:
+        process.env.RESILIENCE_EXPECTED_PAYROLL_CONTRACT_HASH,
+      catalogHash: process.env.RESILIENCE_EXPECTED_PAYROLL_CATALOG_HASH,
+    };
+    const expectedResource = httpsOrigin(
+      expected.resource,
+      'PHASE5_RESILIENCE_EXPECTED_PAYROLL_SOURCE_REQUIRED',
+    );
+    const expectedAuthorizationServer = httpsOrigin(
+      expected.authorizationServer,
+      'PHASE5_RESILIENCE_EXPECTED_PAYROLL_SOURCE_REQUIRED',
+    );
+    for (const field of ['eventContractHash', 'catalogHash']) {
+      pattern(
+        expected[field],
+        SHA256,
+        'PHASE5_RESILIENCE_EXPECTED_PAYROLL_SOURCE_REQUIRED',
+      );
+    }
+    equal(
+      resource,
+      expectedResource,
+      'PHASE5_RESILIENCE_PAYROLL_RESOURCE_MISMATCH',
+    );
+    equal(
+      authorizationServer,
+      expectedAuthorizationServer,
+      'PHASE5_RESILIENCE_PAYROLL_AUTHORIZATION_SERVER_MISMATCH',
+    );
+    equal(
+      value.eventContractHash,
+      expected.eventContractHash,
+      'PHASE5_RESILIENCE_PAYROLL_CONTRACT_MISMATCH',
+    );
+    equal(
+      value.catalogHash,
+      expected.catalogHash,
+      'PHASE5_RESILIENCE_PAYROLL_CATALOG_MISMATCH',
+    );
+  }
+  return Object.freeze({
+    resource,
+    authorizationServer,
+    imageDigest: value.imageDigest,
+    eventContractHash: value.eventContractHash,
+    catalogHash: value.catalogHash,
+    artifacts: value.artifacts,
+  });
 }
 
 function validateRecovery(recovery, environment, objectives) {
@@ -595,49 +849,208 @@ function validateArtifacts(artifacts) {
   return artifacts;
 }
 
-function validateSignoffs(signoffs, endedAt) {
+function validateSigningAuthorities(authorities) {
+  if (!Array.isArray(authorities) || authorities.length !== SIGNOFF_ROLES.length) {
+    fail('PHASE5_RESILIENCE_SIGNING_AUTHORITIES_INCOMPLETE');
+  }
+  const roles = [];
+  const keyIds = new Set();
+  const byRole = new Map();
+  const keyset = [];
+  for (const authority of authorities) {
+    object(
+      authority,
+      ['role', 'algorithm', 'keyId', 'publicKeySpkiBase64'],
+      'PHASE5_RESILIENCE_SIGNING_AUTHORITY_INVALID',
+    );
+    if (!SIGNOFF_ROLES.includes(authority.role)) {
+      fail('PHASE5_RESILIENCE_SIGNING_AUTHORITY_INVALID');
+    }
+    equal(authority.algorithm, 'Ed25519', 'PHASE5_RESILIENCE_SIGNING_AUTHORITY_INVALID');
+    pattern(authority.keyId, SHA256, 'PHASE5_RESILIENCE_SIGNING_AUTHORITY_INVALID');
+    const publicKey = publicKeyFromSpkiBase64(authority.publicKeySpkiBase64);
+    equal(
+      authority.keyId,
+      publicKeyHash(publicKey),
+      'PHASE5_RESILIENCE_SIGNING_AUTHORITY_KEY_MISMATCH',
+    );
+    roles.push(authority.role);
+    keyIds.add(authority.keyId);
+    byRole.set(authority.role, Object.freeze({ keyId: authority.keyId, publicKey }));
+    keyset.push(Object.freeze({ role: authority.role, keyId: authority.keyId }));
+  }
+  exactStringSet(
+    roles,
+    SIGNOFF_ROLES,
+    'PHASE5_RESILIENCE_SIGNING_AUTHORITIES_INCOMPLETE',
+  );
+  if (keyIds.size !== SIGNOFF_ROLES.length || byRole.size !== SIGNOFF_ROLES.length) {
+    fail('PHASE5_RESILIENCE_SIGNING_AUTHORITIES_NOT_INDEPENDENT');
+  }
+  return Object.freeze({ byRole, keysetHash: signerKeysetHash(keyset) });
+}
+
+function validateSignoffMetadata(signoffs, endedAt) {
   if (!Array.isArray(signoffs) || signoffs.length !== SIGNOFF_ROLES.length) {
     fail('PHASE5_RESILIENCE_SIGNOFFS_INCOMPLETE');
   }
   const roles = [];
   const evidenceIds = new Set();
   const commentHashes = new Set();
+  const actorHashes = new Set();
   for (const signoff of signoffs) {
-    object(signoff, ['role', 'decision', 'evidenceId', 'commentHash', 'signedAt'],
-      'PHASE5_RESILIENCE_SIGNOFF_INVALID');
+    object(signoff, [
+      'role', 'actorHash', 'decision', 'evidenceId', 'commentHash', 'approvedAt',
+      'signedAt', 'algorithm', 'keyId', 'signedPayloadSha256', 'signature',
+    ], 'PHASE5_RESILIENCE_SIGNOFF_INVALID');
+    if (!SIGNOFF_ROLES.includes(signoff.role)) fail('PHASE5_RESILIENCE_SIGNOFF_INVALID');
+    pattern(signoff.actorHash, SHA256, 'PHASE5_RESILIENCE_SIGNOFF_ACTOR_INVALID');
     equal(signoff.decision, 'approve', 'PHASE5_RESILIENCE_SIGNOFF_REJECTED');
     pattern(signoff.evidenceId, ULID, 'PHASE5_RESILIENCE_SIGNOFF_EVIDENCE_INVALID');
     pattern(signoff.commentHash, SHA256, 'PHASE5_RESILIENCE_SIGNOFF_COMMENT_INVALID');
-    if (timestamp(signoff.signedAt) < endedAt) fail('PHASE5_RESILIENCE_SIGNOFF_TIME_INVALID');
+    const approvedAt = timestamp(signoff.approvedAt);
+    if (approvedAt < endedAt || approvedAt - endedAt > SIGNOFF_WINDOW_MS) {
+      fail('PHASE5_RESILIENCE_SIGNOFF_TIME_INVALID');
+    }
     roles.push(signoff.role);
     evidenceIds.add(signoff.evidenceId);
     commentHashes.add(signoff.commentHash);
+    actorHashes.add(signoff.actorHash);
+  }
+  if (canonical(roles.sort()) !== canonical([...SIGNOFF_ROLES].sort())) {
+    fail('PHASE5_RESILIENCE_SIGNOFFS_INCOMPLETE');
+  }
+  if (actorHashes.size !== SIGNOFF_ROLES.length) {
+    fail('PHASE5_RESILIENCE_SIGNOFF_ACTORS_NOT_INDEPENDENT');
   }
   if (
-    canonical(roles.sort()) !== canonical(SIGNOFF_ROLES) ||
-    evidenceIds.size !== SIGNOFF_ROLES.length || commentHashes.size !== SIGNOFF_ROLES.length
-  ) fail('PHASE5_RESILIENCE_SIGNOFFS_INCOMPLETE');
-  return [...evidenceIds];
+    evidenceIds.size !== SIGNOFF_ROLES.length ||
+    commentHashes.size !== SIGNOFF_ROLES.length
+  ) fail('PHASE5_RESILIENCE_SIGNOFF_EVIDENCE_REUSED');
+}
+
+function validateSignoffSignatures(
+  signoffs,
+  signingAuthorities,
+  approvalPayloadHash,
+  endedAt,
+) {
+  const signatures = new Set();
+  const evidenceIds = [];
+  for (const signoff of signoffs) {
+    equal(signoff.algorithm, 'Ed25519', 'PHASE5_RESILIENCE_SIGNOFF_PROOF_INVALID');
+    pattern(signoff.keyId, SHA256, 'PHASE5_RESILIENCE_SIGNOFF_PROOF_INVALID');
+    pattern(
+      signoff.signedPayloadSha256,
+      SHA256,
+      'PHASE5_RESILIENCE_SIGNOFF_PROOF_INVALID',
+    );
+    pattern(signoff.signature, SIGNATURE, 'PHASE5_RESILIENCE_SIGNOFF_PROOF_INVALID');
+    const signedAt = timestamp(signoff.signedAt);
+    const approvedAt = timestamp(signoff.approvedAt);
+    if (
+      signedAt < approvedAt ||
+      signedAt - approvedAt > SIGNOFF_WINDOW_MS ||
+      signedAt - endedAt > SIGNOFF_WINDOW_MS
+    ) fail('PHASE5_RESILIENCE_SIGNOFF_SIGNATURE_TIME_INVALID');
+    const authority = signingAuthorities.get(signoff.role);
+    if (authority === undefined) fail('PHASE5_RESILIENCE_SIGNOFF_AUTHORITY_INVALID');
+    equal(signoff.keyId, authority.keyId, 'PHASE5_RESILIENCE_SIGNOFF_KEY_MISMATCH');
+    const payload = resilienceSignoffPayload(approvalPayloadHash, signoff);
+    equal(
+      signoff.signedPayloadSha256,
+      digest(payload),
+      'PHASE5_RESILIENCE_SIGNOFF_PAYLOAD_MISMATCH',
+    );
+    const signature = decodeSignature(signoff.signature);
+    if (!verify(null, Buffer.from(payload, 'utf8'), authority.publicKey, signature)) {
+      fail('PHASE5_RESILIENCE_SIGNOFF_SIGNATURE_INVALID');
+    }
+    signatures.add(signoff.signature);
+    evidenceIds.push(signoff.evidenceId);
+  }
+  if (signatures.size !== SIGNOFF_ROLES.length) {
+    fail('PHASE5_RESILIENCE_SIGNOFF_PROOF_REUSED');
+  }
+  return evidenceIds;
+}
+
+function resilienceApprovalPayload(document, signerKeysetHashValue) {
+  return canonical({
+    formatVersion: document.formatVersion,
+    suite: document.suite,
+    runId: document.runId,
+    environment: document.environment,
+    source: document.source,
+    objectives: document.objectives,
+    disasterRecovery: document.disasterRecovery,
+    consistency: document.consistency,
+    professionalPayroll: document.professionalPayroll,
+    integrations: document.integrations,
+    safety: document.safety,
+    artifacts: document.artifacts,
+    signerKeysetHash: signerKeysetHashValue,
+    signoffs: document.signoffs.map((signoff) => ({
+      role: signoff.role,
+      actorHash: signoff.actorHash,
+      decision: signoff.decision,
+      evidenceId: signoff.evidenceId,
+      commentHash: signoff.commentHash,
+      approvedAt: signoff.approvedAt,
+    })),
+  });
+}
+
+function resilienceSignoffPayload(approvalPayloadHash, signoff) {
+  return canonical({
+    suite: SIGNOFF_SIGNATURE_SUITE,
+    approvalPayloadHash,
+    role: signoff.role,
+    keyId: signoff.keyId,
+    signedAt: signoff.signedAt,
+  });
 }
 
 function runSelfTest() {
   validateEvidence(fixture());
 
   const environmentBound = fixture();
-  process.env.RESILIENCE_EXPECTED_ENVIRONMENT = environmentBound.environment.name;
-  process.env.RESILIENCE_EXPECTED_REGION = environmentBound.environment.region;
-  process.env.RESILIENCE_EXPECTED_COMMIT = environmentBound.source.commitSha;
-  process.env.RESILIENCE_EXPECTED_API_IMAGE = environmentBound.source.images.api;
-  process.env.RESILIENCE_EXPECTED_WORKER_IMAGE = environmentBound.source.images.worker;
-  process.env.RESILIENCE_EXPECTED_WEB_IMAGE = environmentBound.source.images.web;
-  process.env.RESILIENCE_EXPECTED_WEBSITE_IMAGE = environmentBound.source.images.website;
-  process.env.RESILIENCE_EXPECTED_DEPLOYMENT_MANIFEST =
-    environmentBound.source.deploymentManifestHash;
-  validateEvidence(environmentBound, true);
-  process.env.RESILIENCE_EXPECTED_COMMIT = 'b'.repeat(40);
+  withExpectedEnvironment(environmentBound, () => {
+    validateEvidence(environmentBound, true);
+    process.env.RESILIENCE_EXPECTED_COMMIT = 'b'.repeat(40);
+    expectFailure(
+      () => validateEvidence(environmentBound, true),
+      'PHASE5_RESILIENCE_COMMIT_MISMATCH',
+    );
+    process.env.RESILIENCE_EXPECTED_COMMIT = environmentBound.source.commitSha;
+    process.env.RESILIENCE_EXPECTED_SIGNER_KEYSET_SHA256 = digest('unapproved-keyset');
+    expectFailure(
+      () => validateEvidence(environmentBound, true),
+      'PHASE5_RESILIENCE_SIGNER_KEYSET_MISMATCH',
+    );
+    process.env.RESILIENCE_EXPECTED_SIGNER_KEYSET_SHA256 =
+      signerKeysetHash(environmentBound.signingAuthorities);
+    process.env.RESILIENCE_EXPECTED_PAYROLL_CATALOG_HASH =
+      digest('unapproved-payroll-catalog');
+    expectFailure(
+      () => validateEvidence(environmentBound, true),
+      'PHASE5_RESILIENCE_PAYROLL_CATALOG_MISMATCH',
+    );
+  });
+
+  const missingPayrollTool = fixture();
+  missingPayrollTool.professionalPayroll.requiredTools.pop();
   expectFailure(
-    () => validateEvidence(environmentBound, true),
-    'PHASE5_RESILIENCE_COMMIT_MISMATCH',
+    () => validateEvidence(missingPayrollTool),
+    'PHASE5_RESILIENCE_PAYROLL_CATALOG_INVALID',
+  );
+
+  const sharedPayrollTrustDomain = fixture();
+  sharedPayrollTrustDomain.professionalPayroll.authorizationServer =
+    sharedPayrollTrustDomain.professionalPayroll.resource;
+  expectFailure(
+    () => validateEvidence(sharedPayrollTrustDomain),
+    'PHASE5_RESILIENCE_PAYROLL_TRUST_DOMAINS_NOT_SEPARATE',
   );
 
   const rpoExceeded = fixture();
@@ -675,10 +1088,81 @@ function runSelfTest() {
   const missingSignoff = fixture();
   missingSignoff.signoffs.pop();
   expectFailure(() => validateEvidence(missingSignoff), 'PHASE5_RESILIENCE_SIGNOFFS_INCOMPLETE');
+
+  const forgedSignature = fixture();
+  forgedSignature.signoffs[0].signature =
+    `${forgedSignature.signoffs[0].signature[0] === 'A' ? 'B' : 'A'}${
+      forgedSignature.signoffs[0].signature.slice(1)
+    }`;
+  expectFailure(
+    () => validateEvidence(forgedSignature),
+    'PHASE5_RESILIENCE_SIGNOFF_SIGNATURE_INVALID',
+  );
+
+  const tamperedAfterSigning = fixture();
+  tamperedAfterSigning.integrations[0].requestsAttempted += 1;
+  expectFailure(
+    () => validateEvidence(tamperedAfterSigning),
+    'PHASE5_RESILIENCE_SIGNOFF_PAYLOAD_MISMATCH',
+  );
+
+  const reusedActorBundle = fixtureBundle();
+  reusedActorBundle.document.signoffs[1].actorHash =
+    reusedActorBundle.document.signoffs[0].actorHash;
+  signFixture(reusedActorBundle.document, reusedActorBundle.privateKeys);
+  expectFailure(
+    () => validateEvidence(reusedActorBundle.document),
+    'PHASE5_RESILIENCE_SIGNOFF_ACTORS_NOT_INDEPENDENT',
+  );
+
+  const reusedAuthority = fixture();
+  reusedAuthority.signingAuthorities[1].keyId = reusedAuthority.signingAuthorities[0].keyId;
+  reusedAuthority.signingAuthorities[1].publicKeySpkiBase64 =
+    reusedAuthority.signingAuthorities[0].publicKeySpkiBase64;
+  expectFailure(
+    () => validateEvidence(reusedAuthority),
+    'PHASE5_RESILIENCE_SIGNING_AUTHORITIES_NOT_INDEPENDENT',
+  );
+
+  const swappedRoleKey = fixture();
+  const firstKeyId = swappedRoleKey.signoffs[0].keyId;
+  swappedRoleKey.signoffs[0].keyId = swappedRoleKey.signoffs[1].keyId;
+  swappedRoleKey.signoffs[1].keyId = firstKeyId;
+  expectFailure(
+    () => validateEvidence(swappedRoleKey),
+    'PHASE5_RESILIENCE_SIGNOFF_KEY_MISMATCH',
+  );
+
+  const lateSignatureBundle = fixtureBundle();
+  lateSignatureBundle.document.signoffs[0].signedAt = '2026-07-03T05:00:01.000Z';
+  signFixture(lateSignatureBundle.document, lateSignatureBundle.privateKeys);
+  expectFailure(
+    () => validateEvidence(lateSignatureBundle.document),
+    'PHASE5_RESILIENCE_SIGNOFF_SIGNATURE_TIME_INVALID',
+  );
 }
 
 function fixture() {
+  return fixtureBundle().document;
+}
+
+function fixtureBundle() {
   const hash = (label) => digest(label);
+  const privateKeys = new Map();
+  const signingAuthorities = SIGNOFF_ROLES.map((role) => {
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    const keyId = publicKeyHash(publicKey);
+    privateKeys.set(role, privateKey);
+    return {
+      role,
+      algorithm: 'Ed25519',
+      keyId,
+      publicKeySpkiBase64: publicKey.export({ format: 'der', type: 'spki' }).toString('base64'),
+    };
+  });
+  const authoritiesByRole = new Map(
+    signingAuthorities.map((authority) => [authority.role, authority]),
+  );
   const domains = DOMAIN_NAMES.map((domain, index) => ({
     domain,
     recordCountBefore: 100 + index,
@@ -711,9 +1195,9 @@ function fixture() {
     monitoringHash: hash(`integration-${index}-monitoring`),
     auditHash: hash(`integration-${index}-audit`),
   }));
-  return {
-    formatVersion: 1,
-    suite: 'gaoq.phase5.resilience.v1',
+  const document = {
+    formatVersion: 4,
+    suite: 'gaoq.phase5.resilience.v4',
     runId: '01J8ZQK7V0A2M4N6P8R0T2W6B1',
     environment: {
       name: 'resilience-stage',
@@ -733,7 +1217,8 @@ function fixture() {
         web: hash('web'),
         website: hash('website'),
       },
-      rehearsalPlanVersion: 'phase-5-resilience-v1',
+      professionalPayrollImage: hash('professional-payroll-image'),
+      rehearsalPlanVersion: 'phase-5-resilience-v4',
       harnessSha256: HARNESS_DIGEST,
       deploymentManifestHash: hash('deployment-manifest'),
     },
@@ -742,6 +1227,28 @@ function fixture() {
       rtoTargetSeconds: 14_400,
       integrationOutageTargetSeconds: 7_200,
       catchUpTargetSeconds: 3_600,
+    },
+    professionalPayroll: {
+      resource: 'https://payroll.example.invalid',
+      mcpEndpoint: 'https://payroll.example.invalid/mcp',
+      authorizationServer: 'https://identity.example.invalid',
+      imageDigest: hash('professional-payroll-image'),
+      platformContractVersion: '1.0.0',
+      eventContractHash: hash('professional-payroll-event-contract'),
+      protocolVersion: '2025-11-25',
+      transport: 'streamable-http',
+      oauthProfile: 'oauth-2.1-resource-server',
+      catalogHash: hash('professional-payroll-catalog'),
+      requiredTools: [...PROFESSIONAL_PAYROLL_TOOLS],
+      requiredResourceTemplates: [...PROFESSIONAL_PAYROLL_RESOURCES],
+      requiredPrompts: [...PROFESSIONAL_PAYROLL_PROMPTS],
+      eventTypesReplayed: 7,
+      artifacts: {
+        oauthMetadataHash: hash('professional-payroll-oauth'),
+        mcpCatalogArtifactHash: hash('professional-payroll-mcp-catalog'),
+        capabilityProbeHash: hash('professional-payroll-capability-probe'),
+        eventReplayHash: hash('professional-payroll-event-replay'),
+      },
     },
     disasterRecovery: {
       scenario: 'isolated-region-loss',
@@ -873,14 +1380,125 @@ function fixture() {
       'monitoringReportHash', 'alertReportHash', 'adapterMatrixHash', 'runbookHash',
       'rollbackDecisionHash',
     ].map((name) => [name, hash(`artifact-${name}`)])),
+    signingAuthorities,
     signoffs: SIGNOFF_ROLES.map((role, index) => ({
       role,
+      actorHash: hash(`actor-${role}`),
       decision: 'approve',
       evidenceId: `01J8ZQK7V0A2M4N6P8R0T2W6C${index + 1}`,
       commentHash: hash(`signoff-${role}`),
-      signedAt: `2026-07-02T05:${String(index).padStart(2, '0')}:00.000Z`,
+      approvedAt: `2026-07-02T05:${String(index).padStart(2, '0')}:00.000Z`,
+      signedAt: `2026-07-02T05:${String(index + 10).padStart(2, '0')}:00.000Z`,
+      algorithm: 'Ed25519',
+      keyId: authoritiesByRole.get(role)?.keyId,
+      signedPayloadSha256: digest('unsigned'),
+      signature: 'A'.repeat(86),
     })),
   };
+  signFixture(document, privateKeys);
+  return Object.freeze({ document, privateKeys });
+}
+
+function signFixture(document, privateKeys) {
+  const keysetHash = signerKeysetHash(document.signingAuthorities);
+  const approvalPayloadHash = digest(resilienceApprovalPayload(document, keysetHash));
+  for (const signoff of document.signoffs) {
+    const payload = resilienceSignoffPayload(approvalPayloadHash, signoff);
+    signoff.signedPayloadSha256 = digest(payload);
+    signoff.signature = sign(
+      null,
+      Buffer.from(payload, 'utf8'),
+      privateKeys.get(signoff.role),
+    ).toString('base64url');
+  }
+}
+
+function withExpectedEnvironment(document, action) {
+  const values = {
+    RESILIENCE_EXPECTED_ENVIRONMENT: document.environment.name,
+    RESILIENCE_EXPECTED_REGION: document.environment.region,
+    RESILIENCE_EXPECTED_COMMIT: document.source.commitSha,
+    RESILIENCE_EXPECTED_API_IMAGE: document.source.images.api,
+    RESILIENCE_EXPECTED_WORKER_IMAGE: document.source.images.worker,
+    RESILIENCE_EXPECTED_WEB_IMAGE: document.source.images.web,
+    RESILIENCE_EXPECTED_WEBSITE_IMAGE: document.source.images.website,
+    RESILIENCE_EXPECTED_PAYROLL_IMAGE: document.source.professionalPayrollImage,
+    RESILIENCE_EXPECTED_PAYROLL_RESOURCE:
+      document.professionalPayroll.resource,
+    RESILIENCE_EXPECTED_PAYROLL_AUTHORIZATION_SERVER:
+      document.professionalPayroll.authorizationServer,
+    RESILIENCE_EXPECTED_PAYROLL_CONTRACT_HASH:
+      document.professionalPayroll.eventContractHash,
+    RESILIENCE_EXPECTED_PAYROLL_CATALOG_HASH:
+      document.professionalPayroll.catalogHash,
+    RESILIENCE_EXPECTED_DEPLOYMENT_MANIFEST: document.source.deploymentManifestHash,
+    RESILIENCE_EXPECTED_SIGNER_KEYSET_SHA256:
+      signerKeysetHash(document.signingAuthorities),
+  };
+  const previous = Object.fromEntries(
+    Object.keys(values).map((key) => [key, process.env[key]]),
+  );
+  Object.assign(process.env, values);
+  try {
+    action();
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+function publicKeyFromSpkiBase64(value) {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/u.test(value)) {
+    fail('PHASE5_RESILIENCE_SIGNING_AUTHORITY_INVALID');
+  }
+  let der;
+  try {
+    der = Buffer.from(value, 'base64');
+  } catch {
+    fail('PHASE5_RESILIENCE_SIGNING_AUTHORITY_INVALID');
+  }
+  if (
+    der.length < 32 ||
+    der.length > 256 ||
+    der.toString('base64') !== value
+  ) fail('PHASE5_RESILIENCE_SIGNING_AUTHORITY_INVALID');
+  let publicKey;
+  try {
+    publicKey = createPublicKey({ key: der, format: 'der', type: 'spki' });
+  } catch {
+    fail('PHASE5_RESILIENCE_SIGNING_AUTHORITY_INVALID');
+  }
+  if (publicKey.asymmetricKeyType !== 'ed25519') {
+    fail('PHASE5_RESILIENCE_SIGNING_AUTHORITY_INVALID');
+  }
+  return publicKey;
+}
+
+function publicKeyHash(publicKey) {
+  return digest(publicKey.export({ format: 'der', type: 'spki' }));
+}
+
+function signerKeysetHash(authorities) {
+  return digest(canonical(
+    authorities
+      .map(({ role, keyId }) => ({ role, keyId }))
+      .sort((left, right) => left.role.localeCompare(right.role)),
+  ));
+}
+
+function decodeSignature(value) {
+  let signature;
+  try {
+    signature = Buffer.from(value, 'base64url');
+  } catch {
+    fail('PHASE5_RESILIENCE_SIGNOFF_SIGNATURE_INVALID');
+  }
+  if (signature.length !== 64 || signature.toString('base64url') !== value) {
+    fail('PHASE5_RESILIENCE_SIGNOFF_SIGNATURE_INVALID');
+  }
+  return signature;
 }
 
 function parseDocument(content) {
@@ -894,6 +1512,43 @@ function parseDocument(content) {
 function object(value, keys, code) {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) fail(code);
   if (canonical(Object.keys(value).sort()) !== canonical([...keys].sort())) fail(code);
+}
+
+function exactStringSet(actual, expected, code) {
+  if (
+    !Array.isArray(actual) ||
+    actual.some((item) => typeof item !== 'string') ||
+    new Set(actual).size !== expected.length ||
+    canonical([...actual].sort()) !== canonical([...expected].sort())
+  ) fail(code);
+}
+
+function exactStringArray(actual, expected, code) {
+  if (
+    !Array.isArray(actual) ||
+    actual.some((item) => typeof item !== 'string') ||
+    canonical([...actual].sort()) !== canonical([...expected].sort())
+  ) fail(code);
+}
+
+function httpsOrigin(value, code) {
+  if (typeof value !== 'string' || value.length > 256) fail(code);
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    fail(code);
+  }
+  if (
+    parsed.protocol !== 'https:' ||
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    parsed.pathname !== '/' ||
+    parsed.search !== '' ||
+    parsed.hash !== '' ||
+    parsed.origin !== value
+  ) fail(code);
+  return parsed.origin;
 }
 
 function integer(value, minimum, maximum, code) {

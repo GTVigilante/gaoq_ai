@@ -235,6 +235,7 @@ export function transitionCandidateApplication(
     readonly targetStage: Exclude<CandidateApplicationStage, 'applied'>;
     readonly reasonCode?: string;
     readonly evidenceId?: string;
+    readonly employmentId?: string;
   },
   now: Date,
 ): { readonly application: CandidateApplication; readonly event: CandidateApplicationStageEvent } {
@@ -258,6 +259,20 @@ export function transitionCandidateApplication(
     throw new RecruitmentDomainError('CANDIDATE_STAGE_EVIDENCE_REQUIRED', '目标阶段缺少受信任证据引用');
   }
   if (evidenceId !== null) assertRecruitmentId(evidenceId, 'evidenceId');
+  const employmentId = input.employmentId ?? null;
+  if (input.targetStage === 'hired' && employmentId === null) {
+    throw new RecruitmentDomainError(
+      'CANDIDATE_STAGE_EMPLOYMENT_REQUIRED',
+      '已入职阶段必须绑定劳动关系',
+    );
+  }
+  if (input.targetStage !== 'hired' && employmentId !== null) {
+    throw new RecruitmentDomainError(
+      'CANDIDATE_STAGE_EMPLOYMENT_UNEXPECTED',
+      '非入职阶段禁止绑定劳动关系',
+    );
+  }
+  if (employmentId !== null) assertRecruitmentId(employmentId, 'employmentId');
   const occurredAt = toRecruitmentIso(now);
   const terminal = ['hired', 'rejected', 'withdrawn'].includes(input.targetStage);
   const next = deepFreezeRecruitment({
@@ -273,7 +288,7 @@ export function transitionCandidateApplication(
     onboardingInstanceId: input.targetStage === 'preboarding'
       ? evidenceId
       : application.onboardingInstanceId,
-    employmentId: input.targetStage === 'hired' ? evidenceId : application.employmentId,
+    employmentId: input.targetStage === 'hired' ? employmentId : application.employmentId,
     version: application.version + 1,
     endedAt: terminal ? occurredAt : null,
     updatedAt: occurredAt,

@@ -21,7 +21,7 @@ export {
   transitionEmployeeStatus,
   updateEmployee,
 } from './employee.js';
-export { createPerson } from './person.js';
+export { attestPersonBirthday, createPerson } from './person.js';
 export type { CreatePersonInput, Person } from './person.js';
 export {
   createEmployment,
@@ -74,6 +74,7 @@ export {
   buildPositionCreatedEvent,
   buildPositionUpdatedEvent,
   buildPersonCreatedEvent,
+  buildPersonBirthdayAttestedEvent,
 } from './org-events.js';
 export type {
   DepartmentCreatedEvent,
@@ -104,4 +105,6 @@ export type {
   PositionUpdatedPayload,
   PersonCreatedEvent,
   PersonCreatedPayload,
+  PersonBirthdayAttestedEvent,
+  PersonBirthdayAttestedPayload,
 } from './org-events.js';

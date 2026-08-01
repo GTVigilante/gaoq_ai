@@ -1,6 +1,6 @@
 {
   "name": "@gaoq/platform-contracts",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "GaoQ ERP 与专业算薪系统之间的版本化平台契约",
   "type": "module",
   "files": [
@@ -22,8 +22,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@gaoq/shared-types": "workspace:^",
-    "zod": "^4.4.3"
+    "@gaoq/shared-types": "workspace:^"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

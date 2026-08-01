@@ -353,7 +353,8 @@ export function retireApprovalTemplate(
 /** 生成实例使用的完整不可变模板快照。 */
 export function snapshotApprovalTemplate(template: ApprovalTemplate): ApprovalTemplateSnapshot {
   if (
-    template.status !== 'published' || template.approvedBy === null || template.publishedAt === null
+    template.status !== 'published' || template.approvedBy === null ||
+    template.publishedAt === null || template.retiredAt !== null
   ) throw new ApprovalDomainError('APPROVAL_TEMPLATE_NOT_PUBLISHED', '模板尚未发布');
   assertTemplateDefinitionIntegrity(template);
   return deepFreeze(structuredClone({
@@ -381,6 +382,8 @@ export function snapshotApprovalTemplateForMigration(
   if (
     !['published', 'retired'].includes(template.status) ||
     template.approvedBy === null || template.publishedAt === null ||
+    (template.status === 'published' && template.retiredAt !== null) ||
+    (template.status === 'retired' && template.retiredAt === null) ||
     createdAt < template.publishedAt ||
     (template.retiredAt !== null && createdAt > template.retiredAt)
   ) throw new ApprovalDomainError(
@@ -482,7 +485,8 @@ function normalizeAndValidateDefinition(
   const fields = definition.fields.map((field) => normalizeField(field));
   assertUnique(fields.map((field) => field.key), 'fields.key');
   const allowedFields = new Set(fields.map((field) => field.key));
-  const nodes = definition.nodes.map((node) => normalizeNode(node, allowedFields));
+  const fieldTypes = new Map(fields.map((field) => [field.key, field.type] as const));
+  const nodes = definition.nodes.map((node) => normalizeNode(node, allowedFields, fieldTypes));
   assertUnique(nodes.map((node) => node.id), 'nodes.id');
   if (!nodes.some((node) => node.type === 'approval')) {
     throw new ApprovalDomainError('APPROVAL_TEMPLATE_NO_APPROVAL_NODE', '流程至少需要一个审批节点');
@@ -547,6 +551,7 @@ function normalizeField(field: ApprovalFormField): ApprovalFormField {
 function normalizeNode(
   node: ApprovalProcessNode,
   allowedFields: ReadonlySet<string>,
+  fieldTypes: ReadonlyMap<string, ApprovalFormFieldType>,
 ): ApprovalProcessNode {
   if (!isPlainObject(node)) throw new ApprovalDomainError('APPROVAL_NODE_INVALID', '节点定义必须为纯对象');
   assertApprovalCode(node.id, 'node.id');
@@ -560,7 +565,7 @@ function normalizeNode(
   if (node.type === 'copy' && node.approvalMode !== undefined) {
     throw new ApprovalDomainError('APPROVAL_NODE_MODE_INVALID', '抄送节点不能声明审批模式');
   }
-  const resolver = normalizeResolver(node.resolver, allowedFields);
+  const resolver = normalizeResolver(node.resolver, allowedFields, fieldTypes);
   if (node.condition !== undefined) validateApprovalCondition(node.condition, allowedFields);
   return deepFreeze({
     id: node.id,
@@ -575,6 +580,7 @@ function normalizeNode(
 function normalizeResolver(
   resolver: ApprovalActorResolver,
   allowedFields: ReadonlySet<string>,
+  fieldTypes: ReadonlyMap<string, ApprovalFormFieldType>,
 ): ApprovalActorResolver {
   if (!isPlainObject(resolver)) {
     throw new ApprovalDomainError('APPROVAL_RESOLVER_INVALID', '审批人解析器必须为纯对象');
@@ -603,6 +609,12 @@ function normalizeResolver(
       assertFieldKey(resolver.departmentField, 'resolver.departmentField');
       if (!allowedFields.has(resolver.departmentField)) {
         throw new ApprovalDomainError('APPROVAL_RESOLVER_FIELD_DENIED', '部门负责人解析器引用了未声明字段');
+      }
+      if (fieldTypes.get(resolver.departmentField) !== 'department') {
+        throw new ApprovalDomainError(
+          'APPROVAL_RESOLVER_FIELD_TYPE_INVALID',
+          '部门负责人解析器只能引用 department 字段',
+        );
       }
       return Object.freeze({ type: 'department_manager', departmentField: resolver.departmentField });
     default:

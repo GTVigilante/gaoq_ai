@@ -35,6 +35,7 @@ import { AnalyticsModule } from './modules/analytics/analytics.module.js';
 import { DataMigrationModule } from './modules/data-migration/data-migration.module.js';
 import { DocumentModule } from './modules/document/document.module.js';
 import { MarketingCmsModule } from './modules/marketing-cms/marketing-cms.module.js';
+import { TalentLifecycleModule } from './modules/talent-lifecycle/talent-lifecycle.module.js';
 
 const mongoLogger = new Logger('MongoDB');
 
@@ -83,6 +84,7 @@ const mongoLogger = new Logger('MongoDB');
     AnalyticsModule,
     DocumentModule,
     MarketingCmsModule,
+    TalentLifecycleModule,
     DataMigrationModule,
     TraceMiddlewareModule,
     TenantContextModule,

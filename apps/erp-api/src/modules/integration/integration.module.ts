@@ -5,6 +5,14 @@ import { IntegrationCoreModule } from './integration-core.module.js';
 import { IntegrationController } from './integration.controller.js';
 import { OrgEmployeeProvisioningController } from './org-employee-provisioning.controller.js';
 import { PayrollMasterDataSnapshotController } from './payroll-master-data-snapshot.controller.js';
+import { AttendanceProviderCoverageController } from './attendance-provider-coverage.controller.js';
+import {
+  RecruitmentCalendarOperationsController,
+} from './recruitment-calendar-operations.controller.js';
+import {
+  RecruitmentChannelOperationsController,
+} from './recruitment-channel-operations.controller.js';
+import { ESignIssuanceController } from './esign-issuance.controller.js';
 
 /** 集成 HTTP/Webhook 外壳；后台消费者只导入 IntegrationCoreModule。 */
 @Module({
@@ -14,6 +22,10 @@ import { PayrollMasterDataSnapshotController } from './payroll-master-data-snaps
     OrgEmployeeProvisioningController,
     ESignWebhookController,
     PayrollMasterDataSnapshotController,
+    AttendanceProviderCoverageController,
+    RecruitmentCalendarOperationsController,
+    RecruitmentChannelOperationsController,
+    ESignIssuanceController,
   ],
   exports: [IntegrationCoreModule],
 })

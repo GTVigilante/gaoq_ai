@@ -17,6 +17,8 @@ import { AnalyticsWorkerModule } from './modules/analytics/analytics-worker.modu
 import { DataMigrationWorkerModule } from './modules/data-migration/data-migration-worker.module.js';
 import { MarketingCmsWorkerModule } from './modules/marketing-cms/marketing-cms-worker.module.js';
 import { RecruitmentResumeWorkerModule } from './modules/recruitment/recruitment-resume-worker.module.js';
+import { KnowledgeSearchWorkerModule } from './modules/knowledge/knowledge-search-worker.module.js';
+import { KnowledgeExamWorkerModule } from './modules/knowledge/knowledge-exam-worker.module.js';
 
 const mongoLogger = new Logger('WorkerMongoDB');
 
@@ -53,6 +55,8 @@ const mongoLogger = new Logger('WorkerMongoDB');
     DataMigrationWorkerModule,
     MarketingCmsWorkerModule,
     RecruitmentResumeWorkerModule,
+    KnowledgeSearchWorkerModule,
+    KnowledgeExamWorkerModule,
     AuditWorkerModule,
     ObservabilityModule,
   ],

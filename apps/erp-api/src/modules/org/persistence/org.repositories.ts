@@ -259,6 +259,29 @@ export class PersonRepository extends TenantBoundRepository {
     return record === null ? null : this.toDomain(record);
   }
 
+  async findById(id: string, session?: ClientSession): Promise<Person | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), id });
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record === null ? null : this.toDomain(record);
+  }
+
+  async findBirthdayProjectionById(
+    id: string,
+    session?: ClientSession,
+  ): Promise<{
+    readonly person: Person;
+    readonly birthdayBlindIndexes: readonly string[];
+  } | null> {
+    const query = this.records.findOne({ tenantId: this.tenantId(), id });
+    if (session !== undefined) query.session(session);
+    const record = await query.lean().exec();
+    return record === null ? null : Object.freeze({
+      person: this.toDomain(record),
+      birthdayBlindIndexes: Object.freeze([...(record.birthdayBlindIndexes ?? [])]),
+    });
+  }
+
   async findByIds(ids: readonly string[], session?: ClientSession): Promise<readonly Person[]> {
     const query = this.records.find({ tenantId: this.tenantId(), id: { $in: [...ids] } });
     if (session !== undefined) query.session(session);
@@ -274,10 +297,36 @@ export class PersonRepository extends TenantBoundRepository {
     }], { session });
   }
 
+  async attestBirthday(
+    person: Person,
+    birthdayBlindIndexes: readonly string[],
+    expectedVersion: number,
+    session: ClientSession,
+  ): Promise<void> {
+    this.assertEntityTenant(person.tenantId);
+    const result = await this.records.updateOne(
+      { tenantId: this.tenantId(), id: person.id, version: expectedVersion },
+      { $set: {
+        birthdayEvidenceId: person.birthdayEvidenceId,
+        birthdayBlindIndexes: [...birthdayBlindIndexes],
+        birthdayAttestedAt: person.birthdayAttestedAt === null
+          ? null
+          : new Date(person.birthdayAttestedAt),
+        version: person.version,
+        updatedAt: new Date(person.updatedAt),
+      } },
+      { session, timestamps: false, runValidators: true },
+    );
+    if (result.matchedCount !== 1) throw new OrgWriteConflictError();
+  }
+
   private toDomain(record: OrgPersonRecord): Person {
     return Object.freeze({
       id: record.id, tenantId: record.tenantId, sourceCandidateId: record.sourceCandidateId,
-      identityEvidenceId: record.identityEvidenceId, status: record.status,
+      identityEvidenceId: record.identityEvidenceId,
+      birthdayEvidenceId: record.birthdayEvidenceId ?? null,
+      birthdayAttestedAt: record.birthdayAttestedAt?.toISOString() ?? null,
+      status: record.status,
       version: record.version, createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
     });
@@ -308,6 +357,17 @@ export class EmploymentRepository extends TenantBoundRepository {
     if (session !== undefined) query.session(session);
     const record = await query.lean().exec();
     return record === null ? null : this.toDomain(record);
+  }
+
+  async findByPersonId(
+    personId: string,
+    session?: ClientSession,
+  ): Promise<readonly Employment[]> {
+    const query = this.records
+      .find({ tenantId: this.tenantId(), personId })
+      .sort({ effectiveFrom: -1, id: 1 });
+    if (session !== undefined) query.session(session);
+    return (await query.lean().exec()).map((record) => this.toDomain(record));
   }
 
   /** 为受控下游快照按稳定主键顺序读取租户内全部劳动关系。 */

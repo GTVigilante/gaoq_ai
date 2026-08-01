@@ -13,6 +13,22 @@ const KEY_ID_PATTERN = /^[A-Za-z0-9._-]{8,128}$/;
 const HASH_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const FORBIDDEN_METADATA_KEY = /(?:password|passwd|secret|token|authorization|cookie|mobile|phone|email|bank|account|idcard|identitycard|privatekey|ciphertext)/i;
 export const AUDIT_GENESIS_HASH = '0'.repeat(43);
+const CHAIN_PAYLOAD_KEYS = new Set([
+  'tenantId',
+  'actorId',
+  'actorType',
+  'action',
+  'resourceType',
+  'resourceId',
+  'riskLevel',
+  'outcome',
+  'occurredAt',
+  'traceId',
+  'metadataCanonical',
+  'eventId',
+  'sequence',
+  'previousHash',
+]);
 
 const metadataValueSchema = z.union([
   z.string().max(256),
@@ -129,8 +145,8 @@ export class AuditIntegrityService implements OnModuleInit {
     const key = this.loadKeyRing().keys.find((candidate) => candidate.keyId === keyId);
     if (key === undefined) return false;
     const actual = Buffer.from(this.hmac(key.keyBase64url, payload), 'base64url');
-    const expected = Buffer.from(expectedHash, 'base64url');
-    return actual.length === expected.length && timingSafeEqual(actual, expected);
+    const expected = decodeCanonicalHash(expectedHash);
+    return expected !== null && timingSafeEqual(actual, expected);
   }
 
   private loadKeyRing(): AuditIntegrityKeyRing {
@@ -161,11 +177,55 @@ export class AuditIntegrityService implements OnModuleInit {
   }
 
   private assertChainPayload(payload: AuditChainPayload): void {
+    const candidate: unknown = payload;
     if (
-      !Number.isSafeInteger(payload.sequence) || payload.sequence < 1 ||
-      !ID_PATTERN.test(payload.eventId) || !HASH_PATTERN.test(payload.previousHash) ||
-      payload.metadataCanonical.length > 4_096
+      !isRecord(candidate) ||
+      Object.keys(candidate).some((key) => !CHAIN_PAYLOAD_KEYS.has(key)) ||
+      typeof candidate.metadataCanonical !== 'string'
     ) throw new Error('AUDIT_CHAIN_PAYLOAD_INVALID');
+    let metadata: unknown;
+    try {
+      metadata = JSON.parse(candidate.metadataCanonical) as unknown;
+    } catch (error) {
+      throw new Error('AUDIT_CHAIN_PAYLOAD_INVALID', { cause: error });
+    }
+    const normalizedEvent = auditEventSchema.safeParse({
+      tenantId: candidate.tenantId,
+      actorId: candidate.actorId,
+      actorType: candidate.actorType,
+      action: candidate.action,
+      resourceType: candidate.resourceType,
+      ...(candidate.resourceId === undefined ? {} : { resourceId: candidate.resourceId }),
+      riskLevel: candidate.riskLevel,
+      outcome: candidate.outcome,
+      occurredAt: candidate.occurredAt,
+      traceId: candidate.traceId,
+      metadata,
+    });
+    if (
+      !normalizedEvent.success ||
+      stableJson(normalizedEvent.data.metadata ?? {}) !== candidate.metadataCanonical ||
+      typeof candidate.sequence !== 'number' ||
+      !Number.isSafeInteger(candidate.sequence) ||
+      candidate.sequence < 1 ||
+      typeof candidate.eventId !== 'string' ||
+      !ID_PATTERN.test(candidate.eventId) ||
+      typeof candidate.previousHash !== 'string' ||
+      !HASH_PATTERN.test(candidate.previousHash) ||
+      decodeCanonicalHash(candidate.previousHash) === null ||
+      candidate.metadataCanonical.length > 4_096
+    ) throw new Error('AUDIT_CHAIN_PAYLOAD_INVALID');
+  }
+}
+
+function decodeCanonicalHash(value: string): Buffer | null {
+  try {
+    const decoded = Buffer.from(value, 'base64url');
+    return decoded.length === 32 && decoded.toString('base64url') === value
+      ? decoded
+      : null;
+  } catch {
+    return null;
   }
 }
 

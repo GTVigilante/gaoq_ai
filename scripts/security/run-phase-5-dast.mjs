@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createReadStream } from 'node:fs';
-import { appendFile, chmod, mkdir, readFile, stat } from 'node:fs/promises';
+import { appendFile, chmod, lstat, mkdir, readFile, stat } from 'node:fs/promises';
 import { isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -14,13 +14,14 @@ if (process.argv[2] === '--self-test') {
   runSelfTest();
   process.stdout.write('Phase 5 DAST 目标、安全边界与工作流自测通过。\n');
 } else if (process.argv[2] === '--run') {
-  await runScans(process.env);
+  if (process.argv.length !== 4) fail('PHASE5_DAST_CONFIG_PATH_REQUIRED');
+  await runScans(process.env, await readProtectedConfig(process.argv[3], process.env));
 } else {
   throw new Error('PHASE5_DAST_MODE_REQUIRED');
 }
 
-async function runScans(environment) {
-  const config = parseConfig(environment);
+async function runScans(environment, protectedConfig) {
+  const config = parseConfig(environment, protectedConfig);
   await mkdir(config.reportDir, { recursive: true, mode: 0o700 });
   await chmod(config.reportDir, 0o777);
   const results = [];
@@ -119,22 +120,24 @@ function runDocker(config, mode) {
   });
 }
 
-function parseConfig(environment) {
+function parseConfig(environment, protectedConfig) {
   exact(environment.DAST_PRODUCTION_EQUIVALENT, 'true', 'PHASE5_DAST_ENV_NOT_EQUIVALENT');
   exact(environment.DAST_PRODUCTION_TRAFFIC, 'false', 'PHASE5_DAST_PRODUCTION_FORBIDDEN');
   exact(environment.DAST_ACTIVE_SCAN_APPROVED, 'true', 'PHASE5_DAST_APPROVAL_REQUIRED');
-  const environmentName = match(
+  const expectedEnvironmentName = match(
     environment.DAST_ENVIRONMENT_NAME,
     /^[a-z][a-z0-9-]{2,31}$/u,
     'PHASE5_DAST_ENVIRONMENT_INVALID',
   );
-  if (['prod', 'production'].includes(environmentName)) fail('PHASE5_DAST_PRODUCTION_FORBIDDEN');
+  if (['prod', 'production'].includes(expectedEnvironmentName)) {
+    fail('PHASE5_DAST_PRODUCTION_FORBIDDEN');
+  }
   const allowedSuffix = match(
     environment.DAST_ALLOWED_HOST_SUFFIX,
     /^\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/u,
     'PHASE5_DAST_SUFFIX_INVALID',
   );
-  const target = new URL(required(environment.DAST_BASE_URL, 'PHASE5_DAST_TARGET_REQUIRED'));
+  const target = new URL(required(protectedConfig.baseUrl, 'PHASE5_DAST_TARGET_REQUIRED'));
   const hostnameLabels = target.hostname.split('.');
   if (
     target.protocol !== 'https:' || target.username !== '' || target.password !== '' ||
@@ -146,7 +149,7 @@ function parseConfig(environment) {
     !hostnameLabels.some((label) => NON_PRODUCTION_LABELS.has(label))
   ) fail('PHASE5_DAST_TARGET_INVALID');
   const authToken = match(
-    environment.DAST_AUTH_TOKEN,
+    protectedConfig.authToken,
     /^[\x21-\x7e]{32,8192}$/u,
     'PHASE5_DAST_TOKEN_INVALID',
   );
@@ -158,12 +161,54 @@ function parseConfig(environment) {
   const normalizedReport = resolve(reportDir);
   if (!normalizedReport.startsWith(`${normalizedTemp}${sep}`)) fail('PHASE5_DAST_REPORT_DIR_INVALID');
   return Object.freeze({
-    environmentName,
+    environmentName: expectedEnvironmentName,
     targetOrigin: target.origin,
     targetHostname: target.hostname,
     authToken,
     reportDir: normalizedReport,
   });
+}
+
+async function readProtectedConfig(path, environment) {
+  const runnerTemp = required(environment.RUNNER_TEMP, 'PHASE5_DAST_RUNNER_TEMP_REQUIRED');
+  if (!isAbsolute(path) || !resolve(path).startsWith(`${resolve(runnerTemp)}${sep}`)) {
+    fail('PHASE5_DAST_CONFIG_PATH_INVALID');
+  }
+  const metadata = await lstat(path);
+  if (
+    !metadata.isFile() || metadata.isSymbolicLink() || metadata.size < 2 ||
+    metadata.size > 16_384 || (metadata.mode & 0o022) !== 0
+  ) fail('PHASE5_DAST_CONFIG_FILE_INVALID');
+  let document;
+  try {
+    const bytes = await readFile(path);
+    document = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+  } catch {
+    return fail('PHASE5_DAST_CONFIG_JSON_INVALID');
+  }
+  const keys = [
+    'formatVersion', 'suite', 'issuedAt', 'expiresAt', 'environmentName', 'baseUrl',
+    'authToken',
+  ];
+  if (
+    document === null || typeof document !== 'object' || Array.isArray(document) ||
+    JSON.stringify(Object.keys(document).sort()) !== JSON.stringify(keys.sort())
+  ) fail('PHASE5_DAST_CONFIG_INVALID');
+  exact(document.formatVersion, 1, 'PHASE5_DAST_CONFIG_INVALID');
+  exact(document.suite, 'gaoq.phase5.dast-config.v1', 'PHASE5_DAST_CONFIG_INVALID');
+  exact(
+    document.environmentName,
+    environment.DAST_ENVIRONMENT_NAME,
+    'PHASE5_DAST_CONFIG_ENVIRONMENT_MISMATCH',
+  );
+  const issuedAt = timestamp(document.issuedAt);
+  const expiresAt = timestamp(document.expiresAt);
+  const now = Date.now();
+  if (
+    issuedAt > now + 5 * 60_000 || now - issuedAt > 4 * 60 * 60_000 ||
+    expiresAt <= now || expiresAt - issuedAt > 4 * 60 * 60_000
+  ) fail('PHASE5_DAST_CONFIG_STALE');
+  return Object.freeze(document);
 }
 
 async function validateWorkflow() {
@@ -173,22 +218,34 @@ async function validateWorkflow() {
   );
   for (const marker of [
     'workflow_dispatch:',
-    'environment: phase-5-dast',
-    'DAST_BASE_URL: ${{ secrets.DAST_BASE_URL }}',
-    'DAST_AUTH_TOKEN: ${{ secrets.DAST_AUTH_TOKEN }}',
+    'runs-on: ubuntu-latest',
+    'id-token: write',
+    '只允许默认分支执行主动扫描',
+    'test "$GITHUB_REF" = \'refs/heads/main\'',
+    'node-version: 22.23.1',
+    'GAOQ_OIDC_POLICY: phase-5-dast',
+    'DAST_CONFIG_OIDC_AUDIENCE: ${{ vars.DAST_CONFIG_OIDC_AUDIENCE }}',
+    'DAST_CONFIG_URL: ${{ vars.DAST_CONFIG_URL }}',
+    'DAST_CONFIG_SHA256: ${{ vars.DAST_CONFIG_SHA256 }}',
+    'scripts/github/fetch-oidc-protected-input.mjs',
+    '--policy "$GAOQ_OIDC_POLICY"',
     'DAST_ACTIVE_SCAN_APPROVED: ${{ vars.DAST_ACTIVE_SCAN_APPROVED }}',
     ZAP_IMAGE,
-    'node scripts/security/run-phase-5-dast.mjs --run',
+    'node scripts/security/run-phase-5-dast.mjs --run "$DAST_CONFIG_PATH"',
     "if: always() && steps.dast.outputs.reports_safe == 'true'",
   ]) {
     if (!workflow.includes(marker)) fail('PHASE5_DAST_WORKFLOW_INCOMPLETE');
   }
   const actions = [...workflow.matchAll(/^\s*uses:\s*([^\s#]+)(?:\s*#.*)?$/gmu)]
     .map((item) => item[1]);
-  if (actions.length !== 2 || actions.some((action) => !/@[a-f0-9]{40}$/u.test(action ?? ''))) {
+  if (actions.length !== 3 || actions.some((action) => !/@[a-f0-9]{40}$/u.test(action ?? ''))) {
     fail('PHASE5_DAST_ACTION_NOT_PINNED');
   }
-  if (/--include-system-env-vars|--privileged|network:\s*host|continue-on-error/u.test(workflow)) {
+  if (
+    /--include-system-env-vars|--privileged|network:\s*host|continue-on-error/u.test(workflow) ||
+    workflow.includes('environment:') || workflow.includes('${{ secrets.') ||
+    workflow.includes('self-hosted') || workflow.includes('/var/lib/gaoq')
+  ) {
     fail('PHASE5_DAST_WORKFLOW_UNSAFE');
   }
   const authScript = await readFile(new URL('./zap/exact-auth-header.js', import.meta.url), 'utf8');
@@ -213,18 +270,21 @@ async function validateWorkflow() {
 
 function runSelfTest() {
   const environment = fixtureEnvironment();
-  const parsed = parseConfig(environment);
+  const protectedConfig = fixtureProtectedConfig();
+  const parsed = parseConfig(environment, protectedConfig);
   exact(parsed.targetOrigin, 'https://erp.dast.security.example.com', 'PHASE5_DAST_SELF_TEST_FAILED');
   exact(parsed.reportDir, '/runner/temp/reports', 'PHASE5_DAST_SELF_TEST_FAILED');
   for (const mutation of [
-    { DAST_BASE_URL: 'http://erp.dast.security.example.com' },
-    { DAST_BASE_URL: 'https://erp.production.security.example.com' },
-    { DAST_BASE_URL: 'https://erp.dast.attacker.example.net' },
-    { DAST_BASE_URL: 'https://user@erp.dast.security.example.com' },
     { DAST_PRODUCTION_TRAFFIC: 'true' },
     { DAST_ACTIVE_SCAN_APPROVED: 'false' },
     { DAST_REPORT_DIR: '/runner/other/reports' },
-  ]) expectFailure(() => parseConfig({ ...environment, ...mutation }));
+  ]) expectFailure(() => parseConfig({ ...environment, ...mutation }, protectedConfig));
+  for (const baseUrl of [
+    'http://erp.dast.security.example.com',
+    'https://erp.production.security.example.com',
+    'https://erp.dast.attacker.example.net',
+    'https://user@erp.dast.security.example.com',
+  ]) expectFailure(() => parseConfig(environment, { ...protectedConfig, baseUrl }));
 }
 
 function fixtureEnvironment() {
@@ -234,11 +294,30 @@ function fixtureEnvironment() {
     DAST_ACTIVE_SCAN_APPROVED: 'true',
     DAST_ENVIRONMENT_NAME: 'security-stage',
     DAST_ALLOWED_HOST_SUFFIX: '.security.example.com',
-    DAST_BASE_URL: 'https://erp.dast.security.example.com',
-    DAST_AUTH_TOKEN: 'A'.repeat(64),
     RUNNER_TEMP: '/runner/temp',
     DAST_REPORT_DIR: '/runner/temp/reports',
   };
+}
+
+function fixtureProtectedConfig() {
+  return {
+    formatVersion: 1,
+    suite: 'gaoq.phase5.dast-config.v1',
+    issuedAt: new Date(Date.now() - 60_000).toISOString(),
+    expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+    environmentName: 'security-stage',
+    baseUrl: 'https://erp.dast.security.example.com',
+    authToken: 'A'.repeat(64),
+  };
+}
+
+function timestamp(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value)) {
+    fail('PHASE5_DAST_CONFIG_TIMESTAMP_INVALID');
+  }
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) fail('PHASE5_DAST_CONFIG_TIMESTAMP_INVALID');
+  return parsed;
 }
 
 function required(value, code) {

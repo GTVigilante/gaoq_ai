@@ -54,6 +54,9 @@ assertIncludes(JSON.stringify(schema), [
   'targetNamespace',
   '^[a-f0-9]{40}$',
   '^sha256:[a-f0-9]{64}$',
+  'apiConfigMapHash',
+  'workerConfigMapHash',
+  'contractHash',
   '"minimum":3',
   '"minimum":2',
   'httpsEgressCidrs',
@@ -62,15 +65,28 @@ assertIncludes(JSON.stringify(schema), [
 ], 'KUBERNETES_VALUES_SCHEMA_INCOMPLETE');
 
 for (const [component, markers] of Object.entries({
-  api: ['runtime.apiConfigMapName', 'runtime.apiSecretName', '/api/health/ready'],
-  worker: ['runtime.workerConfigMapName', 'runtime.workerSecretName', '/health/live'],
+  api: [
+    'runtime.apiConfigMapName',
+    'runtime.apiConfigMapHash',
+    'runtime.contractHash',
+    'runtime.apiSecretName',
+    '/api/health/ready',
+  ],
+  worker: [
+    'runtime.workerConfigMapName',
+    'runtime.workerConfigMapHash',
+    'runtime.contractHash',
+    'runtime.workerSecretName',
+    '/health/live',
+  ],
   web: ['runtime.webConfigMapName', 'runtime.webSecretName', 'path: /', 'containerPort: 3000'],
   website: [
     'runtime.websiteConfigMapName',
     'runtime.websiteSecretName',
-    '/zh-CN',
+    'ERP_API_INTERNAL_ORIGIN',
+    'MARKETING_REVALIDATE_SECRET',
+    'path: /zh-CN',
     'containerPort: 3002',
-    'gaoq.io/website-public-config:',
   ],
 })) {
   const deployment = contents.get(`templates/deployment-${component}.yaml`);
@@ -97,6 +113,13 @@ for (const [component, markers] of Object.entries({
   ], `KUBERNETES_${component.toUpperCase()}_DEPLOYMENT_INCOMPLETE`);
 }
 
+for (const component of ['api', 'worker']) {
+  assertIncludes(contents.get(`templates/deployment-${component}.yaml`), [
+    'gaoq.io/runtime-config:',
+    'gaoq.io/runtime-contract:',
+  ], `KUBERNETES_${component.toUpperCase()}_RUNTIME_BINDING_MISSING`);
+}
+
 const webDeployment = contents.get('templates/deployment-web.yaml');
 assertIncludes(webDeployment, [
   'envFrom:',
@@ -110,10 +133,12 @@ if (
 
 const websiteDeployment = contents.get('templates/deployment-website.yaml');
 if (
+  websiteDeployment.includes('envFrom:') ||
+  websiteDeployment.includes('NEXT_PUBLIC_') ||
   websiteDeployment.includes('runtime.apiSecretName') ||
   websiteDeployment.includes('runtime.workerSecretName') ||
   websiteDeployment.includes('runtime.webSecretName')
-) throw new Error('KUBERNETES_WEBSITE_SECRET_REUSE_FORBIDDEN');
+) throw new Error('KUBERNETES_WEBSITE_RUNTIME_BOUNDARY_INVALID');
 
 const serviceAccount = contents.get('templates/serviceaccount.yaml');
 assertIncludes(serviceAccount, [
@@ -150,6 +175,7 @@ assertIncludes(contents.get('templates/ingress.yaml'), [
   'tlsSecretName',
   'ingressClassName:',
   'pathType: Prefix',
+  'websiteHost',
 ], 'KUBERNETES_INGRESS_INCOMPLETE');
 assertIncludes(contents.get('templates/networkpolicy.yaml'), [
   'default-deny',
@@ -226,6 +252,19 @@ if (renderedPath !== undefined) {
   if ([...rendered.matchAll(/^\s*image:\s*"?([^"\s]+)"?$/gmu)].some(
     (match) => !/@sha256:[a-f0-9]{64}$/u.test(match[1] ?? ''),
   )) throw new Error('KUBERNETES_RENDERED_IMAGE_NOT_IMMUTABLE');
+
+  for (const annotation of ['runtime-config', 'runtime-contract']) {
+    const values = [...rendered.matchAll(
+      new RegExp(`gaoq\\.io\\/${annotation}:\\s*"?([^"\\s]+)"?`, 'gu'),
+    )].map((match) => match[1]);
+    if (
+      values.length !== 4 ||
+      values.some((value) => !/^sha256:[a-f0-9]{64}$/u.test(value ?? ''))
+    ) throw new Error('KUBERNETES_RENDERED_RUNTIME_BINDING_INVALID');
+    if (annotation === 'runtime-contract' && new Set(values).size !== 1) {
+      throw new Error('KUBERNETES_RENDERED_RUNTIME_BINDING_INVALID');
+    }
+  }
 
   for (const forbidden of [
     /^kind:\s*Secret$/mu,

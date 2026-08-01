@@ -12,7 +12,7 @@ import { z } from 'zod';
 import type { AppEnvironment } from '../../config/environment.js';
 import { REDIS_CLIENT } from '../../infrastructure/redis/redis.constants.js';
 
-const captchaResponse = z.object({ success: z.literal(true) }).passthrough();
+const captchaResponse = z.object({ success: z.literal(true) }).strict();
 
 /** 官网公开表单防滥用：Redis 限流失败关闭，并通过隔离验证码网关校验。 */
 @Injectable()
@@ -29,11 +29,18 @@ export class MarketingPublicProtectionService {
     if (endpoint === undefined || secret === undefined) throw unavailable();
     const response = await fetch(endpoint, {
       method: 'POST',
-      headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
+      headers: {
+        accept: 'application/json',
+        authorization: `Bearer ${secret}`,
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({ token: captchaToken, remoteIp: ip }),
       signal: AbortSignal.timeout(5_000),
     }).catch(() => null);
-    if (response?.ok !== true || !captchaResponse.safeParse(await response.json()).success) {
+    const body: unknown = response?.ok === true
+      ? await response.json().catch(() => null)
+      : null;
+    if (!captchaResponse.safeParse(body).success) {
       throw new HttpException(
         { code: 'MARKETING_CAPTCHA_INVALID', message: '人机验证未通过' },
         HttpStatus.BAD_REQUEST,

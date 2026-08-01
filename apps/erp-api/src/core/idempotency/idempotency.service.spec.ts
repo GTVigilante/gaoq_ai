@@ -34,6 +34,10 @@ interface FakeStore {
   };
   connection: { startSession: ReturnType<typeof vi.fn> };
   session: ClientSession;
+  sessionMocks: {
+    withTransaction: ReturnType<typeof vi.fn>;
+    endSession: ReturnType<typeof vi.fn>;
+  };
   service: IdempotencyService;
   context: TenantContextService;
 }
@@ -65,6 +69,10 @@ function assemble(findOneResults: unknown[]): FakeStore {
     model: { findOne, create, updateOne },
     connection: { startSession },
     session: session as unknown as ClientSession,
+    sessionMocks: {
+      withTransaction: session.withTransaction,
+      endSession: session.endSession,
+    },
     service,
     context,
   };
@@ -128,6 +136,28 @@ describe('IdempotencyService', () => {
     const hashB = (second.model.create.mock.calls[0]?.[0] as Array<Record<string, unknown>>)[0]?.['requestHash'];
     expect(hashA).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(hashA).toBe(hashB);
+  });
+
+  it('请求哈希覆盖全部 JSON 原语且响应数组递归扫描保持安全', async () => {
+    const store = assemble([null]);
+    await run(store, () =>
+      store.service.execute(
+        'op.primitives',
+        'key-primitives-1',
+        {
+          nil: null,
+          text: 'value',
+          number: 1,
+          yes: true,
+          no: false,
+        },
+        () => Promise.resolve({
+          items: [{ id: 'safe-001' }, null, true, 1],
+        }),
+      ),
+    );
+
+    expect(store.model.updateOne).toHaveBeenCalledOnce();
   });
 
   it('同键同请求重放：返回深拷贝冻结响应，handler 不再执行', async () => {
@@ -231,6 +261,24 @@ describe('IdempotencyService', () => {
     expect(store.model.updateOne).not.toHaveBeenCalled();
   });
 
+  it('handler 抛出非对象拒绝值时也不误判为唯一键冲突', async () => {
+    const store = assemble([null]);
+    store.sessionMocks.withTransaction.mockRejectedValueOnce('primitive failure');
+    const failure = await capture(
+      run(store, () =>
+        store.service.execute(
+          'op.a',
+          'key-fail-2',
+          {},
+          () => Promise.resolve({}),
+        ),
+      ),
+    );
+
+    expect(failure).toBe('primitive failure');
+    expect(store.model.findOne).not.toHaveBeenCalled();
+  });
+
   it('非法幂等键与非法 operation：抛 400 且不触库', async () => {
     const store = assemble([]);
     const badKeys = ['short', 'key with space!!', 'x'.repeat(129)];
@@ -255,7 +303,7 @@ describe('IdempotencyService', () => {
     expect(store.connection.startSession).not.toHaveBeenCalled();
   });
 
-  it('请求体拒绝 undefined/循环引用/超深嵌套：400 IDEMPOTENCY_INVALID_REQUEST', async () => {
+  it('请求体拒绝非 JSON 值、非有限数、非纯对象、循环引用和超深嵌套', async () => {
     const store = assemble([]);
     const circular: Record<string, unknown> = {};
     circular['self'] = circular;
@@ -263,7 +311,17 @@ describe('IdempotencyService', () => {
     for (let i = 0; i < 25; i += 1) {
       deep = { nested: deep };
     }
-    const invalidRequests: unknown[] = [{ value: undefined }, circular, deep];
+    const invalidRequests: unknown[] = [
+      { value: undefined },
+      { value: () => undefined },
+      { value: Symbol('invalid') },
+      { value: 1n },
+      { value: Number.NaN },
+      { value: Number.POSITIVE_INFINITY },
+      { value: new Date() },
+      circular,
+      deep,
+    ];
     for (const request of invalidRequests) {
       const failure = await capture(
         run(store, () =>
@@ -293,6 +351,55 @@ describe('IdempotencyService', () => {
       code: 'IDEMPOTENCY_SENSITIVE_RESPONSE',
     });
     expect(store.model.updateOne).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    null,
+    [],
+    'not-an-object',
+    { value: undefined },
+    { value: new Date() },
+  ])('非纯 JSON 对象响应失败关闭 %#', async (response) => {
+    const store = assemble([null]);
+    const failure = await capture(
+      run(store, () =>
+        store.service.execute(
+          'op.invalid-response',
+          'key-response-1',
+          {},
+          () => Promise.resolve(response as never),
+        ),
+      ),
+    );
+
+    expect(failure).toBeInstanceOf(InternalServerErrorException);
+    expect((failure as InternalServerErrorException).getResponse()).toMatchObject({
+      code: 'IDEMPOTENCY_INVALID_RESPONSE',
+    });
+    expect(store.model.updateOne).not.toHaveBeenCalled();
+  });
+
+  it('数组中的敏感键和超深响应失败关闭', async () => {
+    let deep: Record<string, unknown> = { leaf: true };
+    for (let index = 0; index < 25; index += 1) deep = { nested: deep };
+    for (const response of [
+      { items: [{ authorization: 'forbidden' }] },
+      deep,
+    ]) {
+      const store = assemble([null]);
+      const failure = await capture(
+        run(store, () =>
+          store.service.execute(
+            'op.deep-response',
+            'key-response-2',
+            {},
+            () => Promise.resolve(response),
+          ),
+        ),
+      );
+      expect(failure).toBeInstanceOf(InternalServerErrorException);
+      expect(store.model.updateOne).not.toHaveBeenCalled();
+    }
   });
 
   it('并发唯一键冲突 11000：事务外重读，同 hash 已完成则重放，否则 409', async () => {
@@ -365,5 +472,112 @@ describe('IdempotencyService', () => {
     );
 
     expect(failure).toBe(businessConflict);
+  });
+
+  it('短时结果只返回给调用方，幂等账本仅保存不含签名 URL 的安全快照', async () => {
+    const store = assemble([null]);
+    const replay = vi.fn();
+
+    const result = await run(store, () =>
+      store.service.executeWithEphemeralResult(
+        'marketing.media.upload.create',
+        'media-upload-key-001',
+        { fileName: 'hero.png' },
+        () => Promise.resolve({
+          stored: { mediaId: 'media-001', objectRef: 'object-001', version: 1 },
+          result: {
+            mediaId: 'media-001',
+            uploadUrl: 'https://upload.example.invalid/signed',
+            expiresAt: '2026-07-28T01:00:00.000Z',
+          },
+        }),
+        replay,
+      ),
+    );
+
+    expect(result).toEqual({
+      mediaId: 'media-001',
+      uploadUrl: 'https://upload.example.invalid/signed',
+      expiresAt: '2026-07-28T01:00:00.000Z',
+    });
+    expect(replay).not.toHaveBeenCalled();
+    const update = store.model.updateOne.mock.calls[0]?.[1] as {
+      $set: { response: Record<string, unknown> };
+    };
+    expect(update.$set.response).toEqual({
+      mediaId: 'media-001',
+      objectRef: 'object-001',
+      version: 1,
+    });
+    expect(JSON.stringify(update.$set.response)).not.toContain('uploadUrl');
+  });
+
+  it('短时结果重放不重新执行业务写入，仅用安全快照获取新的短时能力值', async () => {
+    const existing = {
+      status: 'completed',
+      requestHash: 'placeholder',
+      response: { mediaId: 'media-001', objectRef: 'object-001', version: 1 },
+    };
+    const hashStore = assemble([null]);
+    await run(hashStore, () =>
+      hashStore.service.execute(
+        'marketing.media.upload.create',
+        'media-upload-key-002',
+        { fileName: 'hero.png' },
+        () => Promise.resolve(existing.response),
+      ),
+    );
+    existing.requestHash = (
+      hashStore.model.create.mock.calls[0]?.[0] as Array<Record<string, unknown>>
+    )[0]?.['requestHash'] as string;
+    const store = assemble([existing]);
+    const handler = vi.fn();
+    const replay = vi.fn().mockResolvedValue({
+      mediaId: 'media-001',
+      uploadUrl: 'https://upload.example.invalid/refreshed',
+      expiresAt: '2026-07-28T02:00:00.000Z',
+    });
+
+    const result = await run(store, () =>
+      store.service.executeWithEphemeralResult(
+        'marketing.media.upload.create',
+        'media-upload-key-002',
+        { fileName: 'hero.png' },
+        handler,
+        replay,
+      ),
+    );
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(replay).toHaveBeenCalledWith(existing.response);
+    expect(
+      store.sessionMocks.endSession.mock.invocationCallOrder[0],
+    ).toBeLessThan(replay.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY);
+    expect(result.uploadUrl).toBe('https://upload.example.invalid/refreshed');
+    expect(store.model.updateOne).not.toHaveBeenCalled();
+  });
+
+  it('短时结果允许含上传 URL，但安全快照命中敏感键时仍失败关闭', async () => {
+    const store = assemble([null]);
+    const failure = await capture(
+      run(store, () =>
+        store.service.executeWithEphemeralResult(
+          'marketing.media.upload.create',
+          'media-upload-key-003',
+          {},
+          () => Promise.resolve({
+            stored: { mediaId: 'media-001', accessToken: '禁止落账本' },
+            result: { uploadUrl: 'https://upload.example.invalid/signed' },
+          }),
+          () => Promise.resolve({ uploadUrl: 'unused' }),
+        ),
+      ),
+    );
+
+    expect(failure).toBeInstanceOf(InternalServerErrorException);
+    expect((failure as InternalServerErrorException).getResponse()).toMatchObject({
+      code: 'IDEMPOTENCY_SENSITIVE_RESPONSE',
+    });
+    expect(store.model.updateOne).not.toHaveBeenCalled();
   });
 });

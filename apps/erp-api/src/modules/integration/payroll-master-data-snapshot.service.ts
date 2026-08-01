@@ -11,6 +11,7 @@ import type {
 } from '@gaoq/platform-contracts';
 import { createHash } from 'node:crypto';
 
+import { AuditService } from '../../core/audit/audit.service.js';
 import { TenantContextService } from '../../core/tenant/tenant-context.service.js';
 import {
   DepartmentRepository,
@@ -19,6 +20,10 @@ import {
 } from '../org/persistence/org.repositories.js';
 
 const PAGE_SIZE = 200;
+const CONTRACT_VERSION = '1.0.0' as const;
+const CURSOR_PATTERN = /^[A-Za-z0-9_-]{1,512}$/;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const CURSOR_FIELDS = ['digest', 'offset'] as const;
 
 interface SnapshotEntry {
   readonly kind: 'department' | 'employee' | 'employment';
@@ -33,6 +38,7 @@ export class PayrollMasterDataSnapshotService {
     private readonly departments: DepartmentRepository,
     private readonly employees: EmployeeRepository,
     private readonly employments: EmploymentRepository,
+    private readonly audit: AuditService,
   ) {}
 
   async page(cursor?: string): Promise<PayrollMasterDataSnapshotPage> {
@@ -93,13 +99,17 @@ export class PayrollMasterDataSnapshotService {
       })),
     ];
     const snapshotDigest = createHash('sha256')
-      .update(JSON.stringify(entries))
+      .update(JSON.stringify({
+        contractVersion: CONTRACT_VERSION,
+        tenantId: trusted.tenant.tenantId,
+        entries,
+      }))
       .digest('hex');
     const offset = parseCursor(cursor, snapshotDigest, entries.length);
     const selected = entries.slice(offset, offset + PAGE_SIZE);
     const nextOffset = offset + selected.length;
-    return Object.freeze({
-      contractVersion: '0.1.0',
+    const page = Object.freeze({
+      contractVersion: CONTRACT_VERSION,
       snapshotId: snapshotDigest,
       generatedAt: new Date().toISOString(),
       nextCursor: nextOffset < entries.length
@@ -117,6 +127,21 @@ export class PayrollMasterDataSnapshotService {
         .map((entry) => entry.value as EmploymentProjection)),
       snapshotDigest,
     });
+    await this.audit.record({
+      action: 'integration.payroll_master_data.snapshot.read',
+      resourceType: 'payroll_master_data_snapshot',
+      resourceId: snapshotDigest,
+      riskLevel: 'R1',
+      outcome: 'success',
+      metadata: {
+        offset,
+        departmentCount: page.departments.length,
+        employeeCount: page.employees.length,
+        employmentCount: page.employments.length,
+        hasNextPage: page.nextCursor !== null,
+      },
+    });
+    return page;
   }
 }
 
@@ -127,16 +152,29 @@ const parseCursor = (
 ): number => {
   if (cursor === undefined) return 0;
   try {
-    const decoded = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as unknown;
+    if (!CURSOR_PATTERN.test(cursor)) throw new Error('invalid');
+    const cursorBytes = Buffer.from(cursor, 'base64url');
+    if (cursorBytes.toString('base64url') !== cursor) throw new Error('invalid');
+    const decoded = JSON.parse(cursorBytes.toString('utf8')) as unknown;
     if (
       decoded === null ||
       typeof decoded !== 'object' ||
-      (decoded as Record<string, unknown>).digest !== expectedDigest ||
-      !Number.isInteger((decoded as Record<string, unknown>).offset) ||
-      ((decoded as Record<string, unknown>).offset as number) < 0 ||
-      ((decoded as Record<string, unknown>).offset as number) > total
+      Array.isArray(decoded)
     ) throw new Error('invalid');
-    return (decoded as Record<string, unknown>).offset as number;
+    const record = decoded as Record<string, unknown>;
+    const fields = Object.keys(record).sort();
+    if (
+      fields.length !== CURSOR_FIELDS.length ||
+      fields.some((field, index) => field !== CURSOR_FIELDS[index]) ||
+      typeof record.digest !== 'string' ||
+      !SHA256_PATTERN.test(record.digest) ||
+      record.digest !== expectedDigest ||
+      !Number.isInteger(record.offset) ||
+      (record.offset as number) <= 0 ||
+      (record.offset as number) >= total ||
+      (record.offset as number) % PAGE_SIZE !== 0
+    ) throw new Error('invalid');
+    return record.offset as number;
   } catch {
     throw new BadRequestException({
       code: 'PAYROLL_MASTER_DATA_CURSOR_INVALID',

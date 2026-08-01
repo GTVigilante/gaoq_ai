@@ -18,6 +18,10 @@ const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_IDENTIFIER_BYTES = 512;
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
+const IV_ENCODED_LENGTH = 16;
+const TAG_ENCODED_LENGTH = 22;
+const MAX_BODY_ENCODED_LENGTH = Math.ceil(MAX_BODY_BYTES * 4 / 3);
+const MAX_IDENTIFIER_ENCODED_LENGTH = Math.ceil(MAX_IDENTIFIER_BYTES * 4 / 3);
 
 const keyRingSchema = z.object({
   activeKeyId: z.string().regex(ID_PATTERN),
@@ -91,9 +95,12 @@ export class ESignWebhookCryptoService {
       !BASE64URL_PATTERN.test(payload.payloadCiphertext) ||
       !BASE64URL_PATTERN.test(payload.payloadAuthTag)
     ) throw invalidPayload();
-    const iv = Buffer.from(payload.payloadIv, 'base64url');
-    const ciphertext = Buffer.from(payload.payloadCiphertext, 'base64url');
-    const tag = Buffer.from(payload.payloadAuthTag, 'base64url');
+    const iv = decodeCanonical(payload.payloadIv, IV_ENCODED_LENGTH);
+    const ciphertext = decodeCanonical(
+      payload.payloadCiphertext,
+      MAX_BODY_ENCODED_LENGTH,
+    );
+    const tag = decodeCanonical(payload.payloadAuthTag, TAG_ENCODED_LENGTH);
     if (iv.length !== IV_BYTES || tag.length !== TAG_BYTES || ciphertext.length > MAX_BODY_BYTES) {
       throw invalidPayload();
     }
@@ -189,9 +196,14 @@ export class ESignWebhookCryptoService {
       !ID_PATTERN.test(payload.keyId) || !BASE64URL_PATTERN.test(payload.iv) ||
       !BASE64URL_PATTERN.test(payload.ciphertext) || !BASE64URL_PATTERN.test(payload.authTag)
     ) throw invalidPayload();
-    const iv = Buffer.from(payload.iv, 'base64url');
-    const ciphertext = Buffer.from(payload.ciphertext, 'base64url');
-    const tag = Buffer.from(payload.authTag, 'base64url');
+    const iv = decodeCanonical(payload.iv, IV_ENCODED_LENGTH);
+    const ciphertext = decodeCanonical(
+      payload.ciphertext,
+      maxBytes === MAX_IDENTIFIER_BYTES
+        ? MAX_IDENTIFIER_ENCODED_LENGTH
+        : Math.ceil(maxBytes * 4 / 3),
+    );
+    const tag = decodeCanonical(payload.authTag, TAG_ENCODED_LENGTH);
     if (iv.length !== IV_BYTES || tag.length !== TAG_BYTES || ciphertext.length > maxBytes) {
       throw invalidPayload();
     }
@@ -263,4 +275,15 @@ function invalidKeyRing(): Error {
 
 function invalidPayload(): Error {
   return new Error('ESIGN_WEBHOOK_PAYLOAD_INVALID');
+}
+
+function decodeCanonical(value: string, maxEncodedLength: number): Buffer {
+  if (
+    value.length < 1 ||
+    value.length > maxEncodedLength ||
+    !BASE64URL_PATTERN.test(value)
+  ) throw invalidPayload();
+  const decoded = Buffer.from(value, 'base64url');
+  if (decoded.toString('base64url') !== value) throw invalidPayload();
+  return decoded;
 }

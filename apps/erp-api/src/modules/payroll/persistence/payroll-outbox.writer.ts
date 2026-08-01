@@ -20,6 +20,21 @@ export interface PayrollEvent {
     | 'payroll.rule_pack.attested'
     | 'payroll.rule_pack.migrated'
     | 'payroll.compensation_profile.migrated'
+    | 'payroll.adjustment.prepared'
+    | 'payroll.adjustment.approval_requested'
+    | 'payroll.adjustment.approval_applied'
+    | 'payroll.adjustment.locked'
+    | 'payroll.adjustment.receivable_opened'
+    | 'payroll.adjustment.tax_correction_prepared'
+    | 'payroll.adjustment.tax_correction_submitted'
+    | 'payroll.adjustment.cash_settled'
+    | 'payroll.adjustment.settled'
+    | 'payroll.receivable.opened'
+    | 'payroll.receivable.recovery_recorded'
+    | 'payroll.adjustment_tax_correction.prepared'
+    | 'payroll.adjustment_tax_correction.approved'
+    | 'payroll.adjustment_tax_correction.submitted'
+    | 'payroll.annual_reconciliation.prepared'
     | 'payroll.approval.requested'
     | 'payroll.approval.applied'
     | 'payroll.period.locked'
@@ -55,6 +70,10 @@ export class PayrollOutboxWriter {
       throw new Error('Payroll Outbox 拒绝跨租户事件');
     }
     this.assertTaxEvent(event);
+    this.assertAdjustmentEvent(event);
+    this.assertReceivableEvent(event);
+    this.assertAdjustmentTaxCorrectionEvent(event);
+    this.assertAnnualReconciliationEvent(event);
     this.assertReconciliationEvent(event);
     this.assertShadowEvent(event);
     const eventId = createEventId(new Date(event.occurredAt));
@@ -73,6 +92,151 @@ export class PayrollOutboxWriter {
       eventType, envelope: { ...envelope }, status: 'pending', attempts: 0,
       nextAttemptAt: new Date(event.occurredAt),
     }], { session });
+  }
+
+  private assertAnnualReconciliationEvent(event: PayrollEvent): void {
+    if (event.type !== 'payroll.annual_reconciliation.prepared') return;
+    const data = event.data;
+    if (
+      Object.keys(data).sort().join(',') !==
+        'evidenceHash,periodCount,status,taxYear' ||
+      typeof data['taxYear'] !== 'string' || !/^\d{4}$/.test(data['taxYear']) ||
+      !positive(data['periodCount']) || Number(data['periodCount']) > 12 ||
+      !hash(data['evidenceHash']) ||
+      ![
+        'awaiting_assessment', 'assessment_matched',
+        'requires_employee_settlement', 'frozen',
+      ].includes(String(data['status']))
+    ) throw new Error('PAYROLL_ANNUAL_OUTBOX_DATA_INVALID');
+  }
+
+  private assertAdjustmentEvent(event: PayrollEvent): void {
+    if (!event.type.startsWith('payroll.adjustment.')) return;
+    if (![
+      'payroll.adjustment.prepared',
+      'payroll.adjustment.approval_requested',
+      'payroll.adjustment.approval_applied',
+      'payroll.adjustment.locked',
+      'payroll.adjustment.receivable_opened',
+      'payroll.adjustment.tax_correction_prepared',
+      'payroll.adjustment.tax_correction_submitted',
+      'payroll.adjustment.cash_settled',
+      'payroll.adjustment.settled',
+    ].includes(event.type)) throw new Error('PAYROLL_ADJUSTMENT_OUTBOX_DATA_INVALID');
+    const data = event.data;
+    const base =
+      !month(data['period']) || !hash(data['adjustmentHash']) ||
+      typeof data['reasonCode'] !== 'string' ||
+      !/^[A-Z][A-Z0-9_]{1,63}$/.test(data['reasonCode']) ||
+      !['supplement', 'reversal', 'tax_only'].includes(String(data['type']));
+    const keys = Object.keys(data).sort().join(',');
+    if (event.type === 'payroll.adjustment.approval_applied') {
+      if (
+        base ||
+        keys !== 'adjustmentHash,outcome,period,reasonCode,status,type' ||
+        !['approved', 'rejected'].includes(String(data['outcome'])) ||
+        !['approved', 'cancelled'].includes(String(data['status'])) ||
+        (data['outcome'] === 'approved') !== (data['status'] === 'approved')
+      ) throw new Error('PAYROLL_ADJUSTMENT_OUTBOX_DATA_INVALID');
+      return;
+    }
+    if (event.type === 'payroll.adjustment.locked') {
+      if (
+        base ||
+        keys !== 'adjustmentHash,period,reasonCode,status,strongAuthMethod,type' ||
+        data['status'] !== 'locked' ||
+        data['strongAuthMethod'] !== 'webauthn_uv'
+      ) throw new Error('PAYROLL_ADJUSTMENT_OUTBOX_DATA_INVALID');
+      return;
+    }
+    if (
+      event.type === 'payroll.adjustment.receivable_opened' ||
+      event.type === 'payroll.adjustment.tax_correction_prepared' ||
+      event.type === 'payroll.adjustment.tax_correction_submitted' ||
+      event.type === 'payroll.adjustment.cash_settled' ||
+      event.type === 'payroll.adjustment.settled'
+    ) {
+      if (
+        base ||
+        keys !== 'adjustmentHash,period,reasonCode,status,type' ||
+        !['locked', 'settled'].includes(String(data['status']))
+      ) throw new Error('PAYROLL_ADJUSTMENT_OUTBOX_DATA_INVALID');
+      return;
+    }
+    const expectedStatus = event.type === 'payroll.adjustment.prepared'
+      ? 'prepared'
+      : 'pending_approval';
+    if (
+      base ||
+      keys !== 'adjustmentHash,period,reasonCode,status,type' ||
+      data['status'] !== expectedStatus
+    ) throw new Error('PAYROLL_ADJUSTMENT_OUTBOX_DATA_INVALID');
+  }
+
+  private assertReceivableEvent(event: PayrollEvent): void {
+    if (!event.type.startsWith('payroll.receivable.')) return;
+    if (![
+      'payroll.receivable.opened',
+      'payroll.receivable.recovery_recorded',
+    ].includes(event.type)) throw new Error('PAYROLL_RECEIVABLE_OUTBOX_DATA_INVALID');
+    const data = event.data;
+    const keys = Object.keys(data).sort().join(',');
+    if (
+      keys !== 'adjustmentHash,status' ||
+      !hash(data['adjustmentHash']) ||
+      !['open', 'settled'].includes(String(data['status'])) ||
+      (event.type === 'payroll.receivable.opened' && data['status'] !== 'open')
+    ) throw new Error('PAYROLL_RECEIVABLE_OUTBOX_DATA_INVALID');
+  }
+
+  private assertAdjustmentTaxCorrectionEvent(event: PayrollEvent): void {
+    if (!event.type.startsWith('payroll.adjustment_tax_correction.')) return;
+    if (![
+      'payroll.adjustment_tax_correction.prepared',
+      'payroll.adjustment_tax_correction.approved',
+      'payroll.adjustment_tax_correction.submitted',
+    ].includes(event.type)) {
+      throw new Error('PAYROLL_ADJUSTMENT_TAX_CORRECTION_OUTBOX_DATA_INVALID');
+    }
+    const data = event.data;
+    const base =
+      month(data['period']) &&
+      hash(data['adjustmentHash']) &&
+      hash(data['contentHash']);
+    const keys = Object.keys(data).sort().join(',');
+    if (event.type === 'payroll.adjustment_tax_correction.prepared') {
+      if (
+        !base ||
+        keys !==
+          'adjustmentHash,contentHash,objectEvidenceId,period,status' ||
+        !safeId(data['objectEvidenceId']) ||
+        data['status'] !== 'prepared'
+      ) throw new Error('PAYROLL_ADJUSTMENT_TAX_CORRECTION_OUTBOX_DATA_INVALID');
+      return;
+    }
+    if (event.type === 'payroll.adjustment_tax_correction.approved') {
+      if (
+        !base ||
+        keys !==
+          'adjustmentHash,contentHash,period,status,strongAuthMethod' ||
+        data['strongAuthMethod'] !== 'webauthn_uv' ||
+        data['status'] !== 'approved'
+      ) throw new Error('PAYROLL_ADJUSTMENT_TAX_CORRECTION_OUTBOX_DATA_INVALID');
+      return;
+    }
+    const validKeys = [
+      'adjustmentHash,contentHash,period,status,taxSubmissionEvidenceId,taxSubmissionId',
+      'adjustmentHash,contentHash,period,productionAuthorizationEvidenceId,status,taxSubmissionEvidenceId,taxSubmissionId',
+    ];
+    if (
+      !base ||
+      !validKeys.includes(keys) ||
+      !safeId(data['taxSubmissionId']) ||
+      !safeId(data['taxSubmissionEvidenceId']) ||
+      (Object.hasOwn(data, 'productionAuthorizationEvidenceId') &&
+        !safeId(data['productionAuthorizationEvidenceId'])) ||
+      data['status'] !== 'submitted'
+    ) throw new Error('PAYROLL_ADJUSTMENT_TAX_CORRECTION_OUTBOX_DATA_INVALID');
   }
 
   private assertTaxEvent(event: PayrollEvent): void {

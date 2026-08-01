@@ -10,6 +10,7 @@ import { createEventId } from '@gaoq/shared-utils';
 import type { ClientSession, Model } from 'mongoose';
 
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
+import { LegacyPayrollBoundaryService } from '../legacy-payroll-boundary.service.js';
 import {
   beginPayrollReconciliation,
   completePayrollReconciliation,
@@ -107,6 +108,7 @@ export interface PayrollReconciliationSummary extends Record<string, unknown> {
 export class PayrollReconciliationService {
   constructor(
     private readonly context: TenantContextService,
+    private readonly boundary: LegacyPayrollBoundaryService,
     private readonly outbox: PayrollOutboxWriter,
     @InjectModel(PayrollPeriodRecord.name)
     private readonly periods: Model<PayrollPeriodDocument>,
@@ -118,6 +120,7 @@ export class PayrollReconciliationService {
 
   async getStatus(id: string): Promise<PayrollReconciliationSummary> {
     this.assertScope('erp:payroll:reconciliation:read');
+    this.boundary.assertLegacy();
     if (!ULID.test(id)) throw new BadRequestException({
       code: 'PAYROLL_RECONCILIATION_ID_INVALID', message: '四方对账标识非法',
     });
@@ -129,6 +132,7 @@ export class PayrollReconciliationService {
     session: ClientSession,
   ): Promise<PayrollReconciliationSummary | null> {
     this.assertScope('erp:payroll:reconciliation:execute');
+    this.boundary.assertLegacy();
     const record = await this.reconciliations.findOne({
       tenantId: this.tenantId(), batchId,
     }).session(session).lean().exec();
@@ -143,12 +147,7 @@ export class PayrollReconciliationService {
     migration?: PayrollReconciliationMigrationControl,
   ): Promise<{ readonly summary: PayrollReconciliationSummary; readonly result: FourWayReconciliationResult }> {
     if (migration === undefined) this.assertScope('erp:payroll:reconciliation:execute');
-    else {
-      this.assertMigrationWriter();
-      assertMigrationControl(migration);
-    }
-    const migrationInstant = migration === undefined
-      ? undefined : strictMigrationInstant(migration.reconciledAt);
+    else this.assertMigrationWriter();
     const actor = this.context.getActorRequired();
     if (
       (actor.actorType !== 'service' && actor.actorType !== 'system_job') ||
@@ -157,6 +156,10 @@ export class PayrollReconciliationService {
       code: 'PAYROLL_RECONCILIATION_IDENTITY_INVALID',
       message: '四方对账只接受当前可信服务身份',
     });
+    this.boundary.assertLegacy();
+    if (migration !== undefined) assertMigrationControl(migration);
+    const migrationInstant = migration === undefined
+      ? undefined : strictMigrationInstant(migration.reconciledAt);
     const existing = await this.reconciliations.findOne({
       tenantId: this.tenantId(), batchId: treasury.batchId,
     }).session(session).lean().exec();
@@ -400,10 +403,15 @@ export class PayrollReconciliationService {
         tenantId: this.tenantId(), expectedVersion: current.version,
         reconciliationEvidenceId: evidenceId, trustedReconciliation: true,
       }, now);
+    const mutablePeriod = toMutablePayrollPeriodRecord(current);
     const updated = await this.periods.updateOne({
       tenantId: this.tenantId(), id: initial.id,
       status: initial.status, version: initial.version,
-    }, { $set: toMutablePayrollPeriodRecord(current) }, {
+    }, {
+      $set: emitLifecycleEvents
+        ? mutablePeriod
+        : { ...mutablePeriod, updatedAt: new Date(current.updatedAt) },
+    }, {
       session, runValidators: true,
       ...(emitLifecycleEvents ? {} : { timestamps: false }),
     });

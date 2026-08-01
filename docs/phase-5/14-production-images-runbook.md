@@ -32,6 +32,11 @@ docker build --target website --build-arg IMAGE_REVISION="$(git rev-parse HEAD)"
 
 每个 Pull Request 在 GitHub Actions 分别构建四种最终镜像，并验证最终用户为 `65532:65532`、健康检查存在、SPDX JSON SBOM 可生成、Trivy 的 High/Critical 发现为零。SBOM 保留 30 天作为 PR 证据；正式发布流水线必须把 SBOM、镜像 digest、Git commit、构建者身份和签名绑定到同一发布记录，并由制品仓库执行保留与不可变策略。
 
-API 存活检查为 `/api/health/live`，就绪检查为 `/api/health/ready`；Worker 存活检查为指标端口的 `/health/live`，指标 `/metrics` 仍要求独立 Bearer Token；ERP Web 存活检查为 `/`，Website 为 `/zh-CN`。存活检查不得访问 MongoDB、Redis 或上游系统，就绪检查才可反映依赖状态。
+API 存活检查为 `/api/health/live`，就绪检查为 `/api/health/ready`；Worker 存活
+检查为指标端口的 `/health/live`，指标 `/metrics` 仍要求独立 Bearer Token；
+ERP Web 存活检查为 `/`，Website 为 `/zh-CN`。存活检查不得访问 MongoDB、Redis
+或上游系统。API 就绪检查必须在有界时间内同时确认 MongoDB 是可写 Replica Set
+主节点且 Redis 精确返回 PONG，并对并发重连执行单飞；它不检查外部业务平台，
+外部连接健康由独立低基数指标、告警与 Go/No-Go 证据判定。
 
 本切片不授权将镜像推送到任何生产仓库，也不构成生产放行。镜像签名、SLSA provenance、准入策略、生产等价只读文件系统冒烟和回滚演练必须在 CD 平台接入后形成独立证据。

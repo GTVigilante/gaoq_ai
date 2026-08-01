@@ -4,6 +4,7 @@ import {
   Controller,
   Get,
   HttpException,
+  Logger,
   Param,
   Post,
   Query,
@@ -16,9 +17,12 @@ import { createTraceId } from '@gaoq/shared-utils';
 import { IsBoolean } from 'class-validator';
 import type { Request, Response } from 'express';
 import { decodeJwt } from 'jose';
-import { z } from 'zod';
 
 import type { AppEnvironment } from '../../config/environment.js';
+import {
+  authorizationCodeTokenRequestSchema,
+  clientCredentialsTokenRequestSchema,
+} from '../../contracts/rest-request-contracts.js';
 import { AuditService } from '../../core/audit/audit.service.js';
 import { PublicRoute, RawResponse } from '../../core/http/public-route.decorator.js';
 import type { ErpRequest } from '../../core/http/request-context.js';
@@ -36,24 +40,6 @@ export class OAuthDecisionRequest {
   approved!: boolean;
 }
 
-const authorizationCodeTokenRequestSchema = z.object({
-  grant_type: z.literal('authorization_code'),
-  client_id: z.string().min(1).max(128),
-  code: z.string().min(1).max(256),
-  redirect_uri: z.string().min(1).max(2_048),
-  resource: z.string().min(1).max(2_048),
-  code_verifier: z.string().min(43).max(128),
-}).strict();
-
-const clientCredentialsTokenRequestSchema = z.object({
-  grant_type: z.literal('client_credentials'),
-  resource: z.string().min(1).max(2_048),
-  scope: z.string().min(1).max(12_900).optional(),
-  client_id: z.string().min(1).max(128).optional(),
-  client_assertion_type: z.string().min(1).max(128).optional(),
-  client_assertion: z.string().min(1).max(8_192).optional(),
-}).strict();
-
 const SAFE_STATE_PATTERN = /^[\x21-\x7E]{1,512}$/;
 
 /** OAuth 2.1 人员代理授权端点：预注册客户端 + Authorization Code + PKCE S256。 */
@@ -61,6 +47,8 @@ const SAFE_STATE_PATTERN = /^[\x21-\x7E]{1,512}$/;
 @PublicRoute()
 @RawResponse()
 export class OAuthController {
+  private readonly logger = new Logger(OAuthController.name);
+
   constructor(
     private readonly config: ConfigService<AppEnvironment, true>,
     private readonly transactions: OAuthAuthorizationTransactionService,
@@ -175,34 +163,29 @@ export class OAuthController {
       this.cookies.readRequired(request),
     );
     this.cookies.set(response, identity.refreshToken);
+    const traceId = request.traceId ?? createTraceId();
     let decision;
     try {
       decision = await this.transactions.decide(requestId, body.approved, identity);
     } catch (error) {
-      await this.audit.recordTrustedUser(identity.tenantId, {
+      await this.recordDecisionAudit({
+        tenantId: identity.tenantId,
         actorId: identity.actorId,
-        traceId: request.traceId ?? createTraceId(),
-        action: 'identity.oauth.authorize',
-        resourceType: 'oauth_client',
-        resourceId: 'unknown',
-        riskLevel: 'R1',
+        traceId,
+        clientId: 'unknown',
         outcome: 'failure',
-        metadata: { approved: body.approved },
+        approved: body.approved,
       });
       throw error;
     }
-    await this.audit.recordTrustedUser(identity.tenantId, {
+    await this.recordDecisionAudit({
+      tenantId: identity.tenantId,
       actorId: identity.actorId,
-      traceId: request.traceId ?? createTraceId(),
-      action: 'identity.oauth.authorize',
-      resourceType: 'oauth_client',
-      resourceId: decision.clientId,
-      riskLevel: 'R1',
+      traceId,
+      clientId: decision.clientId,
       outcome: body.approved ? 'success' : 'denied',
-      metadata: {
-        approved: body.approved,
-        scopeCount: decision.scopes.length,
-      },
+      approved: body.approved,
+      scopeCount: decision.scopes.length,
     });
     response.setHeader('Cache-Control', 'no-store');
     response.status(200).json({ redirect_to: decision.redirectTo });
@@ -301,8 +284,9 @@ export class OAuthController {
       response.status(400).json({ error: 'invalid_request' });
       return;
     }
-    const rateLimitSubject = body.client_id ?? this.basicClientId(authorization) ??
-      this.assertionClientId(body.client_assertion) ?? 'unknown';
+    const rateLimitSubject = authorization === undefined
+      ? this.assertionClientId(body.client_assertion) ?? 'unknown'
+      : this.basicClientId(authorization) ?? 'unknown';
     try {
       await this.rateLimits.assertAllowed('token_client', rateLimitSubject);
     } catch (error) {
@@ -342,6 +326,40 @@ export class OAuthController {
     if (code.includes('CLIENT')) return 'unauthorized_client';
     if (code.includes('SCOPE')) return 'invalid_scope';
     return 'invalid_request';
+  }
+
+  private async recordDecisionAudit(input: {
+    readonly tenantId: string;
+    readonly actorId: string;
+    readonly traceId: string;
+    readonly clientId: string;
+    readonly outcome: 'success' | 'denied' | 'failure';
+    readonly approved: boolean;
+    readonly scopeCount?: number;
+  }): Promise<void> {
+    try {
+      await this.audit.recordTrustedUser(input.tenantId, {
+        actorId: input.actorId,
+        traceId: input.traceId,
+        action: 'identity.oauth.authorize',
+        resourceType: 'oauth_client',
+        resourceId: input.clientId,
+        riskLevel: 'R1',
+        outcome: input.outcome,
+        metadata: {
+          approved: input.approved,
+          ...(input.scopeCount === undefined ? {} : { scopeCount: input.scopeCount }),
+        },
+      });
+    } catch {
+      this.logger.error({
+        code: input.outcome === 'failure'
+          ? 'OAUTH_DECISION_FAILURE_AUDIT_FAILED'
+          : 'OAUTH_DECISION_AUDIT_AFTER_COMMIT_FAILED',
+        tenantId: input.tenantId,
+        clientId: input.clientId,
+      });
+    }
   }
 
   private tokenError(error: HttpException): string {

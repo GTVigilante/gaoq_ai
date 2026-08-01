@@ -56,6 +56,10 @@ export class OpOperatingSummaryInboxRecord {
   failureCode!: string | null;
   @Prop({ type: Date, default: null }) processedAt!: Date | null;
   @Prop({ type: Date, default: null }) processingStartedAt!: Date | null;
+  @Prop({ type: String, default: null, maxlength: 128, match: ID })
+  processingJobId!: string | null;
+  @Prop({ type: String, default: null, minlength: 22, maxlength: 22, match: BASE64URL })
+  processingToken!: string | null;
   createdAt!: Date;
   updatedAt!: Date;
 }

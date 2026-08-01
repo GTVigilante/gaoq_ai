@@ -6,6 +6,7 @@ import { ERP_AUTHORIZATION_SCOPE_PATTERN } from './authorization-scope.js';
 /** 授权权限快照状态：active 生效中，disabled 已停用。 */
 export const ACCESS_PROFILE_STATUSES = ['active', 'disabled'] as const;
 export type AccessProfileStatus = (typeof ACCESS_PROFILE_STATUSES)[number];
+const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 
 /** 数组元素统一约束：非空字符串，最长 128。 */
 const STRING_ARRAY_ELEMENT = {
@@ -13,6 +14,7 @@ const STRING_ARRAY_ELEMENT = {
   trim: true,
   minlength: 1,
   maxlength: 128,
+  match: ID_PATTERN,
 } as const;
 
 /** 构造数组最大长度校验器。 */
@@ -28,15 +30,15 @@ const maxLengthValidator = (max: number) => ({
 @Schema({ collection: 'identity_access_profiles', timestamps: true, versionKey: false })
 export class AccessProfile {
   /** 本系统租户标识，所有查询必须携带。 */
-  @Prop({ type: String, required: true, immutable: true, index: true })
+  @Prop({ type: String, required: true, immutable: true, index: true, maxlength: 128, match: ID_PATTERN })
   tenantId!: string;
 
   /** 租户内操作主体标识。 */
-  @Prop({ type: String, required: true, immutable: true })
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
   actorId!: string;
 
   /** 关联的员工标识。 */
-  @Prop({ type: String, required: true, immutable: true })
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
   employeeId!: string;
 
   /** 快照状态，仅 active 参与鉴权。 */
@@ -76,6 +78,7 @@ export class AccessProfile {
     required: true,
     default: 1,
     min: 1,
+    max: 1_000_000_000,
     validate: { validator: Number.isInteger, message: 'version 必须为整数' },
   })
   version!: number;

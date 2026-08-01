@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import type { Response } from 'express';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -7,171 +7,535 @@ import { REQUIRED_SCOPES_KEY } from '../identity/auth.decorators.js';
 import type { ApprovalApplicationService } from './application/approval-application.service.js';
 import { ApprovalController } from './approval.controller.js';
 
-const INSTANCE_ID = '01K00000000000000000000000';
+const ID = '01K00000000000000000000000';
+const VERSION = 2;
 
-function summary() {
-  return {
-    id: INSTANCE_ID,
-    status: 'running' as const,
-    templateCode: 'EXPENSE',
-    templateRevision: 1,
-    riskLevel: 'R2' as const,
-    version: 2,
-    submittedAt: '2026-07-21T00:00:00.000Z',
-    completedAt: null,
+const template = Object.freeze({
+  id: ID,
+  code: 'EXPENSE',
+  name: '费用审批',
+  revision: 1,
+  status: 'draft',
+  riskLevel: 'R2',
+  version: VERSION,
+});
+const instance = Object.freeze({
+  id: ID,
+  status: 'running',
+  templateCode: 'EXPENSE',
+  templateRevision: 1,
+  riskLevel: 'R2',
+  version: VERSION,
+  submittedAt: '2026-07-21T00:00:00.000Z',
+  completedAt: null,
+});
+const delegation = Object.freeze({
+  id: ID,
+  principalApproverId: 'manager-001',
+  delegateId: 'manager-002',
+  validFrom: '2026-07-22T00:00:00.000Z',
+  validUntil: '2026-08-01T00:00:00.000Z',
+  status: 'active',
+  version: VERSION,
+});
+const publishedForms = Object.freeze([{ id: ID, code: 'EXPENSE', fields: [] }]);
+const timeline = Object.freeze([{ actionId: ID, actionType: 'instance.submitted' }]);
+
+function fixture() {
+  const approvals = {
+    listPublishedTemplateForms: vi.fn().mockResolvedValue(publishedForms),
+    listMyDelegations: vi.fn().mockResolvedValue([delegation]),
+    createDelegation: vi.fn().mockResolvedValue({ delegation }),
+    revokeDelegation: vi.fn().mockResolvedValue({
+      delegation: { ...delegation, status: 'revoked', version: 3 },
+    }),
+    createTemplate: vi.fn().mockResolvedValue({ template }),
+    updateTemplate: vi.fn().mockResolvedValue({
+      template: { ...template, version: 3 },
+    }),
+    publishTemplate: vi.fn().mockResolvedValue({
+      template: { ...template, status: 'published', version: 3 },
+    }),
+    createInstance: vi.fn().mockResolvedValue({ instance }),
+    updateInstance: vi.fn().mockResolvedValue({ instance }),
+    getInbox: vi.fn().mockResolvedValue([instance]),
+    getInstance: vi.fn().mockResolvedValue(instance),
+    getTimeline: vi.fn().mockResolvedValue(timeline),
+    submitInstance: vi.fn().mockResolvedValue({ instance }),
+    decideInteractiveInstance: vi.fn().mockResolvedValue({ instance }),
+    transferTask: vi.fn().mockResolvedValue({ instance }),
+    addSigner: vi.fn().mockResolvedValue({ instance }),
+    withdrawInstance: vi.fn().mockResolvedValue({ instance }),
+    archiveInstance: vi.fn().mockResolvedValue({ instance }),
   };
+  const audit = { record: vi.fn().mockResolvedValue(undefined) };
+  const setHeader = vi.fn();
+  const response = { setHeader } as unknown as Response;
+  const controller = new ApprovalController(
+    approvals as unknown as ApprovalApplicationService,
+    audit as unknown as AuditService,
+  );
+  return { controller, approvals, audit, response, setHeader };
 }
 
 describe('ApprovalController', () => {
-  it('模板目录使用发起 Scope 并记录最小 R0 审计', async () => {
-    const templates = [{ id: INSTANCE_ID, code: 'EXPENSE', fields: [] }];
-    const listPublishedTemplateForms = vi.fn().mockResolvedValue(templates);
-    const record = vi.fn().mockResolvedValue(undefined);
-    const controller = new ApprovalController(
-      { listPublishedTemplateForms } as unknown as ApprovalApplicationService,
-      { record } as unknown as AuditService,
-    );
-    await expect(controller.listPublishedTemplates()).resolves.toEqual(templates);
-    expect(record).toHaveBeenCalledWith({
-      action: 'approval.template.catalog.read', resourceType: 'approval_template_catalog',
-      resourceId: 'published', riskLevel: 'R0', outcome: 'success', metadata: { count: 1 },
-    });
-    const method = Object.getOwnPropertyDescriptor(
-      ApprovalController.prototype, 'listPublishedTemplates',
-    )?.value as object;
-    expect(Reflect.getMetadata(REQUIRED_SCOPES_KEY, method)).toEqual(['erp:approval:instance:submit']);
+  it.each([
+    ['listPublishedTemplates', 'erp:approval:instance:submit'],
+    ['listMyDelegations', 'erp:approval:delegation:read'],
+    ['createDelegation', 'erp:approval:delegation:write'],
+    ['revokeDelegation', 'erp:approval:delegation:write'],
+    ['createTemplate', 'erp:approval:template:write'],
+    ['updateTemplate', 'erp:approval:template:write'],
+    ['publishTemplate', 'erp:approval:template:publish'],
+    ['createInstance', 'erp:approval:instance:submit'],
+    ['updateInstance', 'erp:approval:instance:submit'],
+    ['getInbox', 'erp:approval:instance:read'],
+    ['getInstance', 'erp:approval:instance:read'],
+    ['getTimeline', 'erp:approval:instance:read'],
+    ['submitInstance', 'erp:approval:instance:submit'],
+    ['decideInstance', 'erp:approval:task:decide'],
+    ['transferTask', 'erp:approval:task:transfer'],
+    ['addSigner', 'erp:approval:task:add_signer'],
+    ['withdrawInstance', 'erp:approval:instance:submit'],
+    ['archiveInstance', 'erp:approval:instance:archive'],
+  ] as const)('%s 声明精确 Scope', (name, scope) => {
+    expect(Reflect.getMetadata(REQUIRED_SCOPES_KEY, method(name))).toEqual([scope]);
   });
 
-  it('委托列表和写操作使用独立 Scope、强版本与最小审计', async () => {
-    const delegation = {
-      id: INSTANCE_ID, principalApproverId: 'manager-001', delegateId: 'manager-002',
-      validFrom: '2026-07-22T00:00:00.000Z', validUntil: '2026-08-01T00:00:00.000Z',
-      status: 'active' as const, version: 1,
-    };
-    const listMyDelegations = vi.fn().mockResolvedValue([delegation]);
-    const createDelegation = vi.fn().mockResolvedValue({ delegation });
-    const revokeDelegation = vi.fn().mockResolvedValue({
-      delegation: { ...delegation, status: 'revoked', version: 2 },
+  it('模板目录与委托列表记录最小 R0 读取审计', async () => {
+    const store = fixture();
+
+    await expect(store.controller.listPublishedTemplates()).resolves.toBe(publishedForms);
+    await expect(store.controller.listMyDelegations()).resolves.toEqual([delegation]);
+
+    expect(store.audit.record).toHaveBeenNthCalledWith(1, {
+      action: 'approval.template.catalog.read',
+      resourceType: 'approval_template_catalog',
+      resourceId: 'published',
+      riskLevel: 'R0',
+      outcome: 'success',
+      metadata: { count: 1 },
     });
-    const record = vi.fn().mockResolvedValue(undefined);
-    const controller = new ApprovalController(
-      { listMyDelegations, createDelegation, revokeDelegation } as unknown as ApprovalApplicationService,
-      { record } as unknown as AuditService,
-    );
-    await expect(controller.listMyDelegations()).resolves.toEqual([delegation]);
-    const response = { setHeader: vi.fn() } as unknown as Response;
-    await controller.createDelegation('delegation-create-key', {
+    expect(store.audit.record).toHaveBeenNthCalledWith(2, {
+      action: 'approval.delegation.list',
+      resourceType: 'approval_delegation',
+      resourceId: 'mine',
+      riskLevel: 'R0',
+      outcome: 'success',
+      metadata: { count: 1 },
+    });
+  });
+
+  it('审批收件箱和详情只返回应用服务投影，详情携带强 ETag', async () => {
+    const store = fixture();
+
+    await expect(store.controller.getInbox()).resolves.toEqual([instance]);
+    await expect(store.controller.getInstance(ID, store.response)).resolves.toBe(instance);
+
+    expect(store.approvals.getInbox).toHaveBeenCalledTimes(1);
+    expect(store.approvals.getInstance).toHaveBeenCalledWith(ID);
+    expect(store.setHeader).toHaveBeenCalledWith('ETag', `"${VERSION}"`);
+    expect(store.audit.record).not.toHaveBeenCalled();
+  });
+
+  it('时间线使用严格 ULID 并记录最小 R0 读取审计', async () => {
+    const store = fixture();
+
+    await expect(store.controller.getTimeline(ID)).resolves.toBe(timeline);
+
+    expect(store.approvals.getTimeline).toHaveBeenCalledWith(ID);
+    expect(store.audit.record).toHaveBeenCalledWith({
+      action: 'approval.instance.timeline.read',
+      resourceType: 'approval_instance',
+      resourceId: ID,
+      riskLevel: 'R0',
+      outcome: 'success',
+      metadata: { count: 1 },
+    });
+  });
+
+  it('创建和撤销委托使用强版本、ETag 与状态审计', async () => {
+    const store = fixture();
+    const body = {
       delegateId: 'manager-002',
       validFrom: delegation.validFrom,
       validUntil: delegation.validUntil,
-    }, response);
-    await controller.revokeDelegation(INSTANCE_ID, '"1"', 'delegation-revoke-key', response);
-    expect(createDelegation).toHaveBeenCalledWith('delegation-create-key', expect.objectContaining({
-      delegateId: 'manager-002',
-    }));
-    expect(revokeDelegation).toHaveBeenCalledWith(INSTANCE_ID, 1, 'delegation-revoke-key');
-    expect(record).toHaveBeenCalledWith(expect.objectContaining({
-      action: 'approval.delegation.list', riskLevel: 'R0', metadata: { count: 1 },
-    }));
-    expect(record).toHaveBeenCalledWith(expect.objectContaining({
-      action: 'approval.delegation.create', riskLevel: 'R1',
-    }));
-    expect(Reflect.getMetadata(
-      REQUIRED_SCOPES_KEY,
-      Object.getOwnPropertyDescriptor(ApprovalController.prototype, 'createDelegation')?.value as object,
-    )).toEqual(['erp:approval:delegation:write']);
-  });
+    };
 
-  it('读取时间线使用严格 ULID、细粒度 Scope 和最小审计', async () => {
-    const timeline = [{ actionId: INSTANCE_ID, actionType: 'instance.submitted' }];
-    const getTimeline = vi.fn().mockResolvedValue(timeline);
-    const record = vi.fn().mockResolvedValue(undefined);
-    const controller = new ApprovalController(
-      { getTimeline } as unknown as ApprovalApplicationService,
-      { record } as unknown as AuditService,
-    );
-    await expect(controller.getTimeline(INSTANCE_ID)).resolves.toEqual(timeline);
-    expect(getTimeline).toHaveBeenCalledWith(INSTANCE_ID);
-    expect(record).toHaveBeenCalledWith({
-      action: 'approval.instance.timeline.read', resourceType: 'approval_instance',
-      resourceId: INSTANCE_ID, riskLevel: 'R0', outcome: 'success', metadata: { count: 1 },
-    });
-    await expect(controller.getTimeline('invalid')).rejects.toBeInstanceOf(BadRequestException);
-    const method = Object.getOwnPropertyDescriptor(ApprovalController.prototype, 'getTimeline')?.value as object;
-    expect(Reflect.getMetadata(REQUIRED_SCOPES_KEY, method)).toEqual(['erp:approval:instance:read']);
-  });
-
-  it('提交强制 If-Match/幂等键，响应 ETag 并写最小审计', async () => {
-    const submitInstance = vi.fn().mockResolvedValue({ instance: summary() });
-    const record = vi.fn().mockResolvedValue(undefined);
-    const controller = new ApprovalController(
-      { submitInstance } as unknown as ApprovalApplicationService,
-      { record } as unknown as AuditService,
-    );
-    const setHeader = vi.fn();
-    const result = await controller.submitInstance(
-      INSTANCE_ID, '"1"', 'submit-key-001', { setHeader } as unknown as Response,
-    );
-    expect(submitInstance).toHaveBeenCalledWith(INSTANCE_ID, 1, 'submit-key-001');
-    expect(setHeader).toHaveBeenCalledWith('ETag', '"2"');
-    expect(result).toEqual({ instance: summary() });
-    expect(record).toHaveBeenCalledWith({
-      action: 'approval.instance.submit',
-      resourceType: 'approval_instance',
-      resourceId: INSTANCE_ID,
-      riskLevel: 'R2',
-      outcome: 'success',
-      metadata: { version: 2 },
-    });
-  });
-
-  it('缺少强版本或幂等键时在调用应用服务前拒绝', async () => {
-    const submitInstance = vi.fn();
-    const controller = new ApprovalController(
-      { submitInstance } as unknown as ApprovalApplicationService,
-      { record: vi.fn() } as unknown as AuditService,
-    );
-    const response = { setHeader: vi.fn() } as unknown as Response;
-    await expect(controller.submitInstance(INSTANCE_ID, undefined, 'submit-key-001', response))
-      .rejects.toBeInstanceOf(BadRequestException);
-    await expect(controller.submitInstance(INSTANCE_ID, '"1"', undefined, response))
-      .rejects.toBeInstanceOf(BadRequestException);
-    expect(submitInstance).not.toHaveBeenCalled();
-  });
-
-  it('端点声明细粒度 OAuth scope', () => {
-    const decide = Object.getOwnPropertyDescriptor(
-      ApprovalController.prototype, 'decideInstance',
-    )?.value as object;
-    const read = Object.getOwnPropertyDescriptor(
-      ApprovalController.prototype, 'getInstance',
-    )?.value as object;
-    expect(Reflect.getMetadata(
-      REQUIRED_SCOPES_KEY,
-      decide,
-    )).toEqual(['erp:approval:task:decide']);
-    expect(Reflect.getMetadata(
-      REQUIRED_SCOPES_KEY,
-      read,
-    )).toEqual(['erp:approval:instance:read']);
-  });
-
-  it('普通决策端点只调用 R1 交互式应用服务边界', async () => {
-    const decideInteractiveInstance = vi.fn().mockResolvedValue({ instance: summary() });
-    const record = vi.fn().mockResolvedValue(undefined);
-    const controller = new ApprovalController(
-      { decideInteractiveInstance } as unknown as ApprovalApplicationService,
-      { record } as unknown as AuditService,
-    );
-    await controller.decideInstance(
-      INSTANCE_ID,
+    await expect(store.controller.createDelegation(
+      'delegation-create-001',
+      body,
+      store.response,
+    )).resolves.toEqual({ delegation });
+    await expect(store.controller.revokeDelegation(
+      ID,
       '"2"',
-      'decision-key-001',
+      'delegation-revoke-001',
+      store.response,
+    )).resolves.toMatchObject({ delegation: { status: 'revoked', version: 3 } });
+
+    expect(store.approvals.createDelegation).toHaveBeenCalledWith(
+      'delegation-create-001',
+      body,
+    );
+    expect(store.approvals.revokeDelegation).toHaveBeenCalledWith(
+      ID,
+      2,
+      'delegation-revoke-001',
+    );
+    expect(store.audit.record).toHaveBeenNthCalledWith(1, {
+      action: 'approval.delegation.create',
+      resourceType: 'approval_delegation',
+      resourceId: ID,
+      riskLevel: 'R1',
+      outcome: 'success',
+      metadata: { version: VERSION, status: 'active' },
+    });
+    expect(store.audit.record).toHaveBeenNthCalledWith(2, {
+      action: 'approval.delegation.revoke',
+      resourceType: 'approval_delegation',
+      resourceId: ID,
+      riskLevel: 'R1',
+      outcome: 'success',
+      metadata: { version: 3, status: 'revoked' },
+    });
+  });
+
+  it('模板创建、草稿更新和发布统一执行幂等、强版本与审计', async () => {
+    const store = fixture();
+    const createBody = { code: 'EXPENSE', name: '费用审批' };
+    const updateBody = { name: '费用审批修订', riskLevel: 'R2', definition: { fields: [], nodes: [] } };
+
+    await expect(store.controller.createTemplate(
+      'template-create-001',
+      createBody as never,
+      store.response,
+    )).resolves.toEqual({ template });
+    await expect(store.controller.updateTemplate(
+      ID,
+      '"2"',
+      'template-update-001',
+      updateBody as never,
+      store.response,
+    )).resolves.toMatchObject({ template: { status: 'draft', version: 3 } });
+    await expect(store.controller.publishTemplate(
+      ID,
+      '"2"',
+      'template-publish-001',
+      store.response,
+    )).resolves.toMatchObject({ template: { status: 'published', version: 3 } });
+
+    expect(store.approvals.createTemplate).toHaveBeenCalledWith(
+      'template-create-001',
+      createBody,
+    );
+    expect(store.approvals.updateTemplate).toHaveBeenCalledWith(
+      ID,
+      2,
+      'template-update-001',
+      updateBody,
+    );
+    expect(store.approvals.publishTemplate).toHaveBeenCalledWith(
+      ID,
+      2,
+      'template-publish-001',
+    );
+    expectCommittedAudit(store, 1, 'approval.template.create', 'approval_template', VERSION);
+    expectCommittedAudit(store, 2, 'approval.template.update', 'approval_template', 3);
+    expectCommittedAudit(store, 3, 'approval.template.publish', 'approval_template', 3);
+  });
+
+  it('创建审批实例写入 ETag 与实例风险审计', async () => {
+    const store = fixture();
+    const body = { templateId: ID, fields: {} };
+
+    await expect(store.controller.createInstance(
+      'instance-create-001',
+      body as never,
+      store.response,
+    )).resolves.toEqual({ instance });
+
+    expect(store.approvals.createInstance).toHaveBeenCalledWith(
+      'instance-create-001',
+      body,
+    );
+    expect(store.setHeader).toHaveBeenCalledWith('ETag', `"${VERSION}"`);
+    expectCommittedAudit(store, 1, 'approval.instance.create', 'approval_instance', VERSION);
+  });
+
+  it.each([
+    {
+      name: '更新草稿',
+      action: 'approval.instance.update',
+      service: 'updateInstance',
+      invoke: (store: ReturnType<typeof fixture>) => store.controller.updateInstance(
+        ID,
+        '"1"',
+        'instance-update-001',
+        { title: '费用申请修订', formData: { amount: 123_45 } },
+        store.response,
+      ),
+      args: [
+        ID,
+        1,
+        'instance-update-001',
+        { title: '费用申请修订', formData: { amount: 123_45 } },
+      ],
+    },
+    {
+      name: '提交',
+      action: 'approval.instance.submit',
+      service: 'submitInstance',
+      invoke: (store: ReturnType<typeof fixture>) => store.controller.submitInstance(
+        ID,
+        '"1"',
+        'instance-submit-001',
+        store.response,
+      ),
+      args: [ID, 1, 'instance-submit-001'],
+    },
+    {
+      name: '决策',
+      action: 'approval.instance.decide',
+      service: 'decideInteractiveInstance',
+      invoke: (store: ReturnType<typeof fixture>) => store.controller.decideInstance(
+        ID,
+        '"1"',
+        'instance-decide-001',
+        { principalApproverId: 'manager-001', outcome: 'approved' },
+        store.response,
+      ),
+      args: [ID, 1, 'manager-001', 'approved', 'instance-decide-001'],
+    },
+    {
+      name: '转交',
+      action: 'approval.instance.transfer',
+      service: 'transferTask',
+      invoke: (store: ReturnType<typeof fixture>) => store.controller.transferTask(
+        ID,
+        '"1"',
+        'instance-transfer-001',
+        { fromApproverId: 'manager-001', toApproverId: 'manager-002' },
+        store.response,
+      ),
+      args: [ID, 1, 'manager-001', 'manager-002', 'instance-transfer-001'],
+    },
+    {
+      name: '加签',
+      action: 'approval.instance.add_signer',
+      service: 'addSigner',
+      invoke: (store: ReturnType<typeof fixture>) => store.controller.addSigner(
+        ID,
+        '"1"',
+        'instance-add-signer-001',
+        { approverId: 'manager-002' },
+        store.response,
+      ),
+      args: [ID, 1, 'manager-002', 'instance-add-signer-001'],
+    },
+    {
+      name: '撤回',
+      action: 'approval.instance.withdraw',
+      service: 'withdrawInstance',
+      invoke: (store: ReturnType<typeof fixture>) => store.controller.withdrawInstance(
+        ID,
+        '"1"',
+        'instance-withdraw-001',
+        store.response,
+      ),
+      args: [ID, 1, 'instance-withdraw-001'],
+    },
+    {
+      name: '归档',
+      action: 'approval.instance.archive',
+      service: 'archiveInstance',
+      invoke: (store: ReturnType<typeof fixture>) => store.controller.archiveInstance(
+        ID,
+        '"1"',
+        'instance-archive-001',
+        store.response,
+      ),
+      args: [ID, 1, 'instance-archive-001'],
+    },
+  ] as const)('$name操作统一执行强版本、ETag 与风险审计', async ({
+    action,
+    service,
+    invoke,
+    args,
+  }) => {
+    const store = fixture();
+
+    await expect(invoke(store)).resolves.toEqual({ instance });
+
+    expect(store.approvals[service]).toHaveBeenCalledWith(...args);
+    expect(store.setHeader).toHaveBeenCalledWith('ETag', `"${VERSION}"`);
+    expectCommittedAudit(store, 1, action, 'approval_instance', VERSION);
+  });
+
+  it.each([
+    [undefined],
+    [''],
+  ] as const)('写接口拒绝缺失幂等键：%s', async (key) => {
+    const store = fixture();
+
+    await expect(store.controller.createInstance(
+      key,
+      { templateId: ID, fields: {} } as never,
+      store.response,
+    )).rejects.toMatchObject({ response: { code: 'IDEMPOTENCY_KEY_REQUIRED' } });
+
+    expect(store.approvals.createInstance).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [undefined],
+    [''],
+    ['1'],
+    ['W/"1"'],
+    ['"0"'],
+    ['"9007199254740992"'],
+  ] as const)('写接口拒绝非法 If-Match：%s', async (ifMatch) => {
+    const store = fixture();
+
+    await expect(store.controller.submitInstance(
+      ID,
+      ifMatch,
+      'instance-version-invalid',
+      store.response,
+    )).rejects.toMatchObject({ response: { code: 'APPROVAL_IF_MATCH_REQUIRED' } });
+
+    expect(store.approvals.submitInstance).not.toHaveBeenCalled();
+  });
+
+  it('资源读取和写入均拒绝非 ULID 标识', async () => {
+    const store = fixture();
+
+    await expect(store.controller.getInstance('instance-001', store.response))
+      .rejects.toMatchObject({ response: { code: 'APPROVAL_INVALID_ID' } });
+    await expect(store.controller.getTimeline('instance-001'))
+      .rejects.toMatchObject({ response: { code: 'APPROVAL_INVALID_ID' } });
+    await expect(store.controller.publishTemplate(
+      'template-001',
+      '"1"',
+      'template-id-invalid',
+      store.response,
+    )).rejects.toMatchObject({ response: { code: 'APPROVAL_INVALID_ID' } });
+
+    expect(store.approvals.getInstance).not.toHaveBeenCalled();
+    expect(store.approvals.getTimeline).not.toHaveBeenCalled();
+    expect(store.approvals.publishTemplate).not.toHaveBeenCalled();
+  });
+
+  it('业务提交后的审计故障只告警，不把成功终态暴露为失败', async () => {
+    const store = fixture();
+    store.audit.record.mockRejectedValue(new Error('audit unavailable'));
+    const logger = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    await expect(store.controller.decideInstance(
+      ID,
+      '"1"',
+      'instance-decide-audit-failed',
       { principalApproverId: 'manager-001', outcome: 'approved' },
-      { setHeader: vi.fn() } as unknown as Response,
-    );
-    expect(decideInteractiveInstance).toHaveBeenCalledWith(
-      INSTANCE_ID, 2, 'manager-001', 'approved', 'decision-key-001',
-    );
+      store.response,
+    )).resolves.toEqual({ instance });
+
+    expect(store.approvals.decideInteractiveInstance).toHaveBeenCalledTimes(1);
+    expect(logger).toHaveBeenCalledWith({
+      code: 'APPROVAL_AUDIT_AFTER_COMMIT_FAILED',
+      action: 'approval.instance.decide',
+      resourceType: 'approval_instance',
+      resourceId: ID,
+      riskLevel: 'R2',
+    });
+  });
+
+  it('委托提交后的审计故障同样不覆盖已成功业务终态', async () => {
+    const store = fixture();
+    store.audit.record.mockRejectedValue(new Error('audit unavailable'));
+    const logger = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    await expect(store.controller.createDelegation(
+      'delegation-audit-failed',
+      {
+        delegateId: 'manager-002',
+        validFrom: delegation.validFrom,
+        validUntil: delegation.validUntil,
+      },
+      store.response,
+    )).resolves.toEqual({ delegation });
+
+    expect(logger).toHaveBeenCalledWith({
+      code: 'APPROVAL_AUDIT_AFTER_COMMIT_FAILED',
+      action: 'approval.delegation.create',
+      resourceType: 'approval_delegation',
+      resourceId: ID,
+      riskLevel: 'R1',
+    });
+  });
+
+  it('R0 读取审计不可用时仍失败关闭', async () => {
+    const store = fixture();
+    const failure = new Error('audit unavailable');
+    store.audit.record.mockRejectedValue(failure);
+
+    await expect(store.controller.listPublishedTemplates()).rejects.toBe(failure);
+    expect(store.approvals.listPublishedTemplateForms).toHaveBeenCalledTimes(1);
+  });
+
+  it('审批业务失败时保留原始异常且不得伪造成功审计', async () => {
+    const store = fixture();
+    const failure = new Error('approval storage unavailable');
+    store.approvals.archiveInstance.mockRejectedValue(failure);
+
+    await expect(store.controller.archiveInstance(
+      ID,
+      '"1"',
+      'instance-archive-failed',
+      store.response,
+    )).rejects.toBe(failure);
+
+    expect(store.audit.record).not.toHaveBeenCalled();
+    expect(store.setHeader).not.toHaveBeenCalled();
   });
 });
+
+function expectCommittedAudit(
+  store: ReturnType<typeof fixture>,
+  order: number,
+  action: string,
+  resourceType: string,
+  version: number,
+): void {
+  expect(store.audit.record).toHaveBeenNthCalledWith(order, {
+    action,
+    resourceType,
+    resourceId: ID,
+    riskLevel: 'R2',
+    outcome: 'success',
+    metadata: { version },
+  });
+}
+
+function method(
+  name:
+  | 'listPublishedTemplates'
+  | 'listMyDelegations'
+  | 'createDelegation'
+  | 'revokeDelegation'
+  | 'createTemplate'
+  | 'updateTemplate'
+  | 'publishTemplate'
+  | 'createInstance'
+  | 'updateInstance'
+  | 'getInbox'
+  | 'getInstance'
+  | 'getTimeline'
+  | 'submitInstance'
+  | 'decideInstance'
+  | 'transferTask'
+  | 'addSigner'
+  | 'withdrawInstance'
+  | 'archiveInstance',
+): object {
+  return Object.getOwnPropertyDescriptor(ApprovalController.prototype, name)?.value as object;
+}

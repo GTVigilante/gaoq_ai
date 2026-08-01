@@ -1,11 +1,24 @@
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import type { ClientSession } from 'mongoose';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import type { IdentityLifecycleService } from '../../identity/identity-lifecycle.service.js';
-import type { Department, Employee, Employment } from '../domain/index.js';
+import type {
+  Department,
+  Employee,
+  Employment,
+  JobLevel,
+  Person,
+  Position,
+} from '../domain/index.js';
+import { OrgWriteConflictError } from '../persistence/org.repositories.js';
 import type {
   DepartmentRepository,
   EmployeeRepository,
@@ -76,6 +89,59 @@ function employment(): Employment {
     terminationExecutionEvidenceId: null, terminationEvidenceId: null,
     status: 'active', effectiveFrom: '2026-07-01', effectiveTo: null,
     version: 1, createdAt: NOW, updatedAt: NOW,
+  };
+}
+
+function position(id: string, status: Position['status'] = 'active', version = 1): Position {
+  return {
+    id,
+    tenantId: 'tenant-001',
+    code: id.toUpperCase(),
+    name: id,
+    status,
+    version,
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+}
+
+function jobLevel(id: string, version = 1): JobLevel {
+  return {
+    id,
+    tenantId: 'tenant-001',
+    code: id.toUpperCase(),
+    name: id,
+    track: 'professional',
+    rank: 5,
+    version,
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+}
+
+function person(id = 'person-001'): Person {
+  return {
+    id,
+    tenantId: 'tenant-001',
+    sourceCandidateId: 'candidate-001',
+    identityEvidenceId: 'identity-evidence-001',
+    birthdayEvidenceId: null,
+    birthdayAttestedAt: null,
+    status: 'active',
+    version: 1,
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+}
+
+function contextWith(...scopes: readonly string[]) {
+  return {
+    ...trustedContext,
+    actor: {
+      ...trustedContext.actor,
+      actorType: 'service' as const,
+      scopes: [...trustedContext.actor.scopes, ...scopes],
+    },
   };
 }
 
@@ -172,6 +238,12 @@ describe('OrgApplicationService', () => {
 
     expect(chart.departments.map((item) => item.id)).toEqual(['dept-a', 'dept-a-child']);
     expect(chart.employees.map((item) => item.id)).toEqual(['employee-a']);
+    expect(JSON.stringify(chart)).not.toContain('tenantId');
+    expect(JSON.stringify(chart)).not.toContain('createdAt');
+    expect(JSON.stringify(chart)).not.toContain('updatedAt');
+    expect(Object.isFrozen(chart)).toBe(true);
+    expect(Object.isFrozen(chart.departments)).toBe(true);
+    expect(Object.isFrozen(chart.employees[0]?.departmentIds)).toBe(true);
   });
 
   it('创建部门只使用可信租户，并在同一 session 写聚合与 Outbox', async () => {
@@ -554,5 +626,661 @@ describe('OrgApplicationService', () => {
       }),
     )).rejects.toBeInstanceOf(ConflictException);
     expect(store.employeeRepo.insert).not.toHaveBeenCalled();
+  });
+
+  it('全局组织图权限返回全部主数据，空部门范围不会泄露员工', async () => {
+    const all = assemble();
+    all.departmentRepo.findAll.mockResolvedValue([
+      department('dept-a', null),
+      department('dept-b', null),
+    ]);
+    all.employeeRepo.findAll.mockResolvedValue([
+      employee('employee-a', ['dept-a']),
+      employee('employee-b', ['dept-b']),
+    ]);
+    const allContext = contextWith('erp:org:chart:read_all');
+    const chart = await all.context.run(allContext, () => all.service.getOrgChart());
+    expect(chart.departments.map((item) => item.id)).toEqual(['dept-a', 'dept-b']);
+    expect(chart.employees.map((item) => item.id)).toEqual(['employee-a', 'employee-b']);
+
+    const empty = assemble();
+    empty.departmentRepo.findAll.mockResolvedValue([department('dept-a', null)]);
+    empty.employeeRepo.findAll.mockResolvedValue([employee('employee-a', ['dept-a'])]);
+    const emptyContext = {
+      ...trustedContext,
+      actor: { ...trustedContext.actor, departmentIds: [] },
+    };
+    await expect(empty.context.run(emptyContext, () => empty.service.getOrgChart())).resolves.toEqual({
+      departments: [],
+      employees: [],
+    });
+  });
+
+  it('Care 劳动关系只读接口强制专用权限并拒绝断裂引用', async () => {
+    const denied = assemble();
+    await expect(denied.context.run(trustedContext, () =>
+      denied.service.getEmploymentForCare('employment-001'),
+    )).rejects.toBeInstanceOf(ForbiddenException);
+    expect(denied.employmentRepo.findById).not.toHaveBeenCalled();
+
+    const missingEmployment = assemble();
+    await expect(missingEmployment.context.run(
+      contextWith('erp:care:employment:read'),
+      () => missingEmployment.service.getEmploymentForCare('employment-001'),
+    )).rejects.toBeInstanceOf(NotFoundException);
+
+    const missingEmployee = assemble();
+    missingEmployee.employmentRepo.findById.mockResolvedValue(employment());
+    await expect(missingEmployee.context.run(
+      contextWith('erp:care:employment:read'),
+      () => missingEmployee.service.getEmploymentForCare('employment-001'),
+    )).rejects.toMatchObject({ response: { code: 'ORG_NOT_FOUND' } });
+
+    const found = assemble();
+    found.employmentRepo.findById.mockResolvedValue(employment());
+    found.employeeRepo.findById.mockResolvedValue(employee('employee-001', ['dept-a']));
+    await expect(found.context.run(
+      contextWith('erp:care:employment:read'),
+      () => found.service.getEmploymentForCare('employment-001'),
+    )).resolves.toMatchObject({
+      employee: { id: 'employee-001' },
+      employment: { id: 'employment-001' },
+    });
+  });
+
+  it('岗位与职级创建更新复用可信租户、强版本和 Outbox 事务', async () => {
+    const store = assemble();
+    const createdPosition = await store.context.run(trustedContext, () =>
+      store.service.createPosition('key-position-create', { code: 'DEV', name: '开发' }),
+    );
+    expect(createdPosition.position).toMatchObject({ tenantId: 'tenant-001', version: 1 });
+    expect(store.positionRepo.insert).toHaveBeenCalledWith(createdPosition.position, session);
+
+    store.positionRepo.findById.mockResolvedValue(position('position-a'));
+    const updatedPosition = await store.context.run(trustedContext, () =>
+      store.service.updatePosition('position-a', 1, 'key-position-update', { status: 'inactive' }),
+    );
+    expect(updatedPosition.position).toMatchObject({ status: 'inactive', version: 2 });
+    expect(store.positionRepo.replace).toHaveBeenCalledWith(
+      updatedPosition.position,
+      1,
+      session,
+    );
+
+    const createdLevel = await store.context.run(trustedContext, () =>
+      store.service.createJobLevel('key-level-create', {
+        code: 'P5',
+        name: '专业五级',
+        track: 'professional',
+        rank: 5,
+      }),
+    );
+    expect(createdLevel.jobLevel).toMatchObject({ tenantId: 'tenant-001', version: 1 });
+    store.jobLevelRepo.findById.mockResolvedValue(jobLevel('level-a'));
+    const updatedLevel = await store.context.run(trustedContext, () =>
+      store.service.updateJobLevel('level-a', 1, 'key-level-update', {
+        track: 'management',
+        rank: 6,
+      }),
+    );
+    expect(updatedLevel.jobLevel).toMatchObject({
+      track: 'management',
+      rank: 6,
+      version: 2,
+    });
+    expect(store.outbox.append).toHaveBeenCalledTimes(4);
+  });
+
+  it('岗位与职级更新拒绝空补丁、缺失实体和版本漂移', async () => {
+    const empty = assemble();
+    await expect(empty.context.run(trustedContext, () =>
+      empty.service.updatePosition('position-a', 1, 'key-position-empty', {}),
+    )).rejects.toMatchObject({ response: { code: 'ORG_EMPTY_PATCH' } });
+    await expect(empty.context.run(trustedContext, () =>
+      empty.service.updateJobLevel('level-a', 1, 'key-level-empty', {}),
+    )).rejects.toMatchObject({ response: { code: 'ORG_EMPTY_PATCH' } });
+
+    const missing = assemble();
+    await expect(missing.context.run(trustedContext, () =>
+      missing.service.updatePosition('position-a', 1, 'key-position-missing', { name: '岗位' }),
+    )).rejects.toMatchObject({ response: { code: 'ORG_NOT_FOUND' } });
+    await expect(missing.context.run(trustedContext, () =>
+      missing.service.updateJobLevel('level-a', 1, 'key-level-missing', { name: '职级' }),
+    )).rejects.toMatchObject({ response: { code: 'ORG_NOT_FOUND' } });
+
+    const conflict = assemble();
+    conflict.positionRepo.findById.mockResolvedValue(position('position-a', 'active', 2));
+    conflict.jobLevelRepo.findById.mockResolvedValue(jobLevel('level-a', 2));
+    await expect(conflict.context.run(trustedContext, () =>
+      conflict.service.updatePosition('position-a', 1, 'key-position-conflict', { name: '岗位' }),
+    )).rejects.toMatchObject({ response: { code: 'ORG_VERSION_CONFLICT' } });
+    await expect(conflict.context.run(trustedContext, () =>
+      conflict.service.updateJobLevel('level-a', 1, 'key-level-conflict', { name: '职级' }),
+    )).rejects.toMatchObject({ response: { code: 'ORG_VERSION_CONFLICT' } });
+  });
+
+  it('员工创建更新校验启用部门、岗位与职级后原子发布事件', async () => {
+    const store = assemble();
+    store.departmentRepo.findByIds.mockResolvedValue([department('dept-a', null)]);
+    store.positionRepo.findByIds.mockResolvedValue([position('position-a')]);
+    store.jobLevelRepo.findById.mockResolvedValue(jobLevel('level-a'));
+    const created = await store.context.run(trustedContext, () =>
+      store.service.createEmployee('key-employee-create-valid', {
+        employeeNo: 'E001',
+        displayName: '员工',
+        departmentIds: ['dept-a'],
+        primaryDepartmentId: 'dept-a',
+        positionIds: ['position-a'],
+        jobLevelId: 'level-a',
+      }),
+    );
+    expect(store.employeeRepo.insert).toHaveBeenCalledWith(created.employee, session);
+
+    store.employeeRepo.findById.mockResolvedValue(created.employee);
+    const updated = await store.context.run(trustedContext, () =>
+      store.service.updateEmployee(
+        created.employee.id,
+        1,
+        'key-employee-update-valid',
+        { displayName: '员工新名' },
+      ),
+    );
+    expect(updated.employee).toMatchObject({ displayName: '员工新名', version: 2 });
+    expect(store.employeeRepo.replace).toHaveBeenCalledWith(updated.employee, 1, session);
+    expect(store.outbox.append).toHaveBeenCalledTimes(2);
+  });
+
+  it('员工引用校验逐类拒绝停用部门、缺失岗位和缺失职级', async () => {
+    const cases = [
+      {
+        prepare: (store: ReturnType<typeof assemble>) => {
+          store.departmentRepo.findByIds.mockResolvedValue([
+            { ...department('dept-a', null), status: 'inactive' },
+          ]);
+        },
+        expectedCode: 'ORG_INVALID_DEPARTMENT_REFERENCE',
+      },
+      {
+        prepare: (store: ReturnType<typeof assemble>) => {
+          store.departmentRepo.findByIds.mockResolvedValue([department('dept-a', null)]);
+          store.positionRepo.findByIds.mockResolvedValue([]);
+        },
+        expectedCode: 'ORG_INVALID_POSITION_REFERENCE',
+      },
+      {
+        prepare: (store: ReturnType<typeof assemble>) => {
+          store.departmentRepo.findByIds.mockResolvedValue([department('dept-a', null)]);
+          store.positionRepo.findByIds.mockResolvedValue([position('position-a')]);
+        },
+        expectedCode: 'ORG_INVALID_JOB_LEVEL_REFERENCE',
+      },
+    ];
+    for (const { prepare, expectedCode } of cases) {
+      const store = assemble();
+      prepare(store);
+      await expect(store.context.run(trustedContext, () =>
+        store.service.createEmployee(`key-${expectedCode}`, {
+          employeeNo: 'E001',
+          displayName: '员工',
+          departmentIds: ['dept-a'],
+          primaryDepartmentId: 'dept-a',
+          positionIds: ['position-a'],
+          jobLevelId: 'level-a',
+        }),
+      )).rejects.toMatchObject({ response: { code: expectedCode } });
+      expect(store.employeeRepo.insert).not.toHaveBeenCalled();
+    }
+  });
+
+  it('入职组织分配校验强制专用权限并逐类失败关闭', async () => {
+    const denied = assemble();
+    await expect(denied.context.run(trustedContext, () =>
+      denied.service.validateOnboardingAssignment({
+        departmentId: 'dept-a',
+        orgPositionId: 'position-a',
+        jobLevelId: null,
+      }),
+    )).rejects.toBeInstanceOf(ForbiddenException);
+
+    const scenarios = [
+      {
+        department: null,
+        position: position('position-a'),
+        level: jobLevel('level-a'),
+        code: 'ORG_INVALID_DEPARTMENT_REFERENCE',
+      },
+      {
+        department: { ...department('dept-a', null), status: 'inactive' as const },
+        position: position('position-a'),
+        level: jobLevel('level-a'),
+        code: 'ORG_INVALID_DEPARTMENT_REFERENCE',
+      },
+      {
+        department: department('dept-a', null),
+        position: null,
+        level: jobLevel('level-a'),
+        code: 'ORG_INVALID_POSITION_REFERENCE',
+      },
+      {
+        department: department('dept-a', null),
+        position: position('position-a', 'inactive'),
+        level: jobLevel('level-a'),
+        code: 'ORG_INVALID_POSITION_REFERENCE',
+      },
+      {
+        department: department('dept-a', null),
+        position: position('position-a'),
+        level: null,
+        code: 'ORG_INVALID_JOB_LEVEL_REFERENCE',
+      },
+    ];
+    for (const scenario of scenarios) {
+      const store = assemble();
+      store.departmentRepo.findById.mockResolvedValue(scenario.department);
+      store.positionRepo.findById.mockResolvedValue(scenario.position);
+      store.jobLevelRepo.findById.mockResolvedValue(scenario.level);
+      await expect(store.context.run(
+        contextWith('erp:onboarding:org:validate'),
+        () => store.service.validateOnboardingAssignment({
+          departmentId: 'dept-a',
+          orgPositionId: 'position-a',
+          jobLevelId: 'level-a',
+        }),
+      )).rejects.toMatchObject({ response: { code: scenario.code } });
+    }
+
+    const valid = assemble();
+    valid.departmentRepo.findById.mockResolvedValue(department('dept-a', null));
+    valid.positionRepo.findById.mockResolvedValue(position('position-a'));
+    await expect(valid.context.run(
+      contextWith('erp:onboarding:org:validate'),
+      () => valid.service.validateOnboardingAssignment({
+        departmentId: 'dept-a',
+        orgPositionId: 'position-a',
+        jobLevelId: null,
+      }),
+    )).resolves.toEqual({ verified: true });
+    expect(valid.jobLevelRepo.findById).not.toHaveBeenCalled();
+  });
+
+  it('入职实例已有一致事实时幂等收敛，任何证据漂移均冲突', async () => {
+    const baseEmployment = employment();
+    const basePerson = person();
+    const matching = assemble();
+    matching.employmentRepo.findByOnboardingInstanceId.mockResolvedValue(baseEmployment);
+    matching.personRepo.findBySourceCandidateId.mockResolvedValue(basePerson);
+    matching.employeeRepo.findById.mockResolvedValue(employee('employee-001', ['dept-a']));
+    const input = {
+      onboardingInstanceId: 'onboarding-001',
+      onboardingCompletionEvidenceId: 'onboarding-evidence-001',
+      candidateId: 'candidate-001',
+      offerId: 'offer-001',
+      signedEvidenceId: 'signed-001',
+      identityEvidenceId: 'identity-evidence-001',
+      displayName: '员工',
+      primaryDepartmentId: 'dept-a',
+      orgPositionId: 'position-a',
+      jobLevelId: null,
+      effectiveFrom: '2026-07-01',
+    };
+    await expect(matching.context.run(
+      contextWith('erp:onboarding:employment:establish'),
+      () => matching.service.establishEmploymentFromOnboarding('key-onboarding-existing', input),
+    )).resolves.toMatchObject({
+      employment: { id: 'employment-001' },
+      employeeId: 'employee-001',
+      personId: 'person-001',
+    });
+    expect(matching.employeeNumberRepo.next).not.toHaveBeenCalled();
+
+    for (const existing of [
+      { ...baseEmployment, offerId: 'offer-other' },
+      { ...baseEmployment, signedEvidenceId: 'signed-other' },
+      { ...baseEmployment, onboardingCompletionEvidenceId: 'evidence-other' },
+      { ...baseEmployment, effectiveFrom: '2026-07-02' },
+    ]) {
+      const conflict = assemble();
+      conflict.employmentRepo.findByOnboardingInstanceId.mockResolvedValue(existing);
+      await expect(conflict.context.run(
+        contextWith('erp:onboarding:employment:establish'),
+        () => conflict.service.establishEmploymentFromOnboarding('key-onboarding-conflict', input),
+      )).rejects.toMatchObject({ response: { code: 'ORG_ONBOARDING_EMPLOYMENT_MISMATCH' } });
+    }
+
+    for (const existingPerson of [
+      null,
+      { ...basePerson, id: 'person-other' },
+      { ...basePerson, identityEvidenceId: 'identity-other' },
+    ]) {
+      const conflict = assemble();
+      conflict.employmentRepo.findByOnboardingInstanceId.mockResolvedValue(baseEmployment);
+      conflict.personRepo.findBySourceCandidateId.mockResolvedValue(existingPerson);
+      await expect(conflict.context.run(
+        contextWith('erp:onboarding:employment:establish'),
+        () => conflict.service.establishEmploymentFromOnboarding('key-onboarding-person', input),
+      )).rejects.toMatchObject({ response: { code: 'ORG_ONBOARDING_PERSON_MISMATCH' } });
+    }
+  });
+
+  it('入职工号序列耗尽时失败关闭且不写三层主数据', async () => {
+    const store = assemble();
+    store.personRepo.findBySourceCandidateId.mockResolvedValue(person());
+    store.employeeNumberRepo.next.mockResolvedValue(1_000_000);
+    await expect(store.context.run(
+      contextWith('erp:onboarding:employment:establish'),
+      () => store.service.establishEmploymentFromOnboarding('key-onboarding-exhausted', {
+        onboardingInstanceId: 'onboarding-002',
+        onboardingCompletionEvidenceId: 'onboarding-evidence-002',
+        candidateId: 'candidate-001',
+        offerId: 'offer-002',
+        signedEvidenceId: 'signed-002',
+        identityEvidenceId: 'identity-evidence-001',
+        displayName: '员工',
+        primaryDepartmentId: 'dept-a',
+        orgPositionId: 'position-a',
+        jobLevelId: null,
+        effectiveFrom: '2026-08-01',
+      }),
+    )).rejects.toMatchObject({ response: { code: 'ORG_EMPLOYEE_NUMBER_EXHAUSTED' } });
+    expect(store.personRepo.insert).not.toHaveBeenCalled();
+    expect(store.employeeRepo.insert).not.toHaveBeenCalled();
+    expect(store.employmentRepo.insert).not.toHaveBeenCalled();
+  });
+
+  it('入职工作流复用同一身份事实时不重复创建 Person', async () => {
+    const store = assemble();
+    store.personRepo.findBySourceCandidateId.mockResolvedValue(person());
+    store.departmentRepo.findByIds.mockResolvedValue([department('dept-a', null)]);
+    store.positionRepo.findByIds.mockResolvedValue([position('position-a')]);
+    const result = await store.context.run(
+      contextWith('erp:onboarding:employment:establish'),
+      () => store.service.establishEmploymentFromOnboarding('key-onboarding-reuse-person', {
+        onboardingInstanceId: 'onboarding-002',
+        onboardingCompletionEvidenceId: 'onboarding-evidence-002',
+        candidateId: 'candidate-001',
+        offerId: 'offer-002',
+        signedEvidenceId: 'signed-002',
+        identityEvidenceId: 'identity-evidence-001',
+        displayName: '员工',
+        primaryDepartmentId: 'dept-a',
+        orgPositionId: 'position-a',
+        jobLevelId: null,
+        effectiveFrom: '2026-08-01',
+      }),
+    );
+    expect(result.personId).toBe('person-001');
+    expect(store.personRepo.insert).not.toHaveBeenCalled();
+    expect(store.employeeRepo.insert).toHaveBeenCalledOnce();
+    expect(store.employmentRepo.insert).toHaveBeenCalledOnce();
+    expect(store.outbox.append).toHaveBeenCalledTimes(2);
+  });
+
+  it('迁移既有劳动关系只在所有不可变事实一致时幂等收敛', async () => {
+    const input = {
+      employeeId: 'employee-001',
+      sourcePersonId: 'candidate-001',
+      identityEvidenceId: 'identity-evidence-001',
+      onboardingInstanceId: 'onboarding-001',
+      onboardingCompletionEvidenceId: 'onboarding-evidence-001',
+      offerId: 'offer-001',
+      signedEvidenceId: 'signed-001',
+      status: 'active' as const,
+      effectiveFrom: '2026-07-01',
+      effectiveTo: null,
+      terminationCareCaseId: null,
+      terminationExecutionEvidenceId: null,
+      terminationEvidenceId: null,
+    };
+    const baseEmployment = employment();
+    const basePerson = person();
+    const exact = assemble();
+    exact.employeeRepo.findById.mockResolvedValue(employee('employee-001', ['dept-a']));
+    exact.employmentRepo.findByOnboardingInstanceId.mockResolvedValue(baseEmployment);
+    exact.personRepo.findBySourceCandidateId.mockResolvedValue(basePerson);
+    await expect(exact.context.run(
+      contextWith('erp:migration:execute'),
+      () => exact.service.importEmploymentFromMigration('key-migration-existing', input),
+    )).resolves.toEqual({ employment: baseEmployment, personId: 'person-001' });
+    expect(exact.employmentRepo.insert).not.toHaveBeenCalled();
+
+    const factMutations: readonly Employment[] = [
+      { ...baseEmployment, personId: 'person-other' },
+      { ...baseEmployment, employeeId: 'employee-other' },
+      { ...baseEmployment, onboardingInstanceId: 'onboarding-other' },
+      { ...baseEmployment, onboardingCompletionEvidenceId: 'evidence-other' },
+      { ...baseEmployment, offerId: 'offer-other' },
+      { ...baseEmployment, signedEvidenceId: 'signed-other' },
+      { ...baseEmployment, status: 'suspended' },
+      { ...baseEmployment, effectiveFrom: '2026-07-02' },
+      { ...baseEmployment, effectiveTo: '2026-07-31' },
+      { ...baseEmployment, terminationCareCaseId: 'care-other' },
+      { ...baseEmployment, terminationExecutionEvidenceId: 'execution-other' },
+      { ...baseEmployment, terminationEvidenceId: 'termination-other' },
+    ];
+    for (const existing of factMutations) {
+      const conflict = assemble();
+      conflict.employeeRepo.findById.mockResolvedValue(employee('employee-001', ['dept-a']));
+      conflict.employmentRepo.findByOnboardingInstanceId.mockResolvedValue(existing);
+      conflict.personRepo.findBySourceCandidateId.mockResolvedValue(basePerson);
+      await expect(conflict.context.run(
+        contextWith('erp:migration:execute'),
+        () => conflict.service.importEmploymentFromMigration('key-migration-conflict', input),
+      )).rejects.toMatchObject({ response: { code: 'ORG_MIGRATION_EMPLOYMENT_IMMUTABLE' } });
+    }
+  });
+
+  it('迁移新劳动关系复用同一 Person，拒绝身份核验证据漂移', async () => {
+    const input = {
+      employeeId: 'employee-001',
+      sourcePersonId: 'candidate-001',
+      identityEvidenceId: 'identity-evidence-001',
+      onboardingInstanceId: 'onboarding-002',
+      onboardingCompletionEvidenceId: 'onboarding-evidence-002',
+      offerId: 'offer-002',
+      signedEvidenceId: 'signed-002',
+      status: 'active' as const,
+      effectiveFrom: '2026-07-01',
+      effectiveTo: null,
+      terminationCareCaseId: null,
+      terminationExecutionEvidenceId: null,
+      terminationEvidenceId: null,
+    };
+    const reused = assemble();
+    reused.employeeRepo.findById.mockResolvedValue(employee('employee-001', ['dept-a']));
+    reused.personRepo.findBySourceCandidateId.mockResolvedValue(person());
+    await expect(reused.context.run(
+      contextWith('erp:migration:execute'),
+      () => reused.service.importEmploymentFromMigration('key-migration-reuse-person', input),
+    )).resolves.toMatchObject({ personId: 'person-001' });
+    expect(reused.personRepo.insert).not.toHaveBeenCalled();
+    expect(reused.employmentRepo.insert).toHaveBeenCalledOnce();
+    expect(reused.outbox.append).toHaveBeenCalledOnce();
+
+    const conflict = assemble();
+    conflict.employeeRepo.findById.mockResolvedValue(employee('employee-001', ['dept-a']));
+    conflict.personRepo.findBySourceCandidateId.mockResolvedValue({
+      ...person(),
+      identityEvidenceId: 'identity-evidence-other',
+    });
+    await expect(conflict.context.run(
+      contextWith('erp:migration:execute'),
+      () => conflict.service.importEmploymentFromMigration('key-migration-person-conflict', input),
+    )).rejects.toMatchObject({ response: { code: 'ORG_PERSON_IDENTITY_EVIDENCE_MISMATCH' } });
+    expect(conflict.employmentRepo.insert).not.toHaveBeenCalled();
+  });
+
+  it('Care 已关闭事实只允许完全一致幂等返回，其他组合失败关闭', async () => {
+    const terminatedEmployee = {
+      ...employee('employee-001', ['dept-a']),
+      status: 'terminated' as const,
+    };
+    const resignedEmployment = {
+      ...employment(),
+      status: 'resigned' as const,
+      effectiveTo: '2026-07-31',
+      terminationCareCaseId: 'care-001',
+      terminationExecutionEvidenceId: 'execution-001',
+      terminationEvidenceId: 'termination-001',
+    };
+    const input = {
+      careCaseId: 'care-001',
+      employeeId: 'employee-001',
+      employmentId: 'employment-001',
+      effectiveTo: '2026-07-31',
+      executionEvidenceId: 'execution-001',
+    };
+    const exact = assemble();
+    exact.employeeRepo.findById.mockResolvedValue(terminatedEmployee);
+    exact.employmentRepo.findById.mockResolvedValue(resignedEmployment);
+    await expect(exact.context.run(
+      contextWith('erp:care:employment:terminate'),
+      () => exact.service.terminateEmploymentFromCare('key-care-existing', input),
+    )).resolves.toMatchObject({ terminationEvidenceId: 'termination-001' });
+    expect(exact.terminateEmployee).not.toHaveBeenCalled();
+
+    const mismatches = [
+      { employee: employee('employee-001', ['dept-a']), employment: resignedEmployment },
+      {
+        employee: terminatedEmployee,
+        employment: { ...resignedEmployment, terminationCareCaseId: 'care-other' },
+      },
+      {
+        employee: terminatedEmployee,
+        employment: { ...resignedEmployment, terminationExecutionEvidenceId: 'execution-other' },
+      },
+      {
+        employee: terminatedEmployee,
+        employment: { ...resignedEmployment, effectiveTo: '2026-07-30' },
+      },
+      {
+        employee: terminatedEmployee,
+        employment: { ...resignedEmployment, terminationEvidenceId: null },
+      },
+    ];
+    for (const mismatch of mismatches) {
+      const conflict = assemble();
+      conflict.employeeRepo.findById.mockResolvedValue(mismatch.employee);
+      conflict.employmentRepo.findById.mockResolvedValue(mismatch.employment);
+      await expect(conflict.context.run(
+        contextWith('erp:care:employment:terminate'),
+        () => conflict.service.terminateEmploymentFromCare('key-care-mismatch', input),
+      )).rejects.toMatchObject({ response: { code: 'ORG_CARE_TERMINATION_MISMATCH' } });
+    }
+  });
+
+  it('Care 关闭拒绝缺失劳动关系、错绑员工和遗留不一致终态', async () => {
+    const missing = assemble();
+    missing.employeeRepo.findById.mockResolvedValue(employee('employee-001', ['dept-a']));
+    await expect(missing.context.run(
+      contextWith('erp:care:employment:terminate'),
+      () => missing.service.terminateEmploymentFromCare('key-care-missing', {
+        careCaseId: 'care-001',
+        employeeId: 'employee-001',
+        employmentId: 'employment-001',
+        effectiveTo: '2026-07-31',
+        executionEvidenceId: 'execution-001',
+      }),
+    )).rejects.toMatchObject({ response: { code: 'ORG_EMPLOYMENT_NOT_FOUND' } });
+
+    const wrongEmployee = assemble();
+    wrongEmployee.employeeRepo.findById.mockResolvedValue(employee('employee-001', ['dept-a']));
+    wrongEmployee.employmentRepo.findById.mockResolvedValue({
+      ...employment(),
+      employeeId: 'employee-other',
+    });
+    await expect(wrongEmployee.context.run(
+      contextWith('erp:care:employment:terminate'),
+      () => wrongEmployee.service.terminateEmploymentFromCare('key-care-wrong-employee', {
+        careCaseId: 'care-001',
+        employeeId: 'employee-001',
+        employmentId: 'employment-001',
+        effectiveTo: '2026-07-31',
+        executionEvidenceId: 'execution-001',
+      }),
+    )).rejects.toMatchObject({ response: { code: 'ORG_CARE_EMPLOYMENT_MISMATCH' } });
+
+    const legacy = assemble();
+    legacy.employeeRepo.findById.mockResolvedValue({
+      ...employee('employee-001', ['dept-a']),
+      status: 'terminated',
+    });
+    legacy.employmentRepo.findById.mockResolvedValue(employment());
+    await expect(legacy.context.run(
+      contextWith('erp:care:employment:terminate'),
+      () => legacy.service.terminateEmploymentFromCare('key-care-legacy', {
+        careCaseId: 'care-001',
+        employeeId: 'employee-001',
+        employmentId: 'employment-001',
+        effectiveTo: '2026-07-31',
+        executionEvidenceId: 'execution-001',
+      }),
+    )).rejects.toMatchObject({ response: { code: 'ORG_LEGACY_TERMINATION_INCONSISTENT' } });
+  });
+
+  it('部门负责人必须存在且未离职，合法负责人可在同一事务绑定', async () => {
+    for (const manager of [
+      null,
+      { ...employee('manager-001', ['dept-a']), status: 'terminated' as const },
+    ]) {
+      const invalid = assemble();
+      invalid.employeeRepo.findById.mockResolvedValue(manager);
+      await expect(invalid.context.run(trustedContext, () =>
+        invalid.service.createDepartment('key-department-manager-invalid', {
+          code: 'FIN',
+          name: '财务部',
+          managerId: 'manager-001',
+        }),
+      )).rejects.toMatchObject({ response: { code: 'ORG_INVALID_MANAGER' } });
+      expect(invalid.departmentRepo.insert).not.toHaveBeenCalled();
+    }
+
+    const valid = assemble();
+    valid.employeeRepo.findById.mockResolvedValue(employee('manager-001', ['dept-a']));
+    await expect(valid.context.run(trustedContext, () =>
+      valid.service.createDepartment('key-department-manager-valid', {
+        code: 'FIN',
+        name: '财务部',
+        managerId: 'manager-001',
+      }),
+    )).resolves.toMatchObject({
+      department: { managerId: 'manager-001' },
+    });
+  });
+
+  it('领域校验错误映射为稳定组织错误码且不写仓储', async () => {
+    const store = assemble();
+    await expect(store.context.run(trustedContext, () =>
+      store.service.createJobLevel('key-level-invalid-rank', {
+        code: 'P31',
+        name: '非法职级',
+        track: 'professional',
+        rank: 31,
+      }),
+    )).rejects.toMatchObject({ response: { code: 'ORG_INVALID_RANK' } });
+    expect(store.jobLevelRepo.insert).not.toHaveBeenCalled();
+  });
+
+  it('仓储乐观锁冲突映射稳定版本错误，未知异常保持原样', async () => {
+    const writeConflict = assemble();
+    writeConflict.departmentRepo.insert.mockRejectedValue(
+      new OrgWriteConflictError(),
+    );
+    await expect(writeConflict.context.run(trustedContext, () =>
+      writeConflict.service.createDepartment('key-write-conflict', {
+        code: 'FIN',
+        name: '财务部',
+      }),
+    )).rejects.toMatchObject({ response: { code: 'ORG_VERSION_CONFLICT' } });
+
+    for (const error of [new Error('MONGO_UNAVAILABLE'), null, { code: 42 }]) {
+      const failed = assemble();
+      failed.departmentRepo.insert.mockRejectedValue(error);
+      await expect(failed.context.run(trustedContext, () =>
+        failed.service.createDepartment('key-raw-error', {
+          code: 'FIN',
+          name: '财务部',
+        }),
+      )).rejects.toBe(error);
+    }
   });
 });

@@ -1,4 +1,37 @@
+import { createPublicKey } from 'node:crypto';
+import { isIP } from 'node:net';
+
 import { z } from 'zod';
+
+import { parseVerifyOnlySigningJwks } from './auth-signing-key-ring.js';
+import { parseCareAlumniCleanupTargets } from './care-alumni-cleanup-targets.js';
+
+const isLoopbackHostname = (hostname: string): boolean => {
+  const normalized = hostname.toLowerCase().replace(/\.$/u, '')
+    .replace(/^\[(.*)\]$/u, '$1');
+  return normalized === 'localhost' ||
+    normalized.endsWith('.localhost') ||
+    (isIP(normalized) === 4 && normalized.startsWith('127.')) ||
+    (isIP(normalized) === 6 && normalized === '::1');
+};
+
+const careOccasionPoliciesEnvironmentSchema = z.array(z.object({
+  tenantId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
+  version: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/),
+  timeZone: z.string().min(1).max(64),
+  dispatchLocalTime: z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/),
+  quietHoursStart: z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/),
+  quietHoursEnd: z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/),
+  leapDayPolicy: z.enum(['feb28', 'mar01']),
+  rehireAnniversaryBasis: z.enum(['current_employment', 'original_employment']),
+  birthdayTemplateCode: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/),
+  anniversaryTemplateCode: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/),
+  maxAttempts: z.number().int().min(1).max(12),
+}).strict()).max(10_000).superRefine((policies, context) => {
+  if (new Set(policies.map((policy) => policy.tenantId)).size !== policies.length) {
+    context.addIssue({ code: 'custom', message: '关怀策略租户重复' });
+  }
+});
 
 const environmentSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -6,7 +39,7 @@ const environmentSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65_535).default(3001),
   WORKER_METRICS_PORT: z.coerce.number().int().min(1).max(65_535).default(9464),
   MONGODB_URI: z.string().url().startsWith('mongodb://'),
-  REDIS_URL: z.string().url().startsWith('redis://'),
+  REDIS_URL: z.string().url().regex(/^rediss?:\/\//),
   WEB_ORIGIN: z.string().url(),
   MARKETING_WEBSITE_ORIGIN: z.preprocess(
     (value) => value === '' ? undefined : value,
@@ -68,6 +101,8 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(8).max(128).regex(/^[A-Za-z0-9._-]+$/).optional(),
   ),
+  /** 访问令牌轮换窗口内仅用于验签的历史 RSA 公钥；禁止私钥材料。 */
+  AUTH_SIGNING_VERIFY_ONLY_JWKS_JSON: z.string().max(32_768).default('[]'),
   /** 审计 HMAC 密钥环，仅由 Secret Manager 注入，仓库内必须保持为空。 */
   AUDIT_INTEGRITY_KEYS: z.preprocess(
     (value) => value === '' ? undefined : value,
@@ -88,6 +123,35 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(64).max(16_384).optional(),
   ),
+  /** Person 生日月日 HMAC 盲索引密钥环；不得复用招聘、考勤或资金密钥。 */
+  ORG_PERSON_BIRTHDAY_BLIND_INDEX_KEYS: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(64).max(16_384).optional(),
+  ),
+  /** 员工关怀通知网关只接收受控模板与主体标识，并返回签名送达证据。 */
+  CARE_OCCASION_NOTIFICATION_ENDPOINT: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().url().optional(),
+  ),
+  CARE_OCCASION_NOTIFICATION_BEARER_TOKEN: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/).optional(),
+  ),
+  CARE_OCCASION_NOTIFICATION_SIGNING_KEY_ID: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/).optional(),
+  ),
+  CARE_OCCASION_NOTIFICATION_SIGNING_PUBLIC_KEY_BASE64: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(40).max(512).optional(),
+  ),
+  /** 关怀策略由部署控制面按租户注入，浏览器不得提交时区、发送时间或模板。 */
+  CARE_OCCASION_POLICIES_JSON: z.string().default('[]'),
+  /**
+   * 校友授权终止后的下游清理登记表包含独立凭据和签名公钥，
+   * 必须作为整体由 Secret Manager 注入，禁止进入 ConfigMap。
+   */
+  CARE_ALUMNI_CLEANUP_TARGETS_JSON: z.string().default('[]'),
   /** 简历对象只经隔离网关读取；网关完成归属校验、恶意文件扫描、提取与 PII 去除。 */
   RECRUITMENT_RESUME_SOURCE_ENDPOINT: z.preprocess(
     (value) => value === '' ? undefined : value,
@@ -106,6 +170,40 @@ const environmentSchema = z.object({
   OPENAI_RESUME_MODEL: z.preprocess(
     (value) => value === '' ? undefined : value,
     z.string().min(2).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]+$/).optional(),
+  ),
+  /** 知识内容校验与评分使用独立 HTTPS 证据网关，不向 ERP 返回答卷或标准答案。 */
+  KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().url().optional(),
+  ),
+  KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/).optional(),
+  ),
+  KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_PUBLIC_KEY_BASE64: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(56).max(2_048).regex(/^[A-Za-z0-9+/]+={0,2}$/).optional(),
+  ),
+  KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_KEY_ID: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]+$/).optional(),
+  ),
+  /** 知识检索使用独立网关与签名信任域，禁止复用评分服务身份。 */
+  KNOWLEDGE_SEARCH_GATEWAY_ENDPOINT: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().url().optional(),
+  ),
+  KNOWLEDGE_SEARCH_GATEWAY_BEARER_TOKEN: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/).optional(),
+  ),
+  KNOWLEDGE_SEARCH_GATEWAY_SIGNING_PUBLIC_KEY_BASE64: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(56).max(2_048).regex(/^[A-Za-z0-9+/]+={0,2}$/).optional(),
+  ),
+  KNOWLEDGE_SEARCH_GATEWAY_SIGNING_KEY_ID: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(3).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]+$/).optional(),
   ),
   /** 考勤 L4 明细密钥环，与招聘、审批和盲索引密钥域隔离。 */
   ATTENDANCE_DATA_ENCRYPTION_KEYS: z.preprocess(
@@ -149,6 +247,20 @@ const environmentSchema = z.object({
   PAYROLL_TAX_GATEWAY_BEARER_TOKEN: z.preprocess(
     (value) => value === '' ? undefined : value,
     z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/).optional(),
+  ),
+  /** 税务网关年度评估回执 Ed25519 信任根；不得由业务请求覆盖。 */
+  PAYROLL_TAX_GATEWAY_SIGNING_KEY_ID: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(8).max(128).regex(/^[A-Za-z0-9._-]+$/).optional(),
+  ),
+  PAYROLL_TAX_GATEWAY_SIGNING_PUBLIC_KEY_BASE64: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(40).max(512).regex(/^[A-Za-z0-9+/]+={0,2}$/).optional(),
+  ),
+  /** 员工年度汇算只能跳转到该官方 HTTPS origin 的短时链接。 */
+  PAYROLL_TAX_OFFICIAL_PORTAL_ORIGIN: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().url().optional(),
   ),
   /** production 仅在 Phase 6 独立授权域逐对象签发短时授权后可用。 */
   PAYROLL_TAX_GATEWAY_MODE: z.enum(['sandbox', 'production']).default('sandbox'),
@@ -312,6 +424,52 @@ const environmentSchema = z.object({
   const issuer = new URL(environment.AUTH_ISSUER);
   const authorizationServer = new URL(environment.MCP_AUTHORIZATION_SERVER);
   const resource = new URL(environment.AUTH_RESOURCE);
+  if (
+    environment.NODE_ENV === 'production' &&
+    environment.MARKETING_WEBSITE_ORIGIN === undefined
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['MARKETING_WEBSITE_ORIGIN'],
+      message: '生产环境必须配置营销官网精确 HTTPS Origin',
+    });
+  }
+  if (environment.MARKETING_WEBSITE_ORIGIN !== undefined) {
+    const websiteOrigin = new URL(environment.MARKETING_WEBSITE_ORIGIN);
+    const productionInvalid = environment.NODE_ENV === 'production' && (
+      websiteOrigin.protocol !== 'https:' ||
+      (websiteOrigin.port !== '' && websiteOrigin.port !== '443') ||
+      isLoopbackHostname(websiteOrigin.hostname)
+    );
+    if (
+      websiteOrigin.pathname !== '/' ||
+      websiteOrigin.search !== '' ||
+      websiteOrigin.hash !== '' ||
+      websiteOrigin.username !== '' ||
+      websiteOrigin.password !== '' ||
+      productionInvalid ||
+      websiteOrigin.origin === new URL(environment.WEB_ORIGIN).origin
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['MARKETING_WEBSITE_ORIGIN'],
+        message: '营销官网必须为独立精确 Origin；生产仅允许标准 HTTPS 且禁止本地地址',
+      });
+    }
+  }
+  if (
+    environment.NODE_ENV === 'production' &&
+    (
+      environment.MARKETING_CAPTCHA_VERIFY_ENDPOINT === undefined ||
+      environment.MARKETING_CAPTCHA_BEARER_TOKEN === undefined
+    )
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['MARKETING_CAPTCHA_VERIFY_ENDPOINT'],
+      message: '生产环境营销官网必须配置验证码校验端点与独立凭据',
+    });
+  }
   if (environment.NODE_ENV === 'production' && environment.PAYROLL_SYSTEM_MODE !== 'external') {
     context.addIssue({
       code: 'custom',
@@ -403,6 +561,214 @@ const environmentSchema = z.object({
     path: ['RECRUITMENT_RESUME_AI_PROVIDER'],
     message: '简历 AI 关闭时禁止悬空注入模型或 API Key',
   });
+  const careOccasionNotificationInfrastructure = [
+    environment.CARE_OCCASION_NOTIFICATION_ENDPOINT,
+    environment.CARE_OCCASION_NOTIFICATION_BEARER_TOKEN,
+    environment.CARE_OCCASION_NOTIFICATION_SIGNING_PUBLIC_KEY_BASE64,
+    environment.CARE_OCCASION_NOTIFICATION_SIGNING_KEY_ID,
+  ];
+  if (
+    careOccasionNotificationInfrastructure.some((value) => value !== undefined) &&
+    careOccasionNotificationInfrastructure.some((value) => value === undefined)
+  ) context.addIssue({
+    code: 'custom',
+    path: ['CARE_OCCASION_NOTIFICATION_ENDPOINT'],
+    message: '关怀通知网关端点、凭据、公钥与 Key ID 必须成套配置',
+  });
+  if (environment.CARE_OCCASION_NOTIFICATION_ENDPOINT !== undefined) {
+    const endpoint = new URL(environment.CARE_OCCASION_NOTIFICATION_ENDPOINT);
+    const hostname = endpoint.hostname.toLowerCase().replace(/\.$/u, '')
+      .replace(/^\[(.*)\]$/u, '$1');
+    if (
+      endpoint.protocol !== 'https:' || endpoint.username !== '' || endpoint.password !== '' ||
+      endpoint.pathname !== '/' || endpoint.search !== '' || endpoint.hash !== '' ||
+      (endpoint.port !== '' && endpoint.port !== '443') ||
+      isLoopbackHostname(hostname) || isIP(hostname) !== 0 ||
+      endpoint.origin === issuer.origin
+    ) context.addIssue({
+      code: 'custom',
+      path: ['CARE_OCCASION_NOTIFICATION_ENDPOINT'],
+      message: '关怀通知网关必须为独立标准 HTTPS 域名根地址，禁止 IP、本地地址、凭据、路径、query、fragment 和非标准端口',
+    });
+  }
+  if (
+    environment.CARE_OCCASION_NOTIFICATION_SIGNING_PUBLIC_KEY_BASE64 !== undefined
+  ) {
+    try {
+      const publicKey = createPublicKey({
+        key: Buffer.from(
+          environment.CARE_OCCASION_NOTIFICATION_SIGNING_PUBLIC_KEY_BASE64,
+          'base64',
+        ),
+        format: 'der',
+        type: 'spki',
+      });
+      if (publicKey.asymmetricKeyType !== 'ed25519') throw new Error('KEY_TYPE_INVALID');
+    } catch {
+      context.addIssue({
+        code: 'custom',
+        path: ['CARE_OCCASION_NOTIFICATION_SIGNING_PUBLIC_KEY_BASE64'],
+        message: '关怀通知网关签名公钥必须为有效 Ed25519 SPKI DER base64',
+      });
+    }
+  }
+  if (
+    environment.CARE_OCCASION_NOTIFICATION_BEARER_TOKEN !== undefined &&
+    [
+      environment.DINGTALK_CLIENT_SECRET,
+      environment.FEISHU_CLIENT_SECRET,
+      environment.KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN,
+      environment.KNOWLEDGE_SEARCH_GATEWAY_BEARER_TOKEN,
+    ].includes(environment.CARE_OCCASION_NOTIFICATION_BEARER_TOKEN)
+  ) context.addIssue({
+    code: 'custom',
+    path: ['CARE_OCCASION_NOTIFICATION_BEARER_TOKEN'],
+    message: '关怀通知网关不得复用平台或其他业务凭据',
+  });
+  const knowledgeEvidenceInfrastructure = [
+    environment.KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT,
+    environment.KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN,
+    environment.KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_PUBLIC_KEY_BASE64,
+    environment.KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_KEY_ID,
+  ];
+  if (
+    knowledgeEvidenceInfrastructure.some((value) => value !== undefined) &&
+    knowledgeEvidenceInfrastructure.some((value) => value === undefined)
+  ) context.addIssue({
+    code: 'custom',
+    path: ['KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT'],
+    message: '知识证据网关端点与凭据必须成套配置',
+  });
+  if (environment.KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT !== undefined) {
+    const endpoint = new URL(environment.KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT);
+    if (
+      endpoint.protocol !== 'https:' || endpoint.username !== '' || endpoint.password !== '' ||
+      endpoint.pathname !== '/' || endpoint.search !== '' || endpoint.hash !== '' ||
+      (endpoint.port !== '' && endpoint.port !== '443') ||
+      isLoopbackHostname(endpoint.hostname) || endpoint.origin === issuer.origin
+    ) context.addIssue({
+      code: 'custom',
+      path: ['KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT'],
+      message: '知识证据网关必须为独立标准 HTTPS 根地址，禁止本地地址、凭据、路径、query、fragment 和非标准端口',
+    });
+  }
+  if (environment.KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_PUBLIC_KEY_BASE64 !== undefined) {
+    try {
+      const publicKey = createPublicKey({
+        key: Buffer.from(
+          environment.KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_PUBLIC_KEY_BASE64,
+          'base64',
+        ),
+        format: 'der',
+        type: 'spki',
+      });
+      if (publicKey.asymmetricKeyType !== 'ed25519') throw new Error('KEY_TYPE_INVALID');
+    } catch {
+      context.addIssue({
+        code: 'custom',
+        path: ['KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_PUBLIC_KEY_BASE64'],
+        message: '知识证据网关签名公钥必须为有效 Ed25519 SPKI DER base64',
+      });
+    }
+  }
+  if (
+    environment.KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN !== undefined &&
+    [
+      environment.RECRUITMENT_RESUME_SOURCE_BEARER_TOKEN,
+      environment.DATA_MIGRATION_ATTACHMENT_GATEWAY_BEARER_TOKEN,
+      environment.ESIGN_MALWARE_SCAN_BEARER_TOKEN,
+      environment.ESIGN_WORM_ARCHIVE_BEARER_TOKEN,
+      environment.MARKETING_MEDIA_GATEWAY_BEARER_TOKEN,
+      environment.MARKETING_AI_GATEWAY_BEARER_TOKEN,
+      environment.MARKETING_CAPTCHA_BEARER_TOKEN,
+      environment.MARKETING_NOTIFICATION_GATEWAY_BEARER_TOKEN,
+      environment.PAYROLL_TAX_WORM_ARCHIVE_BEARER_TOKEN,
+      environment.PAYROLL_TAX_GATEWAY_BEARER_TOKEN,
+      environment.TREASURY_WORM_ARCHIVE_BEARER_TOKEN,
+      environment.TREASURY_BANK_SUBMISSION_BEARER_TOKEN,
+      environment.TREASURY_BANK_RETURN_INBOX_BEARER_TOKEN,
+      environment.PHASE6_PRODUCTION_AUTHORIZATION_BEARER_TOKEN,
+      environment.METRICS_BEARER_TOKEN,
+      environment.AUDIT_WORM_BEARER_TOKEN,
+      environment.OPENAI_RESUME_API_KEY,
+      environment.OP_SSO_CLIENT_SECRET,
+      environment.DINGTALK_CLIENT_SECRET,
+      environment.FEISHU_CLIENT_SECRET,
+      environment.KNOWLEDGE_SEARCH_GATEWAY_BEARER_TOKEN,
+    ].includes(environment.KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN)
+  ) context.addIssue({
+    code: 'custom',
+    path: ['KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN'],
+    message: '知识证据网关不得复用其他业务、平台或外部系统凭据',
+  });
+  const knowledgeSearchInfrastructure = [
+    environment.KNOWLEDGE_SEARCH_GATEWAY_ENDPOINT,
+    environment.KNOWLEDGE_SEARCH_GATEWAY_BEARER_TOKEN,
+    environment.KNOWLEDGE_SEARCH_GATEWAY_SIGNING_PUBLIC_KEY_BASE64,
+    environment.KNOWLEDGE_SEARCH_GATEWAY_SIGNING_KEY_ID,
+  ];
+  if (
+    knowledgeSearchInfrastructure.some((value) => value !== undefined) &&
+    knowledgeSearchInfrastructure.some((value) => value === undefined)
+  ) context.addIssue({
+    code: 'custom',
+    path: ['KNOWLEDGE_SEARCH_GATEWAY_ENDPOINT'],
+    message: '知识搜索网关端点、凭据、公钥与 Key ID 必须成套配置',
+  });
+  if (environment.KNOWLEDGE_SEARCH_GATEWAY_ENDPOINT !== undefined) {
+    const endpoint = new URL(environment.KNOWLEDGE_SEARCH_GATEWAY_ENDPOINT);
+    const evidenceEndpoint = environment.KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT === undefined
+      ? null
+      : new URL(environment.KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT);
+    if (
+      endpoint.protocol !== 'https:' || endpoint.username !== '' || endpoint.password !== '' ||
+      endpoint.pathname !== '/' || endpoint.search !== '' || endpoint.hash !== '' ||
+      (endpoint.port !== '' && endpoint.port !== '443') ||
+      isLoopbackHostname(endpoint.hostname) || endpoint.origin === issuer.origin ||
+      endpoint.origin === evidenceEndpoint?.origin
+    ) context.addIssue({
+      code: 'custom',
+      path: ['KNOWLEDGE_SEARCH_GATEWAY_ENDPOINT'],
+      message: '知识搜索网关必须为独立标准 HTTPS 根地址，禁止与认证或评分网关共用 Origin',
+    });
+  }
+  if (environment.KNOWLEDGE_SEARCH_GATEWAY_SIGNING_PUBLIC_KEY_BASE64 !== undefined) {
+    try {
+      const publicKey = createPublicKey({
+        key: Buffer.from(
+          environment.KNOWLEDGE_SEARCH_GATEWAY_SIGNING_PUBLIC_KEY_BASE64,
+          'base64',
+        ),
+        format: 'der',
+        type: 'spki',
+      });
+      if (publicKey.asymmetricKeyType !== 'ed25519') throw new Error('KEY_TYPE_INVALID');
+    } catch {
+      context.addIssue({
+        code: 'custom',
+        path: ['KNOWLEDGE_SEARCH_GATEWAY_SIGNING_PUBLIC_KEY_BASE64'],
+        message: '知识搜索网关签名公钥必须为有效 Ed25519 SPKI DER base64',
+      });
+    }
+  }
+  if (
+    environment.KNOWLEDGE_SEARCH_GATEWAY_BEARER_TOKEN !== undefined &&
+    environment.KNOWLEDGE_SEARCH_GATEWAY_BEARER_TOKEN ===
+      environment.KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN
+  ) context.addIssue({
+    code: 'custom',
+    path: ['KNOWLEDGE_SEARCH_GATEWAY_BEARER_TOKEN'],
+    message: '知识搜索网关不得复用评分证据服务身份',
+  });
+  if (
+    environment.KNOWLEDGE_SEARCH_GATEWAY_SIGNING_PUBLIC_KEY_BASE64 !== undefined &&
+    environment.KNOWLEDGE_SEARCH_GATEWAY_SIGNING_PUBLIC_KEY_BASE64 ===
+      environment.KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_PUBLIC_KEY_BASE64
+  ) context.addIssue({
+    code: 'custom',
+    path: ['KNOWLEDGE_SEARCH_GATEWAY_SIGNING_PUBLIC_KEY_BASE64'],
+    message: '知识搜索与评分证据网关必须使用独立签名信任域',
+  });
   if (environment.DATA_MIGRATION_ATTACHMENT_GATEWAY_BEARER_TOKEN !== undefined && [
     environment.TREASURY_WORM_ARCHIVE_BEARER_TOKEN,
     environment.TREASURY_BANK_SUBMISSION_BEARER_TOKEN,
@@ -431,6 +797,18 @@ const environmentSchema = z.object({
       code: 'custom',
       path: ['AUTH_JWKS_URI'],
       message: '内建授权服务器的 AUTH_JWKS_URI 必须指向 issuer 的 /.well-known/jwks.json',
+    });
+  }
+  try {
+    parseVerifyOnlySigningJwks(
+      environment.AUTH_SIGNING_VERIFY_ONLY_JWKS_JSON,
+      environment.AUTH_SIGNING_KEY_ID,
+    );
+  } catch (error) {
+    context.addIssue({
+      code: 'custom',
+      path: ['AUTH_SIGNING_VERIFY_ONLY_JWKS_JSON'],
+      message: error instanceof Error ? error.message : '历史签名公钥配置非法',
     });
   }
   if (resource.hash !== '' || resource.username !== '' || resource.password !== '') {
@@ -592,6 +970,9 @@ const environmentSchema = z.object({
     environment.PAYROLL_TAX_WORM_ARCHIVE_BEARER_TOKEN,
     environment.PAYROLL_TAX_GATEWAY_ENDPOINT,
     environment.PAYROLL_TAX_GATEWAY_BEARER_TOKEN,
+    environment.PAYROLL_TAX_GATEWAY_SIGNING_KEY_ID,
+    environment.PAYROLL_TAX_GATEWAY_SIGNING_PUBLIC_KEY_BASE64,
+    environment.PAYROLL_TAX_OFFICIAL_PORTAL_ORIGIN,
   ];
   if (
     payrollTaxInfrastructure.some((value) => value !== undefined) &&
@@ -610,6 +991,7 @@ const environmentSchema = z.object({
   const payrollTaxOrigins = [
     environment.PAYROLL_TAX_WORM_ARCHIVE_ENDPOINT,
     environment.PAYROLL_TAX_GATEWAY_ENDPOINT,
+    environment.PAYROLL_TAX_OFFICIAL_PORTAL_ORIGIN,
   ].filter((value): value is string => value !== undefined).map((value) => new URL(value));
   const forbiddenTaxOrigins = new Set([
     issuer.origin,
@@ -629,6 +1011,36 @@ const environmentSchema = z.object({
       message: 'Payroll Tax 外部服务必须使用相互隔离的标准 HTTPS 权限域',
     });
     forbiddenTaxOrigins.add(endpoint.origin);
+  }
+  if (environment.PAYROLL_TAX_OFFICIAL_PORTAL_ORIGIN !== undefined) {
+    const portal = new URL(environment.PAYROLL_TAX_OFFICIAL_PORTAL_ORIGIN);
+    if (portal.pathname !== '/') context.addIssue({
+      code: 'custom', path: ['PAYROLL_TAX_OFFICIAL_PORTAL_ORIGIN'],
+      message: '个税官方办理地址必须为独立标准 HTTPS origin，不得配置路径',
+    });
+  }
+  if (environment.PAYROLL_TAX_GATEWAY_SIGNING_PUBLIC_KEY_BASE64 !== undefined) {
+    try {
+      const bytes = Buffer.from(
+        environment.PAYROLL_TAX_GATEWAY_SIGNING_PUBLIC_KEY_BASE64,
+        'base64',
+      );
+      const publicKey = createPublicKey({ key: bytes, format: 'der', type: 'spki' });
+      const exported = publicKey.export({ format: 'der', type: 'spki' });
+      if (
+        publicKey.asymmetricKeyType !== 'ed25519' ||
+        !Buffer.isBuffer(exported) ||
+        !exported.equals(bytes) ||
+        bytes.toString('base64') !==
+          environment.PAYROLL_TAX_GATEWAY_SIGNING_PUBLIC_KEY_BASE64
+      ) throw new Error('KEY_INVALID');
+    } catch {
+      context.addIssue({
+        code: 'custom',
+        path: ['PAYROLL_TAX_GATEWAY_SIGNING_PUBLIC_KEY_BASE64'],
+        message: 'Payroll Tax 税务网关签名公钥必须为有效 Ed25519 SPKI DER base64',
+      });
+    }
   }
   const treasuryTokens = [
     environment.TREASURY_WORM_ARCHIVE_BEARER_TOKEN,
@@ -1012,12 +1424,13 @@ const environmentSchema = z.object({
       const endpoint = new URL(environment.AUDIT_WORM_ENDPOINT);
       if (
         endpoint.username !== '' || endpoint.password !== '' || endpoint.search !== '' ||
-        endpoint.hash !== '' || endpoint.origin === issuer.origin
+        endpoint.hash !== '' || endpoint.origin === issuer.origin ||
+        (endpoint.port !== '' && endpoint.port !== '443')
       ) {
         context.addIssue({
           code: 'custom',
           path: ['AUDIT_WORM_ENDPOINT'],
-          message: 'WORM 锚定端点禁止凭据、查询、fragment，且必须与 ERP 授权域隔离',
+          message: 'WORM 锚定端点禁止凭据、查询、fragment、非 443 端口，且必须与 ERP 授权域隔离',
         });
       }
     }
@@ -1055,6 +1468,61 @@ export const validateEnvironment = (input: Record<string, unknown>): AppEnvironm
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : '格式非法';
     throw new Error(`环境变量校验失败：AUTH_ADDITIONAL_RESOURCES_JSON ${message}`, { cause: error });
+  }
+
+  try {
+    const policies = JSON.parse(result.data.CARE_OCCASION_POLICIES_JSON) as unknown;
+    const parsed = careOccasionPoliciesEnvironmentSchema.safeParse(policies);
+    if (!parsed.success) throw new Error(z.prettifyError(parsed.error));
+    for (const policy of parsed.data) {
+      new Intl.DateTimeFormat('en-CA', { timeZone: policy.timeZone }).format(new Date());
+      const toMinutes = (value: string): number => {
+        const [hour, minute] = value.split(':').map(Number);
+        return (hour ?? 0) * 60 + (minute ?? 0);
+      };
+      const dispatch = toMinutes(policy.dispatchLocalTime);
+      const quietStart = toMinutes(policy.quietHoursStart);
+      const quietEnd = toMinutes(policy.quietHoursEnd);
+      const inQuietHours = quietStart === quietEnd ||
+        (quietStart < quietEnd
+          ? dispatch >= quietStart && dispatch < quietEnd
+          : dispatch >= quietStart || dispatch < quietEnd);
+      if (inQuietHours) throw new Error(`租户 ${policy.tenantId} 的发送时间落入静默时段`);
+    }
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : '格式非法';
+    throw new Error(`环境变量校验失败：CARE_OCCASION_POLICIES_JSON ${message}`, {
+      cause: error,
+    });
+  }
+
+  try {
+    const targets = parseCareAlumniCleanupTargets(
+      result.data.CARE_ALUMNI_CLEANUP_TARGETS_JSON,
+      [
+        new URL(result.data.AUTH_ISSUER).origin,
+        new URL(result.data.AUTH_RESOURCE).origin,
+        ...(result.data.CARE_OCCASION_NOTIFICATION_ENDPOINT === undefined
+          ? []
+          : [new URL(result.data.CARE_OCCASION_NOTIFICATION_ENDPOINT).origin]),
+      ],
+    );
+    const forbiddenTokens = new Set([
+      result.data.DINGTALK_CLIENT_SECRET,
+      result.data.FEISHU_CLIENT_SECRET,
+      result.data.CARE_OCCASION_NOTIFICATION_BEARER_TOKEN,
+      result.data.KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN,
+      result.data.KNOWLEDGE_SEARCH_GATEWAY_BEARER_TOKEN,
+      result.data.RECRUITMENT_RESUME_SOURCE_BEARER_TOKEN,
+    ].filter((value): value is string => value !== undefined));
+    if (targets.some((target) => forbiddenTokens.has(target.bearerToken))) {
+      throw new Error('下游清理凭据禁止复用平台或其他业务凭据');
+    }
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : '格式非法';
+    throw new Error(`环境变量校验失败：CARE_ALUMNI_CLEANUP_TARGETS_JSON ${message}`, {
+      cause: error,
+    });
   }
 
   return result.data;

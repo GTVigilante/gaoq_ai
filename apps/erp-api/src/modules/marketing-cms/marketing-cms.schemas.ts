@@ -144,7 +144,13 @@ MarketingLeadRecordSchema.pre('validate', function validateProtectedContact() {
 });
 
 export type MarketingSideEffectKind = 'lead_notification' | 'scheduled_publish';
-export type MarketingSideEffectStatus = 'pending' | 'dispatching' | 'dispatched' | 'dead';
+export type MarketingSideEffectStatus =
+  | 'pending'
+  | 'dispatching'
+  | 'dispatched'
+  | 'delivered'
+  | 'cancelled'
+  | 'dead';
 
 /** 营销副作用 Outbox；只保存路由引用，禁止复制联系人和内容正文。 */
 @Schema({
@@ -175,7 +181,7 @@ export class MarketingSideEffectRecord {
   dueAt!: Date;
   @Prop({
     type: String,
-    enum: ['pending', 'dispatching', 'dispatched', 'dead'],
+    enum: ['pending', 'dispatching', 'dispatched', 'delivered', 'cancelled', 'dead'],
     required: true,
     default: 'pending',
   })
@@ -190,6 +196,10 @@ export class MarketingSideEffectRecord {
   lockedBy!: string | null;
   @Prop({ type: Date, default: null })
   dispatchedAt!: Date | null;
+  @Prop({ type: Number, required: true, default: 0, min: 0 })
+  deliveryAttempts!: number;
+  @Prop({ type: Date, default: null })
+  completedAt!: Date | null;
   @Prop({ type: String, default: null, maxlength: 128 })
   lastErrorCode!: string | null;
   createdAt!: Date;
@@ -204,6 +214,7 @@ MarketingSideEffectRecordSchema.index(
   { unique: true },
 );
 MarketingSideEffectRecordSchema.index({ status: 1, nextAttemptAt: 1, createdAt: 1 });
+MarketingSideEffectRecordSchema.index({ kind: 1, status: 1, dueAt: 1 });
 MarketingSideEffectRecordSchema.pre('validate', function validateRouting() {
   if (
     (this.kind === 'lead_notification' && this.channel === null) ||

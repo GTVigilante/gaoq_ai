@@ -60,6 +60,14 @@ describe('数据迁移账本 Schema', () => {
     expect(DataMigrationMappingRecordSchema.path('entityType').options.enum).toEqual(
       DATA_MIGRATION_ENTITY_TYPES,
     );
+    const itemVersionPattern = DataMigrationItemRecordSchema.path('sourceVersion')
+      .options.match as RegExp;
+    const mappingVersionPattern = DataMigrationMappingRecordSchema.path('sourceVersion')
+      .options.match as RegExp;
+    expect(itemVersionPattern.test('v1.2026-07-28')).toBe(true);
+    expect(mappingVersionPattern.test('v1.2026-07-28')).toBe(true);
+    expect(itemVersionPattern.test('contains space')).toBe(false);
+    expect(mappingVersionPattern.test('line\nbreak')).toBe(false);
     expect(DataMigrationAssociationRecordSchema.path('relationship').options.enum)
       .toContain('employee');
     expect(DataMigrationAssociationRecordSchema.path('relationship').options.enum)

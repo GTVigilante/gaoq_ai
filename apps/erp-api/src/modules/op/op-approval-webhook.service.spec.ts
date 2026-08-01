@@ -147,4 +147,202 @@ describe('OpApprovalWebhookService', () => {
     await expect(conflict.service.accept(signedHeaders(raw), raw))
       .rejects.toMatchObject({ response: { code: 'OP_APPROVAL_EVENT_CONFLICT' } });
   });
+
+  it.each([
+    ['clientId 缺失', { clientId: undefined }],
+    ['clientId 非法', { clientId: 'bad' }],
+    ['时间戳缺失', { timestamp: undefined }],
+    ['时间戳格式非法', { timestamp: '123' }],
+    ['时间戳超窗', { timestamp: String(NOW.getTime() + 300_001) }],
+    ['nonce 缺失', { nonce: undefined }],
+    ['nonce 非法', { nonce: 'short' }],
+    ['eventId 缺失', { eventId: undefined }],
+    ['eventId 非法', { eventId: 'short' }],
+    ['签名缺失', { signature: undefined }],
+    ['签名格式非法', { signature: 'g'.repeat(64) }],
+    ['算法缺失', { algorithm: undefined }],
+    ['算法非法', { algorithm: 'sha256' }],
+  ])('认证头失败关闭：%s', async (_name, override) => {
+    const store = fixture();
+    const raw = rawBody();
+    await expect(store.service.accept({ ...signedHeaders(raw), ...override }, raw))
+      .rejects.toMatchObject({ response: { code: 'OP_APPROVAL_VERIFICATION_FAILED' } });
+    expect(store.bindings.findOne).not.toHaveBeenCalled();
+  });
+
+  it('接受大小写等价算法并拒绝缺失、过短或超大正文', async () => {
+    const raw = rawBody();
+    await expect(fixture().service.accept(
+      { ...signedHeaders(raw), algorithm: 'HMAC-SHA256' },
+      raw,
+    )).resolves.toMatchObject({ duplicate: false });
+
+    for (const missing of [undefined, Buffer.alloc(0), Buffer.from('x')]) {
+      const store = fixture();
+      await expect(store.service.accept(signedHeaders(raw), missing))
+        .rejects.toMatchObject({ response: { code: 'OP_APPROVAL_RAW_BODY_REQUIRED' } });
+      expect(store.bindings.findOne).not.toHaveBeenCalled();
+    }
+
+    const oversized = Buffer.alloc(1024 * 1024 + 1, 0x61);
+    const store = fixture();
+    await expect(store.service.accept(signedHeaders(oversized), oversized))
+      .rejects.toMatchObject({
+        status: 413,
+        response: { code: 'OP_APPROVAL_BODY_TOO_LARGE' },
+      });
+    expect(store.bindings.findOne).not.toHaveBeenCalled();
+  });
+
+  it('未知或停用 clientId 不解析租户也不写租户审计', async () => {
+    const store = fixture();
+    const raw = rawBody();
+    store.bindings.findOne.mockReturnValueOnce(query(null));
+
+    await expect(store.service.accept(signedHeaders(raw), raw))
+      .rejects.toMatchObject({ response: { code: 'OP_APPROVAL_VERIFICATION_FAILED' } });
+    expect(store.audit.recordTrustedExternalService).not.toHaveBeenCalled();
+  });
+
+  it('签名失败审计异常不覆盖统一认证错误', async () => {
+    const store = fixture();
+    const raw = rawBody();
+    store.audit.recordTrustedExternalService.mockRejectedValueOnce(new Error('audit unavailable'));
+
+    await expect(store.service.accept(signedHeaders(raw, '0'.repeat(64)), raw))
+      .rejects.toMatchObject({ response: { code: 'OP_APPROVAL_VERIFICATION_FAILED' } });
+    expect(store.inbox.create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['非法 JSON', Buffer.from('{{')],
+    ['未知字段', rawBody({ unknown: true })],
+  ])('拒绝不符合严格审批契约的正文：%s', async (_name, raw) => {
+    const store = fixture();
+    await expect(store.service.accept(signedHeaders(raw), raw))
+      .rejects.toMatchObject({ response: { code: 'OP_APPROVAL_BODY_INVALID' } });
+    expect(store.audit.recordTrustedExternalService).toHaveBeenCalledWith(
+      'tenant-001',
+      expect.objectContaining({ outcome: 'failure' }),
+    );
+  });
+
+  it.each([
+    NOW.getTime() + 300_001,
+    NOW.getTime() - 31 * 24 * 60 * 60 * 1_000 - 1,
+  ])('拒绝供应商事件时间越出窗口：%s', async (occurredAt) => {
+    const store = fixture();
+    const raw = rawBody({ occurredAt: new Date(occurredAt).toISOString() });
+    await expect(store.service.accept(signedHeaders(raw), raw))
+      .rejects.toMatchObject({ response: { code: 'OP_APPROVAL_VERIFICATION_FAILED' } });
+    expect(store.audit.recordTrustedExternalService).toHaveBeenCalledWith(
+      'tenant-001',
+      expect.objectContaining({ traceId: EVENT_ID, outcome: 'failure' }),
+    );
+  });
+
+  it('未配置路由时审计故障不覆盖稳定业务错误', async () => {
+    const store = fixture(null, false);
+    const raw = rawBody();
+    store.audit.recordTrustedExternalService.mockRejectedValueOnce(new Error('audit unavailable'));
+
+    await expect(store.service.accept(signedHeaders(raw), raw))
+      .rejects.toMatchObject({ response: { code: 'OP_APPROVAL_ROUTE_NOT_FOUND' } });
+  });
+
+  it.each([
+    ['Redis 返回非 OK', null],
+    ['Redis 连接失败', new Error('redis unavailable')],
+  ])('审批防重放设施失败关闭：%s', async (_name, result) => {
+    const store = fixture();
+    const raw = rawBody();
+    if (result instanceof Error) store.redis.set.mockRejectedValueOnce(result);
+    else store.redis.set.mockResolvedValueOnce(result);
+
+    await expect(store.service.accept(signedHeaders(raw), raw)).rejects.toMatchObject({
+      response: {
+        code: result instanceof Error
+          ? 'OP_APPROVAL_REPLAY_STORE_UNAVAILABLE'
+          : 'OP_APPROVAL_REPLAY_DETECTED',
+      },
+    });
+    expect(store.audit.recordTrustedExternalService).toHaveBeenCalledWith(
+      'tenant-001',
+      expect.objectContaining({ outcome: 'failure' }),
+    );
+  });
+
+  it('数据库非唯一错误保持原始失败且不排队', async () => {
+    const store = fixture();
+    const raw = rawBody();
+    const failure = new Error('database unavailable');
+    store.inbox.create.mockRejectedValueOnce(failure);
+
+    await expect(store.service.accept(signedHeaders(raw), raw)).rejects.toBe(failure);
+    expect(store.queue.add).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['竞态记录缺失', null],
+    ['竞态记录异载荷', {
+      id: '01K00000000000000000000002',
+      tenantId: 'tenant-001',
+      payloadHash: 'x'.repeat(43),
+    }],
+  ])('审批唯一键竞态失败关闭：%s', async (_name, raced) => {
+    const store = fixture();
+    const raw = rawBody();
+    store.inbox.findOne
+      .mockReturnValueOnce(query(null))
+      .mockReturnValueOnce(query(raced));
+    store.inbox.create.mockRejectedValueOnce({ code: 11_000 });
+
+    await expect(store.service.accept(signedHeaders(raw), raw))
+      .rejects.toMatchObject({ response: { code: 'OP_APPROVAL_REPLAY_DETECTED' } });
+    expect(store.queue.add).not.toHaveBeenCalled();
+  });
+
+  it('审批唯一键竞态同载荷恢复首次 Inbox 并确保排队', async () => {
+    const raw = rawBody();
+    const payloadHash = (await import('./op-approval.contract.js')).hashOpApprovalPayload(raw);
+    const raced = {
+      id: '01K00000000000000000000002',
+      tenantId: 'tenant-001',
+      payloadHash,
+    };
+    const store = fixture();
+    store.inbox.findOne
+      .mockReturnValueOnce(query(null))
+      .mockReturnValueOnce(query(raced));
+    store.inbox.create.mockRejectedValueOnce({ code: 11_000 });
+
+    await expect(store.service.accept(signedHeaders(raw), raw)).resolves.toEqual({
+      inboxId: raced.id,
+      duplicate: true,
+    });
+    expect(store.queue.add).toHaveBeenCalledWith(
+      'op.process-approval-request',
+      { inboxId: raced.id, tenantId: raced.tenantId },
+      expect.objectContaining({ jobId: `op_approval_${payloadHash}` }),
+    );
+  });
+
+  it.each([
+    ['首次接收', null],
+    ['幂等重试', 'existing'],
+  ])('审批接收成功后的审计故障不反向暴露失败：%s', async (_name, mode) => {
+    const raw = rawBody();
+    const payloadHash = (await import('./op-approval.contract.js')).hashOpApprovalPayload(raw);
+    const existing = mode === 'existing' ? {
+      id: '01K00000000000000000000001',
+      tenantId: 'tenant-001',
+      payloadHash,
+    } : null;
+    const store = fixture(existing);
+    store.audit.recordTrustedExternalService.mockRejectedValueOnce(new Error('audit unavailable'));
+
+    await expect(store.service.accept(signedHeaders(raw), raw))
+      .resolves.toMatchObject({ duplicate: mode === 'existing' });
+    expect(store.queue.add).toHaveBeenCalledOnce();
+  });
 });

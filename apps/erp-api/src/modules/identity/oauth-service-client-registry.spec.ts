@@ -29,6 +29,27 @@ const validClient = () => ({
   },
 });
 
+const jwtClient = () => ({
+  ...validClient(),
+  clientId: 'service-client-jwt',
+  allowedScopes: ['erp:mcp:server:connect'],
+  roleCodes: [],
+  departmentIds: [],
+  authentication: {
+    method: 'private_key_jwt',
+    credentials: [{
+      credentialId: 'credential-jwt-001',
+      notBefore: '2025-01-01T00:00:00+00:00',
+      expiresAt: '2030-01-01T00:00:00+00:00',
+      status: 'active',
+      publicJwk: {
+        kty: 'EC', kid: 'credential-jwk-001', alg: 'ES256', use: 'sig',
+        key_ops: ['verify'], crv: 'P-256', x: 'x'.repeat(43), y: 'y'.repeat(43),
+      },
+    }],
+  },
+});
+
 const createRegistry = (value: unknown): OAuthServiceClientRegistry =>
   new OAuthServiceClientRegistry({
     get: (key: keyof AppEnvironment) => {
@@ -88,6 +109,48 @@ describe('OAuthServiceClientRegistry', () => {
     const disabled = validClient();
     disabled.status = 'disabled';
     expect(createRegistry([disabled]).resolveActive('service-client-001')).toBeUndefined();
+    expect(registry.isActiveTokenIdentity({
+      clientId: 'service-client-001', tenantId: 'tenant-001', actorId: 'wrong-actor',
+      credentialId: 'credential-001', scopes: ['erp:org:chart:read'],
+      roleCodes: ['service-reader'], departmentIds: ['department-001'],
+    })).toBe(false);
+    expect(registry.isActiveTokenIdentity({
+      clientId: 'service-client-001', tenantId: 'tenant-001', actorId: 'mcp-agent-001',
+      credentialId: 'credential-001',
+      scopes: ['erp:org:chart:read', 'erp:org:chart:read'],
+      roleCodes: ['service-reader'], departmentIds: ['department-001'],
+    })).toBe(false);
+    expect(registry.isActiveTokenIdentity({
+      clientId: 'service-client-001', tenantId: 'tenant-001', actorId: 'mcp-agent-001',
+      credentialId: 'missing-credential', scopes: ['erp:org:chart:read'],
+      roleCodes: ['service-reader'], departmentIds: ['department-001'],
+    })).toBe(false);
+  });
+
+  it('枚举活动客户端能力并只返回登记的公开 JWK', () => {
+    const registry = createRegistry([validClient(), jwtClient()]);
+    expect(registry.listSupportedAuthMethods())
+      .toEqual(['client_secret_basic', 'private_key_jwt']);
+    expect(registry.listSupportedScopes())
+      .toEqual(['erp:mcp:server:connect', 'erp:org:chart:read']);
+    const client = registry.resolveActive('service-client-jwt')!;
+    const credential = registry.listCurrentCredentials(
+      client, new Date('2026-01-01T00:00:00Z'),
+    )[0]!;
+    expect(registry.getPublicJwk(credential as never)).toMatchObject({
+      kty: 'EC', kid: 'credential-jwk-001',
+    });
+  });
+
+  it('空配置安全解析为空注册表，非法 JSON 失败关闭', () => {
+    const empty = new OAuthServiceClientRegistry({
+      get: (key: keyof AppEnvironment) => key === 'MCP_SERVICE_CLIENTS_JSON' ? '' : undefined,
+    } as unknown as ConfigService<AppEnvironment, true>);
+    expect(empty.resolveActive('missing-client')).toBeUndefined();
+    expect(() => new OAuthServiceClientRegistry({
+      get: (key: keyof AppEnvironment) =>
+        key === 'MCP_SERVICE_CLIENTS_JSON' ? '{invalid' : undefined,
+    } as unknown as ConfigService<AppEnvironment, true>)).toThrow('不是合法 JSON');
   });
 
   it.each([
@@ -103,6 +166,31 @@ describe('OAuthServiceClientRegistry', () => {
         notBefore: '2030-01-01T00:00:00+00:00', expiresAt: '2029-01-01T00:00:00+00:00',
       }],
     } }] },
+    { configuration: [
+      jwtClient(),
+      {
+        ...jwtClient(), clientId: 'service-client-jwt-2',
+        authentication: {
+          ...jwtClient().authentication,
+          credentials: [{
+            ...jwtClient().authentication.credentials[0],
+            credentialId: 'credential-jwt-002',
+          }],
+        },
+      },
+    ] },
+    { configuration: [
+      validClient(),
+      {
+        ...validClient(), clientId: 'service-client-002',
+        authentication: {
+          ...validClient().authentication,
+          credentials: [{
+            ...validClient().authentication.credentials[0],
+          }],
+        },
+      },
+    ] },
   ])('启动时拒绝重复、明文或非法有效期配置，且不回显敏感值', ({ configuration }) => {
     expect(() => createRegistry(configuration)).toThrow('MCP_SERVICE_CLIENTS_JSON 配置无效');
     try {

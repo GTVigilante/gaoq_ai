@@ -30,7 +30,7 @@ export class StartSsoRequest {
   @IsString()
   @MinLength(1)
   @MaxLength(512)
-  @Matches(/^\/(?!\/)[^\\:]*$/)
+  @Matches(/^\/(?!\/)[^\p{Cc}\\:]*$/u)
   returnPath!: string;
 }
 
@@ -70,18 +70,22 @@ export class SsoController {
     if (binding === null) {
       throw new UnauthorizedException({ code: 'SSO_LOGIN_UNAVAILABLE', message: 'SSO 登录不可用' });
     }
+    if (binding.provider !== provider) {
+      throw new Error('SSO_TENANT_BINDING_CORRUPT');
+    }
     const issued = await this.states.issue({
       tenantId: binding.tenantId,
       provider,
       externalTenantId: binding.externalTenantId,
       returnPath: body.returnPath,
     });
+    const authorizationUrl = this.adapters.get(provider).buildAuthorizationUrl({
+      ...issued,
+      externalTenantId: binding.externalTenantId,
+    });
     this.stateCookie.set(response, issued.state);
     return {
-      authorizationUrl: this.adapters.get(provider).buildAuthorizationUrl({
-        ...issued,
-        externalTenantId: binding.externalTenantId,
-      }),
+      authorizationUrl,
       expiresIn: 300,
     };
   }
@@ -95,8 +99,8 @@ export class SsoController {
     @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
   ): Promise<Record<string, string | number>> {
-    this.cookies.assertTrustedOrigin(request);
     try {
+      this.cookies.assertTrustedOrigin(request);
       this.stateCookie.assertBound(request, body.state);
       const grant = await this.grants.issueFromSso({
         provider: this.parseProvider(providerValue),

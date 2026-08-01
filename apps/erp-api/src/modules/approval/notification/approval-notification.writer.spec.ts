@@ -3,11 +3,14 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import {
+  addApprovalSigner,
+  archiveApprovalInstance,
   createApprovalInstanceDraft,
   createApprovalTemplateDraft,
   decideApprovalInstance,
   publishApprovalTemplate,
   submitApprovalInstance,
+  transferApprovalTask,
   withdrawApprovalInstance,
   type ApprovalTemplateDefinition,
 } from '../domain/index.js';
@@ -119,5 +122,58 @@ describe('ApprovalNotificationWriter', () => {
     expect(new Set(documents.map((item) => item.recipientActorId)))
       .toEqual(new Set(['approver-a', 'approver-b']));
     expect(documents.some((item) => item.recipientActorId === 'initiator-001')).toBe(false);
+  });
+
+  it('转交与加签只通知新增处理人，归档不生成通知', async () => {
+    const submitted = submitApprovalInstance(draft(), {
+      tenantId: 'tenant-001', expectedVersion: 1, actorId: 'initiator-001',
+      resolvedNodes: [{ nodeId: 'joint', actorIds: ['approver-a', 'approver-b'] }],
+    }, NOW).instance;
+    const transferred = transferApprovalTask(submitted, {
+      tenantId: submitted.tenantId, expectedVersion: submitted.version, actorId: 'approver-a',
+      fromApproverId: 'approver-a', toApproverId: 'approver-c', delegationVerified: false,
+    }, NOW);
+    const transferTarget = writer();
+    await expect(transferTarget.service.append(
+      transferred.instance, transferred.action, SESSION,
+    )).resolves.toBe(2);
+    expect(transferTarget.create.mock.calls[0]?.[0]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ recipientActorId: 'approver-c' }),
+    ]));
+
+    const added = addApprovalSigner(submitted, {
+      tenantId: submitted.tenantId, expectedVersion: submitted.version, actorId: 'approver-a',
+      approverId: 'approver-c', authorizationVerified: true,
+    }, NOW);
+    const addTarget = writer();
+    await expect(addTarget.service.append(added.instance, added.action, SESSION)).resolves.toBe(2);
+    expect(addTarget.create.mock.calls[0]?.[0]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ recipientActorId: 'approver-c' }),
+    ]));
+
+    const withdrawn = withdrawApprovalInstance(submitted, {
+      tenantId: submitted.tenantId, expectedVersion: submitted.version,
+      actorId: submitted.initiatorId,
+    }, NOW).instance;
+    const archived = archiveApprovalInstance(withdrawn, {
+      tenantId: withdrawn.tenantId, expectedVersion: withdrawn.version,
+      actorId: 'records-001', authorizationVerified: true,
+    }, NOW);
+    const archiveTarget = writer();
+    await expect(archiveTarget.service.append(
+      archived.instance, archived.action, SESSION,
+    )).resolves.toBe(0);
+    expect(archiveTarget.create).not.toHaveBeenCalled();
+  });
+
+  it('运行态缺少当前节点时失败关闭且不创建空通知批次', async () => {
+    const submitted = submitApprovalInstance(draft(), {
+      tenantId: 'tenant-001', expectedVersion: 1, actorId: 'initiator-001',
+      resolvedNodes: [{ nodeId: 'joint', actorIds: ['approver-a', 'approver-b'] }],
+    }, NOW);
+    const corrupted = { ...submitted.instance, currentNodeIndex: null };
+    const target = writer();
+    await expect(target.service.append(corrupted, submitted.action, SESSION)).resolves.toBe(0);
+    expect(target.create).not.toHaveBeenCalled();
   });
 });

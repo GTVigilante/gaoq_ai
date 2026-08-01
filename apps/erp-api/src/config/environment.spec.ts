@@ -1,6 +1,42 @@
+import { generateKeyPairSync } from 'node:crypto';
+
 import { describe, expect, it } from 'vitest';
 
 import { validateEnvironment } from './environment.js';
+
+const knowledgeSigning = {
+  KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_PUBLIC_KEY_BASE64:
+    generateKeyPairSync('ed25519').publicKey.export({
+      format: 'der',
+      type: 'spki',
+    }).toString('base64'),
+  KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_KEY_ID: 'knowledge-key-001',
+};
+const knowledgeSearchSigning = {
+  KNOWLEDGE_SEARCH_GATEWAY_SIGNING_PUBLIC_KEY_BASE64:
+    generateKeyPairSync('ed25519').publicKey.export({
+      format: 'der',
+      type: 'spki',
+    }).toString('base64'),
+  KNOWLEDGE_SEARCH_GATEWAY_SIGNING_KEY_ID: 'knowledge-search-key-001',
+};
+const careOccasionSigning = {
+  CARE_OCCASION_NOTIFICATION_SIGNING_PUBLIC_KEY_BASE64:
+    generateKeyPairSync('ed25519').publicKey.export({
+      format: 'der',
+      type: 'spki',
+    }).toString('base64'),
+  CARE_OCCASION_NOTIFICATION_SIGNING_KEY_ID: 'care-key-001',
+};
+const payrollTaxSigning = {
+  PAYROLL_TAX_GATEWAY_SIGNING_PUBLIC_KEY_BASE64:
+    generateKeyPairSync('ed25519').publicKey.export({
+      format: 'der',
+      type: 'spki',
+    }).toString('base64'),
+  PAYROLL_TAX_GATEWAY_SIGNING_KEY_ID: 'payroll-tax-key-001',
+  PAYROLL_TAX_OFFICIAL_PORTAL_ORIGIN: 'https://official.tax.example.cn',
+};
 
 describe('validateEnvironment', () => {
   it('接受完整且合法的本地配置', () => {
@@ -8,7 +44,7 @@ describe('validateEnvironment', () => {
       NODE_ENV: 'test',
       PORT: '3001',
       MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0&directConnection=true',
-      REDIS_URL: 'redis://localhost:6379/0',
+      REDIS_URL: 'rediss://localhost:6379/0',
       WEB_ORIGIN: 'http://localhost:3000',
       LOG_LEVEL: 'info',
       AUTH_ISSUER: 'https://auth.example.internal',
@@ -24,6 +60,7 @@ describe('validateEnvironment', () => {
     });
 
     expect(environment.PORT).toBe(3001);
+    expect(environment.REDIS_URL).toBe('rediss://localhost:6379/0');
     expect(environment.AUTH_ACCESS_TOKEN_TTL_SECONDS).toBe(600);
     expect(environment.AUTH_SIGNING_PRIVATE_KEY_BASE64).toBeUndefined();
     expect(environment.AUDIT_INTEGRITY_KEYS).toBeUndefined();
@@ -33,6 +70,13 @@ describe('validateEnvironment', () => {
     expect(environment.RECRUITMENT_RESUME_AI_PROVIDER).toBe('disabled');
     expect(environment.RECRUITMENT_RESUME_SOURCE_ENDPOINT).toBeUndefined();
     expect(environment.OPENAI_RESUME_API_KEY).toBeUndefined();
+    expect(environment.KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT).toBeUndefined();
+    expect(environment.KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_PUBLIC_KEY_BASE64).toBeUndefined();
+    expect(environment.KNOWLEDGE_SEARCH_GATEWAY_ENDPOINT).toBeUndefined();
+    expect(environment.ORG_PERSON_BIRTHDAY_BLIND_INDEX_KEYS).toBeUndefined();
+    expect(environment.CARE_OCCASION_NOTIFICATION_ENDPOINT).toBeUndefined();
+    expect(environment.CARE_OCCASION_POLICIES_JSON).toBe('[]');
+    expect(environment.CARE_ALUMNI_CLEANUP_TARGETS_JSON).toBe('[]');
     expect(environment.TREASURY_DATA_ENCRYPTION_KEYS).toBeUndefined();
     expect(environment.TREASURY_BLIND_INDEX_KEYS).toBeUndefined();
     expect(environment.TREASURY_WORM_ARCHIVE_ENDPOINT).toBeUndefined();
@@ -42,6 +86,8 @@ describe('validateEnvironment', () => {
     expect(environment.TREASURY_BANK_RETURN_INBOX_ENDPOINT).toBeUndefined();
     expect(environment.PAYROLL_TAX_WORM_ARCHIVE_ENDPOINT).toBeUndefined();
     expect(environment.PAYROLL_TAX_GATEWAY_ENDPOINT).toBeUndefined();
+    expect(environment.PAYROLL_TAX_GATEWAY_SIGNING_KEY_ID).toBeUndefined();
+    expect(environment.PAYROLL_TAX_OFFICIAL_PORTAL_ORIGIN).toBeUndefined();
     expect(environment.PAYROLL_TAX_GATEWAY_MODE).toBe('sandbox');
     expect(environment.PHASE6_PRODUCTION_AUTHORIZATION_ENDPOINT).toBeUndefined();
     expect(environment.PHASE6_RELEASE_COMMIT_SHA).toBeUndefined();
@@ -57,6 +103,263 @@ describe('validateEnvironment', () => {
     expect(environment.OP_SSO_CLIENT_SECRET).toBeUndefined();
     expect(environment.OP_SSO_REDIRECT_URI).toBeUndefined();
     expect(environment.MCP_OAUTH_CLIENTS_JSON).toBe('[]');
+  });
+
+  it('关怀通知网关与租户策略必须完整、独立且失败关闭', () => {
+    const base = {
+      NODE_ENV: 'test',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0',
+      WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://auth.example.internal',
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://auth.example.internal/.well-known/jwks.json',
+      MCP_AUTHORIZATION_SERVER: 'https://auth.example.internal',
+      MCP_ALLOWED_ORIGINS: 'https://client.example.com',
+    };
+    expect(validateEnvironment({
+      ...base,
+      CARE_OCCASION_NOTIFICATION_ENDPOINT: 'https://care.example.internal',
+      CARE_OCCASION_NOTIFICATION_BEARER_TOKEN:
+        'care-notification-token-distinct-at-least-32-characters',
+      ...careOccasionSigning,
+      CARE_OCCASION_POLICIES_JSON: JSON.stringify([{
+        tenantId: 'tenant-001',
+        version: 'care-v1',
+        timeZone: 'Asia/Shanghai',
+        dispatchLocalTime: '09:00',
+        quietHoursStart: '21:00',
+        quietHoursEnd: '08:00',
+        leapDayPolicy: 'feb28',
+        rehireAnniversaryBasis: 'current_employment',
+        birthdayTemplateCode: 'CARE_BIRTHDAY_V1',
+        anniversaryTemplateCode: 'CARE_ANNIVERSARY_V1',
+        maxAttempts: 6,
+      }]),
+    })).toMatchObject({
+      CARE_OCCASION_NOTIFICATION_ENDPOINT: 'https://care.example.internal',
+    });
+    expect(() => validateEnvironment({
+      ...base,
+      CARE_OCCASION_NOTIFICATION_ENDPOINT: 'https://care.example.internal',
+    })).toThrow('关怀通知网关端点、凭据、公钥与 Key ID 必须成套配置');
+    expect(() => validateEnvironment({
+      ...base,
+      CARE_OCCASION_NOTIFICATION_ENDPOINT: 'https://localhost',
+      CARE_OCCASION_NOTIFICATION_BEARER_TOKEN:
+        'care-notification-token-distinct-at-least-32-characters',
+      ...careOccasionSigning,
+    })).toThrow('关怀通知网关必须为独立标准 HTTPS 域名根地址');
+    expect(() => validateEnvironment({
+      ...base,
+      CARE_OCCASION_POLICIES_JSON: '[{"tenantId":"tenant-001"}]',
+    })).toThrow('CARE_OCCASION_POLICIES_JSON');
+  });
+
+  it('校友下游清理登记表使用独立 HTTPS、凭据和 Ed25519 信任域', () => {
+    const base = {
+      NODE_ENV: 'test',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0',
+      WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://auth.example.internal',
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://auth.example.internal/.well-known/jwks.json',
+      MCP_AUTHORIZATION_SERVER: 'https://auth.example.internal',
+      MCP_ALLOWED_ORIGINS: 'https://client.example.com',
+    };
+    const cleanupTarget = {
+      targetCode: 'crm',
+      endpoint: 'https://privacy-crm.example.net',
+      bearerToken: 'crm-cleanup-token-distinct-at-least-32-characters',
+      policyVersion: 'privacy-v1',
+      signingKeyId: 'crm-proof-key-v1',
+      signingPublicKeyBase64:
+        careOccasionSigning.CARE_OCCASION_NOTIFICATION_SIGNING_PUBLIC_KEY_BASE64,
+      maxAttempts: 6,
+      proofRetentionDays: 2_555,
+    };
+    expect(validateEnvironment({
+      ...base,
+      CARE_ALUMNI_CLEANUP_TARGETS_JSON: JSON.stringify([cleanupTarget]),
+    }).CARE_ALUMNI_CLEANUP_TARGETS_JSON).toContain('privacy-crm');
+    expect(() => validateEnvironment({
+      ...base,
+      CARE_ALUMNI_CLEANUP_TARGETS_JSON: JSON.stringify([
+        { ...cleanupTarget, endpoint: 'https://erp.example.com' },
+      ]),
+    })).toThrow('CARE_ALUMNI_CLEANUP_TARGETS_JSON');
+    expect(() => validateEnvironment({
+      ...base,
+      CARE_OCCASION_NOTIFICATION_ENDPOINT: 'https://care.example.net',
+      CARE_OCCASION_NOTIFICATION_BEARER_TOKEN: cleanupTarget.bearerToken,
+      ...careOccasionSigning,
+      CARE_ALUMNI_CLEANUP_TARGETS_JSON: JSON.stringify([cleanupTarget]),
+    })).toThrow('禁止复用');
+  });
+
+  it('知识证据网关必须成套配置并使用独立标准 HTTPS 根地址', () => {
+    const base = {
+      NODE_ENV: 'test',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0',
+      WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://auth.example.internal',
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://auth.example.internal/.well-known/jwks.json',
+      MCP_AUTHORIZATION_SERVER: 'https://auth.example.internal',
+      MCP_ALLOWED_ORIGINS: 'https://client.example.com',
+    };
+    expect(validateEnvironment({
+      ...base,
+      KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT: 'https://knowledge.example.internal',
+      KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN:
+        'knowledge-evidence-token-at-least-32-characters',
+      ...knowledgeSigning,
+    })).toMatchObject({
+      KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT: 'https://knowledge.example.internal',
+    });
+    expect(() => validateEnvironment({
+      ...base,
+      KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT: 'https://knowledge.example.internal',
+    })).toThrow('知识证据网关端点与凭据必须成套配置');
+    expect(() => validateEnvironment({
+      ...base,
+      METRICS_BEARER_TOKEN: 'knowledge-evidence-token-at-least-32-characters',
+      KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT: 'https://knowledge.example.internal',
+      KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN:
+        'knowledge-evidence-token-at-least-32-characters',
+      ...knowledgeSigning,
+    })).toThrow('知识证据网关不得复用其他业务、平台或外部系统凭据');
+    for (const endpoint of [
+      'http://knowledge.example.internal',
+      'https://knowledge.example.internal/path',
+      'https://localhost',
+      'https://127.0.0.2',
+      'https://[::1]',
+      'https://auth.example.internal',
+    ]) expect(() => validateEnvironment({
+      ...base,
+      KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT: endpoint,
+      KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN:
+        'knowledge-evidence-token-at-least-32-characters',
+      ...knowledgeSigning,
+    })).toThrow('知识证据网关必须为独立标准 HTTPS 根地址');
+    expect(() => validateEnvironment({
+      ...base,
+      KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT: 'https://knowledge.example.internal',
+      KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN:
+        'knowledge-evidence-token-at-least-32-characters',
+      ...knowledgeSigning,
+      KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_PUBLIC_KEY_BASE64:
+        Buffer.from('not-an-ed25519-key').toString('base64'),
+    })).toThrow('知识证据网关签名公钥必须为有效 Ed25519 SPKI DER base64');
+  });
+
+  it('知识搜索网关使用独立服务身份与 Ed25519 信任域', () => {
+    const base = {
+      NODE_ENV: 'test',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0',
+      WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://auth.example.internal',
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://auth.example.internal/.well-known/jwks.json',
+      MCP_AUTHORIZATION_SERVER: 'https://auth.example.internal',
+      MCP_ALLOWED_ORIGINS: 'https://client.example.com',
+    };
+    expect(validateEnvironment({
+      ...base,
+      KNOWLEDGE_SEARCH_GATEWAY_ENDPOINT: 'https://search.example.internal',
+      KNOWLEDGE_SEARCH_GATEWAY_BEARER_TOKEN:
+        'knowledge-search-token-distinct-at-least-32-characters',
+      ...knowledgeSearchSigning,
+    })).toMatchObject({
+      KNOWLEDGE_SEARCH_GATEWAY_ENDPOINT: 'https://search.example.internal',
+      KNOWLEDGE_SEARCH_GATEWAY_SIGNING_KEY_ID: 'knowledge-search-key-001',
+    });
+    expect(() => validateEnvironment({
+      ...base,
+      KNOWLEDGE_SEARCH_GATEWAY_ENDPOINT: 'https://search.example.internal',
+    })).toThrow('知识搜索网关端点、凭据、公钥与 Key ID 必须成套配置');
+    expect(() => validateEnvironment({
+      ...base,
+      KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT: 'https://evidence.example.internal',
+      KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN:
+        'shared-knowledge-token-at-least-32-characters',
+      ...knowledgeSigning,
+      KNOWLEDGE_SEARCH_GATEWAY_ENDPOINT: 'https://evidence.example.internal',
+      KNOWLEDGE_SEARCH_GATEWAY_BEARER_TOKEN:
+        'shared-knowledge-token-at-least-32-characters',
+      KNOWLEDGE_SEARCH_GATEWAY_SIGNING_PUBLIC_KEY_BASE64:
+        knowledgeSigning.KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_PUBLIC_KEY_BASE64,
+      KNOWLEDGE_SEARCH_GATEWAY_SIGNING_KEY_ID: 'knowledge-search-key-001',
+    })).toThrow('知识搜索网关必须为独立标准 HTTPS 根地址');
+    expect(() => validateEnvironment({
+      ...base,
+      KNOWLEDGE_SEARCH_GATEWAY_ENDPOINT: 'https://search.example.internal',
+      KNOWLEDGE_SEARCH_GATEWAY_BEARER_TOKEN:
+        'knowledge-search-token-distinct-at-least-32-characters',
+      ...knowledgeSearchSigning,
+      KNOWLEDGE_SEARCH_GATEWAY_SIGNING_PUBLIC_KEY_BASE64:
+        Buffer.from('not-ed25519').toString('base64'),
+    })).toThrow('知识搜索网关签名公钥必须为有效 Ed25519 SPKI DER base64');
+  });
+
+  it('营销官网 Origin 必须精确隔离，生产验证码配置失败关闭', () => {
+    const base = {
+      NODE_ENV: 'test',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0',
+      WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://erp.example.com',
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://erp.example.com/.well-known/jwks.json',
+      MCP_AUTHORIZATION_SERVER: 'https://erp.example.com',
+      MCP_ALLOWED_ORIGINS: 'https://client.example.com',
+    };
+    expect(validateEnvironment({
+      ...base,
+      MARKETING_WEBSITE_ORIGIN: 'https://www.example.com',
+    })).toMatchObject({
+      MARKETING_WEBSITE_ORIGIN: 'https://www.example.com',
+    });
+    expect(() => validateEnvironment({
+      ...base,
+      MARKETING_WEBSITE_ORIGIN: 'https://www.example.com/path',
+    })).toThrow('营销官网必须为独立精确 Origin');
+    expect(() => validateEnvironment({
+      ...base,
+      MARKETING_WEBSITE_ORIGIN: 'https://erp.example.com',
+    })).toThrow('营销官网必须为独立精确 Origin');
+    expect(() => validateEnvironment({
+      ...base,
+      NODE_ENV: 'production',
+    })).toThrow('生产环境必须配置营销官网精确 HTTPS Origin');
+    expect(() => validateEnvironment({
+      ...base,
+      NODE_ENV: 'production',
+      MARKETING_WEBSITE_ORIGIN: 'https://www.example.com',
+    })).toThrow('生产环境营销官网必须配置验证码校验端点与独立凭据');
+    for (const origin of [
+      'https://localhost',
+      'https://tenant.localhost',
+      'https://localhost.',
+    ]) {
+      expect(() => validateEnvironment({
+        ...base,
+        NODE_ENV: 'production',
+        MARKETING_WEBSITE_ORIGIN: origin,
+        MARKETING_CAPTCHA_VERIFY_ENDPOINT: 'https://captcha.example.net/verify',
+        MARKETING_CAPTCHA_BEARER_TOKEN:
+          'captcha-gateway-token-at-least-32-characters',
+      })).toThrow('营销官网必须为独立精确 Origin');
+    }
   });
 
   it('迁移附件网关端点与凭据必须成套且使用独立标准 HTTPS', () => {
@@ -510,6 +813,7 @@ describe('validateEnvironment', () => {
       PAYROLL_TAX_WORM_ARCHIVE_BEARER_TOKEN: 'tax-worm-token-that-is-at-least-32-characters',
       PAYROLL_TAX_GATEWAY_ENDPOINT: 'https://tax-gateway.example.net/v1/submissions',
       PAYROLL_TAX_GATEWAY_BEARER_TOKEN: 'tax-gateway-token-at-least-32-characters',
+      ...payrollTaxSigning,
     };
     expect(validateEnvironment(configured)).toMatchObject({
       PAYROLL_TAX_WORM_RETENTION_DAYS: 3_650,
@@ -530,6 +834,15 @@ describe('validateEnvironment', () => {
       ...configured,
       PAYROLL_TAX_WORM_ARCHIVE_BEARER_TOKEN: 'treasury-worm-token-at-least-32-characters',
     })).toThrow('不得复用');
+    expect(() => validateEnvironment({
+      ...configured,
+      PAYROLL_TAX_GATEWAY_SIGNING_PUBLIC_KEY_BASE64: 'AAAA',
+    })).toThrow('有效 Ed25519');
+    expect(() => validateEnvironment({
+      ...configured,
+      PAYROLL_TAX_OFFICIAL_PORTAL_ORIGIN:
+        'https://official.tax.example.cn/settlement',
+    })).toThrow('不得配置路径');
   });
 
   it('生产资金通道必须完整绑定独立 Phase 6 授权域与发布物', () => {
@@ -622,5 +935,47 @@ describe('validateEnvironment', () => {
     expect(() => validateEnvironment({
       ...base, AUDIT_WORM_ENDPOINT: 'https://worm.example.net/anchors?token=unsafe',
     })).toThrow('禁止凭据、查询、fragment');
+    expect(() => validateEnvironment({
+      ...base, AUDIT_WORM_ENDPOINT: 'https://worm.example.net:8443/anchors',
+    })).toThrow('非 443 端口');
+  });
+
+  it('历史访问令牌验签公钥只接受公开、唯一的 RSA 轮换集合', () => {
+    const base = {
+      NODE_ENV: 'test',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0',
+      WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://erp.example.com',
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://erp.example.com/.well-known/jwks.json',
+      AUTH_SIGNING_KEY_ID: 'signing-current-001',
+      MCP_AUTHORIZATION_SERVER: 'https://erp.example.com',
+      MCP_ALLOWED_ORIGINS: 'https://erp.example.com',
+    };
+    const { publicKey } = generateKeyPairSync('rsa', { modulusLength: 2_048 });
+    const verifyOnly = {
+      ...publicKey.export({ format: 'jwk' }),
+      kid: 'signing-history-001',
+      alg: 'RS256',
+      use: 'sig',
+      key_ops: ['verify'],
+    };
+    expect(validateEnvironment({
+      ...base,
+      AUTH_SIGNING_VERIFY_ONLY_JWKS_JSON: JSON.stringify([verifyOnly]),
+    }).AUTH_SIGNING_VERIFY_ONLY_JWKS_JSON).toBe(JSON.stringify([verifyOnly]));
+    expect(() => validateEnvironment({
+      ...base,
+      AUTH_SIGNING_VERIFY_ONLY_JWKS_JSON: JSON.stringify([{
+        ...verifyOnly,
+        kid: 'signing-current-001',
+      }]),
+    })).toThrow('kid 必须唯一');
+    expect(() => validateEnvironment({
+      ...base,
+      AUTH_SIGNING_VERIFY_ONLY_JWKS_JSON: JSON.stringify([{ ...verifyOnly, d: 'private' }]),
+    })).toThrow('AUTH_SIGNING_VERIFY_ONLY_JWKS_JSON');
   });
 });

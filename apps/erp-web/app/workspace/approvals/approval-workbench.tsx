@@ -24,30 +24,36 @@ import {
   createIdempotencyKey,
   ErpApiError,
   erpFetch,
+  isDefinitiveWriteRejection,
   strongEtag,
 } from '../../lib/api-client';
 import {
   parseApprovalSummaries,
   parseApprovalTimeline,
   parseApprovalView,
+  parseIdentityProfile,
   type ApprovalStatus,
   type ApprovalSummary,
   type ApprovalTimelineEntry,
   type ApprovalView,
+  type IdentityProfileView,
 } from '../../lib/approval-contract';
+import {
+  canSubmitApprovalDecision,
+  isSameApprovalDecisionAttempt,
+} from '../../lib/approval-task-contract';
 import { ApprovalInitiation } from './approval-initiation';
 import { ApprovalDelegationManagement } from './approval-delegation-management';
 import { ApprovalTaskOperations } from './approval-task-operations';
 
-interface IdentityProfile {
-  readonly actorId: string;
-  readonly actorType: string;
-  readonly roleCodes: readonly string[];
-  readonly scopes: readonly string[];
-  readonly departmentIds: readonly string[];
-}
-
 interface DecisionResult { readonly instance: ApprovalSummary }
+
+interface PendingDecision {
+  readonly instance: ApprovalView;
+  readonly actorId: string;
+  readonly outcome: 'approved' | 'rejected';
+  readonly key: string;
+}
 
 const STATUS_TEXT: Readonly<Record<ApprovalStatus, string>> = {
   draft: '草稿', running: '审批中', approved: '已通过', rejected: '已拒绝',
@@ -58,13 +64,14 @@ const STATUS_TEXT: Readonly<Record<ApprovalStatus, string>> = {
 export function ApprovalWorkbench() {
   const { message, modal } = AntApp.useApp();
   const [items, setItems] = useState<readonly ApprovalSummary[]>([]);
-  const [profile, setProfile] = useState<IdentityProfile | null>(null);
+  const [profile, setProfile] = useState<IdentityProfileView | null>(null);
   const [selected, setSelected] = useState<ApprovalView | null>(null);
   const [timeline, setTimeline] = useState<readonly ApprovalTimelineEntry[]>([]);
   const [status, setStatus] = useState<'all' | ApprovalStatus>('all');
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [writing, setWriting] = useState(false);
+  const [pendingDecision, setPendingDecision] = useState<PendingDecision | null>(null);
   const [error, setError] = useState<{ readonly message: string; readonly traceId: string | null } | null>(null);
 
   const load = useCallback(async () => {
@@ -73,10 +80,10 @@ export function ApprovalWorkbench() {
     try {
       const [inbox, identity] = await Promise.all([
         erpFetch<unknown>('/api/approvals/instances/inbox'),
-        erpFetch<IdentityProfile>('/api/auth/profile'),
+        erpFetch<unknown>('/api/auth/profile'),
       ]);
       setItems(parseApprovalSummaries(inbox.data));
-      setProfile(identity.data);
+      setProfile(parseIdentityProfile(identity.data));
     } catch (value) {
       const apiError = value instanceof ErpApiError ? value : null;
       setError({ message: apiError?.message ?? '待办加载失败', traceId: apiError?.traceId ?? null });
@@ -86,6 +93,16 @@ export function ApprovalWorkbench() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    if (pendingDecision !== null && profile?.actorId !== pendingDecision.actorId) {
+      setPendingDecision(null);
+      modal.warning({
+        title: '待确认请求已失效',
+        content: '登录主体已经变化，请重新打开待办后操作。',
+      });
+    }
+  }, [modal, pendingDecision, profile?.actorId]);
 
   const open = useCallback(async (id: string) => {
     setDetailLoading(true);
@@ -104,6 +121,44 @@ export function ApprovalWorkbench() {
     }
   }, [message]);
 
+  const executeDecision = useCallback(async (attempt: PendingDecision) => {
+    if (profile?.actorId !== attempt.actorId) {
+      setPendingDecision(null);
+      modal.warning({
+        title: '待确认请求已失效',
+        content: '登录主体已经变化，请重新打开待办后操作。',
+      });
+      return;
+    }
+    setWriting(true);
+    try {
+      const result = await erpFetch<DecisionResult>(`/api/approvals/instances/${encodeURIComponent(attempt.instance.id)}/decisions`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'if-match': strongEtag(attempt.instance.version),
+          'idempotency-key': attempt.key,
+        },
+        body: JSON.stringify({ principalApproverId: attempt.actorId, outcome: attempt.outcome }),
+      });
+      setPendingDecision(null);
+      void message.success(attempt.outcome === 'approved' ? '审批已通过' : '审批已拒绝');
+      setSelected(null);
+      setTimeline([]);
+      setItems((current) => current.map((item) => item.id === result.data.instance.id ? result.data.instance : item));
+      await load();
+    } catch (value) {
+      if (isDefinitiveWriteRejection(value)) setPendingDecision(null);
+      const apiError = value instanceof ErpApiError ? value : null;
+      modal.error({
+        title: '审批提交失败',
+        content: `${apiError?.message ?? '提交结果未知；请复用当前动作重试'}${apiError?.traceId === null || apiError === null ? '' : `\n追踪标识：${apiError.traceId}`}`,
+      });
+    } finally {
+      setWriting(false);
+    }
+  }, [load, message, modal, profile?.actorId]);
+
   const decide = useCallback(async (outcome: 'approved' | 'rejected') => {
     if (selected === null || profile === null || writing) return;
     if (selected.riskLevel === 'R2') {
@@ -113,31 +168,27 @@ export function ApprovalWorkbench() {
       });
       return;
     }
-    setWriting(true);
-    try {
-      const result = await erpFetch<DecisionResult>(`/api/approvals/instances/${encodeURIComponent(selected.id)}/decisions`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'if-match': strongEtag(selected.version),
-          'idempotency-key': createIdempotencyKey('approval-decision'),
-        },
-        body: JSON.stringify({ principalApproverId: profile.actorId, outcome }),
-      });
-      void message.success(outcome === 'approved' ? '审批已通过' : '审批已拒绝');
-      setSelected(null);
-      setItems((current) => current.map((item) => item.id === result.data.instance.id ? result.data.instance : item));
-      await load();
-    } catch (value) {
-      const apiError = value instanceof ErpApiError ? value : null;
-      modal.error({
-        title: '审批提交失败',
-        content: `${apiError?.message ?? '请刷新后重试'}${apiError?.traceId === null || apiError === null ? '' : `\n追踪标识：${apiError.traceId}`}`,
-      });
-    } finally {
-      setWriting(false);
+    if (!canSubmitApprovalDecision(profile.scopes, selected)) return;
+    if (pendingDecision !== null) {
+      if (!isSameApprovalDecisionAttempt(pendingDecision, selected.id, profile.actorId, outcome)) {
+        modal.warning({
+          title: '存在待确认审批请求',
+          content: '只能回到原审批并复用相同动作重试，或等待服务端结果确认。',
+        });
+        return;
+      }
+      await executeDecision(pendingDecision);
+      return;
     }
-  }, [load, message, modal, profile, selected, writing]);
+    const attempt = Object.freeze({
+      instance: selected,
+      actorId: profile.actorId,
+      outcome,
+      key: createIdempotencyKey('approval-decision'),
+    });
+    setPendingDecision(attempt);
+    await executeDecision(attempt);
+  }, [executeDecision, modal, pendingDecision, profile, selected, writing]);
 
   const filtered = useMemo(
     () => status === 'all' ? items : items.filter((item) => item.status === status),
@@ -204,8 +255,20 @@ export function ApprovalWorkbench() {
               </Space>,
             }))} />}
           </Card>
+          {pendingDecision?.instance.id === selected.id ? <Alert
+            type="warning"
+            showIcon
+            message="审批结果尚未确认"
+            description="请勿刷新页面；只能复用原版本、动作和幂等键重试，避免重复副作用。"
+          /> : null}
+          {pendingDecision !== null && pendingDecision.instance.id !== selected.id ? <Alert
+            type="warning"
+            showIcon
+            message="另一审批存在待确认请求"
+            description="请返回原审批确认结果；在此之前不会开放新的审批写操作。"
+          /> : null}
           {selected.status === 'running' ? <Flex justify="flex-end" gap={12}>
-            {profile === null ? null : <ApprovalTaskOperations
+            {profile === null || pendingDecision !== null ? null : <ApprovalTaskOperations
               instance={selected}
               actorId={profile.actorId}
               scopes={profile.scopes}
@@ -216,12 +279,14 @@ export function ApprovalWorkbench() {
                 await load();
               }}
             />}
-            <Button danger loading={writing} disabled={selected.riskLevel === 'R2'} onClick={() => {
-              modal.confirm({ title: '确认拒绝此审批？', okText: '拒绝', okButtonProps: { danger: true }, onOk: async () => decide('rejected') });
-            }}>拒绝</Button>
-            <Button type="primary" loading={writing} disabled={selected.riskLevel === 'R2'} onClick={() => {
-              modal.confirm({ title: '确认通过此审批？', onOk: async () => decide('approved') });
-            }}>通过</Button>
+            {profile !== null && canSubmitApprovalDecision(profile.scopes, selected) ? <>
+              <Button danger loading={writing} disabled={pendingDecision !== null && (pendingDecision.instance.id !== selected.id || pendingDecision.outcome !== 'rejected')} onClick={() => {
+                modal.confirm({ title: '确认拒绝此审批？', okText: '拒绝', okButtonProps: { danger: true }, onOk: async () => decide('rejected') });
+              }}>{pendingDecision?.instance.id === selected.id && pendingDecision.outcome === 'rejected' ? '重试拒绝' : '拒绝'}</Button>
+              <Button type="primary" loading={writing} disabled={pendingDecision !== null && (pendingDecision.instance.id !== selected.id || pendingDecision.outcome !== 'approved')} onClick={() => {
+                modal.confirm({ title: '确认通过此审批？', onOk: async () => decide('approved') });
+              }}>{pendingDecision?.instance.id === selected.id && pendingDecision.outcome === 'approved' ? '重试通过' : '通过'}</Button>
+            </> : null}
           </Flex> : null}
         </Space>}
       </Drawer>

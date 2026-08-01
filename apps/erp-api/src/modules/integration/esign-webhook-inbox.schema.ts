@@ -58,12 +58,30 @@ export class ESignWebhookInboxRecord {
   @Prop({ type: Date, default: null })
   processingStartedAt!: Date | null;
 
+  @Prop({ type: String, default: null, minlength: 22, maxlength: 22, match: BASE64URL_PATTERN })
+  processingToken!: string | null;
+
+  @Prop({ type: String, default: null, minlength: 1, maxlength: 128 })
+  processingJobId!: string | null;
+
   createdAt!: Date;
   updatedAt!: Date;
 }
 
 export type ESignWebhookInboxDocument = HydratedDocument<ESignWebhookInboxRecord>;
 export const ESignWebhookInboxRecordSchema = SchemaFactory.createForClass(ESignWebhookInboxRecord);
+
+ESignWebhookInboxRecordSchema.pre('validate', function () {
+  const record = this as ESignWebhookInboxRecord;
+  const processing = record.status === 'processing';
+  if (
+    processing !== (record.processingStartedAt != null) ||
+    processing !== (record.processingToken != null) ||
+    processing !== (record.processingJobId != null)
+  ) {
+    throw new Error('eSign Inbox 处理状态与租约字段不一致');
+  }
+});
 
 ESignWebhookInboxRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 ESignWebhookInboxRecordSchema.index(

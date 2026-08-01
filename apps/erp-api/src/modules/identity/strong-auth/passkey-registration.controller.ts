@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Logger,
   Param,
   Post,
   Req,
@@ -24,6 +25,8 @@ import { WebAuthnService } from './webauthn.service.js';
 @PublicRoute()
 @RawResponse()
 export class PasskeyRegistrationController {
+  private readonly logger = new Logger(PasskeyRegistrationController.name);
+
   constructor(
     private readonly webauthn: WebAuthnService,
     private readonly grants: TokenGrantService,
@@ -110,16 +113,25 @@ export class PasskeyRegistrationController {
     identity: BrowserOAuthIdentity,
     outcome: 'success' | 'failure',
   ): Promise<void> {
-    await this.audit.recordTrustedUser(identity.tenantId, {
-      action: 'identity.passkey.register',
-      resourceType: 'identity_actor',
-      resourceId: identity.actorId,
-      riskLevel: 'R2',
-      outcome,
-      actorId: identity.actorId,
-      traceId: identity.sessionId,
-      metadata: { method: 'webauthn_uv' },
-    });
+    try {
+      await this.audit.recordTrustedUser(identity.tenantId, {
+        action: 'identity.passkey.register',
+        resourceType: 'identity_actor',
+        resourceId: identity.actorId,
+        riskLevel: 'R2',
+        outcome,
+        actorId: identity.actorId,
+        traceId: identity.sessionId,
+        metadata: { method: 'webauthn_uv' },
+      });
+    } catch {
+      this.logger.error({
+        code: outcome === 'success'
+          ? 'PASSKEY_REGISTRATION_AUDIT_AFTER_COMMIT_FAILED'
+          : 'PASSKEY_REGISTRATION_FAILURE_AUDIT_FAILED',
+        tenantId: identity.tenantId,
+      });
+    }
   }
 
   private async auditCredentialRevocation(
@@ -127,15 +139,24 @@ export class PasskeyRegistrationController {
     credentialId: string,
     outcome: 'success' | 'failure',
   ): Promise<void> {
-    await this.audit.recordTrustedUser(identity.tenantId, {
-      action: 'identity.passkey.revoke',
-      resourceType: 'identity_passkey',
-      resourceId: credentialId,
-      riskLevel: 'R2',
-      outcome,
-      actorId: identity.actorId,
-      traceId: identity.sessionId,
-      metadata: { method: 'webauthn_uv' },
-    });
+    try {
+      await this.audit.recordTrustedUser(identity.tenantId, {
+        action: 'identity.passkey.revoke',
+        resourceType: 'identity_passkey',
+        resourceId: credentialId,
+        riskLevel: 'R2',
+        outcome,
+        actorId: identity.actorId,
+        traceId: identity.sessionId,
+        metadata: { method: 'webauthn_uv' },
+      });
+    } catch {
+      this.logger.error({
+        code: outcome === 'success'
+          ? 'PASSKEY_REVOCATION_AUDIT_AFTER_COMMIT_FAILED'
+          : 'PASSKEY_REVOCATION_FAILURE_AUDIT_FAILED',
+        tenantId: identity.tenantId,
+      });
+    }
   }
 }

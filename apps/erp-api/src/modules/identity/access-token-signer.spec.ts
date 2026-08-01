@@ -2,6 +2,7 @@ import type { ConfigService } from '@nestjs/config';
 import { ServiceUnavailableException } from '@nestjs/common';
 import {
   createLocalJWKSet,
+  exportJWK,
   exportPKCS8,
   generateKeyPair,
   jwtVerify,
@@ -87,5 +88,77 @@ describe('SecretManagedRsaAccessTokenSigner', () => {
         departmentIds: [],
       }),
     ).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(signer.getPublicJwks()).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+
+  it('无法导入的私钥材料统一映射为签名设施不可用', async () => {
+    const signer = new SecretManagedRsaAccessTokenSigner(createConfig({
+      AUTH_SIGNING_PRIVATE_KEY_BASE64: Buffer.from('not-a-private-key').toString('base64'),
+      AUTH_SIGNING_KEY_ID: 'erp-signing-invalid-001',
+      AUTH_ACCESS_TOKEN_TTL_SECONDS: 600,
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+    }));
+
+    await expect(signer.sign({
+      tenantId: 'tenant-001',
+      actorId: 'actor-001',
+      actorType: 'user',
+      sessionId: 'session-001',
+      clientId: 'gaoq-web',
+      roleCodes: [],
+      scopes: [],
+      departmentIds: [],
+    })).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+
+  it('JWKS 同时发布当前与历史验签公钥，且调用方不能篡改缓存', async () => {
+    const current = await generateKeyPair('RS256', { extractable: true });
+    const historical = await generateKeyPair('RS256', { extractable: true });
+    const currentPem = await exportPKCS8(current.privateKey);
+    const historicalJwk = await exportJWK(historical.publicKey);
+    const signer = new SecretManagedRsaAccessTokenSigner(createConfig({
+      AUTH_SIGNING_PRIVATE_KEY_BASE64: Buffer.from(currentPem).toString('base64'),
+      AUTH_SIGNING_KEY_ID: 'erp-signing-current-001',
+      AUTH_SIGNING_VERIFY_ONLY_JWKS_JSON: JSON.stringify([{
+        ...historicalJwk,
+        kid: 'erp-signing-history-001',
+        alg: 'RS256',
+        use: 'sig',
+        key_ops: ['verify'],
+      }]),
+    }));
+
+    const first = await signer.getPublicJwks();
+    expect(first.keys.map((key) => key.kid)).toEqual([
+      'erp-signing-current-001',
+      'erp-signing-history-001',
+    ]);
+    first.keys[0]!.kid = 'mutated';
+    first.keys.splice(1, 1);
+    await expect(signer.getPublicJwks()).resolves.toMatchObject({
+      keys: [
+        { kid: 'erp-signing-current-001', key_ops: ['verify'] },
+        { kid: 'erp-signing-history-001', key_ops: ['verify'] },
+      ],
+    });
+  });
+
+  it('活动公钥以其他 kid 重复出现在历史集合时失败关闭', async () => {
+    const current = await generateKeyPair('RS256', { extractable: true });
+    const currentPem = await exportPKCS8(current.privateKey);
+    const currentJwk = await exportJWK(current.publicKey);
+    const signer = new SecretManagedRsaAccessTokenSigner(createConfig({
+      AUTH_SIGNING_PRIVATE_KEY_BASE64: Buffer.from(currentPem).toString('base64'),
+      AUTH_SIGNING_KEY_ID: 'erp-signing-current-001',
+      AUTH_SIGNING_VERIFY_ONLY_JWKS_JSON: JSON.stringify([{
+        ...currentJwk,
+        kid: 'erp-signing-history-001',
+        alg: 'RS256',
+        use: 'sig',
+      }]),
+    }));
+
+    await expect(signer.getPublicJwks()).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 });

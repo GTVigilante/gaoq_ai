@@ -23,6 +23,7 @@ import {
   completeCareExecution,
   createAlumniConsent,
   createOffboardingCase,
+  expireAlumniConsent as expireConsent,
   recordCareTaskEvidence,
   rejectCareCase,
   scheduleCareExecution,
@@ -143,7 +144,7 @@ export class CareApplicationService {
     input: CreateAlumniConsentDto,
   ): Promise<{ readonly consent: AlumniConsentSummary }> {
     this.assertScope('erp:care:alumni:consent:attest');
-    return this.run(async () => this.idempotency.execute(
+    const result = await this.run(async () => this.idempotency.execute(
       'care.alumni_consent.create', key, { careCaseId, ...input }, async (session) => {
         const careCase = await this.requireCase(careCaseId, session);
         if (careCase.status !== 'completed') throw new ConflictException({
@@ -183,6 +184,8 @@ export class CareApplicationService {
         return { consent: consentSummary(consent) };
       },
     ));
+    await this.executionQueue.scheduleAlumniConsentExpiry(result.consent);
+    return result;
   }
 
   async withdrawAlumniConsent(
@@ -206,6 +209,32 @@ export class CareApplicationService {
         return { consent: consentSummary(consent) };
       },
     ));
+  }
+
+  async expireAlumniConsent(
+    id: string,
+  ): Promise<{ readonly consent: AlumniConsentSummary }> {
+    this.assertScope('erp:care:alumni:consent:expire');
+    const snapshot = await this.requireConsent(id);
+    if (snapshot.status !== 'active') return { consent: consentSummary(snapshot) };
+    return this.run(async () =>
+      this.idempotency.execute(
+        'care.alumni_consent.expire', `care-consent-expiry-${id}`,
+        { id, expectedVersion: snapshot.version }, async (databaseSession) => {
+          const current = await this.requireConsent(id, databaseSession);
+          if (current.status !== 'active') return { consent: consentSummary(current) };
+          const consent = expireConsent(current, {
+            tenantId: this.context.getTenantRequired().tenantId,
+            expectedVersion: current.version,
+          }, new Date());
+          await this.alumni.replace(consent, current.version, databaseSession);
+          await this.outbox.append(
+            alumniConsentEvent(consent, 'care.alumni_consent.expired'), databaseSession,
+          );
+          return { consent: consentSummary(consent) };
+        },
+      ),
+    );
   }
 
   /** 审批创建、提交与 Care 绑定均使用根幂等键派生，可跨崩溃恢复。 */

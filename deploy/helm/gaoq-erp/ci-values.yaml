@@ -19,9 +19,12 @@ images:
     digest: sha256:4444444444444444444444444444444444444444444444444444444444444444
 runtime:
   apiConfigMapName: gaoq-erp-api-runtime-config
+  apiConfigMapHash: sha256:5555555555555555555555555555555555555555555555555555555555555555
   apiSecretName: gaoq-erp-api-runtime-secrets
   workerConfigMapName: gaoq-erp-worker-runtime-config
+  workerConfigMapHash: sha256:6666666666666666666666666666666666666666666666666666666666666666
   workerSecretName: gaoq-erp-worker-runtime-secrets
+  contractHash: sha256:7777777777777777777777777777777777777777777777777777777777777777
   webConfigMapName: gaoq-erp-web-runtime-config
   webSecretName: gaoq-erp-web-runtime-secrets
   websiteConfigMapName: gaoq-website-runtime-config

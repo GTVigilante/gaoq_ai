@@ -35,6 +35,25 @@ describe('Marketing CMS 数据隔离约束', () => {
     ]);
   });
 
+  it('副作用 Outbox 接受送达终态并记录独立送达尝试次数', async () => {
+    const record = new SideEffect({
+      eventId: '01J8ZQK7V0A2M4N6P8R0T2W4Y0',
+      tenantId: 'tenant-001',
+      kind: 'lead_notification',
+      aggregateId: 'lead-001',
+      aggregateVersion: 1,
+      channel: 'email',
+      dueAt: new Date(),
+      status: 'delivered',
+      attempts: 1,
+      nextAttemptAt: new Date(),
+      deliveryAttempts: 2,
+      completedAt: new Date(),
+    });
+    await expect(record.validate()).resolves.toBeUndefined();
+    expect(record.deliveryAttempts).toBe(2);
+  });
+
   it('仅接受真实长度且为规范 base64url 的联系人保护字段', async () => {
     const valid = {
       id: 'lead-001',
@@ -73,7 +92,7 @@ describe('Marketing CMS 数据隔离约束', () => {
       dedupeDigest: 'a'.repeat(64), consentedAt: new Date(),
     }).validate()).rejects.toThrow();
     await expect(new SideEffect({
-      eventId: '01J8ZQK7V0A2M4N6P8R0T2W4Y',
+      eventId: '01J8ZQK7V0A2M4N6P8R0T2W4Y0',
       tenantId: 'tenant-001',
       kind: 'scheduled_publish',
       aggregateId: 'content-001',

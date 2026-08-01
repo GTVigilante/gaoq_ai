@@ -46,7 +46,7 @@ export function MobileKnowledgePanel(props: { readonly active: boolean; readonly
 
   if (!props.canRead) return <KnowledgeState title="无权读取培训任务" detail="请联系管理员检查当前员工授权快照。" />;
   if (state === 'idle' || state === 'loading') return <KnowledgeState title="正在读取培训任务" detail="任务仅保留在当前页面内存。" />;
-  if (state === 'error') return <KnowledgeState title="培训任务加载失败" detail={error ?? '请稍后重试。'}><button type="button" onClick={() => { void load(); }}>重新加载</button></KnowledgeState>;
+  if (state === 'error') return <KnowledgeState title="培训任务加载失败" detail={error ?? '请稍后重试。'}><button type="button" className="mobile-retry" onClick={() => { void load(); }}>重新加载</button></KnowledgeState>;
   if (state === 'empty') return <KnowledgeState title="暂无培训任务" detail="新任务会由 ERP 主数据关系自动投影到这里。" />;
 
   const completed = items.filter((item) => item.status === 'completed').length;

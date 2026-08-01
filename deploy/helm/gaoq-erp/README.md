@@ -11,9 +11,24 @@
 - `release.websitePublicConfigHash`：Website 镜像构建时三个公开 HTTPS 地址的
   canonical 清单摘要；必须与镜像 provenance 和发布证据一致。
 - `release.rolloutId`：本次发布窗口的唯一标识。
-- `runtime.*`：平台预创建且可独立轮换的 API、Worker、ERP Web、Website ConfigMap 与 Secret 名称。Web Secret 只允许保存招聘门户 BFF 的最小 OAuth 客户端凭据；Website Secret 只保存缓存失效密钥，禁止相互复用。
+- `runtime.*`：平台预创建且可独立轮换的 API、Worker、ERP Web、Website
+  ConfigMap 与 Secret 名称。API/Worker ConfigMap 必须为 `immutable: true`，
+  `apiConfigMapHash`、`workerConfigMapHash` 分别绑定其规范 JSON 摘要，
+  `contractHash` 进一步绑定两份摘要、专业算薪 Resource、七类事件契约摘要和
+  `@gaoq/platform-contracts@1.0.0`。Web Secret 只允许保存招聘门户 BFF 的
+  最小 OAuth 客户端凭据；Website ConfigMap 只提供
+  `ERP_API_INTERNAL_ORIGIN`，Website Secret 只提供
+  `MARKETING_REVALIDATE_SECRET`，禁止相互复用。
+- Website 的 `NEXT_PUBLIC_WEBSITE_ORIGIN`、`NEXT_PUBLIC_ERP_API_ORIGIN`、
+  `NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_ORIGIN` 和 Widget URL 必须在生产镜像
+  构建时固化并进入镜像供应链证据，禁止把构建期公开变量当成 Pod 运行时配置。
 - `networkPolicy.*Labels`：经平台负责人确认的入口网关、监控和 DNS 工作负载标签。
 - `networkPolicy.httpsEgressCidrs`：统一 HTTPS 出站网关的私网 CIDR；ERP、钉钉、飞书、电子签、银行、税务、WORM 等外联只能经该网关。
+- 校友授权下游清理的 `CARE_ALUMNI_CLEANUP_TARGETS_JSON` 必须由 Secret Manager
+  分别注入 API 与 Worker 的独立 Secret 对象；每目标使用独立 Origin、Bearer
+  Token 和 Ed25519 信任根。目标域名解析出的已审批精确出口 CIDR 才能加入
+  `networkPolicy.httpsEgressCidrs`，禁止 `0.0.0.0/0`、`::/0`、直接 IP 目标或
+  为绕过 DNS 漂移扩大网段。
 - `networkPolicy.mongodbCidrs`、`networkPolicy.redisCidrs`：托管 MongoDB Replica Set 和 Redis 的独立私网 CIDR。
 
 ## 验证
@@ -23,6 +38,11 @@ pnpm deployment:kubernetes:validate
 helm lint deploy/helm/gaoq-erp --strict --values <受控值文件>
 helm template <发布名> deploy/helm/gaoq-erp --values <受控值文件> > <渲染清单>
 node scripts/validate-kubernetes-deployment.mjs <渲染清单>
+pnpm --silent release:phase6:runtime-config:print-contract
+GO_NO_GO_EXPECTED_PAYROLL_RESOURCE=https://payroll.example.invalid \
+GO_NO_GO_EXPECTED_PAYROLL_CONTRACT_HASH=sha256:<64位小写十六进制> \
+node scripts/release/validate-phase-6-runtime-config.mjs \
+  --calculate <api-configmap.json> <worker-configmap.json>
 ```
 
 CI 还使用固定版本、固定摘要的 Kubeconform 和固定 commit 的 Kubernetes schema 验证最终清单。生产集群仍需执行服务端 dry-run、准入策略和实际 NetworkPolicy 连通性测试。

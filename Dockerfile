@@ -14,6 +14,7 @@ COPY apps/website/package.json apps/website/package.json
 COPY packages/platform-contracts/package.json packages/platform-contracts/package.json
 COPY packages/shared-types/package.json packages/shared-types/package.json
 COPY packages/shared-utils/package.json packages/shared-utils/package.json
+COPY patches patches
 RUN pnpm install --frozen-lockfile
 
 FROM dependencies AS api-build
@@ -37,11 +38,12 @@ RUN node -e "const endpoint = new URL(process.env.NEXT_PUBLIC_ERP_API_ORIGIN); i
 FROM dependencies AS website-build
 ARG NEXT_PUBLIC_WEBSITE_ORIGIN
 ARG NEXT_PUBLIC_ERP_API_ORIGIN
+ARG NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_ORIGIN
 ARG NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL
 ENV NEXT_PUBLIC_WEBSITE_ORIGIN=${NEXT_PUBLIC_WEBSITE_ORIGIN}
 ENV NEXT_PUBLIC_ERP_API_ORIGIN=${NEXT_PUBLIC_ERP_API_ORIGIN}
+ENV NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_ORIGIN=${NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_ORIGIN}
 ENV NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL=${NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL}
-ENV ERP_API_INTERNAL_ORIGIN=${NEXT_PUBLIC_ERP_API_ORIGIN}
 COPY apps/website apps/website
 RUN pnpm --filter @gaoq/website build
 
@@ -85,7 +87,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
 ENTRYPOINT ["/nodejs/bin/node"]
 CMD ["apps/erp-web/server.js"]
 
-FROM runtime-base AS website
+FROM runtime-base AS erp-website
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3002
 COPY --from=website-build --chown=65532:65532 /workspace/apps/website/.next/standalone/ ./

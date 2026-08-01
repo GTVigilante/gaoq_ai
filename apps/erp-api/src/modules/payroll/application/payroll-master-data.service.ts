@@ -14,6 +14,7 @@ import { IdempotencyService } from '../../../core/idempotency/idempotency.servic
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import { EmployeeRepository } from '../../org/persistence/org.repositories.js';
 import { ApprovalApplicationService } from '../../approval/application/approval-application.service.js';
+import { LegacyPayrollBoundaryService } from '../legacy-payroll-boundary.service.js';
 import {
   calculatePayroll,
   payrollDigest,
@@ -36,6 +37,7 @@ const HASH_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const SOURCE_REFERENCE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/;
 const profileSchema = z.object({
   currency: z.literal('CNY'),
+  jurisdictionCode: z.string().regex(ID_PATTERN),
   taxableEarnings: z.array(z.object({
     code: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/),
     amountMinor: z.number().int().safe().nonnegative(),
@@ -59,6 +61,7 @@ const profileSchema = z.object({
 export interface CompensationProfileSummary extends Record<string, unknown> {
   readonly id: string;
   readonly employeeId: string;
+  readonly jurisdictionCode: string;
   readonly version: number;
   readonly effectiveFrom: string;
   readonly effectiveTo: string | null;
@@ -118,6 +121,7 @@ export class PayrollMasterDataService {
   constructor(
     private readonly idempotency: IdempotencyService,
     private readonly context: TenantContextService,
+    private readonly boundary: LegacyPayrollBoundaryService,
     private readonly employees: EmployeeRepository,
     private readonly approvals: ApprovalApplicationService,
     private readonly crypto: PayrollDataCryptoService,
@@ -134,6 +138,7 @@ export class PayrollMasterDataService {
     input: ImportPayrollCompensationFromMigrationInput,
   ): Promise<CompensationProfileSummary> {
     this.assertMigrationWriter();
+    this.boundary.assertLegacy();
     this.assertInterval(input.effectiveFrom, input.effectiveTo);
     assertMigrationEnvelope(input);
     const parsed = profileSchema.safeParse(input.data);
@@ -162,6 +167,7 @@ export class PayrollMasterDataService {
           const existing = await this.profiles.findOne({ tenantId: this.tenantId(), id })
             .session(session).lean().exec();
           if (existing === null || existing.employeeId !== input.employeeId ||
+            existing.jurisdictionCode !== parsed.data.jurisdictionCode ||
             existing.version !== input.version || existing.effectiveFrom !== input.effectiveFrom ||
             existing.effectiveTo !== input.effectiveTo ||
             existing.approvalEvidenceId !== approval.id || existing.profileHash !== profileHash ||
@@ -183,6 +189,7 @@ export class PayrollMasterDataService {
         }, parsed.data);
         await this.profiles.create([{
           id, tenantId: this.tenantId(), employeeId: input.employeeId, version: input.version,
+          jurisdictionCode: parsed.data.jurisdictionCode,
           effectiveFrom: input.effectiveFrom, effectiveTo: input.effectiveTo,
           approvalEvidenceId: approval.id, status: 'active', profileHash,
           dataKeyId: protectedData.keyId, dataIv: protectedData.iv,
@@ -195,11 +202,13 @@ export class PayrollMasterDataService {
           type: 'payroll.compensation_profile.migrated', tenantId: this.tenantId(),
           aggregateId: id, version: input.version, occurredAt: input.createdAt, data: {
             employeeId: input.employeeId, effectiveFrom: input.effectiveFrom,
-            effectiveTo: input.effectiveTo, profileHash,
+            effectiveTo: input.effectiveTo,
+            jurisdictionCode: parsed.data.jurisdictionCode, profileHash,
           },
         }, session);
         return Object.freeze({
           id, employeeId: input.employeeId, version: input.version,
+          jurisdictionCode: parsed.data.jurisdictionCode,
           effectiveFrom: input.effectiveFrom, effectiveTo: input.effectiveTo, profileHash,
         });
       },
@@ -212,6 +221,7 @@ export class PayrollMasterDataService {
     input: ImportPayrollRulePackFromMigrationInput,
   ): Promise<RulePackSummary> {
     this.assertMigrationWriter();
+    this.boundary.assertLegacy();
     this.assertInterval(input.effectiveFrom, input.effectiveTo);
     assertMigrationEnvelope(input);
     if (!ID_PATTERN.test(input.code) || !ID_PATTERN.test(input.jurisdictionCode) ||
@@ -296,15 +306,18 @@ export class PayrollMasterDataService {
     input: AttestCompensationProfileDto,
   ): Promise<CompensationProfileSummary> {
     this.assertTrustedService('erp:payroll:compensation:attest');
+    this.boundary.assertLegacy();
     const effectiveTo = input.effectiveTo ?? null;
     this.assertInterval(input.effectiveFrom, effectiveTo);
-    if (!ID_PATTERN.test(input.employeeId) || !ID_PATTERN.test(input.approvalEvidenceId)) {
+    if (!ID_PATTERN.test(input.employeeId) || !ID_PATTERN.test(input.jurisdictionCode) ||
+      !ID_PATTERN.test(input.approvalEvidenceId)) {
       throw new BadRequestException({
         code: 'PAYROLL_COMPENSATION_REFERENCE_INVALID', message: '薪酬档案引用非法',
       });
     }
     const parsed = profileSchema.safeParse({
-      currency: 'CNY', taxableEarnings: input.taxableEarnings,
+      currency: 'CNY', jurisdictionCode: input.jurisdictionCode,
+      taxableEarnings: input.taxableEarnings,
       nonTaxableEarnings: input.nonTaxableEarnings,
       employeeSocialInsuranceMinor: input.employeeSocialInsuranceMinor,
       employeeHousingFundMinor: input.employeeHousingFundMinor,
@@ -345,6 +358,7 @@ export class PayrollMasterDataService {
       }, data);
       await this.profiles.create([{
         id, tenantId: this.tenantId(), employeeId: input.employeeId, version,
+        jurisdictionCode: input.jurisdictionCode,
         effectiveFrom: input.effectiveFrom, effectiveTo,
         approvalEvidenceId: input.approvalEvidenceId, status: 'active', profileHash,
         dataKeyId: protectedData.keyId, dataIv: protectedData.iv,
@@ -354,11 +368,11 @@ export class PayrollMasterDataService {
         type: 'payroll.compensation_profile.attested', tenantId: this.tenantId(),
         aggregateId: id, version, occurredAt: now.toISOString(), data: {
           employeeId: input.employeeId, effectiveFrom: input.effectiveFrom,
-          effectiveTo, profileHash,
+          effectiveTo, jurisdictionCode: input.jurisdictionCode, profileHash,
         },
       }, session);
       return Object.freeze({
-        id, employeeId: input.employeeId, version,
+        id, employeeId: input.employeeId, jurisdictionCode: input.jurisdictionCode, version,
         effectiveFrom: input.effectiveFrom, effectiveTo, profileHash,
       });
       },
@@ -367,6 +381,7 @@ export class PayrollMasterDataService {
 
   async attestRulePack(key: string, input: AttestPayrollRulePackDto): Promise<RulePackSummary> {
     this.assertTrustedService('erp:payroll:rule:attest');
+    this.boundary.assertLegacy();
     const effectiveTo = input.effectiveTo ?? null;
     this.assertInterval(input.effectiveFrom, effectiveTo);
     if (
@@ -605,6 +620,7 @@ function compensationSummary(record: PayrollCompensationProfileRecord): Compensa
   return Object.freeze({
     id: record.id, employeeId: record.employeeId, version: record.version,
     effectiveFrom: record.effectiveFrom, effectiveTo: record.effectiveTo,
+    jurisdictionCode: record.jurisdictionCode,
     profileHash: record.profileHash,
   });
 }

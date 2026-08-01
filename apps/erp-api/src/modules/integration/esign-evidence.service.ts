@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 
-import { ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { createEventId } from '@gaoq/shared-utils';
 import type { Model } from 'mongoose';
@@ -23,6 +28,8 @@ import { ESignSecretResolver } from './esign-webhook.service.js';
 /** eSign PDF 验签、扫描、WORM 归档和 Offer 终态编排；任一证据不完整即失败关闭。 */
 @Injectable()
 export class ESignEvidenceService {
+  private readonly logger = new Logger(ESignEvidenceService.name);
+
   constructor(
     private readonly context: TenantContextService,
     private readonly adapter: ESignAdapter,
@@ -58,11 +65,20 @@ export class ESignEvidenceService {
     )) throw new Error('ESIGN_COMPLETED_EVIDENCE_INTEGRITY_INVALID');
     const record = existing ?? await this.buildAndPersistEvidence(flow);
     await this.finalizeOfferAndFlow(flow, record);
-    await this.audit.record({
-      action: 'integration.esign.evidence.archive', resourceType: 'esign_evidence',
-      resourceId: record.id, riskLevel: 'R3', outcome: 'success',
-      metadata: { flowId: flow.id, artifactCount: record.artifacts.length },
-    });
+    try {
+      await this.audit.record({
+        action: 'integration.esign.evidence.archive', resourceType: 'esign_evidence',
+        resourceId: record.id, riskLevel: 'R3', outcome: 'success',
+        metadata: { flowId: flow.id, artifactCount: record.artifacts.length },
+      });
+    } catch {
+      this.logger.error({
+        code: 'ESIGN_EVIDENCE_AUDIT_AFTER_COMMIT_FAILED',
+        tenantId,
+        flowId: flow.id,
+        evidenceId: record.id,
+      });
+    }
     return Object.freeze({ evidenceId: record.id });
   }
 
@@ -79,6 +95,9 @@ export class ESignEvidenceService {
       throw new Error('ESIGN_PROVIDER_COMPLETION_NOT_CONFIRMED');
     }
     const descriptors = await this.adapter.listSignedFiles(credential, externalFlowId);
+    if (new Set(descriptors.map((descriptor) => descriptor.fileId)).size !== descriptors.length) {
+      throw new Error('ESIGN_DOCUMENT_DESCRIPTOR_DUPLICATED');
+    }
     const artifacts: ESignEvidenceArtifactRecord[] = [];
     for (const descriptor of descriptors) {
       const bytes = await this.adapter.downloadSignedFile(descriptor);

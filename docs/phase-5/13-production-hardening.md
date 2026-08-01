@@ -17,15 +17,31 @@ Dependabot 每周分别检查 pnpm/npm 依赖与 GitHub Actions。许可证门�
 
 API、Worker、ERP Web、Website 已有固定摘要、distroless、nonroot 的生产镜像目标；每个 PR 分别构建最终镜像、生成 SPDX JSON SBOM 并以 Trivy 阻断 High/Critical 漏洞。构建和验证细则见[生产镜像构建与验证运行手册](./14-production-images-runbook.md)。正式仓库推送、镜像签名、SLSA provenance 与准入策略仍待 CD 平台接入。
 
-1000 并发只读 API、1000 人工资计算和三次可比证据的脚本与校验契约见[性能容量三次实测门禁](./15-performance-capacity-gate.md)。现场证据只能由受保护的 `phase-5-performance` Environment 和隔离单次 Runner 验收；工具交付不代替生产等价环境的三次真实执行。
+1000 并发只读 API、1000 人工资计算和三次可比证据的脚本与校验契约见
+[性能容量三次实测门禁](./15-performance-capacity-gate.md)。v2 证据要求性能、
+平台、安全三方分别使用独立 Ed25519 密钥逐次签署，并把同一受信 keyset 与
+三次运行和当前发布候选绑定。现场脱敏摘要只能由 `phase-5-performance`
+workflow policy 通过 GitHub Hosted Runner 和单次 OIDC 身份验收；工具交付
+不代替生产等价环境的三次真实执行。
 
-二十六个迁移 Scope、三轮七十八个运行与三类故障演练的聚合证据由[数据迁移三次演练证据门禁](./12-data-migration-rehearsal-gate.md)验收。只有受保护的 `phase-5-migration-rehearsal` Environment 可以生成供 Go/No-Go 消费的 migration verdict；单 Scope 比较通过不能替代全链路验收。
+二十六个迁移 Scope、三轮七十八个运行与三类故障演练的聚合证据由[数据迁移三次演练证据门禁](./12-data-migration-rehearsal-gate.md)验收。只有 `phase-5-migration-rehearsal` workflow policy 可以生成供 Go/No-Go 消费的 migration verdict；单 Scope 比较通过不能替代全链路验收。
 
-ZAP 主动扫描、OWASP ASVS 5.0.0 L2/L3 证据与四方签署契约见[DAST 与 ASVS 5.0.0 证据门禁](./16-dast-asvs-gate.md)。工作流只能由受保护的 `phase-5-dast` GitHub Environment 在隔离测试租户执行，不允许扫描生产流量。
+ZAP 主动扫描、OWASP ASVS 5.0.0 L2/L3 证据与四方签署契约见[DAST 与 ASVS
+5.0.0 证据门禁](./16-dast-asvs-gate.md)。主动扫描只能由 `phase-5-dast`
+workflow policy 在隔离测试租户执行，短期目标和低权限 Token 经 OIDC 网关
+取得，不允许扫描生产流量；最终 v2 脱敏证据由独立
+`phase-5-dast-evidence` policy 拉取，四方 Ed25519 验签并绑定当前发布候选和
+受信 keyset 后才形成 verdict。
 
-MongoDB 时间点恢复、Redis/BullMQ 重建、对象/WORM 与 KMS 验证、旧系统回滚及八类外部连接两小时断连追赶契约见[容灾恢复与外部系统断连追赶门禁](./17-resilience-rehearsal-gate.md)。现场证据只能由受保护的 `phase-5-resilience` Environment 和隔离单次 Runner 验收。
+MongoDB 时间点恢复、Redis/BullMQ 重建、对象/WORM 与 KMS 验证、旧系统回滚及
+九类外部连接（含独立专业算薪）两小时断连追赶契约见
+[容灾恢复与外部系统断连追赶门禁](./17-resilience-rehearsal-gate.md)。现场脱敏
+摘要只能由 `phase-5-resilience` workflow policy 通过 GitHub Hosted Runner 和
+单次 OIDC 身份验收。容灾 v4 把专业算薪 Resource、独立授权服务器、镜像、
+MCP 目录和事件契约纳入七方签名；Go/No-Go v3 再与 MCP 联调结论逐字段比对，
+禁止跨环境替身或旧版本拼接。
 
-工程质量、供应链、生产镜像、权限、业务 UAT、隐私合规和运行保障先由[七类发布就绪 verdict 门禁](./20-readiness-verdicts.md)生成独立证据。全部上线证据的新鲜度、版本绑定、十二类门禁、十方签署和周末八小时切换窗口再由[跨职能 Go/No-Go 证据门禁](./18-go-no-go-evidence-gate.md)统一验收。工作流只生成不可部署的 verdict，不替代人工生产审批。
+工程质量、供应链、生产镜像、权限、业务 UAT、隐私合规和运行保障先由[七类发布就绪 verdict 门禁](./20-readiness-verdicts.md)生成独立证据。全部上线证据的新鲜度、版本绑定、十二类门禁、十方独立 Ed25519 签署和周末八小时切换窗口再由[跨职能 Go/No-Go 证据门禁](./18-go-no-go-evidence-gate.md)统一验收。工作流只生成不可部署的 verdict，不替代人工生产审批。
 
 以下项目尚未完成，因此本文件不构成生产放行：
 

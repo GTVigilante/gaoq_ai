@@ -30,6 +30,20 @@ export interface PayrollRulePackSnapshot {
   readonly roundingMode: 'HALF_UP';
 }
 
+export interface PayrollCompensationAllocationEvidence {
+  readonly profileId: string;
+  readonly profileVersion: number;
+  readonly profileHash: string;
+  readonly jurisdictionCode: string;
+  readonly effectiveFrom: string;
+  readonly effectiveTo: string | null;
+  readonly allocatedFrom: string;
+  readonly allocatedTo: string;
+  readonly allocatedDays: number;
+  readonly periodDays: number;
+  readonly allocationMethod: 'CALENDAR_DAY_HALF_UP';
+}
+
 export interface PayrollCalculationInput {
   readonly tenantId: string;
   readonly employeeId: string;
@@ -46,6 +60,8 @@ export interface PayrollCalculationInput {
   readonly otherPreTaxWithholdingMinor: number;
   readonly postTaxDeductionMinor: number;
   readonly cumulativeBefore: CumulativeWithholdingState;
+  /** 月中变更时冻结档案、法域和分摊边界；旧整月快照可不包含。 */
+  readonly compensationAllocations?: readonly PayrollCompensationAllocationEvidence[];
 }
 
 export interface PayrollCalculationStep {
@@ -151,6 +167,10 @@ export function calculatePayroll(input: PayrollCalculationInput): PayrollCalcula
     otherPreTaxWithholdingMinor: input.otherPreTaxWithholdingMinor,
     postTaxDeductionMinor: input.postTaxDeductionMinor,
     cumulativeBefore: Object.freeze({ ...input.cumulativeBefore }),
+    ...(input.compensationAllocations === undefined ? {} : {
+      compensationAllocations: Object.freeze(input.compensationAllocations
+        .map((item) => Object.freeze({ ...item }))),
+    }),
   });
   const inputDigest = payrollDigest(normalizedInput);
   const amounts = [
@@ -242,6 +262,45 @@ function validateInput(input: PayrollCalculationInput): void {
   if (input.rulePack.taxBrackets.at(-1)?.upperBoundMinor !== null) {
     invalid('PAYROLL_TAX_BRACKETS_INVALID', '税率表必须包含最终无上限档');
   }
+  validateCompensationAllocations(input);
+}
+
+function validateCompensationAllocations(input: PayrollCalculationInput): void {
+  if (input.compensationAllocations === undefined) return;
+  if (input.compensationAllocations.length < 1 || input.compensationAllocations.length > 31) {
+    invalid('PAYROLL_COMPENSATION_ALLOCATION_INVALID', '薪酬分摊证据数量非法');
+  }
+  const profileIds = new Set<string>();
+  let allocatedDays = 0;
+  for (const allocation of input.compensationAllocations) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(allocation.profileId) ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(allocation.jurisdictionCode) ||
+      !/^[A-Za-z0-9_-]{43}$/.test(allocation.profileHash) ||
+      !Number.isSafeInteger(allocation.profileVersion) || allocation.profileVersion < 1 ||
+      !Number.isSafeInteger(allocation.allocatedDays) || allocation.allocatedDays < 1 ||
+      !Number.isSafeInteger(allocation.periodDays) || allocation.periodDays < 28 ||
+      allocation.periodDays > 31 ||
+      allocation.allocationMethod !== 'CALENDAR_DAY_HALF_UP' ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(allocation.effectiveFrom) ||
+      (allocation.effectiveTo !== null && !/^\d{4}-\d{2}-\d{2}$/.test(allocation.effectiveTo)) ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(allocation.allocatedFrom) ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(allocation.allocatedTo) ||
+      allocation.allocatedFrom > allocation.allocatedTo ||
+      allocation.periodDays !== daysInPeriod(input.period) ||
+      profileIds.has(allocation.profileId)) {
+      invalid('PAYROLL_COMPENSATION_ALLOCATION_INVALID', '薪酬分摊证据非法');
+    }
+    profileIds.add(allocation.profileId);
+    allocatedDays += allocation.allocatedDays;
+  }
+  if (allocatedDays !== daysInPeriod(input.period)) {
+    invalid('PAYROLL_COMPENSATION_ALLOCATION_INVALID', '薪酬分摊天数未覆盖工资期间');
+  }
+}
+
+function daysInPeriod(period: string): number {
+  const [yearText, monthText] = period.split('-');
+  return new Date(Date.UTC(Number(yearText), Number(monthText), 0)).getUTCDate();
 }
 
 function normalizedComponents(

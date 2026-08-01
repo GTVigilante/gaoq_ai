@@ -94,4 +94,87 @@ describe('OrgPlatformCredentialService', () => {
     expect(error).toMatchObject({ code: 'ORG_CREDENTIAL_INVALID' });
     expect(String(error)).not.toContain('leaked-value');
   });
+
+  it('通用凭据解析拒绝缺失绑定、越权 Secret 引用、非法凭据和非法外部租户', async () => {
+    const missing = new OrgPlatformCredentialService(
+      { findOne: vi.fn().mockReturnValue(query(null)) } as unknown as Model<OrgPlatformBindingDocument>,
+      { resolve: vi.fn() },
+    );
+    await expect(missing.resolve('tenant-a', 'dingtalk')).rejects.toMatchObject({
+      code: 'ORG_PLATFORM_BINDING_MISSING',
+    });
+
+    const invalidReference = new OrgPlatformCredentialService(
+      {
+        findOne: vi.fn().mockReturnValue(query({
+          externalTenantId: 'corp-001',
+          credentialSecretRef: PROVISIONING_SECRET_NAME,
+        })),
+      } as unknown as Model<OrgPlatformBindingDocument>,
+      { resolve: vi.fn() },
+    );
+    await expect(invalidReference.resolve('tenant-a', 'dingtalk')).rejects.toMatchObject({
+      code: 'ORG_CREDENTIAL_REF_INVALID',
+    });
+
+    const invalidCredential = new OrgPlatformCredentialService(
+      {
+        findOne: vi.fn().mockReturnValue(query({
+          externalTenantId: '$bad',
+          credentialSecretRef: SECRET_NAME,
+        })),
+      } as unknown as Model<OrgPlatformBindingDocument>,
+      { resolve: vi.fn().mockResolvedValue(JSON.stringify({
+        clientId: 'app-key',
+        clientSecret: 'secret-value',
+        unexpected: true,
+      })) },
+    );
+    await expect(invalidCredential.resolve('tenant-a', 'dingtalk')).rejects.toMatchObject({
+      code: 'ORG_CREDENTIAL_INVALID',
+    });
+  });
+
+  it('开户租户标识查询拒绝非法租户、缺失绑定和损坏的外部租户标识', async () => {
+    const findOne = vi.fn();
+    const service = new OrgPlatformCredentialService(
+      { findOne } as unknown as Model<OrgPlatformBindingDocument>,
+      { resolve: vi.fn() },
+    );
+    await expect(service.resolveExternalTenantId('$ne', 'feishu')).rejects.toMatchObject({
+      code: 'ORG_TENANT_ID_INVALID',
+    });
+    expect(findOne).not.toHaveBeenCalled();
+
+    findOne.mockReturnValueOnce(query(null));
+    await expect(service.resolveExternalTenantId('tenant-a', 'feishu')).rejects.toMatchObject({
+      code: 'ORG_PLATFORM_BINDING_MISSING',
+    });
+
+    findOne.mockReturnValueOnce(query({ externalTenantId: '$bad' }));
+    await expect(service.resolveExternalTenantId('tenant-a', 'feishu')).rejects.toMatchObject({
+      code: 'ORG_CREDENTIAL_INVALID',
+    });
+  });
+
+  it('凭据对象必须严格包含规范 clientId 与不少于八位的 clientSecret', async () => {
+    const findOne = vi.fn().mockReturnValue(query({
+      externalTenantId: 'corp-001',
+      credentialSecretRef: SECRET_NAME,
+    }));
+    const resolve = vi.fn()
+      .mockResolvedValueOnce(JSON.stringify({ clientId: '$bad', clientSecret: 'short' }))
+      .mockResolvedValueOnce(JSON.stringify({ clientId: 'app-key', clientSecret: 'secret-value' }));
+    const service = new OrgPlatformCredentialService(
+      { findOne } as unknown as Model<OrgPlatformBindingDocument>,
+      { resolve },
+    );
+    await expect(service.resolve('tenant-a', 'feishu')).rejects.toMatchObject({
+      code: 'ORG_CREDENTIAL_INVALID',
+    });
+    await expect(service.resolve('tenant-a', 'feishu')).resolves.toMatchObject({
+      clientId: 'app-key',
+      externalTenantId: 'corp-001',
+    });
+  });
 });

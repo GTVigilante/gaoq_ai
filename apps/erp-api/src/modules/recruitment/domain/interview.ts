@@ -12,6 +12,15 @@ export type RecruitmentInterviewStatus = 'scheduled' | 'completed' | 'cancelled'
 export type RecruitmentInterviewMode = 'phone' | 'video' | 'onsite';
 export type InterviewRecommendation = 'strong_hire' | 'hire' | 'no_hire' | 'strong_no_hire';
 
+const INTERVIEW_MODES: readonly RecruitmentInterviewMode[] =
+  ['phone', 'video', 'onsite'];
+const INTERVIEW_STATUSES: readonly RecruitmentInterviewStatus[] =
+  ['scheduled', 'completed', 'cancelled'];
+const INTERVIEW_RECOMMENDATIONS: readonly InterviewRecommendation[] =
+  ['strong_hire', 'hire', 'no_hire', 'strong_no_hire'];
+const INTERVIEW_TIMEZONE_PATTERN =
+  /^(?:UTC|[A-Za-z_]+(?:\/[A-Za-z0-9_+.-]+)+)$/;
+
 export interface RecruitmentInterview {
   readonly id: string;
   readonly tenantId: string;
@@ -80,6 +89,7 @@ export function createRecruitmentInterview(
   },
   now: Date,
 ): RecruitmentInterview {
+  const occurredAt = toRecruitmentIso(now);
   for (const [field, value] of Object.entries({
     id: input.id, tenantId: input.tenantId, applicationId: input.applicationId,
     actorId: input.actorId,
@@ -87,8 +97,9 @@ export function createRecruitmentInterview(
   if (!Number.isSafeInteger(input.roundNumber) || input.roundNumber < 1 || input.roundNumber > 100) {
     throw new RecruitmentDomainError('RECRUITMENT_INTERVIEW_ROUND_INVALID', '面试轮次必须为 1..100 的整数');
   }
-  if (!['phone', 'video', 'onsite'].includes(input.mode)) throw new RecruitmentDomainError(
-    'RECRUITMENT_INTERVIEW_MODE_INVALID', '面试方式无效',
+  assertInterviewMode(input.mode);
+  if (!Array.isArray(input.interviewerIds)) throw new RecruitmentDomainError(
+    'RECRUITMENT_INTERVIEWERS_INVALID', '面试官必须唯一且人数为 1..20',
   );
   const interviewerIds = [...new Set(input.interviewerIds)];
   if (
@@ -98,6 +109,8 @@ export function createRecruitmentInterview(
     'RECRUITMENT_INTERVIEWERS_INVALID', '面试官必须唯一且人数为 1..20',
   );
   for (const interviewerId of interviewerIds) assertRecruitmentId(interviewerId, 'interviewerId');
+  const startsAtIso = toRecruitmentIso(input.startsAt);
+  const endsAtIso = toRecruitmentIso(input.endsAt);
   const startsAt = input.startsAt.getTime();
   const endsAt = input.endsAt.getTime();
   if (
@@ -107,15 +120,12 @@ export function createRecruitmentInterview(
   ) throw new RecruitmentDomainError(
     'RECRUITMENT_INTERVIEW_TIME_INVALID', '面试必须在未来开始、正向结束且时长不超过 12 小时',
   );
-  if (!/^(?:UTC|[A-Za-z_]+\/[A-Za-z0-9_+.-]+)$/.test(input.timezone)) {
-    throw new RecruitmentDomainError('RECRUITMENT_TIMEZONE_INVALID', '时区必须使用 IANA 标识');
-  }
+  assertInterviewTimezone(input.timezone);
   assertRecruitmentLabel(input.location, 'location', 2_048);
-  const occurredAt = toRecruitmentIso(now);
   return deepFreezeRecruitment({
     id: input.id, tenantId: input.tenantId, applicationId: input.applicationId,
     roundNumber: input.roundNumber, mode: input.mode,
-    startsAt: toRecruitmentIso(input.startsAt), endsAt: toRecruitmentIso(input.endsAt),
+    startsAt: startsAtIso, endsAt: endsAtIso,
     timezone: input.timezone, interviewerIds, location: input.location.trim(),
     status: 'scheduled' as const, version: 1, completedAt: null, cancelledAt: null,
     createdBy: input.actorId, createdAt: occurredAt, updatedAt: occurredAt,
@@ -146,6 +156,16 @@ export function restoreRecruitmentInterviewFromMigration(
   },
   now: Date,
 ): RecruitmentInterviewMigrationResult {
+  toRecruitmentIso(now);
+  assertInterviewStatus(input.expectedStatus);
+  assertRecruitmentVersion(input.expectedVersion);
+  if (!Array.isArray(input.interviewerIds)) throw new RecruitmentDomainError(
+    'RECRUITMENT_INTERVIEWERS_INVALID', '面试官必须唯一且人数为 1..20',
+  );
+  if (!Array.isArray(input.feedback)) throw new RecruitmentDomainError(
+    'RECRUITMENT_MIGRATION_INTERVIEW_FEEDBACK_INVALID',
+    '面试迁移评价必须为有界普通对象数组',
+  );
   const createdAt = strictInterviewMigrationIso(input.createdAt);
   const startsAt = strictInterviewMigrationIso(input.startsAt);
   const endsAt = strictInterviewMigrationIso(input.endsAt);
@@ -177,18 +197,14 @@ export function restoreRecruitmentInterviewFromMigration(
       'RECRUITMENT_INTERVIEW_ROUND_INVALID', '面试轮次必须为 1..100 的整数',
     );
   }
-  if (!['phone', 'video', 'onsite'].includes(input.mode)) throw new RecruitmentDomainError(
-    'RECRUITMENT_INTERVIEW_MODE_INVALID', '面试方式无效',
-  );
+  assertInterviewMode(input.mode);
   const interviewerIds = [...new Set(input.interviewerIds)];
   if (interviewerIds.length < 1 || interviewerIds.length > 20 ||
     interviewerIds.length !== input.interviewerIds.length) throw new RecruitmentDomainError(
     'RECRUITMENT_INTERVIEWERS_INVALID', '面试官必须唯一且人数为 1..20',
   );
   for (const interviewerId of interviewerIds) assertRecruitmentId(interviewerId, 'interviewerId');
-  if (!/^(?:UTC|[A-Za-z_]+\/[A-Za-z0-9_+.-]+)$/.test(input.timezone)) {
-    throw new RecruitmentDomainError('RECRUITMENT_TIMEZONE_INVALID', '时区必须使用 IANA 标识');
-  }
+  assertInterviewTimezone(input.timezone);
   assertRecruitmentLabel(input.location, 'location', 2_048);
   if (input.feedback.length > 20 ||
     input.expectedVersion !== 1 + input.feedback.length +
@@ -220,7 +236,9 @@ export function restoreRecruitmentInterviewFromMigration(
   const restoredFeedback: RecruitmentInterviewFeedback[] = [];
   const submitted = new Set<string>();
   let previous = createdAt;
-  for (const source of input.feedback) {
+  for (const candidate of input.feedback as readonly unknown[]) {
+    assertMigrationFeedback(candidate);
+    const source = candidate;
     const submittedAt = strictInterviewMigrationIso(source.submittedAt);
     if (submittedAt < startsAt || submittedAt < previous ||
       Date.parse(submittedAt) > nowTime + 5 * 60 * 1_000 ||
@@ -304,7 +322,7 @@ export function submitRecruitmentInterviewFeedback(
       'RECRUITMENT_FEEDBACK_SUBMIT_DENIED', '只有该轮有效面试官可提交评价',
     );
   }
-  if (!['strong_hire', 'hire', 'no_hire', 'strong_no_hire'].includes(input.recommendation)) {
+  if (!INTERVIEW_RECOMMENDATIONS.includes(input.recommendation)) {
     throw new RecruitmentDomainError('RECRUITMENT_RECOMMENDATION_INVALID', '面试建议无效');
   }
   if (!Number.isSafeInteger(input.score) || input.score < 1 || input.score > 5) {
@@ -312,14 +330,15 @@ export function submitRecruitmentInterviewFeedback(
   }
   assertRecruitmentLabel(input.notes, 'notes', 8_192);
   const submittedAt = toRecruitmentIso(now);
+  if (submittedAt < interview.startsAt) throw new RecruitmentDomainError(
+    'RECRUITMENT_FEEDBACK_TIME_INVALID', '面试开始前不得提交评价',
+  );
   const feedback = deepFreezeRecruitment({
     id: input.id, tenantId: input.tenantId, interviewId: interview.id,
     interviewerId: input.interviewerId, recommendation: input.recommendation,
     score: input.score, notes: input.notes.trim(), submittedAt,
   });
-  const updatedInterview = deepFreezeRecruitment({
-    ...interview, version: interview.version + 1, updatedAt: submittedAt,
-  });
+  const updatedInterview = advanceInterview(interview, now, {});
   return deepFreezeRecruitment({ interview: updatedInterview, feedback });
 }
 
@@ -336,17 +355,27 @@ export function completeRecruitmentInterview(
   if (interview.status !== 'scheduled') throw new RecruitmentDomainError(
     'RECRUITMENT_INTERVIEW_COMPLETE_INVALID', '只有已排期面试可完成',
   );
+  if (!Array.isArray(input.submittedInterviewerIds)) throw new RecruitmentDomainError(
+    'RECRUITMENT_FEEDBACK_INCOMPLETE', '所有面试官提交评价后才能完成面试',
+  );
+  for (const id of input.submittedInterviewerIds) {
+    assertRecruitmentId(id, 'submittedInterviewerId');
+  }
   const submitted = new Set(input.submittedInterviewerIds);
   if (
+    submitted.size !== input.submittedInterviewerIds.length ||
     submitted.size !== interview.interviewerIds.length ||
     !interview.interviewerIds.every((id) => submitted.has(id))
   ) throw new RecruitmentDomainError(
     'RECRUITMENT_FEEDBACK_INCOMPLETE', '所有面试官提交评价后才能完成面试',
   );
   const occurredAt = toRecruitmentIso(now);
-  return deepFreezeRecruitment({
-    ...interview, status: 'completed' as const, version: interview.version + 1,
-    completedAt: occurredAt, updatedAt: occurredAt,
+  if (occurredAt < interview.endsAt) throw new RecruitmentDomainError(
+    'RECRUITMENT_INTERVIEW_COMPLETE_TIME_INVALID', '面试结束前不得完成面试',
+  );
+  return advanceInterview(interview, now, {
+    status: 'completed' as const,
+    completedAt: occurredAt,
   });
 }
 
@@ -359,10 +388,9 @@ export function cancelRecruitmentInterview(
   if (interview.status !== 'scheduled') throw new RecruitmentDomainError(
     'RECRUITMENT_INTERVIEW_CANCEL_INVALID', '只有已排期面试可取消',
   );
-  const occurredAt = toRecruitmentIso(now);
-  return deepFreezeRecruitment({
-    ...interview, status: 'cancelled' as const, version: interview.version + 1,
-    cancelledAt: occurredAt, updatedAt: occurredAt,
+  return advanceInterview(interview, now, {
+    status: 'cancelled' as const,
+    cancelledAt: toRecruitmentIso(now),
   });
 }
 
@@ -372,13 +400,108 @@ function assertInterviewCommand(
   expectedVersion: number,
 ): void {
   assertRecruitmentTenant(interview.tenantId, tenantId);
+  assertRecruitmentVersion(interview.version);
   assertRecruitmentVersion(expectedVersion);
+  assertInterviewStatus(interview.status);
   if (interview.version !== expectedVersion) throw new RecruitmentDomainError(
     'RECRUITMENT_VERSION_CONFLICT', '面试版本冲突',
   );
 }
 
-function strictInterviewMigrationIso(value: string): string {
+function advanceInterview<T extends Partial<RecruitmentInterview>>(
+  interview: RecruitmentInterview,
+  now: Date,
+  patch: T,
+): RecruitmentInterview {
+  const updatedAt = toRecruitmentIso(now);
+  if (interview.version >= Number.MAX_SAFE_INTEGER) {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_INTERVIEW_VERSION_EXHAUSTED',
+      '面试版本已达到安全整数上限',
+    );
+  }
+  if (updatedAt < interview.updatedAt) throw new RecruitmentDomainError(
+    'RECRUITMENT_INTERVIEW_TIMELINE_INVALID',
+    '面试更新时间不能早于当前版本',
+  );
+  return deepFreezeRecruitment({
+    ...interview,
+    ...patch,
+    version: interview.version + 1,
+    updatedAt,
+  });
+}
+
+function assertInterviewMode(value: unknown): asserts value is RecruitmentInterviewMode {
+  if (!INTERVIEW_MODES.includes(value as RecruitmentInterviewMode)) {
+    throw new RecruitmentDomainError('RECRUITMENT_INTERVIEW_MODE_INVALID', '面试方式无效');
+  }
+}
+
+function assertInterviewStatus(value: unknown): asserts value is RecruitmentInterviewStatus {
+  if (!INTERVIEW_STATUSES.includes(value as RecruitmentInterviewStatus)) {
+    throw new RecruitmentDomainError('RECRUITMENT_INTERVIEW_STATUS_INVALID', '面试状态无效');
+  }
+}
+
+function assertInterviewTimezone(value: unknown): asserts value is string {
+  if (typeof value !== 'string' || !INTERVIEW_TIMEZONE_PATTERN.test(value)) {
+    throw new RecruitmentDomainError('RECRUITMENT_TIMEZONE_INVALID', '时区必须使用有效 IANA 标识');
+  }
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value }).format();
+  } catch {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_TIMEZONE_INVALID',
+      '时区必须使用有效 IANA 标识',
+    );
+  }
+}
+
+function assertMigrationFeedback(
+  value: unknown,
+): asserts value is RecruitmentInterviewMigrationFeedback {
+  const expectedKeys = [
+    'id',
+    'interviewerId',
+    'recommendation',
+    'score',
+    'notes',
+    'submittedAt',
+  ] as const;
+  let descriptors: PropertyDescriptorMap;
+  try {
+    if (
+      typeof value !== 'object' ||
+      value === null ||
+      Array.isArray(value) ||
+      Object.getPrototypeOf(value) !== Object.prototype
+    ) throw new Error('not_plain');
+    const keys = Reflect.ownKeys(value);
+    if (
+      keys.length !== expectedKeys.length ||
+      keys.some((key) => typeof key !== 'string' || !expectedKeys.includes(
+        key as (typeof expectedKeys)[number],
+      ))
+    ) throw new Error('keys_invalid');
+    descriptors = Object.getOwnPropertyDescriptors(value);
+    if (expectedKeys.some((key) => !Object.hasOwn(descriptors, key) ||
+      !Object.hasOwn(descriptors[key]!, 'value'))) throw new Error('accessor_invalid');
+  } catch {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_MIGRATION_INTERVIEW_FEEDBACK_INVALID',
+      '面试迁移评价必须为精确普通数据对象',
+    );
+  }
+}
+
+function strictInterviewMigrationIso(value: unknown): string {
+  if (typeof value !== 'string') {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_MIGRATION_INTERVIEW_TIMELINE_INVALID',
+      '面试迁移时间必须为严格 UTC ISO',
+    );
+  }
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value) {
     throw new RecruitmentDomainError(

@@ -22,6 +22,7 @@ import {
 import {
   ESIGN_PROCESS_WEBHOOK_JOB,
   ESIGN_WEBHOOK_QUEUE,
+  createESignWebhookJobId,
   type ESignWebhookJobData,
 } from './esign-webhook.queue.js';
 
@@ -165,13 +166,13 @@ export class ESignWebhookService {
   private async enqueue(inboxId: string, tenantId: string, providerEventId: string): Promise<void> {
     await this.queue.add(
       ESIGN_PROCESS_WEBHOOK_JOB,
-      { inboxId, tenantId },
+      { inboxId, tenantId, providerEventId },
       {
-        jobId: `esign_${providerEventId}`,
+        jobId: createESignWebhookJobId(tenantId, inboxId, providerEventId),
         attempts: 12,
         backoff: { type: 'exponential', delay: 2_000 },
         removeOnComplete: 1_000,
-        removeOnFail: 10_000,
+        removeOnFail: true,
       },
     );
   }

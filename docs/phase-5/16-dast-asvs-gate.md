@@ -1,7 +1,8 @@
 # Phase 5 DAST 与 ASVS 5.0.0 证据门禁
 
 - 文档编号：phase-5/16
-- 状态：扫描工作流与证据校验器已交付；生产等价环境实测和签署尚未执行
+- 状态：扫描、最终证据验收工作流与 v2 证据校验器已交付；生产等价环境实测和
+  真实职责签署尚未执行
 
 ## 标准与范围
 
@@ -13,9 +14,11 @@ DAST 使用 [ZAP 2.17.0 Full Scan](https://www.zaproxy.org/docs/docker/full-scan
 
 ## 主动扫描安全边界
 
-`.github/workflows/phase-5-dast.yml` 只能通过 `workflow_dispatch` 启动，并绑定受保护的 `phase-5-dast` GitHub Environment。环境必须配置 Required Reviewers，并提供：
+`.github/workflows/phase-5-dast.yml` 只能通过 `workflow_dispatch` 在 `main` 启动，
+使用 GitHub Hosted Runner、`phase-5-dast` policy 和单次 OIDC。GitHub Free
+私有仓库不依赖 Environment 或 Required Reviewers；Repository Variables 提供：
 
-- Secret：`DAST_BASE_URL`、`DAST_AUTH_TOKEN`；Token 是专用低权限测试身份，不带 `Bearer ` 前缀；
+- `DAST_CONFIG_URL`、`DAST_CONFIG_SHA256`、`DAST_CONFIG_OIDC_AUDIENCE`；网关返回最长四小时的严格 JSON，包含目标和专用低权限 Token，原始配置不得上传；
 - Variable：`DAST_ENVIRONMENT_NAME`、`DAST_ALLOWED_HOST_SUFFIX`、`DAST_PRODUCTION_EQUIVALENT=true`、`DAST_PRODUCTION_TRAFFIC=false`、`DAST_ACTIVE_SCAN_APPROVED=true`；
 - 目标必须是带 `dast/preprod/security/stage/staging/uat` 独立标签的 HTTPS FQDN，只允许根路径、默认 443 端口和显式批准的域名后缀；禁止凭据、IP、路径、查询与 fragment。
 
@@ -31,10 +34,42 @@ ZAP 不能替代业务授权验证。安全测试必须额外完成至少：100 
 
 ## 证据契约与 Go/No-Go
 
-安全平台将逐项 ASVS 矩阵、两轮 ZAP 报告、授权探针、监控、审计查询和测试数据清单组装为严格白名单的 `gaoq.phase5.dast-asvs.v1` JSON。文件只保存目标 Origin 的 SHA-256，不保存 URL；API、Worker、ERP Web、Website 镜像、commit、ZAP 镜像、Node 调度器、认证脚本、Hook、手动工作流和 ASVS 目录必须固定摘要。AppSec、平台、QA、风险四类负责人使用不同证据 ID 签署。
+安全平台将逐项 ASVS 矩阵、两轮 ZAP 报告、授权探针、监控、审计查询和测试数据
+清单组装为严格白名单的 `gaoq.phase5.dast-asvs.v2` JSON。文件只保存目标 Origin
+的 SHA-256，不保存 URL；API、Worker、ERP Web、Website 镜像、commit、ZAP
+镜像、Node 调度器、认证脚本、Hook、扫描工作流、最终证据工作流和 ASVS 目录
+必须固定摘要。
+
+扫描结束后 72 小时内，AppSec、平台、QA、风险四类负责人必须使用不同主体、
+不同证据 ID、不同意见摘要和不同 Ed25519 公钥完成 `approve` 签署。每个
+`keyId` 等于对应 SPKI DER 公钥的 SHA-256；按角色排序的四方 `{role,keyId}`
+规范 JSON 摘要必须与 Repository Variable `DAST_SIGNER_KEYSET_SHA256` 完全
+一致。同一主体、公钥、证据、意见或签名不得跨角色复用。
+
+共同批准 payload 覆盖环境和目标 Origin 摘要、commit、四类镜像、ZAP/ASVS/
+扫描工具链摘要、345 项目录计数、全部 L2 与高风险 L3 结论、WebRTC 排除证据、
+两轮原始报告摘要、授权探针、安全隔离断言、监控/审计/测试数据工件及四方批准
+元数据。每位负责人再以职责密钥签署共同 payload 摘要、自身角色、keyId 和
+签署时间。任何伪签名、签后修改、角色换钥、主体/证据/意见/公钥复用、超时
+签署或受信 keyset 漂移均失败关闭。
 
 ```bash
+pnpm --silent security:dast:print-contract \
+  > /secure/security/phase-5-dast-asvs-contract.json
 pnpm security:dast:validate-evidence -- /secure/security/phase-5-dast-asvs.json
 ```
 
-以下任一情况均为 No-Go：Critical/High/Medium 动态发现非零；ASVS L2 未全部评估或存在失败；87 项高风险 L3 任一未通过；认证、跨租户、IDOR、Scope、审计或 MCP R3 探针不足；报告复用；签署缺失；出现生产数据、生产流量或外部副作用。工具自测和工作流成功不等于安全负责人已完成实测与签署。
+`.github/workflows/phase-5-dast-evidence.yml` 与主动扫描分开，仅允许在 `main`
+手工启动，使用 GitHub Hosted `ubuntu-latest` 和 `phase-5-dast-evidence`
+policy。Repository Variables 配置脱敏证据 URL/预期 SHA-256/OIDC audience、
+环境名、区域、目标 Origin SHA-256、四类镜像摘要及
+`DAST_SIGNER_KEYSET_SHA256`。工作流以单次 GitHub OIDC 身份把最长 512 KiB
+的严格 JSON 以 `0600` 写入 `$RUNNER_TEMP`，将其与当前 commit、环境、目标、
+镜像和受信 keyset 精确绑定，只上传不含目标、报告、人员或业务数据的 verdict，
+原始证据必须留在企业 WORM。
+
+以下任一情况均为 No-Go：Critical/High/Medium 动态发现非零；ASVS L2 未全部
+评估或存在失败；87 项高风险 L3 任一未通过；认证、跨租户、IDOR、Scope、
+审计或 MCP R3 探针不足；报告复用；签署缺失或不可验签；出现生产数据、生产
+流量或外部副作用。仓库自测只生成临时密钥且不保存私钥；真实人员身份、
+IAM/KMS/HSM 职责绑定、生产等价扫描、人工验证和 WORM 原始材料仍须现场验收。

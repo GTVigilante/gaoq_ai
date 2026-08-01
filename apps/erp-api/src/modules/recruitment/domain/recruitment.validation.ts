@@ -19,10 +19,15 @@ export function assertRecruitmentLabel(
   value: unknown,
   field: string,
   maximum = 128,
+  minimum = 1,
 ): asserts value is string {
-  if (typeof value !== 'string' || value.trim().length < 1 || value.length > maximum) {
+  if (
+    typeof value !== 'string' ||
+    value.trim().length < minimum ||
+    value.length > maximum
+  ) {
     throw new RecruitmentDomainError(
-      'RECRUITMENT_INVALID_LABEL', `${field} 长度必须为 1..${maximum}`,
+      'RECRUITMENT_INVALID_LABEL', `${field} 长度必须为 ${minimum}..${maximum}`,
     );
   }
 }
@@ -40,7 +45,7 @@ export function assertRecruitmentTenant(expected: string, actual: string): void 
 }
 
 export function toRecruitmentIso(value: Date): string {
-  if (Number.isNaN(value.getTime())) {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) {
     throw new RecruitmentDomainError('RECRUITMENT_INVALID_DATE', '时间无效');
   }
   return value.toISOString();

@@ -108,6 +108,9 @@ export class OrgPlatformCredentialService {
     if (binding === null) {
       throw new OrgPushError('ORG_PLATFORM_BINDING_MISSING', 'business', '组织平台尚未绑定');
     }
+    if (!identifierSchema.safeParse(binding.externalTenantId).success) {
+      throw new OrgPushError('ORG_CREDENTIAL_INVALID', 'business', '平台凭据格式无效');
+    }
     return binding.externalTenantId;
   }
 }

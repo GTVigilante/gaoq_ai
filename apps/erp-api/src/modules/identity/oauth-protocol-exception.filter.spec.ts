@@ -1,4 +1,10 @@
-import { BadRequestException, Logger, type ArgumentsHost } from '@nestjs/common';
+import {
+  BadRequestException,
+  HttpException,
+  HttpStatus,
+  Logger,
+  type ArgumentsHost,
+} from '@nestjs/common';
 import type { Response } from 'express';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -39,6 +45,28 @@ describe('OAuthProtocolExceptionFilter', () => {
       'OAuth 协议端点发生未处理异常 failure=Error',
     );
     expect(JSON.stringify(log.mock.calls)).not.toContain('secret detail');
+    log.mockRestore();
+  });
+
+  it('保留 429 状态且覆盖所有安全故障码归一化分支', () => {
+    const limited = fixture();
+    new OAuthProtocolExceptionFilter().catch(
+      new HttpException('limited', HttpStatus.TOO_MANY_REQUESTS),
+      limited.host,
+    );
+    expect(limited.status).toHaveBeenCalledWith(429);
+    expect(limited.json).toHaveBeenCalledWith({ error: 'invalid_request' });
+
+    const log = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    for (const exception of [
+      'not-an-error',
+      new Error('STABLE_INTERNAL_CODE'),
+      Object.assign(new Error('free text'), { name: '<unsafe>', code: 17 }),
+    ]) {
+      new OAuthProtocolExceptionFilter().catch(exception, fixture().host);
+    }
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('failure=UNKNOWN'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('failure=STABLE_INTERNAL_CODE'));
     log.mockRestore();
   });
 });

@@ -4,6 +4,11 @@ import type { HydratedDocument } from 'mongoose';
 
 import type { RecruitmentCalendarChannel } from './recruitment-calendar.adapter.js';
 
+const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const CALENDAR_ID_PATTERN = /^[\x21-\x7E]{1,256}$/;
+const EXTERNAL_EVENT_ID_PATTERN = /^[\x21-\x7E]{1,512}$/;
+const ERROR_CODE_PATTERN = /^[A-Z0-9_]{1,128}$/;
+
 export type RecruitmentCalendarDeliveryAction = 'upsert' | 'cancel';
 export type RecruitmentCalendarDeliveryStatus =
   | 'pending'
@@ -23,19 +28,40 @@ export class RecruitmentCalendarDeliveryRecord {
   @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
   eventId!: string;
 
-  @Prop({ type: String, required: true, immutable: true, maxlength: 128 })
+  @Prop({
+    type: String,
+    required: true,
+    immutable: true,
+    maxlength: 128,
+    match: ID_PATTERN,
+  })
   tenantId!: string;
 
   @Prop({ type: String, enum: ['dingtalk', 'feishu'], required: true, immutable: true })
   channel!: RecruitmentCalendarChannel;
 
-  @Prop({ type: String, required: true, immutable: true, maxlength: 256 })
+  @Prop({
+    type: String,
+    required: true,
+    immutable: true,
+    maxlength: 256,
+    match: CALENDAR_ID_PATTERN,
+  })
   externalCalendarId!: string;
 
   @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN })
   interviewId!: string;
 
-  @Prop({ type: Number, required: true, immutable: true, min: 1 })
+  @Prop({
+    type: Number,
+    required: true,
+    immutable: true,
+    min: 1,
+    validate: {
+      validator: (value: number) => Number.isSafeInteger(value),
+      message: 'interviewVersion 必须为安全整数',
+    },
+  })
   interviewVersion!: number;
 
   @Prop({ type: String, enum: ['upsert', 'cancel'], required: true, immutable: true })
@@ -49,8 +75,11 @@ export class RecruitmentCalendarDeliveryRecord {
   })
   status!: RecruitmentCalendarDeliveryStatus;
 
-  @Prop({ type: Number, required: true, default: 0, min: 0 })
+  @Prop({ type: Number, required: true, default: 0, min: 0, max: 8 })
   attempts!: number;
+
+  @Prop({ type: Number, required: true, default: 0, min: 0 })
+  operatorResolutionCount!: number;
 
   @Prop({ type: Date, required: true })
   nextAttemptAt!: Date;
@@ -58,13 +87,18 @@ export class RecruitmentCalendarDeliveryRecord {
   @Prop({ type: Date, default: null })
   lockedAt!: Date | null;
 
-  @Prop({ type: String, default: null, maxlength: 128 })
+  @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
   lockedBy!: string | null;
 
-  @Prop({ type: String, default: null, maxlength: 512 })
+  @Prop({
+    type: String,
+    default: null,
+    maxlength: 512,
+    match: EXTERNAL_EVENT_ID_PATTERN,
+  })
   externalEventId!: string | null;
 
-  @Prop({ type: String, default: null, maxlength: 128 })
+  @Prop({ type: String, default: null, maxlength: 128, match: ERROR_CODE_PATTERN })
   lastErrorCode!: string | null;
 
   @Prop({ type: String, enum: ['retryable', 'business', 'conflict', null], default: null })
@@ -72,6 +106,9 @@ export class RecruitmentCalendarDeliveryRecord {
 
   @Prop({ type: Date, default: null })
   succeededAt!: Date | null;
+
+  @Prop({ type: Date, default: null })
+  operatorResolvedAt!: Date | null;
 
   createdAt!: Date;
   updatedAt!: Date;

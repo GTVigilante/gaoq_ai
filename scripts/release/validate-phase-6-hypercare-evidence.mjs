@@ -1,4 +1,10 @@
-import { createHash } from 'node:crypto';
+import {
+  createHash,
+  createPublicKey,
+  generateKeyPairSync,
+  sign,
+  verify,
+} from 'node:crypto';
 import { lstat, readFile } from 'node:fs/promises';
 
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
@@ -6,10 +12,12 @@ const COMMIT = /^[a-f0-9]{40}$/u;
 const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/u;
 const RELEASE = /^rc-[0-9]{8}-[0-9]{2}$/u;
 const DATE = /^\d{4}-\d{2}-\d{2}$/u;
+const SIGNATURE = /^[A-Za-z0-9_-]{86}$/u;
 const RECONCILIATION_DOMAINS = [
   'approval', 'esign', 'external-callbacks', 'mcp', 'org', 'payroll', 'queues',
 ];
 const ARCHIVE_SIGNOFF_ROLES = ['data_owner', 'finance_owner', 'legal_owner'];
+const ARCHIVE_SIGNOFF_SIGNATURE_SUITE = 'gaoq.phase6.hypercare-archive.signoff.v1';
 const HARNESS_FILES = [
   ['./validate-phase-6-hypercare-evidence.mjs', new URL(import.meta.url)],
   ['../../.github/workflows/phase-6-hypercare.yml',
@@ -23,6 +31,33 @@ const argumentsList = process.argv.slice(2);
 if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
   runSelfTest();
   process.stdout.write('Phase 6 Hypercare 与旧系统归档证据门禁自测通过。\n');
+} else if (argumentsList.length === 1 && argumentsList[0] === '--print-contract') {
+  process.stdout.write(`${JSON.stringify({
+    formatVersion: 2,
+    suite: 'gaoq.phase6.hypercare-archive.v2',
+    harnessSha256: HARNESS_DIGEST,
+    archiveSignoffRoles: ARCHIVE_SIGNOFF_ROLES,
+    signatureSuite: ARCHIVE_SIGNOFF_SIGNATURE_SUITE,
+    signatureAlgorithm: 'Ed25519',
+    signatureEncoding: 'base64url-unpadded',
+    publicKeyEncoding: 'base64-spki-der',
+    keyId: 'sha256:<lowercase-hex-of-spki-der>',
+    canonicalization: 'RFC8785-compatible-finite-number-subset',
+    signerKeysetCanonicalFields: ['role', 'keyId'],
+    signerKeysetOrder: 'role-ascending',
+    archiveApprovalPayloadFields: [
+      'formatVersion', 'suite', 'releaseId', 'source', 'production', 'cutover',
+      'period', 'days', 'aggregate', 'legacySystem', 'archiveSignoffs',
+      'signerKeysetHash',
+    ],
+    archiveSignoffFields: [
+      'role', 'actorHash', 'decision', 'evidenceId', 'evidenceHash', 'approvedAt',
+    ],
+    signoffPayloadFields: [
+      'suite', 'archiveApprovalPayloadHash', 'role', 'keyId', 'signedAt',
+    ],
+    excludedPostApprovalFields: ['archive'],
+  }, null, 2)}\n`);
 } else {
   const enforceEnvironment = argumentsList[0] === '--enforce-environment';
   const evidencePath = argumentsList[enforceEnvironment ? 1 : 0];
@@ -39,23 +74,30 @@ if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
     enforceEnvironment,
   );
   process.stdout.write(`${JSON.stringify({
-    formatVersion: 1,
+    formatVersion: 2,
     suite: 'gaoq.phase6.hypercare-archive.verdict',
     releaseId: summary.releaseId,
     outcome: 'ARCHIVE_APPROVED',
     commitSha: summary.commitSha,
+    signerKeysetHash: summary.signerKeysetHash,
+    archiveApprovalPayloadHash: summary.archiveApprovalPayloadHash,
     evidenceChecksum: digest(canonical(summary)),
   }, null, 2)}\n`);
 }
 
 /** 校验连续 28 天稳定期和只读归档证据。 */
-function validateEvidence(document, enforceEnvironment = false) {
+function validateEvidence(
+  document,
+  enforceEnvironment = false,
+  now = Date.now(),
+  expectedSignerKeysetHash,
+) {
   object(document, [
     'formatVersion', 'suite', 'releaseId', 'source', 'production', 'cutover', 'period',
-    'days', 'aggregate', 'legacySystem', 'archiveSignoffs', 'archive',
+    'days', 'aggregate', 'legacySystem', 'signingAuthorities', 'archiveSignoffs', 'archive',
   ], 'PHASE6_HYPERCARE_DOCUMENT_INVALID');
-  equal(document.formatVersion, 1, 'PHASE6_HYPERCARE_FORMAT_INVALID');
-  equal(document.suite, 'gaoq.phase6.hypercare-archive.v1',
+  equal(document.formatVersion, 2, 'PHASE6_HYPERCARE_FORMAT_INVALID');
+  equal(document.suite, 'gaoq.phase6.hypercare-archive.v2',
     'PHASE6_HYPERCARE_SUITE_INVALID');
   pattern(document.releaseId, ULID, 'PHASE6_HYPERCARE_RELEASE_ID_INVALID');
   const source = validateSource(document.source, enforceEnvironment);
@@ -65,7 +107,31 @@ function validateEvidence(document, enforceEnvironment = false) {
   const dailyHashes = validateDays(document.days, period);
   validateAggregate(document.aggregate, document.days);
   validateLegacySystem(document.legacySystem, document.days);
-  const signoffs = validateSignoffs(document.archiveSignoffs, period.completedAt);
+  const authorities = validateSigningAuthorities(document.signingAuthorities);
+  const expectedKeyset = expectedSignerKeysetHash ??
+    (enforceEnvironment ? process.env.PHASE6_HYPERCARE_SIGNER_KEYSET_SHA256 : undefined);
+  if (expectedKeyset !== undefined) {
+    pattern(expectedKeyset, SHA256, 'PHASE6_HYPERCARE_EXPECTED_SIGNER_KEYSET_REQUIRED');
+    equal(
+      authorities.keysetHash,
+      expectedKeyset,
+      'PHASE6_HYPERCARE_SIGNER_KEYSET_MISMATCH',
+    );
+  }
+  const signoffs = validateSignoffMetadata(
+    document.archiveSignoffs,
+    period.completedAt,
+    now,
+  );
+  const archiveApprovalPayloadHash = digest(
+    archiveApprovalPayload(document, authorities.keysetHash),
+  );
+  validateSignoffSignatures(
+    document.archiveSignoffs,
+    authorities.byRole,
+    archiveApprovalPayloadHash,
+    now,
+  );
   validateArchive(document.archive, signoffs.maximumSignedAt);
   return Object.freeze({
     releaseId: document.releaseId,
@@ -75,6 +141,8 @@ function validateEvidence(document, enforceEnvironment = false) {
     dailyEvidenceHashes: dailyHashes,
     archiveSignoffEvidenceIds: signoffs.evidenceIds,
     archiveEvidenceHash: document.archive.evidenceHash,
+    signerKeysetHash: authorities.keysetHash,
+    archiveApprovalPayloadHash,
   });
 }
 
@@ -275,31 +343,172 @@ function validateLegacySystem(legacy, days) {
   }
 }
 
-function validateSignoffs(signoffs, completedAt) {
+function validateSigningAuthorities(authorities) {
+  if (!Array.isArray(authorities) || authorities.length !== ARCHIVE_SIGNOFF_ROLES.length) {
+    fail('PHASE6_HYPERCARE_SIGNING_AUTHORITIES_INCOMPLETE');
+  }
+  const roles = [];
+  const keyIds = new Set();
+  const byRole = new Map();
+  const keyset = [];
+  for (const authority of authorities) {
+    object(
+      authority,
+      ['role', 'algorithm', 'keyId', 'publicKeySpkiBase64'],
+      'PHASE6_HYPERCARE_SIGNING_AUTHORITY_INVALID',
+    );
+    if (!ARCHIVE_SIGNOFF_ROLES.includes(authority.role)) {
+      fail('PHASE6_HYPERCARE_SIGNING_AUTHORITY_INVALID');
+    }
+    equal(authority.algorithm, 'Ed25519', 'PHASE6_HYPERCARE_SIGNING_AUTHORITY_INVALID');
+    pattern(authority.keyId, SHA256, 'PHASE6_HYPERCARE_SIGNING_AUTHORITY_INVALID');
+    const publicKey = publicKeyFromSpkiBase64(authority.publicKeySpkiBase64);
+    equal(
+      authority.keyId,
+      publicKeyHash(publicKey),
+      'PHASE6_HYPERCARE_SIGNING_AUTHORITY_KEY_MISMATCH',
+    );
+    roles.push(authority.role);
+    keyIds.add(authority.keyId);
+    byRole.set(authority.role, Object.freeze({ keyId: authority.keyId, publicKey }));
+    keyset.push(Object.freeze({ role: authority.role, keyId: authority.keyId }));
+  }
+  exactStringSet(
+    roles,
+    ARCHIVE_SIGNOFF_ROLES,
+    'PHASE6_HYPERCARE_SIGNING_AUTHORITIES_INCOMPLETE',
+  );
+  if (
+    keyIds.size !== ARCHIVE_SIGNOFF_ROLES.length ||
+    byRole.size !== ARCHIVE_SIGNOFF_ROLES.length
+  ) fail('PHASE6_HYPERCARE_SIGNING_AUTHORITIES_NOT_INDEPENDENT');
+  return Object.freeze({ byRole, keysetHash: signerKeysetHash(keyset) });
+}
+
+function validateSignoffMetadata(signoffs, completedAt, now) {
   if (!Array.isArray(signoffs) || signoffs.length !== ARCHIVE_SIGNOFF_ROLES.length) {
     fail('PHASE6_HYPERCARE_ARCHIVE_SIGNOFFS_INCOMPLETE');
   }
   const roles = [];
+  const actors = new Set();
   const evidenceIds = new Set();
-  let maximumSignedAt = completedAt;
+  const evidenceHashes = new Set();
   for (const signoff of signoffs) {
-    object(signoff, ['role', 'decision', 'evidenceId', 'evidenceHash', 'signedAt'],
-      'PHASE6_HYPERCARE_ARCHIVE_SIGNOFF_INVALID');
+    object(signoff, [
+      'role', 'actorHash', 'decision', 'evidenceId', 'evidenceHash', 'approvedAt',
+      'signedAt', 'algorithm', 'keyId', 'signedPayloadSha256', 'signature',
+    ], 'PHASE6_HYPERCARE_ARCHIVE_SIGNOFF_INVALID');
+    if (!ARCHIVE_SIGNOFF_ROLES.includes(signoff.role)) {
+      fail('PHASE6_HYPERCARE_ARCHIVE_SIGNOFF_INVALID');
+    }
+    pattern(signoff.actorHash, SHA256, 'PHASE6_HYPERCARE_ARCHIVE_SIGNOFF_INVALID');
     equal(signoff.decision, 'approved', 'PHASE6_HYPERCARE_ARCHIVE_REJECTED');
     pattern(signoff.evidenceId, ULID, 'PHASE6_HYPERCARE_ARCHIVE_SIGNOFF_INVALID');
     pattern(signoff.evidenceHash, SHA256, 'PHASE6_HYPERCARE_ARCHIVE_SIGNOFF_INVALID');
-    const signedAt = timestamp(signoff.signedAt);
-    if (signedAt < completedAt) fail('PHASE6_HYPERCARE_ARCHIVE_SIGNOFF_TOO_EARLY');
-    maximumSignedAt = Math.max(maximumSignedAt, signedAt);
+    const approvedAt = timestamp(signoff.approvedAt);
+    if (
+      approvedAt < completedAt ||
+      approvedAt - completedAt > 72 * 60 * 60_000 ||
+      approvedAt > now + 5 * 60_000
+    ) fail('PHASE6_HYPERCARE_ARCHIVE_SIGNOFF_TIME_INVALID');
     roles.push(signoff.role);
+    actors.add(signoff.actorHash);
     evidenceIds.add(signoff.evidenceId);
+    evidenceHashes.add(signoff.evidenceHash);
   }
   exactStringSet(roles, ARCHIVE_SIGNOFF_ROLES,
     'PHASE6_HYPERCARE_ARCHIVE_SIGNOFFS_INCOMPLETE');
-  if (evidenceIds.size !== ARCHIVE_SIGNOFF_ROLES.length) {
+  if (
+    actors.size !== ARCHIVE_SIGNOFF_ROLES.length ||
+    evidenceIds.size !== ARCHIVE_SIGNOFF_ROLES.length ||
+    evidenceHashes.size !== ARCHIVE_SIGNOFF_ROLES.length
+  ) {
     fail('PHASE6_HYPERCARE_ARCHIVE_SIGNOFF_EVIDENCE_REUSED');
   }
-  return Object.freeze({ evidenceIds: [...evidenceIds], maximumSignedAt });
+  return Object.freeze({
+    evidenceIds: [...evidenceIds],
+    maximumSignedAt: Math.max(...signoffs.map((signoff) => timestamp(signoff.signedAt))),
+  });
+}
+
+function validateSignoffSignatures(signoffs, authorities, archiveApprovalPayloadHash, now) {
+  const signatures = new Set();
+  for (const signoff of signoffs) {
+    equal(
+      signoff.algorithm,
+      'Ed25519',
+      'PHASE6_HYPERCARE_ARCHIVE_SIGNOFF_PROOF_INVALID',
+    );
+    pattern(signoff.keyId, SHA256, 'PHASE6_HYPERCARE_ARCHIVE_SIGNOFF_PROOF_INVALID');
+    pattern(
+      signoff.signedPayloadSha256,
+      SHA256,
+      'PHASE6_HYPERCARE_ARCHIVE_SIGNOFF_PROOF_INVALID',
+    );
+    pattern(
+      signoff.signature,
+      SIGNATURE,
+      'PHASE6_HYPERCARE_ARCHIVE_SIGNOFF_PROOF_INVALID',
+    );
+    const approvedAt = timestamp(signoff.approvedAt);
+    const signedAt = timestamp(signoff.signedAt);
+    if (
+      signedAt < approvedAt ||
+      signedAt - approvedAt > 24 * 60 * 60_000 ||
+      signedAt > now + 5 * 60_000
+    ) fail('PHASE6_HYPERCARE_ARCHIVE_SIGNATURE_TIME_INVALID');
+    const authority = authorities.get(signoff.role);
+    if (authority === undefined) fail('PHASE6_HYPERCARE_ARCHIVE_AUTHORITY_INVALID');
+    equal(signoff.keyId, authority.keyId, 'PHASE6_HYPERCARE_ARCHIVE_KEY_MISMATCH');
+    const payload = archiveSignoffSignaturePayload(archiveApprovalPayloadHash, signoff);
+    equal(
+      signoff.signedPayloadSha256,
+      digest(payload),
+      'PHASE6_HYPERCARE_ARCHIVE_PAYLOAD_MISMATCH',
+    );
+    const signature = decodeSignature(signoff.signature);
+    if (!verify(null, Buffer.from(payload, 'utf8'), authority.publicKey, signature)) {
+      fail('PHASE6_HYPERCARE_ARCHIVE_SIGNATURE_INVALID');
+    }
+    signatures.add(signoff.signature);
+  }
+  if (signatures.size !== ARCHIVE_SIGNOFF_ROLES.length) {
+    fail('PHASE6_HYPERCARE_ARCHIVE_SIGNOFFS_INCOMPLETE');
+  }
+}
+
+function archiveApprovalPayload(document, signerKeysetHashValue) {
+  return signatureCanonical({
+    formatVersion: document.formatVersion,
+    suite: document.suite,
+    releaseId: document.releaseId,
+    source: document.source,
+    production: document.production,
+    cutover: document.cutover,
+    period: document.period,
+    days: document.days,
+    aggregate: document.aggregate,
+    legacySystem: document.legacySystem,
+    archiveSignoffs: document.archiveSignoffs.map((signoff) => ({
+      role: signoff.role,
+      actorHash: signoff.actorHash,
+      decision: signoff.decision,
+      evidenceId: signoff.evidenceId,
+      evidenceHash: signoff.evidenceHash,
+      approvedAt: signoff.approvedAt,
+    })),
+    signerKeysetHash: signerKeysetHashValue,
+  });
+}
+
+function archiveSignoffSignaturePayload(archiveApprovalPayloadHash, signoff) {
+  return signatureCanonical({
+    suite: ARCHIVE_SIGNOFF_SIGNATURE_SUITE,
+    archiveApprovalPayloadHash,
+    role: signoff.role,
+    keyId: signoff.keyId,
+    signedAt: signoff.signedAt,
+  });
 }
 
 function validateArchive(archive, maximumSignedAt) {
@@ -316,7 +525,7 @@ function validateArchive(archive, maximumSignedAt) {
   pattern(archive.evidenceHash, SHA256, 'PHASE6_HYPERCARE_ARCHIVE_INVALID');
 }
 
-function fixture() {
+function createFixture() {
   const hash = (index) => {
     const value = index.toString(16).padStart(64, '0').slice(-64);
     return `sha256:${value}`;
@@ -326,9 +535,21 @@ function fixture() {
   const end = start + 27 * 24 * 60 * 60 * 1_000;
   const completedAt = end + 24 * 60 * 60 * 1_000;
   const commitSha = 'a'.repeat(40);
-  return {
-    formatVersion: 1,
-    suite: 'gaoq.phase6.hypercare-archive.v1',
+  const privateKeys = new Map();
+  const signingAuthorities = ARCHIVE_SIGNOFF_ROLES.map((role) => {
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    const keyId = publicKeyHash(publicKey);
+    privateKeys.set(role, privateKey);
+    return {
+      role,
+      algorithm: 'Ed25519',
+      keyId,
+      publicKeySpkiBase64: publicKey.export({ format: 'der', type: 'spki' }).toString('base64'),
+    };
+  });
+  const evidence = {
+    formatVersion: 2,
+    suite: 'gaoq.phase6.hypercare-archive.v2',
     releaseId: id(1),
     source: {
       commitSha, releaseCandidate: 'rc-20260719-01', harnessSha256: HARNESS_DIGEST,
@@ -378,9 +599,19 @@ function fixture() {
       recordCount: 10_000, objectCount: 500, dataChecksum: hash(2), auditChecksum: hash(3),
       retentionPolicyId: 'retention-cn-erp-10y', deletionPerformed: false, evidenceHash: hash(4),
     },
+    signingAuthorities,
     archiveSignoffs: ARCHIVE_SIGNOFF_ROLES.map((role, index) => ({
-      role, decision: 'approved', evidenceId: id(10 + index), evidenceHash: hash(10 + index),
-      signedAt: new Date(completedAt + (index + 1) * 60 * 1_000).toISOString(),
+      role,
+      actorHash: hash(30 + index),
+      decision: 'approved',
+      evidenceId: id(10 + index),
+      evidenceHash: hash(10 + index),
+      approvedAt: new Date(completedAt + (index + 1) * 60 * 1_000).toISOString(),
+      signedAt: new Date(completedAt + (index + 4) * 60 * 1_000).toISOString(),
+      algorithm: 'Ed25519',
+      keyId: signingAuthorities[index].keyId,
+      signedPayloadSha256: hash(0),
+      signature: 'A'.repeat(86),
     })),
     archive: {
       status: 'archived', mode: 'read-only',
@@ -388,10 +619,15 @@ function fixture() {
       immutable: true, writeProbeRejected: true, deletionAuthorized: false, evidenceHash: hash(20),
     },
   };
+  signFixtureSignoffs(evidence, privateKeys);
+  return Object.freeze({ evidence, privateKeys, completedAt });
 }
 
 function runSelfTest() {
-  validateEvidence(fixture());
+  const { evidence, privateKeys, completedAt } = createFixture();
+  const now = completedAt + 24 * 60 * 60_000;
+  const expectedKeysetHash = signerKeysetHash(evidence.signingAuthorities);
+  validateEvidence(evidence, false, now, expectedKeysetHash);
   const cases = [
     [(value) => { value.days.pop(); }, 'PHASE6_HYPERCARE_DAYS_INCOMPLETE'],
     [(value) => { value.days[3].date = value.days[2].date; },
@@ -409,12 +645,131 @@ function runSelfTest() {
       'PHASE6_HYPERCARE_DELETION_FORBIDDEN'],
     [(value) => { value.archiveSignoffs.pop(); },
       'PHASE6_HYPERCARE_ARCHIVE_SIGNOFFS_INCOMPLETE'],
+    [(value) => {
+      value.archiveSignoffs[1].actorHash = value.archiveSignoffs[0].actorHash;
+    }, 'PHASE6_HYPERCARE_ARCHIVE_SIGNOFF_EVIDENCE_REUSED'],
+    [(value) => {
+      value.archiveSignoffs[0].signature =
+        `${value.archiveSignoffs[0].signature[0] === 'A' ? 'B' : 'A'}${value.archiveSignoffs[0].signature.slice(1)}`;
+    }, 'PHASE6_HYPERCARE_ARCHIVE_SIGNATURE_INVALID'],
+    [(value) => {
+      value.signingAuthorities[1].keyId = value.signingAuthorities[0].keyId;
+      value.signingAuthorities[1].publicKeySpkiBase64 =
+        value.signingAuthorities[0].publicKeySpkiBase64;
+    }, 'PHASE6_HYPERCARE_SIGNING_AUTHORITIES_NOT_INDEPENDENT'],
+    [(value) => {
+      const firstKeyId = value.archiveSignoffs[0].keyId;
+      value.archiveSignoffs[0].keyId = value.archiveSignoffs[1].keyId;
+      value.archiveSignoffs[1].keyId = firstKeyId;
+    }, 'PHASE6_HYPERCARE_ARCHIVE_KEY_MISMATCH'],
+    [(value) => { value.archiveSignoffs[0].evidenceHash = `sha256:${'f'.repeat(64)}`; },
+      'PHASE6_HYPERCARE_ARCHIVE_PAYLOAD_MISMATCH'],
   ];
   for (const [mutate, code] of cases) {
-    const value = structuredClone(fixture());
+    const value = structuredClone(evidence);
     mutate(value);
-    expectFailure(() => validateEvidence(value), code);
+    expectFailure(() => validateEvidence(value, false, now), code);
   }
+  expectFailure(
+    () => validateEvidence(evidence, false, now, `sha256:${'f'.repeat(64)}`),
+    'PHASE6_HYPERCARE_SIGNER_KEYSET_MISMATCH',
+  );
+  const futureSignature = structuredClone(evidence);
+  futureSignature.archiveSignoffs[0].signedAt =
+    new Date(now + 10 * 60_000).toISOString();
+  signFixtureSignoffs(futureSignature, privateKeys);
+  expectFailure(
+    () => validateEvidence(futureSignature, false, now),
+    'PHASE6_HYPERCARE_ARCHIVE_SIGNATURE_TIME_INVALID',
+  );
+}
+
+function signFixtureSignoffs(evidence, privateKeys) {
+  const keysetHash = signerKeysetHash(evidence.signingAuthorities);
+  const payloadHash = digest(archiveApprovalPayload(evidence, keysetHash));
+  for (const signoff of evidence.archiveSignoffs) {
+    const payload = archiveSignoffSignaturePayload(payloadHash, signoff);
+    signoff.signedPayloadSha256 = digest(payload);
+    signoff.signature = sign(
+      null,
+      Buffer.from(payload, 'utf8'),
+      privateKeys.get(signoff.role),
+    ).toString('base64url');
+  }
+}
+
+function publicKeyFromSpkiBase64(value) {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/u.test(value)) {
+    fail('PHASE6_HYPERCARE_SIGNING_AUTHORITY_INVALID');
+  }
+  let der;
+  try {
+    der = Buffer.from(value, 'base64');
+  } catch {
+    fail('PHASE6_HYPERCARE_SIGNING_AUTHORITY_INVALID');
+  }
+  if (
+    der.length < 32 ||
+    der.length > 256 ||
+    der.toString('base64') !== value
+  ) fail('PHASE6_HYPERCARE_SIGNING_AUTHORITY_INVALID');
+  let publicKey;
+  try {
+    publicKey = createPublicKey({ key: der, format: 'der', type: 'spki' });
+  } catch {
+    fail('PHASE6_HYPERCARE_SIGNING_AUTHORITY_INVALID');
+  }
+  if (publicKey.asymmetricKeyType !== 'ed25519') {
+    fail('PHASE6_HYPERCARE_SIGNING_AUTHORITY_INVALID');
+  }
+  return publicKey;
+}
+
+function publicKeyHash(publicKey) {
+  return digest(publicKey.export({ format: 'der', type: 'spki' }));
+}
+
+function signerKeysetHash(authorities) {
+  return digest(signatureCanonical(
+    authorities
+      .map(({ role, keyId }) => ({ role, keyId }))
+      .sort((left, right) => left.role.localeCompare(right.role)),
+  ));
+}
+
+function decodeSignature(value) {
+  let signature;
+  try {
+    signature = Buffer.from(value, 'base64url');
+  } catch {
+    fail('PHASE6_HYPERCARE_ARCHIVE_SIGNATURE_INVALID');
+  }
+  if (signature.length !== 64 || signature.toString('base64url') !== value) {
+    fail('PHASE6_HYPERCARE_ARCHIVE_SIGNATURE_INVALID');
+  }
+  return signature;
+}
+
+function signatureCanonical(value) {
+  if (
+    value === null ||
+    typeof value === 'boolean' ||
+    typeof value === 'string'
+  ) return JSON.stringify(value);
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) fail('PHASE6_HYPERCARE_NUMBER_INVALID');
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => signatureCanonical(item)).join(',')}]`;
+  }
+  if (typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${signatureCanonical(value[key])}`)
+      .join(',')}}`;
+  }
+  return fail('PHASE6_HYPERCARE_VALUE_INVALID');
 }
 
 function parseDocument(content) {

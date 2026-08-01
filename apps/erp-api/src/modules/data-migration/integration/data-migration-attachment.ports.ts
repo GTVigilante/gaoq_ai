@@ -1,4 +1,9 @@
 export interface DataMigrationAttachmentReceipt {
+  readonly schemaVersion: 'erp-data-migration-attachment-receipt.v1';
+  readonly tenantId: string;
+  readonly runId: string;
+  readonly sourceSystem: string;
+  readonly sourceAttachmentId: string;
   readonly targetEvidenceId: string;
   readonly malwareScanEvidenceId: string;
   readonly checksum: string;

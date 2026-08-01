@@ -27,7 +27,10 @@ const listQuery = (value: unknown) => ({
 
 describe('AuditChainVerificationService', () => {
   it('验证连续序号、前向哈希、事件 HMAC 与链头', async () => {
-    const records = [event(1, '0'.repeat(43), hash1), event(2, hash1, hash2)];
+    const records = [
+      event(1, '0'.repeat(43), hash1),
+      { ...event(2, hash1, hash2), resourceId: 'employee-001' },
+    ];
     const find = vi.fn().mockReturnValue(listQuery(records));
     const verify = vi.fn().mockReturnValue(true);
     const eventModel = { find } as unknown as Model<AuditEventRecordDocument>;
@@ -46,6 +49,12 @@ describe('AuditChainVerificationService', () => {
       tenantId: 'tenant-001', verifiedEvents: 2, lastSequence: 2, lastHash: hash2,
     });
     expect(verify).toHaveBeenCalledTimes(2);
+    expect(verify).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ resourceId: 'employee-001' }),
+      'audit-key-001',
+      hash2,
+    );
   });
 
   it('序号断裂、哈希错误与链头漂移均失败关闭', async () => {
@@ -64,6 +73,17 @@ describe('AuditChainVerificationService', () => {
         { recordAuditVerification: vi.fn() } as unknown as MetricsService,
       );
     };
+    await expect(build([], null).verifyTenant('tenant id')).rejects.toThrow(
+      'AUDIT_TENANT_INVALID',
+    );
+    await expect(build([], null).verifyTenant('tenant-001')).resolves.toEqual({
+      tenantId: 'tenant-001',
+      verifiedEvents: 0,
+      lastSequence: 0,
+      lastHash: '0'.repeat(43),
+    });
+    await expect(build([event(1, '0'.repeat(43), hash1)], null)
+      .verifyTenant('tenant-001')).rejects.toThrow('AUDIT_CHAIN_HEAD_INVALID');
     await expect(build([event(2, '0'.repeat(43), hash2)], {
       sequence: 2, eventHash: hash2, keyId: 'audit-key-001',
     }).verifyTenant('tenant-001')).rejects.toThrow('AUDIT_CHAIN_SEQUENCE_INVALID');
@@ -75,5 +95,38 @@ describe('AuditChainVerificationService', () => {
       sequence: 1, eventHash: hash1, keyId: 'audit-key-001',
     }).verifyTenant('tenant-001'))
       .rejects.toThrow('AUDIT_CHAIN_HEAD_INVALID');
+  });
+
+  it('满批验链后使用最后序号继续分页', async () => {
+    const records = Array.from({ length: 1_000 }, (_, index) => event(
+      index + 1,
+      index === 0 ? '0'.repeat(43) : hash1,
+      hash1,
+    ));
+    const find = vi.fn()
+      .mockReturnValueOnce(listQuery(records))
+      .mockReturnValueOnce(listQuery([]));
+    const service = new AuditChainVerificationService(
+      { find } as unknown as Model<AuditEventRecordDocument>,
+      {
+        findOne: vi.fn().mockReturnValue(directQuery({
+          sequence: 1_000,
+          eventHash: hash1,
+          keyId: 'audit-key-001',
+        })),
+      } as unknown as Model<AuditChainHeadRecordDocument>,
+      { verify: vi.fn().mockReturnValue(true) } as unknown as AuditIntegrityService,
+      { recordAuditVerification: vi.fn() } as unknown as MetricsService,
+    );
+    await expect(service.verifyTenant('tenant-001')).resolves.toMatchObject({
+      verifiedEvents: 1_000,
+      lastSequence: 1_000,
+      lastHash: hash1,
+    });
+    expect(find).toHaveBeenNthCalledWith(
+      2,
+      { tenantId: 'tenant-001', sequence: { $gt: 1_000 } },
+      expect.anything(),
+    );
   });
 });

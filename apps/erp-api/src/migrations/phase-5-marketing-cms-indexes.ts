@@ -13,7 +13,7 @@ import {
   runAdditiveIndexMigration,
 } from './phase-3-indexes.js';
 
-const MIGRATION_ID = 'phase-5-marketing-cms-indexes-v1';
+const MIGRATION_ID = 'phase-5-marketing-cms-indexes-v2';
 const SCHEMAS = Object.freeze([
   MarketingContentRecordSchema,
   MarketingContentRevisionRecordSchema,

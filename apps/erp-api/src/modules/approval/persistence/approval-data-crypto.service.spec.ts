@@ -1,5 +1,5 @@
 import { ConfigService } from '@nestjs/config';
-import { randomBytes } from 'node:crypto';
+import { createCipheriv, hkdfSync, randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import type { AppEnvironment } from '../../../config/environment.js';
@@ -26,6 +26,13 @@ function service(
 ): ApprovalDataCryptoService {
   const config = new ConfigService<AppEnvironment, true>({
     APPROVAL_DATA_ENCRYPTION_KEYS: JSON.stringify({ activeKeyId, keys }),
+  } as AppEnvironment);
+  return new ApprovalDataCryptoService(config);
+}
+
+function serviceFromRaw(raw: string | undefined): ApprovalDataCryptoService {
+  const config = new ConfigService<AppEnvironment, true>({
+    APPROVAL_DATA_ENCRYPTION_KEYS: raw,
   } as AppEnvironment);
   return new ApprovalDataCryptoService(config);
 }
@@ -68,5 +75,96 @@ describe('ApprovalDataCryptoService', () => {
     expect(rotated.unprotect(CONTEXT, protectedData)).toEqual({ amount: 1 });
     expect(() => rotated.unprotect(CONTEXT, { ...protectedData, formDataKeyId: 'missing-key' }))
       .toThrowError(expect.objectContaining({ code: 'APPROVAL_DATA_KEY_UNAVAILABLE' }));
+  });
+
+  it.each([
+    undefined,
+    '{invalid-json',
+    JSON.stringify({
+      activeKeyId: 'approval-key-001',
+      keys: [
+        { keyId: 'approval-key-001', keyBase64url: KEY, status: 'active' },
+        { keyId: 'approval-key-001', keyBase64url: KEY, status: 'decrypt_only' },
+      ],
+    }),
+    JSON.stringify({
+      activeKeyId: 'approval-key-002',
+      keys: [{ keyId: 'approval-key-001', keyBase64url: KEY, status: 'active' }],
+    }),
+    JSON.stringify({
+      activeKeyId: 'approval-key-001',
+      keys: [
+        { keyId: 'approval-key-001', keyBase64url: KEY, status: 'active' },
+        { keyId: 'approval-key-002', keyBase64url: KEY, status: 'active' },
+      ],
+    }),
+    JSON.stringify({
+      activeKeyId: 'approval-key-001',
+      keys: [{
+        keyId: 'approval-key-001',
+        keyBase64url: `${'A'.repeat(42)}B`,
+        status: 'active',
+      }],
+    }),
+  ])('拒绝缺失、损坏、重复或活动状态不一致的密钥环 %#', (raw) => {
+    expect(() => serviceFromRaw(raw).protect(CONTEXT, { amount: 1 }))
+      .toThrowError(expect.objectContaining({ code: 'APPROVAL_DATA_KEY_RING_INVALID' }));
+  });
+
+  it.each([
+    { formDataKeyId: '非法 空格' },
+    { formDataIv: '*' },
+    { formDataCiphertext: '*' },
+    { formDataAuthTag: '*' },
+    { formDataIv: 'a' },
+    { formDataAuthTag: 'a' },
+  ])('拒绝格式或编码长度非法的密文载荷 %#', (patch) => {
+    const crypto = service();
+    const protectedData = crypto.protect(CONTEXT, { amount: 1 });
+    expect(() => crypto.unprotect(CONTEXT, { ...protectedData, ...patch }))
+      .toThrowError(expect.objectContaining({ code: 'APPROVAL_DATA_CIPHERTEXT_INVALID' }));
+  });
+
+  it.each([
+    { tenantId: '非法 空格' },
+    { instanceId: '非法 空格' },
+    { definitionHash: 'invalid' },
+  ])('拒绝未绑定可信租户、实例或模板摘要的上下文 %#', (patch) => {
+    const crypto = service();
+    expect(() => crypto.protect({ ...CONTEXT, ...patch }, { amount: 1 }))
+      .toThrowError(expect.objectContaining({ code: 'APPROVAL_DATA_CIPHERTEXT_INVALID' }));
+  });
+
+  it('认证通过但明文不是 JSON 时仍失败关闭', () => {
+    const masterKey = Buffer.from(KEY, 'base64url');
+    const encryptionKey = Buffer.from(hkdfSync(
+      'sha256',
+      masterKey,
+      Buffer.from('gaoq-approval-data-v1', 'utf8'),
+      Buffer.from('form-data-encryption-v1', 'utf8'),
+      32,
+    ));
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', encryptionKey, iv, { authTagLength: 16 });
+    cipher.setAAD(Buffer.from(JSON.stringify([
+      'gaoq-approval-data-v1',
+      CONTEXT.tenantId,
+      CONTEXT.instanceId,
+      CONTEXT.definitionHash,
+    ]), 'utf8'));
+    const ciphertext = Buffer.concat([
+      cipher.update(Buffer.from('not-json', 'utf8')),
+      cipher.final(),
+    ]);
+    const protectedData = {
+      formDataKeyId: 'approval-key-001',
+      formDataIv: iv.toString('base64url'),
+      formDataCiphertext: ciphertext.toString('base64url'),
+      formDataAuthTag: cipher.getAuthTag().toString('base64url'),
+    };
+    expect(() => service().unprotect(CONTEXT, protectedData))
+      .toThrowError(expect.objectContaining({ code: 'APPROVAL_DATA_CIPHERTEXT_INVALID' }));
+    masterKey.fill(0);
+    encryptionKey.fill(0);
   });
 });

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import {
   BadRequestException,
+  BadGatewayException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -11,26 +12,32 @@ import { createEventId } from '@gaoq/shared-utils';
 
 import { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
-import { AccessProfileRepository } from '../../identity/access-profile.repository.js';
+import {
+  AccessProfileRepository,
+  type AccessProfileSnapshot,
+} from '../../identity/access-profile.repository.js';
 import { OnboardingApplicationService } from '../../onboarding/application/onboarding-application.service.js';
-import { EmploymentRepository } from '../../org/persistence/org.repositories.js';
+import type { Employee, Employment } from '../../org/domain/index.js';
+import {
+  EmployeeRepository,
+  EmploymentRepository,
+} from '../../org/persistence/org.repositories.js';
 import {
   KnowledgeDomainError,
   assignmentEvent,
   completeTrainingAssignment,
   courseEvent,
   createCourseVersion,
-  createExamAttempt,
   createTrainingAssignment,
-  examGradedEvent,
   onboardingAttestedEvent,
   publishCourseVersion,
   recordTrainingProgress,
+  retireCourseVersion,
   type CourseVersion,
-  type ExamAttempt,
   type TrainingAssignment,
 } from '../domain/index.js';
 import { KnowledgeOutboxWriter } from '../persistence/knowledge-outbox.writer.js';
+import { KnowledgeSearchIndexTaskWriter } from '../persistence/knowledge-search-index-task.writer.js';
 import {
   CourseVersionRepository,
   ExamAttemptRepository,
@@ -38,7 +45,10 @@ import {
   KnowledgeWriteConflictError,
   TrainingAssignmentRepository,
 } from '../persistence/knowledge.repositories.js';
-import { KnowledgeContentVerificationPort, KnowledgeGradingPort } from './knowledge-ports.js';
+import {
+  KnowledgeContentVerificationPort,
+  KnowledgeSearchPort,
+} from './knowledge-ports.js';
 
 export interface CourseSummary extends Record<string, unknown> {
   readonly id: string;
@@ -47,6 +57,14 @@ export interface CourseSummary extends Record<string, unknown> {
   readonly title: string;
   readonly examRequired: boolean;
   readonly passingScoreBps: number | null;
+  readonly questionMode: CourseVersion['questionMode'];
+  readonly timeLimitMinutes: number | null;
+  readonly maxAttempts: number | null;
+  readonly gradingPolicyVersion: string | null;
+  readonly passingRule: CourseVersion['passingRule'];
+  readonly gradingSlaMinutes: number | null;
+  readonly manualReviewSlaMinutes: number | null;
+  readonly manualReviewRequired: boolean;
   readonly status: CourseVersion['status'];
   readonly version: number;
 }
@@ -63,15 +81,6 @@ export interface TrainingAssignmentSummary extends Record<string, unknown> {
   readonly version: number;
 }
 
-export interface ExamAttemptSummary extends Record<string, unknown> {
-  readonly id: string;
-  readonly assignmentId: string;
-  readonly attemptNumber: number;
-  readonly scoreBps: number;
-  readonly passed: boolean;
-  readonly gradedAt: string;
-}
-
 export interface PersonalTrainingAssignmentView extends Record<string, unknown> {
   readonly id: string;
   readonly course: CourseSummary;
@@ -81,6 +90,22 @@ export interface PersonalTrainingAssignmentView extends Record<string, unknown> 
   readonly status: TrainingAssignment['status'];
   readonly progressBps: number;
   readonly version: number;
+}
+
+export interface PersonalKnowledgeSearchItem extends Record<string, unknown> {
+  readonly course: CourseSummary;
+  readonly snippetText: string;
+  readonly highlights: readonly {
+    readonly start: number;
+    readonly end: number;
+  }[];
+  readonly scoreBps: number;
+  readonly indexedAt: string;
+}
+
+export interface PersonalKnowledgeSearchResult extends Record<string, unknown> {
+  readonly items: readonly PersonalKnowledgeSearchItem[];
+  readonly nextCursor: string | null;
 }
 
 /** Knowledge 应用服务；答案、标准答案、题库引用与提交引用均不进入响应或事件。 */
@@ -94,11 +119,13 @@ export class KnowledgeApplicationService {
     private readonly attempts: ExamAttemptRepository,
     private readonly evidence: KnowledgeEvidenceRepository,
     private readonly outbox: KnowledgeOutboxWriter,
-    private readonly grader: KnowledgeGradingPort,
+    private readonly searchIndexTasks: KnowledgeSearchIndexTaskWriter,
     private readonly verifier: KnowledgeContentVerificationPort,
+    private readonly searcher: KnowledgeSearchPort,
     private readonly onboarding: OnboardingApplicationService,
     private readonly profiles: AccessProfileRepository,
     private readonly employments: EmploymentRepository,
+    private readonly employees: EmployeeRepository,
   ) {}
 
   async createCourse(
@@ -111,6 +138,16 @@ export class KnowledgeApplicationService {
       readonly questionBankRef?: string;
       readonly questionBankDigest?: string;
       readonly passingScoreBps?: number;
+      readonly questionMode?: 'objective' | 'subjective' | 'mixed';
+      readonly timeLimitMinutes?: number;
+      readonly maxAttempts?: number;
+      readonly gradingPolicyVersion?: string;
+      readonly passingRule?: 'score_threshold' | 'all_required_sections';
+      readonly gradingSlaMinutes?: number;
+      readonly manualReviewSlaMinutes?: number;
+      readonly audienceMode?: 'assigned_only' | 'employment_scope';
+      readonly audienceDepartmentIds?: readonly string[];
+      readonly audiencePositionIds?: readonly string[];
     },
   ): Promise<{ readonly course: CourseSummary }> {
     this.assertScope('erp:knowledge:course:create');
@@ -133,11 +170,29 @@ export class KnowledgeApplicationService {
     key: string,
   ): Promise<{ readonly course: CourseSummary }> {
     this.assertScope('erp:knowledge:course:publish');
-    const current = await this.requireCourse(id);
-    const verification = await this.verifier.verify(current);
+    let verificationCache: {
+      readonly key: string;
+      readonly value: {
+        readonly contentVerified: boolean;
+        readonly questionBankVerified: boolean;
+      };
+    } | null = null;
     return this.run(async () => this.idempotency.execute(
       'knowledge.course.publish', key, { id, expectedVersion }, async (session) => {
         const fresh = await this.requireCourse(id, session);
+        /**
+         * 校验放在幂等事务的新执行分支内：已完成请求直接重放快照，不再依赖外部校验器；
+         * 首次执行则校验事务内读取的精确课程版本。Mongo 自动重试同一快照时复用结果；
+         * 若重试读取到的版本或内容引用变化，则必须重新校验，禁止沿用旧证明。
+         */
+        const verificationKey = courseVerificationKey(fresh);
+        if (verificationCache === null || verificationCache.key !== verificationKey) {
+          verificationCache = {
+            key: verificationKey,
+            value: await this.verifier.verify(fresh),
+          };
+        }
+        const verification = verificationCache.value;
         const course = publishCourseVersion(fresh, {
           tenantId: this.context.getTenantRequired().tenantId,
           expectedVersion,
@@ -145,7 +200,11 @@ export class KnowledgeApplicationService {
           questionBankVerified: verification.questionBankVerified,
         }, new Date());
         await this.courses.replace(course, expectedVersion, session);
-        await this.outbox.append(courseEvent(course, 'knowledge.course.published'), session);
+        const eventId = await this.outbox.append(
+          courseEvent(course, 'knowledge.course.published'),
+          session,
+        );
+        await this.searchIndexTasks.append(eventId, course, 'upsert', session);
         return { course: courseSummary(course) };
       },
     ));
@@ -154,6 +213,33 @@ export class KnowledgeApplicationService {
   async getCourse(id: string): Promise<CourseSummary> {
     this.assertScope('erp:knowledge:course:read');
     return courseSummary(await this.requireCourse(id));
+  }
+
+  async retireCourse(
+    id: string,
+    expectedVersion: number,
+    key: string,
+  ): Promise<{ readonly course: CourseSummary }> {
+    this.assertScope('erp:knowledge:course:publish');
+    return this.run(async () => this.idempotency.execute(
+      'knowledge.course.retire',
+      key,
+      { id, expectedVersion },
+      async (session) => {
+        const current = await this.requireCourse(id, session);
+        const course = retireCourseVersion(current, {
+          tenantId: this.context.getTenantRequired().tenantId,
+          expectedVersion,
+        }, new Date());
+        await this.courses.replace(course, expectedVersion, session);
+        const eventId = await this.outbox.append(
+          courseEvent(course, 'knowledge.course.retired'),
+          session,
+        );
+        await this.searchIndexTasks.append(eventId, course, 'delete', session);
+        return { course: courseSummary(course) };
+      },
+    ));
   }
 
   async assignCourse(
@@ -205,21 +291,7 @@ export class KnowledgeApplicationService {
   /** 当前员工培训任务；主体到员工、任职与入职实例的映射只取服务端可信主数据。 */
   async listMyAssignments(): Promise<{ readonly items: readonly PersonalTrainingAssignmentView[] }> {
     this.assertScope('erp:knowledge:assignment:read');
-    const actor = this.context.getActorRequired();
-    const tenantId = this.context.getTenantRequired().tenantId;
-    if (actor.actorType !== 'user') throw new ForbiddenException({
-      code: 'KNOWLEDGE_EMPLOYEE_CONTEXT_REQUIRED', message: '当前主体不是员工用户',
-    });
-    const profile = await this.profiles.resolveActive(tenantId, actor.actorId);
-    if (profile === null || profile.actorId !== actor.actorId) throw new ForbiddenException({
-      code: 'KNOWLEDGE_EMPLOYEE_CONTEXT_REQUIRED', message: '当前主体没有有效员工授权快照',
-    });
-    const employment = await this.employments.findOpenByEmployeeId(profile.employeeId);
-    if (employment === null || employment.employeeId !== profile.employeeId) {
-      throw new ForbiddenException({
-        code: 'KNOWLEDGE_EMPLOYEE_CONTEXT_REQUIRED', message: '当前主体没有有效任职关系',
-      });
-    }
+    const { employment } = await this.resolveEmployeeContext();
     const assignments = await this.assignments.findByOnboarding(employment.onboardingInstanceId);
     const courses = await this.courses.findByIds(
       [...new Set(assignments.map((item) => item.courseVersionId))],
@@ -242,6 +314,91 @@ export class KnowledgeApplicationService {
       });
     }).sort((left, right) => left.dueDate.localeCompare(right.dueDate) || left.id.localeCompare(right.id));
     return Object.freeze({ items: Object.freeze(items) });
+  }
+
+  /** 当前员工知识全文检索；网关粗筛后仍按当前任务与课程状态逐项失败关闭。 */
+  async searchMyKnowledge(input: {
+    readonly query: string;
+    readonly cursor?: string;
+    readonly limit?: number;
+  }): Promise<PersonalKnowledgeSearchResult> {
+    this.assertScope('erp:knowledge:search');
+    const queryText = normalizeSearchQuery(input.query);
+    const cursor = normalizeSearchCursor(input.cursor);
+    const limit = input.limit ?? 10;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 20) {
+      throw new BadRequestException({
+        code: 'KNOWLEDGE_SEARCH_LIMIT_INVALID', message: 'limit 必须为 1..20 的整数',
+      });
+    }
+    const { profile, employment, employee, departmentIds } =
+      await this.resolveEmployeeContext();
+    const assignments = await this.assignments.findByOnboarding(employment.onboardingInstanceId);
+    const assignedCourseIds = [...new Set(assignments
+      .filter((item) => item.status !== 'expired')
+      .map((item) => item.courseVersionId))].sort();
+    const positionIds = [...employee.positionIds].sort();
+    const candidates = await this.courses.findSearchEligible(
+      assignedCourseIds,
+      departmentIds,
+      positionIds,
+    );
+    const eligible = currentPublishedCourseVersions(candidates);
+    if (eligible.length === 0) {
+      return Object.freeze({ items: Object.freeze([]), nextCursor: null });
+    }
+    const eligibleById = new Map(eligible.map((course) => [course.id, course]));
+    const authorizationDigest = createHash('sha256').update(JSON.stringify([
+      profile.version,
+      employment.id,
+      employment.version,
+      employee.id,
+      employee.version,
+      departmentIds,
+      positionIds,
+      eligible.map((course) => [course.id, course.version]),
+    ]), 'utf8').digest('base64url');
+    const result = await this.searcher.search({
+      tenantId: this.context.getTenantRequired().tenantId,
+      employeeId: employee.id,
+      departmentIds,
+      positionIds,
+      allowedCourseVersionIds: eligible.map((course) => course.id).sort(),
+      authorizationDigest,
+      queryText,
+      cursor,
+      limit,
+    });
+    const items = result.items.map((item) => {
+      const course = eligibleById.get(item.courseVersionId);
+      if (course === undefined || course.revision !== item.revision) {
+        throw new BadGatewayException({
+          code: 'KNOWLEDGE_SEARCH_AUTHORIZATION_MISMATCH',
+          message: '搜索结果与当前课程授权不一致',
+        });
+      }
+      const indexedAt = new Date(item.indexedAt);
+      const courseUpdatedAt = new Date(course.updatedAt);
+      if (
+        Number.isNaN(indexedAt.getTime()) ||
+        indexedAt.getTime() < courseUpdatedAt.getTime() ||
+        indexedAt.getTime() > Date.now() + 5 * 60_000
+      ) throw new BadGatewayException({
+        code: 'KNOWLEDGE_SEARCH_INDEX_FRESHNESS_INVALID',
+        message: '搜索结果索引时间不满足当前课程版本',
+      });
+      return Object.freeze({
+        course: courseSummary(course),
+        snippetText: item.snippetText,
+        highlights: item.highlights,
+        scoreBps: item.scoreBps,
+        indexedAt: item.indexedAt,
+      });
+    });
+    return Object.freeze({
+      items: Object.freeze(items),
+      nextCursor: result.nextCursor,
+    });
   }
 
   /** LMS/内容播放器专用：只接受可信源绝对进度与唯一源事件。 */
@@ -295,75 +452,6 @@ export class KnowledgeApplicationService {
           assignmentEvent(assignment, 'knowledge.assignment.progressed'), session,
         );
         return { assignment: assignmentSummary(assignment) };
-      },
-    ));
-  }
-
-  /** 评分器必须按 submissionRef 幂等，且只返回分数与不可变证据摘要。 */
-  async gradeExam(
-    assignmentId: string,
-    key: string,
-    submissionRef: string,
-  ): Promise<{ readonly attempt: ExamAttemptSummary }> {
-    this.assertScope('erp:knowledge:exam:grade');
-    const assignment = await this.requireAssignment(assignmentId);
-    if (assignment.status === 'completed' || assignment.status === 'expired') {
-      throw new ConflictException({
-        code: 'KNOWLEDGE_ASSIGNMENT_TERMINAL', message: '终态培训任务不能继续考试',
-      });
-    }
-    const existingAttempt = await this.attempts.findBySubmissionRef(submissionRef);
-    if (existingAttempt !== null) {
-      if (existingAttempt.assignmentId !== assignmentId) throw new ConflictException({
-        code: 'KNOWLEDGE_SUBMISSION_REUSED', message: '答卷提交引用已绑定其他培训任务',
-      });
-      return { attempt: attemptSummary(existingAttempt) };
-    }
-    const course = await this.requireCourse(assignment.courseVersionId);
-    if (
-      !assignment.examRequired || course.questionBankRef === null ||
-      course.questionBankDigest === null || course.passingScoreBps === null
-    ) throw new ConflictException({
-      code: 'KNOWLEDGE_EXAM_NOT_CONFIGURED', message: '该培训任务未配置考试',
-    });
-    const graded = await this.grader.grade({
-      tenantId: this.context.getTenantRequired().tenantId,
-      assignmentId, courseVersionId: course.id,
-      questionBankRef: course.questionBankRef,
-      questionBankDigest: course.questionBankDigest,
-      submissionRef,
-    });
-    if (graded.questionBankDigest !== course.questionBankDigest) throw new ConflictException({
-      code: 'KNOWLEDGE_QUESTION_BANK_DIGEST_MISMATCH', message: '评分题库版本不匹配',
-    });
-    return this.run(async () => this.idempotency.execute(
-      'knowledge.exam.grade', key, { assignmentId, submissionRef }, async (session) => {
-        const replay = await this.attempts.findBySubmissionRef(submissionRef, session);
-        if (replay !== null) {
-          if (replay.assignmentId !== assignmentId) throw new ConflictException({
-            code: 'KNOWLEDGE_SUBMISSION_REUSED', message: '答卷提交引用已绑定其他培训任务',
-          });
-          return { attempt: attemptSummary(replay) };
-        }
-        const freshAssignment = await this.requireAssignment(assignmentId, session);
-        if (freshAssignment.status === 'completed' || freshAssignment.status === 'expired') {
-          throw new ConflictException({
-            code: 'KNOWLEDGE_ASSIGNMENT_TERMINAL', message: '终态培训任务不能继续考试',
-          });
-        }
-        if (freshAssignment.courseVersionId !== course.id) throw new ConflictException({
-          code: 'KNOWLEDGE_ASSIGNMENT_COURSE_CHANGED', message: '培训任务课程引用已变化',
-        });
-        const attempt = createExamAttempt({
-          id: createEventId(new Date()), tenantId: freshAssignment.tenantId,
-          assignmentId, attemptNumber: await this.attempts.nextAttemptNumber(assignmentId, session),
-          submissionRef, questionSetDigest: graded.questionSetDigest,
-          gradingEvidenceId: graded.gradingEvidenceId, scoreBps: graded.scoreBps,
-          passingScoreBps: course.passingScoreBps ?? 0, serverGradingVerified: true,
-        }, new Date());
-        await this.attempts.insert(attempt, session);
-        await this.outbox.append(examGradedEvent(attempt), session);
-        return { attempt: attemptSummary(attempt) };
       },
     ));
   }
@@ -477,6 +565,50 @@ export class KnowledgeApplicationService {
     return value;
   }
 
+  private async resolveEmployeeContext(): Promise<{
+    readonly profile: AccessProfileSnapshot;
+    readonly employment: Employment;
+    readonly employee: Employee;
+    readonly departmentIds: readonly string[];
+  }> {
+    const actor = this.context.getActorRequired();
+    const tenantId = this.context.getTenantRequired().tenantId;
+    if (actor.actorType !== 'user') throw new ForbiddenException({
+      code: 'KNOWLEDGE_EMPLOYEE_CONTEXT_REQUIRED', message: '当前主体不是员工用户',
+    });
+    const profile = await this.profiles.resolveActive(tenantId, actor.actorId);
+    if (profile === null || profile.actorId !== actor.actorId) throw new ForbiddenException({
+      code: 'KNOWLEDGE_EMPLOYEE_CONTEXT_REQUIRED', message: '当前主体没有有效员工授权快照',
+    });
+    const [employment, employee] = await Promise.all([
+      this.employments.findOpenByEmployeeId(profile.employeeId),
+      this.employees.findById(profile.employeeId),
+    ]);
+    const today = new Date().toISOString().slice(0, 10);
+    if (
+      employment === null || employment.employeeId !== profile.employeeId ||
+      !['probation', 'active'].includes(employment.status) ||
+      employment.effectiveFrom > today ||
+      employee === null || employee.id !== profile.employeeId ||
+      !['probation', 'active'].includes(employee.status)
+    ) throw new ForbiddenException({
+      code: 'KNOWLEDGE_EMPLOYEE_CONTEXT_REQUIRED', message: '当前主体没有有效任职关系',
+    });
+    const employeeDepartments = new Set(employee.departmentIds);
+    const departmentIds = [...new Set(profile.departmentIds)]
+      .filter((departmentId) => employeeDepartments.has(departmentId))
+      .sort();
+    if (departmentIds.length === 0) throw new ForbiddenException({
+      code: 'KNOWLEDGE_EMPLOYEE_CONTEXT_REQUIRED', message: '授权快照与员工部门不一致',
+    });
+    return Object.freeze({
+      profile,
+      employment,
+      employee,
+      departmentIds: Object.freeze(departmentIds),
+    });
+  }
+
   private assertScope(scope: string): void {
     if (!this.context.getActorRequired().scopes.includes(scope)) throw new ForbiddenException({
       code: 'KNOWLEDGE_SCOPE_REQUIRED', message: `缺少 ${scope}`,
@@ -509,8 +641,29 @@ function courseSummary(course: CourseVersion): CourseSummary {
   return Object.freeze({
     id: course.id, courseCode: course.courseCode, revision: course.revision,
     title: course.title, examRequired: course.questionBankRef !== null,
-    passingScoreBps: course.passingScoreBps, status: course.status, version: course.version,
+    passingScoreBps: course.passingScoreBps,
+    questionMode: course.questionMode,
+    timeLimitMinutes: course.timeLimitMinutes,
+    maxAttempts: course.maxAttempts,
+    gradingPolicyVersion: course.gradingPolicyVersion,
+    passingRule: course.passingRule,
+    gradingSlaMinutes: course.gradingSlaMinutes,
+    manualReviewSlaMinutes: course.manualReviewSlaMinutes,
+    manualReviewRequired: course.manualReviewRequired,
+    status: course.status,
+    version: course.version,
   });
+}
+
+function courseVerificationKey(course: CourseVersion): string {
+  return JSON.stringify([
+    course.tenantId,
+    course.id,
+    course.version,
+    course.contentRef,
+    course.questionBankRef,
+    course.questionBankDigest,
+  ]);
 }
 
 function assignmentSummary(value: TrainingAssignment): TrainingAssignmentSummary {
@@ -519,13 +672,6 @@ function assignmentSummary(value: TrainingAssignment): TrainingAssignmentSummary
     courseVersionId: value.courseVersionId, mandatory: value.mandatory,
     examRequired: value.examRequired, dueDate: value.dueDate, status: value.status,
     progressBps: value.progressBps, version: value.version,
-  });
-}
-
-function attemptSummary(value: ExamAttempt): ExamAttemptSummary {
-  return Object.freeze({
-    id: value.id, assignmentId: value.assignmentId, attemptNumber: value.attemptNumber,
-    scoreBps: value.scoreBps, passed: value.passed, gradedAt: value.gradedAt,
   });
 }
 
@@ -540,6 +686,45 @@ function requiredDate(value: string): Date {
     code: 'KNOWLEDGE_DATE_INVALID', message: '时间格式非法',
   });
   return result;
+}
+
+function normalizeSearchQuery(value: string): string {
+  const normalized = value.normalize('NFKC').trim().replace(/\s+/gu, ' ');
+  if (
+    normalized.length < 2 ||
+    normalized.length > 128 ||
+    !/^[\p{L}\p{M}\p{N}\s._-]+$/u.test(normalized)
+  ) throw new BadRequestException({
+    code: 'KNOWLEDGE_SEARCH_QUERY_INVALID',
+    message: '查询必须为 2..128 个中英文、数字、空格或 ._- 字符',
+  });
+  return normalized;
+}
+
+function normalizeSearchCursor(value: string | undefined): string | null {
+  if (value === undefined || value.length === 0) return null;
+  if (!/^[A-Za-z0-9_-]{16,256}$/u.test(value)) throw new BadRequestException({
+    code: 'KNOWLEDGE_SEARCH_CURSOR_INVALID', message: '搜索游标非法',
+  });
+  return value;
+}
+
+function currentPublishedCourseVersions(
+  courses: readonly CourseVersion[],
+): readonly CourseVersion[] {
+  const current = new Map<string, CourseVersion>();
+  for (const course of courses) {
+    const previous = current.get(course.courseCode);
+    if (
+      previous === undefined ||
+      course.revision > previous.revision ||
+      (course.revision === previous.revision && course.id.localeCompare(previous.id) < 0)
+    ) current.set(course.courseCode, course);
+  }
+  return Object.freeze([...current.values()].sort((left, right) =>
+    left.courseCode.localeCompare(right.courseCode) ||
+    right.revision - left.revision ||
+    left.id.localeCompare(right.id)));
 }
 
 function isDuplicateKeyError(error: unknown): boolean {
