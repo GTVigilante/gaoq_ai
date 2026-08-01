@@ -8,12 +8,41 @@ import { OrgController } from './org.controller.js';
 
 const ID = '01K00000000000000000000000';
 const VERSION = 2;
+const NOW = '2026-07-29T00:00:00.000Z';
 
-const department = Object.freeze({ id: ID, version: VERSION });
-const position = Object.freeze({ id: ID, version: VERSION });
-const jobLevel = Object.freeze({ id: ID, version: VERSION });
-const employee = Object.freeze({ id: ID, version: VERSION, status: 'active' });
-const chart = Object.freeze({ departments: [], positions: [], jobLevels: [], employees: [] });
+const department = Object.freeze({
+  id: ID, tenantId: 'tenant-001', code: 'D001', name: '总部', status: 'active' as const,
+  parentId: null, managerId: null, sortOrder: 0, version: VERSION, createdAt: NOW, updatedAt: NOW,
+});
+const departmentView = Object.freeze({
+  id: ID, code: 'D001', name: '总部', status: 'active' as const,
+  parentId: null, managerId: null, sortOrder: 0, version: VERSION,
+});
+const position = Object.freeze({
+  id: ID, tenantId: 'tenant-001', code: 'P001', name: '架构师', status: 'active' as const,
+  version: VERSION, createdAt: NOW, updatedAt: NOW,
+});
+const positionView = Object.freeze({
+  id: ID, code: 'P001', name: '架构师', status: 'active' as const, version: VERSION,
+});
+const jobLevel = Object.freeze({
+  id: ID, tenantId: 'tenant-001', code: 'M1', name: '一级经理',
+  track: 'management' as const, rank: 1, version: VERSION, createdAt: NOW, updatedAt: NOW,
+});
+const jobLevelView = Object.freeze({
+  id: ID, code: 'M1', name: '一级经理', track: 'management' as const, rank: 1, version: VERSION,
+});
+const employee = Object.freeze({
+  id: ID, tenantId: 'tenant-001', employeeNo: 'E001', displayName: '员工甲',
+  status: 'active' as const, departmentIds: [ID], primaryDepartmentId: ID,
+  positionIds: [], jobLevelId: null, version: VERSION, createdAt: NOW, updatedAt: NOW,
+});
+const employeeView = Object.freeze({
+  id: ID, employeeNo: 'E001', displayName: '员工甲', status: 'active' as const,
+  departmentIds: [ID], primaryDepartmentId: ID, positionIds: [], jobLevelId: null, version: VERSION,
+});
+const chart = Object.freeze({ departments: [department], employees: [employee] });
+const chartView = Object.freeze({ departments: [departmentView], employees: [employeeView] });
 
 function fixture() {
   const organization = {
@@ -55,7 +84,10 @@ describe('OrgController', () => {
 
   it('组织图只调用权威组织应用服务', async () => {
     const store = fixture();
-    await expect(store.controller.getChart()).resolves.toBe(chart);
+    const result = await store.controller.getChart();
+
+    expect(result).toEqual(chartView);
+    expectPublicProjection(result);
     expect(store.organization.getOrgChart).toHaveBeenCalledTimes(1);
     expect(store.audit.record).not.toHaveBeenCalled();
   });
@@ -68,7 +100,7 @@ describe('OrgController', () => {
       'org-department-create-001',
       body,
       store.response as never,
-    )).resolves.toEqual({ department });
+    )).resolves.toEqual({ department: departmentView });
 
     expect(store.organization.createDepartment).toHaveBeenCalledWith(
       'org-department-create-001',
@@ -85,7 +117,7 @@ describe('OrgController', () => {
       'org-position-create-001',
       body,
       store.response as never,
-    )).resolves.toEqual({ position });
+    )).resolves.toEqual({ position: positionView });
 
     expect(store.organization.createPosition).toHaveBeenCalledWith(
       'org-position-create-001',
@@ -102,7 +134,7 @@ describe('OrgController', () => {
       'org-job-level-create-001',
       body,
       store.response as never,
-    )).resolves.toEqual({ jobLevel });
+    )).resolves.toEqual({ jobLevel: jobLevelView });
 
     expect(store.organization.createJobLevel).toHaveBeenCalledWith(
       'org-job-level-create-001',
@@ -124,7 +156,7 @@ describe('OrgController', () => {
       'org-employee-create-001',
       body,
       store.response as never,
-    )).resolves.toEqual({ employee });
+    )).resolves.toEqual({ employee: employeeView });
 
     expect(store.organization.createEmployee).toHaveBeenCalledWith(
       'org-employee-create-001',
@@ -143,7 +175,7 @@ describe('OrgController', () => {
       'org-department-update-001',
       body,
       store.response as never,
-    )).resolves.toEqual({ department });
+    )).resolves.toEqual({ department: departmentView });
 
     expect(store.organization.updateDepartment).toHaveBeenCalledWith(
       ID,
@@ -164,7 +196,7 @@ describe('OrgController', () => {
       'org-position-update-001',
       body,
       store.response as never,
-    )).resolves.toEqual({ position });
+    )).resolves.toEqual({ position: positionView });
 
     expect(store.organization.updatePosition).toHaveBeenCalledWith(
       ID,
@@ -185,7 +217,7 @@ describe('OrgController', () => {
       'org-job-level-update-001',
       body,
       store.response as never,
-    )).resolves.toEqual({ jobLevel });
+    )).resolves.toEqual({ jobLevel: jobLevelView });
 
     expect(store.organization.updateJobLevel).toHaveBeenCalledWith(
       ID,
@@ -206,7 +238,7 @@ describe('OrgController', () => {
       'org-employee-update-001',
       body,
       store.response as never,
-    )).resolves.toEqual({ employee });
+    )).resolves.toEqual({ employee: employeeView });
 
     expect(store.organization.updateEmployee).toHaveBeenCalledWith(
       ID,
@@ -227,7 +259,7 @@ describe('OrgController', () => {
       'org-employee-status-001',
       body,
       store.response as never,
-    )).resolves.toEqual({ employee });
+    )).resolves.toEqual({ employee: employeeView });
 
     expect(store.organization.transitionEmployeeStatus).toHaveBeenCalledWith(
       ID,
@@ -320,7 +352,7 @@ describe('OrgController', () => {
       store.response as never,
     );
 
-    expect(result).toEqual({ employee });
+    expect(result).toEqual({ employee: employeeView });
     expect(store.organization.createEmployee).toHaveBeenCalledTimes(1);
     expect(logger).toHaveBeenCalledWith({
       code: 'ORG_AUDIT_AFTER_COMMIT_FAILED',
@@ -361,6 +393,13 @@ function expectSuccess(
     riskLevel: 'R1',
     outcome: 'success',
   });
+}
+
+function expectPublicProjection(value: unknown): void {
+  const serialized = JSON.stringify(value);
+  expect(serialized).not.toContain('tenantId');
+  expect(serialized).not.toContain('createdAt');
+  expect(serialized).not.toContain('updatedAt');
 }
 
 function method(

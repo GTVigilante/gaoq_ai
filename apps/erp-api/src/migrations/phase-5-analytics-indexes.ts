@@ -3,16 +3,20 @@ import { pathToFileURL } from 'node:url';
 import { createConnection } from 'mongoose';
 
 import { AnalyticsManagementExportRecordSchema } from '../modules/analytics/persistence/analytics.schemas.js';
-import { ApprovalInstanceRecordSchema } from '../modules/approval/persistence/approval.schemas.js';
+import {
+  ApprovalActionRecordSchema,
+  ApprovalInstanceRecordSchema,
+} from '../modules/approval/persistence/approval.schemas.js';
 import { KnowledgeTrainingAssignmentRecordSchema } from '../modules/knowledge/persistence/knowledge.schemas.js';
 import { CandidateApplicationRecordSchema } from '../modules/recruitment/persistence/recruitment.schemas.js';
 import { buildIndexManifestFromSchemas, runAdditiveIndexMigration } from './phase-3-indexes.js';
 
-const MIGRATION_ID = 'phase-5-analytics-indexes-v1';
+const MIGRATION_ID = 'phase-5-analytics-indexes-v2';
 
 export function buildPhaseFiveAnalyticsIndexManifest() {
   return buildIndexManifestFromSchemas([
     ApprovalInstanceRecordSchema,
+    ApprovalActionRecordSchema,
     CandidateApplicationRecordSchema,
     KnowledgeTrainingAssignmentRecordSchema,
     AnalyticsManagementExportRecordSchema,

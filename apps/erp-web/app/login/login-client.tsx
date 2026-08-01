@@ -35,7 +35,7 @@ export function LoginClient() {
   };
 
   return (
-    <main className="login-shell">
+    <main className="login-shell" aria-busy={submitting}>
       <Card className="login-card" bordered={false}>
         <Space direction="vertical" size="large" className="login-content">
           <div>
@@ -45,6 +45,7 @@ export function LoginClient() {
           </div>
           {error === null ? null : (
             <Alert
+              role="alert"
               type="error"
               showIcon
               message={error.message}

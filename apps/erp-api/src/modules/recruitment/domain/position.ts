@@ -119,9 +119,22 @@ export function transitionRecruitmentPosition(
   now: Date,
 ): RecruitmentPosition {
   assertRecruitmentTenant(position.tenantId, input.tenantId);
+  assertRecruitmentVersion(position.version);
   assertRecruitmentVersion(input.expectedVersion);
   if (position.version !== input.expectedVersion) {
     throw new RecruitmentDomainError('RECRUITMENT_VERSION_CONFLICT', '职位版本冲突');
+  }
+  if (!['draft', 'open', 'paused', 'closed'].includes(position.status)) {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_POSITION_STATUS_INVALID',
+      '职位当前状态无效',
+    );
+  }
+  if (!['open', 'paused', 'closed'].includes(input.targetStatus)) {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_POSITION_TRANSITION_INVALID',
+      '职位目标状态无效',
+    );
   }
   const allowed: Readonly<Record<RecruitmentPositionStatus, readonly RecruitmentPositionStatus[]>> = {
     draft: ['open', 'closed'],
@@ -135,22 +148,48 @@ export function transitionRecruitmentPosition(
   if (input.targetStatus === 'open' && !input.requisitionApproved) {
     throw new RecruitmentDomainError('RECRUITMENT_REQUISITION_NOT_APPROVED', 'HC 审批通过前不能开放职位');
   }
-  const occurredAt = toRecruitmentIso(now);
+  return advancePosition(position, now, {
+    status: input.targetStatus,
+    publishedAt: input.targetStatus === 'open' && position.publishedAt === null
+      ? toRecruitmentIso(now)
+      : position.publishedAt,
+    closedAt: input.targetStatus === 'closed' ? toRecruitmentIso(now) : null,
+  });
+}
+
+function advancePosition<T extends Partial<RecruitmentPosition>>(
+  position: RecruitmentPosition,
+  now: Date,
+  patch: T,
+): RecruitmentPosition {
+  const updatedAt = toRecruitmentIso(now);
+  if (position.version >= Number.MAX_SAFE_INTEGER) {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_POSITION_VERSION_EXHAUSTED',
+      '职位版本已达到安全整数上限',
+    );
+  }
+  if (updatedAt < position.updatedAt) throw new RecruitmentDomainError(
+    'RECRUITMENT_POSITION_TIMELINE_INVALID',
+    '职位更新时间不能早于当前版本',
+  );
   return deepFreezeRecruitment({
     ...position,
-    status: input.targetStatus,
+    ...patch,
     version: position.version + 1,
-    publishedAt: input.targetStatus === 'open' && position.publishedAt === null
-      ? occurredAt
-      : position.publishedAt,
-    closedAt: input.targetStatus === 'closed' ? occurredAt : null,
-    updatedAt: occurredAt,
+    updatedAt,
   });
 }
 
 function migrationIso(value: string): string {
+  if (typeof value !== 'string') {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_POSITION_MIGRATION_TIME_INVALID',
+      '职位迁移时间必须为规范 UTC ISO 时间',
+    );
+  }
   const parsed = new Date(value);
-  if (typeof value !== 'string' || Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value) {
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value) {
     throw new RecruitmentDomainError(
       'RECRUITMENT_POSITION_MIGRATION_TIME_INVALID',
       '职位迁移时间必须为规范 UTC ISO 时间',

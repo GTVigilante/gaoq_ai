@@ -17,6 +17,10 @@ export type ApprovalDomainEvent =
       readonly code: string; readonly revision: number; readonly riskLevel: 'R1' | 'R2';
       readonly definitionHash: string;
     }>
+  | ApprovalEvent<'approval_template.draft_updated', {
+      readonly code: string; readonly revision: number; readonly riskLevel: 'R1' | 'R2';
+      readonly definitionHash: string;
+    }>
   | ApprovalEvent<'approval_template.published', {
       readonly code: string; readonly revision: number; readonly riskLevel: 'R1' | 'R2';
       readonly definitionHash: string; readonly approvedBy: string;
@@ -33,6 +37,10 @@ export type ApprovalDomainEvent =
       readonly outcome: ApprovalLegacyHistory['outcome']; readonly evidenceChecksum: string;
     }>
   | ApprovalEvent<'approval_instance.draft_created', {
+      readonly initiatorId: string; readonly templateCode: string; readonly templateRevision: number;
+      readonly riskLevel: 'R1' | 'R2'; readonly formDataHash: string;
+    }>
+  | ApprovalEvent<'approval_instance.draft_updated', {
       readonly initiatorId: string; readonly templateCode: string; readonly templateRevision: number;
       readonly riskLevel: 'R1' | 'R2'; readonly formDataHash: string;
     }>
@@ -105,7 +113,7 @@ export function buildApprovalDelegationEvent(
 /** 模板事件只披露版本元数据和摘要，不外发字段定义。 */
 export function buildApprovalTemplateEvent(
   template: ApprovalTemplate,
-  type: 'draft_created' | 'published' | 'retired',
+  type: 'draft_created' | 'draft_updated' | 'published' | 'retired',
 ): ApprovalDomainEvent {
   const common = {
     tenantId: template.tenantId,
@@ -113,10 +121,12 @@ export function buildApprovalTemplateEvent(
     version: template.version,
     occurredAt: template.updatedAt,
   };
-  if (type === 'draft_created') {
+  if (type === 'draft_created' || type === 'draft_updated') {
     return {
       ...common,
-      type: 'approval_template.draft_created',
+      type: type === 'draft_created'
+        ? 'approval_template.draft_created'
+        : 'approval_template.draft_updated',
       payload: {
         code: template.code, revision: template.revision, riskLevel: template.riskLevel,
         definitionHash: template.definitionHash,
@@ -182,12 +192,26 @@ export function buildApprovalLegacyHistoryMigratedEvent(
 
 /** 实例草稿事件不含标题和表单正文。 */
 export function buildApprovalInstanceCreatedEvent(instance: ApprovalInstance): ApprovalDomainEvent {
+  return buildApprovalInstanceDraftEvent(instance, 'draft_created');
+}
+
+/** 实例草稿更新事件仅披露不可逆摘要，不外发标题或表单正文。 */
+export function buildApprovalInstanceUpdatedEvent(instance: ApprovalInstance): ApprovalDomainEvent {
+  return buildApprovalInstanceDraftEvent(instance, 'draft_updated');
+}
+
+function buildApprovalInstanceDraftEvent(
+  instance: ApprovalInstance,
+  type: 'draft_created' | 'draft_updated',
+): ApprovalDomainEvent {
   return {
-    type: 'approval_instance.draft_created',
+    type: type === 'draft_created'
+      ? 'approval_instance.draft_created'
+      : 'approval_instance.draft_updated',
     tenantId: instance.tenantId,
     aggregateId: instance.id,
     version: instance.version,
-    occurredAt: instance.createdAt,
+    occurredAt: type === 'draft_created' ? instance.createdAt : instance.updatedAt,
     payload: {
       initiatorId: instance.initiatorId,
       templateCode: instance.templateSnapshot.templateCode,

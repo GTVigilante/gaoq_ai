@@ -11,6 +11,7 @@ import {
   createNextApprovalTemplateRevision,
   createApprovalTemplateDraft,
   decideApprovalInstance,
+  hashApprovalJson,
   publishApprovalTemplate,
   submitApprovalInstance,
   type ApprovalTemplateDefinition,
@@ -69,6 +70,65 @@ function runningInstance(templateCode = 'EXPENSE', riskLevel: 'R1' | 'R2' = 'R1'
     actorId: 'actor-001',
     resolvedNodes: [{ nodeId: 'manager', actorIds: ['manager-001'] }],
   }, NOW).instance;
+}
+
+function treasuryApprovedInstance(
+  overrides: Readonly<Record<string, unknown>> = {},
+): ApprovalInstance {
+  const completedAt = '2026-07-20T00:00:00.000Z';
+  return {
+    id: '01J8ZQK7V0A2M4N6P8R0T2W4T1',
+    status: 'approved',
+    completedAt,
+    formDataHash: 't'.repeat(43),
+    templateSnapshot: { templateCode: 'treasury_bank_account_attestation' },
+    formData: {
+      owner_type: 'employee',
+      owner_id: 'employee-001',
+      account_name: '张三',
+      account: '6222000000000001',
+      clearing_code: 'CNAPS001',
+      currency: 'CNY',
+    },
+    resolvedNodes: [{
+      decisions: [{
+        decidedBy: 'finance-001',
+        principalApproverId: 'finance-001',
+        outcome: 'approved',
+        decidedAt: completedAt,
+        delegated: false,
+      }],
+    }],
+    ...overrides,
+  } as unknown as ApprovalInstance;
+}
+
+function payrollAdjustmentApprovedInstance(
+  overrides: Readonly<Record<string, unknown>> = {},
+): ApprovalInstance {
+  const completedAt = '2026-07-31T11:00:00.000Z';
+  return {
+    id: '01J8ZQK7V0A2M4N6P8R0T2W4A4',
+    status: 'approved',
+    completedAt,
+    formDataHash: 'd'.repeat(43),
+    templateSnapshot: { templateCode: 'payroll_adjustment_approval' },
+    formData: {
+      adjustment_id: '01J8ZQK7V0A2M4N6P8R0T2W4D1',
+      adjustment_hash: 'a'.repeat(43),
+      period: '2026-07',
+      adjustment_type: 'supplement',
+      reason_code: 'RETROACTIVE_SALARY_CHANGE',
+    },
+    resolvedNodes: [{ decisions: [{
+      decidedBy: 'finance-002',
+      principalApproverId: 'finance-002',
+      outcome: 'approved',
+      decidedAt: completedAt,
+      delegated: false,
+    }] }],
+    ...overrides,
+  } as unknown as ApprovalInstance;
 }
 
 function trustedContext(scopes: readonly string[] = [], actorId = 'actor-001'): TenantContextService {
@@ -801,6 +861,251 @@ describe('ApprovalApplicationService', () => {
     });
   });
 
+  it('资金账户审批只输出专用表单绑定和最终通过人，并复用调用方事务', async () => {
+    const deps = dependencies();
+    const approved = treasuryApprovedInstance();
+    deps.instances.findById.mockResolvedValue(approved);
+    const result = await service(
+      deps,
+      trustedContext(['erp:treasury:account:attest']),
+    ).getTreasuryBankAccountDecision(approved.id, SESSION);
+    expect(result).toEqual({
+      id: approved.id,
+      completedAt: approved.completedAt,
+      approvedBy: 'finance-001',
+      ownerType: 'employee',
+      ownerId: 'employee-001',
+      accountName: '张三',
+      account: '6222000000000001',
+      clearingCode: 'CNAPS001',
+      currency: 'CNY',
+      formDataHash: 't'.repeat(43),
+    });
+    expect(deps.instances.findById).toHaveBeenCalledWith(
+      approved.id,
+      SESSION,
+    );
+    expect(result).not.toHaveProperty('resolvedNodes');
+  });
+
+  it('资金账户审批读取对 Scope、模板、通过终态和最终决定失败关闭', async () => {
+    await expect(service(dependencies()).getTreasuryBankAccountDecision(
+      'instance-001',
+      SESSION,
+    )).rejects.toMatchObject({
+      response: { code: 'APPROVAL_TREASURY_INTEGRATION_STATUS_DENIED' },
+    });
+
+    const templateDeps = dependencies();
+    templateDeps.instances.findById.mockResolvedValue(treasuryApprovedInstance({
+      templateSnapshot: { templateCode: 'EXPENSE' },
+    }));
+    await expect(service(
+      templateDeps,
+      trustedContext(['erp:treasury:account:attest']),
+    ).getTreasuryBankAccountDecision(
+      'instance-001',
+      SESSION,
+    )).rejects.toMatchObject({
+      response: { code: 'APPROVAL_TREASURY_INTEGRATION_TEMPLATE_DENIED' },
+    });
+
+    const stateDeps = dependencies();
+    stateDeps.instances.findById.mockResolvedValue(treasuryApprovedInstance({
+      status: 'running',
+      completedAt: null,
+    }));
+    await expect(service(
+      stateDeps,
+      trustedContext(['erp:treasury:account:attest']),
+    ).getTreasuryBankAccountDecision(
+      'instance-001',
+      SESSION,
+    )).rejects.toMatchObject({
+      response: { code: 'APPROVAL_TREASURY_DECISION_INCOMPLETE' },
+    });
+
+    const decisionDeps = dependencies();
+    decisionDeps.instances.findById.mockResolvedValue(treasuryApprovedInstance({
+      resolvedNodes: [{ decisions: [{
+        decidedBy: 'finance-001',
+        principalApproverId: 'finance-001',
+        outcome: 'approved',
+        decidedAt: '2026-07-19T00:00:00.000Z',
+        delegated: false,
+      }] }],
+    }));
+    await expect(service(
+      decisionDeps,
+      trustedContext(['erp:treasury:account:attest']),
+    ).getTreasuryBankAccountDecision(
+      'instance-001',
+      SESSION,
+    )).rejects.toMatchObject({
+      response: { code: 'APPROVAL_TREASURY_DECISION_INVALID' },
+    });
+  });
+
+  it.each([
+    ['owner_type', 'supplier'],
+    ['owner_id', '/invalid'],
+    ['account_name', '张三\u0000'],
+    ['account', '1234'],
+    ['clearing_code', 'cnaps001'],
+    ['currency', 'USD'],
+  ] as const)('资金账户审批拒绝非法或缺失的 %s 字段', async (field, value) => {
+    const deps = dependencies();
+    const approved = treasuryApprovedInstance();
+    deps.instances.findById.mockResolvedValue(treasuryApprovedInstance({
+      formData: { ...approved.formData, [field]: value },
+    }));
+    await expect(service(
+      deps,
+      trustedContext(['erp:treasury:account:attest']),
+    ).getTreasuryBankAccountDecision(
+      approved.id,
+      SESSION,
+    )).rejects.toMatchObject({
+      response: { code: 'APPROVAL_TREASURY_FORM_INVALID' },
+    });
+  });
+
+  it('工资调整审批终态只输出固定控制摘要，不输出员工或金额', async () => {
+    const deps = dependencies();
+    const approved = payrollAdjustmentApprovedInstance();
+    deps.instances.findById.mockResolvedValue(approved);
+    const result = await service(
+      deps, trustedContext(['erp:payroll:adjustment:approval:sync']),
+    ).getPayrollAdjustmentDecision(approved.id);
+    expect(result).toEqual({
+      id: approved.id,
+      outcome: 'approved',
+      decidedBy: 'finance-002',
+      completedAt: approved.completedAt,
+      adjustmentId: '01J8ZQK7V0A2M4N6P8R0T2W4D1',
+      adjustmentHash: 'a'.repeat(43),
+      period: '2026-07',
+      adjustmentType: 'supplement',
+      reasonCode: 'RETROACTIVE_SALARY_CHANGE',
+      formDataHash: 'd'.repeat(43),
+    });
+    expect(JSON.stringify(result)).not.toMatch(/employee|amount|payable|receivable/u);
+  });
+
+  it('工资调整审批同步对 Scope、模板、终态和决策链逐项失败关闭', async () => {
+    const id = payrollAdjustmentApprovedInstance().id;
+    const denied = dependencies();
+    denied.instances.findById.mockResolvedValue(payrollAdjustmentApprovedInstance());
+    await expect(service(denied).getPayrollAdjustmentDecision(id))
+      .rejects.toMatchObject({
+        response: { code: 'APPROVAL_PAYROLL_ADJUSTMENT_STATUS_DENIED' },
+      });
+
+    const cases = [
+      [
+        payrollAdjustmentApprovedInstance({
+          templateSnapshot: { templateCode: 'payroll_period_approval' },
+        }),
+        'APPROVAL_PAYROLL_ADJUSTMENT_TEMPLATE_DENIED',
+      ],
+      [
+        payrollAdjustmentApprovedInstance({ status: 'running', completedAt: null }),
+        'APPROVAL_PAYROLL_ADJUSTMENT_INCOMPLETE',
+      ],
+      [
+        payrollAdjustmentApprovedInstance({ status: 'approved', completedAt: null }),
+        'APPROVAL_PAYROLL_ADJUSTMENT_INCOMPLETE',
+      ],
+      [
+        payrollAdjustmentApprovedInstance({ resolvedNodes: [{ decisions: [] }] }),
+        'APPROVAL_PAYROLL_ADJUSTMENT_DECISION_INVALID',
+      ],
+      [
+        payrollAdjustmentApprovedInstance({
+          resolvedNodes: [{ decisions: [{
+            decidedBy: 'finance-002',
+            principalApproverId: 'finance-002',
+            outcome: 'approved',
+            decidedAt: '2026-07-31T10:59:59.000Z',
+            delegated: false,
+          }] }],
+        }),
+        'APPROVAL_PAYROLL_ADJUSTMENT_DECISION_INVALID',
+      ],
+    ] as const;
+
+    for (const [instance, code] of cases) {
+      const deps = dependencies();
+      deps.instances.findById.mockResolvedValue(instance);
+      await expect(service(
+        deps,
+        trustedContext(['erp:payroll:adjustment:approval:sync']),
+      ).getPayrollAdjustmentDecision(id)).rejects.toMatchObject({
+        response: { code },
+      });
+    }
+  });
+
+  it('工资调整拒绝终态取最后一项可信决策并校验全部固定表单字段', async () => {
+    const rejected = payrollAdjustmentApprovedInstance({
+      status: 'rejected',
+      completedAt: '2026-07-31T12:00:00.000Z',
+      formData: {
+        ...payrollAdjustmentApprovedInstance().formData,
+        adjustment_type: 'reversal',
+      },
+      resolvedNodes: [
+        { decisions: [{
+          decidedBy: 'finance-001',
+          principalApproverId: 'finance-001',
+          outcome: 'rejected',
+          decidedAt: '2026-07-31T11:00:00.000Z',
+          delegated: false,
+        }] },
+        { decisions: [{
+          decidedBy: 'finance-003',
+          principalApproverId: 'finance-003',
+          outcome: 'rejected',
+          decidedAt: '2026-07-31T12:00:00.000Z',
+          delegated: false,
+        }] },
+      ],
+    });
+    const deps = dependencies();
+    deps.instances.findById.mockResolvedValue(rejected);
+    await expect(service(
+      deps,
+      trustedContext(['erp:payroll:adjustment:approval:sync']),
+    ).getPayrollAdjustmentDecision(rejected.id)).resolves.toMatchObject({
+      outcome: 'rejected',
+      decidedBy: 'finance-003',
+      adjustmentType: 'reversal',
+    });
+
+    for (const [field, value] of [
+      ['adjustment_id', 'invalid'],
+      ['adjustment_hash', 'short'],
+      ['period', '2026-13'],
+      ['adjustment_type', 'other'],
+      ['reason_code', 'lowercase'],
+    ] as const) {
+      const invalid = payrollAdjustmentApprovedInstance({
+        formData: {
+          ...payrollAdjustmentApprovedInstance().formData,
+          [field]: value,
+        },
+      });
+      const invalidDeps = dependencies();
+      invalidDeps.instances.findById.mockResolvedValue(invalid);
+      await expect(service(
+        invalidDeps,
+        trustedContext(['erp:payroll:adjustment:approval:sync']),
+      ).getPayrollAdjustmentDecision(invalid.id)).rejects.toMatchObject({
+        response: { code: 'APPROVAL_PAYROLL_FORM_INVALID' },
+      });
+    }
+  });
+
   it('创建实例只返回脱敏摘要，聚合与事件共用幂等事务', async () => {
     const deps = dependencies();
     const result = await service(deps).createInstance('idempotency-key-001', {
@@ -817,6 +1122,69 @@ describe('ApprovalApplicationService', () => {
       type: 'approval_instance.draft_created',
     }), SESSION);
     expect(JSON.stringify(deps.outbox.append.mock.calls[0]?.[0])).not.toContain('费用申请');
+  });
+
+  it('实例草稿更新保持模板快照并只发布正文摘要事件', async () => {
+    const current = draftInstance();
+    const updatedFormData = { amount: 456_78, remark: '更新后的私密说明' };
+    const deps = dependencies();
+    deps.instances.findById.mockResolvedValue(current);
+
+    const result = await service(deps).updateInstance(
+      current.id,
+      current.version,
+      'instance-update-001',
+      { title: '更新后的费用申请', formData: updatedFormData },
+    );
+
+    expect(result.instance).toMatchObject({
+      id: current.id,
+      status: 'draft',
+      templateCode: current.templateSnapshot.templateCode,
+      templateRevision: current.templateSnapshot.revision,
+      version: 2,
+    });
+    expect(deps.instances.replace).toHaveBeenCalledWith(expect.objectContaining({
+      title: '更新后的费用申请',
+      formData: { amount: 456_78, remark: '更新后的私密说明' },
+      templateSnapshot: current.templateSnapshot,
+      version: 2,
+    }), 1, SESSION);
+    expect(deps.outbox.append).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'approval_instance.draft_updated',
+      payload: {
+        templateCode: current.templateSnapshot.templateCode,
+        templateRevision: current.templateSnapshot.revision,
+        riskLevel: current.templateSnapshot.riskLevel,
+        initiatorId: current.initiatorId,
+        formDataHash: hashApprovalJson(updatedFormData),
+      },
+    }), SESSION);
+    expect(JSON.stringify(deps.outbox.append.mock.calls[0]?.[0]))
+      .not.toMatch(/更新后的费用申请|更新后的私密说明/u);
+    expect(deps.actions.append).not.toHaveBeenCalled();
+    expect(deps.notifications.append).not.toHaveBeenCalled();
+  });
+
+  it('实例草稿更新拒绝非发起人且不产生任何持久化副作用', async () => {
+    const current = draftInstance();
+    const deps = dependencies();
+    deps.instances.findById.mockResolvedValue(current);
+
+    await expect(service(
+      deps,
+      trustedContext(['erp:approval:instance:submit'], 'actor-002'),
+    ).updateInstance(
+      current.id,
+      current.version,
+      'instance-update-denied-001',
+      { title: '越权修改', formData: { amount: 1 } },
+    )).rejects.toMatchObject({ response: { code: 'APPROVAL_DRAFT_UPDATE_DENIED' } });
+
+    expect(deps.instances.replace).not.toHaveBeenCalled();
+    expect(deps.outbox.append).not.toHaveBeenCalled();
+    expect(deps.actions.append).not.toHaveBeenCalled();
+    expect(deps.notifications.append).not.toHaveBeenCalled();
   });
 
   it('提交在一个事务中更新聚合、追加动作和 Outbox', async () => {
@@ -911,6 +1279,75 @@ describe('ApprovalApplicationService', () => {
       definition: definition(),
     });
     expect(next.template).toMatchObject({ code: 'EXPENSE', revision: 2, status: 'draft' });
+  });
+
+  it('模板草稿更新保持编码与修订并通过强版本写入摘要事件', async () => {
+    const current = createApprovalTemplateDraft({
+      id: 'template-001',
+      tenantId: 'tenant-001',
+      code: 'EXPENSE',
+      name: '费用审批草稿',
+      riskLevel: 'R1',
+      definition: definition(),
+      actorId: 'editor-001',
+    }, NOW);
+    const deps = dependencies();
+    deps.templates.findById.mockResolvedValue(current);
+
+    const result = await service(deps).updateTemplate(
+      current.id,
+      current.version,
+      'template-update-001',
+      {
+        name: '费用审批草稿修订',
+        riskLevel: 'R2',
+        definition: definition(),
+      },
+    );
+
+    expect(result.template).toMatchObject({
+      id: current.id,
+      code: current.code,
+      revision: current.revision,
+      riskLevel: 'R2',
+      status: 'draft',
+      version: 2,
+    });
+    expect(deps.templates.replace).toHaveBeenCalledWith(expect.objectContaining({
+      code: current.code,
+      revision: current.revision,
+      name: '费用审批草稿修订',
+      version: 2,
+    }), 1, SESSION);
+    expect(deps.outbox.append).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'approval_template.draft_updated',
+      payload: {
+        code: current.code,
+        revision: current.revision,
+        riskLevel: 'R2',
+        definitionHash: hashApprovalJson(definition()),
+      },
+    }), SESSION);
+  });
+
+  it('模板发布后永久拒绝更新且不产生持久化副作用', async () => {
+    const current = template();
+    const deps = dependencies();
+    deps.templates.findById.mockResolvedValue(current);
+
+    await expect(service(deps).updateTemplate(
+      current.id,
+      current.version,
+      'template-update-denied-001',
+      {
+        name: '不得覆盖已发布模板',
+        riskLevel: 'R2',
+        definition: definition(),
+      },
+    )).rejects.toMatchObject({ response: { code: 'APPROVAL_TEMPLATE_IMMUTABLE' } });
+
+    expect(deps.templates.replace).not.toHaveBeenCalled();
+    expect(deps.outbox.append).not.toHaveBeenCalled();
   });
 
   it('发布新模板时原子退役旧发布版本并生成两条事件', async () => {

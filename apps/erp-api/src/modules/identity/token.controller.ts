@@ -1,4 +1,4 @@
-import { Controller, Post, Req, Res } from '@nestjs/common';
+import { Controller, Post, Req, Res, UnauthorizedException } from '@nestjs/common';
 import type { Request, Response } from 'express';
 
 import { PublicRoute } from '../../core/http/public-route.decorator.js';
@@ -20,7 +20,13 @@ export class TokenController {
     @Res({ passthrough: true }) response: Response,
   ): Promise<Record<string, string | number>> {
     this.cookies.assertTrustedOrigin(request);
-    const grant = await this.grants.refresh(this.cookies.readRequired(request));
+    let grant: Awaited<ReturnType<TokenGrantService['refresh']>>;
+    try {
+      grant = await this.grants.refresh(this.cookies.readRequired(request));
+    } catch (error) {
+      if (error instanceof UnauthorizedException) this.cookies.clear(response);
+      throw error;
+    }
     this.cookies.set(response, grant.refreshToken);
     return {
       accessToken: grant.accessToken,

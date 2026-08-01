@@ -1,17 +1,10 @@
-import { IsString, Matches } from 'class-validator';
+import type { z } from 'zod';
 
-const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
+import { attestPersonBirthdayRequestSchema } from '../../../contracts/rest-request-contracts.js';
 
-export class AttestPersonBirthdayDto {
-  @IsString()
-  @Matches(/^(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$/)
-  monthDay!: string;
+export { attestPersonBirthdayRequestSchema };
 
-  @IsString()
-  @Matches(ULID_PATTERN)
-  identityEvidenceId!: string;
-
-  @IsString()
-  @Matches(ULID_PATTERN)
-  birthdayEvidenceId!: string;
-}
+/** 生日证明请求契约；未知字段必须失败关闭。 */
+export type AttestPersonBirthdayDto = Readonly<
+  z.infer<typeof attestPersonBirthdayRequestSchema>
+>;

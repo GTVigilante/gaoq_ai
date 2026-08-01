@@ -30,10 +30,33 @@ export class CreateApprovalTemplateDto {
   definition!: ApprovalTemplateDefinition;
 }
 
+export class UpdateApprovalTemplateDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(128)
+  name!: string;
+
+  @IsEnum(['R1', 'R2'])
+  riskLevel!: 'R1' | 'R2';
+
+  @IsObject()
+  definition!: ApprovalTemplateDefinition;
+}
+
 export class CreateApprovalInstanceDto {
   @Matches(CODE_PATTERN)
   templateCode!: string;
 
+  @IsString()
+  @MinLength(1)
+  @MaxLength(256)
+  title!: string;
+
+  @IsObject()
+  formData!: ApprovalFormData;
+}
+
+export class UpdateApprovalInstanceDto {
   @IsString()
   @MinLength(1)
   @MaxLength(256)

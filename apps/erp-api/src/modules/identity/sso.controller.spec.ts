@@ -94,6 +94,33 @@ describe('SsoController', () => {
     ).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
+  it('仓储返回的平台与请求不一致时失败关闭', async () => {
+    const fixture = createController({
+      tenantId: 'tenant-001',
+      provider: 'dingtalk',
+      externalTenantId: 'external-tenant-001',
+    });
+    await expect(fixture.controller.start(
+      'feishu', { tenantSlug: 'gaoq-group', returnPath: '/' }, fixture.response,
+    )).rejects.toThrow('SSO_TENANT_BINDING_CORRUPT');
+    expect(fixture.issue).not.toHaveBeenCalled();
+  });
+
+  it('适配器配置失败时不向浏览器写入不可用 state Cookie', async () => {
+    const fixture = createController({
+      tenantId: 'tenant-001',
+      provider: 'feishu',
+      externalTenantId: 'external-tenant-001',
+    });
+    fixture.buildAuthorizationUrl.mockImplementation(() => {
+      throw new Error('SSO_NOT_CONFIGURED');
+    });
+    await expect(fixture.controller.start(
+      'feishu', { tenantSlug: 'gaoq-group', returnPath: '/' }, fixture.response,
+    )).rejects.toThrow('SSO_NOT_CONFIGURED');
+    expect(fixture.setStateCookie).not.toHaveBeenCalled();
+  });
+
   it('在访问任何仓储前拒绝非白名单 provider', async () => {
     const { controller, resolveActive, response } = createController(null);
 
@@ -160,5 +187,30 @@ describe('SsoController', () => {
       ),
     ).rejects.toThrow('上游失败');
     expect(clearStateCookie).toHaveBeenCalledWith(response);
+  });
+
+  it('Origin 拒绝或 provider 非法时仍清除浏览器 state Cookie', async () => {
+    const originFixture = createController(null);
+    originFixture.assertTrustedOrigin.mockImplementation(() => {
+      throw new UnauthorizedException();
+    });
+    await expect(originFixture.controller.callback(
+      'feishu',
+      { state: 'state-001-long-enough', code: 'code-001' },
+      originFixture.request,
+      originFixture.response,
+    )).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(originFixture.assertBound).not.toHaveBeenCalled();
+    expect(originFixture.clearStateCookie).toHaveBeenCalledWith(originFixture.response);
+
+    const providerFixture = createController(null);
+    await expect(providerFixture.controller.callback(
+      'unknown',
+      { state: 'state-001-long-enough', code: 'code-001' },
+      providerFixture.request,
+      providerFixture.response,
+    )).rejects.toBeInstanceOf(BadRequestException);
+    expect(providerFixture.issueFromSso).not.toHaveBeenCalled();
+    expect(providerFixture.clearStateCookie).toHaveBeenCalledWith(providerFixture.response);
   });
 });

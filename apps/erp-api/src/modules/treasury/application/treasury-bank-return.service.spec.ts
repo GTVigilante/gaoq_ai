@@ -39,12 +39,22 @@ function assemble(lines: readonly BankReturnLineFixture[] = [{
   instructionId: 'instruction-001', outcome: 'succeeded' as const,
   amountMinor: 839_500, bankLineReference: 'bank-line-001',
 }], protection = { signatureVerified: true, malwareClean: true },
-receivedAt = new Date().toISOString(), sequence = 1) {
+receivedAt = new Date().toISOString(), sequence = 1, supplement = false,
+recoveryRoot?: Readonly<Record<string, unknown>>) {
   const context = new TenantContextService();
   let batch: Record<string, unknown> | null = {
     id: BATCH_ID, tenantId: tenant.tenantId, payrollPeriodId: 'period-001',
     payrollRunId: 'run-001', format: 'ISO20022_PAIN_001_001_03', fileHash: 'f'.repeat(43),
-    purpose: 'regular', batchSequence: 1, parentBatchId: null, recoverySourceBatchId: null,
+    purpose: recoveryRoot === undefined
+      ? supplement ? 'supplement' : 'regular'
+      : 'recovery',
+    batchSequence: 1,
+    parentBatchId: supplement
+      ? '01J8ZQK7V0A2M4N6P8R0T2W4P9'
+      : recoveryRoot?.id ?? null,
+    recoverySourceBatchId: recoveryRoot?.id ?? null,
+    adjustmentSourceId: supplement ? '01J8ZQK7V0A2M4N6P8R0T2W4D1' : null,
+    adjustmentSourceHash: supplement ? 'a'.repeat(43) : null,
     lineCount: 1, totalMinor: 839_500, preparedBy: 'maker', payrollLockedBy: 'locker',
     exportApprovedBy: 'checker', strongAuthEvidenceId: 'strong-auth-001',
     objectEvidenceId: 'file-evidence-001', bankSubmissionId: 'bank-submission-001',
@@ -57,7 +67,9 @@ receivedAt = new Date().toISOString(), sequence = 1) {
     updatedAt: new Date('2026-07-22T11:00:00.000Z'),
   };
   const batches = {
-    findOne: vi.fn().mockImplementation(() => query(() => batch)),
+    findOne: vi.fn().mockImplementation((
+      filter: { readonly id?: string },
+    ) => query(() => filter.id === recoveryRoot?.id ? recoveryRoot : batch)),
     updateOne: vi.fn().mockImplementation((
       _filter: unknown, update: { readonly $set: Readonly<Record<string, unknown>> },
     ) => {
@@ -91,7 +103,10 @@ receivedAt = new Date().toISOString(), sequence = 1) {
     payrollCalculationLineId: instruction.payrollCalculationLineId,
     payrollResultHash: 'p'.repeat(43), creditorName: '密文内姓名',
     creditorAccount: '6222000000000001', creditorAgentClearingCode: 'CNAPS001',
-    amountMinor: 839_500, purposeCode: 'PAYROLL',
+    amountMinor: 839_500,
+    purposeCode: supplement || recoveryRoot !== undefined
+      ? 'PAYROLL_ADJUSTMENT'
+      : 'PAYROLL',
   };
   const protectedValues = new Map<string, unknown>();
   const crypto = {
@@ -130,12 +145,18 @@ receivedAt = new Date().toISOString(), sequence = 1) {
     handler: (value: ClientSession) => Promise<Record<string, unknown>>,
   ) => handler(session)) };
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
+  const boundary = { assertLegacy: vi.fn() };
+  const payrollAdjustments = {
+    recordSupplementBankReturn: vi.fn().mockResolvedValue(undefined),
+  };
   const service = new TreasuryBankReturnService(
-    idempotency as never, context, inbox, crypto as never, outbox as never,
+    idempotency as never, context, boundary as never, payrollAdjustments as never,
+    inbox, crypto as never, outbox as never,
     batches as never, instructions as never, returns as never,
   );
   return {
-    context, batches, instructions, inbox, crypto, manifest, returns, outbox, service,
+    context, idempotency, batches, instructions, inbox, crypto, manifest,
+    returns, outbox, boundary, payrollAdjustments, service,
     getBatch: () => batch,
     setBatch: (value: Record<string, unknown> | null) => { batch = value; },
     mutateBatch: (value: Readonly<Record<string, unknown>>) => {
@@ -179,6 +200,40 @@ function migrationInput(targetId: string | null = null) {
 }
 
 describe('TreasuryBankReturnService', () => {
+  it('external 模式在身份授权后、回盘读取与外部 Inbox 前失败关闭', async () => {
+    const failure = new Error('PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM');
+    const migration = assemble();
+    migration.boundary.assertLegacy.mockImplementation(() => { throw failure; });
+    await expect(migration.context.run({ tenant, actor: migrationActor() }, () =>
+      migration.service.importCleanFromMigration(
+        'boundary-return-migration',
+        {} as never,
+      ))).rejects.toBe(failure);
+    expect(migration.idempotency.execute).not.toHaveBeenCalled();
+    expect(migration.batches.findOne).not.toHaveBeenCalled();
+
+    const online = assemble();
+    online.boundary.assertLegacy.mockImplementation(() => { throw failure; });
+    await expect(online.context.run({ tenant, actor }, () => online.service.ingest(
+      'boundary-return-ingest',
+      BATCH_ID,
+      4,
+    ))).rejects.toBe(failure);
+    expect(online.batches.findOne).not.toHaveBeenCalled();
+    expect(online.inbox.claim).not.toHaveBeenCalled();
+
+    const unauthorized = assemble();
+    await expect(unauthorized.context.run({
+      tenant,
+      actor: { ...actor, scopes: [] },
+    }, () => unauthorized.service.ingest(
+      'boundary-return-unauthorized',
+      BATCH_ID,
+      4,
+    ))).rejects.toMatchObject({ response: { code: 'AUTH_SCOPE_DENIED' } });
+    expect(unauthorized.boundary.assertLegacy).not.toHaveBeenCalled();
+  });
+
   it('迁移全量成功回盘时重建密文清单且不调用外部 Inbox', async () => {
     const store = assemble();
     const result = await store.context.run({ tenant, actor: migrationActor() }, () =>
@@ -450,6 +505,64 @@ describe('TreasuryBankReturnService', () => {
     await expect(store.context.run({ tenant, actor }, () =>
       store.service.ingest(`treasury-return-mapped-${_label}`, BATCH_ID, 4)))
       .rejects.toMatchObject({ response: { code } });
+  });
+
+  it('补发子批次全额成功时在同一事务回写工资调整现金结算证据', async () => {
+    const store = assemble(
+      [{
+        instructionId: 'instruction-001',
+        outcome: 'succeeded',
+        amountMinor: 839_500,
+        bankLineReference: 'bank-line-001',
+      }],
+      { signatureVerified: true, malwareClean: true },
+      new Date().toISOString(),
+      1,
+      true,
+    );
+    await store.context.run({ tenant, actor }, () =>
+      store.service.ingest('return-supplement-001', BATCH_ID, 4));
+    expect(store.payrollAdjustments.recordSupplementBankReturn).toHaveBeenCalledWith({
+      adjustmentId: '01J8ZQK7V0A2M4N6P8R0T2W4D1',
+      adjustmentHash: 'a'.repeat(43),
+      batchId: BATCH_ID,
+      returnId: RETURN_ID,
+      successfulMinor: 839_500,
+    }, session);
+  });
+
+  it('补发恢复子批次全额成功时沿来源链回写同一工资调整', async () => {
+    const supplementRoot = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4S1',
+      tenantId: tenant.tenantId,
+      purpose: 'supplement',
+      adjustmentSourceId: '01J8ZQK7V0A2M4N6P8R0T2W4D1',
+      adjustmentSourceHash: 'a'.repeat(43),
+      totalMinor: 839_500,
+      recoverySourceBatchId: null,
+    };
+    const store = assemble(
+      [{
+        instructionId: 'instruction-001',
+        outcome: 'succeeded',
+        amountMinor: 839_500,
+        bankLineReference: 'bank-line-recovery-001',
+      }],
+      { signatureVerified: true, malwareClean: true },
+      new Date().toISOString(),
+      1,
+      false,
+      supplementRoot,
+    );
+    await store.context.run({ tenant, actor }, () =>
+      store.service.ingest('return-supplement-recovery-001', BATCH_ID, 4));
+    expect(store.payrollAdjustments.recordSupplementBankReturn).toHaveBeenCalledWith({
+      adjustmentId: supplementRoot.adjustmentSourceId,
+      adjustmentHash: supplementRoot.adjustmentSourceHash,
+      batchId: BATCH_ID,
+      returnId: RETURN_ID,
+      successfulMinor: 839_500,
+    }, session);
   });
 
   it.each([

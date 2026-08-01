@@ -9,6 +9,26 @@ export const RECRUITMENT_CHANNEL_EVIDENCE_VERIFIERS = Symbol(
 export type RecruitmentChannelStage =
   | 'applied' | 'screening' | 'interview' | 'offer' | 'hired' | 'rejected' | 'withdrawn';
 
+export type RecruitmentChannelTransportOutcome = 'not_committed' | 'unknown';
+
+/**
+ * 渠道传输失败必须显式声明外部副作用是否确定未提交。
+ * 未包装异常一律按结果未知处理，禁止因超时或连接中断自动重放外部写入。
+ */
+export class RecruitmentChannelTransportError extends Error {
+  constructor(
+    readonly code: string,
+    readonly outcome: RecruitmentChannelTransportOutcome,
+    options?: ErrorOptions,
+  ) {
+    if (!/^[A-Z0-9_]{3,128}$/.test(code)) {
+      throw new Error('招聘渠道传输错误码非法');
+    }
+    super(code, options);
+    this.name = 'RecruitmentChannelTransportError';
+  }
+}
+
 export interface RecruitmentChannelPositionCommand {
   readonly tenantId: string;
   readonly positionId: string;

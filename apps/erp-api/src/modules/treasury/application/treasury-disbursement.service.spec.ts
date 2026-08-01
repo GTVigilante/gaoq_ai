@@ -186,8 +186,10 @@ function assemble(
     templateCode: 'treasury_disbursement_export_approval',
     completedAt: '2026-07-22T10:00:00.000Z', evidenceChecksum: 'a'.repeat(43),
   }) };
+  const boundary = { assertLegacy: vi.fn() };
   const service = new TreasuryDisbursementService(
-    idempotency as never, context, payroll as never, strongAuth as never, crypto as never,
+    idempotency as never, context, boundary as never,
+    payroll as never, strongAuth as never, crypto as never,
     archive, bankGateway,
     new ConfigService({ TREASURY_BANK_SUBMISSION_MODE: submissionMode }) as never,
     productionAuthorization as never,
@@ -200,7 +202,7 @@ function assemble(
     context, crypto, payroll, strongAuth, accounts, batches, instructions,
     idempotency, archive, bankGateway, archivedBody: () => archivedBody,
     archivedBytes: () => archivedBytes, outbox,
-    profiles, approvals, productionAuthorization, service,
+    profiles, approvals, productionAuthorization, boundary, service,
     lockedSource,
     getBatch: () => batch,
     setBatch: (value: Record<string, unknown> | null) => { batch = value; },
@@ -295,6 +297,74 @@ function runMigration(
 }
 
 describe('TreasuryDisbursementService', () => {
+  it('external 模式在身份授权后、所有 Treasury 读取与外部副作用前失败关闭', async () => {
+    const failure = new Error('PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM');
+    const migration = assemble();
+    migration.boundary.assertLegacy.mockImplementation(() => { throw failure; });
+    await expect(migration.context.run({ tenant, actor: migrationActor() }, () =>
+      migration.service.importSubmittedFromMigration(
+        'boundary-migration',
+        {} as never,
+      ))).rejects.toBe(failure);
+    expect(migration.payroll.getLockedDisbursementSourceForMigration).not.toHaveBeenCalled();
+    expect(migration.idempotency.execute).not.toHaveBeenCalled();
+
+    const submission = assemble();
+    submission.boundary.assertLegacy.mockImplementation(() => { throw failure; });
+    await expect(submission.context.run({ tenant, actor: connector }, () =>
+      submission.service.submit('boundary-submit', PERIOD_ID, {
+        expectedVersion: 1,
+      }))).rejects.toBe(failure);
+    expect(submission.productionAuthorization.authorize).not.toHaveBeenCalled();
+    expect(submission.bankGateway.submit).not.toHaveBeenCalled();
+
+    const approval = assemble();
+    approval.boundary.assertLegacy.mockImplementation(() => { throw failure; });
+    const checker = actor('treasury-checker');
+    await expect(approval.context.run({ tenant, actor: checker }, () =>
+      approval.service.approveExport('boundary-approve', PERIOD_ID, {
+        expectedVersion: 1,
+        strongAuthEvidenceId: EVIDENCE_ID,
+      }, checkerToken(checker)))).rejects.toBe(failure);
+    expect(approval.strongAuth.requireVerifiedEvidence).not.toHaveBeenCalled();
+
+    const preparation = assemble();
+    preparation.boundary.assertLegacy.mockImplementation(() => { throw failure; });
+    await expect(preparation.context.run({ tenant, actor: actor() }, () =>
+      preparation.service.prepare('boundary-prepare', input))).rejects.toBe(failure);
+    expect(preparation.payroll.getLockedDisbursementSource).not.toHaveBeenCalled();
+
+    const materialization = assemble();
+    materialization.boundary.assertLegacy.mockImplementation(() => { throw failure; });
+    await expect(materialization.context.run({ tenant, actor: actor() }, () =>
+      materialization.service.materializeStaged(
+        'boundary-materialize',
+        PERIOD_ID,
+      ))).rejects.toBe(failure);
+    expect(materialization.batches.findOne).not.toHaveBeenCalled();
+
+    const unauthorized = assemble();
+    await expect(unauthorized.context.run({
+      tenant,
+      actor: { ...actor(), scopes: [] },
+    }, () => unauthorized.service.prepare(
+      'boundary-unauthorized',
+      input,
+    ))).rejects.toMatchObject({ response: { code: 'AUTH_SCOPE_DENIED' } });
+    expect(unauthorized.boundary.assertLegacy).not.toHaveBeenCalled();
+
+    await expect(unauthorized.context.run({
+      tenant,
+      actor: { ...connector, scopes: [] },
+    }, () => unauthorized.service.materializeStaged(
+      'boundary-materialize-unauthorized',
+      PERIOD_ID,
+    ))).rejects.toMatchObject({
+      response: { code: 'TREASURY_MATERIALIZATION_CALLER_DENIED' },
+    });
+    expect(unauthorized.boundary.assertLegacy).not.toHaveBeenCalled();
+  });
+
   it('以确定性密文快照恢复已提交常规批次且不调用 WORM 或银行网关', async () => {
     const store = assemble();
     const result = await store.context.run({ tenant, actor: migrationActor() }, () =>

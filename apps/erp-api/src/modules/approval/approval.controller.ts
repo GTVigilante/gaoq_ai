@@ -8,6 +8,7 @@ import {
   Logger,
   Param,
   Post,
+  Put,
   Res,
 } from '@nestjs/common';
 import type { Response } from 'express';
@@ -31,6 +32,8 @@ import {
   CreateApprovalTemplateDto,
   DecideApprovalInstanceDto,
   TransferApprovalTaskDto,
+  UpdateApprovalInstanceDto,
+  UpdateApprovalTemplateDto,
 } from './application/approval.dto.js';
 
 const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
@@ -119,6 +122,26 @@ export class ApprovalController {
     return result;
   }
 
+  @Put('templates/:id')
+  @RequiredScopes('erp:approval:template:write')
+  async updateTemplate(
+    @Param('id') id: string,
+    @Headers('if-match') ifMatch: string | undefined,
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: UpdateApprovalTemplateDto,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<{ readonly template: ApprovalTemplateSummary }> {
+    const result = await this.approvals.updateTemplate(
+      this.requireUlid(id),
+      this.requireVersion(ifMatch),
+      this.requireKey(key),
+      body,
+    );
+    this.setVersion(response, result.template.version);
+    await this.auditSuccess('approval.template.update', 'approval_template', result.template);
+    return result;
+  }
+
   @Post('templates/:id/publish')
   @HttpCode(200)
   @RequiredScopes('erp:approval:template:publish')
@@ -145,6 +168,27 @@ export class ApprovalController {
     this.setVersion(response, result.instance.version);
     await this.auditInstance('approval.instance.create', result.instance);
     return result;
+  }
+
+  @Put('instances/:id')
+  @RequiredScopes('erp:approval:instance:submit')
+  async updateInstance(
+    @Param('id') id: string,
+    @Headers('if-match') ifMatch: string | undefined,
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: UpdateApprovalInstanceDto,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<{ readonly instance: ApprovalInstanceSummary }> {
+    return this.instanceWrite(
+      'approval.instance.update',
+      response,
+      this.approvals.updateInstance(
+        this.requireUlid(id),
+        this.requireVersion(ifMatch),
+        this.requireKey(key),
+        body,
+      ),
+    );
   }
 
   @Get('instances/inbox')

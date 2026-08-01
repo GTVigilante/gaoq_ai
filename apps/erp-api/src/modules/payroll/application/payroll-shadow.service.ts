@@ -14,6 +14,7 @@ import { IdempotencyService } from '../../../core/idempotency/idempotency.servic
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import type { VerifiedAccessToken } from '../../identity/auth.types.js';
 import { WebAuthnService } from '../../identity/strong-auth/webauthn.service.js';
+import { LegacyPayrollBoundaryService } from '../legacy-payroll-boundary.service.js';
 import {
   compareShadowPayroll,
   payrollDigest,
@@ -148,6 +149,7 @@ export class PayrollShadowService {
   constructor(
     private readonly idempotency: IdempotencyService,
     private readonly context: TenantContextService,
+    private readonly boundary: LegacyPayrollBoundaryService,
     private readonly crypto: PayrollDataCryptoService,
     private readonly strongAuth: WebAuthnService,
     private readonly outbox: PayrollOutboxWriter,
@@ -176,6 +178,7 @@ export class PayrollShadowService {
         message: '影子工资只允许受信任旧系统连接器导入',
       });
     }
+    this.boundary.assertLegacy();
     this.assertImportInput(input);
     return this.run(() => this.idempotency.execute(
       'payroll.shadow.import', key, input, async (session) => {
@@ -283,6 +286,7 @@ export class PayrollShadowService {
     if (actor.actorType !== 'user') throw new ForbiddenException({
       code: 'SHADOW_PAYROLL_EXPLANATION_HUMAN_REQUIRED', message: '影子差异归因必须由已验证人员执行',
     });
+    this.boundary.assertLegacy();
     if (
       !ULID.test(cycleId) || !ULID.test(differenceId) ||
       !EXPLANATION_CODES.includes(explanationCode) || !ID.test(evidenceId)
@@ -350,6 +354,7 @@ export class PayrollShadowService {
     ) throw new ForbiddenException({
       code: 'SHADOW_PAYROLL_SIGNER_IDENTITY_INVALID', message: '影子周期签署身份上下文非法',
     });
+    this.boundary.assertLegacy();
     if (!ULID.test(cycleId) || !ULID.test(strongAuthEvidenceId)) {
       throw new BadRequestException({
         code: 'SHADOW_PAYROLL_SIGNOFF_INPUT_INVALID', message: '影子周期签署引用非法',
@@ -464,6 +469,7 @@ export class PayrollShadowService {
 
   async getCycle(id: string): Promise<PayrollShadowCycleSummary> {
     this.assertScope('erp:payroll:shadow:read');
+    this.boundary.assertLegacy();
     if (!ULID.test(id)) throw new BadRequestException({
       code: 'SHADOW_PAYROLL_CYCLE_ID_INVALID', message: '影子周期标识非法',
     });
@@ -486,6 +492,7 @@ export class PayrollShadowService {
     if (actor.actorType !== 'user') throw new ForbiddenException({
       code: 'SHADOW_PAYROLL_DIFFERENCE_HUMAN_REQUIRED', message: '行级工资差异只允许已验证人员读取',
     });
+    this.boundary.assertLegacy();
     if (!ULID.test(id)) throw new BadRequestException({
       code: 'SHADOW_PAYROLL_CYCLE_ID_INVALID', message: '影子周期标识非法',
     });
@@ -529,6 +536,7 @@ export class PayrollShadowService {
 
   async getReadiness(id: string): Promise<PayrollCutoverReadinessSummary> {
     this.assertScope('erp:payroll:shadow:read');
+    this.boundary.assertLegacy();
     if (!ULID.test(id)) throw new BadRequestException({
       code: 'PAYROLL_CUTOVER_READINESS_ID_INVALID', message: '工资可切换证据标识非法',
     });

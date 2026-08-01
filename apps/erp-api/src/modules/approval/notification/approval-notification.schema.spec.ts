@@ -50,6 +50,9 @@ describe('ApprovalNotificationRecordSchema', () => {
     await new NotificationModel({
       ...record(), status: 'processing', lockedAt: new Date(), lockedBy: 'worker-001',
     }).validate();
+    await expect(new NotificationModel({
+      ...record(), status: 'pending', lockedAt: new Date(), lockedBy: 'worker-001',
+    }).validate()).rejects.toThrow('非处理中通知不能持有租约');
   });
 
   it('已发送记录必须包含平台消息标识和发送时间', async () => {
@@ -66,5 +69,15 @@ describe('ApprovalNotificationRecordSchema', () => {
       spec.eventType === 1 && spec.recipientActorId === 1 && spec.channel === 1,
     );
     expect(index?.[1]?.unique).toBe(true);
+  });
+
+  it('死信运维游标查询具有租户状态前缀索引', () => {
+    const index = ApprovalNotificationRecordSchema.indexes().find(([spec]) =>
+      spec.tenantId === 1 &&
+      spec.status === 1 &&
+      spec.notificationId === -1 &&
+      spec.channel === 1,
+    );
+    expect(index).toBeDefined();
   });
 });

@@ -27,9 +27,12 @@ export default function RootLayout({ children }: RootLayoutProps) {
   return (
     <html lang="zh-CN">
       <body>
-        <AntdRegistry>
-          <AppProviders>{children}</AppProviders>
-        </AntdRegistry>
+        <a className="skip-link" href="#main-content">跳到主要内容</a>
+        <div id="main-content" tabIndex={-1}>
+          <AntdRegistry>
+            <AppProviders>{children}</AppProviders>
+          </AntdRegistry>
+        </div>
       </body>
     </html>
   );

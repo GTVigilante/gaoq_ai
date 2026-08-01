@@ -35,7 +35,10 @@ export class SsoAuthenticationService {
       codeVerifier: state.codeVerifier,
       expectedExternalTenantId: state.externalTenantId,
     });
-    if (profile.externalTenantId !== state.externalTenantId) {
+    if (
+      profile.provider !== input.provider ||
+      profile.externalTenantId !== state.externalTenantId
+    ) {
       throw this.invalidIdentity();
     }
     const mapping = await this.identities.findBoundByExternalProfile(state.tenantId, profile);
@@ -45,13 +48,22 @@ export class SsoAuthenticationService {
         message: '外部身份尚未绑定 ERP 员工',
       });
     }
-    return {
+    if (
+      mapping.tenantId !== state.tenantId ||
+      mapping.provider !== input.provider ||
+      mapping.externalTenantId !== state.externalTenantId ||
+      mapping.unionId !== profile.unionId ||
+      mapping.externalUserId !== profile.externalUserId
+    ) {
+      throw this.invalidIdentity();
+    }
+    return Object.freeze({
       tenantId: mapping.tenantId,
       actorId: mapping.actorId,
       employeeId: mapping.employeeId,
       provider: profile.provider,
       returnPath: state.returnPath,
-    };
+    });
   }
 
   private invalidIdentity(): UnauthorizedException {

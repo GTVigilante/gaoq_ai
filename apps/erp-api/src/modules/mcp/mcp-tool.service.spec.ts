@@ -1,7 +1,7 @@
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type { ServerNotification, ServerRequest } from '@modelcontextprotocol/sdk/types.js';
-import { Logger, UnauthorizedException } from '@nestjs/common';
+import { GoneException, Logger, UnauthorizedException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AuditService } from '../../core/audit/audit.service.js';
@@ -24,6 +24,13 @@ import type { PayrollPayslipService } from '../payroll/application/payroll-paysl
 import type { PayrollTaxFilingService } from '../payroll/application/payroll-tax-filing.service.js';
 import type { PayrollReconciliationService } from '../payroll/application/payroll-reconciliation.service.js';
 import type { PayrollShadowService } from '../payroll/application/payroll-shadow.service.js';
+import type { PayrollAdjustmentService } from '../payroll/application/payroll-adjustment.service.js';
+import type {
+  PayrollAdjustmentTaxCorrectionService,
+} from '../payroll/application/payroll-adjustment-tax-correction.service.js';
+import type {
+  PayrollAnnualReconciliationService,
+} from '../payroll/application/payroll-annual-reconciliation.service.js';
 import type { OpOperatingSummaryService } from '../op/application/op-operating-summary.service.js';
 import type { OpApprovalBridgeService } from '../op/application/op-approval-bridge.service.js';
 import type { ManagementDashboardService } from '../analytics/application/management-dashboard.service.js';
@@ -113,9 +120,12 @@ function assemble() {
   const taxFilings = { getStatus: vi.fn() };
   const reconciliations = { getStatus: vi.fn() };
   const shadows = { getCycle: vi.fn(), getReadiness: vi.fn() };
+  const payrollAdjustments = { getControlStatus: vi.fn() };
+  const payrollAdjustmentTaxCorrections = { getControlStatus: vi.fn() };
+  const annualPayrollReconciliations = { getControlStatus: vi.fn() };
   const opSummaries = { getLatest: vi.fn() };
   const opApprovalBridges = { get: vi.fn() };
-  const managementDashboard = { get: vi.fn() };
+  const managementDashboard = { get: vi.fn(), validateAsOf: vi.fn() };
   const analyticsExports = { get: vi.fn(), request: vi.fn() };
   const dataMigrations = { report: vi.fn() };
   const talentLifecycle = { getForMcp: vi.fn() };
@@ -139,6 +149,9 @@ function assemble() {
     taxFilings as unknown as PayrollTaxFilingService,
     reconciliations as unknown as PayrollReconciliationService,
     shadows as unknown as PayrollShadowService,
+    payrollAdjustments as unknown as PayrollAdjustmentService,
+    payrollAdjustmentTaxCorrections as unknown as PayrollAdjustmentTaxCorrectionService,
+    annualPayrollReconciliations as unknown as PayrollAnnualReconciliationService,
     opSummaries as unknown as OpOperatingSummaryService,
     opApprovalBridges as unknown as OpApprovalBridgeService,
     managementDashboard as unknown as ManagementDashboardService,
@@ -156,6 +169,7 @@ function assemble() {
     onboarding, knowledge, knowledgeExamRuns, care, careOccasions, careAlumniCleanup,
     attendance, payroll, payslips,
     taxFilings, reconciliations, shadows,
+    payrollAdjustments, payrollAdjustmentTaxCorrections, annualPayrollReconciliations,
     opSummaries, opApprovalBridges, managementDashboard, analyticsExports, dataMigrations,
     talentLifecycle,
     marketing,
@@ -270,17 +284,65 @@ describe('McpToolService', () => {
       observedTenant = store.context.getTenantRequired().tenantId;
       observedDepartments = store.context.getActorRequired().departmentIds;
       return Promise.resolve({
-        departments: [{ id: 'department-001', name: '财务部' }],
-        employees: [],
+        departments: [{
+          id: 'department-001',
+          tenantId: 'tenant-001',
+          code: 'FIN',
+          name: '财务部',
+          status: 'active' as const,
+          parentId: null,
+          managerId: null,
+          sortOrder: 0,
+          version: 2,
+          createdAt: '2026-07-29T00:00:00.000Z',
+          updatedAt: '2026-07-29T00:00:00.000Z',
+        }],
+        employees: [{
+          id: 'employee-001',
+          tenantId: 'tenant-001',
+          employeeNo: 'E001',
+          displayName: '员工甲',
+          status: 'active' as const,
+          departmentIds: ['department-001'],
+          primaryDepartmentId: 'department-001',
+          positionIds: [],
+          jobLevelId: null,
+          version: 3,
+          createdAt: '2026-07-29T00:00:00.000Z',
+          updatedAt: '2026-07-29T00:00:00.000Z',
+        }],
       });
     });
 
     const result = await store.service.getOrgChart(extra(['erp:mcp:server:connect', 'erp:org:chart:read']));
 
     expect(result.isError).not.toBe(true);
-    expect(result.structuredContent).toMatchObject({
-      departments: [{ id: 'department-001', name: '财务部' }],
+    expect(result.structuredContent).toEqual({
+      departments: [{
+        id: 'department-001',
+        code: 'FIN',
+        name: '财务部',
+        status: 'active',
+        parentId: null,
+        managerId: null,
+        sortOrder: 0,
+        version: 2,
+      }],
+      employees: [{
+        id: 'employee-001',
+        employeeNo: 'E001',
+        displayName: '员工甲',
+        status: 'active',
+        departmentIds: ['department-001'],
+        primaryDepartmentId: 'department-001',
+        positionIds: [],
+        jobLevelId: null,
+        version: 3,
+      }],
     });
+    expect(JSON.stringify(result)).not.toContain('tenantId');
+    expect(JSON.stringify(result)).not.toContain('createdAt');
+    expect(JSON.stringify(result)).not.toContain('updatedAt');
     expect(observedTenant).toBe('tenant-001');
     expect(observedDepartments).toEqual(['department-001']);
     expect(store.audit.record).toHaveBeenCalledWith(expect.objectContaining({
@@ -609,6 +671,9 @@ describe('McpToolService', () => {
       openFollowUpCount: 1,
       nextActionAt: '2026-07-28T08:00:00.000Z',
       updatedAt: '2026-07-27T08:00:00.000Z',
+      displayName: '不得进入 MCP',
+      note: '不得进入 MCP',
+      tenantId: 'tenant-001',
     });
     const denied = await store.service.getTalentLifecycle(
       candidateId,
@@ -620,11 +685,19 @@ describe('McpToolService', () => {
       candidateId,
       extra(['erp:mcp:server:connect', 'erp:talent-lifecycle:read']),
     );
-    expect(result.structuredContent).toMatchObject({
-      lifecycle: { stage: 'recruiting', openFollowUpCount: 1 },
+    expect(result.structuredContent).toEqual({
+      lifecycle: {
+        candidateId,
+        stage: 'recruiting',
+        currentApplicationStage: 'interview',
+        employeeStatus: null,
+        openFollowUpCount: 1,
+        nextActionAt: '2026-07-28T08:00:00.000Z',
+        updatedAt: '2026-07-27T08:00:00.000Z',
+      },
     });
     expect(JSON.stringify(result)).not.toMatch(
-      /displayName|phone|email|note|reasonCode|EvidenceId/iu,
+      /displayName|phone|email|note|reasonCode|EvidenceId|tenantId/iu,
     );
   });
 
@@ -674,6 +747,44 @@ describe('McpToolService', () => {
     expect(result.structuredContent).toMatchObject({
       payslip: { period: '2026-07', netPayMinor: 839_500 },
     });
+  });
+
+  it('专业工资模式的迁移响应原样失败关闭且不误记读取成功', async () => {
+    const store = assemble();
+    store.payslips.getMyPayslip.mockRejectedValue(new GoneException({
+      code: 'PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM',
+      message: '工资能力已迁移至专业算薪系统',
+      payrollWebOrigin: 'https://payroll.example.test',
+    }));
+
+    const moved = await store.service.getMyPayrollPayslip(
+      '2026-07',
+      extra(['erp:mcp:server:connect', 'erp:payroll:sheet:read_self']),
+    );
+    expect(moved.isError).toBe(true);
+    const firstContent = moved.content[0];
+    const text = firstContent?.type === 'text' ? firstContent.text : '';
+    expect(text).toContain('PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM');
+    expect(store.audit.record).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'mcp.tool.payroll_payslip_get_self',
+      outcome: 'denied',
+    }));
+  });
+
+  it('不把无关的 410 异常误报为专业工资迁移', async () => {
+    const store = assemble();
+    store.payslips.getMyPayslip.mockRejectedValue(new GoneException({
+      code: 'PAYROLL_PAYSLIP_ARCHIVED',
+      message: '薪资单已归档',
+    }));
+
+    await expect(store.service.getMyPayrollPayslip(
+      '2026-07',
+      extra(['erp:mcp:server:connect', 'erp:payroll:sheet:read_self']),
+    )).rejects.toMatchObject({
+      response: { code: 'PAYROLL_PAYSLIP_ARCHIVED' },
+    });
+    expect(store.audit.record).not.toHaveBeenCalled();
   });
 
   it('个税申报 MCP 只复用应用服务并返回控制摘要', async () => {
@@ -778,6 +889,75 @@ describe('McpToolService', () => {
     });
     expect(JSON.stringify([cycle, readiness])).not.toMatch(
       /employeeId|deltaMinor|explanationEvidence|signedBy|strongAuthEvidence/iu,
+    );
+  });
+
+  it('工资调整和年度薪税 MCP 只返回脱敏控制状态', async () => {
+    const store = assemble();
+    const adjustmentId = '01J8ZQK7V0A2M4N6P8R0T2W4A1';
+    const correctionId = '01J8ZQK7V0A2M4N6P8R0T2W4F1';
+    const annualId = '01J8ZQK7V0A2M4N6P8R0T2W4Y1';
+    store.payrollAdjustments.getControlStatus.mockResolvedValue({
+      id: adjustmentId, period: '2026-07', adjustmentNumber: 1,
+      type: 'supplement', reasonCode: 'RETROACTIVE_SALARY_CHANGE',
+      status: 'prepared', cashSettlementStatus: 'pending',
+      taxCorrectionStatus: 'pending',
+      version: 1, adjustmentHash: 'a'.repeat(43),
+    });
+    store.payrollAdjustmentTaxCorrections.getControlStatus.mockResolvedValue({
+      id: correctionId,
+      adjustmentId,
+      period: '2026-07',
+      format: 'CN_IIT_WITHHOLDING_CORRECTION_V1',
+      contentHash: 'c'.repeat(43),
+      objectEvidenceId: 'worm-correction-evidence-001',
+      taxSubmissionEvidenceId: null,
+      status: 'prepared',
+      version: 2,
+    });
+    store.annualPayrollReconciliations.getControlStatus.mockResolvedValue({
+      id: annualId, taxYear: '2026', periodCount: 12,
+      firstPeriod: '2026-01', lastPeriod: '2026-12',
+      status: 'assessment_matched', version: 1, evidenceHash: 'e'.repeat(43),
+    });
+    const denied = await store.service.getPayrollAdjustmentStatus(
+      adjustmentId, extra(['erp:mcp:server:connect']),
+    );
+    expect(denied.isError).toBe(true);
+    const adjustment = await store.service.getPayrollAdjustmentStatus(
+      adjustmentId,
+      extra(['erp:mcp:server:connect', 'erp:payroll:adjustment:read']),
+    );
+    const annual = await store.service.getAnnualPayrollReconciliationStatus(
+      annualId,
+      extra(['erp:mcp:server:connect', 'erp:payroll:annual:read']),
+    );
+    const correction =
+      await store.service.getPayrollAdjustmentTaxCorrectionStatus(
+        correctionId,
+        extra([
+          'erp:mcp:server:connect',
+          'erp:payroll:adjustment:tax_correction:read',
+        ]),
+      );
+    expect(adjustment.structuredContent).toMatchObject({
+      payrollAdjustment: {
+        id: adjustmentId, status: 'prepared',
+        cashSettlementStatus: 'pending', taxCorrectionStatus: 'pending',
+      },
+    });
+    expect(annual.structuredContent).toMatchObject({
+      annualPayrollReconciliation: { id: annualId, status: 'assessment_matched' },
+    });
+    expect(correction.structuredContent).toMatchObject({
+      payrollAdjustmentTaxCorrection: {
+        id: correctionId,
+        adjustmentId,
+        status: 'prepared',
+      },
+    });
+    expect(JSON.stringify([adjustment, annual, correction])).not.toMatch(
+      /employeeId|payableMinor|receivableMinor|assessedTax|withheld|taxableEarningsMinor/iu,
     );
   });
 
@@ -903,8 +1083,11 @@ describe('McpToolService', () => {
   it('OP 经营摘要 Tool 仅凭 Scope 复用只读应用服务', async () => {
     const store = assemble();
     store.opSummaries.getLatest.mockResolvedValue({
-      id: '01J8ZQK7V0A2M4N6P8R0T2W4D1', summaryDate: '2026-07-22', revision: 2,
-      payloadHash: 'o'.repeat(43), metrics: { gmvMinor: 100 },
+      summaryDate: '2026-07-22', revision: 2, currency: 'CNY',
+      metrics: {
+        gmvMinor: 100, paidOrderCount: 2, refundMinor: 1,
+        refundOrderCount: 1, activeCustomerCount: 2,
+      },
     });
     const denied = await store.service.getOpOperatingSummary('2026-07-22', extra([]));
     expect(denied.isError).toBe(true);
@@ -959,7 +1142,6 @@ describe('McpToolService', () => {
 
   it('管理驾驶舱导出必须经 R2 确认并返回异步资源链接', async () => {
     const store = assemble();
-    store.managementDashboard.get.mockResolvedValue({ asOf: '2026-07-22' });
     store.confirmations.prepare.mockResolvedValueOnce({
       operationId: '01J8ZQK7V0A2M4N6P8R0T2W4E1', digest: 'b'.repeat(43), riskLevel: 'R2',
       expiresAt: '2026-07-22T00:10:00.000Z',
@@ -969,6 +1151,8 @@ describe('McpToolService', () => {
     const prepared = await store.service.prepareManagementDashboardExport(
       '2026-07-22', 'export-key-001', extra(scopes),
     );
+    expect(store.managementDashboard.validateAsOf).toHaveBeenCalledWith('2026-07-22');
+    expect(store.managementDashboard.get).not.toHaveBeenCalled();
     expect(prepared.structuredContent).toMatchObject({ riskLevel: 'R2' });
     expect(store.confirmations.prepare).toHaveBeenCalledWith(
       expect.objectContaining({ tenantId: 'tenant-001' }),
@@ -1042,6 +1226,8 @@ describe('McpToolService', () => {
       dispatchedAt: '2026-07-27T00:00:01.000Z',
       completedAt: '2026-07-27T00:01:00.000Z',
       lastErrorCode: 'MARKETING_NOTIFICATION_GATEWAY_FAILED',
+      tenantId: 'tenant-001',
+      lockedBy: 'worker-secret',
     });
     const denied = await store.service.getMarketingSideEffect(eventId, extra([]));
     expect(denied.isError).toBe(true);
@@ -1052,14 +1238,25 @@ describe('McpToolService', () => {
       extra(['erp:marketing:operations:read']),
     );
     expect(store.marketing.getSideEffectStatus).toHaveBeenCalledWith(eventId);
-    expect(result.structuredContent).toMatchObject({
+    expect(result.structuredContent).toEqual({
       sideEffect: {
         eventId,
+        kind: 'lead_notification',
+        aggregateId: 'lead-001',
+        aggregateVersion: 1,
+        channel: 'email',
         status: 'dead',
+        attempts: 1,
+        deliveryAttempts: 6,
+        nextAttemptAt: '2026-07-27T00:00:00.000Z',
+        dispatchedAt: '2026-07-27T00:00:01.000Z',
+        completedAt: '2026-07-27T00:01:00.000Z',
         lastErrorCode: 'MARKETING_NOTIFICATION_GATEWAY_FAILED',
       },
     });
-    expect(JSON.stringify(result)).not.toMatch(/tenant-001|contact|requestSummary/u);
+    expect(JSON.stringify(result)).not.toMatch(
+      /tenant-001|worker-secret|lockedBy|contact|requestSummary/u,
+    );
   });
 
   it('招聘、考试、考勤与导出只读 Tool 均复用对应应用服务', async () => {

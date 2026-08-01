@@ -14,6 +14,9 @@ import { RecruitmentApplicationService } from './application/recruitment-applica
 import { RecruitmentManagementService } from './application/recruitment-management.service.js';
 import { RecruitmentInterviewService } from './application/recruitment-interview.service.js';
 import { RecruitmentOfferService } from './application/recruitment-offer.service.js';
+import {
+  RecruitmentESignSourceService,
+} from './application/recruitment-esign-source.service.js';
 import { RecruitmentOnboardingBridgeService } from './application/recruitment-onboarding-bridge.service.js';
 import { RecruitmentResumeService } from './application/recruitment-resume.service.js';
 import { RecruitmentTalentSourceService } from './application/recruitment-talent-source.service.js';
@@ -115,6 +118,7 @@ import {
     RecruitmentManagementService,
     RecruitmentInterviewService,
     RecruitmentOfferService,
+    RecruitmentESignSourceService,
     RecruitmentOnboardingBridgeService,
     RecruitmentResumeService,
     RecruitmentTalentSourceService,
@@ -143,6 +147,7 @@ import {
     RecruitmentManagementService,
     RecruitmentInterviewService,
     RecruitmentOfferService,
+    RecruitmentESignSourceService,
     RecruitmentOnboardingBridgeService,
     RecruitmentResumeService,
     RecruitmentTalentSourceService,

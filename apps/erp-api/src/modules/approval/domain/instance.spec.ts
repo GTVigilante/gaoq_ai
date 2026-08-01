@@ -89,6 +89,29 @@ function decide(
 }
 
 describe('审批实例提交与快照', () => {
+  it('拒绝空标题、非规范迁移时间并允许发起人更新合法草稿', () => {
+    expect(() => createApprovalInstanceDraft({
+      id: 'instance-invalid-title', tenantId: 'tenant-001', title: ' ',
+      initiatorId: 'employee-001', template: publishedTemplate(), formData: { amount: 1 },
+    }, NOW)).toThrowError(expect.objectContaining({ code: 'APPROVAL_INSTANCE_TITLE_INVALID' }));
+    expect(() => createApprovalInstanceDraftFromMigration({
+      id: 'instance-invalid-migration', tenantId: 'tenant-001', title: '历史审批',
+      initiatorId: 'employee-001', template: publishedTemplate(), formData: { amount: 1 },
+      createdAt: '2026-07-21T00:00:00Z',
+    })).toThrow();
+    const draft = instance();
+    const updated = updateApprovalInstanceDraft(draft, {
+      tenantId: draft.tenantId, expectedVersion: draft.version, actorId: draft.initiatorId,
+      title: '  更新标题  ', formData: { amount: 300_00 },
+    }, LATER);
+    expect(updated).toMatchObject({ title: '更新标题', version: 2 });
+    expect(updated.formDataHash).not.toBe(draft.formDataHash);
+    expect(() => updateApprovalInstanceDraft(draft, {
+      tenantId: draft.tenantId, expectedVersion: draft.version, actorId: draft.initiatorId,
+      title: '', formData: { amount: 1 },
+    }, LATER)).toThrowError(expect.objectContaining({ code: 'APPROVAL_INSTANCE_TITLE_INVALID' }));
+  });
+
   it('迁移可按历史时点引用现已退役模板，但拒绝生命周期之外的实例', () => {
     const published = publishedTemplate();
     const retired = retireApprovalTemplate(published, {
@@ -182,6 +205,49 @@ describe('审批实例提交与快照', () => {
       title: '冒用发起人', formData: { amount: 1 },
     }, LATER)).toThrowError(expect.objectContaining({ code: 'APPROVAL_DRAFT_UPDATE_DENIED' }));
   });
+
+  it('提交入口拒绝冒用、非数组、非纯对象、重复节点和无审批节点', () => {
+    const draft = instance();
+    expect(() => submitApprovalInstance(draft, {
+      tenantId: draft.tenantId, expectedVersion: draft.version, actorId: 'employee-002',
+      resolvedNodes: [],
+    }, LATER)).toThrowError(expect.objectContaining({ code: 'APPROVAL_SUBMIT_DENIED' }));
+    expect(() => submitApprovalInstance(draft, {
+      tenantId: draft.tenantId, expectedVersion: draft.version, actorId: draft.initiatorId,
+      resolvedNodes: 'not-array' as never,
+    }, LATER)).toThrowError(expect.objectContaining({ code: 'APPROVAL_RESOLUTION_INVALID' }));
+    expect(() => submitApprovalInstance(draft, {
+      tenantId: draft.tenantId, expectedVersion: draft.version, actorId: draft.initiatorId,
+      resolvedNodes: [null] as never,
+    }, LATER)).toThrowError(expect.objectContaining({ code: 'APPROVAL_RESOLUTION_INVALID' }));
+    expect(() => submitApprovalInstance(draft, {
+      tenantId: draft.tenantId, expectedVersion: draft.version, actorId: draft.initiatorId,
+      resolvedNodes: [
+        { nodeId: 'manager', actorIds: ['manager-001'] },
+        { nodeId: 'manager', actorIds: ['manager-002'] },
+        { nodeId: 'copy', actorIds: [] },
+      ],
+    }, LATER)).toThrow();
+
+    const copyInstance = {
+      ...draft,
+      templateSnapshot: {
+        ...draft.templateSnapshot,
+        definition: {
+          ...draft.templateSnapshot.definition,
+          nodes: [{
+            id: 'copy', name: '仅知会', type: 'copy' as const,
+            resolver: { type: 'roles' as const, roleCodes: ['VIEWER'], scope: 'tenant' as const },
+          }],
+        },
+      },
+    };
+    expect(() => submitApprovalInstance(copyInstance, {
+      tenantId: copyInstance.tenantId, expectedVersion: copyInstance.version,
+      actorId: copyInstance.initiatorId,
+      resolvedNodes: [{ nodeId: 'copy', actorIds: [] }],
+    }, LATER)).toThrowError(expect.objectContaining({ code: 'APPROVAL_NO_ACTIVE_NODE' }));
+  });
 });
 
 describe('会签、或签与任务变更', () => {
@@ -223,6 +289,25 @@ describe('会签、或签与任务变更', () => {
     expect(result.action).toMatchObject({ actorId: 'delegate-001', delegated: true });
   });
 
+  it('决策拒绝非运行态、非审批节点和非当前审批人', () => {
+    const draft = instance();
+    expect(() => decide(draft, 'manager-001')).toThrowError(
+      expect.objectContaining({ code: 'APPROVAL_NOT_RUNNING' }),
+    );
+    const running = submit();
+    expect(() => decide(running, 'outsider-001')).toThrowError(
+      expect.objectContaining({ code: 'APPROVAL_ACTOR_DENIED' }),
+    );
+    const corrupted = {
+      ...running,
+      resolvedNodes: running.resolvedNodes.map((node, index) =>
+        index === 0 ? { ...node, type: 'copy' as const, approvalMode: null } : node),
+    };
+    expect(() => decide(corrupted, 'manager-001')).toThrowError(
+      expect.objectContaining({ code: 'APPROVAL_CURRENT_NODE_INVALID' }),
+    );
+  });
+
   it('转交替换未决主体且防重复；加签仅授权的当前会签节点允许', () => {
     const running = submit();
     const transferred = transferApprovalTask(running, {
@@ -244,6 +329,37 @@ describe('会签、或签与任务变更', () => {
       approverId: 'manager-003', authorizationVerified: true,
     }, LATER).instance;
     expect(currentApprovalNode(added)?.actorIds).toContain('manager-003');
+  });
+
+  it('转交拒绝未验证代理、非当前主体和已决主体；加签拒绝或签与重复主体', () => {
+    const running = submit();
+    expect(() => transferApprovalTask(running, {
+      tenantId: running.tenantId, expectedVersion: running.version, actorId: 'delegate-001',
+      fromApproverId: 'manager-001', toApproverId: 'manager-003',
+      delegationVerified: false,
+    }, LATER)).toThrowError(expect.objectContaining({ code: 'APPROVAL_DELEGATION_REQUIRED' }));
+    expect(() => transferApprovalTask(running, {
+      tenantId: running.tenantId, expectedVersion: running.version, actorId: 'outsider-001',
+      fromApproverId: 'outsider-001', toApproverId: 'manager-003',
+      delegationVerified: false,
+    }, LATER)).toThrowError(expect.objectContaining({ code: 'APPROVAL_ACTOR_DENIED' }));
+    const decided = decide(running, 'manager-001');
+    expect(() => transferApprovalTask(decided, {
+      tenantId: decided.tenantId, expectedVersion: decided.version, actorId: 'manager-001',
+      fromApproverId: 'manager-001', toApproverId: 'manager-003',
+      delegationVerified: false,
+    }, LATER)).toThrowError(expect.objectContaining({ code: 'APPROVAL_ALREADY_DECIDED' }));
+    expect(() => addApprovalSigner(running, {
+      tenantId: running.tenantId, expectedVersion: running.version, actorId: 'manager-001',
+      approverId: 'manager-002', authorizationVerified: true,
+    }, LATER)).toThrowError(expect.objectContaining({ code: 'APPROVAL_ADD_SIGNER_DUPLICATE' }));
+    const managerPassed = decide(decide(running, 'manager-001'), 'manager-002');
+    expect(() => addApprovalSigner(managerPassed, {
+      tenantId: managerPassed.tenantId, expectedVersion: managerPassed.version,
+      actorId: 'finance-001', approverId: 'finance-003', authorizationVerified: true,
+    }, LATER)).toThrowError(expect.objectContaining({
+      code: 'APPROVAL_ADD_SIGNER_MODE_DENIED',
+    }));
   });
 });
 

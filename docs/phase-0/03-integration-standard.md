@@ -47,6 +47,13 @@
 2. 每个外部系统一个适配器，适配器职责仅限：协议转换、签名/鉴权、字段映射、限流与重试的执行。业务判断（如"该员工是否可下发"）在业务模块完成。
 3. 适配器之间禁止互相调用；跨系统流程（如"入离职触发多系统同步"）由编排服务（sync-orchestrator）组合。
 4. 所有出站写入、入站事件必须先落库（outbox/inbox），再走网络，保证可重放、可对账。
+5. 每个外连客户端必须在类型和运行时同时固定 HTTPS origin、端口、方法、路径及
+   协议 Header 白名单；禁止业务输入、数据库正文或 AI/MCP 参数选择 URL、覆盖
+   Host/Accept/传输编码或增加协议外 Header。
+6. 请求与响应必须按业务最小必要值分别设置字节硬上限；响应在无
+   Content-Length 时仍须流式限长并严格解码 UTF-8。非 2xx 只按状态码和受控
+   provider code 分类，禁止把上游正文、cause、签名、凭据或 Token 写入错误、
+   日志、审计、指标、REST 或 MCP。
 
 ### 1.3 Canonical Model（规范模型）最小集
 
@@ -61,7 +68,11 @@
 | `CanonicalCandidate` | candidateId、tenantId、渠道来源、职位、简历快照、阶段 | ERP（渠道仅投递来源） |
 | `CanonicalPayslipFile` | tenantId、批次号、代发文件/回盘文件/税务文件摘要、对账状态 | ERP（薪酬模块） |
 
-字段级映射表按适配器分别维护在 `integration-module/adapters/<name>/mapping.md`（实现期产出），新增字段必须走 ADR。
+字段级映射表按适配器分别维护在
+`apps/erp-api/src/modules/integration/adapters/<name>/mapping.md`，索引见
+[`adapters/README.md`](../../apps/erp-api/src/modules/integration/adapters/README.md)。
+新增外部字段必须在同一 PR 更新映射表、运行时 schema 和协议测试；改变权威方向、
+敏感级别或固定端点必须另行提交 ADR。
 
 ---
 
@@ -105,13 +116,37 @@
 - 密文有效期 15 分钟；成功、业务冲突、重试耗尽或到期时立即将 IV/密文/AuthTag 置空，最小状态记录 30 天后 TTL 清理。
 - Worker 最多 6 次带抖动退避；只在内存中解密，平台调用后尽力断开明文引用。外部 userId 使用平台租户+员工+渠道的确定性标识，创建后固定回读 userId、unionId 与工号，以恢复“外部成功、本地未提交”。
 - 平台回读必须与 ERP 工号完全一致；缺少字段或任一冲突均失败关闭。最小权限 AccessProfile、ExternalIdentity 和开户终态必须在同一 Mongo 事务中提交。
+- Worker 从 Mongo 认领后必须再次校验租户、请求 ULID、员工、渠道、幂等键、密钥
+  标识、尝试次数和敏感资料有效期；损坏任务进入终态隔离，禁止触达身份仓储、密钥
+  或平台。平台回读的 userId 必须等于 ERP 派生的确定性标识，外部租户、userId 和
+  unionId 均须符合身份仓储白名单。
+- Mongo 事务已提交后的会话清理或成功审计故障，以及失败终态已提交后的审计故障，
+  必须单独归类并向 Worker 告警；通用失败处理不得重复调用平台、改写成功终态或
+  二次更新失败终态。
+- 开户成功建立考勤 Provider 员工映射时，仓储必须确认活动 Mongo 事务，同时按
+  `tenantId + providerCode + employeeId` 与外部员工标识盲索引双向查询；既有记录
+  只读取租户、平台、员工、盲索引和状态最小投影并反向绑定。停用、跨租户、跨平台、
+  一对多或多对一冲突必须直接进入人工复核，禁止依赖唯一索引异常进行无界重试。
+  盲索引密钥环结果、AES-GCM 信封和 Mongo 写回结果均须运行时校验。
 
 ### 3.2 SSO 身份映射
 
-- 登录流程：钉钉/飞书 OAuth2/免密 → 取得外部 unionId/userId → 查 `CanonicalIdentity` 映射 → 命中则签发 ERP JWT；未命中则进入"绑定流程"（验证 ERP 工号+手机号）或拒绝。
+- 登录流程：钉钉/飞书/OP Authorization Code + PKCE → 消费一次性 state → 校验
+  state、适配器、平台租户和 ERP 租户绑定 → 同时使用外部 tenantId、unionId 与
+  userId 查 `CanonicalIdentity` 映射 → 命中后才可生成 ERP 可信主体；未命中一律
+  拒绝并进入独立人工绑定流程。
+- 外部平台 Token 只能在固定域名适配器内部短暂使用，不得进入仓储、日志、JWT、
+  MCP 或业务服务；上游重定向、任意 URL、query、非标准端口和超限响应均失败关闭。
+- 租户绑定、外部身份映射与授权快照从数据库读取后必须按运行时契约二次验证，
+  并转换为最小、深冻结的普通对象；受损记录、查询越界、平台/租户漂移不得降级。
+- 组织下发与招聘日历解析企业内用户标识时，活动平台绑定、bound 身份双标识和
+  令牌投影必须分别严格校验；钉钉 Token 的外部租户必须反向等于活动绑定，
+  `unionId → userid` 回执必须是规范标识。受损投影或租户漂移不得触达平台，也
+  不得伪装为正常“尚未绑定”进入无界重试。
 - 一个外部账号只能映射一个 ERP 员工；一个员工可绑定多个 provider。
 - 离职员工映射立即失效（联动 §3.1 停用事件），不等待外部账号删除。
-- 禁止事项：不允许以手机号自动合并已有账号；不允许外部 IdP 回传字段（如外部侧部门）覆盖 ERP 主档。
+- 禁止事项：不允许以手机号或邮箱自动合并已有账号；不允许外部 IdP 回传字段
+  （如外部侧部门、角色）覆盖 ERP 主档；AI/MCP 不得建立、修改或绕过人员身份映射。
 
 ### 3.3 考勤入站（钉钉/飞书→ERP）
 
@@ -140,6 +175,9 @@
 | 经营摘要 | OP→ERP | OP 每日推送经营指标摘要（GMV、单量等业务指标），仅作 ERP 管理层看板展示，**只读**，不参与 ERP 计算 |
 
 - OP 接入走独立服务账号 + 签名（§10），不共用钉钉/飞书凭据。
+- OP 入站可提供业务单据和 ERP 发起员工映射，不得提供或覆盖审批人、审批部门、
+  角色或路由结果。ERP 必须按当前组织主数据、在职状态、授权快照和已发布模板
+  重新解析审批主体；外部值与 ERP 结果不一致时失败关闭。
 - OP 作为未来 SaaS 对外提供时，本规范不变：OP 对 ERP 而言始终是"一个外部系统"。
 
 ---
@@ -151,6 +189,15 @@
 - 出站：职位发布、职位下架、候选人阶段回执（如渠道支持）。
 - 渠道回传的候选人状态变更只作为事件参考，ERP 招聘状态机（PRD §4.6.3）为唯一权威。
 - 简历附件经病毒扫描后入对象存储；访问走短期签名 URL。
+- 职位发布/下架与阶段回传 Worker 只能认领 `pending`。过期 `processing`、
+  未分类传输异常及渠道已响应后的本地终态故障均代表外部结果未知，必须进入
+  `manual_review`；只有 Adapter 以稳定错误码显式声明 `not_committed` 才允许
+  自动退避重试。
+- 人工处置必须使用可信租户、幂等键和 R2 审计；结果未知任务只有在
+  `approved_exception` 且供应商确认未提交时才能重新入队，禁止直接伪造成功。
+  运维查询分页只接受规范十进制，处置正文必须严格拒绝未知字段；业务失败后的
+  审计故障不得覆盖原始异常，外部或本地状态已提交后的审计故障不得改变成功响应。
+  标准 MCP 不注册渠道凭据、补拉、人工核验、重试或重放 Tool。
 
 ---
 
@@ -158,7 +205,18 @@
 
 ### 6.1 适配器抽象
 
-`ESignAdapter` 接口：`createFlow / getFlow / signUrl / downloadFile`；Webhook 验签是入站边界能力，不与出站 Adapter 请求混用。首发仅 `esign-adapter`（e签宝）；`fadada-adapter` 作为后续适配器按同一接口实现，切换经 ADR 评审。
+`ESignAdapter` 接口：`createFlow / getFlow / signUrl / listSignedFiles /
+downloadSignedFile / verifySignedFile`；Webhook 验签是入站边界能力，不与出站
+Adapter 请求混用。首发仅 `esign-adapter`（e签宝）；`fadada-adapter` 作为后续
+适配器按同一接口实现，切换经 ADR 评审。
+
+- `createFlow` 固定调用 V3 `POST /v3/sign-flow/create-by-file`，只接受受控文件
+  标识、个人签署账号、姓名、5 分钟至 90 天的到期时间及有界坐标；强制
+  `autoStart/autoFinish/identityVerify=true`，不得把客户端任意 JSON 透传给
+  供应商。
+- `signUrl` 固定调用 V3 `POST /v3/sign-flow/{id}/sign-url`，使用已核验的个人
+  账号、`needLogin=false`、`urlType=2`；只返回无凭据、标准 443 端口的
+  `https://*.esign.cn` 页面。候选人免登录不等于跳过身份一致校验。
 
 ### 6.2 签署流程状态机（ERP 侧权威）
 
@@ -172,6 +230,32 @@ AWAITING_SIGNATURE → PARTIAL_SIGNED → PROVIDER_COMPLETED → COMPLETED
 - 状态迁移只允许由两类输入驱动：适配器回传（webhook/拉单）或 ERP 用户显式操作（发起、撤销）。
 - 外部状态与内部状态的映射表由适配器维护；外部新增未知状态必须设置 `REVIEW_REQUIRED` 并告警，保持当前状态，禁止把未知值伪造成业务状态或静默忽略。
 
+发起动作使用独立持久化状态机
+`pending → processing → local_finalize → succeeded`，异常终态为
+`manual_review/dead`：
+
+- `POST /integrations/esign/issuance-requests` 只接受已验证 ERP 用户、可信租户、
+  `erp:integration:esign:initiate` Scope、`Idempotency-Key`、已接受且未签署的
+  Offer、供应商文件标识、规范到期时间及有界签署坐标；响应为 202。
+- 外呼前必须先提交发起意图；意图只保存加密供应商文件标识、Offer 引用和控制
+  字段，不保存候选人姓名、账号、Offer 条款、签署链接或供应商 Token。Worker
+  只能通过 Recruitment 专用窄口临时取得最小签署主体，禁止绕过应用服务读取
+  数据库。
+- 供应商调用一旦可能已提交但本地没有可验证回执，必须进入 `manual_review`，
+  禁止由 BullMQ、租约恢复或调度器自动重放。已加密保存外部 flowId 后，只允许
+  重试本地流程登记，不得再次调用供应商创建接口。
+- `GET /integrations/esign/issuance-requests` 只允许查询本租户
+  `manual_review/dead` 脱敏摘要；`POST
+  /integrations/esign/issuance-requests/:requestId/resolutions` 必须使用运维
+  Scope、幂等键和 R2 审计。重新外呼仅限 `approved_exception` 且供应商明确
+  确认未创建；人工绑定外部 flowId 必须确认与原请求一致，并且只能进入
+  `local_finalize`，不能直接伪造成功。
+- 发起 JobId 必须绑定租户和请求标识，载荷不得含文件、姓名或账号；完成 Job
+  立即删除，使人工处置可安全复用确定性 JobId。过期 `processing` 无外部回执时
+  转人工核验，有回执时只补本地终态。
+- 发起、重试、人工处置、外部 flowId、供应商文件和签署主体永久不注册 MCP
+  Tool、Resource 或 Prompt；AI 不得执行或代替供应商核验。
+
 ### 6.3 Webhook 处理
 
 - 入口：`POST /webhooks/esign`，回调 URL 固定不带 query。经网关来源限制后，按 e签宝 V3 规则对 `X-Tsign-Open-Timestamp + raw body bytes` 执行 HMAC-SHA256，请求时间戳窗口为 ±5 分钟。事件发生时间可因供应商重试早于请求时间，不用它代替请求防重放。租户只能在验签后根据唯一 `appId` 绑定解析，禁止信任 URL、query、header 或 body 中的 `tenantId`。
@@ -179,12 +263,20 @@ AWAITING_SIGNATURE → PARTIAL_SIGNED → PROVIDER_COMPLETED → COMPLETED
 - 入箱只保存 AES-256-GCM 密文，AAD 绑定租户和 Inbox ID；外部 flowId 同样加密，只用 SHA-256 摘要作精确关联。
 - 重放：以 `appId + raw body` 的 SHA-256 事件标识幂等；同一 flowId 只应用不早于已提交时间的事件，乱序事件标记 `ignored` 并保留审计。
 - 只白名单处理官方 action `SIGN_MISSON_COMPLETE` 和 `SIGN_FLOW_COMPLETE`（保留供应商官方拼写）；流程状态 `2/3/5/7` 分别投影为供应商完成/撤销/过期/拒签。未知 action 仅入箱告警，未知状态仅转人工复核，都不推进业务终态。
+- BullMQ 任务标识必须绑定租户、Inbox 和供应商事件摘要；Worker 认领时写入随机
+  `processingToken`、确定性 `processingJobId` 与递增 `attempts`。成功、忽略和
+  失败终态更新必须同时匹配这三项租约证据，旧 Worker 丢失租约后不得覆盖新
+  Worker 的终态。
 
 ### 6.4 兜底对账
 
 - 每 15 分钟对 `SENT/PARTIAL_SIGNED` 且超过 10 分钟未更新的流程主动调 `getFlow` 拉单，防止 webhook 丢失。
 - `SIGN_FLOW_COMPLETE + signFlowStatus=2` 只进入 `PROVIDER_COMPLETED`，不等于 ERP `COMPLETED`。已签 PDF 必须下载、验签、病毒扫描、记录 SHA-256 并进入不可变对象存储；证据归档成功后 ERP 才进入 `COMPLETED` 并允许 Offer 进入 `signed`。
 - 已签文件获取使用 V3 推荐的 POST 下载地址接口，短链有效期不超过 300 秒。只允许 eSign HTTPS 域名，禁止 HTTP 跳转；文件最大 50 MiB，必须通过 PDF 魔数、病毒扫描和供应商签名有效性核验。
+- 对账范围同时包含滞留的 `PROVIDER_COMPLETED`。证据任务使用租户与流程绑定的
+  确定性 ID，耗尽失败后移除失败 Job；下一轮对账重建任务。供应商补拉、流程
+  投影或归档已经提交后的审计故障只形成独立告警，不得把已成功业务终态回写为
+  失败或重复执行外部副作用。
 
 ---
 
@@ -208,6 +300,11 @@ AWAITING_SIGNATURE → PARTIAL_SIGNED → PROVIDER_COMPLETED → COMPLETED
 
 - 按税务局要求格式生成个税申报文件；导出前由财务复核，文件版本与薪酬批次强关联。
 - 申报结果（导入成功/失败回执）人工录入或文件回传，记入批次对账状态。
+- 年度官方评估只能由隔离税务网关按租户、员工、税年和请求摘要读取，ERP 与
+  调用客户端不得声明官方评估税额；回执必须使用独立 Ed25519 信任根验签并限制
+  五分钟签发窗口。
+- 员工年度汇算只允许返回五分钟内失效、严格同源的官方办理链接；ERP 不代理
+  个人申报或税款收付，审计、事件和 MCP 不记录或返回链接令牌。
 
 ### 7.4 自动对账
 
@@ -253,12 +350,23 @@ AWAITING_SIGNATURE → PARTIAL_SIGNED → PROVIDER_COMPLETED → COMPLETED
 
 - `type` 命名：`cn.gaoq.<域>.<实体>.<动作>.v<主版本>`；破坏性变更升主版本，新旧版本至少并行一个迭代周期。
 - 事件体一律使用 canonical model，禁止透传外部报文。
+- 每个业务模块的 Outbox Writer 必须对完整事件对象、逐类型负载、状态组合、标识、
+  版本和规范 UTC 时间执行严格运行时白名单校验；TypeScript 类型、上游领域对象
+  和通用敏感键黑名单均不得替代该校验。未知字段、保留字段覆盖和个人/凭据/证明
+  正文夹带必须在数据库调用前失败关闭。
+- 事件租户必须同时绑定可信租户和可信主体租户，`traceId` 只能来自可信上下文；
+  禁止信任事件调用方自行传入的上下文。事件 ID 必须在写入前验证为规范 ULID。
 
 ### 9.2 Outbox（出站可靠性）
 
 1. 业务写入与 outbox 事件插入在**同一 MongoDB 事务**内完成；
 2. 后台 relay 轮询 outbox（或 Change Stream），投递至适配器/事件总线；
 3. 投递成功后标记 `dispatchedAt`；记录保留 30 天后归档。
+4. Writer 必须运行时确认会话处于活动事务，禁止无事务降级写入；创建结果必须按
+   eventId、租户、聚合、版本、事件名、完整信封、状态和下一尝试时间反向绑定，
+   空结果、多结果或受损回执一律使事务失败。
+5. 数据库原始异常由事务上层分类，不得把失败写入伪装为已发布；对调用方事件先
+   生成规范深冻结副本，避免校验后的对象突变改变待发布载荷。
 
 ### 9.3 Inbox（入站可靠性）
 

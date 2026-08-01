@@ -30,6 +30,7 @@ import {
 } from '../../org/persistence/org.repositories.js';
 import type { VerifiedAccessToken } from '../../identity/auth.types.js';
 import { WebAuthnService } from '../../identity/strong-auth/webauthn.service.js';
+import { LegacyPayrollBoundaryService } from '../legacy-payroll-boundary.service.js';
 import {
   generateTaxFilingManifest,
   payrollDigest,
@@ -115,6 +116,7 @@ export class PayrollTaxFilingService {
   constructor(
     private readonly idempotency: IdempotencyService,
     private readonly context: TenantContextService,
+    private readonly boundary: LegacyPayrollBoundaryService,
     private readonly employments: EmploymentRepository,
     private readonly persons: PersonRepository,
     private readonly strongAuth: WebAuthnService,
@@ -142,6 +144,7 @@ export class PayrollTaxFilingService {
     input: ImportPayrollTaxFilingFromMigrationInput,
   ): Promise<PayrollTaxFilingSummary> {
     this.assertMigrationWriter();
+    this.boundary.assertLegacy();
     assertMigrationInput(input);
     if (this.profiles === undefined || this.approvals === undefined) {
       throw new Error('工资税务迁移依赖未装配');
@@ -236,6 +239,7 @@ export class PayrollTaxFilingService {
     if (!actor.scopes.includes('erp:payroll:tax:read')) throw new ForbiddenException({
       code: 'AUTH_SCOPE_DENIED', message: '缺少个税申报状态读取权限',
     });
+    this.boundary.assertLegacy();
     if (!ULID.test(filingId)) throw new BadRequestException({
       code: 'PAYROLL_TAX_FILING_ID_INVALID', message: '个税申报清单标识非法',
     });
@@ -259,6 +263,7 @@ export class PayrollTaxFilingService {
     ) throw new ForbiddenException({
       code: 'PAYROLL_TAX_APPROVER_IDENTITY_INVALID', message: '个税申报审批身份上下文非法',
     });
+    this.boundary.assertLegacy();
     if (
       !ULID.test(filingId) || !ULID.test(evidenceId) ||
       !Number.isSafeInteger(expectedVersion) || expectedVersion < 1
@@ -331,6 +336,7 @@ export class PayrollTaxFilingService {
         message: '只允许受信任税务连接器执行个税申报提交',
       });
     }
+    this.boundary.assertLegacy();
     if (!ULID.test(filingId) || !Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
       throw new BadRequestException({
         code: 'PAYROLL_TAX_SUBMISSION_INPUT_INVALID', message: '个税申报提交引用非法',
@@ -453,6 +459,7 @@ export class PayrollTaxFilingService {
     if (actor.actorType !== 'user') throw new ForbiddenException({
       code: 'PAYROLL_TAX_PREPARER_HUMAN_REQUIRED', message: '个税申报制备只能由已验证人员执行',
     });
+    this.boundary.assertLegacy();
     if (!ULID.test(periodId) || !Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
       throw new BadRequestException({
         code: 'PAYROLL_TAX_PREPARE_INPUT_INVALID', message: '个税申报制备引用非法',

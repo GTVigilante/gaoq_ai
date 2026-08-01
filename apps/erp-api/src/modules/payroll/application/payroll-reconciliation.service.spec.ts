@@ -100,8 +100,10 @@ function setup(taxMinor = 21_000) {
     create: vi.fn().mockResolvedValue([]),
   };
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
+  const boundary = { assertLegacy: vi.fn() };
   const service = new PayrollReconciliationService(
-    context, outbox as never, periods as never, taxFilings as never, reconciliations as never,
+    context, boundary as never, outbox as never,
+    periods as never, taxFilings as never, reconciliations as never,
   );
   const treasury = {
     batchId: BATCH_ID, payrollPeriodId: PERIOD_ID, payrollRunId: RUN_ID,
@@ -129,6 +131,7 @@ function setup(taxMinor = 21_000) {
     taxFilings,
     reconciliations,
     outbox,
+    boundary,
     treasury,
     bankReturn,
   };
@@ -144,6 +147,65 @@ function createdReconciliation(store: ReturnType<typeof setup>): Record<string, 
 }
 
 describe('PayrollReconciliationService', () => {
+  it('external 模式覆盖只读、批次内部读取及在线/迁移对账入口', async () => {
+    const failure = new Error('PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM');
+
+    const read = setup();
+    read.boundary.assertLegacy.mockImplementation(() => {
+      throw failure;
+    });
+    await expect(read.context.run({
+      tenant,
+      actor: actorWith(['erp:payroll:reconciliation:read']),
+    }, () => read.service.getStatus('invalid'))).rejects.toBe(failure);
+    expect(read.reconciliations.findOne).not.toHaveBeenCalled();
+
+    const batch = setup();
+    batch.boundary.assertLegacy.mockImplementation(() => {
+      throw failure;
+    });
+    await expect(batch.context.run({ tenant, actor }, () =>
+      batch.service.getForBatch('invalid', session))).rejects.toBe(failure);
+    expect(batch.reconciliations.findOne).not.toHaveBeenCalled();
+
+    const online = setup();
+    online.boundary.assertLegacy.mockImplementation(() => {
+      throw failure;
+    });
+    await expect(online.context.run({ tenant, actor }, () =>
+      online.service.reconcile(
+        online.treasury,
+        online.bankReturn,
+        actor.actorId,
+        session,
+      ))).rejects.toBe(failure);
+    expect(online.reconciliations.findOne).not.toHaveBeenCalled();
+    expect(online.periods.findOne).not.toHaveBeenCalled();
+
+    const migration = setup();
+    migration.boundary.assertLegacy.mockImplementation(() => {
+      throw failure;
+    });
+    await expect(migration.context.run({ tenant, actor: migrationActor() }, () =>
+      migration.service.reconcile(
+        migration.treasury,
+        migration.bankReturn,
+        'migration-worker',
+        session,
+        {} as never,
+      ))).rejects.toBe(failure);
+    expect(migration.reconciliations.findOne).not.toHaveBeenCalled();
+    expect(migration.periods.findOne).not.toHaveBeenCalled();
+
+    const unauthorized = setup();
+    await expect(unauthorized.context.run({
+      tenant,
+      actor: actorWith([]),
+    }, () => unauthorized.service.getStatus('invalid')))
+      .rejects.toMatchObject({ response: { code: 'AUTH_SCOPE_DENIED' } });
+    expect(unauthorized.boundary.assertLegacy).not.toHaveBeenCalled();
+  });
+
   it('迁移四方重算守恒时冻结历史时间且只发布迁移事件', async () => {
     const store = setup();
     const migrationActor: ActorContext = {

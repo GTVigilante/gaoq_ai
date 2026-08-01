@@ -47,4 +47,19 @@ describe('AccessProfileSchema', () => {
 
     await expect(document.validate()).rejects.toThrow();
   });
+
+  it('拒绝操作符形态标识、非法数组元素与超大版本', async () => {
+    for (const override of [
+      { tenantId: '$where' },
+      { actorId: '$ne' },
+      { employeeId: '$gt' },
+      { roleCodes: ['$bad'] },
+      { departmentIds: ['$bad'] },
+      { version: 1_000_000_001 },
+    ]) {
+      await expect(new AccessProfileValidationModel({
+        ...validProfile(), ...override,
+      }).validate()).rejects.toThrow();
+    }
+  });
 });

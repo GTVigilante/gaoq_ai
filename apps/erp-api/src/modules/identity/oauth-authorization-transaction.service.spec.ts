@@ -19,9 +19,12 @@ const CODE_CHALLENGE = createHash('sha256').update(CODE_VERIFIER).digest('base64
 
 class MemoryRedis {
   readonly records = new Map<string, string>();
+  readonly setResults: Array<'OK' | null> = [];
+  readonly evalResults: number[] = [];
 
-  set(key: string, value: string): Promise<'OK'> {
-    if (this.records.has(key)) return Promise.resolve('OK');
+  set(key: string, value: string): Promise<'OK' | null> {
+    const result = this.setResults.length === 0 ? 'OK' : this.setResults.shift() ?? null;
+    if (result !== 'OK') return Promise.resolve(result);
     this.records.set(key, value);
     return Promise.resolve('OK');
   }
@@ -31,6 +34,8 @@ class MemoryRedis {
   }
 
   eval(_script: string, keyCount: number, ...values: string[]): Promise<number> {
+    const forced = this.evalResults.shift();
+    if (forced !== undefined) return Promise.resolve(forced);
     if (keyCount === 1) {
       const [key, expected] = values;
       if (key === undefined || expected === undefined || this.records.get(key) !== expected) {
@@ -101,6 +106,16 @@ async function begin(service: OAuthAuthorizationTransactionService) {
     state: 'client-state-001',
     codeChallenge: CODE_CHALLENGE,
   });
+}
+
+function replaceOnlyRecord(
+  redis: MemoryRedis,
+  mutate: (stored: Record<string, unknown>) => Record<string, unknown>,
+): void {
+  const entry = [...redis.records.entries()][0];
+  if (entry === undefined) throw new Error('测试记录不存在');
+  const [key, raw] = entry;
+  redis.records.set(key, JSON.stringify(mutate(JSON.parse(raw) as Record<string, unknown>)));
 }
 
 describe('OAuthAuthorizationTransactionService 客户端资源授权', () => {
@@ -201,6 +216,11 @@ describe('OAuthAuthorizationTransactionService', () => {
   it('拒绝开放回调、重复 scope、错误资源和非 S256 challenge', async () => {
     const store = fixture();
     await expect(store.service.begin({
+      clientId: 'unknown-client', redirectUri: REDIRECT_URI,
+      scopes: ['erp:mcp:server:connect'], resource: RESOURCE,
+      state: 'client-state-001', codeChallenge: CODE_CHALLENGE,
+    })).rejects.toMatchObject({ response: { code: 'OAUTH_INVALID_CLIENT' } });
+    await expect(store.service.begin({
       clientId: CLIENT_ID,
       redirectUri: 'https://evil.example.com/callback',
       scopes: ['erp:mcp:server:connect'], resource: RESOURCE,
@@ -221,5 +241,138 @@ describe('OAuthAuthorizationTransactionService', () => {
       scopes: ['erp:mcp:server:connect'], resource: RESOURCE,
       state: 'client-state-001', codeChallenge: 'plain-verifier-not-s256',
     })).rejects.toMatchObject({ response: { code: 'OAUTH_PKCE_INVALID' } });
+    await expect(store.service.begin({
+      clientId: CLIENT_ID, redirectUri: REDIRECT_URI,
+      scopes: ['erp:mcp:server:connect'], resource: RESOURCE,
+      state: 'contains space', codeChallenge: CODE_CHALLENGE,
+    })).rejects.toMatchObject({ response: { code: 'OAUTH_STATE_INVALID' } });
+  });
+
+  it.each([
+    ['回调', { redirectUri: 'https://evil.example.com/callback' }],
+    ['资源', { resource: PAYROLL_RESOURCE }],
+    ['Scope', { scopes: ['erp:payroll:payslip:read'] }],
+  ])('Redis 中的旧请求%s不再受当前客户端授权时拒绝展示和决策', async (_name, mutation) => {
+    const store = fixture();
+    const request = await begin(store.service);
+    replaceOnlyRecord(store.redis, (stored) => ({ ...stored, ...mutation }));
+
+    await expect(store.service.describe(request.requestId)).rejects.toMatchObject({
+      response: { code: 'OAUTH_REQUEST_INVALID' },
+    });
+    await expect(store.service.decide(request.requestId, true, identity)).rejects.toMatchObject({
+      response: { code: 'OAUTH_REQUEST_INVALID' },
+    });
+  });
+
+  it.each([
+    ['租户', { tenantId: 'tenant-evil' }],
+    ['回调', { redirectUri: 'https://evil.example.com/callback' }],
+    ['资源', { resource: PAYROLL_RESOURCE }],
+    ['Scope', { scopes: ['erp:payroll:payslip:read'] }],
+  ])('授权码中的%s绑定不再受当前客户端授权时拒绝交换', async (_name, mutation) => {
+    const store = fixture();
+    const request = await begin(store.service);
+    const decision = await store.service.decide(request.requestId, true, identity);
+    const code = new URL(decision.redirectTo).searchParams.get('code') ?? '';
+    replaceOnlyRecord(store.redis, (stored) => ({ ...stored, ...mutation }));
+    const untrustedMutation: Readonly<Record<string, unknown>> = mutation;
+    const redirectUri = typeof untrustedMutation['redirectUri'] === 'string'
+      ? untrustedMutation['redirectUri']
+      : REDIRECT_URI;
+    const resource = typeof untrustedMutation['resource'] === 'string'
+      ? untrustedMutation['resource']
+      : RESOURCE;
+
+    await expect(store.service.exchange({
+      code,
+      clientId: CLIENT_ID,
+      redirectUri,
+      resource,
+      codeVerifier: CODE_VERIFIER,
+    })).rejects.toMatchObject({ response: { code: 'OAUTH_INVALID_GRANT' } });
+  });
+
+  it('请求与授权码随机值连续冲突三次时失败关闭', async () => {
+    const requestStore = fixture();
+    requestStore.redis.setResults.push(null, null, null);
+    await expect(begin(requestStore.service)).rejects.toMatchObject({
+      response: { code: 'OAUTH_REQUEST_UNAVAILABLE' },
+    });
+
+    const codeStore = fixture();
+    const request = await begin(codeStore.service);
+    codeStore.redis.evalResults.push(-1, -1, -1);
+    await expect(codeStore.service.decide(request.requestId, true, identity)).rejects.toMatchObject({
+      response: { code: 'OAUTH_CODE_UNAVAILABLE' },
+    });
+  });
+
+  it('请求或授权码在原子消费前变更时拒绝继续', async () => {
+    const denyStore = fixture();
+    const denied = await begin(denyStore.service);
+    denyStore.redis.evalResults.push(0);
+    await expect(denyStore.service.decide(denied.requestId, false, identity)).rejects.toMatchObject({
+      response: { code: 'OAUTH_REQUEST_INVALID' },
+    });
+
+    const approveStore = fixture();
+    const approved = await begin(approveStore.service);
+    approveStore.redis.evalResults.push(0);
+    await expect(approveStore.service.decide(approved.requestId, true, identity)).rejects.toMatchObject({
+      response: { code: 'OAUTH_REQUEST_INVALID' },
+    });
+
+    const exchangeStore = fixture();
+    const exchangeRequest = await begin(exchangeStore.service);
+    const decision = await exchangeStore.service.decide(exchangeRequest.requestId, true, identity);
+    const code = new URL(decision.redirectTo).searchParams.get('code') ?? '';
+    exchangeStore.redis.evalResults.push(0);
+    await expect(exchangeStore.service.exchange({
+      code,
+      clientId: CLIENT_ID,
+      redirectUri: REDIRECT_URI,
+      resource: RESOURCE,
+      codeVerifier: CODE_VERIFIER,
+    })).rejects.toMatchObject({ response: { code: 'OAUTH_INVALID_GRANT' } });
+  });
+
+  it.each([
+    ['非法 requestId', () => fixture().service.describe('invalid')],
+    ['不存在 request', () => fixture().service.describe('A'.repeat(43))],
+    ['非法 code', () => fixture().service.exchange({
+      code: 'invalid',
+      clientId: CLIENT_ID,
+      redirectUri: REDIRECT_URI,
+      resource: RESOURCE,
+      codeVerifier: CODE_VERIFIER,
+    })],
+    ['非法 verifier', () => fixture().service.exchange({
+      code: `oc_${'A'.repeat(43)}`,
+      clientId: CLIENT_ID,
+      redirectUri: REDIRECT_URI,
+      resource: RESOURCE,
+      codeVerifier: 'short',
+    })],
+  ])('%s时返回稳定失败分类', async (_name, operation) => {
+    await expect(operation()).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('受损 JSON 和未知客户端请求不进入授权决策', async () => {
+    const malformed = fixture();
+    const malformedRequest = await begin(malformed.service);
+    const malformedKey = [...malformed.redis.records.keys()][0];
+    if (malformedKey === undefined) throw new Error('测试记录不存在');
+    malformed.redis.records.set(malformedKey, '{bad-json');
+    await expect(malformed.service.describe(malformedRequest.requestId)).rejects.toMatchObject({
+      response: { code: 'OAUTH_REQUEST_INVALID' },
+    });
+
+    const unknown = fixture();
+    const unknownRequest = await begin(unknown.service);
+    replaceOnlyRecord(unknown.redis, (stored) => ({ ...stored, clientId: 'unknown-client' }));
+    await expect(unknown.service.decide(unknownRequest.requestId, true, identity)).rejects.toMatchObject({
+      response: { code: 'OAUTH_REQUEST_INVALID' },
+    });
   });
 });

@@ -2,6 +2,11 @@
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { Locale } from '../lib/content';
+import {
+  parseCaptchaTokenMessage,
+  parsePublicLeadResponse,
+  shouldRetainPublicLeadRequest,
+} from '../lib/marketing-public-contract';
 
 const API_ORIGIN = process.env.NEXT_PUBLIC_ERP_API_ORIGIN ?? 'http://localhost:3001';
 const CAPTCHA_WIDGET_URL = process.env.NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL;
@@ -16,6 +21,11 @@ export function LeadForm({ locale, audience }: {
   const [state, setState] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
   const [captchaToken, setCaptchaToken] = useState('');
   const captchaFrame = useRef<HTMLIFrameElement>(null);
+  const submissionInFlight = useRef(false);
+  const pendingSubmission = useRef<{
+    readonly fingerprint: string;
+    readonly idempotencyKey: string;
+  } | null>(null);
   const zh = locale === 'zh-CN';
 
   useEffect(() => {
@@ -24,16 +34,16 @@ export function LeadForm({ locale, audience }: {
       CAPTCHA_WIDGET_ORIGIN === undefined
     ) return;
     const listener = (event: MessageEvent<unknown>) => {
-      if (
-        event.origin !== CAPTCHA_WIDGET_ORIGIN ||
-        typeof event.data !== 'object' ||
-        event.data === null ||
-        !('captchaToken' in event.data) ||
-        typeof event.data.captchaToken !== 'string' ||
-        event.data.captchaToken.length < 16 ||
-        event.data.captchaToken.length > 4_096
-      ) return;
-      setCaptchaToken(event.data.captchaToken);
+      const source = captchaFrame.current?.contentWindow;
+      if (source === null || source === undefined) return;
+      const token = parseCaptchaTokenMessage(
+        CAPTCHA_WIDGET_ORIGIN,
+        source,
+        event,
+      );
+      if (token === null) return;
+      setCaptchaToken(token);
+      setState((current) => current === 'error' ? 'idle' : current);
     };
     window.addEventListener('message', listener);
     return () => window.removeEventListener('message', listener);
@@ -41,31 +51,66 @@ export function LeadForm({ locale, audience }: {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submissionInFlight.current || captchaToken === '') return;
+    submissionInFlight.current = true;
     setState('sending');
     const form = new FormData(event.currentTarget);
-    const response = await fetch(`${API_ORIGIN}/api/marketing/public/leads`, {
-      method: 'POST',
-      mode: 'cors',
-      credentials: 'omit',
-      cache: 'no-store',
-      referrerPolicy: 'strict-origin-when-cross-origin',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        audience,
-        name: form.get('name'),
-        contact: form.get('contact'),
-        requestSummary: form.get('requestSummary'),
-        privacyAccepted: form.get('privacyAccepted') === 'on',
-        website: form.get('website'),
-        captchaToken,
-      }),
-    }).catch(() => null);
-    if (response?.ok === true) {
-      setState('success');
-      return;
+    const lead = {
+      audience,
+      name: form.get('name'),
+      contact: form.get('contact'),
+      requestSummary: form.get('requestSummary'),
+      privacyAccepted: form.get('privacyAccepted') === 'on',
+      website: form.get('website'),
+    };
+    const fingerprint = JSON.stringify(lead);
+    if (pendingSubmission.current?.fingerprint !== fingerprint) {
+      pendingSubmission.current = {
+        fingerprint,
+        idempotencyKey: `lead.${crypto.randomUUID()}`,
+      };
     }
-    setCaptchaToken('');
-    setState('error');
+    try {
+      const response = await fetch(`${API_ORIGIN}/api/marketing/public/leads`, {
+        method: 'POST',
+        mode: 'cors',
+        credentials: 'omit',
+        cache: 'no-store',
+        referrerPolicy: 'strict-origin-when-cross-origin',
+        signal: AbortSignal.timeout(15_000),
+        headers: {
+          accept: 'application/json',
+          'content-type': 'application/json',
+          'idempotency-key': pendingSubmission.current.idempotencyKey,
+        },
+        body: JSON.stringify({
+          ...lead,
+          captchaToken,
+        }),
+      }).catch(() => null);
+      const responseBody: unknown = response === null
+        ? null
+        : await response.json().catch(() => null);
+      if (response?.ok === true) {
+        try {
+          parsePublicLeadResponse(responseBody);
+          pendingSubmission.current = null;
+          setState('success');
+          return;
+        } catch {
+          setCaptchaToken('');
+          setState('error');
+          return;
+        }
+      }
+      if (!shouldRetainPublicLeadRequest(response?.status ?? null, responseBody)) {
+        pendingSubmission.current = null;
+      }
+      setCaptchaToken('');
+      setState('error');
+    } finally {
+      submissionInFlight.current = false;
+    }
   }
 
   if (state === 'success') return (
@@ -98,6 +143,7 @@ export function LeadForm({ locale, audience }: {
           title={zh ? '人机验证' : 'Human verification'}
           sandbox="allow-scripts allow-same-origin allow-forms"
           referrerPolicy="no-referrer"
+          onLoad={() => setCaptchaToken('')}
         />
       )}
       <button type="submit" disabled={state === 'sending' || captchaToken === ''}>

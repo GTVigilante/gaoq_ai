@@ -3,6 +3,7 @@ import { isIP } from 'node:net';
 
 import { z } from 'zod';
 
+import { parseVerifyOnlySigningJwks } from './auth-signing-key-ring.js';
 import { parseCareAlumniCleanupTargets } from './care-alumni-cleanup-targets.js';
 
 const isLoopbackHostname = (hostname: string): boolean => {
@@ -38,7 +39,7 @@ const environmentSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65_535).default(3001),
   WORKER_METRICS_PORT: z.coerce.number().int().min(1).max(65_535).default(9464),
   MONGODB_URI: z.string().url().startsWith('mongodb://'),
-  REDIS_URL: z.string().url().startsWith('redis://'),
+  REDIS_URL: z.string().url().regex(/^rediss?:\/\//),
   WEB_ORIGIN: z.string().url(),
   MARKETING_WEBSITE_ORIGIN: z.preprocess(
     (value) => value === '' ? undefined : value,
@@ -100,6 +101,8 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(8).max(128).regex(/^[A-Za-z0-9._-]+$/).optional(),
   ),
+  /** 访问令牌轮换窗口内仅用于验签的历史 RSA 公钥；禁止私钥材料。 */
+  AUTH_SIGNING_VERIFY_ONLY_JWKS_JSON: z.string().max(32_768).default('[]'),
   /** 审计 HMAC 密钥环，仅由 Secret Manager 注入，仓库内必须保持为空。 */
   AUDIT_INTEGRITY_KEYS: z.preprocess(
     (value) => value === '' ? undefined : value,
@@ -244,6 +247,20 @@ const environmentSchema = z.object({
   PAYROLL_TAX_GATEWAY_BEARER_TOKEN: z.preprocess(
     (value) => value === '' ? undefined : value,
     z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/).optional(),
+  ),
+  /** 税务网关年度评估回执 Ed25519 信任根；不得由业务请求覆盖。 */
+  PAYROLL_TAX_GATEWAY_SIGNING_KEY_ID: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(8).max(128).regex(/^[A-Za-z0-9._-]+$/).optional(),
+  ),
+  PAYROLL_TAX_GATEWAY_SIGNING_PUBLIC_KEY_BASE64: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(40).max(512).regex(/^[A-Za-z0-9+/]+={0,2}$/).optional(),
+  ),
+  /** 员工年度汇算只能跳转到该官方 HTTPS origin 的短时链接。 */
+  PAYROLL_TAX_OFFICIAL_PORTAL_ORIGIN: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().url().optional(),
   ),
   /** production 仅在 Phase 6 独立授权域逐对象签发短时授权后可用。 */
   PAYROLL_TAX_GATEWAY_MODE: z.enum(['sandbox', 'production']).default('sandbox'),
@@ -782,6 +799,18 @@ const environmentSchema = z.object({
       message: '内建授权服务器的 AUTH_JWKS_URI 必须指向 issuer 的 /.well-known/jwks.json',
     });
   }
+  try {
+    parseVerifyOnlySigningJwks(
+      environment.AUTH_SIGNING_VERIFY_ONLY_JWKS_JSON,
+      environment.AUTH_SIGNING_KEY_ID,
+    );
+  } catch (error) {
+    context.addIssue({
+      code: 'custom',
+      path: ['AUTH_SIGNING_VERIFY_ONLY_JWKS_JSON'],
+      message: error instanceof Error ? error.message : '历史签名公钥配置非法',
+    });
+  }
   if (resource.hash !== '' || resource.username !== '' || resource.password !== '') {
     context.addIssue({
       code: 'custom',
@@ -941,6 +970,9 @@ const environmentSchema = z.object({
     environment.PAYROLL_TAX_WORM_ARCHIVE_BEARER_TOKEN,
     environment.PAYROLL_TAX_GATEWAY_ENDPOINT,
     environment.PAYROLL_TAX_GATEWAY_BEARER_TOKEN,
+    environment.PAYROLL_TAX_GATEWAY_SIGNING_KEY_ID,
+    environment.PAYROLL_TAX_GATEWAY_SIGNING_PUBLIC_KEY_BASE64,
+    environment.PAYROLL_TAX_OFFICIAL_PORTAL_ORIGIN,
   ];
   if (
     payrollTaxInfrastructure.some((value) => value !== undefined) &&
@@ -959,6 +991,7 @@ const environmentSchema = z.object({
   const payrollTaxOrigins = [
     environment.PAYROLL_TAX_WORM_ARCHIVE_ENDPOINT,
     environment.PAYROLL_TAX_GATEWAY_ENDPOINT,
+    environment.PAYROLL_TAX_OFFICIAL_PORTAL_ORIGIN,
   ].filter((value): value is string => value !== undefined).map((value) => new URL(value));
   const forbiddenTaxOrigins = new Set([
     issuer.origin,
@@ -978,6 +1011,36 @@ const environmentSchema = z.object({
       message: 'Payroll Tax 外部服务必须使用相互隔离的标准 HTTPS 权限域',
     });
     forbiddenTaxOrigins.add(endpoint.origin);
+  }
+  if (environment.PAYROLL_TAX_OFFICIAL_PORTAL_ORIGIN !== undefined) {
+    const portal = new URL(environment.PAYROLL_TAX_OFFICIAL_PORTAL_ORIGIN);
+    if (portal.pathname !== '/') context.addIssue({
+      code: 'custom', path: ['PAYROLL_TAX_OFFICIAL_PORTAL_ORIGIN'],
+      message: '个税官方办理地址必须为独立标准 HTTPS origin，不得配置路径',
+    });
+  }
+  if (environment.PAYROLL_TAX_GATEWAY_SIGNING_PUBLIC_KEY_BASE64 !== undefined) {
+    try {
+      const bytes = Buffer.from(
+        environment.PAYROLL_TAX_GATEWAY_SIGNING_PUBLIC_KEY_BASE64,
+        'base64',
+      );
+      const publicKey = createPublicKey({ key: bytes, format: 'der', type: 'spki' });
+      const exported = publicKey.export({ format: 'der', type: 'spki' });
+      if (
+        publicKey.asymmetricKeyType !== 'ed25519' ||
+        !Buffer.isBuffer(exported) ||
+        !exported.equals(bytes) ||
+        bytes.toString('base64') !==
+          environment.PAYROLL_TAX_GATEWAY_SIGNING_PUBLIC_KEY_BASE64
+      ) throw new Error('KEY_INVALID');
+    } catch {
+      context.addIssue({
+        code: 'custom',
+        path: ['PAYROLL_TAX_GATEWAY_SIGNING_PUBLIC_KEY_BASE64'],
+        message: 'Payroll Tax 税务网关签名公钥必须为有效 Ed25519 SPKI DER base64',
+      });
+    }
   }
   const treasuryTokens = [
     environment.TREASURY_WORM_ARCHIVE_BEARER_TOKEN,
@@ -1361,12 +1424,13 @@ const environmentSchema = z.object({
       const endpoint = new URL(environment.AUDIT_WORM_ENDPOINT);
       if (
         endpoint.username !== '' || endpoint.password !== '' || endpoint.search !== '' ||
-        endpoint.hash !== '' || endpoint.origin === issuer.origin
+        endpoint.hash !== '' || endpoint.origin === issuer.origin ||
+        (endpoint.port !== '' && endpoint.port !== '443')
       ) {
         context.addIssue({
           code: 'custom',
           path: ['AUDIT_WORM_ENDPOINT'],
-          message: 'WORM 锚定端点禁止凭据、查询、fragment，且必须与 ERP 授权域隔离',
+          message: 'WORM 锚定端点禁止凭据、查询、fragment、非 443 端口，且必须与 ERP 授权域隔离',
         });
       }
     }

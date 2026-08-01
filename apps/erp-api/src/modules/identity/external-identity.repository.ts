@@ -3,12 +3,14 @@ import { InjectModel } from '@nestjs/mongoose';
 import type { ClientSession, Model } from 'mongoose';
 
 import {
+  EXTERNAL_IDENTITY_PROVIDERS,
   ExternalIdentity,
   type ExternalIdentityDocument,
   type ExternalIdentityProvider,
 } from './external-identity.schema.js';
 
 const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+const EXTERNAL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/;
 
 /** 外部平台回调/同步得到的用户身份档案，字段均为标量，禁止透传客户端对象。 */
 export interface ExternalProfile {
@@ -27,6 +29,17 @@ export interface BoundEmployeeExternalIdentitySnapshot {
   readonly actorId: string;
   readonly externalUserId: string;
   readonly unionId: string;
+}
+
+/** 登录签发使用的最小外部身份映射；只允许经过持久化完整性校验的冻结对象。 */
+export interface BoundExternalIdentitySnapshot {
+  readonly tenantId: string;
+  readonly provider: ExternalIdentityProvider;
+  readonly externalTenantId: string;
+  readonly unionId: string;
+  readonly externalUserId: string;
+  readonly actorId: string;
+  readonly employeeId: string;
 }
 
 /**
@@ -48,17 +61,35 @@ export class ExternalIdentityRepository {
   async findBoundByExternalProfile(
     tenantId: string,
     profile: ExternalProfile,
-  ): Promise<ExternalIdentityDocument | null> {
-    return this.externalIdentities
-      .findOne({
+  ): Promise<BoundExternalIdentitySnapshot | null> {
+    this.assertId(tenantId);
+    this.assertProvider(profile.provider);
+    this.assertExternalIds(profile.externalTenantId, profile.unionId, profile.externalUserId);
+    const record = await this.externalIdentities.findOne(
+      {
         tenantId,
         provider: profile.provider,
         externalTenantId: profile.externalTenantId,
         status: 'bound',
         unionId: profile.unionId,
         externalUserId: profile.externalUserId,
-      })
-      .exec();
+      },
+      {
+        tenantId: 1, provider: 1, externalTenantId: 1, unionId: 1,
+        externalUserId: 1, actorId: 1, employeeId: 1, status: 1, _id: 0,
+      },
+    ).lean().exec();
+    if (record === null) return null;
+    this.assertBoundRecord(record, tenantId, profile);
+    return Object.freeze({
+      tenantId: record.tenantId,
+      provider: record.provider,
+      externalTenantId: record.externalTenantId,
+      unionId: record.unionId,
+      externalUserId: record.externalUserId,
+      actorId: record.actorId,
+      employeeId: record.employeeId,
+    });
   }
 
   /** 按租户+平台租户+员工精确确认已绑定身份。 */
@@ -68,21 +99,22 @@ export class ExternalIdentityRepository {
     externalTenantId: string,
     employeeId: string,
   ): Promise<BoundEmployeeExternalIdentitySnapshot | null> {
-    this.assertIds(tenantId, employeeId);
-    if (!/^[A-Za-z0-9._:@-]{1,256}$/.test(externalTenantId)) {
-      throw new Error('外部租户标识非法');
-    }
+    this.assertId(tenantId);
+    this.assertId(employeeId);
+    this.assertProvider(provider);
+    this.assertExternalIds(externalTenantId);
     const record = await this.externalIdentities.findOne(
       { tenantId, provider, externalTenantId, employeeId, status: 'bound' },
       { actorId: 1, externalUserId: 1, unionId: 1, _id: 0 },
     ).lean().exec();
-    return record === null
-      ? null
-      : Object.freeze({
-          actorId: record.actorId,
-          externalUserId: record.externalUserId,
-          unionId: record.unionId,
-        });
+    if (record === null) return null;
+    this.assertId(record.actorId);
+    this.assertExternalIds(record.externalUserId, record.unionId);
+    return Object.freeze({
+      actorId: record.actorId,
+      externalUserId: record.externalUserId,
+      unionId: record.unionId,
+    });
   }
 
   /**
@@ -90,6 +122,8 @@ export class ExternalIdentityRepository {
    * 返回是否实际修改了一条记录。
    */
   async disable(tenantId: string, id: string): Promise<boolean> {
+    this.assertId(tenantId);
+    this.assertId(id);
     const result = await this.externalIdentities.updateOne(
       { _id: id, tenantId, status: 'bound' },
       { $set: { status: 'disabled' } },
@@ -103,14 +137,19 @@ export class ExternalIdentityRepository {
     employeeId: string,
     mongoSession: ClientSession,
   ): Promise<readonly string[]> {
-    this.assertIds(tenantId, employeeId);
+    this.assertId(tenantId);
+    this.assertId(employeeId);
     const records = await this.externalIdentities
       .find({ tenantId, employeeId })
       .select('actorId -_id')
       .session(mongoSession)
       .lean()
       .exec();
-    return Object.freeze([...new Set(records.map((record) => record.actorId))].sort());
+    const actorIds = records.map((record) => {
+      this.assertId(record.actorId);
+      return record.actorId;
+    });
+    return Object.freeze([...new Set(actorIds)].sort());
   }
 
   /** 离职事务内停用员工的全部已绑定外部身份，不影响其他租户或已停用记录。 */
@@ -119,7 +158,8 @@ export class ExternalIdentityRepository {
     employeeId: string,
     mongoSession: ClientSession,
   ): Promise<number> {
-    this.assertIds(tenantId, employeeId);
+    this.assertId(tenantId);
+    this.assertId(employeeId);
     const result = await this.externalIdentities.updateMany(
       { tenantId, employeeId, status: 'bound' },
       { $set: { status: 'disabled' } },
@@ -138,14 +178,16 @@ export class ExternalIdentityRepository {
     input: ProvisionedExternalIdentityInput,
     mongoSession: ClientSession,
   ): Promise<void> {
-    this.assertIds(tenantId, input.employeeId);
+    this.assertId(tenantId);
+    this.assertId(input.employeeId);
+    this.assertProvider(input.provider);
     for (const value of [
       input.externalTenantId,
       input.unionId,
       input.externalUserId,
       input.actorId,
     ]) {
-      if (!/^[A-Za-z0-9._:@-]{1,256}$/.test(value)) {
+      if (!EXTERNAL_ID_PATTERN.test(value)) {
         throw new Error('开户外部身份标识非法');
       }
     }
@@ -176,9 +218,42 @@ export class ExternalIdentityRepository {
     );
   }
 
-  private assertIds(tenantId: string, employeeId: string): void {
-    if (!ID_PATTERN.test(tenantId) || !ID_PATTERN.test(employeeId)) {
+  private assertId(value: string): void {
+    if (!ID_PATTERN.test(value)) {
       throw new Error('外部身份生命周期标识非法');
     }
+  }
+
+  private assertProvider(provider: ExternalIdentityProvider): void {
+    if (!EXTERNAL_IDENTITY_PROVIDERS.includes(provider)) {
+      throw new Error('外部身份提供者非法');
+    }
+  }
+
+  private assertExternalIds(...values: readonly string[]): void {
+    if (values.some((value) => !EXTERNAL_ID_PATTERN.test(value))) {
+      throw new Error('外部身份标识非法');
+    }
+  }
+
+  private assertBoundRecord(
+    record: ExternalIdentity,
+    expectedTenantId: string,
+    expectedProfile: ExternalProfile,
+  ): void {
+    const sameIdentity =
+      record.tenantId === expectedTenantId &&
+      record.provider === expectedProfile.provider &&
+      record.externalTenantId === expectedProfile.externalTenantId &&
+      record.unionId === expectedProfile.unionId &&
+      record.externalUserId === expectedProfile.externalUserId;
+    if (!sameIdentity || record.status !== 'bound') {
+      throw new Error('外部身份持久化记录受损');
+    }
+    this.assertId(record.tenantId);
+    this.assertId(record.actorId);
+    this.assertId(record.employeeId);
+    this.assertProvider(record.provider);
+    this.assertExternalIds(record.externalTenantId, record.unionId, record.externalUserId);
   }
 }

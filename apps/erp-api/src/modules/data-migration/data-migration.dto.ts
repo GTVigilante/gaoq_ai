@@ -12,7 +12,6 @@ import {
   Max,
   MaxLength,
   Min,
-  MinLength,
   ValidateNested,
 } from 'class-validator';
 
@@ -24,6 +23,7 @@ import {
 } from './data-migration-contract.js';
 
 const SOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const SOURCE_VERSION = /^[\x21-\x7E]{1,64}$/;
 const HASH = /^[A-Za-z0-9_-]{43}$/;
 
 export class CreateDataMigrationRunDto {
@@ -43,7 +43,7 @@ export class MigrationAttachmentDto {
 export class ApplyDataMigrationRecordDto {
   @IsInt() @Min(1) @Max(10_000_000) sequence!: number;
   @IsString() @Matches(SOURCE_ID) sourceRecordId!: string;
-  @IsString() @MinLength(1) @MaxLength(64) sourceVersion!: string;
+  @IsString() @Matches(SOURCE_VERSION) sourceVersion!: string;
   @IsEnum(DATA_MIGRATION_ENTITY_TYPES) entityType!: DataMigrationEntityType;
   @IsObject() payload!: Readonly<Record<string, unknown>>;
   @IsString() @Length(43, 43) @Matches(HASH) payloadHash!: string;

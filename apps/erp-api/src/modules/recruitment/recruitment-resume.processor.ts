@@ -9,6 +9,7 @@ import { RecruitmentResumeService } from './application/recruitment-resume.servi
 import {
   RECRUITMENT_RESUME_ANALYZE_JOB,
   RECRUITMENT_RESUME_QUEUE,
+  createRecruitmentResumeAnalysisJobId,
   type RecruitmentResumeAnalysisJobData,
 } from './recruitment-resume.queue.js';
 
@@ -33,6 +34,12 @@ export class RecruitmentResumeProcessor extends WorkerHost {
       throw new Error('RECRUITMENT_RESUME_JOB_UNKNOWN');
     }
     const data = jobSchema.parse(job.data);
+    if (
+      String(job.id ?? '') !== createRecruitmentResumeAnalysisJobId(
+        data.tenantId,
+        data.analysisId,
+      )
+    ) throw new Error('RECRUITMENT_RESUME_JOB_ID_MISMATCH');
     await this.context.run({
       tenant: { tenantId: data.tenantId, source: 'service_identity' },
       actor: {

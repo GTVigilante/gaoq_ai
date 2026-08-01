@@ -26,11 +26,15 @@ import {
 import type { CourseVersion } from '../domain/index.js';
 
 const RESPONSE_LIMIT_BYTES = 16 * 1024;
+const REQUEST_LIMIT_BYTES = 128 * 1024;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const DIGEST = /^[A-Za-z0-9_-]{43}$/;
 const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 const SIGNATURE = /^[A-Za-z0-9_-]{86}$/;
 const CURSOR = /^[A-Za-z0-9_-]{16,256}$/;
+const TOKEN = /^[\x21-\x7e]{32,512}$/;
+const JSON_CONTENT_TYPE =
+  /^application\/(?:[a-z0-9!#$&^_.+-]+\+)?json(?:\s*;\s*charset=utf-8)?$/iu;
 const highlightSchema = z.object({
   start: z.number().int().min(0).max(512),
   end: z.number().int().min(1).max(512),
@@ -61,7 +65,23 @@ const examBindingSchema = z.object({
   manualReviewRequired: z.boolean(),
   gradingSlaMinutes: z.number().int().min(1).max(60),
   manualReviewSlaMinutes: z.number().int().min(30).max(10_080),
-});
+}).strict();
+const examStartRequestSchema = examBindingSchema;
+const examTimeoutRequestSchema = examBindingSchema.extend({
+  gatewaySessionRef: z.string().regex(SAFE_ID),
+  questionSetDigest: z.string().regex(DIGEST),
+  deadlineAt: z.string().datetime({ offset: true }),
+}).strict();
+const examFinalizationRequestSchema = examBindingSchema.extend({
+  gatewaySessionRef: z.string().regex(SAFE_ID),
+  questionSetDigest: z.string().regex(DIGEST),
+  submissionRef: z.string().regex(SAFE_ID),
+  timedOut: z.boolean(),
+  submittedAt: z.string().datetime({ offset: true }),
+}).strict();
+const examStatusRequestSchema = examFinalizationRequestSchema.extend({
+  reviewEvidenceId: z.string().regex(ULID),
+}).strict();
 const examStartReceiptSchema = examBindingSchema.extend({
   gatewaySessionRef: z.string().regex(SAFE_ID),
   questionSetDigest: z.string().regex(DIGEST),
@@ -92,6 +112,7 @@ const examFinalizationReceiptSchema = examBindingSchema.extend({
       scoreBps: z.number().int().min(0).max(10_000),
       passed: z.boolean(),
       gradingEvidenceId: z.string().regex(ULID),
+      reviewEvidenceId: z.string().regex(ULID).nullable(),
       gradedAt: z.string().datetime({ offset: true }),
     }).strict(),
   ]),
@@ -119,7 +140,7 @@ const searchRequestSchema = z.object({
   positionIds: z.array(z.string().regex(SAFE_ID)).max(200),
   allowedCourseVersionIds: z.array(z.string().regex(SAFE_ID)).min(1).max(200),
   authorizationDigest: z.string().regex(DIGEST),
-  queryText: z.string().min(2).max(128),
+  queryText: z.string().min(2).max(128).refine(safeSearchQuery),
   cursor: z.string().regex(CURSOR).nullable(),
   limit: z.number().int().min(1).max(20),
 }).strict();
@@ -156,14 +177,17 @@ export class KnowledgeEvidenceHttpClient {
     readonly contentVerified: boolean;
     readonly questionBankVerified: boolean;
   }> {
+    const request = {
+      tenantId: course.tenantId,
+      courseVersionId: course.id,
+      contentRef: course.contentRef,
+      questionBankRef: course.questionBankRef,
+      questionBankDigest: course.questionBankDigest,
+    };
     const parsed = verificationReceiptSchema.safeParse(await this.post(
       '/v1/courses/verify',
-      {
-        tenantId: course.tenantId, courseVersionId: course.id,
-        contentRef: course.contentRef, questionBankRef: course.questionBankRef,
-        questionBankDigest: course.questionBankDigest,
-      },
-      digest(['verify', course.tenantId, course.id, String(course.version)]),
+      request,
+      requestDigest('/v1/courses/verify', request),
       'evidence',
     ));
     if (!parsed.success) throw new Error('KNOWLEDGE_VERIFICATION_RECEIPT_INVALID');
@@ -184,19 +208,24 @@ export class KnowledgeEvidenceHttpClient {
   async startExam(
     input: KnowledgeExamOrchestrationInput,
   ): Promise<KnowledgeExamStartReceipt> {
+    const request = examStartRequestSchema.safeParse(input);
+    if (!request.success || !validExamPolicy(request.data)) {
+      throw new Error('KNOWLEDGE_EXAM_START_REQUEST_INVALID');
+    }
     const parsed = examStartReceiptSchema.safeParse(await this.post(
       '/v1/exam-runs/start',
-      input,
-      digest(['exam-start', input.tenantId, input.runId, input.gradingPolicyVersion]),
+      request.data,
+      requestDigest('/v1/exam-runs/start', request.data),
       'evidence',
     ));
-    if (!parsed.success || !matchesExamBinding(parsed.data, input)) {
+    if (!parsed.success || !matchesExamBinding(parsed.data, request.data)) {
       throw new Error('KNOWLEDGE_EXAM_START_RECEIPT_INVALID');
     }
     const startedAt = new Date(parsed.data.startedAt);
     const deadlineAt = new Date(parsed.data.deadlineAt);
     if (
-      deadlineAt.getTime() - startedAt.getTime() !== input.timeLimitMinutes * 60_000 ||
+      deadlineAt.getTime() - startedAt.getTime() !==
+        request.data.timeLimitMinutes * 60_000 ||
       startedAt.getTime() < Date.now() - 5 * 60_000 ||
       startedAt.getTime() > Date.now() + 5 * 60_000
     ) throw new Error('KNOWLEDGE_EXAM_START_TIME_INVALID');
@@ -227,25 +256,23 @@ export class KnowledgeEvidenceHttpClient {
       readonly deadlineAt: string;
     },
   ): Promise<KnowledgeExamTimeoutReceipt> {
+    const request = examTimeoutRequestSchema.safeParse(input);
+    if (!request.success || !validExamPolicy(request.data)) {
+      throw new Error('KNOWLEDGE_EXAM_TIMEOUT_REQUEST_INVALID');
+    }
     const parsed = examTimeoutReceiptSchema.safeParse(await this.post(
       '/v1/exam-runs/timeout',
-      input,
-      digest([
-        'exam-timeout',
-        input.tenantId,
-        input.runId,
-        input.gatewaySessionRef,
-        input.deadlineAt,
-      ]),
+      request.data,
+      requestDigest('/v1/exam-runs/timeout', request.data),
       'evidence',
     ));
     if (
       !parsed.success ||
-      !matchesExamBinding(parsed.data, input) ||
-      parsed.data.gatewaySessionRef !== input.gatewaySessionRef ||
-      parsed.data.questionSetDigest !== input.questionSetDigest ||
-      parsed.data.deadlineAt !== input.deadlineAt ||
-      parsed.data.submittedAt !== input.deadlineAt
+      !matchesExamBinding(parsed.data, request.data) ||
+      parsed.data.gatewaySessionRef !== request.data.gatewaySessionRef ||
+      parsed.data.questionSetDigest !== request.data.questionSetDigest ||
+      parsed.data.deadlineAt !== request.data.deadlineAt ||
+      parsed.data.submittedAt !== request.data.deadlineAt
     ) throw new Error('KNOWLEDGE_EXAM_TIMEOUT_RECEIPT_INVALID');
     return Object.freeze({
       submissionRef: parsed.data.submissionRef,
@@ -272,19 +299,15 @@ export class KnowledgeEvidenceHttpClient {
     const request = searchRequestSchema.safeParse(input);
     if (
       !request.success ||
-      !unique(request.data.departmentIds) ||
-      !unique(request.data.positionIds) ||
-      !unique(request.data.allowedCourseVersionIds)
+      !uniqueIds(request.data.departmentIds) ||
+      !uniqueIds(request.data.positionIds) ||
+      !uniqueIds(request.data.allowedCourseVersionIds)
     ) throw new Error('KNOWLEDGE_SEARCH_REQUEST_INVALID');
     const queryDigest = digest(['search-query', request.data.queryText]);
     const parsed = searchReceiptSchema.safeParse(await this.post(
       '/v1/search',
       request.data,
-      digest([
-        'search', request.data.tenantId, request.data.employeeId,
-        request.data.authorizationDigest, queryDigest, request.data.cursor ?? '',
-        String(request.data.limit),
-      ]),
+      requestDigest('/v1/search', request.data),
       'search',
     ));
     if (!parsed.success) throw new Error('KNOWLEDGE_SEARCH_RECEIPT_INVALID');
@@ -316,8 +339,8 @@ export class KnowledgeEvidenceHttpClient {
     const request = searchIndexRequestSchema.safeParse(input);
     if (
       !request.success ||
-      !unique(request.data.audienceDepartmentIds) ||
-      !unique(request.data.audiencePositionIds) ||
+      !uniqueIds(request.data.audienceDepartmentIds) ||
+      !uniqueIds(request.data.audiencePositionIds) ||
       !validAudienceCombination(request.data)
     ) throw new Error('KNOWLEDGE_SEARCH_INDEX_REQUEST_INVALID');
     const path = request.data.operation === 'upsert'
@@ -326,14 +349,7 @@ export class KnowledgeEvidenceHttpClient {
     const parsed = searchIndexReceiptSchema.safeParse(await this.post(
       path,
       request.data,
-      digest([
-        'search-index',
-        request.data.eventId,
-        request.data.tenantId,
-        request.data.courseVersionId,
-        String(request.data.courseVersion),
-        request.data.operation,
-      ]),
+      requestDigest(path, request.data),
       'search',
     ));
     if (!parsed.success) throw new Error('KNOWLEDGE_SEARCH_INDEX_RECEIPT_INVALID');
@@ -390,13 +406,25 @@ export class KnowledgeEvidenceHttpClient {
     ) {
       throw new Error(`${gatewayPrefix(gateway)}_GATEWAY_UNAVAILABLE`);
     }
+    assertGatewayRuntimeConfig(
+      this.config,
+      gateway,
+      endpoint,
+      token,
+      signingPublicKey,
+      signingKeyId,
+    );
     const url = new URL(path, safeBaseUrl(endpoint, gateway)).toString();
     const payload = JSON.stringify(body);
+    if (Buffer.byteLength(payload) > REQUEST_LIMIT_BYTES) {
+      throw new Error(`${gatewayPrefix(gateway)}_REQUEST_TOO_LARGE`);
+    }
     const response = await request(url, {
       method: 'POST', redirect: 'error',
       headers: {
         authorization: `Bearer ${token}`,
-        accept: 'application/json', 'cache-control': 'no-store',
+        accept: 'application/json', 'accept-encoding': 'identity',
+        'cache-control': 'no-store',
         'content-type': 'application/json', 'content-length': String(Buffer.byteLength(payload)),
         'idempotency-key': idempotencyKey,
       },
@@ -417,51 +445,79 @@ export class KnowledgeEvidenceHttpClient {
       readonly submittedAt: string;
     },
   ): Promise<KnowledgeExamFinalizationReceipt> {
+    const request = path === '/v1/exam-runs/status'
+      ? examStatusRequestSchema.safeParse(input)
+      : examFinalizationRequestSchema.safeParse(input);
+    if (!request.success || !validExamPolicy(request.data)) {
+      throw new Error('KNOWLEDGE_EXAM_FINALIZATION_REQUEST_INVALID');
+    }
     const parsed = examFinalizationReceiptSchema.safeParse(await this.post(
       path,
-      input,
-      digest([
-        'exam-finalize',
-        path,
-        input.tenantId,
-        input.runId,
-        input.gatewaySessionRef,
-        input.submissionRef,
-      ]),
+      request.data,
+      requestDigest(path, request.data),
       'evidence',
     ));
     if (
       !parsed.success ||
-      !matchesExamBinding(parsed.data, input) ||
-      parsed.data.gatewaySessionRef !== input.gatewaySessionRef ||
-      parsed.data.questionSetDigest !== input.questionSetDigest ||
-      parsed.data.submissionRef !== input.submissionRef ||
-      parsed.data.timedOut !== input.timedOut ||
-      parsed.data.submittedAt !== input.submittedAt
+      !matchesExamBinding(parsed.data, request.data) ||
+      parsed.data.gatewaySessionRef !== request.data.gatewaySessionRef ||
+      parsed.data.questionSetDigest !== request.data.questionSetDigest ||
+      parsed.data.submissionRef !== request.data.submissionRef ||
+      parsed.data.timedOut !== request.data.timedOut ||
+      parsed.data.submittedAt !== request.data.submittedAt
     ) throw new Error('KNOWLEDGE_EXAM_FINALIZATION_RECEIPT_INVALID');
     if (
       path === '/v1/exam-runs/status' &&
-      parsed.data.result.status === 'pending_review' &&
-      'reviewEvidenceId' in input &&
-      parsed.data.result.reviewEvidenceId !== input.reviewEvidenceId
+      (
+        !('reviewEvidenceId' in request.data) ||
+        parsed.data.result.reviewEvidenceId !== request.data.reviewEvidenceId
+      )
     ) throw new Error('KNOWLEDGE_EXAM_REVIEW_RECEIPT_MISMATCH');
+    if (
+      path === '/v1/exam-runs/finalize' &&
+      (
+        (
+          request.data.manualReviewRequired &&
+          parsed.data.result.status !== 'pending_review'
+        ) ||
+        (
+          !request.data.manualReviewRequired &&
+          (
+            parsed.data.result.status !== 'graded' ||
+            parsed.data.result.reviewEvidenceId !== null
+          )
+        )
+      )
+    ) throw new Error('KNOWLEDGE_EXAM_REVIEW_POLICY_MISMATCH');
     const resultTime = new Date(
       parsed.data.result.status === 'graded'
         ? parsed.data.result.gradedAt
         : parsed.data.result.reviewRequestedAt,
     );
-    const submittedAt = new Date(input.submittedAt);
+    const submittedAt = new Date(request.data.submittedAt);
     if (
       resultTime.getTime() < submittedAt.getTime() ||
       resultTime.getTime() > Date.now() + 5 * 60_000 ||
       (
         parsed.data.result.status === 'graded' &&
-        input.passingRule === 'score_threshold' &&
+        request.data.passingRule === 'score_threshold' &&
         parsed.data.result.passed !==
-          (parsed.data.result.scoreBps >= input.passingScoreBps)
+          (parsed.data.result.scoreBps >= request.data.passingScoreBps)
       )
     ) throw new Error('KNOWLEDGE_EXAM_FINALIZATION_RESULT_INVALID');
-    return Object.freeze({ ...parsed.data.result });
+    return parsed.data.result.status === 'pending_review'
+      ? Object.freeze({
+          status: parsed.data.result.status,
+          reviewEvidenceId: parsed.data.result.reviewEvidenceId,
+          reviewRequestedAt: parsed.data.result.reviewRequestedAt,
+        })
+      : Object.freeze({
+          status: parsed.data.result.status,
+          scoreBps: parsed.data.result.scoreBps,
+          passed: parsed.data.result.passed,
+          gradingEvidenceId: parsed.data.result.gradingEvidenceId,
+          gradedAt: parsed.data.result.gradedAt,
+        });
   }
 }
 
@@ -558,13 +614,23 @@ async function request(
       throw new Error(`${prefix}_GATEWAY_UNAVAILABLE`);
     }
     if ([502, 503, 504].includes(response.status) && attempt === 0) {
-      await response.body?.cancel().catch(() => undefined);
+      cancelResponseBody(response);
       continue;
     }
     if (response.status !== 200) {
+      cancelResponseBody(response);
       throw new Error(`${prefix}_GATEWAY_HTTP_${response.status}`);
     }
-    if (!response.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
+    if (!JSON_CONTENT_TYPE.test(response.headers.get('content-type')?.trim() ?? '')) {
+      cancelResponseBody(response);
+      throw new Error(`${prefix}_RECEIPT_INVALID`);
+    }
+    const contentEncoding = response.headers.get('content-encoding');
+    if (
+      contentEncoding !== null &&
+      contentEncoding.trim().toLowerCase() !== 'identity'
+    ) {
+      cancelResponseBody(response);
       throw new Error(`${prefix}_RECEIPT_INVALID`);
     }
     return response;
@@ -578,22 +644,53 @@ async function readBytes(
 ): Promise<Uint8Array> {
   const prefix = gatewayPrefix(gateway);
   if (response.body === null) throw new Error(`${prefix}_RECEIPT_INVALID`);
+  let expectedLength: number | null;
+  try {
+    expectedLength = responseLength(response.headers.get('content-length'), gateway);
+  } catch (error) {
+    cancelResponseBody(response);
+    throw error;
+  }
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
   try {
     while (true) {
-      const part = await reader.read();
+      let part: { readonly done: boolean; readonly value?: Uint8Array };
+      try {
+        part = await reader.read();
+      } catch {
+        cancelReader(reader);
+        throw new Error(`${prefix}_RESPONSE_READ_ERROR`);
+      }
       if (part.done) break;
       if (!(part.value instanceof Uint8Array)) {
-        throw new Error(`${prefix}_RECEIPT_INVALID`);
+        cancelReader(reader);
+        throw new Error(`${prefix}_RESPONSE_READ_ERROR`);
       }
       total += part.value.byteLength;
-      if (total > RESPONSE_LIMIT_BYTES) throw new Error(`${prefix}_RECEIPT_TOO_LARGE`);
+      if (
+        total > RESPONSE_LIMIT_BYTES ||
+        (expectedLength !== null && total > expectedLength)
+      ) {
+        cancelReader(reader);
+        throw new Error(
+          total > RESPONSE_LIMIT_BYTES
+            ? `${prefix}_RECEIPT_TOO_LARGE`
+            : `${prefix}_RESPONSE_LENGTH_INVALID`,
+        );
+      }
       chunks.push(part.value);
     }
   } finally {
-    reader.releaseLock();
+    try {
+      reader.releaseLock();
+    } catch {
+      // 读取器清理是尽力操作，不得覆盖已确定的网关结果。
+    }
+  }
+  if (expectedLength !== null && total !== expectedLength) {
+    throw new Error(`${prefix}_RESPONSE_LENGTH_INVALID`);
   }
   const bytes = new Uint8Array(total);
   let offset = 0;
@@ -626,20 +723,34 @@ function verifyReceipt(
     signature === null || !SIGNATURE.test(signature)
   ) throw new Error(`${gatewayPrefix(gateway)}_RECEIPT_SIGNATURE_INVALID`);
   let publicKey: KeyObject;
+  let publicKeyBytes: Buffer;
   try {
+    publicKeyBytes = canonicalBase64(publicKeyBase64);
     publicKey = createPublicKey({
-      key: Buffer.from(publicKeyBase64, 'base64'),
+      key: publicKeyBytes,
       format: 'der',
       type: 'spki',
     });
   } catch {
     throw new Error(`${gatewayPrefix(gateway)}_SIGNING_KEY_INVALID`);
   }
-  if (publicKey.asymmetricKeyType !== 'ed25519') {
+  let signatureBytes: Buffer;
+  try {
+    signatureBytes = canonicalBase64Url(signature);
+  } catch {
+    throw new Error(`${gatewayPrefix(gateway)}_RECEIPT_SIGNATURE_INVALID`);
+  }
+  const exported = publicKey.export({ format: 'der', type: 'spki' });
+  if (
+    publicKey.asymmetricKeyType !== 'ed25519' ||
+    !Buffer.isBuffer(exported) ||
+    !exported.equals(publicKeyBytes) ||
+    signatureBytes.byteLength !== 64
+  ) {
     throw new Error(`${gatewayPrefix(gateway)}_SIGNING_KEY_INVALID`);
   }
   const signed = Buffer.from(receiptSigningInput(gateway, keyId, bytes), 'utf8');
-  if (!verifySignature(null, signed, publicKey, Buffer.from(signature, 'base64url'))) {
+  if (!verifySignature(null, signed, publicKey, signatureBytes)) {
     throw new Error(`${gatewayPrefix(gateway)}_RECEIPT_SIGNATURE_INVALID`);
   }
 }
@@ -697,8 +808,14 @@ function safeSnippetText(value: string): boolean {
   return true;
 }
 
-function unique(values: readonly string[]): boolean {
+function uniqueIds(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
+}
+
+function safeSearchQuery(value: string): boolean {
+  return value.normalize('NFKC') === value &&
+    value.trim() === value &&
+    /^[\p{L}\p{M}\p{N}._-]+(?: [\p{L}\p{M}\p{N}._-]+)*$/u.test(value);
 }
 
 function validAudienceCombination(input: {
@@ -709,6 +826,11 @@ function validAudienceCombination(input: {
   return input.audienceMode === 'assigned_only'
     ? input.audienceDepartmentIds.length === 0 && input.audiencePositionIds.length === 0
     : input.audienceDepartmentIds.length > 0 || input.audiencePositionIds.length > 0;
+}
+
+function validExamPolicy(input: KnowledgeExamOrchestrationInput): boolean {
+  return input.manualReviewRequired ===
+    (input.questionMode === 'subjective' || input.questionMode === 'mixed');
 }
 
 function matchesExamBinding(
@@ -749,7 +871,12 @@ function matchesExamBinding(
 }
 
 function safeBaseUrl(value: string, gateway: 'evidence' | 'search'): string {
-  const url = new URL(value);
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`${gatewayPrefix(gateway)}_GATEWAY_ENDPOINT_INVALID`);
+  }
   const hostname = url.hostname.toLowerCase().replace(/\.$/u, '')
     .replace(/^\[(.*)\]$/u, '$1');
   if (
@@ -768,6 +895,132 @@ function isLoopback(hostname: string): boolean {
 
 function gatewayPrefix(gateway: 'evidence' | 'search'): string {
   return gateway === 'evidence' ? 'KNOWLEDGE_EVIDENCE' : 'KNOWLEDGE_SEARCH';
+}
+
+function assertGatewayRuntimeConfig(
+  config: ConfigService<AppEnvironment, true>,
+  gateway: 'evidence' | 'search',
+  endpoint: string,
+  token: string,
+  signingPublicKey: string,
+  signingKeyId: string,
+): void {
+  const prefix = gatewayPrefix(gateway);
+  if (!TOKEN.test(token)) throw new Error(`${prefix}_GATEWAY_CREDENTIAL_INVALID`);
+  if (!SAFE_ID.test(signingKeyId)) throw new Error(`${prefix}_SIGNING_KEY_INVALID`);
+  assertSigningPublicKey(signingPublicKey, gateway);
+  const activeOrigin = new URL(safeBaseUrl(endpoint, gateway)).origin;
+  const otherGateway = gateway === 'evidence' ? 'search' : 'evidence';
+  const otherEndpoint = config.get(
+    otherGateway === 'evidence'
+      ? 'KNOWLEDGE_EVIDENCE_GATEWAY_ENDPOINT'
+      : 'KNOWLEDGE_SEARCH_GATEWAY_ENDPOINT',
+    { infer: true },
+  );
+  const otherToken = config.get(
+    otherGateway === 'evidence'
+      ? 'KNOWLEDGE_EVIDENCE_GATEWAY_BEARER_TOKEN'
+      : 'KNOWLEDGE_SEARCH_GATEWAY_BEARER_TOKEN',
+    { infer: true },
+  );
+  const otherPublicKey = config.get(
+    otherGateway === 'evidence'
+      ? 'KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_PUBLIC_KEY_BASE64'
+      : 'KNOWLEDGE_SEARCH_GATEWAY_SIGNING_PUBLIC_KEY_BASE64',
+    { infer: true },
+  );
+  const otherKeyId = config.get(
+    otherGateway === 'evidence'
+      ? 'KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_KEY_ID'
+      : 'KNOWLEDGE_SEARCH_GATEWAY_SIGNING_KEY_ID',
+    { infer: true },
+  );
+  const sharesOrigin = otherEndpoint !== undefined &&
+    new URL(safeBaseUrl(otherEndpoint, otherGateway)).origin === activeOrigin;
+  if (
+    sharesOrigin ||
+    otherToken === token ||
+    otherPublicKey === signingPublicKey ||
+    otherKeyId === signingKeyId
+  ) throw new Error(`${prefix}_GATEWAY_TRUST_DOMAIN_INVALID`);
+}
+
+function assertSigningPublicKey(
+  value: string,
+  gateway: 'evidence' | 'search',
+): void {
+  try {
+    const bytes = canonicalBase64(value);
+    const key = createPublicKey({ key: bytes, format: 'der', type: 'spki' });
+    const exported = key.export({ format: 'der', type: 'spki' });
+    if (
+      key.asymmetricKeyType !== 'ed25519' ||
+      !Buffer.isBuffer(exported) ||
+      !exported.equals(bytes)
+    ) throw new Error('KEY_INVALID');
+  } catch {
+    throw new Error(`${gatewayPrefix(gateway)}_SIGNING_KEY_INVALID`);
+  }
+}
+
+function canonicalBase64(value: string): Buffer {
+  if (
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u
+      .test(value)
+  ) throw new Error('BASE64_INVALID');
+  const bytes = Buffer.from(value, 'base64');
+  if (bytes.byteLength === 0 || bytes.toString('base64') !== value) {
+    throw new Error('BASE64_INVALID');
+  }
+  return bytes;
+}
+
+function canonicalBase64Url(value: string): Buffer {
+  if (!/^[A-Za-z0-9_-]+$/u.test(value)) throw new Error('BASE64URL_INVALID');
+  const bytes = Buffer.from(value, 'base64url');
+  if (bytes.byteLength === 0 || bytes.toString('base64url') !== value) {
+    throw new Error('BASE64URL_INVALID');
+  }
+  return bytes;
+}
+
+function responseLength(
+  value: string | null,
+  gateway: 'evidence' | 'search',
+): number | null {
+  if (value === null) return null;
+  const prefix = gatewayPrefix(gateway);
+  if (!/^(?:0|[1-9][0-9]*)$/u.test(value)) {
+    throw new Error(`${prefix}_RESPONSE_LENGTH_INVALID`);
+  }
+  const length = Number(value);
+  if (!Number.isSafeInteger(length)) {
+    throw new Error(`${prefix}_RESPONSE_LENGTH_INVALID`);
+  }
+  if (length > RESPONSE_LIMIT_BYTES) {
+    throw new Error(`${prefix}_RECEIPT_TOO_LARGE`);
+  }
+  return length;
+}
+
+function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): void {
+  try {
+    void reader.cancel().catch(() => undefined);
+  } catch {
+    // 取消是尽力操作，禁止覆盖本域稳定错误码。
+  }
+}
+
+function cancelResponseBody(response: Response): void {
+  try {
+    void response.body?.cancel().catch(() => undefined);
+  } catch {
+    // 释放是尽力操作，禁止覆盖已确定的 HTTP 结果。
+  }
+}
+
+function requestDigest(path: string, body: object): string {
+  return digest(['knowledge-gateway-request-v1', path, JSON.stringify(body)]);
 }
 
 function digest(parts: readonly string[]): string {

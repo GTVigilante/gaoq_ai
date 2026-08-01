@@ -352,22 +352,23 @@ describe('MCP Streamable HTTP 协议集成', () => {
       getPayrollReconciliation: vi.fn(),
       getPayrollShadowCycle: vi.fn(),
       getPayrollCutoverReadiness: vi.fn(),
+      getPayrollAdjustmentStatus: vi.fn(),
+      getPayrollAdjustmentTaxCorrectionStatus: vi.fn(),
+      getAnnualPayrollReconciliationStatus: vi.fn(),
       getOpOperatingSummary: vi.fn().mockResolvedValue({
         content: [{ type: 'text' as const, text: JSON.stringify({ operatingSummary: {
-          id: '01J8ZQK7V0A2M4N6P8R0T2W4D1', summaryDate: '2026-07-22', revision: 1,
+          summaryDate: '2026-07-22', revision: 1,
           currency: 'CNY', metrics: {
             gmvMinor: 123_456, paidOrderCount: 12, refundMinor: 500,
             refundOrderCount: 1, activeCustomerCount: 8,
-          }, payloadHash: 'o'.repeat(43), occurredAt: '2026-07-22T08:00:00.000Z',
-          receivedAt: '2026-07-22T08:00:01.000Z',
+          },
         } }) }],
         structuredContent: { operatingSummary: {
-          id: '01J8ZQK7V0A2M4N6P8R0T2W4D1', summaryDate: '2026-07-22', revision: 1,
+          summaryDate: '2026-07-22', revision: 1,
           currency: 'CNY', metrics: {
             gmvMinor: 123_456, paidOrderCount: 12, refundMinor: 500,
             refundOrderCount: 1, activeCustomerCount: 8,
-          }, payloadHash: 'o'.repeat(43), occurredAt: '2026-07-22T08:00:00.000Z',
-          receivedAt: '2026-07-22T08:00:01.000Z',
+          },
         } },
       }),
       getOpApprovalBridge: vi.fn().mockResolvedValue({
@@ -407,7 +408,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
             gmvMinor: 123_456, paidOrderCount: 12, refundMinor: 500,
           },
           sources: [
-            'org_employees', 'approval_instances', 'recruitment_positions',
+            'org_employees', 'approval_instances', 'approval_actions', 'recruitment_positions',
             'recruitment_applications', 'knowledge_training_assignments',
             'payroll_periods', 'op_operating_summaries',
           ],
@@ -434,7 +435,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
             gmvMinor: 123_456, paidOrderCount: 12, refundMinor: 500,
           },
           sources: [
-            'org_employees', 'approval_instances', 'recruitment_positions',
+            'org_employees', 'approval_instances', 'approval_actions', 'recruitment_positions',
             'recruitment_applications', 'knowledge_training_assignments',
             'payroll_periods', 'op_operating_summaries',
           ],
@@ -602,6 +603,9 @@ describe('MCP Streamable HTTP 协议集成', () => {
       'payroll_reconciliation_get',
       'payroll_shadow_cycle_get',
       'payroll_cutover_readiness_get',
+      'payroll_adjustment_status_get',
+      'payroll_adjustment_tax_correction_status_get',
+      'payroll_annual_reconciliation_status_get',
       'op_operating_summary_get',
       'op_approval_bridge_get',
       'management_dashboard_get',
@@ -617,6 +621,101 @@ describe('MCP Streamable HTTP 协议集成', () => {
       'recruitment_offer_send_prepare',
       'recruitment_offer_send_execute',
     ]);
+    const jsonSchemaDialect = 'https://json-schema.org/draft/2020-12/schema';
+    for (const tool of listedTools.tools) {
+      expect(tool.inputSchema).toMatchObject({ type: 'object' });
+      if (tool.inputSchema.$schema === undefined) {
+        expect(tool.inputSchema).toEqual({ type: 'object', properties: {} });
+      } else {
+        expect(tool.inputSchema.$schema).toBe(jsonSchemaDialect);
+      }
+      expect(tool.outputSchema).toMatchObject({
+        $schema: jsonSchemaDialect,
+        type: 'object',
+      });
+    }
+    const marketingTool = listedTools.tools.find(
+      (tool) => tool.name === 'marketing_side_effect_get',
+    );
+    expect(marketingTool?.outputSchema).toMatchObject({
+      type: 'object',
+      additionalProperties: false,
+      required: ['sideEffect'],
+      properties: {
+        sideEffect: {
+          type: 'object',
+          additionalProperties: false,
+          required: [
+            'eventId',
+            'kind',
+            'aggregateId',
+            'aggregateVersion',
+            'channel',
+            'status',
+            'attempts',
+            'deliveryAttempts',
+            'nextAttemptAt',
+            'dispatchedAt',
+            'completedAt',
+            'lastErrorCode',
+          ],
+          properties: {
+            aggregateId: {
+              type: 'string',
+              pattern: '^[A-Za-z0-9][A-Za-z0-9-]{7,127}$',
+            },
+            nextAttemptAt: { type: 'string', format: 'date-time' },
+          },
+        },
+      },
+    });
+    expect(JSON.stringify(marketingTool?.outputSchema)).toContain(
+      '"pattern":"^[A-Z][A-Z0-9_]{2,127}$"',
+    );
+    const approvalToolContracts = [
+      ['approval_get_inbox', 'R0', 'direct', []],
+      ['approval_get', 'R0', 'direct', ['instanceId']],
+      ['approval_timeline_get', 'R0', 'direct', ['instanceId']],
+      [
+        'approval_submit_prepare',
+        'R1',
+        'prepare',
+        ['instanceId', 'expectedVersion', 'prepareKey'],
+      ],
+      ['approval_submit_execute', 'R1', 'execute', ['operationId', 'confirmationCredential']],
+      [
+        'approval_withdraw_prepare',
+        'R1',
+        'prepare',
+        ['instanceId', 'expectedVersion', 'prepareKey'],
+      ],
+      ['approval_withdraw_execute', 'R1', 'execute', ['operationId', 'confirmationCredential']],
+      [
+        'approval_decide_prepare',
+        'R2',
+        'prepare',
+        ['instanceId', 'expectedVersion', 'prepareKey', 'principalApproverId', 'outcome'],
+      ],
+      ['approval_decide_execute', 'R2', 'execute', ['operationId', 'confirmationCredential']],
+    ] as const;
+    for (const [name, riskLevel, confirmationMode, required] of approvalToolContracts) {
+      const tool = listedTools.tools.find((candidate) => candidate.name === name);
+      expect(tool, `${name} 应存在于 MCP 能力目录`).toBeDefined();
+      expect(tool?.inputSchema).toMatchObject({ type: 'object' });
+      expect(tool?.outputSchema).toMatchObject({ type: 'object' });
+      if (required.length > 0) {
+        expect(tool?.inputSchema.required).toEqual(expect.arrayContaining([...required]));
+      }
+      expect(tool?.annotations).toMatchObject({
+        openWorldHint: false,
+        idempotentHint: true,
+      });
+      expect(tool?._meta).toMatchObject({
+        'com.gaoq/riskLevel': riskLevel,
+        'com.gaoq/jsonSchemaDialect': jsonSchemaDialect,
+        'com.gaoq/confirmationMode': confirmationMode,
+      });
+    }
     const resources = await client.listResources();
     expect(resources.resources).toEqual(expect.arrayContaining([
       expect.objectContaining({ uri: 'gaoq://mcp/guide' }),
@@ -656,6 +755,11 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ uriTemplate: 'erp://payroll/reconciliations/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://payroll/shadow-cycles/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://payroll/cutover-readiness/{id}' }),
+      expect.objectContaining({ uriTemplate: 'erp://payroll/adjustments/{id}' }),
+      expect.objectContaining({
+        uriTemplate: 'erp://payroll/adjustment-tax-corrections/{id}',
+      }),
+      expect.objectContaining({ uriTemplate: 'erp://payroll/annual-reconciliations/{id}' }),
       expect.objectContaining({ uriTemplate: 'erp://op/operating-summaries/{date}' }),
       expect.objectContaining({ uriTemplate: 'erp://op/approval-bridges/{externalEventId}' }),
       expect.objectContaining({ uriTemplate: 'erp://analytics/management-dashboard/{asOf}' }),
@@ -682,6 +786,11 @@ describe('MCP Streamable HTTP 协议集成', () => {
       expect.objectContaining({ name: 'payroll_reconciliation_review_guide' }),
       expect.objectContaining({ name: 'payroll_shadow_cycle_review_guide' }),
       expect.objectContaining({ name: 'payroll_cutover_readiness_review_guide' }),
+      expect.objectContaining({ name: 'payroll_adjustment_review_guide' }),
+      expect.objectContaining({
+        name: 'payroll_adjustment_tax_correction_review_guide',
+      }),
+      expect.objectContaining({ name: 'payroll_annual_reconciliation_review_guide' }),
       expect.objectContaining({ name: 'op_operating_summary_review_guide' }),
       expect.objectContaining({ name: 'op_approval_bridge_review_guide' }),
       expect.objectContaining({ name: 'management_dashboard_review_guide' }),
@@ -983,6 +1092,9 @@ describe('MCP Streamable HTTP 协议集成', () => {
       ['payroll_reconciliation_get', { id: validId }],
       ['payroll_shadow_cycle_get', { id: validId }],
       ['payroll_cutover_readiness_get', { id: validId }],
+      ['payroll_adjustment_status_get', { id: validId }],
+      ['payroll_adjustment_tax_correction_status_get', { id: validId }],
+      ['payroll_annual_reconciliation_status_get', { id: validId }],
       ['op_operating_summary_get', { date: '2026-07-22' }],
       ['data_migration_report_get', { runId: validId }],
       ['management_dashboard_export_prepare', {
@@ -1073,6 +1185,18 @@ describe('MCP Streamable HTTP 协议集成', () => {
       [
         'getPayrollCutoverReadiness',
         'erp://payroll/cutover-readiness/01J8ZQK7V0A2M4N6P8R0T2W4P5',
+      ],
+      [
+        'getPayrollAdjustmentStatus',
+        'erp://payroll/adjustments/01J8ZQK7V0A2M4N6P8R0T2W4A3',
+      ],
+      [
+        'getPayrollAdjustmentTaxCorrectionStatus',
+        'erp://payroll/adjustment-tax-corrections/01J8ZQK7V0A2M4N6P8R0T2W4F1',
+      ],
+      [
+        'getAnnualPayrollReconciliationStatus',
+        'erp://payroll/annual-reconciliations/01J8ZQK7V0A2M4N6P8R0T2W4Y1',
       ],
       ['getOpOperatingSummary', 'erp://op/operating-summaries/2026-07-22'],
       ['getOpApprovalBridge', 'erp://op/approval-bridges/approval-event-001'],

@@ -14,14 +14,16 @@ import { SsoHttpClient } from './sso-http-client.js';
 const DINGTALK_TOKEN_URL = 'https://api.dingtalk.com/v1.0/oauth2/userAccessToken';
 const DINGTALK_PROFILE_URL = 'https://api.dingtalk.com/v1.0/contact/users/me';
 const DINGTALK_AUTHORIZE_URL = 'https://login.dingtalk.com/oauth2/auth';
+const identifier = z.string().min(1).max(256)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/);
 
 const tokenSchema = z.object({
   accessToken: z.string().min(1),
-  corpId: z.string().min(1),
+  corpId: identifier,
 });
 const profileSchema = z.object({
-  unionId: z.string().min(1),
-  openId: z.string().min(1),
+  unionId: identifier,
+  openId: identifier,
   nick: z.string().min(1).max(256),
 });
 
@@ -71,6 +73,12 @@ export class DingTalkSsoAdapter extends DingTalkSsoAdapterToken {
     if (!tokenResult.success) {
       throw new UnauthorizedException({ code: 'SSO_CODE_REJECTED', message: '钉钉授权码无效' });
     }
+    if (tokenResult.data.corpId !== input.expectedExternalTenantId) {
+      throw new UnauthorizedException({
+        code: 'SSO_PROFILE_REJECTED',
+        message: '无法验证钉钉身份',
+      });
+    }
 
     const profileResult = profileSchema.safeParse(
       await this.http.getJson({
@@ -81,13 +89,13 @@ export class DingTalkSsoAdapter extends DingTalkSsoAdapterToken {
     if (!profileResult.success) {
       throw new UnauthorizedException({ code: 'SSO_PROFILE_REJECTED', message: '无法验证钉钉身份' });
     }
-    return {
+    return Object.freeze({
       provider: this.provider,
       externalTenantId: tokenResult.data.corpId,
       unionId: profileResult.data.unionId,
       externalUserId: profileResult.data.openId,
       displayName: profileResult.data.nick,
-    };
+    });
   }
 
   private requiredConfig(

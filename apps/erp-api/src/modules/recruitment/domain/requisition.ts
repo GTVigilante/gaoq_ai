@@ -41,7 +41,7 @@ export function createRecruitmentRequisition(
     actorId: input.actorId,
   })) assertRecruitmentId(value, field);
   assertRecruitmentLabel(input.positionTitle, 'positionTitle', 128);
-  assertRecruitmentLabel(input.justification, 'justification', 4_096);
+  assertRecruitmentLabel(input.justification, 'justification', 4_096, 3);
   if (!Number.isSafeInteger(input.headcount) || input.headcount < 1 || input.headcount > 10_000) {
     throw new RecruitmentDomainError('RECRUITMENT_HEADCOUNT_INVALID', 'HC 数量必须为 1..10000 的整数');
   }
@@ -72,13 +72,10 @@ export function submitRecruitmentRequisition(
   if (requisition.status !== 'draft' || requisition.createdBy !== input.actorId) {
     throw new RecruitmentDomainError('RECRUITMENT_REQUISITION_SUBMIT_DENIED', '只有创建人可提交 HC 草稿');
   }
-  return deepFreezeRecruitment({
-    ...requisition,
+  return advanceRequisition(requisition, now, {
     status: 'pending_approval' as const,
     approvalInstanceId: input.approvalInstanceId,
     approvalHistoryId: null,
-    version: requisition.version + 1,
-    updatedAt: toRecruitmentIso(now),
   });
 }
 
@@ -109,7 +106,7 @@ export function restoreRecruitmentRequisitionFromMigration(
     createdBy: input.createdBy,
   })) assertRecruitmentId(value, field);
   assertRecruitmentLabel(input.positionTitle, 'positionTitle', 128);
-  assertRecruitmentLabel(input.justification, 'justification', 4_096);
+  assertRecruitmentLabel(input.justification, 'justification', 4_096, 3);
   assertRecruitmentVersion(input.version);
   if (!Number.isSafeInteger(input.headcount) || input.headcount < 1 || input.headcount > 10_000) {
     throw new RecruitmentDomainError('RECRUITMENT_HEADCOUNT_INVALID', 'HC 数量必须为 1..10000 的整数');
@@ -169,17 +166,21 @@ export function applyRecruitmentApprovalOutcome(
   now: Date,
 ): RecruitmentRequisition {
   assertCommand(requisition, input.tenantId, input.expectedVersion);
+  assertRecruitmentId(input.approvalInstanceId, 'approvalInstanceId');
+  if (input.outcome !== 'approved' && input.outcome !== 'rejected') {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_APPROVAL_OUTCOME_INVALID',
+      'HC 审批结果必须为 approved 或 rejected',
+    );
+  }
   if (
     requisition.status !== 'pending_approval' || !input.approvalVerified ||
     requisition.approvalInstanceId !== input.approvalInstanceId
   ) throw new RecruitmentDomainError(
     'RECRUITMENT_APPROVAL_EVIDENCE_INVALID', 'HC 审批结果缺少可信审批证据或引用不匹配',
   );
-  return deepFreezeRecruitment({
-    ...requisition,
+  return advanceRequisition(requisition, now, {
     status: input.outcome,
-    version: requisition.version + 1,
-    updatedAt: toRecruitmentIso(now),
   });
 }
 
@@ -192,10 +193,7 @@ export function closeRecruitmentRequisition(
   if (requisition.status !== 'approved') throw new RecruitmentDomainError(
     'RECRUITMENT_REQUISITION_CLOSE_INVALID', '只有已批准 HC 可以关闭',
   );
-  return deepFreezeRecruitment({
-    ...requisition, status: 'closed' as const, version: requisition.version + 1,
-    updatedAt: toRecruitmentIso(now),
-  });
+  return advanceRequisition(requisition, now, { status: 'closed' as const });
 }
 
 function assertCommand(
@@ -204,15 +202,46 @@ function assertCommand(
   expectedVersion: number,
 ): void {
   assertRecruitmentTenant(requisition.tenantId, tenantId);
+  assertRecruitmentVersion(requisition.version);
   assertRecruitmentVersion(expectedVersion);
   if (requisition.version !== expectedVersion) throw new RecruitmentDomainError(
     'RECRUITMENT_VERSION_CONFLICT', 'HC 需求版本冲突',
   );
 }
 
+function advanceRequisition<T extends Partial<RecruitmentRequisition>>(
+  requisition: RecruitmentRequisition,
+  now: Date,
+  patch: T,
+): RecruitmentRequisition {
+  const updatedAt = toRecruitmentIso(now);
+  if (requisition.version >= Number.MAX_SAFE_INTEGER) {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_REQUISITION_VERSION_EXHAUSTED',
+      'HC 版本已达到安全整数上限',
+    );
+  }
+  if (updatedAt < requisition.updatedAt) throw new RecruitmentDomainError(
+    'RECRUITMENT_REQUISITION_TIMELINE_INVALID',
+    'HC 更新时间不能早于当前版本',
+  );
+  return deepFreezeRecruitment({
+    ...requisition,
+    ...patch,
+    version: requisition.version + 1,
+    updatedAt,
+  });
+}
+
 function strictMigrationIso(value: string): string {
+  if (typeof value !== 'string') {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_REQUISITION_MIGRATION_TIME_INVALID',
+      'HC 迁移时间必须为规范 UTC ISO 时间',
+    );
+  }
   const parsed = new Date(value);
-  if (typeof value !== 'string' || Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value) {
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value) {
     throw new RecruitmentDomainError(
       'RECRUITMENT_REQUISITION_MIGRATION_TIME_INVALID',
       'HC 迁移时间必须为规范 UTC ISO 时间',

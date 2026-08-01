@@ -28,6 +28,8 @@ export class AttendanceProviderStateRecord {
   @Prop({ type: String, default: null, minlength: 22, maxlength: 22, match: BASE64URL_PATTERN })
   cursorAuthTag!: string | null;
   @Prop({ type: Date, default: null }) lastPolledAt!: Date | null;
+  @Prop({ type: String, default: null, match: /^\d{4}-\d{2}-\d{2}$/ })
+  committedThroughDate!: string | null;
   @Prop({ type: Date, required: true }) nextPollAt!: Date;
   @Prop({ type: String, default: null, maxlength: 128, match: /^[A-Z0-9_]+$/ })
   lastFailureCode!: string | null;

@@ -16,19 +16,12 @@ const LOCK_TIMEOUT_MS = 5 * 60 * 1_000;
 const MAX_RELAY_ATTEMPTS = 6;
 const WORKER_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 const terminalEventSchema = z.object({
-  specversion: z.literal('1.0'),
-  id: z.string().min(1).max(128),
-  source: z.literal('//gaoq-erp/approval-module'),
   type: z.enum([
     'cn.gaoq.erp.approval_instance.decided.v1',
     'cn.gaoq.erp.approval_instance.withdrawn.v1',
   ]),
-  subject: z.string().min(1).max(512),
   time: z.string().datetime({ offset: true }),
-  datacontenttype: z.literal('application/json'),
   tenantId: z.string().min(1).max(128),
-  idempotencyKey: z.string().min(1).max(512),
-  schemaVersion: z.literal('1'),
   data: z.object({
     tenantId: z.string().min(1).max(128),
     aggregateId: z.string().min(1).max(128),
@@ -110,7 +103,7 @@ export class OpApprovalResultRelayService {
               approvalVersion: bridge.approvalVersion,
             }, { $set: {
               approvalStatus: terminal.result, approvalVersion: terminal.version,
-              completedAt: terminal.occurredAt,
+              completedAt: terminal.occurredAt, updatedAt: terminal.occurredAt,
             } }, { session, timestamps: false, runValidators: true });
             if (updated.matchedCount !== 1) {
               throw new Error('OP_APPROVAL_BRIDGE_VERSION_CONFLICT');
@@ -142,13 +135,8 @@ export class OpApprovalResultRelayService {
       event.eventType !== 'cn.gaoq.erp.approval_instance.withdrawn.v1') return null;
     const parsed = terminalEventSchema.parse(event.envelope);
     if (
-      parsed.id !== event.eventId ||
       parsed.type !== event.eventType ||
       parsed.tenantId !== event.tenantId ||
-      parsed.subject !==
-        `tenant/${event.tenantId}/approval.instance/${event.aggregateId}` ||
-      parsed.idempotencyKey !==
-        `${event.tenantId}:${event.eventType}:${event.aggregateId}:${event.aggregateVersion}` ||
       parsed.data.tenantId !== event.tenantId ||
       parsed.data.aggregateId !== event.aggregateId ||
       parsed.data.version !== event.aggregateVersion

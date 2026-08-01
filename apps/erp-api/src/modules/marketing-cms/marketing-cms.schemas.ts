@@ -214,6 +214,7 @@ MarketingSideEffectRecordSchema.index(
   { unique: true },
 );
 MarketingSideEffectRecordSchema.index({ status: 1, nextAttemptAt: 1, createdAt: 1 });
+MarketingSideEffectRecordSchema.index({ kind: 1, status: 1, dueAt: 1 });
 MarketingSideEffectRecordSchema.pre('validate', function validateRouting() {
   if (
     (this.kind === 'lead_notification' && this.channel === null) ||

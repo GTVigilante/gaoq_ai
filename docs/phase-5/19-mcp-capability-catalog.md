@@ -1,21 +1,47 @@
 # Phase 5 MCP 完整能力目录与联调门禁
 
 - 文档编号：phase-5/19
-- 状态：运行时能力目录门禁已交付；三类客户端与外部沙箱真实联调待执行
+- 状态：远程 Streamable HTTP 与本地 stdio 运行入口、能力目录门禁已交付；
+  Kimi Tool 目录及 Inspector 四类目录实体探针已通过，三类授权客户端与外部
+  沙箱真实联调待执行
 
 ## 运行基线
 
-生产 MCP Server 已实现 `2025-11-25`、Streamable HTTP、OAuth 2.1 Resource Server、结构化输出、Resources、Resource Templates、Prompts 和 Tools。业务 Tool 只依赖应用服务；禁止访问 Model、Repository、MongoDB、供应商 SDK 或透传上游 Token。租户只能由验证后的 OAuth 身份解析，任何 Tool 参数中的租户标识都不可信。
+生产远程 MCP Server 已实现 `2025-11-25`、Streamable HTTP、OAuth 2.1 Resource
+Server、结构化输出、Resources、Resource Templates、Prompts 和 Tools。同一
+`McpRuntimeService` 还提供本地 stdio 入口，供同机 AI 客户端、开发和 Inspector
+使用；两个 transport 共用相同能力注册、应用服务与可信身份转换，不维护私有
+Tool 分支。业务 Tool 只依赖应用服务；禁止访问 Model、Repository、MongoDB、
+供应商 SDK 或透传上游 Token。租户只能由验证后的 OAuth 身份解析，任何 Tool
+参数或 stdio 消息中的租户标识都不可信。
 
 四个静态 Resource 分别提供服务说明、审批待办、已发布审批模板目录和本人委托目录。`erp://approval/templates/published` 只返回表单字段白名单；`erp://approval/delegations/mine` 只返回限期授权最小投影。两者均复用审批应用服务，不返回租户、权限快照、流程节点、审批人解析器、发布审批人或任何表单值；敏感审批正文不得进入 MCP 明文确认命令，持续授权关系不得注册 AI 写 Tool。
 
-确定性目录直接从 `McpRuntimeService` 的 47 个真实 `registerTool` 注册点解析，不维护第二份容易漂移的手工清单：R0 23 个、R1 16 个、R2 8 个、R3 0 个。门禁验证中文标题/说明、输入与输出 Schema、幂等与副作用注解、R1/R2 封闭世界、prepare 不产生破坏性效果，以及应用服务边界。
+确定性目录直接从 `McpRuntimeService` 的真实注册点解析，不维护第二份容易漂移的
+手工清单：50 个 Tool（R0 23 个、R1 19 个、R2 8 个、R3 0 个）、4 个静态
+Resource、27 个 Resource Template 和 25 个 Prompt。新增工资调整能力只返回
+不含员工和金额的整体状态、现金结算状态与税务更正状态；税务更正只返回格式、
+内容摘要、WORM/税局证据标识和状态，年度薪税能力只返回控制状态。门禁验证
+中文标题/说明、
+Tool 输入与输出 Schema、幂等与副作用注解、Resource 定位符/MIME、Prompt 参数、
+R1/R2 封闭世界、prepare 不产生破坏性效果，以及应用服务边界。
+
+`@modelcontextprotocol/sdk 1.29.0` 的高层服务默认把 Zod Schema 显式转换为
+Draft-07，与本项目和协议的 JSON Schema 2020-12 基线不一致。仓库通过
+`pnpm.patchedDependencies` 锁定最小补丁，仅把 Tool 输入/输出转换目标改为
+`draft-2020-12`；补丁哈希进入锁文件。官方 Client 协议测试直接检查发现结果，
+要求审批 Tool 的输入/输出根为对象、方言为 2020-12、必填字段完整、
+`openWorldHint: false`，并校验命名空间中的风险等级和确认模式。升级 SDK 时若
+上游已修复，必须删除补丁并保持同一契约测试通过。
 
 ```bash
 pnpm --silent mcp:catalog:print > /secure/mcp/gaoq-mcp-catalog.json
 ```
 
-输出按源码注册顺序规范化并生成 `catalogHash`。任何 Tool 增删、标题/Schema/注解或风险分级变化都会改变目录摘要并要求重新完成安全评审和客户端联调。
+输出按源码注册顺序规范化并生成 `catalogHash`。摘要覆盖四类完整目录以及忽略
+注释和格式差异的 `runtimeContractHash`；Tool、Resource、Resource Template、
+Prompt 的增删或契约语义变化都会改变目录摘要，并要求重新完成安全评审和客户端
+联调。仅修改注释不会制造无意义的目录漂移。
 
 ## 能力分层
 
@@ -28,11 +54,28 @@ pnpm --silent mcp:catalog:print > /secure/mcp/gaoq-mcp-catalog.json
 
 上线前使用交互式用户 Agent、机器服务 Agent、只读审计 Agent 分别验证初始化协商、OAuth 发现、PKCE 或 Client Credentials、资源指示、Scope、分页、结构化内容、Tool Error、超时、取消、幂等重放、确认过期和审计。每类客户端必须读取同一 `catalogHash`；不按厂商名称做私有兼容分支，任何符合协议与授权标准的 AI 均可接入。
 
+本地 stdio 启动入口为 `apps/erp-api/dist/mcp-stdio-main.js`，要求秘密管理器注入
+短时 JWT 形态的 `MCP_STDIO_ACCESS_TOKEN`。启动预检和每条消息均复用
+`AccessTokenVerifier`，要求 `erp:mcp:server:connect`，即时撤销或过期即关闭
+连接。stdout 只传输 JSON-RPC，错误只向 stderr 输出稳定码。官方 TypeScript
+Client 已经通过真实 stdio 字节流完成初始化，并发现同一套四类目录。锁定的
+官方 MCP Inspector CLI 2.0.0 还实体执行了 `tools/list`、`resources/list`、
+`resources/templates/list` 和 `prompts/list`，逐项匹配 50/4/27/25 与当前
+两个摘要；通用配置、构建和 Inspector 命令见
+[stdio 客户端接入手册](./20-mcp-stdio-client-onboarding.md)。这些目录证据不
+包含 Resource 读取、Prompt 渲染、业务 Tool 调用、OAuth 或业务 UAT。
+
 仓库门禁 `pnpm quality:mcp-http-entry-coverage` 覆盖 `/mcp` 与 `/mcp/` 的认证前
 Origin 拒绝、控制器二次 Origin 校验、连接 Scope、浏览器确认 Cookie 会话、
 R1/R2 状态、WebAuthn 仪式与显式可信用户审计。公共确认端点不得依赖 Bearer 请求
 租户上下文；业务拒绝或确认状态推进后的审计异常均不得改变原始决定。三个入口
 目标文件语句、分支、函数和行均不得低于 90%，当前 26 项测试达到四维 100%。
+
+仓库门禁 `pnpm quality:mcp-stdio-coverage` 覆盖环境变量白名单、连接 Scope、
+启动预检、逐消息重新验签、消息顺序、撤销/过期失败关闭、稳定错误、重复关闭以及
+官方 Client 的真实字节流协商与能力发现。进程运行器另覆盖应用动态加载前预检、
+输入结束、信号竞态、迟到资源、stderr 故障与按对象身份幂等清理。认证
+transport、启动边界和进程运行器三个关键生产文件逐文件四维均不得低于 90%。
 
 ## 跨系统联调
 
@@ -43,14 +86,63 @@ OP、钉钉、飞书、e签宝、银行、税务、附件和 WORM 只通过应�
 批量部门、员工或劳动关系快照 Resource/Tool；AI 只能使用目录中已有的脱敏控制
 摘要能力，不能把 MCP 变成跨系统主数据导出通道。
 
+专业算薪是独立 OAuth Resource Server，不得由 ERP MCP 代理。其最低标准目录
+固定为四个只读/受控查询 Tool（本人薪资单、工资期间、对账和税务状态）、两个
+Resource Template 与两个解释 Prompt，逐项名称见
+[专业算薪系统边界](../phase-0/07-payroll-system-boundary.md)。三类客户端必须分别
+初始化 ERP 与专业算薪资源，证明跨 resource Token、错误 audience 和错误租户
+全部拒绝；两个 MCP 都不得持有或返回对方 Token，也不得直接访问对方数据库。
+
 业务附件迁移固定为 L4，不注册正文、对象定位符、checksum 的迁移 Tool 或 Resource。AI 只能读取聚合迁移报告；未来若增加领域附件状态能力，也必须复用应用服务并返回无正文、无对象地址、无上传人员标识的最小安全投影。
 
-工具自测和本目录不等于联调完成。最终 `integration-mcp` verdict 必须绑定 commit、API/Worker/ERP Web/Website 四类镜像、`catalogHash`、三类客户端原始协议记录、八类外部沙箱证据、跨租户拒绝、审计和安全签署，随后才能进入[跨职能 Go/No-Go 门禁](./18-go-no-go-evidence-gate.md)。
+工具自测和本目录不等于联调完成。最终 `integration-mcp` v3 verdict 必须绑定
+commit、API/Worker/ERP Web/Website 四类镜像、ERP `catalogHash`、三类客户端
+原始协议记录、九类外部沙箱证据、跨租户拒绝、审计和安全签署；同时精确绑定
+专业算薪的 HTTPS resource、独立授权服务器、镜像摘要、平台契约 `1.0.0`、
+七类事件契约摘要、完整 MCP `catalogHash` 和四类原始证据摘要，随后才能进入
+[跨职能 Go/No-Go 门禁](./18-go-no-go-evidence-gate.md)。
 
-`.github/workflows/phase-5-mcp-integration.yml` 只允许 `main` 手工启动，绑定 Required Reviewers 保护的 `phase-5-mcp-integration` Environment 和同名隔离单次 Runner 标签。Environment 配置固定环境名及 API/Worker/ERP Web/Website 镜像 SHA-256；现场摘要文件固定为 `/var/lib/gaoq/mcp/phase-5-mcp-integration.json`。工作流把证据与当前 commit、镜像和实时解析的 `catalogHash` 精确绑定，只上传脱敏 verdict，不上传 OAuth Token、协议正文、业务数据或供应商凭据。
+联调结束后 24 小时内，集成、MCP、QA 和安全四方必须以不同主体、不同证据 ID、
+不同意见摘要和不同 Ed25519 公钥完成 `approve` 签署。每个 `keyId` 等于对应
+SPKI DER 公钥的 SHA-256；按角色排序的四方 `{role,keyId}` 规范 JSON 摘要必须
+与 Repository Variable `MCP_INTEGRATION_SIGNER_KEYSET_SHA256` 完全一致。同一
+主体、公钥、证据、意见或签名不得跨角色复用。
 
-证据必须覆盖三类客户端各至少 10 次 Tool 调用、全部 47 个 Tool 的一致目录、至少 4 个 Resource、24 个 Resource Template、22 个 Prompt；OP、钉钉、飞书、e签宝、银行、税务、附件、WORM 各至少 10 次沙箱请求。跨租户和无效 Scope 各至少 30 次并全部拒绝，过期确认至少 10 次并全部拒绝；丢失、重复业务效果、未对账、租户错配、Token 暴露、生产副作用和 R3 Tool 均为零。MCP、集成、安全和 QA 四方在联调结束后独立签署。
+四方共同批准 payload 覆盖证据版本、runId、环境、commit、四类 ERP 镜像、
+ERP 完整目录、三类客户端及其原始证据摘要、九类外部沙箱、专业算薪资源/授权
+服务器/镜像/目录/事件契约与四类原始证据、跨租户/Scope/确认拒绝、安全结论、
+全部通用工件、完整 keyset 及四方批准元数据。每位负责人再以职责密钥签署共同
+payload 摘要、自身角色、keyId 和签名时间。任何签后修改、伪造签名、角色换钥、
+主体/证据/意见/公钥复用或受信 keyset 漂移均失败关闭。
+
+`.github/workflows/phase-5-mcp-integration.yml` 只允许 `main` 手工启动，使用
+`phase-5-mcp-integration` workflow policy 和 GitHub Hosted `ubuntu-latest`。
+Repository Variables 配置固定环境名、API/Worker/ERP Web/Website 镜像
+SHA-256、脱敏摘要 HTTPS URL、预期文件 SHA-256、专用 OIDC audience，以及
+专业算薪 resource、授权服务器、镜像摘要、事件契约摘要、MCP 目录摘要和
+`MCP_INTEGRATION_SIGNER_KEYSET_SHA256`。工作流
+以当前 policy 的单次 GitHub OIDC 身份取得最多 1 MiB 的严格 JSON，把证据与
+当前 commit、ERP 镜像/目录及专业算薪发布候选精确绑定，只上传脱敏 verdict，
+不上传 OAuth Token、协议正文、工资数据或供应商凭据。
+
+证据必须覆盖三类客户端各至少 10 次 Tool 调用、全部 50 个 Tool、4 个 Resource、
+27 个 Resource Template 和 25 个 Prompt 的一致目录；OP、钉钉、飞书、e签宝、
+银行、税务、附件、WORM 与专业算薪各至少 10 次沙箱请求。专业算薪另要求
+四 Tool、两 Resource Template、两 Prompt 均存在，七类事件至少回放 70 次，
+旧事件名和未知字段逐类拒绝，跨 resource Token 与错误租户各至少 30 次全部
+拒绝。ERP 跨租户和无效 Scope 各至少
+30 次并全部拒绝，过期确认至少 10 次并全部拒绝；丢失、重复业务效果、未对账、
+租户错配、Token 暴露、生产副作用和 R3 Tool 均为零。MCP、集成、安全和 QA
+四方在联调结束后独立签署。最终 Go/No-Go 证据还必须精确绑定该完整
+ERP `catalogHash`、专业算薪 `catalogHash`、事件契约摘要和双方目录，陈旧示例
+或仅满足数量下限的目录不得通过。
+
+仓库自测只生成临时 Ed25519 密钥且不保存私钥；真实人员身份、职责与角色密钥
+绑定、KMS/HSM 签署、三类客户端与九类沙箱现场记录及企业 WORM 原始材料必须由
+现场验收，不能用 fixture 或 CI verdict 替代。
 
 ```bash
+pnpm --silent mcp:integration:print-contract \
+  > /secure/mcp/phase-5-mcp-integration-contract.json
 pnpm mcp:integration:validate-evidence -- /secure/mcp/phase-5-mcp-integration.json
 ```

@@ -97,6 +97,55 @@ export interface TalentLifecycleDetail extends TalentLifecycleSummary {
   readonly timeline: readonly TalentTimelineEntry[];
 }
 
+export interface TalentLifecycleApplicationView {
+  readonly id: string;
+  readonly positionTitle: string;
+  readonly stage: string;
+  readonly sourceChannel: string;
+  readonly appliedAt: string;
+}
+
+export interface TalentLifecycleOnboardingView {
+  readonly id: string;
+  readonly status: string;
+  readonly proposedStartDate: string;
+}
+
+export interface TalentLifecycleEmploymentView {
+  readonly id: string;
+  readonly employeeNo: string;
+  readonly displayName: string;
+  readonly status: string;
+  readonly effectiveFrom: string;
+  readonly effectiveTo: string | null;
+}
+
+export interface TalentLifecycleCareCaseView {
+  readonly id: string;
+  readonly status: string;
+  readonly lastWorkingDate: string;
+}
+
+export interface TalentLifecycleAlumniConsentView {
+  readonly id: string;
+  readonly purpose: string;
+  readonly status: string;
+  readonly expiresAt: string;
+}
+
+export interface TalentLifecyclePublicDetail extends TalentLifecycleSummary {
+  readonly personId: string | null;
+  readonly applications: readonly TalentLifecycleApplicationView[];
+  readonly onboarding: readonly TalentLifecycleOnboardingView[];
+  readonly employments: readonly TalentLifecycleEmploymentView[];
+  readonly care: {
+    readonly cases: readonly TalentLifecycleCareCaseView[];
+    readonly alumniConsents: readonly TalentLifecycleAlumniConsentView[];
+  };
+  readonly touchpoints: readonly TalentTouchpointView[];
+  readonly timeline: readonly TalentTimelineEntry[];
+}
+
 export type TalentLifecycleMcpView = Pick<
   TalentLifecycleSummary,
   | 'candidateId'
@@ -143,7 +192,7 @@ export class TalentLifecycleService {
       ? values
       : values.filter((value) => value.stage === input.stage).slice(0, input.limit);
     return Object.freeze({
-      items: Object.freeze(filtered.map((value) => summary(value))),
+      items: Object.freeze(filtered.map((value) => toTalentLifecycleSummaryView(value))),
     });
   }
 
@@ -197,7 +246,7 @@ export class TalentLifecycleService {
         }, now);
         await this.touchpoints.insert(touchpoint, session);
         await this.outbox.append(touchpoint, 'created', session);
-        return { touchpoint: touchpointMutationView(touchpoint) };
+        return { touchpoint: toTalentTouchpointMutationView(touchpoint) };
       },
     ));
   }
@@ -232,7 +281,7 @@ export class TalentLifecycleService {
         }, new Date());
         await this.touchpoints.replace(closed, expectedVersion, session);
         await this.outbox.append(closed, input.status, session);
-        return { touchpoint: touchpointMutationView(closed) };
+        return { touchpoint: toTalentTouchpointMutationView(closed) };
       },
     ));
   }
@@ -252,9 +301,13 @@ export class TalentLifecycleService {
           touchpoint.ownerActorId === actor.actorId,
         );
     const employments = organization?.employments ?? [];
-    const care = await this.care.getByEmploymentIds(
-      employments.map((employment) => employment.id),
-    );
+    const care = await this.care.getByEmployments({
+      personId: organization?.personId ?? null,
+      employments: employments.map((employment) => Object.freeze({
+        id: employment.id,
+        employeeId: employment.employeeId,
+      })),
+    });
     const stage = deriveStage(candidate, onboarding, organization, care);
     const currentApplication = selectCurrentApplication(candidate);
     const currentEmployment =
@@ -302,7 +355,7 @@ export class TalentLifecycleService {
       onboarding,
       employments,
       care,
-      touchpoints: Object.freeze(touchpoints.map((touchpoint) => touchpointView(touchpoint))),
+      touchpoints: Object.freeze(touchpoints.map((touchpoint) => toTalentTouchpointView(touchpoint))),
       timeline,
     });
   }
@@ -595,7 +648,10 @@ function entry(
   });
 }
 
-function summary(value: TalentLifecycleDetail): TalentLifecycleSummary {
+/** REST 列表只返回稳定业务摘要，不透传跨域来源对象。 */
+export function toTalentLifecycleSummaryView(
+  value: TalentLifecycleSummary,
+): TalentLifecycleSummary {
   return Object.freeze({
     candidateId: value.candidateId,
     displayName: value.displayName,
@@ -612,8 +668,22 @@ function summary(value: TalentLifecycleDetail): TalentLifecycleSummary {
   });
 }
 
-function touchpointMutationView(
-  touchpoint: TalentTouchpoint,
+/** REST 写响应固定为不含租户、备注和持久化时间戳的最小投影。 */
+export function toTalentTouchpointMutationView(
+  touchpoint: Pick<
+    TalentTouchpoint,
+    | 'id'
+    | 'candidateId'
+    | 'kind'
+    | 'channel'
+    | 'direction'
+    | 'outcome'
+    | 'ownerActorId'
+    | 'occurredAt'
+    | 'nextActionAt'
+    | 'status'
+    | 'version'
+  >,
 ): TalentTouchpointMutationView {
   return Object.freeze({
     id: touchpoint.id,
@@ -630,10 +700,83 @@ function touchpointMutationView(
   });
 }
 
-function touchpointView(touchpoint: TalentTouchpoint): TalentTouchpointView {
+/** 详情中的触点只在应用服务完成责任人裁剪后附加授权可见备注。 */
+export function toTalentTouchpointView(
+  touchpoint: Pick<
+    TalentTouchpoint,
+    | 'id'
+    | 'candidateId'
+    | 'kind'
+    | 'channel'
+    | 'direction'
+    | 'outcome'
+    | 'ownerActorId'
+    | 'occurredAt'
+    | 'nextActionAt'
+    | 'status'
+    | 'note'
+    | 'version'
+  >,
+): TalentTouchpointView {
   return Object.freeze({
-    ...touchpointMutationView(touchpoint),
+    ...toTalentTouchpointMutationView(touchpoint),
     note: touchpoint.note,
+  });
+}
+
+/**
+ * REST 详情显式压缩四域内部快照，只保留管理页面契约所需字段。
+ * 联系授权内部期限、部门路由、任务证据和跨域关联键不得随对象展开泄漏。
+ */
+export function toTalentLifecyclePublicDetail(
+  value: TalentLifecycleDetail,
+): TalentLifecyclePublicDetail {
+  return Object.freeze({
+    ...toTalentLifecycleSummaryView(value),
+    personId: value.personId,
+    applications: Object.freeze(value.applications.map((application) => Object.freeze({
+      id: application.id,
+      positionTitle: application.positionTitle,
+      stage: application.stage,
+      sourceChannel: application.sourceChannel,
+      appliedAt: application.appliedAt,
+    }))),
+    onboarding: Object.freeze(value.onboarding.map((instance) => Object.freeze({
+      id: instance.id,
+      status: instance.status,
+      proposedStartDate: instance.proposedStartDate,
+    }))),
+    employments: Object.freeze(value.employments.map((employment) => Object.freeze({
+      id: employment.id,
+      employeeNo: employment.employeeNo,
+      displayName: employment.displayName,
+      status: employment.status,
+      effectiveFrom: employment.effectiveFrom,
+      effectiveTo: employment.effectiveTo,
+    }))),
+    care: Object.freeze({
+      cases: Object.freeze(value.care.cases.map((careCase) => Object.freeze({
+        id: careCase.id,
+        status: careCase.status,
+        lastWorkingDate: careCase.lastWorkingDate,
+      }))),
+      alumniConsents: Object.freeze(value.care.alumniConsents.map((consent) => Object.freeze({
+        id: consent.id,
+        purpose: consent.purpose,
+        status: consent.status,
+        expiresAt: consent.expiresAt,
+      }))),
+    }),
+    touchpoints: Object.freeze(value.touchpoints.map(toTalentTouchpointView)),
+    timeline: Object.freeze(value.timeline.map((item) => Object.freeze({
+      id: item.id,
+      domain: item.domain,
+      eventType: item.eventType,
+      title: item.title,
+      occurredAt: item.occurredAt,
+      referenceType: item.referenceType,
+      referenceId: item.referenceId,
+    }))),
   });
 }
 

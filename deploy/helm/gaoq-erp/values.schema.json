@@ -54,12 +54,15 @@
     },
     "runtime": {
       "type": "object",
-      "required": ["apiConfigMapName", "apiSecretName", "workerConfigMapName", "workerSecretName", "webConfigMapName", "webSecretName", "websiteConfigMapName", "websiteSecretName"],
+      "required": ["apiConfigMapName", "apiConfigMapHash", "apiSecretName", "workerConfigMapName", "workerConfigMapHash", "workerSecretName", "contractHash", "webConfigMapName", "webSecretName", "websiteConfigMapName", "websiteSecretName"],
       "properties": {
         "apiConfigMapName": { "$ref": "#/definitions/dnsLabel" },
+        "apiConfigMapHash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
         "apiSecretName": { "$ref": "#/definitions/dnsLabel" },
         "workerConfigMapName": { "$ref": "#/definitions/dnsLabel" },
+        "workerConfigMapHash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
         "workerSecretName": { "$ref": "#/definitions/dnsLabel" },
+        "contractHash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
         "webConfigMapName": { "$ref": "#/definitions/dnsLabel" },
         "webSecretName": { "$ref": "#/definitions/dnsLabel" },
         "websiteConfigMapName": { "$ref": "#/definitions/dnsLabel" },

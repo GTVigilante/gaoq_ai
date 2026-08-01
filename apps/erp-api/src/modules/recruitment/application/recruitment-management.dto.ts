@@ -18,6 +18,7 @@ export class CreateRecruitmentRequisitionDto {
   @IsString()
   @MinLength(1)
   @MaxLength(128)
+  @Matches(/\S/u)
   positionTitle!: string;
 
   @IsInt()
@@ -28,6 +29,7 @@ export class CreateRecruitmentRequisitionDto {
   @IsString()
   @MinLength(3)
   @MaxLength(4_096)
+  @Matches(/^(?:\s*\S){3}[\s\S]*$/u)
   justification!: string;
 }
 
@@ -38,6 +40,7 @@ export class CreateRecruitmentPositionDto {
   @IsString()
   @MinLength(1)
   @MaxLength(128)
+  @Matches(/\S/u)
   location!: string;
 }
 

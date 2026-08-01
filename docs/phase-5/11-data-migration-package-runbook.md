@@ -34,7 +34,7 @@
 
 `attendance_monthly_snapshots` 必须按员工、月份、版本升序排列。来源只提交规则版本、严格 UTC 截止/关账时间、四项分钟控制总量、事实/修订计数、前序与重开审批来源引用及独立 WORM；不得提交目标逐日明细或目标哈希。目标端重新查询截止时间内的事实和修订、重算并核对控制总量，v2+ 精确校验直接前序和 `attendance_month_reopen` approved 历史后才激活新版本。
 
-`payroll_rule_packs` 只提交固定税率结构、法规来源摘要/引用、版本、生效区间、`payroll_rule_pack` approved 历史及 WORM；目标重新执行确定性计算内核的规则校验。`payroll_compensation_profiles` 包含 L4 金额与扣缴策略，来源包必须独立加密；目标只保存 AES-256-GCM 密文和控制摘要，并核验员工映射、`payroll_compensation` approved 历史、连续版本、不重叠区间和唯一 WORM。
+`payroll_rule_packs` 只提交固定税率结构、法规来源摘要/引用、版本、生效区间、`payroll_rule_pack` approved 历史及 WORM；目标重新执行确定性计算内核的规则校验。`payroll_compensation_profiles` 包含 `jurisdictionCode`、L4 金额与扣缴策略，来源包必须独立加密；目标保存 AES-256-GCM 密文、法域控制字段和控制摘要，并核验员工映射、`payroll_compensation` approved 历史、连续版本、不重叠区间和唯一 WORM。月中变更必须由相邻版本完整覆盖，禁止迁移器自行补齐缺口。
 
 `payroll_periods` 只提交月份、`draft|collecting`、制单员工来源引用、创建/更新时间和唯一 WORM。不得提交目标 actorId、运行摘要、审批、锁定、支付或对账状态。`payroll_calculation_runs` 必须按税年、月份、运行序号升序，且 `expectedPeriodVersion = runNumber + 1`；每条记录引用一个已迁移周期、一个生效规则包，以及每位员工对应的已迁移员工、薪酬档案和 active 考勤月结。运行 1 把周期从 collecting 推到 review；运行 2+ 只有在前次迁移运行的 WORM、活动引用和控制摘要全部一致时才允许 review 重算。来源提交员工行应发/税额/实发及期间控制汇总，目标重新计算并逐项核对；前月尚未迁移锁定时，只能继承运行 WORM 与周期摘要一致的目标重算结果。该包包含 L4 工资控制金额，必须在隔离区静态加密；不得包含目标哈希、计算步骤、累计税状态、银行卡、身份证件或密钥。单条最多 5,000 名员工、20,000 个去重来源关联，并受 API 8 MiB 请求上限约束；容量演练必须覆盖最大实际工资人数。
 
@@ -84,7 +84,16 @@ unset ERP_MIGRATION_TOKEN
 - 网络超时或进程中断后使用同一来源包重跑 apply；禁止修改原包后复用 `sourceRunId`。
 - 当前实现会在预检期间维护来源记录 ID 集合；超大数据包必须按已批准 Scope 和容量演练结果拆分，不得绕过服务端总控制量。
 
-附件网关通过 `DATA_MIGRATION_ATTACHMENT_GATEWAY_ENDPOINT` 与 `DATA_MIGRATION_ATTACHMENT_GATEWAY_BEARER_TOKEN` 成套配置，必须位于 ERP 授权域之外的标准 HTTPS 权限域。网关负责来源凭据、正文拉取、扫描与 WORM 归档；ERP 只发送来源标识、预期 checksum、由服务端 Scope 固定映射的 `L3|L4` 分级和不少于 2555 天的保留期。`recruitment_offers`、三个考勤 Scope、`payroll_compensation_profiles`、`payroll_calculation_runs`、`payroll_period_approvals`、`payroll_period_locks`、`payroll_tax_filings`、`payroll_reconciliations`、`business_attachments`、三个 Treasury Scope 强制为 L4；`payroll_rule_packs` 与 `payroll_periods` 为 L3。来源包和客户端不能提交或降低分级，网关回执必须原样确认。
+附件网关通过 `DATA_MIGRATION_ATTACHMENT_GATEWAY_ENDPOINT` 与 `DATA_MIGRATION_ATTACHMENT_GATEWAY_BEARER_TOKEN` 成套配置，必须位于 ERP 授权域之外的标准 HTTPS 权限域。网关负责来源凭据、正文拉取、扫描与 WORM 归档；ERP 只发送来源标识、预期 checksum、由服务端 Scope 固定映射的 `L3|L4` 分级和不少于 2555 天的保留期。`recruitment_offers`、三个考勤 Scope、`payroll_compensation_profiles`、`payroll_calculation_runs`、`payroll_period_approvals`、`payroll_period_locks`、`payroll_tax_filings`、`payroll_reconciliations`、`business_attachments`、三个 Treasury Scope 强制为 L4；`payroll_rule_packs` 与 `payroll_periods` 为 L3。来源包和客户端不能提交或降低分级。
+
+成功响应固定为无压缩、最大 16 KiB 的严格 JSON 对象：
+`schemaVersion=erp-data-migration-attachment-receipt.v1`，并逐项返回
+`tenantId`、`runId`、`sourceSystem`、`sourceAttachmentId`、
+`targetEvidenceId`、`malwareScanEvidenceId`、`checksum`、
+`immutable=true`、`malwareClean=true`、`retentionDays` 和
+`classification`。前四项与请求上下文、checksum、分级必须完全一致，回执保留期
+不得低于请求；任何额外字段、上下文错位、非 JSON、非法 UTF-8、非规范或超限
+Content-Length 均视为无效回执。非 2xx 只按状态码分类，不读取上游正文。
 
 ## 完整差异证据导出
 

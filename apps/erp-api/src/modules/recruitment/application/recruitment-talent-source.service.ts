@@ -81,6 +81,7 @@ export class RecruitmentTalentSourceService {
     candidateId: string,
     failIfMissing: boolean,
   ): Promise<RecruitmentTalentCandidate | null> {
+    const tenantId = this.context.getTenantRequired().tenantId;
     const candidate = await this.candidates.findById(candidateId);
     if (candidate === null) {
       if (failIfMissing) throw new NotFoundException({
@@ -89,13 +90,30 @@ export class RecruitmentTalentSourceService {
       });
       return null;
     }
+    if (candidate.tenantId !== tenantId || candidate.id !== candidateId) {
+      throw new Error('TALENT_LIFECYCLE_CANDIDATE_REFERENCE_INVALID');
+    }
     const applications = await this.applications.findByCandidateId(candidate.id);
     const composed = await Promise.all(applications.map(async (application) => {
+      if (application.tenantId !== tenantId || application.candidateId !== candidate.id) {
+        throw new Error('TALENT_LIFECYCLE_APPLICATION_REFERENCE_INVALID');
+      }
       const [position, stageHistory] = await Promise.all([
         this.positions.findById(application.positionId),
         this.stages.findByApplicationId(application.id),
       ]);
-      if (position === null) throw new Error('TALENT_LIFECYCLE_POSITION_REFERENCE_INVALID');
+      if (
+        position === null ||
+        position.tenantId !== tenantId ||
+        position.id !== application.positionId
+      ) {
+        throw new Error('TALENT_LIFECYCLE_POSITION_REFERENCE_INVALID');
+      }
+      if (stageHistory.some((event) =>
+        event.tenantId !== tenantId || event.applicationId !== application.id
+      )) {
+        throw new Error('TALENT_LIFECYCLE_STAGE_REFERENCE_INVALID');
+      }
       return Object.freeze({
         id: application.id,
         positionId: position.id,

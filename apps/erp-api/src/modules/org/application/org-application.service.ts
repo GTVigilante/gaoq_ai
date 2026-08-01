@@ -72,9 +72,109 @@ import type {
 
 const MAX_DEPARTMENT_DEPTH = 100;
 
+export interface OrgDepartmentView {
+  readonly id: string;
+  readonly code: string;
+  readonly name: string;
+  readonly status: Department['status'];
+  readonly parentId: string | null;
+  readonly managerId: string | null;
+  readonly sortOrder: number;
+  readonly version: number;
+}
+
+export interface OrgEmployeeView {
+  readonly id: string;
+  readonly employeeNo: string;
+  readonly displayName: string;
+  readonly status: Employee['status'];
+  readonly departmentIds: readonly string[];
+  readonly primaryDepartmentId: string;
+  readonly positionIds: readonly string[];
+  readonly jobLevelId: string | null;
+  readonly version: number;
+}
+
+export interface OrgPositionView {
+  readonly id: string;
+  readonly code: string;
+  readonly name: string;
+  readonly status: Position['status'];
+  readonly version: number;
+}
+
+export interface OrgJobLevelView {
+  readonly id: string;
+  readonly code: string;
+  readonly name: string;
+  readonly track: JobLevel['track'];
+  readonly rank: number;
+  readonly version: number;
+}
+
 export interface OrgChart {
-  readonly departments: readonly Department[];
-  readonly employees: readonly Employee[];
+  readonly departments: readonly OrgDepartmentView[];
+  readonly employees: readonly OrgEmployeeView[];
+}
+
+/** 组织公开投影只保留业务标识和并发版本，禁止暴露租户路由与持久化时间戳。 */
+export function toOrgDepartmentView(department: OrgDepartmentView): OrgDepartmentView {
+  return Object.freeze({
+    id: department.id,
+    code: department.code,
+    name: department.name,
+    status: department.status,
+    parentId: department.parentId,
+    managerId: department.managerId,
+    sortOrder: department.sortOrder,
+    version: department.version,
+  });
+}
+
+/** 员工公开投影不包含租户路由和持久化时间戳。 */
+export function toOrgEmployeeView(employee: OrgEmployeeView): OrgEmployeeView {
+  return Object.freeze({
+    id: employee.id,
+    employeeNo: employee.employeeNo,
+    displayName: employee.displayName,
+    status: employee.status,
+    departmentIds: Object.freeze([...employee.departmentIds]),
+    primaryDepartmentId: employee.primaryDepartmentId,
+    positionIds: Object.freeze([...employee.positionIds]),
+    jobLevelId: employee.jobLevelId,
+    version: employee.version,
+  });
+}
+
+/** 岗位公开投影不包含租户路由和持久化时间戳。 */
+export function toOrgPositionView(position: OrgPositionView): OrgPositionView {
+  return Object.freeze({
+    id: position.id,
+    code: position.code,
+    name: position.name,
+    status: position.status,
+    version: position.version,
+  });
+}
+
+/** 职级公开投影不包含租户路由和持久化时间戳。 */
+export function toOrgJobLevelView(jobLevel: OrgJobLevelView): OrgJobLevelView {
+  return Object.freeze({
+    id: jobLevel.id,
+    code: jobLevel.code,
+    name: jobLevel.name,
+    track: jobLevel.track,
+    rank: jobLevel.rank,
+    version: jobLevel.version,
+  });
+}
+
+/** 统一生成 REST 与 MCP 共用的组织图最小投影。 */
+export function toOrgChartView(chart: OrgChart): OrgChart {
+  return Object.freeze({
+    departments: Object.freeze(chart.departments.map(toOrgDepartmentView)),
+    employees: Object.freeze(chart.employees.map(toOrgEmployeeView)),
+  });
 }
 
 export interface CareEmploymentSource {
@@ -123,7 +223,7 @@ export class OrgApplicationService {
       this.employees.findAll(),
     ]);
     if (actor.scopes.includes('erp:org:chart:read_all')) {
-      return { departments, employees };
+      return toOrgChartView({ departments, employees });
     }
     const visible = new Set(actor.departmentIds);
     let changed = true;
@@ -136,12 +236,12 @@ export class OrgApplicationService {
         }
       }
     }
-    return {
+    return toOrgChartView({
       departments: departments.filter((department) => visible.has(department.id)),
       employees: employees.filter((employee) =>
         employee.departmentIds.some((departmentId) => visible.has(departmentId)),
       ),
-    };
+    });
   }
 
   /** Care 只读取离职编排所需的当前组织与劳动关系，不返回身份或合同原文。 */

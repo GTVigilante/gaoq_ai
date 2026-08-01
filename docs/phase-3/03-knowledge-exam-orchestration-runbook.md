@@ -11,7 +11,7 @@ REST 契约如下：
 - `GET /knowledge/exam-runs/:id`，Scope `erp:knowledge:exam:read`；员工用户只可读取当前有效任职对应的本人考试。
 - 旧 `/knowledge/assignments/:id/exam-attempts` REST 路由已移除，任何题型均不得绕过考试运行状态机直接形成最终成绩。
 
-评分网关端点固定为 `/v1/exam-runs/start`、`/v1/exam-runs/timeout`、`/v1/exam-runs/finalize` 和 `/v1/exam-runs/status`。每份 Ed25519 签名回执必须逐字段绑定租户、运行、任务、课程、次数、题库引用及摘要、题型、评分策略、通过规则、人工复核要求、SLA、会话、试题集、提交引用、超时标记及时间。网关不得返回题目、答案或访问凭据。
+评分网关端点固定为 `/v1/exam-runs/start`、`/v1/exam-runs/timeout`、`/v1/exam-runs/finalize` 和 `/v1/exam-runs/status`。每份 Ed25519 签名回执必须逐字段绑定租户、运行、任务、课程、次数、题库引用及摘要、题型、评分策略、通过规则、人工复核要求、SLA、会话、试题集、提交引用、超时标记及时间。主观题和混合题的 `/finalize` 只能返回 `pending_review`；后续 `/status` 请求、待复核回执及已评分回执必须使用同一 `reviewEvidenceId`。客观题直接评分回执必须显式包含 `reviewEvidenceId:null`。网关不得返回题目、答案或访问凭据。
 
 ## 可靠性与安全
 
@@ -20,6 +20,14 @@ MongoDB `knowledge_exam_runs` 是唯一运行事实源；BullMQ 只每 15 秒以
 `starting → in_progress → submitted → pending_review → graded`
 
 任一网关步骤最多 8 次指数退避，之后进入 `dead`；评分网关连续 5 次失败后熔断 30 秒，半开仅允许一个探测。到达 `deadlineAt` 后只能调用受信任的超时端点形成不透明提交引用，客户端迟到提交失败关闭。最终 `knowledge_exam_attempts` 与 `graded` 状态在同一 Mongo 事务形成，状态迁移事件使用同事务 Outbox；业务提交后的审计故障单独记录，不得把已成功终态回写为失败。
+
+Adapter 外呼前必须以严格 Schema 拒绝未知字段、答案、Token 和题型/复核策略
+错位；确定性幂等键绑定固定 path 与完整请求 JSON。评分与搜索网关分别使用
+独立 Origin、可见 ASCII Bearer Token、规范 Ed25519 SPKI DER base64 公钥和
+Key ID，运行时不得复用。请求正文最大 128 KiB；回执只接受严格 JSON
+Content-Type、规范 Content-Length、16 KiB 流式上限和 Fatal UTF-8，非 200、
+声明错位、读取失败、超限和验签失败均取消响应正文并映射为稳定错误码，不记录
+上游正文或 cause。
 
 事件固定为：
 

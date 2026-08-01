@@ -151,6 +151,52 @@ export class IdempotencyService {
     request: unknown,
     handler: (session: ClientSession) => Promise<T>,
   ): Promise<T> {
+    return this.executeStored(
+      operation,
+      idempotencyKey,
+      request,
+      async (session) => {
+        const result = await handler(session);
+        return { stored: result, result };
+      },
+      (stored) => Promise.resolve(stored),
+    );
+  }
+
+  /**
+   * 执行包含短时能力值的幂等写操作。
+   *
+   * `stored` 必须是可长期写入幂等账本的安全快照；`result` 可以包含短时签名 URL
+   * 等不得落账本的响应字段。命中重放时，服务在事务结束后使用安全快照重新获取
+   * 短时结果，禁止把短时能力值伪装成普通幂等响应持久化。
+   */
+  async executeWithEphemeralResult<
+    TStored extends Record<string, unknown>,
+    TResult extends Record<string, unknown>,
+  >(
+    operation: string,
+    idempotencyKey: string,
+    request: unknown,
+    handler: (
+      session: ClientSession,
+    ) => Promise<{ readonly stored: TStored; readonly result: TResult }>,
+    replay: (stored: Readonly<TStored>) => Promise<TResult>,
+  ): Promise<TResult> {
+    return this.executeStored(operation, idempotencyKey, request, handler, replay);
+  }
+
+  private async executeStored<
+    TStored extends Record<string, unknown>,
+    TResult,
+  >(
+    operation: string,
+    idempotencyKey: string,
+    request: unknown,
+    handler: (
+      session: ClientSession,
+    ) => Promise<{ readonly stored: TStored; readonly result: TResult }>,
+    replay: (stored: Readonly<TStored>) => Promise<TResult>,
+  ): Promise<TResult> {
     if (!OPERATION_PATTERN.test(operation)) {
       throw new BadRequestException({
         code: 'IDEMPOTENCY_INVALID_OPERATION',
@@ -168,40 +214,51 @@ export class IdempotencyService {
     const filter = { tenantId, operation, idempotencyKey };
 
     const session = await this.connection.startSession();
+    let replayStored!: Readonly<TStored>;
     try {
-      return await session.withTransaction(async () => {
+      const outcome = await session.withTransaction(async () => {
         const existing = await this.records.findOne(filter).session(session).lean().exec();
         if (existing !== null) {
-          return this.replayOrReject<T>(existing, requestHash);
+          return {
+            kind: 'replay' as const,
+            stored: this.replayOrReject<TStored>(existing, requestHash),
+          };
         }
         const expiresAt = new Date(Date.now() + IDEMPOTENCY_TTL_SECONDS * 1000);
         await this.records.create(
           [{ ...filter, requestHash, status: 'processing', response: null, expiresAt }],
           { session },
         );
-        const result = await handler(session);
-        this.assertStorableResponse(result);
+        const executed = await handler(session);
+        this.assertStorableResponse(executed.stored);
         await this.records.updateOne(
           filter,
-          { $set: { status: 'completed', response: structuredClone(result) } },
+          { $set: { status: 'completed', response: structuredClone(executed.stored) } },
           { session },
         );
-        return result;
+        return { kind: 'result' as const, result: executed.result };
       });
+      if (outcome.kind === 'result') {
+        return outcome.result;
+      }
+      replayStored = outcome.stored;
     } catch (error) {
       if (isDuplicateKeyError(error)) {
         // 并发同键插入冲突：事务外重读一次裁决
         const existing = await this.records.findOne(filter).lean().exec();
         if (existing !== null) {
-          return this.replayOrReject<T>(existing, requestHash);
+          replayStored = this.replayOrReject<TStored>(existing, requestHash);
+        } else {
+          // 对应幂等记录不存在，说明 11000 来自业务 handler 的唯一约束；不得掩盖真实业务冲突。
+          throw error;
         }
-        // 对应幂等记录不存在，说明 11000 来自业务 handler 的唯一约束；不得掩盖真实业务冲突。
+      } else {
         throw error;
       }
-      throw error;
     } finally {
       await session.endSession();
     }
+    return replay(replayStored);
   }
 
   /** 请求体稳定规范 JSON 的 SHA-256（base64url）。 */

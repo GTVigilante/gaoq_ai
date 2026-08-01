@@ -8,14 +8,32 @@ import {
   Param,
   Post,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 
 import { AuditService } from '../../core/audit/audit.service.js';
 import type { AuditRecordInput } from '../../core/audit/audit.types.js';
 import type { ErpRequest } from '../../core/http/request-context.js';
 import { RequiredScopes } from '../identity/auth.decorators.js';
 import { PayrollMasterDataService } from './application/payroll-master-data.service.js';
+import {
+  PayrollAdjustmentService,
+  type PayrollAdjustmentSummary,
+} from './application/payroll-adjustment.service.js';
+import {
+  PayrollAdjustmentReceivableService,
+  type PayrollAdjustmentReceivableSummary,
+} from './application/payroll-adjustment-receivable.service.js';
+import {
+  PayrollAdjustmentTaxCorrectionService,
+  type PayrollAdjustmentTaxCorrectionSummary,
+} from './application/payroll-adjustment-tax-correction.service.js';
+import {
+  PayrollAnnualReconciliationService,
+  type AnnualPayrollReconciliationSummary,
+} from './application/payroll-annual-reconciliation.service.js';
 import { PayrollApprovalService } from './application/payroll-approval.service.js';
 import { PayrollRunService, type PayrollPeriodSummary } from './application/payroll-run.service.js';
 import { PayrollPayslipService, type PayrollPayslipView } from './application/payroll-payslip.service.js';
@@ -36,18 +54,29 @@ import {
 import {
   AttestCompensationProfileDto,
   AttestPayrollRulePackDto,
+  ApplyPayrollAdjustmentApprovalDto,
   ApprovePayrollTaxFilingDto,
   ApplyPayrollApprovalDto,
   CreatePayrollPeriodDto,
   LockPayrollPeriodDto,
+  LockPayrollAdjustmentDto,
+  OpenPayrollAdjustmentReceivableDto,
+  RecordPayrollAdjustmentRecoveryDto,
+  PreparePayrollAdjustmentTaxCorrectionDto,
+  ApprovePayrollAdjustmentTaxCorrectionDto,
+  SubmitPayrollAdjustmentTaxCorrectionDto,
   PayrollVersionCommandDto,
   PreparePayrollTaxFilingDto,
+  PreparePayrollAdjustmentDto,
+  PrepareAnnualPayrollReconciliationDto,
+  ResolveAnnualPayrollAssessmentDto,
   StartPayrollCollectionDto,
   SubmitPayrollTaxFilingDto,
   ExplainShadowPayrollDifferenceDto,
   ImportShadowPayrollCycleDto,
   SignShadowPayrollCycleDto,
 } from './application/payroll.dto.js';
+import type { PayrollAnnualSettlementLink } from './integration/payroll-tax.ports.js';
 import { LegacyPayrollBoundaryGuard } from './legacy-payroll-boundary.guard.js';
 
 @Controller('payroll')
@@ -57,6 +86,10 @@ export class PayrollController {
 
   constructor(
     private readonly runs: PayrollRunService,
+    private readonly adjustments: PayrollAdjustmentService,
+    private readonly adjustmentReceivables: PayrollAdjustmentReceivableService,
+    private readonly adjustmentTaxCorrections: PayrollAdjustmentTaxCorrectionService,
+    private readonly annualReconciliations: PayrollAnnualReconciliationService,
     private readonly approvals: PayrollApprovalService,
     private readonly payslips: PayrollPayslipService,
     private readonly masterData: PayrollMasterDataService,
@@ -65,6 +98,391 @@ export class PayrollController {
     private readonly shadows: PayrollShadowService,
     private readonly audit: AuditService,
   ) {}
+
+  /** R2：受信任薪税服务仅准备年度工资与已提交清单核对，不接受外部评估声明。 */
+  @Post('annual-reconciliations/prepare')
+  @RequiredScopes('erp:payroll:annual:prepare')
+  async prepareAnnualReconciliation(
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: PrepareAnnualPayrollReconciliationDto,
+  ): Promise<AnnualPayrollReconciliationSummary> {
+    const result = await this.annualReconciliations.prepare(this.key(key), {
+      employeeId: body.employeeId,
+      taxYear: body.taxYear,
+    });
+    await this.auditAfterCommit({
+      action: 'payroll.annual_reconciliation.prepare',
+      resourceType: 'payroll_annual_reconciliation', resourceId: result.id,
+      riskLevel: 'R2', outcome: 'success', metadata: {
+        taxYear: result.taxYear, periodCount: result.periodCount,
+        status: result.status, evidenceHash: result.evidenceHash,
+      },
+    });
+    return result;
+  }
+
+  /** R2：由隔离税务网关读取并验签官方年度评估，再生成追加核对版本。 */
+  @Post('annual-reconciliations/resolve-assessment')
+  @RequiredScopes('erp:payroll:annual:assessment:resolve')
+  async resolveAnnualAssessment(
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: ResolveAnnualPayrollAssessmentDto,
+  ): Promise<AnnualPayrollReconciliationSummary> {
+    const result = await this.annualReconciliations.resolveOfficialAssessment(
+      this.key(key),
+      { employeeId: body.employeeId, taxYear: body.taxYear },
+    );
+    await this.auditAfterCommit({
+      action: 'payroll.annual_reconciliation.assessment.resolve',
+      resourceType: 'payroll_annual_reconciliation',
+      resourceId: result.id,
+      riskLevel: 'R2',
+      outcome: 'success',
+      metadata: {
+        taxYear: result.taxYear,
+        periodCount: result.periodCount,
+        status: result.status,
+        evidenceHash: result.evidenceHash,
+      },
+    });
+    return result;
+  }
+
+  /** R2：员工本人获取短时官方汇算入口；ERP 不代理申报，审计不记录 URL。 */
+  @Post('annual-reconciliations/:id/settlement-link')
+  @RequiredScopes('erp:payroll:annual:settlement:self')
+  async createMyAnnualSettlementLink(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<PayrollAnnualSettlementLink> {
+    const result = await this.annualReconciliations.createMySettlementLink(
+      this.key(key),
+      id,
+    );
+    response.setHeader('Cache-Control', 'no-store');
+    response.setHeader('Pragma', 'no-cache');
+    await this.auditAfterCommit({
+      action: 'payroll.annual_reconciliation.settlement_link.create',
+      resourceType: 'payroll_annual_reconciliation',
+      resourceId: id,
+      riskLevel: 'R2',
+      outcome: 'success',
+      metadata: { expiresAt: result.expiresAt },
+    });
+    return result;
+  }
+
+  /** L4：年度员工薪税控制结果仅供受控角色读取，标准 MCP 不暴露。 */
+  @Get('annual-reconciliations/:id')
+  @RequiredScopes('erp:payroll:annual:read')
+  async getAnnualReconciliation(
+    @Param('id') id: string,
+  ): Promise<AnnualPayrollReconciliationSummary> {
+    const result = await this.annualReconciliations.get(id);
+    await this.audit.record({
+      action: 'payroll.annual_reconciliation.read',
+      resourceType: 'payroll_annual_reconciliation', resourceId: result.id,
+      riskLevel: 'R1', outcome: 'success', metadata: {
+        taxYear: result.taxYear, periodCount: result.periodCount,
+        status: result.status, evidenceHash: result.evidenceHash,
+      },
+    });
+    return result;
+  }
+
+  /** R2：受信任计算服务只按 ERP 引用准备锁定工资差额，不执行收付或税务重报。 */
+  @Post('adjustments/prepare')
+  @RequiredScopes('erp:payroll:adjustment:prepare')
+  async prepareAdjustment(
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: PreparePayrollAdjustmentDto,
+  ): Promise<PayrollAdjustmentSummary> {
+    const result = await this.adjustments.prepare(this.key(key), {
+      periodId: body.periodId,
+      originalCalculationLineId: body.originalCalculationLineId,
+      rulePackId: body.rulePackId, rulePackVersion: body.rulePackVersion,
+      reasonCode: body.reasonCode,
+      correctedLine: {
+        employeeId: body.correctedLine.employeeId,
+        compensationProfileId: body.correctedLine.compensationProfileId,
+        ...(body.correctedLine.additionalCompensationProfileIds === undefined ? {} : {
+          additionalCompensationProfileIds:
+            body.correctedLine.additionalCompensationProfileIds,
+        }),
+        attendanceSnapshotId: body.correctedLine.attendanceSnapshotId,
+      },
+    });
+    await this.auditAfterCommit({
+      action: 'payroll.adjustment.prepare',
+      resourceType: 'payroll_adjustment', resourceId: result.id,
+      riskLevel: 'R2', outcome: 'success', metadata: {
+        period: result.period, type: result.type, status: result.status,
+        adjustmentHash: result.adjustmentHash,
+      },
+    });
+    return result;
+  }
+
+  /** R2：已验证薪酬人员将确定性差额送入专用审批，MCP 不注册此动作。 */
+  @Post('adjustments/:id/approval')
+  @RequiredScopes('erp:payroll:adjustment:approval:request')
+  async requestAdjustmentApproval(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Body() body: PayrollVersionCommandDto,
+  ): Promise<PayrollAdjustmentSummary> {
+    const result = await this.adjustments.requestApproval(
+      this.key(key), id, body.expectedVersion,
+    );
+    await this.auditAfterCommit({
+      action: 'payroll.adjustment.approval.request',
+      resourceType: 'payroll_adjustment',
+      resourceId: result.id,
+      riskLevel: 'R2',
+      outcome: 'success',
+      metadata: adjustmentAuditMetadata(result),
+    });
+    return result;
+  }
+
+  /** 受信任同步服务只接受 Approval 专用模板终态，不接受客户端批准声明。 */
+  @Post('adjustments/:id/approval-result')
+  @RequiredScopes('erp:payroll:adjustment:approval:sync')
+  async applyAdjustmentApproval(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Body() body: ApplyPayrollAdjustmentApprovalDto,
+  ): Promise<PayrollAdjustmentSummary> {
+    const result = await this.adjustments.applyApproval(
+      this.key(key), id, body.expectedVersion, body.approvalInstanceId,
+    );
+    await this.auditAfterCommit({
+      action: 'payroll.adjustment.approval.apply',
+      resourceType: 'payroll_adjustment',
+      resourceId: result.id,
+      riskLevel: 'R2',
+      outcome: 'success',
+      metadata: adjustmentAuditMetadata(result),
+    });
+    return result;
+  }
+
+  /** R3：独立人员以 WebAuthn UV 锁定已批准调整，MCP 永不注册此动作。 */
+  @Post('adjustments/:id/lock')
+  @RequiredScopes('erp:payroll:adjustment:lock')
+  async lockAdjustment(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Body() body: LockPayrollAdjustmentDto,
+    @Req() request: ErpRequest,
+  ): Promise<PayrollAdjustmentSummary> {
+    if (request.verifiedAccessToken === undefined) throw new BadRequestException({
+      code: 'PAYROLL_ADJUSTMENT_LOCK_TOKEN_REQUIRED',
+      message: '工资调整锁定必须使用已验证人员访问令牌',
+    });
+    const result = await this.adjustments.lock(
+      this.key(key),
+      id,
+      body.expectedVersion,
+      body.strongAuthEvidenceId,
+      request.verifiedAccessToken,
+    );
+    await this.auditAfterCommit({
+      action: 'payroll.adjustment.lock',
+      resourceType: 'payroll_adjustment',
+      resourceId: result.id,
+      riskLevel: 'R3',
+      outcome: 'success',
+      metadata: {
+        ...adjustmentAuditMetadata(result),
+        strongAuthMethod: 'webauthn_uv',
+      },
+    });
+    return result;
+  }
+
+  /** L4：仅受控薪酬角色读取差额；MCP 不注册员工级调整查询。 */
+  @Get('adjustments/:id')
+  @RequiredScopes('erp:payroll:adjustment:read')
+  async getAdjustment(@Param('id') id: string): Promise<PayrollAdjustmentSummary> {
+    const result = await this.adjustments.get(id);
+    await this.audit.record({
+      action: 'payroll.adjustment.read',
+      resourceType: 'payroll_adjustment', resourceId: result.id,
+      riskLevel: 'R1', outcome: 'success', metadata: {
+        period: result.period, type: result.type, status: result.status,
+        adjustmentHash: result.adjustmentHash,
+      },
+    });
+    return result;
+  }
+
+  /** R2：独立财务人员从已锁定负向调整建立唯一员工应收；不创建负数支付。 */
+  @Post('adjustments/:id/receivable')
+  @RequiredScopes(
+    'erp:payroll:adjustment:receivable:open',
+    'erp:payroll:adjustment:receivable:source:read',
+  )
+  async openAdjustmentReceivable(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Body() body: OpenPayrollAdjustmentReceivableDto,
+  ): Promise<PayrollAdjustmentReceivableSummary> {
+    const result = await this.adjustmentReceivables.open(
+      this.key(key),
+      id,
+      { expectedAdjustmentVersion: body.expectedVersion },
+    );
+    await this.auditAdjustmentReceivable(
+      'payroll.adjustment_receivable.open',
+      result,
+      'R2',
+      true,
+    );
+    return result;
+  }
+
+  /** L4：受控薪酬/财务角色读取应收余额；标准 MCP 不暴露金额或员工链路。 */
+  @Get('adjustment-receivables/:id')
+  @RequiredScopes('erp:payroll:adjustment:receivable:read')
+  async getAdjustmentReceivable(
+    @Param('id') id: string,
+  ): Promise<PayrollAdjustmentReceivableSummary> {
+    const result = await this.adjustmentReceivables.get(id);
+    await this.auditAdjustmentReceivable(
+      'payroll.adjustment_receivable.read',
+      result,
+      'R1',
+    );
+    return result;
+  }
+
+  /**
+   * R3：仅受信任银行回款或工资运行连接器可登记恢复终态。
+   * 工资抵扣必须同时提交独立法定授权证据，MCP 永不注册此动作。
+   */
+  @Post('adjustment-receivables/:id/recoveries')
+  @RequiredScopes('erp:payroll:adjustment:receivable:settle')
+  async recordAdjustmentReceivableRecovery(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Body() body: RecordPayrollAdjustmentRecoveryDto,
+  ): Promise<PayrollAdjustmentReceivableSummary> {
+    const result = await this.adjustmentReceivables.recordRecovery(
+      this.key(key),
+      id,
+      {
+        expectedReceivableVersion: body.expectedReceivableVersion,
+        method: body.method,
+        amountMinor: body.amountMinor,
+        sourceReferenceId: body.sourceReferenceId,
+        sourceEvidenceId: body.sourceEvidenceId,
+        ...(body.legalAuthorizationEvidenceId === undefined ? {} : {
+          legalAuthorizationEvidenceId: body.legalAuthorizationEvidenceId,
+        }),
+        receivedAt: body.receivedAt,
+      },
+    );
+    await this.auditAdjustmentReceivable(
+      'payroll.adjustment_receivable.recovery_record',
+      result,
+      'R3',
+      true,
+    );
+    return result;
+  }
+
+  /** R3：独立税务人员从锁定调整制备单员工更正清单并写独立 WORM。 */
+  @Post('adjustments/:id/tax-corrections')
+  @RequiredScopes(
+    'erp:payroll:adjustment:tax_correction:prepare',
+    'erp:payroll:adjustment:tax_correction:source:read',
+  )
+  async prepareAdjustmentTaxCorrection(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Body() body: PreparePayrollAdjustmentTaxCorrectionDto,
+  ): Promise<PayrollAdjustmentTaxCorrectionSummary> {
+    const result = await this.adjustmentTaxCorrections.prepare(
+      this.key(key),
+      id,
+      body.expectedVersion,
+    );
+    await this.auditAdjustmentTaxCorrection(
+      'payroll.adjustment_tax_correction.prepare',
+      result,
+      'R3',
+      true,
+    );
+    return result;
+  }
+
+  /** 只读 L4 税务更正摘要；不返回员工、正文或 WORM 地址。 */
+  @Get('adjustment-tax-corrections/:id')
+  @RequiredScopes('erp:payroll:adjustment:tax_correction:read')
+  async getAdjustmentTaxCorrection(
+    @Param('id') id: string,
+  ): Promise<PayrollAdjustmentTaxCorrectionSummary> {
+    const result = await this.adjustmentTaxCorrections.get(id);
+    await this.auditAdjustmentTaxCorrection(
+      'payroll.adjustment_tax_correction.read',
+      result,
+      'R1',
+    );
+    return result;
+  }
+
+  /** R3：独立审批人以 WebAuthn UV 审批更正清单；MCP 永不注册此动作。 */
+  @Post('adjustment-tax-corrections/:id/approval')
+  @RequiredScopes('erp:payroll:adjustment:tax_correction:approve')
+  async approveAdjustmentTaxCorrection(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Body() body: ApprovePayrollAdjustmentTaxCorrectionDto,
+    @Req() request: ErpRequest,
+  ): Promise<PayrollAdjustmentTaxCorrectionSummary> {
+    if (request.verifiedAccessToken === undefined) throw new BadRequestException({
+      code: 'PAYROLL_ADJUSTMENT_TAX_CORRECTION_APPROVAL_TOKEN_REQUIRED',
+      message: '工资调整税务更正审批必须使用已验证人员访问令牌',
+    });
+    const result = await this.adjustmentTaxCorrections.approve(
+      this.key(key),
+      id,
+      body.expectedVersion,
+      body.strongAuthEvidenceId,
+      request.verifiedAccessToken,
+    );
+    await this.auditAdjustmentTaxCorrection(
+      'payroll.adjustment_tax_correction.approve',
+      result,
+      'R3',
+      true,
+    );
+    return result;
+  }
+
+  /** R3：仅受信任税务连接器提交 WORM 清单并回写税局受理终态。 */
+  @Post('adjustment-tax-corrections/:id/submission')
+  @RequiredScopes('erp:payroll:adjustment:tax_correction:submit')
+  async submitAdjustmentTaxCorrection(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('id') id: string,
+    @Body() body: SubmitPayrollAdjustmentTaxCorrectionDto,
+  ): Promise<PayrollAdjustmentTaxCorrectionSummary> {
+    const result = await this.adjustmentTaxCorrections.submit(
+      this.key(key),
+      id,
+      body.expectedVersion,
+    );
+    await this.auditAdjustmentTaxCorrection(
+      'payroll.adjustment_tax_correction.submit',
+      result,
+      'R3',
+      true,
+    );
+    return result;
+  }
 
   /** 影子周期脱敏控制摘要；不返回员工级差异、解释正文或 WORM 地址。 */
   @Get('shadow-cycles/:id')
@@ -364,6 +782,7 @@ export class PayrollController {
       action: 'payroll.compensation.attest', resourceType: 'payroll_compensation_profile',
       resourceId: result.id, riskLevel: 'R2', outcome: 'success', metadata: {
         employeeId: result.employeeId, version: result.version,
+        jurisdictionCode: result.jurisdictionCode,
         effectiveFrom: result.effectiveFrom, effectiveTo: result.effectiveTo ?? 'open',
       },
     });
@@ -443,6 +862,71 @@ export class PayrollController {
     await this.audit.record(input);
   }
 
+  private async auditAdjustmentReceivable(
+    action: string,
+    receivable: PayrollAdjustmentReceivableSummary,
+    riskLevel: 'R1' | 'R2' | 'R3',
+    afterCommit = false,
+  ): Promise<void> {
+    const input: AuditRecordInput = {
+      action,
+      resourceType: 'payroll_adjustment_receivable',
+      resourceId: receivable.id,
+      riskLevel,
+      outcome: 'success',
+      metadata: {
+        adjustmentId: receivable.adjustmentId,
+        adjustmentHash: receivable.adjustmentHash,
+        originalAmountMinor: receivable.originalAmountMinor,
+        recoveredAmountMinor: receivable.recoveredAmountMinor,
+        outstandingAmountMinor: receivable.outstandingAmountMinor,
+        status: receivable.status,
+        version: receivable.version,
+      },
+    };
+    if (afterCommit) {
+      await this.auditAfterCommit(input);
+      return;
+    }
+    await this.audit.record(input);
+  }
+
+  private async auditAdjustmentTaxCorrection(
+    action: string,
+    filing: PayrollAdjustmentTaxCorrectionSummary,
+    riskLevel: 'R1' | 'R3',
+    afterCommit = false,
+  ): Promise<void> {
+    const input: AuditRecordInput = {
+      action,
+      resourceType: 'payroll_adjustment_tax_correction',
+      resourceId: filing.id,
+      riskLevel,
+      outcome: 'success',
+      metadata: {
+        adjustmentId: filing.adjustmentId,
+        adjustmentHash: filing.adjustmentHash,
+        period: filing.period,
+        format: filing.format,
+        contentHash: filing.contentHash,
+        correctedTaxableEarningsMinor: filing.correctedTaxableEarningsMinor,
+        correctedWithholdingTaxMinor: filing.correctedWithholdingTaxMinor,
+        taxableEarningsDeltaMinor: filing.taxableEarningsDeltaMinor,
+        withholdingTaxDeltaMinor: filing.withholdingTaxDeltaMinor,
+        objectEvidenceId: filing.objectEvidenceId ?? 'none',
+        taxSubmissionId: filing.taxSubmissionId ?? 'none',
+        taxSubmissionEvidenceId: filing.taxSubmissionEvidenceId ?? 'none',
+        status: filing.status,
+        version: filing.version,
+      },
+    };
+    if (afterCommit) {
+      await this.auditAfterCommit(input);
+      return;
+    }
+    await this.audit.record(input);
+  }
+
   private async auditShadow(
     action: string,
     cycle: PayrollShadowCycleSummary,
@@ -485,4 +969,16 @@ export class PayrollController {
       });
     }
   }
+}
+
+function adjustmentAuditMetadata(
+  adjustment: PayrollAdjustmentSummary,
+): Readonly<Record<string, string | number>> {
+  return Object.freeze({
+    period: adjustment.period,
+    type: adjustment.type,
+    status: adjustment.status,
+    version: adjustment.version,
+    adjustmentHash: adjustment.adjustmentHash,
+  });
 }

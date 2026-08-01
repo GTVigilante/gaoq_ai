@@ -7,6 +7,7 @@ import {
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { createEventId } from '@gaoq/shared-utils';
 import type { Connection, Model } from 'mongoose';
+import { z } from 'zod';
 
 import { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
@@ -27,6 +28,77 @@ const HASH = /^[A-Za-z0-9_-]{43}$/;
 const OBJECT_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/;
 const MIGRATION_REF =
   /^erp:\/\/data-migrations\/runs\/([0-7][0-9A-HJKMNP-TV-Z]{25})\/attachments\/([A-Za-z0-9][A-Za-z0-9._:-]{0,127})$/;
+const migrationInputSchema = z.object({
+  targetId: z.string().regex(ULID).nullable(),
+  ownerType: z.enum(BUSINESS_ATTACHMENT_OWNER_TYPES),
+  ownerId: z.string().regex(ID),
+  purpose: z.enum(BUSINESS_ATTACHMENT_PURPOSES),
+  uploadedByEmployeeId: z.string().regex(ID).nullable(),
+  businessCreatedAt: z.string(),
+  migrationEvidenceRef: z.string().regex(MIGRATION_REF),
+  evidenceChecksum: z.string().regex(HASH),
+}).strict().refine(
+  (value) => BUSINESS_ATTACHMENT_OWNER_BY_PURPOSE[value.purpose] ===
+    value.ownerType,
+);
+const migrationReceiptSchema = z.object({
+  tenantId: z.string().regex(ID),
+  runId: z.string().regex(ULID),
+  sourceAttachmentId: z.string().regex(ID),
+  checksum: z.string().regex(HASH),
+  targetEvidenceId: z.string().regex(OBJECT_ID),
+}).strict();
+const storedAttachmentSchema = z.object({
+  id: z.string().regex(ULID),
+  tenantId: z.string().regex(ID),
+  ownerType: z.enum(BUSINESS_ATTACHMENT_OWNER_TYPES),
+  ownerId: z.string().regex(ID),
+  purpose: z.enum(BUSINESS_ATTACHMENT_PURPOSES),
+  uploadedByEmployeeId: z.string().regex(ID).nullable(),
+  businessCreatedAt: z.date(),
+  contentChecksum: z.string().regex(HASH),
+  migrationEvidenceRef: z.string().regex(MIGRATION_REF),
+  migrationEvidenceChecksum: z.string().regex(HASH),
+  objectEvidenceId: z.string().regex(OBJECT_ID).nullable(),
+  availableAt: z.date().nullable(),
+  status: z.enum(['migration_pending', 'available']),
+  version: z.union([z.literal(1), z.literal(2)]),
+  createdAt: z.date(),
+  updatedAt: z.date(),
+}).strict().refine(
+  (value) =>
+    BUSINESS_ATTACHMENT_OWNER_BY_PURPOSE[value.purpose] === value.ownerType &&
+    value.contentChecksum === value.migrationEvidenceChecksum &&
+    (
+      value.status === 'migration_pending'
+        ? value.version === 1 &&
+          value.objectEvidenceId === null &&
+          value.availableAt === null
+        : value.version === 2 &&
+          value.objectEvidenceId !== null &&
+          value.availableAt !== null
+    ),
+);
+const ATTACHMENT_PROJECTION = Object.freeze({
+  id: 1,
+  tenantId: 1,
+  ownerType: 1,
+  ownerId: 1,
+  purpose: 1,
+  uploadedByEmployeeId: 1,
+  businessCreatedAt: 1,
+  contentChecksum: 1,
+  migrationEvidenceRef: 1,
+  migrationEvidenceChecksum: 1,
+  objectEvidenceId: 1,
+  availableAt: 1,
+  status: 1,
+  version: 1,
+  createdAt: 1,
+  updatedAt: 1,
+  _id: 0,
+} as const);
+type StoredAttachment = z.infer<typeof storedAttachmentSchema>;
 
 export interface ImportBusinessAttachmentFromMigrationInput {
   readonly targetId: string | null;
@@ -65,25 +137,40 @@ export class BusinessAttachmentService {
     input: ImportBusinessAttachmentFromMigrationInput,
   ): Promise<BusinessAttachmentSummary> {
     this.assertMigrationWriter();
-    assertMigrationInput(input);
+    const validated = assertMigrationInput(input);
+    const tenantId = this.tenantId();
     return this.idempotency.execute(
-      'business.attachment.import_from_migration', key, input, async (session) => {
+      'business.attachment.import_from_migration',
+      key,
+      validated,
+      async (session) => {
         const existing = await this.records.findOne({
-          tenantId: this.tenantId(), migrationEvidenceRef: input.migrationEvidenceRef,
-        }).session(session).lean().exec();
+          tenantId,
+          migrationEvidenceRef: validated.migrationEvidenceRef,
+        }, ATTACHMENT_PROJECTION).session(session).lean().exec();
         if (existing !== null) {
-          assertReplay(existing, input);
-          return summary(existing);
+          const stored = assertStoredAttachment(
+            existing,
+            tenantId,
+            validated.migrationEvidenceRef,
+          );
+          assertReplay(stored, validated);
+          return summary(stored);
         }
-        if (input.targetId !== null) throw immutableConflict();
-        const id = createEventId(strictInstant(input.businessCreatedAt));
+        if (validated.targetId !== null) throw immutableConflict();
+        const businessCreatedAt = strictInstant(validated.businessCreatedAt);
+        const id = createEventId(businessCreatedAt);
         const record: BusinessAttachmentRecord = {
-          id, tenantId: this.tenantId(), ownerType: input.ownerType, ownerId: input.ownerId,
-          purpose: input.purpose, uploadedByEmployeeId: input.uploadedByEmployeeId,
-          businessCreatedAt: strictInstant(input.businessCreatedAt),
-          contentChecksum: input.evidenceChecksum,
-          migrationEvidenceRef: input.migrationEvidenceRef,
-          migrationEvidenceChecksum: input.evidenceChecksum,
+          id,
+          tenantId,
+          ownerType: validated.ownerType,
+          ownerId: validated.ownerId,
+          purpose: validated.purpose,
+          uploadedByEmployeeId: validated.uploadedByEmployeeId,
+          businessCreatedAt,
+          contentChecksum: validated.evidenceChecksum,
+          migrationEvidenceRef: validated.migrationEvidenceRef,
+          migrationEvidenceChecksum: validated.evidenceChecksum,
           objectEvidenceId: null, availableAt: null,
           status: 'migration_pending', version: 1,
           createdAt: new Date(), updatedAt: new Date(),
@@ -104,32 +191,53 @@ export class BusinessAttachmentService {
     checksum: string,
     targetEvidenceId: string,
   ): Promise<boolean> {
-    if (!ID.test(tenantId) || !ULID.test(runId) || !ID.test(sourceAttachmentId) ||
-      !HASH.test(checksum) || !OBJECT_ID.test(targetEvidenceId)) {
+    const receipt = migrationReceiptSchema.safeParse({
+      tenantId,
+      runId,
+      sourceAttachmentId,
+      checksum,
+      targetEvidenceId,
+    });
+    if (!receipt.success) {
       throw new Error('BUSINESS_ATTACHMENT_MIGRATION_RECEIPT_INVALID');
     }
     const migrationEvidenceRef =
-      `erp://data-migrations/runs/${runId}/attachments/${sourceAttachmentId}`;
+      `erp://data-migrations/runs/${receipt.data.runId}/attachments/` +
+      receipt.data.sourceAttachmentId;
     return this.connection.transaction(async (session) => {
-      const record = await this.records.findOne({ tenantId, migrationEvidenceRef })
-        .session(session).lean().exec();
-      if (record === null) return false;
-      if (record.contentChecksum !== checksum || record.migrationEvidenceChecksum !== checksum) {
+      const found = await this.records.findOne({
+        tenantId: receipt.data.tenantId,
+        migrationEvidenceRef,
+      }, ATTACHMENT_PROJECTION).session(session).lean().exec();
+      if (found === null) return false;
+      const record = assertStoredAttachment(
+        found,
+        receipt.data.tenantId,
+        migrationEvidenceRef,
+      );
+      if (record.contentChecksum !== receipt.data.checksum) {
         throw new Error('BUSINESS_ATTACHMENT_MIGRATION_CHECKSUM_MISMATCH');
       }
       if (record.status === 'available') {
-        if (record.objectEvidenceId !== targetEvidenceId || record.availableAt === null ||
-          record.version !== 2) throw new Error('BUSINESS_ATTACHMENT_MIGRATION_IMMUTABLE');
+        if (record.objectEvidenceId !== receipt.data.targetEvidenceId) {
+          throw new Error('BUSINESS_ATTACHMENT_MIGRATION_IMMUTABLE');
+        }
         return true;
       }
       const now = new Date();
       const updated = await this.records.updateOne({
-        tenantId, id: record.id, status: 'migration_pending', version: 1,
+        tenantId: receipt.data.tenantId,
+        id: record.id,
+        status: 'migration_pending',
+        version: 1,
       }, { $set: {
-        status: 'available', version: 2, objectEvidenceId: targetEvidenceId, availableAt: now,
+        status: 'available',
+        version: 2,
+        objectEvidenceId: receipt.data.targetEvidenceId,
+        availableAt: now,
       } }, { session, runValidators: true });
       if (updated.modifiedCount !== 1) throw new Error('BUSINESS_ATTACHMENT_MIGRATION_CONFLICT');
-      await this.outbox.migrated(record, runId, now, session);
+      await this.outbox.migrated(record, receipt.data.runId, now, session);
       return true;
     });
   }
@@ -149,21 +257,18 @@ export class BusinessAttachmentService {
   private tenantId(): string { return this.context.getTenantRequired().tenantId; }
 }
 
-function assertMigrationInput(input: ImportBusinessAttachmentFromMigrationInput): void {
-  if (Object.keys(input).sort().join(',') !==
-      'businessCreatedAt,evidenceChecksum,migrationEvidenceRef,ownerId,ownerType,purpose,targetId,uploadedByEmployeeId' ||
-    (input.targetId !== null && !ULID.test(input.targetId)) || !ID.test(input.ownerId) ||
-    !BUSINESS_ATTACHMENT_OWNER_TYPES.includes(input.ownerType) ||
-    !BUSINESS_ATTACHMENT_PURPOSES.includes(input.purpose) ||
-    BUSINESS_ATTACHMENT_OWNER_BY_PURPOSE[input.purpose] !== input.ownerType ||
-    (input.uploadedByEmployeeId !== null && !ID.test(input.uploadedByEmployeeId)) ||
-    !MIGRATION_REF.test(input.migrationEvidenceRef) || !HASH.test(input.evidenceChecksum)) {
+function assertMigrationInput(
+  input: ImportBusinessAttachmentFromMigrationInput,
+): z.infer<typeof migrationInputSchema> {
+  const parsed = migrationInputSchema.safeParse(input);
+  if (!parsed.success) {
     throw new BadRequestException({
       code: 'BUSINESS_ATTACHMENT_MIGRATION_INPUT_INVALID',
       message: '业务附件迁移输入非法',
     });
   }
-  strictInstant(input.businessCreatedAt);
+  strictInstant(parsed.data.businessCreatedAt);
+  return parsed.data;
 }
 
 function strictInstant(value: string): Date {
@@ -179,8 +284,8 @@ function strictInstant(value: string): Date {
 }
 
 function assertReplay(
-  record: BusinessAttachmentRecord,
-  input: ImportBusinessAttachmentFromMigrationInput,
+  record: StoredAttachment,
+  input: z.infer<typeof migrationInputSchema>,
 ): void {
   if ((input.targetId !== null && input.targetId !== record.id) ||
     record.ownerType !== input.ownerType ||
@@ -191,6 +296,20 @@ function assertReplay(
     record.migrationEvidenceChecksum !== input.evidenceChecksum) throw immutableConflict();
 }
 
+function assertStoredAttachment(
+  value: unknown,
+  tenantId: string,
+  migrationEvidenceRef: string,
+): StoredAttachment {
+  const parsed = storedAttachmentSchema.safeParse(value);
+  if (
+    !parsed.success ||
+    parsed.data.tenantId !== tenantId ||
+    parsed.data.migrationEvidenceRef !== migrationEvidenceRef
+  ) throw new Error('BUSINESS_ATTACHMENT_MIGRATION_STATE_INVALID');
+  return Object.freeze(parsed.data);
+}
+
 function immutableConflict(): ConflictException {
   return new ConflictException({
     code: 'BUSINESS_ATTACHMENT_MIGRATION_IMMUTABLE',
@@ -198,7 +317,7 @@ function immutableConflict(): ConflictException {
   });
 }
 
-function summary(record: BusinessAttachmentRecord): BusinessAttachmentSummary {
+function summary(record: BusinessAttachmentRecord | StoredAttachment): BusinessAttachmentSummary {
   return Object.freeze({
     id: record.id, ownerType: record.ownerType, ownerId: record.ownerId,
     purpose: record.purpose, status: record.status, version: record.version,

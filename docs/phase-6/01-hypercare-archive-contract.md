@@ -20,6 +20,27 @@
 
 第 28 日结束且全部日报通过后，法务、财务和数据负责人必须分别签署。三方签署只批准进入受控归档，不授权删除。销毁必须由未来独立的数据保留流程按法律保留期执行。
 
+三方批准使用 `gaoq.phase6.hypercare-archive.v2`。数据、财务和法务负责人必须是
+三个不同主体并使用三个不同 Ed25519 SPKI 公钥；`keyId` 等于公钥 DER 的
+SHA-256，角色/keyId 规范集合的 `signerKeysetHash` 必须与 Repository Variable
+`PHASE6_HYPERCARE_SIGNER_KEYSET_SHA256` 匹配。每份签名共同绑定 release、
+发布源、生产环境、切换 verdict、完整 28 日日报、汇总、旧系统保全状态及三份
+批准元数据，再单独绑定角色、`keyId` 和签署时间。公钥复用、主体复用、角色换钥、
+签后篡改、未来签名或 keyset 漂移均失败关闭。
+
+`archive` 是三方批准后执行的受控只读归档结果，因此不进入批准 payload；验证器
+另外要求归档时间晚于全部有效签名，并强制只读、不可变、写探针拒绝和
+`deletionAuthorized=false`。三方签名不能授权删除，也不能替代独立保留期流程。
+
+机器可读契约：
+
+```bash
+pnpm release:phase6:hypercare:print-contract
+```
+
+真实自然人—角色—密钥绑定、私钥托管、撤销、轮换和 WORM 审计仍须由企业
+IAM/KMS 与归档平台现场验收。
+
 ## MCP 边界
 
 MCP 可提供 R1 只读的稳定期状态、日报摘要和归档就绪性，不返回姓名、薪酬金额、凭据、证据正文或生产配置。MCP 不提供“关闭 Hypercare”“批准归档”“恢复旧系统写入”或“删除旧数据”等 Tool。

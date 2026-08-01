@@ -31,10 +31,15 @@ export class MarketingSideEffectDeliveryService {
     session?: ClientSession,
   ): Promise<boolean> {
     assertIdentity(identity);
-    const query = this.records.findOne(identityFilter(identity))
-      .select('status').lean();
-    if (session !== undefined) query.session(session);
-    const record = await query.exec();
+    let record: { readonly status?: string } | null;
+    try {
+      const query = this.records.findOne(identityFilter(identity))
+        .select('status').lean();
+      if (session !== undefined) query.session(session);
+      record = await query.exec();
+    } catch {
+      throw new Error('MARKETING_SIDE_EFFECT_STORE_UNAVAILABLE');
+    }
     if (record?.status === 'dispatched') return true;
     if (record?.status === 'delivered' || record?.status === 'cancelled') return false;
     throw new Error('MARKETING_SIDE_EFFECT_ROUTE_MISMATCH');
@@ -50,21 +55,25 @@ export class MarketingSideEffectDeliveryService {
     const options = session === undefined
       ? { timestamps: false as const }
       : { timestamps: false as const, session };
-    const updated = await this.records.updateOne(
-      { ...identityFilter(identity), status: 'dispatched' },
-      {
-        $set: {
-          status: 'delivered',
-          deliveryAttempts: deliveryAttempt,
-          completedAt: new Date(),
-          lastErrorCode: null,
+    try {
+      const updated = await this.records.updateOne(
+        { ...identityFilter(identity), status: 'dispatched' },
+        {
+          $set: {
+            status: 'delivered',
+            completedAt: new Date(),
+            lastErrorCode: null,
+          },
+          $max: { deliveryAttempts: deliveryAttempt },
         },
-      },
-      options,
-    );
-    if (updated.matchedCount === 1) return;
-    if (!await this.isTerminal(identity, 'delivered', session)) {
-      throw new Error('MARKETING_SIDE_EFFECT_DELIVERY_STATE_LOST');
+        options,
+      );
+      if (updated.matchedCount === 1) return;
+      if (!await this.isTerminal(identity, 'delivered', session)) {
+        throw new Error('MARKETING_SIDE_EFFECT_DELIVERY_STATE_LOST');
+      }
+    } catch (caught) {
+      throw normalizeStoreError(caught);
     }
   }
 
@@ -79,23 +88,32 @@ export class MarketingSideEffectDeliveryService {
     if (!/^[A-Z0-9_]{3,128}$/u.test(errorCode)) {
       throw new Error('MARKETING_SIDE_EFFECT_ERROR_CODE_INVALID');
     }
-    const updated = await this.records.updateOne(
-      { ...identityFilter(identity), status: 'dispatched' },
-      {
-        $set: {
-          status: finalAttempt ? 'dead' : 'dispatched',
-          deliveryAttempts: deliveryAttempt,
-          completedAt: finalAttempt ? new Date() : null,
-          lastErrorCode: errorCode,
+    try {
+      const updated = await this.records.updateOne(
+        {
+          ...identityFilter(identity),
+          status: 'dispatched',
+          deliveryAttempts: { $lte: deliveryAttempt },
         },
-      },
-      { timestamps: false },
-    );
-    if (
-      updated.matchedCount !== 1 &&
-      !await this.isAnyTerminal(identity)
-    ) {
-      throw new Error('MARKETING_SIDE_EFFECT_DELIVERY_STATE_LOST');
+        {
+          $set: {
+            status: finalAttempt ? 'dead' : 'dispatched',
+            completedAt: finalAttempt ? new Date() : null,
+            lastErrorCode: errorCode,
+          },
+          $max: { deliveryAttempts: deliveryAttempt },
+        },
+        { timestamps: false },
+      );
+      if (updated.matchedCount === 1) return;
+      if (
+        !await this.isAnyTerminal(identity) &&
+        !await this.isFailureAttemptRecorded(identity, deliveryAttempt)
+      ) {
+        throw new Error('MARKETING_SIDE_EFFECT_DELIVERY_STATE_LOST');
+      }
+    } catch (caught) {
+      throw normalizeStoreError(caught);
     }
   }
 
@@ -113,6 +131,17 @@ export class MarketingSideEffectDeliveryService {
     return await this.records.exists({
       ...identityFilter(identity),
       status: { $in: ['delivered', 'cancelled', 'dead'] },
+    }).exec() !== null;
+  }
+
+  private async isFailureAttemptRecorded(
+    identity: MarketingSideEffectIdentity,
+    deliveryAttempt: number,
+  ): Promise<boolean> {
+    return await this.records.exists({
+      ...identityFilter(identity),
+      status: 'dispatched',
+      deliveryAttempts: { $gte: deliveryAttempt },
     }).exec() !== null;
   }
 }
@@ -134,6 +163,10 @@ const assertIdentity = (identity: MarketingSideEffectIdentity): void => {
     !Number.isSafeInteger(identity.aggregateVersion) ||
     identity.aggregateVersion < 1 ||
     (
+      identity.kind !== 'lead_notification' &&
+      identity.kind !== 'scheduled_publish'
+    ) ||
+    (
       identity.kind === 'lead_notification' &&
       identity.channel !== 'email' &&
       identity.channel !== 'feishu'
@@ -142,6 +175,19 @@ const assertIdentity = (identity: MarketingSideEffectIdentity): void => {
   ) {
     throw new Error('MARKETING_SIDE_EFFECT_IDENTITY_INVALID');
   }
+};
+
+const normalizeStoreError = (caught: unknown): Error => {
+  if (
+    caught instanceof Error &&
+    (
+      caught.message === 'MARKETING_SIDE_EFFECT_DELIVERY_STATE_LOST' ||
+      caught.message === 'MARKETING_SIDE_EFFECT_STORE_UNAVAILABLE'
+    )
+  ) {
+    return caught;
+  }
+  return new Error('MARKETING_SIDE_EFFECT_STORE_UNAVAILABLE');
 };
 
 const assertAttempt = (attempt: number): void => {

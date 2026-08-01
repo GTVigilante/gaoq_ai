@@ -139,13 +139,15 @@ function assemble(options: {
       method: 'webauthn_uv',
     }),
   };
+  const boundary = { assertLegacy: vi.fn() };
   const service = new PayrollApprovalService(
-    idempotency as never, context, profiles as never, approvals as never, strongAuth as never,
+    idempotency as never, context, boundary as never,
+    profiles as never, approvals as never, strongAuth as never,
     outbox as never, periods as never, approvalEvidence as never, lockEvidence as never,
   );
   return {
     context, service, idempotency, periods, profiles, approvals, approvalEvidence, lockEvidence,
-    strongAuth, outbox,
+    strongAuth, outbox, boundary,
   };
 }
 
@@ -224,6 +226,69 @@ async function rejectionCode(operation: () => Promise<unknown>): Promise<unknown
   }
   throw new Error('预期操作失败但实际成功');
 }
+
+describe('PayrollApprovalService 旧系统模式边界', () => {
+  it('external 模式覆盖审批迁移、在线审批同步和强认证锁定入口', async () => {
+    const failure = new Error('PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM');
+    const migration = actor();
+    const human = actor({
+      actorType: 'user',
+      actorId: 'actor-locker-001',
+      scopes: [
+        'erp:payroll:approval:request',
+        'erp:approval:instance:submit',
+        'erp:payroll:period:lock',
+      ],
+    });
+    const synchronizer = actor({
+      actorType: 'service',
+      scopes: ['erp:payroll:approval:sync'],
+    });
+    const cases: readonly [
+      ActorContext,
+      (store: ReturnType<typeof assemble>) => Promise<unknown>,
+    ][] = [
+      [migration, (store) =>
+        store.service.importApprovalFromMigration('boundary-approval-migration', {} as never)],
+      [migration, (store) =>
+        store.service.importLockFromMigration('boundary-lock-migration', {} as never)],
+      [human, (store) =>
+        store.service.requestApproval('boundary-request', PERIOD_ID, 0)],
+      [synchronizer, (store) =>
+        store.service.applyApproval('boundary-apply', PERIOD_ID, 0, APPROVAL_INSTANCE_ID)],
+      [human, (store) =>
+        store.service.lockPeriod(
+          'boundary-lock',
+          PERIOD_ID,
+          0,
+          WEBAUTHN_EVIDENCE_ID,
+          userToken(),
+        )],
+    ];
+    for (const [principal, execute] of cases) {
+      const store = assemble();
+      store.boundary.assertLegacy.mockImplementation(() => { throw failure; });
+      await expect(runAs(store.context, principal, () => execute(store))).rejects.toBe(failure);
+      expect(store.idempotency.execute).not.toHaveBeenCalled();
+      expect(store.periods.findOne).not.toHaveBeenCalled();
+      expect(store.approvals.createInstance).not.toHaveBeenCalled();
+      expect(store.approvals.getPayrollPeriodDecision).not.toHaveBeenCalled();
+      expect(store.strongAuth.requireVerifiedEvidence).not.toHaveBeenCalled();
+    }
+
+    const unauthorized = assemble();
+    await expect(runAs(
+      unauthorized.context,
+      actor({ actorType: 'user', scopes: [] }),
+      () => unauthorized.service.requestApproval(
+        'boundary-unauthorized',
+        PERIOD_ID,
+        3,
+      ),
+    )).rejects.toBeInstanceOf(ForbiddenException);
+    expect(unauthorized.boundary.assertLegacy).not.toHaveBeenCalled();
+  });
+});
 
 describe('PayrollApprovalService 迁移控制', () => {
   it('用专用批准历史恢复批准状态并只发迁移事件', async () => {

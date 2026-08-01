@@ -35,6 +35,9 @@ const ERROR_CODE_PATTERN = /^[A-Z0-9_:-]{1,128}$/;
 /** 对账报告已完成但后置审计不可用；禁止将完成报告回写为失败。 */
 class ReconciliationPostCommitAuditError extends Error {}
 
+/** 报告租约已转移；禁止当前 Worker 覆盖新持有者状态或追加错误审计。 */
+class ReconciliationLeaseLostError extends Error {}
+
 interface MappingView {
   readonly aggregateType: OrgDeliveryAggregateType;
   readonly aggregateId: string;
@@ -149,7 +152,7 @@ export class OrgReconciliationService {
         snapshot,
       );
       const completedAt = new Date();
-      await this.reports.updateOne(
+      const completed = await this.reports.updateOne(
         { tenantId, channel, runDate, status: 'running' },
         { $set: {
           status: 'completed',
@@ -161,8 +164,11 @@ export class OrgReconciliationService {
           completedAt,
           lastErrorCode: null,
         } },
-        { timestamps: false },
+        { timestamps: false, runValidators: true },
       );
+      if (completed.matchedCount !== 1) {
+        throw new ReconciliationLeaseLostError('ORG_RECONCILIATION_LEASE_LOST');
+      }
       try {
         await this.audit.recordSystem(tenantId, {
           action: 'integration.org.reconciliation',
@@ -178,15 +184,21 @@ export class OrgReconciliationService {
       }
       return true;
     } catch (error) {
-      if (error instanceof ReconciliationPostCommitAuditError) throw error;
+      if (
+        error instanceof ReconciliationPostCommitAuditError ||
+        error instanceof ReconciliationLeaseLostError
+      ) throw error;
       const code = error instanceof OrgPushError && ERROR_CODE_PATTERN.test(error.code)
         ? error.code
         : 'ORG_RECONCILIATION_FAILED';
-      await this.reports.updateOne(
+      const failed = await this.reports.updateOne(
         { tenantId, channel, runDate, status: 'running' },
         { $set: { status: 'failed', completedAt: new Date(), lastErrorCode: code } },
-        { timestamps: false },
+        { timestamps: false, runValidators: true },
       );
+      if (failed.matchedCount !== 1) {
+        throw new ReconciliationLeaseLostError('ORG_RECONCILIATION_LEASE_LOST');
+      }
       await this.audit.recordSystem(tenantId, {
         action: 'integration.org.reconciliation',
         resourceType: 'org_reconciliation_report',
@@ -195,6 +207,11 @@ export class OrgReconciliationService {
         outcome: 'failure',
         traceId: `reconcile-${randomUUID()}`,
         metadata: { channel, errorCode: code },
+      }).catch((auditError: unknown) => {
+        throw new ReconciliationPostCommitAuditError(
+          '对账失败终态已提交但审计不可用',
+          { cause: auditError },
+        );
       });
       throw error;
     }

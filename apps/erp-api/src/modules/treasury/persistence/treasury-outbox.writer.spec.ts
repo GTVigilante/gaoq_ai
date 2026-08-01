@@ -264,6 +264,37 @@ describe('TreasuryOutboxWriter', () => {
     expect(calls).not.toMatch(/employee|instruction|account|approvedBy|evidence/u);
   });
 
+  it('补发子批次事件只公开调整与批次控制量，不公开员工和账户', async () => {
+    const context = new TenantContextService();
+    const create = vi.fn().mockResolvedValue([]);
+    const writer = new TreasuryOutboxWriter(context, { create } as never);
+    const supplement: TreasuryEvent = {
+      type: 'treasury.disbursement.adjustment_supplement_requested',
+      tenantId: 'tenant-001',
+      aggregateId: 'child-batch-002',
+      version: 1,
+      occurredAt: '2026-07-22T10:05:00.000Z',
+      data: {
+        adjustmentId: 'adjustment-001',
+        parentBatchId: 'parent-batch-001',
+        payrollPeriodId: 'period-001',
+        payrollRunId: 'run-001',
+        lineCount: 1,
+        totalMinor: 97_000,
+        status: 'materializing',
+      },
+    };
+    await context.run({ tenant, actor }, () => writer.append(supplement, session));
+    const calls = JSON.stringify(create.mock.calls);
+    expect(calls).toContain('adjustment_supplement_requested.v1');
+    expect(calls).toContain('"adjustmentId":"adjustment-001"');
+    expect(calls).not.toMatch(/employee|account|instruction|approvedBy|lockedBy/u);
+    await expect(context.run({ tenant, actor }, () => writer.append({
+      ...supplement,
+      data: { ...supplement.data, employeeId: 'employee-001' },
+    }, session))).rejects.toThrow('TREASURY_OUTBOX_DATA_INVALID');
+  });
+
   it('在线与迁移四方对账事件只公开证据摘要和差异数量', async () => {
     const context = new TenantContextService();
     const create = vi.fn().mockResolvedValue([]);

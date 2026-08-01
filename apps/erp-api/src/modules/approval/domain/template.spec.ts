@@ -509,6 +509,7 @@ describe('审批模板定义白名单', () => {
         scope: 'tenant',
       },
       { type: 'department_manager', departmentField: 'unknown_department' },
+      { type: 'department_manager', departmentField: 'reason' },
       { type: 'script' },
     ];
     for (const resolver of invalidResolvers) {
@@ -520,6 +521,19 @@ describe('审批模板定义白名单', () => {
         }],
       ))).toThrowError(ApprovalDomainError);
     }
+    expectCode(
+      () => validateAndFreezeApprovalTemplateDefinition(definitionWith(
+        [textField],
+        [{
+          id: 'approve',
+          name: '审批',
+          type: 'approval',
+          approvalMode: 'all',
+          resolver: { type: 'department_manager', departmentField: 'reason' },
+        }],
+      )),
+      'APPROVAL_RESOLVER_FIELD_TYPE_INVALID',
+    );
   });
 });
 

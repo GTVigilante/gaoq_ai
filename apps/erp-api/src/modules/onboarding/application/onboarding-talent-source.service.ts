@@ -32,7 +32,13 @@ export class OnboardingTalentSourceService {
   async getByCandidateId(candidateId: string): Promise<readonly OnboardingTalentSnapshot[]> {
     this.assertScope();
     const actor = this.context.getActorRequired();
+    const tenantId = this.context.getTenantRequired().tenantId;
     const instances = await this.instances.findByCandidateId(candidateId);
+    if (instances.some((instance) =>
+      instance.tenantId !== tenantId || instance.candidateId !== candidateId
+    )) {
+      throw new Error('TALENT_LIFECYCLE_ONBOARDING_REFERENCE_INVALID');
+    }
     const visible = actor.scopes.includes('erp:talent-lifecycle:read_all')
       ? instances
       : instances.filter((instance) => actor.departmentIds.includes(instance.departmentId));

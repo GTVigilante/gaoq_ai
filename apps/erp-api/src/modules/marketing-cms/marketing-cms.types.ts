@@ -1,5 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 
+import { marketingContentRequestSchema } from '../../contracts/rest-request-contracts.js';
+
 export const MARKETING_CONTENT_TYPES = [
   'page', 'service', 'case', 'article', 'team', 'testimonial', 'faq',
   'navigation', 'footer', 'site_config',
@@ -33,8 +35,6 @@ export interface MarketingContentInput {
   readonly seo?: Readonly<Record<string, string>>;
 }
 
-const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
-const SLUG = /^(?:[a-z0-9]+(?:-[a-z0-9]+)*)$/u;
 const DANGEROUS =
   /<\s*(?:script|iframe|object|embed|style)|javascript:|vbscript:|data:text\/html|on[a-z]+\s*=|expression\s*\(/iu;
 
@@ -45,25 +45,23 @@ export function parseContentInput(value: unknown): MarketingContentInput {
   if (Object.keys(value).some((key) => !allowed.has(key))) {
     throw invalid('CMS_CONTENT_UNKNOWN_FIELD', '内容包含未允许字段');
   }
-  if (
-    typeof value.siteId !== 'string' || !ID.test(value.siteId) ||
-    !MARKETING_CONTENT_TYPES.includes(value.type as MarketingContentType) ||
-    !MARKETING_LOCALES.includes(value.locale as MarketingLocale) ||
-    typeof value.slug !== 'string' || !SLUG.test(value.slug) ||
-    typeof value.title !== 'string' || value.title.length < 1 || value.title.length > 160 ||
-    (value.summary !== undefined && (typeof value.summary !== 'string' || value.summary.length > 500)) ||
-    !Array.isArray(value.blocks) || value.blocks.length > 40
-  ) throw invalid('CMS_CONTENT_INVALID', '内容字段不符合约束');
-  const blocks = value.blocks.map((block) => parseBlock(block));
-  const seo = value.seo === undefined ? undefined : parseSeo(value.seo);
-  assertSafeText(value);
+  if (Array.isArray(value.blocks)) {
+    for (const block of value.blocks) {
+      parseBlock(block);
+    }
+  }
+  const parsed = marketingContentRequestSchema.safeParse(value);
+  if (!parsed.success) throw invalid('CMS_CONTENT_INVALID', '内容字段不符合约束');
+  const blocks = parsed.data.blocks.map((block) => parseBlock(block));
+  const seo = parsed.data.seo === undefined ? undefined : parseSeo(parsed.data.seo);
+  assertSafeText(parsed.data);
   return Object.freeze({
-    siteId: value.siteId,
-    type: value.type as MarketingContentType,
-    locale: value.locale as MarketingLocale,
-    slug: value.slug,
-    title: value.title,
-    ...(value.summary === undefined ? {} : { summary: value.summary }),
+    siteId: parsed.data.siteId,
+    type: parsed.data.type,
+    locale: parsed.data.locale,
+    slug: parsed.data.slug,
+    title: parsed.data.title,
+    ...(parsed.data.summary === undefined ? {} : { summary: parsed.data.summary }),
     blocks: Object.freeze(blocks),
     ...(seo === undefined ? {} : { seo }),
   });

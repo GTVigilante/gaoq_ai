@@ -8,7 +8,11 @@ import type { ESignBindingDocument } from './esign-binding.schema.js';
 import type { ESignFlowDocument } from './esign-flow.schema.js';
 import { ESignReconciliationService } from './esign-reconciliation.service.js';
 import type { ESignWebhookCryptoService } from './esign-webhook-crypto.service.js';
-import type { ESignQueueJobData } from './esign-webhook.queue.js';
+import {
+  ESIGN_ARCHIVE_EVIDENCE_JOB,
+  createESignEvidenceJobId,
+  type ESignQueueJobData,
+} from './esign-webhook.queue.js';
 
 function query<T>(value: T) {
   return { lean: () => ({ exec: () => Promise.resolve(value) }) };
@@ -29,13 +33,16 @@ const FLOW = {
   reviewRequired: false, reviewCode: null, version: 2,
 };
 
-function fixture(providerStatus: number) {
+function fixture(
+  providerStatus: number,
+  candidates: readonly Readonly<Record<string, unknown>>[] = [FLOW],
+) {
   const adapter = { getFlow: vi.fn().mockResolvedValue(providerStatus) };
   const bindings = { findOne: vi.fn().mockReturnValue(query({
     appId: 'app12345', credentialSecretRef: 'GAOQ_ESIGN_APP_TEST',
   })) };
   const flows = {
-    find: vi.fn().mockReturnValue(listQuery([FLOW])),
+    find: vi.fn().mockReturnValue(listQuery(candidates)),
     updateOne: vi.fn().mockResolvedValue({ modifiedCount: 1 }),
   };
   const audit = { recordSystem: vi.fn().mockResolvedValue(undefined) };
@@ -64,8 +71,14 @@ describe('ESignReconciliationService', () => {
       lastProviderAction: 'RECONCILE_FLOW_DETAIL',
     });
     expect(store.queue.add).toHaveBeenCalledWith(
-      'archive:esign:evidence', { flowId: FLOW.id, tenantId: FLOW.tenantId },
-      expect.objectContaining({ attempts: 12 }),
+      ESIGN_ARCHIVE_EVIDENCE_JOB, { flowId: FLOW.id, tenantId: FLOW.tenantId },
+      {
+        jobId: createESignEvidenceJobId(FLOW.tenantId, FLOW.id),
+        attempts: 12,
+        backoff: { type: 'exponential', delay: 10_000 },
+        removeOnComplete: 1_000,
+        removeOnFail: true,
+      },
     );
   });
 
@@ -87,5 +100,105 @@ describe('ESignReconciliationService', () => {
     expect(store.audit.recordSystem).toHaveBeenCalledWith('tenant-001', expect.objectContaining({
       outcome: 'failure', metadata: { failureCode: 'ESIGN_HTTP_UNAVAILABLE' },
     }));
+  });
+
+  it('查询显式覆盖 provider_completed，并限制批量和稳定排序', async () => {
+    const store = fixture(1, []);
+    await expect(store.service.runStaleBatch(
+      new Date('2026-07-21T08:00:00Z'),
+      1_000,
+    )).resolves.toBe(0);
+    expect(store.flows.find).toHaveBeenCalledWith({
+      status: { $in: ['awaiting_signature', 'partial_signed', 'provider_completed'] },
+      reviewRequired: false,
+      updatedAt: { $lte: new Date('2026-07-21T07:50:00.000Z') },
+    });
+  });
+
+  it('provider_completed 直接重建已耗尽的证据任务，不再访问供应商', async () => {
+    const completed = {
+      ...FLOW,
+      status: 'provider_completed',
+      providerStatus: null,
+    };
+    const store = fixture(99, [completed]);
+    await expect(store.service.runStaleBatch(
+      new Date('2026-07-21T08:00:00Z'),
+    )).resolves.toBe(1);
+    expect(store.bindings.findOne).not.toHaveBeenCalled();
+    expect(store.adapter.getFlow).not.toHaveBeenCalled();
+    expect(store.flows.updateOne).not.toHaveBeenCalled();
+    expect(store.queue.add).toHaveBeenCalledWith(
+      ESIGN_ARCHIVE_EVIDENCE_JOB,
+      { flowId: FLOW.id, tenantId: FLOW.tenantId },
+      expect.objectContaining({
+        jobId: createESignEvidenceJobId(FLOW.tenantId, FLOW.id),
+        removeOnFail: true,
+      }),
+    );
+    expect(store.audit.recordSystem).toHaveBeenCalledWith(
+      FLOW.tenantId,
+      expect.objectContaining({
+        outcome: 'success',
+        metadata: { providerStatus: 2, flowStatus: 'provider_completed' },
+      }),
+    );
+  });
+
+  it('业务提交后的审计故障不降低 processed，也不阻断证据恢复', async () => {
+    const store = fixture(2);
+    store.audit.recordSystem.mockRejectedValueOnce(new Error('AUDIT_UNAVAILABLE'));
+    await expect(store.service.runStaleBatch(
+      new Date('2026-07-21T08:00:00Z'),
+    )).resolves.toBe(1);
+    expect(store.flows.updateOne).toHaveBeenCalledOnce();
+    expect(store.queue.add).toHaveBeenCalledOnce();
+  });
+
+  it('绑定缺失和版本冲突使用稳定失败码并继续下一条', async () => {
+    const missing = fixture(2);
+    missing.bindings.findOne.mockReturnValueOnce(query(null));
+    await expect(missing.service.runStaleBatch(
+      new Date('2026-07-21T08:00:00Z'),
+    )).resolves.toBe(0);
+    expect(missing.audit.recordSystem).toHaveBeenCalledWith(
+      FLOW.tenantId,
+      expect.objectContaining({ metadata: { failureCode: 'ESIGN_BINDING_NOT_FOUND' } }),
+    );
+
+    const conflict = fixture(2);
+    conflict.flows.updateOne.mockResolvedValueOnce({ modifiedCount: 0 });
+    await expect(conflict.service.runStaleBatch(
+      new Date('2026-07-21T08:00:00Z'),
+    )).resolves.toBe(0);
+    expect(conflict.queue.add).not.toHaveBeenCalled();
+    expect(conflict.audit.recordSystem).toHaveBeenCalledWith(
+      FLOW.tenantId,
+      expect.objectContaining({ metadata: { failureCode: 'ESIGN_FLOW_VERSION_CONFLICT' } }),
+    );
+  });
+
+  it('证据任务入队故障保留 provider_completed，且失败审计故障不终止批次', async () => {
+    const completed = { ...FLOW, status: 'provider_completed' };
+    const store = fixture(2, [completed]);
+    store.queue.add.mockRejectedValueOnce(new Error('ESIGN_EVIDENCE_QUEUE_UNAVAILABLE'));
+    store.audit.recordSystem.mockRejectedValueOnce(new Error('AUDIT_UNAVAILABLE'));
+    await expect(store.service.runStaleBatch(
+      new Date('2026-07-21T08:00:00Z'),
+    )).resolves.toBe(0);
+    expect(store.flows.updateOne).not.toHaveBeenCalled();
+    expect(store.audit.recordSystem).toHaveBeenCalledOnce();
+  });
+
+  it('未知敏感异常只写稳定兜底码', async () => {
+    const store = fixture(2);
+    store.adapter.getFlow.mockRejectedValueOnce(new Error('供应商敏感错误'));
+    await expect(store.service.runStaleBatch(
+      new Date('2026-07-21T08:00:00Z'),
+    )).resolves.toBe(0);
+    expect(store.audit.recordSystem).toHaveBeenCalledWith(
+      FLOW.tenantId,
+      expect.objectContaining({ metadata: { failureCode: 'ESIGN_RECONCILIATION_FAILED' } }),
+    );
   });
 });

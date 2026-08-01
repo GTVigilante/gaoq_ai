@@ -13,7 +13,11 @@ import {
   TalentTouchpointWriteConflictError,
   type TalentTouchpointRepository,
 } from '../persistence/talent-lifecycle.repository.js';
-import { TalentLifecycleService } from './talent-lifecycle.service.js';
+import {
+  TalentLifecycleService,
+  toTalentLifecyclePublicDetail,
+  type TalentLifecycleDetail,
+} from './talent-lifecycle.service.js';
 
 const candidate = Object.freeze({
   candidateId: '01J8ZQK7V0A2M4N6P8R0T2W4E1',
@@ -70,7 +74,7 @@ function fixture(
   const onboarding = { getByCandidateId: vi.fn().mockResolvedValue([]) };
   const organization = { getByCandidateId: vi.fn().mockResolvedValue(null) };
   const care = {
-    getByEmploymentIds: vi.fn().mockResolvedValue({
+    getByEmployments: vi.fn().mockResolvedValue({
       cases: [],
       alumniConsents,
     }),
@@ -194,6 +198,118 @@ describe('TalentLifecycleService', () => {
     expect(detail.touchpoints).toEqual([
       expect.objectContaining({ id: ownedTouchpoint.id, note: ownedTouchpoint.note }),
     ]);
+  });
+
+  it('REST 公开详情投影压缩全部四域内部快照并深冻结', () => {
+    const value = {
+      candidateId: candidate.candidateId,
+      displayName: candidate.displayName,
+      stage: 'employed',
+      candidateStatus: candidate.candidateStatus,
+      currentApplicationStage: 'hired',
+      currentPositionTitle: '后端工程师',
+      employeeStatus: 'active',
+      activeCareStatus: 'draft',
+      alumniConsentStatus: 'active',
+      openFollowUpCount: 1,
+      nextActionAt: ownedTouchpoint.nextActionAt,
+      updatedAt: ownedTouchpoint.updatedAt,
+      personId: '01J8ZQK7V0A2M4N6P8R0T2W4P1',
+      candidateContactConsentExpiresAt: candidate.contactConsentExpiresAt,
+      candidateRetentionExpiresAt: candidate.retentionExpiresAt,
+      applications: candidate.applications,
+      onboarding: [{
+        id: '01J8ZQK7V0A2M4N6P8R0T2W4N1',
+        applicationId: candidate.applications[0]?.id,
+        offerId: '01J8ZQK7V0A2M4N6P8R0T2W4O1',
+        departmentId: 'department-001',
+        proposedStartDate: '2026-08-01',
+        status: 'completed',
+        tasks: { contract_archived: 'completed' },
+        employmentId: '01J8ZQK7V0A2M4N6P8R0T2W4M1',
+        createdAt: '2026-07-27T00:00:00.000Z',
+        updatedAt: '2026-07-27T01:00:00.000Z',
+      }],
+      employments: [{
+        id: '01J8ZQK7V0A2M4N6P8R0T2W4M1',
+        employeeId: '01J8ZQK7V0A2M4N6P8R0T2W4M2',
+        employeeNo: 'E001',
+        displayName: '员工甲',
+        employeeStatus: 'active',
+        departmentIds: ['department-001'],
+        primaryDepartmentId: 'department-001',
+        status: 'active',
+        effectiveFrom: '2026-08-01',
+        effectiveTo: null,
+        onboardingInstanceId: '01J8ZQK7V0A2M4N6P8R0T2W4N1',
+        offerId: '01J8ZQK7V0A2M4N6P8R0T2W4O1',
+        careCaseId: null,
+        createdAt: '2026-07-27T00:00:00.000Z',
+        updatedAt: '2026-07-27T01:00:00.000Z',
+      }],
+      care: {
+        cases: [{
+          id: '01J8ZQK7V0A2M4N6P8R0T2W4C1',
+          employmentId: '01J8ZQK7V0A2M4N6P8R0T2W4M1',
+          employeeId: '01J8ZQK7V0A2M4N6P8R0T2W4M2',
+          separationType: 'voluntary_resignation',
+          lastWorkingDate: '2026-12-31',
+          status: 'draft',
+          tasks: { handover_accepted: 'pending' },
+          createdAt: '2026-07-27T00:00:00.000Z',
+          updatedAt: '2026-07-27T01:00:00.000Z',
+        }],
+        alumniConsents: [{
+          id: '01J8ZQK7V0A2M4N6P8R0T2W4C2',
+          personId: '01J8ZQK7V0A2M4N6P8R0T2W4P1',
+          careCaseId: '01J8ZQK7V0A2M4N6P8R0T2W4C1',
+          purpose: 'alumni_network',
+          channels: ['email'],
+          grantedAt: '2026-07-27T00:00:00.000Z',
+          expiresAt: '2027-07-27T00:00:00.000Z',
+          withdrawnAt: null,
+          status: 'active',
+        }],
+      },
+      touchpoints: [{ ...ownedTouchpoint, note: '授权备注' }],
+      timeline: [{
+        id: `service:${ownedTouchpoint.id}`,
+        domain: 'service',
+        eventType: 'touchpoint.open',
+        title: '服务跟进',
+        occurredAt: ownedTouchpoint.occurredAt,
+        referenceType: 'touchpoint',
+        referenceId: ownedTouchpoint.id,
+        tenantId: 'tenant-001',
+      }],
+    } as unknown as TalentLifecycleDetail;
+
+    const result = toTalentLifecyclePublicDetail(value);
+
+    expect(result).toMatchObject({
+      candidateId: candidate.candidateId,
+      applications: [{
+        id: candidate.applications[0]?.id,
+        positionTitle: '后端工程师',
+        stage: 'interview',
+        sourceChannel: 'portal',
+      }],
+      onboarding: [{ status: 'completed', proposedStartDate: '2026-08-01' }],
+      employments: [{ employeeNo: 'E001', status: 'active' }],
+      care: {
+        cases: [{ status: 'draft', lastWorkingDate: '2026-12-31' }],
+        alumniConsents: [{ purpose: 'alumni_network', status: 'active' }],
+      },
+      touchpoints: [{ id: ownedTouchpoint.id, note: '授权备注' }],
+      timeline: [{ domain: 'service', referenceId: ownedTouchpoint.id }],
+    });
+    expect(JSON.stringify(result)).not.toMatch(
+      /tenantId|candidateContactConsentExpiresAt|candidateRetentionExpiresAt|departmentId|employeeId|tasks|channels/iu,
+    );
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.applications)).toBe(true);
+    expect(Object.isFrozen(result.care.cases[0])).toBe(true);
+    expect(Object.isFrozen(result.timeline[0])).toBe(true);
   });
 
   it('关闭触点先以非敏感路由完成授权且幂等响应不保存备注明文', async () => {
@@ -341,7 +457,7 @@ describe('TalentLifecycleService', () => {
 
   it('阶段推导优先级覆盖离职、任职、入职和 Offer', async () => {
     const offboarding = fixture();
-    offboarding.care.getByEmploymentIds.mockResolvedValueOnce({
+    offboarding.care.getByEmployments.mockResolvedValueOnce({
       cases: [{
         id: 'care-active',
         status: 'clearance',
@@ -358,6 +474,7 @@ describe('TalentLifecycleService', () => {
       personId: 'person-001',
       employments: [{
         id: 'employment-active',
+        employeeId: 'employee-active',
         employeeNo: 'E001',
         employeeStatus: 'active',
         effectiveTo: null,
@@ -367,6 +484,10 @@ describe('TalentLifecycleService', () => {
     });
     await expect(employed.run(() => employed.service.get(candidate.candidateId)))
       .resolves.toMatchObject({ stage: 'employed', employeeStatus: 'active' });
+    expect(employed.care.getByEmployments).toHaveBeenCalledWith({
+      personId: 'person-001',
+      employments: [{ id: 'employment-active', employeeId: 'employee-active' }],
+    });
 
     const onboarding = fixture();
     onboarding.onboarding.getByCandidateId.mockResolvedValueOnce([{
@@ -405,7 +526,7 @@ describe('TalentLifecycleService', () => {
 
     const former = fixture();
     former.recruitment.get.mockResolvedValueOnce({ ...candidate, applications: [] });
-    former.care.getByEmploymentIds.mockResolvedValueOnce({
+    former.care.getByEmployments.mockResolvedValueOnce({
       cases: [{
         id: 'care-completed',
         status: 'completed',
@@ -471,6 +592,7 @@ describe('TalentLifecycleService', () => {
       personId: 'person-001',
       employments: [{
         id: 'employment-ended',
+        employeeId: 'employee-ended',
         employeeNo: 'E001',
         employeeStatus: 'terminated',
         effectiveTo: '2026-07-25T00:00:00.000Z',
@@ -478,7 +600,7 @@ describe('TalentLifecycleService', () => {
         updatedAt: '2026-07-25T00:00:00.000Z',
       }],
     });
-    store.care.getByEmploymentIds.mockResolvedValueOnce({
+    store.care.getByEmployments.mockResolvedValueOnce({
       cases: [{
         id: 'care-completed',
         status: 'completed',

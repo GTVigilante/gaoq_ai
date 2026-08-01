@@ -21,105 +21,35 @@ import {
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   createIdempotencyKey,
+  ErpApiError,
   erpFetch,
+  isDefinitiveWriteRejection,
   strongEtag,
 } from '../../lib/api-client';
+import {
+  parseIdentityProfile,
+  type IdentityProfileView,
+} from '../../lib/approval-contract';
+import {
+  buildTouchpointCreateInput,
+  canCloseTalentTouchpoint,
+  canRetryTalentTouchpoint,
+  canWriteTalentTouchpoint,
+  parseTalentLifecycleDetail,
+  parseTalentLifecycleList,
+  parseTouchpointMutationResult,
+  type LifecycleDetail,
+  type LifecycleStage,
+  type LifecycleSummary,
+  type Touchpoint,
+  type TouchpointCreateInput,
+} from '../../lib/talent-lifecycle-contract';
 
 const { Title, Paragraph, Text } = Typography;
-
-type LifecycleStage =
-  | 'talent_pool'
-  | 'recruiting'
-  | 'offer'
-  | 'onboarding'
-  | 'employed'
-  | 'offboarding'
-  | 'alumni'
-  | 'former_employee'
-  | 'inactive';
-
-interface LifecycleSummary {
-  readonly candidateId: string;
-  readonly displayName: string | null;
-  readonly stage: LifecycleStage;
-  readonly candidateStatus: string;
-  readonly currentApplicationStage: string | null;
-  readonly currentPositionTitle: string | null;
-  readonly employeeStatus: string | null;
-  readonly activeCareStatus: string | null;
-  readonly alumniConsentStatus: string | null;
-  readonly openFollowUpCount: number;
-  readonly nextActionAt: string | null;
-  readonly updatedAt: string;
-}
-
-interface TimelineEntry {
-  readonly id: string;
-  readonly domain: 'recruitment' | 'onboarding' | 'org' | 'care' | 'alumni' | 'service';
-  readonly eventType: string;
-  readonly title: string;
-  readonly occurredAt: string;
-  readonly referenceType: string;
-  readonly referenceId: string;
-}
-
-interface Touchpoint {
-  readonly id: string;
-  readonly candidateId: string;
-  readonly kind: string;
-  readonly channel: string;
-  readonly direction: string;
-  readonly outcome: string;
-  readonly ownerActorId: string;
-  readonly occurredAt: string;
-  readonly nextActionAt: string | null;
-  readonly status: 'open' | 'completed' | 'cancelled';
-  readonly note: string | null;
-  readonly version: number;
-}
-
-interface LifecycleDetail extends LifecycleSummary {
-  readonly personId: string | null;
-  readonly applications: readonly {
-    readonly id: string;
-    readonly positionTitle: string;
-    readonly stage: string;
-    readonly sourceChannel: string;
-    readonly appliedAt: string;
-  }[];
-  readonly onboarding: readonly {
-    readonly id: string;
-    readonly status: string;
-    readonly proposedStartDate: string;
-  }[];
-  readonly employments: readonly {
-    readonly id: string;
-    readonly employeeNo: string;
-    readonly displayName: string;
-    readonly status: string;
-    readonly effectiveFrom: string;
-    readonly effectiveTo: string | null;
-  }[];
-  readonly care: {
-    readonly cases: readonly {
-      readonly id: string;
-      readonly status: string;
-      readonly lastWorkingDate: string;
-    }[];
-    readonly alumniConsents: readonly {
-      readonly id: string;
-      readonly purpose: string;
-      readonly status: string;
-      readonly expiresAt: string;
-    }[];
-  };
-  readonly touchpoints: readonly Touchpoint[];
-  readonly timeline: readonly TimelineEntry[];
-}
 
 interface TouchpointForm {
   readonly kind: string;
@@ -129,6 +59,23 @@ interface TouchpointForm {
   readonly occurredAt: string;
   readonly nextActionAt?: string;
   readonly note?: string;
+}
+
+interface PendingTouchpointCreate {
+  readonly actorId: string;
+  readonly candidateId: string;
+  readonly input: TouchpointCreateInput;
+  readonly key: string;
+}
+
+interface PendingTouchpointClose {
+  readonly actorId: string;
+  readonly candidateId: string;
+  readonly ownerActorId: string;
+  readonly touchpointId: string;
+  readonly version: number;
+  readonly input: { readonly status: 'completed' };
+  readonly key: string;
 }
 
 const STAGES: Readonly<Record<LifecycleStage, {
@@ -146,7 +93,7 @@ const STAGES: Readonly<Record<LifecycleStage, {
   inactive: { label: '已失效', color: 'red' },
 };
 
-const DOMAIN_COLORS: Readonly<Record<TimelineEntry['domain'], string>> = {
+const DOMAIN_COLORS: Readonly<Record<LifecycleDetail['timeline'][number]['domain'], string>> = {
   recruitment: 'blue',
   onboarding: 'cyan',
   org: 'green',
@@ -159,104 +106,204 @@ const DOMAIN_COLORS: Readonly<Record<TimelineEntry['domain'], string>> = {
 export function TalentLifecycleConsole() {
   const [items, setItems] = useState<readonly LifecycleSummary[]>([]);
   const [active, setActive] = useState<LifecycleDetail | null>(null);
+  const [profile, setProfile] = useState<IdentityProfileView | null>(null);
   const [search, setSearch] = useState('');
   const [stage, setStage] = useState<LifecycleStage | undefined>();
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [touchpointOpen, setTouchpointOpen] = useState(false);
+  const [pendingCreate, setPendingCreate] = useState<PendingTouchpointCreate | null>(null);
+  const [pendingClose, setPendingClose] = useState<PendingTouchpointClose | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [form] = Form.useForm<TouchpointForm>();
+  const loadGeneration = useRef(0);
+  const detailGeneration = useRef(0);
 
   const load = useCallback(async () => {
+    const generation = loadGeneration.current + 1;
+    loadGeneration.current = generation;
     setLoading(true);
     setError(null);
+    setItems([]);
+    setProfile(null);
     const query = new URLSearchParams({ limit: '50' });
     if (search.trim().length > 0) query.set('search', search.trim());
     if (stage !== undefined) query.set('stage', stage);
     try {
-      const result = await erpFetch<{ readonly items: readonly LifecycleSummary[] }>(
-        `/api/talent-lifecycle/people?${query.toString()}`,
-      );
-      setItems(result.data.items);
+      const [listResult, profileResult] = await Promise.all([
+        erpFetch<unknown>(`/api/talent-lifecycle/people?${query.toString()}`),
+        erpFetch<unknown>('/api/auth/profile'),
+      ]);
+      const nextItems = parseTalentLifecycleList(listResult.data);
+      const nextProfile = parseIdentityProfile(profileResult.data);
+      if (generation !== loadGeneration.current) return;
+      setItems(nextItems);
+      setProfile(nextProfile);
     } catch (value) {
-      setError(value instanceof Error ? value.message : '人才全周期列表加载失败');
+      if (generation !== loadGeneration.current) return;
+      setError(errorMessage(value, '人才全周期列表加载失败'));
     } finally {
-      setLoading(false);
+      if (generation === loadGeneration.current) setLoading(false);
     }
   }, [search, stage]);
 
   useEffect(() => { void load(); }, [load]);
 
+  useEffect(() => {
+    if (profile === null) return;
+    setPendingCreate((current) =>
+      current !== null && !canRetryTalentTouchpoint(profile, current.actorId) ? null : current);
+    setPendingClose((current) =>
+      current !== null &&
+      !canRetryTalentTouchpoint(profile, current.actorId, current.ownerActorId)
+        ? null
+        : current);
+  }, [profile]);
+
   async function openDetail(candidateId: string): Promise<void> {
+    const generation = detailGeneration.current + 1;
+    detailGeneration.current = generation;
     setDetailLoading(true);
     setError(null);
+    setActive(null);
     try {
-      const result = await erpFetch<LifecycleDetail>(
+      const result = await erpFetch<unknown>(
         `/api/talent-lifecycle/people/${candidateId}`,
       );
-      setActive(result.data);
+      const detail = parseTalentLifecycleDetail(result.data);
+      if (detail.candidateId !== candidateId) throw new Error('TALENT_LIFECYCLE_TARGET_MISMATCH');
+      if (generation !== detailGeneration.current) return;
+      setActive(detail);
     } catch (value) {
-      setError(value instanceof Error ? value.message : '人才全景加载失败');
+      if (generation !== detailGeneration.current) return;
+      setError(errorMessage(value, '人才全景加载失败'));
     } finally {
-      setDetailLoading(false);
+      if (generation === detailGeneration.current) setDetailLoading(false);
+    }
+  }
+
+  async function executeCreate(attempt: PendingTouchpointCreate): Promise<void> {
+    if (!canRetryTalentTouchpoint(profile, attempt.actorId)) {
+      if (profile !== null) setPendingCreate(null);
+      setError(profile === null
+        ? '请先刷新并确认当前身份，再重试原服务跟进请求。'
+        : '当前身份或授权已变化，原服务跟进请求已清除。');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await erpFetch<unknown>(
+        `/api/talent-lifecycle/people/${attempt.candidateId}/touchpoints`,
+        {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'idempotency-key': attempt.key,
+        },
+        body: JSON.stringify(attempt.input),
+      });
+      const parsed = parseTouchpointMutationResult(result.data);
+      if (parsed.touchpoint.candidateId !== attempt.candidateId) {
+        throw new Error('TALENT_TOUCHPOINT_TARGET_MISMATCH');
+      }
+      setPendingCreate(null);
+      setTouchpointOpen(false);
+      form.resetFields();
+      await openDetail(attempt.candidateId);
+      await load();
+    } catch (value) {
+      const definitive = isDefinitiveWriteRejection(value);
+      if (definitive) setPendingCreate(null);
+      setError(writeErrorMessage(value, '服务跟进保存失败', !definitive));
+    } finally {
+      setSaving(false);
     }
   }
 
   async function createTouchpoint(values: TouchpointForm): Promise<void> {
-    if (active === null) return;
+    if (
+      active === null ||
+      profile === null ||
+      !canWriteTalentTouchpoint(profile.scopes) ||
+      pendingCreate !== null ||
+      pendingClose !== null
+    ) return;
+    const attempt = Object.freeze({
+      actorId: profile.actorId,
+      candidateId: active.candidateId,
+      input: buildTouchpointCreateInput(values),
+      key: createIdempotencyKey('talent.touchpoint.create'),
+    });
+    setPendingCreate(attempt);
+    await executeCreate(attempt);
+  }
+
+  async function executeClose(attempt: PendingTouchpointClose): Promise<void> {
+    if (!canRetryTalentTouchpoint(profile, attempt.actorId, attempt.ownerActorId)) {
+      if (profile !== null) setPendingClose(null);
+      setError(profile === null
+        ? '请先刷新并确认当前身份，再重试原关闭请求。'
+        : '当前身份或授权已变化，原关闭请求已清除。');
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
-      await erpFetch(`/api/talent-lifecycle/people/${active.candidateId}/touchpoints`, {
+      const result = await erpFetch<unknown>(
+        `/api/talent-lifecycle/touchpoints/${attempt.touchpointId}/close`,
+        {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          'idempotency-key': createIdempotencyKey('talent.touchpoint.create'),
+          'idempotency-key': attempt.key,
+          'if-match': strongEtag(attempt.version),
         },
-        body: JSON.stringify({
-          ...values,
-          occurredAt: new Date(values.occurredAt).toISOString(),
-          ...(values.nextActionAt === undefined || values.nextActionAt.length === 0
-            ? {}
-            : { nextActionAt: new Date(values.nextActionAt).toISOString() }),
-          ...(values.note === undefined || values.note.trim().length === 0
-            ? {}
-            : { note: values.note.trim() }),
-        }),
+        body: JSON.stringify(attempt.input),
       });
-      setTouchpointOpen(false);
-      form.resetFields();
-      await openDetail(active.candidateId);
+      const parsed = parseTouchpointMutationResult(result.data);
+      if (
+        parsed.touchpoint.id !== attempt.touchpointId ||
+        parsed.touchpoint.candidateId !== attempt.candidateId ||
+        parsed.touchpoint.status !== attempt.input.status ||
+        parsed.touchpoint.version !== attempt.version + 1
+      ) throw new Error('TALENT_TOUCHPOINT_CLOSE_RESULT_MISMATCH');
+      setPendingClose(null);
+      await openDetail(attempt.candidateId);
       await load();
     } catch (value) {
-      setError(value instanceof Error ? value.message : '服务跟进保存失败');
+      const definitive = isDefinitiveWriteRejection(value);
+      if (definitive) setPendingClose(null);
+      setError(writeErrorMessage(value, '跟进行动关闭失败', !definitive));
     } finally {
       setSaving(false);
     }
   }
 
   async function closeTouchpoint(touchpoint: Touchpoint): Promise<void> {
-    setSaving(true);
-    setError(null);
-    try {
-      await erpFetch(`/api/talent-lifecycle/touchpoints/${touchpoint.id}/close`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'idempotency-key': createIdempotencyKey('talent.touchpoint.close'),
-          'if-match': strongEtag(touchpoint.version),
-        },
-        body: JSON.stringify({ status: 'completed' }),
-      });
-      if (active !== null) await openDetail(active.candidateId);
-      await load();
-    } catch (value) {
-      setError(value instanceof Error ? value.message : '跟进行动关闭失败');
-    } finally {
-      setSaving(false);
-    }
+    if (
+      active === null ||
+      profile === null ||
+      !canCloseTalentTouchpoint(profile, touchpoint) ||
+      pendingCreate !== null ||
+      pendingClose !== null
+    ) return;
+    const attempt = Object.freeze({
+      actorId: profile.actorId,
+      candidateId: active.candidateId,
+      ownerActorId: touchpoint.ownerActorId,
+      touchpointId: touchpoint.id,
+      version: touchpoint.version,
+      input: Object.freeze({ status: 'completed' as const }),
+      key: createIdempotencyKey('talent.touchpoint.close'),
+    });
+    setPendingClose(attempt);
+    await executeClose(attempt);
   }
+
+  const canWrite = profile !== null && canWriteTalentTouchpoint(profile.scopes);
+  const hasPendingWrite = pendingCreate !== null || pendingClose !== null;
 
   const counts = useMemo(() => ({
     total: items.length,
@@ -336,6 +383,14 @@ export function TalentLifecycleConsole() {
         {error === null ? null : (
           <Alert type="error" showIcon message={error} closable onClose={() => setError(null)} />
         )}
+        {!loading && profile !== null && !canWrite ? (
+          <Alert
+            type="info"
+            showIcon
+            message="当前身份仅可查看人才全周期"
+            description="服务触点写入同时需要读取与 erp:talent-lifecycle:touchpoint:write Scope。"
+          />
+        ) : null}
 
         <Row gutter={[16, 16]}>
           <Col xs={12} lg={6}><Card><Statistic title="当前人才" value={counts.total} /></Card></Col>
@@ -381,12 +436,17 @@ export function TalentLifecycleConsole() {
         width={760}
         open={active !== null || detailLoading}
         loading={detailLoading}
-        onClose={() => setActive(null)}
-        extra={active === null ? null : (
+        closable={!hasPendingWrite && !saving}
+        keyboard={!hasPendingWrite && !saving}
+        maskClosable={!hasPendingWrite && !saving}
+        onClose={() => {
+          if (!hasPendingWrite && !saving) setActive(null);
+        }}
+        extra={active === null || !canWrite ? null : (
           <Button type="primary" onClick={() => {
             form.setFieldsValue({ occurredAt: localInputTime(new Date()) });
             setTouchpointOpen(true);
-          }}>
+          }} disabled={hasPendingWrite || saving}>
             记录服务跟进
           </Button>
         )}
@@ -413,14 +473,46 @@ export function TalentLifecycleConsole() {
             </Descriptions>
 
             <Card size="small" title="服务跟进">
+              {pendingClose === null ? null : (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="上次关闭结果尚未确认"
+                  description="只能重试原关闭请求；系统会复用同一主体、版本、正文和幂等键。"
+                  style={{ marginBottom: 12 }}
+                />
+              )}
               <List
                 dataSource={[...active.touchpoints]}
                 locale={{ emptyText: '尚无服务跟进记录' }}
                 renderItem={(item) => (
                   <List.Item
-                    actions={item.status === 'open'
-                      ? [<Button key="done" type="link" loading={saving} onClick={() => void closeTouchpoint(item)}>标记完成</Button>]
-                      : []}
+                    actions={
+                      pendingClose?.touchpointId === item.id
+                        ? [(
+                          <Button
+                            key="retry"
+                            type="link"
+                            loading={saving}
+                            onClick={() => void executeClose(pendingClose)}
+                          >
+                            重试原关闭请求
+                          </Button>
+                        )]
+                        : pendingClose === null && canCloseTalentTouchpoint(profile, item)
+                          ? [(
+                            <Button
+                              key="done"
+                              type="link"
+                              loading={saving}
+                              disabled={pendingCreate !== null}
+                              onClick={() => void closeTouchpoint(item)}
+                            >
+                              标记完成
+                            </Button>
+                          )]
+                          : []
+                    }
                   >
                     <List.Item.Meta
                       title={(
@@ -471,11 +563,34 @@ export function TalentLifecycleConsole() {
         title="记录服务跟进"
         open={touchpointOpen}
         confirmLoading={saving}
-        okText="保存"
-        onOk={() => form.submit()}
-        onCancel={() => setTouchpointOpen(false)}
+        okText={pendingCreate === null ? '保存' : '重试原请求'}
+        cancelButtonProps={{ disabled: pendingCreate !== null || saving }}
+        closable={pendingCreate === null && !saving}
+        keyboard={pendingCreate === null && !saving}
+        maskClosable={pendingCreate === null && !saving}
+        onOk={() => {
+          if (pendingCreate === null) form.submit();
+          else void executeCreate(pendingCreate);
+        }}
+        onCancel={() => {
+          if (pendingCreate === null && !saving) setTouchpointOpen(false);
+        }}
       >
-        <Form form={form} layout="vertical" onFinish={(values) => void createTouchpoint(values)}>
+        {pendingCreate === null ? null : (
+          <Alert
+            type="warning"
+            showIcon
+            message="上次保存结果尚未确认"
+            description="重试会复用完全相同的主体、候选人、正文和幂等键，不会创建第二条服务触点。"
+            style={{ marginBottom: 12 }}
+          />
+        )}
+        <Form
+          form={form}
+          layout="vertical"
+          disabled={saving || pendingCreate !== null}
+          onFinish={(values) => void createTouchpoint(values)}
+        >
           <Form.Item name="kind" label="服务类型" rules={[{ required: true }]}>
             <Select options={[
               ['candidate_outreach', '候选人沟通'],
@@ -542,4 +657,18 @@ function formatTime(value: string): string {
 function localInputTime(value: Date): string {
   const offset = value.getTimezoneOffset() * 60_000;
   return new Date(value.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function errorMessage(value: unknown, fallback: string): string {
+  if (value instanceof ErpApiError) {
+    return value.traceId === null ? value.message : `${value.message}（追踪标识：${value.traceId}）`;
+  }
+  return value instanceof Error ? value.message : fallback;
+}
+
+function writeErrorMessage(value: unknown, fallback: string, uncertain: boolean): string {
+  const message = errorMessage(value, fallback);
+  return uncertain
+    ? `${message}；结果尚未确认，请使用“重试原请求”，系统会复用同一幂等键。`
+    : message;
 }

@@ -9,6 +9,8 @@ metadata:
   annotations:
     gaoq.io/release-commit: {{ required "release.commitSha 必填" .Values.release.commitSha | quote }}
     gaoq.io/deployment-manifest: {{ required "release.deploymentManifestHash 必填" .Values.release.deploymentManifestHash | quote }}
+    gaoq.io/runtime-config: {{ required "runtime.workerConfigMapHash 必填" .Values.runtime.workerConfigMapHash | quote }}
+    gaoq.io/runtime-contract: {{ required "runtime.contractHash 必填" .Values.runtime.contractHash | quote }}
 spec:
   replicas: {{ .Values.replicas.worker }}
   revisionHistoryLimit: 5
@@ -32,6 +34,8 @@ spec:
         gaoq.io/rollout-id: {{ required "release.rolloutId 必填" .Values.release.rolloutId | quote }}
         gaoq.io/release-commit: {{ .Values.release.commitSha | quote }}
         gaoq.io/deployment-manifest: {{ .Values.release.deploymentManifestHash | quote }}
+        gaoq.io/runtime-config: {{ .Values.runtime.workerConfigMapHash | quote }}
+        gaoq.io/runtime-contract: {{ .Values.runtime.contractHash | quote }}
     spec:
       serviceAccountName: {{ include "gaoq-erp.serviceAccountName" . }}
       automountServiceAccountToken: false

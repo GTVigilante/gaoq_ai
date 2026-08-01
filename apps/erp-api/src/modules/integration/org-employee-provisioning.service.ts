@@ -47,8 +47,8 @@ const RECORD_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 const DUPLICATE_KEY_CODE = 11_000;
 type ProvisioningChannel = Exclude<OrgPushChannel, 'op'>;
 
-/** 外部与本地事务已成功，但后置审计不可用；禁止再改写业务终态。 */
-class ProvisioningPostCommitAuditError extends Error {}
+/** 外部或本地终态已经提交，但提交后的基础设施动作失败；禁止再改写业务终态。 */
+class ProvisioningPostCommitError extends Error {}
 
 interface ProvisioningResponse {
   readonly requestId: string;
@@ -274,7 +274,7 @@ export class OrgEmployeeProvisioningService {
         await this.processOne(claim, workerId);
         succeeded += 1;
       } catch (error) {
-        if (error instanceof ProvisioningPostCommitAuditError) throw error;
+        if (error instanceof ProvisioningPostCommitError) throw error;
         await this.markFailure(claim, workerId, error, new Date());
       }
     }
@@ -340,6 +340,7 @@ export class OrgEmployeeProvisioningService {
   }
 
   private async processOne(claim: ClaimedProvisioning, workerId: string): Promise<void> {
+    this.assertClaim(claim);
     const employee = await this.employees.findOne(
       { tenantId: claim.tenantId, id: claim.employeeId },
       {
@@ -406,16 +407,28 @@ export class OrgEmployeeProvisioningService {
         payloadCiphertext: claim.payloadCiphertext,
         payloadAuthTag: claim.payloadAuthTag,
       });
+      const expectedExternalUserId = this.externalUserId(
+        externalTenantId,
+        claim.employeeId,
+        claim.channel,
+      );
       const result = await this.adapters.get(claim.channel).provisionEmployee({
         tenantId: claim.tenantId,
         employeeId: claim.employeeId,
-        externalUserId: this.externalUserId(externalTenantId, claim.employeeId, claim.channel),
+        externalUserId: expectedExternalUserId,
         employeeNo: employee.employeeNo,
         displayName: employee.displayName,
         departmentExternalIds,
         idempotencyKey: claim.idempotencyKey,
         contact,
       });
+      if (result.externalUserId !== expectedExternalUserId) {
+        throw new OrgPushError(
+          'ORG_PROVISIONING_PLATFORM_IDENTITY_CONFLICT',
+          'conflict',
+          '平台开户身份与 ERP 确定性标识不一致',
+        );
+      }
       await this.complete(
         claim,
         workerId,
@@ -441,7 +454,10 @@ export class OrgEmployeeProvisioningService {
     unionId: string,
     platformRequestId?: string,
   ): Promise<void> {
+    this.assertPlatformBinding(externalTenantId, externalUserId, unionId);
     const session = await this.connection.startSession();
+    let transactionFailed = false;
+    let transactionError: unknown;
     try {
       await session.withTransaction(async () => {
         await this.profiles.ensureProvisionedEmployee(
@@ -491,8 +507,21 @@ export class OrgEmployeeProvisioningService {
         );
         if (result.modifiedCount !== 1) throw new Error('开户请求租约已丢失');
       });
-    } finally {
+    } catch (error) {
+      transactionFailed = true;
+      transactionError = error;
+    }
+    let sessionCleanupFailed = false;
+    try {
       await session.endSession();
+    } catch {
+      sessionCleanupFailed = true;
+    }
+    if (transactionFailed) {
+      throw transactionError;
+    }
+    if (sessionCleanupFailed) {
+      throw new ProvisioningPostCommitError('开户已提交但数据库会话清理不可用');
     }
     try {
       await this.audit.recordSystem(claim.tenantId, {
@@ -505,7 +534,7 @@ export class OrgEmployeeProvisioningService {
         metadata: { channel: claim.channel, attempts: claim.attempts + 1 },
       });
     } catch {
-      throw new ProvisioningPostCommitAuditError('开户已提交但审计不可用');
+      throw new ProvisioningPostCommitError('开户已提交但审计不可用');
     }
   }
 
@@ -518,7 +547,12 @@ export class OrgEmployeeProvisioningService {
     const pushError = error instanceof OrgPushError
       ? error
       : new OrgPushError('ORG_PROVISIONING_INTERNAL', 'retryable', '开户处理暂时失败');
-    const attempts = Math.min(claim.attempts + 1, ORG_DELIVERY_MAX_ATTEMPTS);
+    const priorAttempts = Number.isInteger(claim.attempts) &&
+      claim.attempts >= 0 &&
+      claim.attempts < ORG_DELIVERY_MAX_ATTEMPTS
+      ? claim.attempts
+      : ORG_DELIVERY_MAX_ATTEMPTS - 1;
+    const attempts = Math.min(priorAttempts + 1, ORG_DELIVERY_MAX_ATTEMPTS);
     const nextAttemptAt = calculateNextAttemptAt(attempts, now);
     const expired = nextAttemptAt >= claim.sensitiveExpiresAt;
     const retry = pushError.category === 'retryable' &&
@@ -551,15 +585,24 @@ export class OrgEmployeeProvisioningService {
       { runValidators: true },
     );
     if (result.modifiedCount !== 1) throw new Error('开户失败状态租约已丢失');
-    await this.audit.recordSystem(claim.tenantId, {
-      action: 'integration.org_employee.provision',
-      resourceType: 'org_employee_provisioning',
-      resourceId: claim.requestId,
-      riskLevel: 'R3',
-      outcome: 'failure',
-      traceId: claim.requestId,
-      metadata: { channel: claim.channel, status, errorCode: this.safeErrorCode(pushError.code), attempts },
-    });
+    try {
+      await this.audit.recordSystem(claim.tenantId, {
+        action: 'integration.org_employee.provision',
+        resourceType: 'org_employee_provisioning',
+        resourceId: claim.requestId,
+        riskLevel: 'R3',
+        outcome: 'failure',
+        traceId: claim.requestId,
+        metadata: {
+          channel: claim.channel,
+          status,
+          errorCode: this.safeErrorCode(pushError.code),
+          attempts,
+        },
+      });
+    } catch {
+      throw new ProvisioningPostCommitError('开户失败终态已提交但审计不可用');
+    }
   }
 
   private async expireSensitivePayloads(now: Date): Promise<void> {
@@ -627,6 +670,55 @@ export class OrgEmployeeProvisioningService {
       .digest('base64url')
       .slice(0, 32);
     return `gq_${digest}`;
+  }
+
+  private assertClaim(claim: ClaimedProvisioning): void {
+    const expiresAtMs = claim.sensitiveExpiresAt instanceof Date
+      ? claim.sensitiveExpiresAt.getTime()
+      : Number.NaN;
+    if (
+      !ID_PATTERN.test(claim.tenantId) ||
+      !ULID_PATTERN.test(claim.requestId) ||
+      !ID_PATTERN.test(claim.employeeId) ||
+      (claim.channel !== 'dingtalk' && claim.channel !== 'feishu') ||
+      !IDEMPOTENCY_KEY_PATTERN.test(claim.idempotencyKey) ||
+      !ID_PATTERN.test(claim.payloadKeyId) ||
+      !Number.isInteger(claim.attempts) ||
+      claim.attempts < 0 ||
+      claim.attempts >= ORG_DELIVERY_MAX_ATTEMPTS ||
+      !Number.isFinite(expiresAtMs)
+    ) {
+      throw new OrgPushError(
+        'ORG_PROVISIONING_RECORD_INVALID',
+        'business',
+        '开户任务记录无效',
+      );
+    }
+    if (expiresAtMs <= Date.now()) {
+      throw new OrgPushError(
+        'ORG_PROVISIONING_PAYLOAD_EXPIRED',
+        'business',
+        '私密开户资料已过期',
+      );
+    }
+  }
+
+  private assertPlatformBinding(
+    externalTenantId: string,
+    externalUserId: string,
+    unionId: string,
+  ): void {
+    if (
+      !ID_PATTERN.test(externalTenantId) ||
+      !ID_PATTERN.test(externalUserId) ||
+      !ID_PATTERN.test(unionId)
+    ) {
+      throw new OrgPushError(
+        'ORG_PROVISIONING_PLATFORM_IDENTITY_INVALID',
+        'conflict',
+        '平台开户身份无效',
+      );
+    }
   }
 
   private safePlatformRequestId(value: string | undefined): string | null {

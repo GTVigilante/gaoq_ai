@@ -5,6 +5,7 @@ import {
   Get,
   Headers,
   HttpCode,
+  Logger,
   Param,
   Post,
   Query,
@@ -34,6 +35,8 @@ const RETRY_REASONS: readonly OpApprovalResultRetryReason[] = [
 /** OP 控制面；业务数据只读，仅允许对终态失败投递执行受审计的幂等重试。 */
 @Controller('op')
 export class OpController {
+  private readonly logger = new Logger(OpController.name);
+
   constructor(
     private readonly summaries: OpOperatingSummaryService,
     private readonly approvalBridges: OpApprovalBridgeService,
@@ -50,9 +53,9 @@ export class OpController {
     const result = await this.summaries.getLatest(date);
     await this.audit.record({
       action: 'op.operating_summary.read', resourceType: 'op_operating_summary',
-      resourceId: result.id, riskLevel: 'R0', outcome: 'success', metadata: {
+      resourceId: `${result.summaryDate}:${result.revision}`,
+      riskLevel: 'R0', outcome: 'success', metadata: {
         summaryDate: result.summaryDate, revision: result.revision,
-        payloadHash: result.payloadHash,
       },
     });
     return result;
@@ -113,10 +116,10 @@ export class OpController {
         parsedEventId, reason, this.requireIdempotencyKey(idempotencyKey),
       );
     } catch (error) {
-      await this.auditApprovalResultRetry(parsedEventId, reason, 'failure');
+      await this.auditApprovalResultRetrySafe(parsedEventId, reason, 'failure');
       throw error;
     }
-    await this.auditApprovalResultRetry(parsedEventId, reason, 'success');
+    await this.auditApprovalResultRetrySafe(parsedEventId, reason, 'success');
     return result;
   }
 
@@ -158,14 +161,22 @@ export class OpController {
     });
   }
 
-  private async auditApprovalResultRetry(
+  private async auditApprovalResultRetrySafe(
     eventId: string,
     reason: OpApprovalResultRetryReason,
     outcome: 'success' | 'failure',
   ): Promise<void> {
-    await this.audit.record({
-      action: 'op.approval.result.retry', resourceType: 'op_approval_result',
-      resourceId: eventId, riskLevel: 'R2', outcome, metadata: { reason },
-    });
+    try {
+      await this.audit.record({
+        action: 'op.approval.result.retry', resourceType: 'op_approval_result',
+        resourceId: eventId, riskLevel: 'R2', outcome, metadata: { reason },
+      });
+    } catch {
+      this.logger.error({
+        code: 'OP_APPROVAL_RESULT_RETRY_AUDIT_AFTER_DECISION_FAILED',
+        eventId,
+        outcome,
+      });
+    }
   }
 }

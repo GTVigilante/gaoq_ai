@@ -13,6 +13,7 @@ import type { ClientSession, Model } from 'mongoose';
 
 import { IdempotencyService } from '../../../core/idempotency/idempotency.service.js';
 import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
+import { LegacyPayrollBoundaryService } from '../../payroll/legacy-payroll-boundary.service.js';
 import {
   PayrollReconciliationService,
   type PayrollReconciliationMigrationControl,
@@ -47,6 +48,7 @@ export class TreasuryReconciliationService {
   constructor(
     private readonly idempotency: IdempotencyService,
     private readonly context: TenantContextService,
+    private readonly boundary: LegacyPayrollBoundaryService,
     private readonly payroll: PayrollReconciliationService,
     private readonly outbox: TreasuryOutboxWriter,
     @InjectModel(TreasuryDisbursementBatchRecord.name)
@@ -62,6 +64,7 @@ export class TreasuryReconciliationService {
     input: ImportFourWayReconciliationFromMigrationInput,
   ): Promise<PayrollReconciliationSummary> {
     this.assertMigrationWriter();
+    this.boundary.assertLegacy();
     assertReconciliationMigrationInput(input);
     return this.idempotency.execute(
       'treasury.reconciliation.import_from_migration', key, input, async (session) => {
@@ -179,6 +182,7 @@ export class TreasuryReconciliationService {
         message: '只允许受信任对账服务执行四方对账',
       });
     }
+    this.boundary.assertLegacy();
     if (!ULID.test(batchId) || !Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
       throw new BadRequestException({
         code: 'PAYROLL_RECONCILIATION_INPUT_INVALID', message: '四方对账引用非法',

@@ -3,7 +3,14 @@ import { collectDefaultMetrics, Counter, Gauge, Histogram, Registry } from 'prom
 
 type AuditOutcome = 'success' | 'failure';
 type VerificationOutcome = 'success' | 'failure';
-type ApprovalNotificationOutcome = 'sent' | 'retry' | 'dead';
+type ApprovalNotificationOutcome = 'sent' | 'retry' | 'dead' | 'state_unavailable';
+type OrgDeliveryOutcome =
+  | 'succeeded'
+  | 'retry'
+  | 'dead'
+  | 'manual_review'
+  | 'busy'
+  | 'state_unavailable';
 type McpConfirmationStage = 'prepare' | 'confirm' | 'execute';
 type KnowledgeSearchIndexOutcome = 'success' | 'retry' | 'dead';
 type KnowledgeExamRunOutcome = 'success' | 'pending' | 'retry' | 'dead' | 'deferred';
@@ -21,6 +28,18 @@ type CareAlumniCleanupOutcome =
   | 'dead'
   | 'deduplicated'
   | 'deferred';
+
+const HTTP_METHOD_LABELS = new Set([
+  'CONNECT',
+  'DELETE',
+  'GET',
+  'HEAD',
+  'OPTIONS',
+  'PATCH',
+  'POST',
+  'PUT',
+  'TRACE',
+]);
 
 /** 低基数 Prometheus 指标注册中心；严禁使用租户、用户、资源 ID 作为标签。 */
 @Injectable()
@@ -104,6 +123,19 @@ export class MetricsService {
     help: '审批通知单次投递耗时（秒）。',
     labelNames: ['channel', 'outcome'] as const,
     buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+    registers: [this.registry],
+  });
+  private readonly orgDeliveries = new Counter({
+    name: 'gaoq_org_delivery_total',
+    help: 'ERP 组织主数据向固定外部平台投递结果总数。',
+    labelNames: ['channel', 'outcome'] as const,
+    registers: [this.registry],
+  });
+  private readonly orgDeliveryDuration = new Histogram({
+    name: 'gaoq_org_delivery_duration_seconds',
+    help: 'ERP 组织主数据单次外部平台投递耗时（秒）。',
+    labelNames: ['channel', 'outcome'] as const,
+    buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
     registers: [this.registry],
   });
   private readonly mcpConfirmations = new Counter({
@@ -233,10 +265,10 @@ export class MetricsService {
     readonly durationSeconds: number;
   }): void {
     const labels = {
-      method: input.method,
+      method: normalizeHttpMethod(input.method),
       controller: input.controller,
       handler: input.handler,
-      status_code: String(input.statusCode),
+      status_code: normalizeHttpStatus(input.statusCode),
     };
     this.httpRequests.inc(labels);
     this.httpDuration.observe(labels, input.durationSeconds);
@@ -278,6 +310,15 @@ export class MetricsService {
   ): void {
     this.approvalNotifications.inc({ channel, outcome });
     this.approvalNotificationDuration.observe({ channel, outcome }, durationSeconds);
+  }
+
+  recordOrgDelivery(
+    channel: 'dingtalk' | 'feishu' | 'op',
+    outcome: OrgDeliveryOutcome,
+    durationSeconds: number,
+  ): void {
+    this.orgDeliveries.inc({ channel, outcome });
+    this.orgDeliveryDuration.observe({ channel, outcome }, Math.max(0, durationSeconds));
   }
 
   recordMcpConfirmation(
@@ -388,6 +429,17 @@ export class MetricsService {
       Math.max(0, oldestAgeSeconds),
     );
   }
+}
+
+function normalizeHttpMethod(method: string): string {
+  const normalized = method.toUpperCase();
+  return HTTP_METHOD_LABELS.has(normalized) ? normalized : 'OTHER';
+}
+
+function normalizeHttpStatus(statusCode: number): string {
+  return Number.isInteger(statusCode) && statusCode >= 100 && statusCode <= 599
+    ? String(statusCode)
+    : '500';
 }
 
 /** 单调时钟耗时，避免系统时间校准导致负值。 */

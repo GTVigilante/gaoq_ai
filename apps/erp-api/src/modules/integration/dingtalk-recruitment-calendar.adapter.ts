@@ -8,12 +8,17 @@ import { OrgPlatformTokenService } from './org-platform-token.service.js';
 import { OrgPushError } from './org-push.adapter.js';
 import {
   RecruitmentCalendarAdapter,
+  assertCancelRecruitmentCalendarCommand,
+  assertRecruitmentCalendarExternalEventId,
+  assertUpsertRecruitmentCalendarCommand,
   type CancelRecruitmentCalendarCommand,
   type RecruitmentCalendarResult,
+  RecruitmentCalendarError,
   type UpsertRecruitmentCalendarCommand,
 } from './recruitment-calendar.adapter.js';
 
 const eventResponseSchema = z.object({ id: z.string().min(1).max(512) }).passthrough();
+const REQUEST_ID_PATTERN = /^[\x21-\x7E]{1,128}$/;
 
 /** 钉钉 Calendar 1.0 适配器；令牌仅在调用时从安全凭据服务取得。 */
 @Injectable()
@@ -28,6 +33,7 @@ export class DingTalkRecruitmentCalendarAdapter extends RecruitmentCalendarAdapt
   }
 
   async upsert(command: UpsertRecruitmentCalendarCommand): Promise<RecruitmentCalendarResult> {
+    assertUpsertRecruitmentCalendarCommand(command);
     const eventId = command.currentExternalEventId;
     const response = await this.call({
       tenantId: command.tenantId,
@@ -47,16 +53,17 @@ export class DingTalkRecruitmentCalendarAdapter extends RecruitmentCalendarAdapt
       },
     });
     const parsed = eventResponseSchema.safeParse(response.body);
-    if (!parsed.success) throw new OrgPushError(
-      'DINGTALK_CALENDAR_RESPONSE_INVALID', 'retryable', '钉钉日程响应无效',
+    if (!parsed.success) throw new RecruitmentCalendarError(
+      'DINGTALK_CALENDAR_RESULT_UNKNOWN',
+      'conflict',
+      '钉钉日程可能已提交但响应无效',
     );
-    return {
-      externalEventId: parsed.data.id,
-      ...(response.requestId === undefined ? {} : { requestId: response.requestId }),
-    };
+    const externalEventId = assertRecruitmentCalendarExternalEventId(parsed.data.id);
+    return this.result(externalEventId, response.requestId);
   }
 
   async cancel(command: CancelRecruitmentCalendarCommand): Promise<RecruitmentCalendarResult> {
+    assertCancelRecruitmentCalendarCommand(command);
     try {
       const response = await this.call({
         tenantId: command.tenantId,
@@ -65,10 +72,7 @@ export class DingTalkRecruitmentCalendarAdapter extends RecruitmentCalendarAdapt
         idempotencyKey: command.idempotencyKey,
         query: { pushNotification: true },
       });
-      return {
-        externalEventId: command.externalEventId,
-        ...(response.requestId === undefined ? {} : { requestId: response.requestId }),
-      };
+      return this.result(command.externalEventId, response.requestId);
     } catch (error) {
       if (error instanceof OrgPushError && error.status === 404) {
         return { externalEventId: command.externalEventId };
@@ -123,5 +127,17 @@ export class DingTalkRecruitmentCalendarAdapter extends RecruitmentCalendarAdapt
     const hex = createHash('sha256').update(value, 'utf8').digest('hex').slice(0, 32);
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}`
       + `-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+
+  private requestId(value: string | undefined): string | undefined {
+    return value !== undefined && REQUEST_ID_PATTERN.test(value) ? value : undefined;
+  }
+
+  private result(
+    externalEventId: string,
+    rawRequestId: string | undefined,
+  ): RecruitmentCalendarResult {
+    const requestId = this.requestId(rawRequestId);
+    return requestId === undefined ? { externalEventId } : { externalEventId, requestId };
   }
 }

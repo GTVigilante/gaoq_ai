@@ -68,6 +68,29 @@ describe('Attendance 领域', () => {
     expect(source.impact.workedMinutes).toBe(480);
   });
 
+  it('来源水位按 Provider 排序后固化进快照哈希，并拒绝截止点后的水位', () => {
+    const input = {
+      id: 'snapshot-watermark-001', tenantId: 'tenant-001', employeeId: 'employee-001',
+      month: '2026-04', snapshotVersion: 1, rulesetVersion: 'attendance-cn-v1',
+      sourceCutoffAt: '2026-04-02T00:00:00.000Z', facts: [fact()], corrections: [],
+      previousSnapshotId: null, supersessionEvidenceId: null,
+      sourceWatermarks: [{
+        providerCode: 'feishu', throughDate: '2026-04-30',
+        lastPolledAt: '2026-04-01T23:59:00.000Z', completedInboxCount: 42,
+      }],
+    } as const;
+    const snapshot = closeAttendanceMonth(input, now);
+    expect(snapshot.sourceProviderCount).toBe(1);
+    expect(snapshot.sourceWatermarkDigest).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(() => closeAttendanceMonth({
+      ...input,
+      sourceWatermarks: [{
+        ...input.sourceWatermarks[0],
+        lastPolledAt: '2026-04-02T00:00:01.000Z',
+      }],
+    }, now)).toThrow('来源水位晚于关账截止时间');
+  });
+
   it('重开月结缺少前序引用或审批证据时失败关闭', () => {
     expect(() => closeAttendanceMonth({
       id: 'snapshot-002', tenantId: 'tenant-001', employeeId: 'employee-001',

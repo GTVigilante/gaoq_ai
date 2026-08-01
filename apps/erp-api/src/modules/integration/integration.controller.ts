@@ -5,11 +5,13 @@ import {
   Get,
   Headers,
   HttpCode,
+  Logger,
   Param,
   Post,
   Query,
 } from '@nestjs/common';
 
+import { retryReasonSchema as retryRequestSchema } from '../../contracts/rest-request-contracts.js';
 import { AuditService } from '../../core/audit/audit.service.js';
 import { RequiredScopes } from '../identity/auth.decorators.js';
 import {
@@ -23,10 +25,11 @@ const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
 const RETRY_REASONS: readonly OrgDeliveryRetryReason[] = [
   'credentials_fixed', 'mapping_fixed', 'provider_recovered', 'approved_exception',
 ];
-
 /** 多渠道组织同步运维接口；不暴露 Outbox envelope、平台令牌或原始响应。 */
 @Controller('integrations/org-deliveries')
 export class IntegrationController {
+  private readonly logger = new Logger(IntegrationController.name);
+
   constructor(
     private readonly operations: OrgDeliveryOperationsService,
     private readonly audit: AuditService,
@@ -55,11 +58,11 @@ export class IntegrationController {
     @Param('eventId') eventId: string,
     @Param('channel') channel: string,
     @Headers('idempotency-key') idempotencyKey: string | undefined,
-    @Body() body: { readonly reason?: string },
+    @Body() body: unknown,
   ) {
     const parsedEventId = this.requireUlid(eventId);
     const parsedChannel = this.requireChannel(channel);
-    const reason = this.requireReason(body.reason);
+    const reason = this.requireReason(this.requireRetryRequest(body).reason);
     const parsedIdempotencyKey = this.requireIdempotencyKey(idempotencyKey);
     let result;
     try {
@@ -70,25 +73,50 @@ export class IntegrationController {
         parsedIdempotencyKey,
       );
     } catch (error) {
+      try {
+        await this.audit.record({
+          action: 'integration.org_delivery.retry',
+          resourceType: 'org_delivery',
+          resourceId: `${parsedEventId}:${parsedChannel}`,
+          riskLevel: 'R2',
+          outcome: 'failure',
+          metadata: { reason },
+        });
+      } catch {
+        this.logger.error({
+          code: 'ORG_DELIVERY_RETRY_FAILURE_AUDIT_FAILED',
+          eventId: parsedEventId,
+          channel: parsedChannel,
+        });
+      }
+      throw error;
+    }
+    try {
       await this.audit.record({
         action: 'integration.org_delivery.retry',
         resourceType: 'org_delivery',
         resourceId: `${parsedEventId}:${parsedChannel}`,
         riskLevel: 'R2',
-        outcome: 'failure',
+        outcome: 'success',
         metadata: { reason },
       });
-      throw error;
+    } catch {
+      this.logger.error({
+        code: 'ORG_DELIVERY_RETRY_AUDIT_AFTER_COMMIT_FAILED',
+        eventId: parsedEventId,
+        channel: parsedChannel,
+      });
     }
-    await this.audit.record({
-      action: 'integration.org_delivery.retry',
-      resourceType: 'org_delivery',
-      resourceId: `${parsedEventId}:${parsedChannel}`,
-      riskLevel: 'R2',
-      outcome: 'success',
-      metadata: { reason },
-    });
     return result;
+  }
+
+  private requireRetryRequest(value: unknown): { readonly reason: string } {
+    const parsed = retryRequestSchema.safeParse(value);
+    if (parsed.success) return parsed.data;
+    throw new BadRequestException({
+      code: 'ORG_DELIVERY_RETRY_REQUEST_INVALID',
+      message: '重试请求结构无效',
+    });
   }
 
   private requireStatus(value: string | undefined): 'manual_review' | 'dead' {
@@ -112,8 +140,8 @@ export class IntegrationController {
   }
 
   private requireLimit(value: string | undefined): number {
-    const parsed = value === undefined ? 50 : Number(value);
-    if (Number.isInteger(parsed) && parsed >= 1 && parsed <= 100) return parsed;
+    if (value === undefined) return 50;
+    if (/^(?:[1-9]|[1-9][0-9]|100)$/u.test(value)) return Number(value);
     throw new BadRequestException({ code: 'ORG_DELIVERY_LIMIT_INVALID', message: 'limit 必须为 1..100' });
   }
 

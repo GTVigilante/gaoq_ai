@@ -17,6 +17,7 @@ import { TenantContextService } from '../../../core/tenant/tenant-context.servic
 import type { VerifiedAccessToken } from '../../identity/auth.types.js';
 import { WebAuthnService } from '../../identity/strong-auth/webauthn.service.js';
 import { payrollDigest } from '../../payroll/domain/index.js';
+import { LegacyPayrollBoundaryService } from '../../payroll/legacy-payroll-boundary.service.js';
 import { TreasuryDataCryptoService } from '../persistence/treasury-data-crypto.service.js';
 import { TreasuryOutboxWriter } from '../persistence/treasury-outbox.writer.js';
 import {
@@ -52,7 +53,8 @@ const instructionSchema = z.object({
   bankAccountId: z.string().regex(ID), payrollCalculationLineId: z.string().regex(ID),
   payrollResultHash: z.string().regex(HASH), creditorName: z.string(),
   creditorAccount: z.string(), creditorAgentClearingCode: z.string(),
-  amountMinor: z.number().int().safe().positive(), purposeCode: z.literal('PAYROLL'),
+  amountMinor: z.number().int().safe().positive(),
+  purposeCode: z.enum(['PAYROLL', 'PAYROLL_ADJUSTMENT']),
 }).strict();
 const accountSchema = z.object({
   accountName: z.string().min(1).max(140), account: z.string().regex(/^[0-9]{8,32}$/),
@@ -73,6 +75,7 @@ export class TreasuryRecoveryService {
   constructor(
     private readonly idempotency: IdempotencyService,
     private readonly context: TenantContextService,
+    private readonly boundary: LegacyPayrollBoundaryService,
     private readonly strongAuth: WebAuthnService,
     private readonly crypto: TreasuryDataCryptoService,
     private readonly outbox: TreasuryOutboxWriter,
@@ -103,6 +106,7 @@ export class TreasuryRecoveryService {
     ) throw new ForbiddenException({
       code: 'TREASURY_RECOVERY_APPROVER_IDENTITY_INVALID', message: '失败代发恢复身份上下文非法',
     });
+    this.boundary.assertLegacy();
     if (!ID.test(parentBatchId)) throw new BadRequestException({
       code: 'TREASURY_BATCH_ID_INVALID', message: '父代发批次标识非法',
     });
@@ -279,6 +283,7 @@ export class TreasuryRecoveryService {
       payrollRunId: parent.payrollRunId, payrollResultHash: parent.payrollResultHash,
       payableResultHash, batchSequence: latest.batchSequence + 1, parentBatchId: parent.id,
       recoverySourceBatchId: parent.id,
+      adjustmentSourceId: null, adjustmentSourceHash: null,
       purpose: 'recovery', format: parent.format, fileHash: null,
       lineCount: failed.length, totalMinor: failedMinor, preparedBy: approvedBy,
       payrollLockedBy: parent.payrollLockedBy, exportApprovedBy: null,
@@ -304,7 +309,7 @@ export class TreasuryRecoveryService {
         payrollResultHash: source.payrollResultHash, creditorName: account.data.accountName,
         creditorAccount: account.data.account,
         creditorAgentClearingCode: account.data.clearingCode,
-        amountMinor: source.amountMinor, purposeCode: 'PAYROLL',
+        amountMinor: source.amountMinor, purposeCode: source.purposeCode,
       });
       return {
         id, tenantId: this.tenantId(), batchId, employeeId: source.employeeId,

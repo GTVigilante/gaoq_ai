@@ -10,6 +10,8 @@
 
 - 运行声明：`sourceSystem`、来源唯一 `sourceRunId`、`full|incremental`、固定 Scope、来源总数和预期滚动校验和。空数据域允许声明总数为 0，但预期校验和必须与空滚动结果一致。
 - 条目声明：连续 `sequence`、来源记录/版本、白名单实体类型、内存态 payload、payload SHA-256、显式关联来源 ID 和附件摘要清单。服务端另行计算覆盖实体类型、来源版本、关联与附件摘要的 `sourceFactHash`，用于识别“正文相同但控制事实已变化”的重放。
+- `sourceVersion` 只允许 1–64 个可见 ASCII；控制字符、空格和非规范编码在进入
+  校验和、账本或日志前失败关闭，DTO 与持久化 Schema 使用同一约束。
 - 服务端先对规范 JSON 重算 payload SHA-256；不匹配立即拒绝请求且不推进检查点。
 - 检查点只能逐条推进；同一运行/序号重复提交必须绑定同一来源记录和摘要。中断发生在领域写入、映射或条目之间时，领域幂等键和 `lastRunId + lastSequence` 可恢复原结果，不重复创建目标。
 - 相同来源记录和相同摘要跨运行识别为 `duplicate`；摘要变化按目标版本执行增量更新。
@@ -54,7 +56,7 @@
 - v1 不得包含前序或重开证据；v2+ 必须引用同员工同月份的 v(n-1) 目标映射、已通过 `attendance_month_reopen` 历史及其 WORM checksum，并满足重开审批完成 ≤ 关账时间。每一版另绑定唯一 WORM，激活新版本时只把直接前序标记为 superseded。
 - 只发布 `attendance.month.migrated`，不伪造普通关账/重开事件。逐日明细继续使用 AES-256-GCM；迁移账本、报告、事件与 MCP 不输出逐日明细或来源控制 payload。
 - `payroll_rule_packs` 必须先执行。每条规则版本引用 `payroll_rule_pack` approved 审批历史、审批 WORM checksum、法规来源摘要/引用和独立 WORM；目标重新运行确定性税率校验，按法域要求版本连续、生效区间不重叠，只发布 `payroll.rule_pack.migrated`。
-- `payroll_compensation_profiles` 随后按员工、版本升序执行。员工只来自 ERP 主数据映射，审批只接受 `payroll_compensation` approved 历史；金额组件、扣缴与考勤调整策略使用 Payroll 独立 AES-256-GCM 密钥域，目标重算 `profileHash`，版本不连续、生效区间重叠、审批/WORM 或密文重放不一致均失败关闭。
+- `payroll_compensation_profiles` 随后按员工、版本升序执行。员工只来自 ERP 主数据映射，审批只接受 `payroll_compensation` approved 历史；法域、金额组件、扣缴与考勤调整策略使用 Payroll 独立 AES-256-GCM 密钥域，法域另存控制字段并与密文交叉核验。目标重算 `profileHash`，版本不连续、生效区间重叠、审批/WORM、法域不一致或密文重放不一致均失败关闭。
 - `payroll_periods` 只允许恢复 `draft|collecting` 基线。制单人必须先由来源员工映射为 ERP employeeId，再由身份仓储反查 actorId；来源不得提交 actorId。草稿的创建/更新时间必须相同，采集中周期只能通过正式领域状态机从版本 1 推到版本 2。周期不得携带运行、审批、锁定、代发或对账字段，每条周期绑定独立 WORM，只发布 `payroll.period.migrated`。
 - `payroll_calculation_runs` 必须在规则、薪酬档案、考勤月结和 `collecting` 周期之后，按税年、月份、运行序号升序执行。首个运行执行 `collecting → review`，后续历史重算执行 `review → review`；固定满足 `expectedPeriodVersion = runNumber + 1`，且前一运行必须由本迁移产生、WORM 成对完整并与周期活动运行及全部摘要一致。来源只提交这些实体的来源引用、运行序号、完成时间、每员工应发/税额/实发控制金额和期间汇总，不提交目标输入快照、计算步骤、累计税状态或目标哈希。目标将全部引用解析为当前租户目标 ID，读取并验密薪酬与考勤快照，复用正式累计预扣内核逐员工重算；跨月累计只允许继承已锁定/已支付周期，或已经目标重算且运行 WORM 与周期摘要完全一致的前月迁移运行，普通在线计算不放宽。任一员工行、人数、三项汇总、规则摘要、前月/前次运行完整性或连续运行序号不一致即整笔失败，不写运行、密文或周期。
 - 重算通过后，目标输入与结果继续分别使用 Payroll AES-256-GCM 密钥域保存，运行级 WORM 与历史完成时间冻结；首个运行把版本 2 `collecting` 推到版本 3 `review`，后续运行只按连续版本留在 `review` 并替换活动运行，只发布 `payroll.run.migrated`。审批、强认证锁定、代发、对账与报税必须由后续独立 Scope 恢复，禁止本 Scope 合成。
@@ -71,20 +73,35 @@
 - `payroll_reconciliations` 只接收上述链路中已平衡的常规首批四方对账。来源只提交批次、银行回盘、已提交个税清单和对账员工来源引用，固定期望 v6、批次 v5、历史对账时间与唯一 L4 WORM；不接受来源差异、目标摘要、actorId、金额明细或账号。对账员工必须通过 ERP 身份映射，且不得与工资锁定人、代发制备人或导出批准人重合。
 - 目标重新读取 Payroll 运行、个税清单、Treasury 指令与银行回盘，复用确定性四方对账内核；仅零差异才把周期从 locked v6 历史恢复为 reconciled v9、批次从 reconciling v5 恢复为 reconciled v6。目标 `evidenceHash` 只代表重算事实，来源对账材料由 `migration_reconciliation_evidence` WORM 独立保真。全事务只发布 `payroll.reconciliation.migrated` 与 `treasury.reconciliation.migrated`，不发布普通中间状态、不调用外部系统，不开放 MCP 迁移写工具。
 - `business_attachments` 必须在全部归属实体和员工映射完成后最后执行。归属类型与用途采用一一固定白名单：审批实例/审批附件、审批历史/历史附件、候选人/简历、申请/申请附件、面试/面试附件、Offer/Offer 附件、劳动关系/劳动关系文件。payload 只接收归属来源 ID、可选上传员工来源 ID、固定用途、历史创建时间、checksum 和本条唯一附件；拒绝 tenantId、actorId、附件正文、原文件名、路径、MIME 与来源访问凭据。
-- 目标应用服务先登记 `migration_pending` 元数据，不伪造对象地址或 WORM 回执；隔离附件网关完成拉取、checksum、恶意文件扫描与不可变归档后，Worker 才调用同一应用服务，在 Mongo 事务内把附件激活为 available v2 并发布 `business.attachment.migrated`，随后才能把迁移附件账本标记为 verified。账本更新失败可幂等重试，不会重复发布事件；正文、对象定位符、checksum、上传员工标识和原文件名均不得进入 Outbox 或 MCP。
+- 目标应用服务只接受无未知字段的严格迁移输入并先登记 `migration_pending` 元数据，不伪造对象地址或 WORM 回执。每次读取只取最小投影，并在运行时反向校验可信租户、迁移引用、归属类型/用途、内容与迁移 checksum、状态、版本、对象证据和可用时间组合；受损记录以稳定 `BUSINESS_ATTACHMENT_MIGRATION_STATE_INVALID` 失败关闭，不得进入更新或 Outbox。
+- 隔离附件网关完成拉取、checksum、恶意文件扫描与不可变归档后，Worker 才能提交严格回执并调用同一应用服务，在 Mongo 事务内把附件从 `migration_pending` v1 激活为 available v2 并发布一次 `business.attachment.migrated`，随后才能把迁移附件账本标记为 verified。available 重放只有在目标证据完全相同时才视为幂等；账本更新失败可重试且不会重复发布事件。正文、对象定位符、checksum、上传员工标识和原文件名均不得进入 Outbox 或 MCP。
 
 `sourceFactHash` 的规范对象固定为 `sourceRecordId`、`sourceVersion`、`entityType`、`payloadHash`、按字典序排列的 `associationSourceIds`，以及按 `sourceAttachmentId` 排列且仅含 ID 与 checksum 的附件数组。滚动来源校验和初值为 `base64url(SHA-256(""))`，第 N 条为 `base64url(SHA-256(previous + "\\n" + sequence + ":" + sourceFactHash))`。来源导出程序必须使用相同算法，并固定 UTF-8、对象键字典序与数组规则。
 
 ## 权限、安全与数据质量
 
-- 写接口只允许具有 `erp:migration:execute` 与目标域写 Scope 的 `service`/`system_job`；普通用户和 MCP 永久不能开始、推进或完成迁移。
+- 写接口的 HTTP 固定门禁只声明 `erp:migration:execute`，不能为所有 Scope 错误
+  强绑组织写权限；应用服务再按运行 Scope 要求唯一目标域写 Scope。两层均只允许
+  `service`/`system_job`，普通用户和 MCP 永久不能开始、推进或完成迁移。
 - `payroll_reconciliations` 同时变更 Payroll 周期和 Treasury 批次，控制面开始、应用与重放均必须同时具备 `erp:payroll:migration:write` 与 `erp:treasury:migration:write`；缺少任一 Scope 即失败关闭。
 - `business_attachments` 的控制面开始、应用与重放必须具备 `erp:document:migration:write`，附件 Worker 仍必须具备 `erp:migration:attachment:execute`。两者都只接受可信 `service|system_job` 身份；MCP 不注册迁移写 Tool，也不暴露附件正文 Resource。
 - 租户只来自已验证服务身份；payload 不允许 tenantId，实体类型、字段和关联均走固定白名单。
 - 账本不保存来源 payload、姓名、附件内容或 Token，只保存摘要、来源/目标引用、版本、状态和标准拒绝码。
 - `data_migration_associations` 逐项保存关系类型、来源关联 ID、解析后的目标 ID 与 `resolved|missing` 状态；`data_migration_attachments` 逐项保存来源附件 ID、checksum、搬运状态和目标证据引用，严禁保存附件正文。
 - 未知基础设施错误不允许伪装为业务拒绝或推进检查点；只有稳定的 `ORG_*` / `APPROVAL_*` / `RECRUITMENT_*` / `ATTENDANCE_*` / `PAYROLL_*` / `TREASURY_*` / `BUSINESS_ATTACHMENT_MIGRATION_*` / `DATA_MIGRATION_*` 规则错误进入拒绝账本。
-- 附件证据逐项登记为 `pending`，全部来源记录处理完成后由独立 Worker 调用隔离附件网关。网关自行拉取来源正文，完成 checksum 复核、恶意文件扫描与不可变归档；ERP 进程只接收严格绑定摘要的回执。`pending|processing` 生成 High 差异，网关拒绝生成 Critical 差异并阻止 Phase 6。未解析关联同样生成 Critical 差异。
+- 附件证据逐项登记为 `pending`，全部来源记录处理完成后由独立 Worker 调用隔离附件网关。队列载荷只含租户、运行和派发 ULID，JobId 必须绑定三者并由
+  Worker 重算；受损、扩张或错路由任务在查询数据库前失败关闭。
+- Worker 认领使用 `processingStartedAt` 作为五分钟租约栅栏；成功与失败终态更新
+  均精确绑定原租户、运行、条目、尝试次数和租约时间。租约丢失立即停止批次，
+  不得覆盖其他 Worker 终态。状态先提交，后置审计故障只形成稳定告警，禁止把
+  已归档附件或已提交的失败终态恢复为 `pending`。
+- 网关自行拉取来源正文，完成 checksum 复核、恶意文件扫描与不可变归档；ERP
+  只发送严格运行时校验的控制命令。成功回执必须使用
+  `erp-data-migration-attachment-receipt.v1`，逐项回显租户、运行、来源系统、
+  来源附件，并绑定摘要、数据分级和不低于请求值的保留期；额外字段、上下文错位、
+  压缩响应、非规范 Content-Length、超过 16 KiB、非法 UTF-8/JSON 或非标准
+  HTTPS 端点均失败关闭。`pending|processing` 生成 High 差异，网关拒绝生成
+  Critical 差异并阻止 Phase 6。未解析关联同样生成 Critical 差异。
 
 ## REST、MCP 与审计
 
@@ -96,7 +113,9 @@
 - `GET /api/data-migrations/runs/{id}/evidence`：按 `items|associations|attachments` 固定顺序分页读取完整证据账本；要求 `erp:migration:read` 与 `erp:migration:evidence:export`，每页返回 SHA-256，按 R2 审计。
 - MCP Tool：`data_migration_report_get`；Resource：`erp://data-migrations/runs/{id}/report`；Prompt：`data_migration_report_review_guide`。全部只读且复用 `DataMigrationService.report`。
 - MCP 只提供聚合控制量，不注册详细证据导出 Tool 或 Resource。来源/目标标识、逐条拒绝和附件 checksum 只能由受控 REST/CLI 导出，禁止向通用 AI 上下文扩散。
-- R2 审计记录运行开始、每条应用/拒绝和完成；R1 审计记录报告读取。审计与 MCP 不包含来源正文。
+- R2 审计记录运行开始、每条应用/拒绝和完成；R1 审计记录报告读取。写操作业务
+  状态提交后的审计故障只告警并返回已提交结果，避免客户端误判后重复执行；报告
+  与详细证据读取仍保持审计失败关闭。审计与 MCP 不包含来源正文。
 
 ## Phase 6 资格
 

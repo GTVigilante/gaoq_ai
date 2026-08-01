@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AuditService } from '../../core/audit/audit.service.js';
 import { REQUIRED_SCOPES_KEY } from '../identity/auth.decorators.js';
 import type { AttendanceApplicationService } from './application/attendance-application.service.js';
+import type { AttendanceShiftApplicationService } from './application/attendance-shift-application.service.js';
 import { AttendanceController } from './attendance.controller.js';
 
 const KEY = 'attendance-key-001';
@@ -40,6 +41,18 @@ const month = {
   snapshotVersion: 2,
   snapshotHash: 'snapshot-hash',
 };
+const shiftPlan = {
+  id: 'shift-plan-001',
+  employeeId: 'employee-001',
+  businessDate: '2026-07-28',
+  planCode: 'CN-SH-DAY',
+  rulesetVersion: 'cn-sh-2026-v1',
+};
+const evaluation = {
+  shiftPlanId: 'shift-plan-001',
+  sourceFactId: 'fact-001',
+  businessDate: '2026-07-28',
+};
 
 function fixture() {
   const attendance = {
@@ -49,17 +62,24 @@ function fixture() {
     closeMonth: vi.fn().mockResolvedValue({ month }),
     getMyMonth: vi.fn().mockResolvedValue(month),
   };
+  const shifts = {
+    assign: vi.fn().mockResolvedValue({ shiftPlan }),
+    evaluate: vi.fn().mockResolvedValue({ evaluation }),
+  };
   const record = vi.fn().mockResolvedValue(undefined);
   const setHeader = vi.fn();
   const response = { setHeader } as unknown as Response;
   const controller = new AttendanceController(
     attendance as unknown as AttendanceApplicationService,
+    shifts as unknown as AttendanceShiftApplicationService,
     { record } as unknown as AuditService,
   );
-  return { controller, attendance, record, response, setHeader };
+  return { controller, attendance, shifts, record, response, setHeader };
 }
 
 const routeCases = [
+  ['assignShiftPlan', 'shift-plans', RequestMethod.POST, ['erp:attendance:shift_plan:write']],
+  ['evaluateShift', 'shift-plans/:shiftPlanId/evaluate', RequestMethod.POST, ['erp:attendance:shift:evaluate']],
   ['ingest', 'source-facts', RequestMethod.POST, ['erp:attendance:source:ingest']],
   ['registerCorrection', 'corrections', RequestMethod.POST, ['erp:attendance:correction:attest', 'erp:attendance:approval:sync']],
   ['requestCorrection', 'correction-requests', RequestMethod.POST, ['erp:attendance:correction:request', 'erp:approval:instance:submit']],
@@ -118,6 +138,41 @@ describe('AttendanceController', () => {
     expect(JSON.stringify(store.record.mock.calls)).not.toContain('replacementMinutes');
   });
 
+  it('委托排班分配与确定性班次求值并只审计控制字段', async () => {
+    const store = fixture();
+    const body = {
+      employeeId: 'employee-001',
+      providerCode: 'dingtalk',
+      planCode: 'CN-SH-DAY',
+    };
+
+    await expect(store.controller.assignShiftPlan(KEY, body as never))
+      .resolves.toEqual({ shiftPlan });
+    await expect(store.controller.evaluateShift(KEY, 'shift-plan-001'))
+      .resolves.toEqual({ evaluation });
+
+    expect(store.shifts.assign).toHaveBeenCalledWith(KEY, body);
+    expect(store.shifts.evaluate).toHaveBeenCalledWith(KEY, 'shift-plan-001');
+    expect(store.record).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'attendance.shift_plan.assign',
+      resourceId: 'shift-plan-001',
+      metadata: {
+        employeeId: 'employee-001',
+        businessDate: '2026-07-28',
+        planCode: 'CN-SH-DAY',
+        rulesetVersion: 'cn-sh-2026-v1',
+      },
+    }));
+    expect(store.record).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'attendance.shift.evaluate',
+      resourceId: 'shift-plan-001',
+      metadata: {
+        sourceFactId: 'fact-001',
+        businessDate: '2026-07-28',
+      },
+    }));
+  });
+
   it('只以规范月份读取本人月结、设置 ETag 并执行失败关闭审计', async () => {
     const store = fixture();
 
@@ -169,11 +224,13 @@ describe('AttendanceController', () => {
     const error = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
 
     await store.controller.ingest(KEY, {} as never);
+    await store.controller.assignShiftPlan(KEY, {} as never);
+    await store.controller.evaluateShift(KEY, 'shift-plan-001');
     await store.controller.requestCorrection(KEY, {} as never);
     await store.controller.registerCorrection(KEY, {} as never);
     await store.controller.closeMonth(KEY, {} as never, store.response);
 
-    expect(error).toHaveBeenCalledTimes(4);
+    expect(error).toHaveBeenCalledTimes(6);
     expect(error).toHaveBeenCalledWith({
       code: 'ATTENDANCE_AUDIT_AFTER_COMMIT_FAILED',
       action: 'attendance.source_fact.ingest',

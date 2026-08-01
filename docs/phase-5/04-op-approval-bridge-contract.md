@@ -49,9 +49,8 @@ Worker 必须先持久化 Inbox 的 `completed|failed` 终态，再写本切片�
 - `cn.gaoq.erp.approval_instance.withdrawn.v1`；
 - 非 OP 来源审批不会创建 OP 投递；非终态事件只完成本消费者的处理；
 - 结果投递以审批 Outbox eventId 为幂等键，最多自动尝试 6 次，采用 1 秒至 30 分钟的 ±20% 抖动退避。
-- Relay 必须逐字校验 CloudEvent 顶层 `id/source/type/subject/tenantId`、
-  `idempotencyKey`、数据 `tenantId/aggregateId/version` 与 Outbox 元数据；
-  已有桥接只能从较低版本
+- Relay 必须逐字校验 CloudEvent 顶层 `type/tenantId`、数据
+  `tenantId/aggregateId/version` 与 Outbox 元数据；已有桥接只能从较低版本
   `running` 单调推进到终态，或以相同版本、相同终态幂等恢复。投递记录通过
   eventId 写入后必须重新核对全部不可变控制字段，桥表更新必须绑定读取到的精确
   状态与版本；陈旧事件、状态冲突、版本竞争或投递内容冲突一律回滚并重试/死信。
@@ -60,6 +59,13 @@ Worker 必须先持久化 Inbox 的 `completed|failed` 终态，再写本切片�
 
 固定端点：`PUT /erp/v1/approval-results/{externalEventId}`。目标根地址必须是无用户信息、query、fragment 和非 443 端口的 HTTPS origin；禁止重定向，超时 8 秒，响应上限 256 KiB。审批结果使用独立 `GAOQ_OP_APPROVAL_OUTBOUND_*` 凭据，不得复用入站、组织下发或 SSO Secret。
 
+出站客户端只接受 `content-type`、clientId、externalTenantId、13 位时间戳、
+16 字节 Base64URL nonce、Outbox eventId 幂等键、固定签名算法和 64 位小写十六
+进制签名八个协议 Header；名称按大小写归一后必须精确唯一，禁止额外 Header、
+控制字符和超长值。客户端自行注入固定 `Accept: application/json`，调用方不得
+覆盖。签名正文在发送前必须是最大 16 KiB 的有效 JSON 对象，禁止数组、标量、
+畸形 JSON 或无界受损持久化数据进入外呼。
+
 签名原文为：
 
 ```text
@@ -67,6 +73,18 @@ timestamp\nnonce\nPUT\npath\nexternalTenantId\nidempotencyKey\nSHA256_BASE64URL(
 ```
 
 正文只含 `externalEventId/sourceDocumentType/sourceDocumentId/approvalInstanceId/approvalVersion/result/occurredAt`，禁止发送表单、审批意见、人员隐私或密钥。OP 必须用幂等键去重，并精确回显外部 eventId、审批实例和版本。409/412 进入人工复核；408/425/429/5xx 与网络错误可自动重试；其他 4xx 进入人工复核。外呼成功或失败终态落库后，审计设施失败只记录稳定告警，不得把投递改回失败、覆盖原始终态、中断剩余批次或触发重复外呼。持久化与审计中的连接器错误码只接受 `^[A-Z0-9_]{3,128}$`，否则收敛为 `OP_APPROVAL_DELIVERY_UNEXPECTED`。
+
+响应 Content-Length 缺失时仍须流式限长；非法、负数、超大或超出安全整数范围的
+声明均失败关闭。成功正文必须是严格 UTF-8，且 Content-Type 为
+`application/json` 或 `application/*+json`；上游 requestId 只保留最多 128
+字符的可见 ASCII。非 2xx 只按状态码分类，错误正文不参与分类、错误对象、日志、
+审计或 MCP；网络、读取、取消和解析异常不得保留上游 cause。
+
+外呼返回并通过严格回显校验后，后续本地成功终态写入失败属于“外部已成功、本地
+终态未知”，必须显式中断并告警；禁止落入通用外呼失败处理、把记录回写
+`pending/dead/manual_review`、写失败审计或再次执行外部调用。只有外呼本身失败
+时才允许调用失败状态机；本地终态故障必须记录不含响应正文的
+`OP_APPROVAL_RESULT_LOCAL_FINALIZE_FAILED` 稳定告警。
 
 ## 5. REST、MCP、Scope 与审计
 
@@ -77,6 +95,37 @@ timestamp\nnonce\nPUT\npath\nexternalTenantId\nidempotencyKey\nSHA256_BASE64URL(
 | 人工重试 | `POST /op/approval-result-deliveries/{eventId}/retries` | `erp:op:approval_result:operate` | R2；必须 Idempotency-Key 和原因码 |
 | MCP 查询 | Tool `op_approval_bridge_get` / Resource `erp://op/approval-bridges/{externalEventId}` | `erp:op:approval_bridge:read` | 只读、幂等、复用应用服务 |
 | MCP 引导 | Prompt `op_approval_bridge_review_guide` | 同上 | 禁止决策、重试、回推和读取正文 |
+
+REST、MCP Tool 与 MCP Resource 必须复用同一个 `OpApprovalBridgeService`。应用
+服务不得依赖入口层已经鉴权的假设，必须从可信身份上下文二次校验读取 Scope，以
+可信租户和规范外部 eventId 执行固定最小投影，并对投影中的租户、eventId、
+标识格式、状态、版本和时间关系做运行时反向绑定。`processing` 只允许版本 0，
+`running` 只允许版本不低于 2，二者不得有完成时间；终态只允许版本不低于 3，
+且完成时间不得晚于更新时间。未知字段、跨租户/跨事件错绑、未来更新时间或非法
+状态组合必须整体失败关闭，禁止返回部分数据。终态 Relay 在禁用 Mongoose 自动
+时间戳的事务更新中必须同时写入 `completedAt` 与同值 `updatedAt`。
+
+异常投递查询与人工重试必须复用 `OpApprovalResultOperationsService`。服务层
+必须分别二次校验读取/运维 Scope，并在访问数据库前重复校验状态、严格 ULID、
+分页上限、原因码与幂等键。查询只允许固定最小投影，且必须对租户、请求状态、
+标识格式、审批终态版本、尝试次数、错误码与更新时间做严格运行时反向绑定；
+任一记录未知字段、跨租户错绑、状态不一致、空错误码或未来时间都使整页失败
+关闭。响应对象、数组和条目均须冻结。
+
+人工重试必须在统一幂等事务内以原因码收窄可恢复记录：
+
+- `provider_recovered` 仅恢复非凭据类自动重试耗尽形成的 `dead`；
+- `approved_exception` 仅恢复业务或冲突类形成的 `manual_review`；
+- `credentials_fixed` 仅匹配 OP 出站凭据引用非法或凭据暂不可用；
+- `route_fixed` 仅匹配路由停用、根地址、目标或路径配置非法。
+
+复位必须使用同一个服务器时间原子写入 `pending/attempts=0/nextAttemptAt/updatedAt`，
+清理租约、成功时间和原错误码，并增加人工重试次数；人工重试次数达到 100 后
+必须拒绝继续复位。更新后必须通过最小投影重新
+核对可信租户、eventId、状态、计数、时间和清理结果；原因与失败类别不匹配时按
+不可重试处理，禁止使用宽泛终态条件绕过处置语义。投递服务在禁用 Mongoose 自动
+时间戳的成功、失败和人工复位路径都必须显式维护 `updatedAt`。标准 MCP 继续只
+开放审批桥只读能力，不提供异常队列、人工重试或任何 R2 写操作。
 
 必须审计：验签成败、审批创建提交成败、结果外呼成败、人工重试成败和桥接查询。审计元数据只允许控制标识、状态、版本和失败码。
 
@@ -89,10 +138,23 @@ timestamp\nnonce\nPUT\npath\nexternalTenantId\nidempotencyKey\nSHA256_BASE64URL(
 - 仓库门禁 `pnpm quality:op-approval-request-coverage` 必须覆盖任务参数、载荷摘要与
   时间、路由、来源唯一桥接、租约、永久/瞬时失败分类和成功/失败审计故障，目标
   文件的语句、分支、函数和行覆盖率均不得低于 90%。
+- 仓库门禁 `pnpm quality:op-approval-bridge-read-coverage` 必须覆盖应用层
+  Scope 二次校验、可信租户查询、固定最小投影、反向绑定、全部状态/版本/时间
+  组合、受损记录与数据库故障；读取服务目标文件四维均不得低于 90%，并由
+  `pnpm precheck` 与 `pnpm check` 独立执行。
+- 仓库门禁 `pnpm quality:op-approval-result-operations-coverage` 必须覆盖
+  读取/运维 Scope 二次校验、应用层参数校验、可信租户与状态反向绑定、严格
+  最小投影、原因码恢复矩阵、幂等事务、原子时间、复位后状态核验、受损记录和
+  数据库故障；运维服务目标文件四维均不得低于 90%，并由 `pnpm precheck` 与
+  `pnpm check` 独立执行。
 - 仓库门禁 `pnpm quality:op-approval-result-coverage` 必须覆盖 Outbox/信封身份
   绑定、非终态跳过、桥接版本单调推进、投递内容幂等校验、事务与租约竞争、退避/
   死信、HMAC 最小载荷、响应回显、错误分类与成功/失败审计故障；Relay 与 Delivery
   两个目标文件的语句、分支、函数和行覆盖率均不得低于 90%。
+- 仓库门禁 `pnpm quality:op-approval-egress-coverage` 独立覆盖固定目标、协议
+  Header 白名单、有界请求、禁重定向、超时、Content-Length、流式读取、严格
+  UTF-8/JSON、HTTP 分类和敏感错误隔离；HTTP 客户端生产文件四维均不得低于
+  90%，并由 OP 审批结果门禁在 `pnpm check` 中联动执行。
 - 仓库门禁 `pnpm quality:op-webhook-ingress-coverage` 同时覆盖审批请求与经营
   摘要两个公网 Controller、入口服务和独立 AES-256-GCM 服务，必须验证 query
   禁止、六认证头、HMAC 原始字节、时间窗、clientId 租户绑定、路由、防重放、

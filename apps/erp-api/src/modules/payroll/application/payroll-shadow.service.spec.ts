@@ -80,8 +80,10 @@ function setupImport() {
     ) => operation(session)),
   };
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
+  const boundary = { assertLegacy: vi.fn() };
   const service = new PayrollShadowService(
-    idempotency as never, context, crypto as never, {} as never, outbox as never,
+    idempotency as never, context, boundary as never,
+    crypto as never, {} as never, outbox as never,
     periods as never, calculationLines as never, cycles as never, differences as never,
     explanations as never, signoffs as never, readiness as never,
   );
@@ -92,7 +94,7 @@ function setupImport() {
   }];
   return {
     context, service, periods, calculationLines, cycles, differences, crypto, idempotency,
-    outbox, period, calculationLine, lines,
+    outbox, boundary, period, calculationLine, lines,
     input: {
       periodId: PERIOD_ID, sourceSystem: 'legacy-payroll', sourceExportId: 'legacy-export-001',
       sourceObjectEvidenceId: 'legacy-worm-001',
@@ -161,14 +163,16 @@ function setupSign(differenceCount = 0, hasPayrollSignoff = true) {
     evidenceId: EVIDENCE_ID, method: 'webauthn_uv',
   }) };
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
+  const boundary = { assertLegacy: vi.fn() };
   const service = new PayrollShadowService(
-    idempotency as never, context, {} as never, strongAuth as never, outbox as never,
+    idempotency as never, context, boundary as never,
+    {} as never, strongAuth as never, outbox as never,
     periods as never, {} as never, cycles as never, differences as never,
     explanations as never, signoffs as never, readiness as never,
   );
   return {
     context, service, periods, cycles, differences, explanations, signoffs, readiness,
-    strongAuth, outbox, cycle, period, previousSignoff, payrollSignoff,
+    idempotency, strongAuth, outbox, boundary, cycle, period, previousSignoff, payrollSignoff,
   };
 }
 
@@ -200,13 +204,15 @@ function setupExplain(explainedCount = 1) {
     ) => operation(session)),
   };
   const outbox = { append: vi.fn().mockResolvedValue(undefined) };
+  const boundary = { assertLegacy: vi.fn() };
   const service = new PayrollShadowService(
-    idempotency as never, context, {} as never, {} as never, outbox as never,
+    idempotency as never, context, boundary as never,
+    {} as never, {} as never, outbox as never,
     {} as never, {} as never, cycles as never, differences as never,
     explanations as never, signoffs as never, {} as never,
   );
   return {
-    context, service, cycles, signoffs, differences, explanations, idempotency, outbox,
+    context, service, cycles, signoffs, differences, explanations, idempotency, outbox, boundary,
     cycle, difference,
   };
 }
@@ -277,18 +283,144 @@ function setupRead() {
   const crypto = {
     unprotect: vi.fn().mockReturnValue({ ...differenceWithoutHash, evidenceHash }),
   };
+  const boundary = { assertLegacy: vi.fn() };
   const service = new PayrollShadowService(
-    {} as never, context, crypto as never, {} as never, {} as never,
+    {} as never, context, boundary as never,
+    crypto as never, {} as never, {} as never,
     {} as never, {} as never, cycles as never, differences as never,
     explanations as never, signoffs as never, readiness as never,
   );
   return {
-    context, service, cycles, differences, explanations, signoffs, readiness, crypto,
+    context, service, cycles, differences, explanations, signoffs, readiness, crypto, boundary,
     cycle, difference, explanation, readinessRecord,
   };
 }
 
 describe('PayrollShadowService', () => {
+  it('external 模式覆盖导入、归因、签署及全部只读入口', async () => {
+    const failure = new Error('PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM');
+
+    const imported = setupImport();
+    imported.boundary.assertLegacy.mockImplementation(() => {
+      throw failure;
+    });
+    const connector: ActorContext = {
+      actorType: 'service',
+      actorId: 'legacy-connector',
+      tenantId: tenant.tenantId,
+      roleCodes: [],
+      scopes: ['erp:payroll:shadow:import'],
+      departmentIds: [],
+      traceId: 'trace-shadow-boundary-import',
+    };
+    await expect(imported.context.run({ tenant, actor: connector }, () =>
+      imported.service.importCycle('invalid', {} as never))).rejects.toBe(failure);
+    expect(imported.idempotency.execute).not.toHaveBeenCalled();
+    expect(imported.periods.findOne).not.toHaveBeenCalled();
+    expect(imported.crypto.unprotect).not.toHaveBeenCalled();
+
+    const explained = setupExplain();
+    explained.boundary.assertLegacy.mockImplementation(() => {
+      throw failure;
+    });
+    const analyst: ActorContext = {
+      actorType: 'user',
+      actorId: 'payroll-analyst',
+      tenantId: tenant.tenantId,
+      roleCodes: [],
+      scopes: ['erp:payroll:shadow:explain'],
+      departmentIds: [],
+      traceId: 'trace-shadow-boundary-explain',
+    };
+    await expect(explained.context.run({ tenant, actor: analyst }, () =>
+      explained.service.explainDifference(
+        'invalid',
+        'invalid',
+        'invalid',
+        'LEGACY_RULE_VERSION',
+        'invalid value',
+      ))).rejects.toBe(failure);
+    expect(explained.idempotency.execute).not.toHaveBeenCalled();
+    expect(explained.cycles.findOne).not.toHaveBeenCalled();
+
+    const signed = setupSign(0, false);
+    signed.boundary.assertLegacy.mockImplementation(() => {
+      throw failure;
+    });
+    const signer: ActorContext = {
+      actorType: 'user',
+      actorId: 'independent-payroll',
+      tenantId: tenant.tenantId,
+      roleCodes: [],
+      scopes: ['erp:payroll:shadow:sign_payroll'],
+      departmentIds: [],
+      traceId: 'trace-shadow-boundary-sign',
+    };
+    const token = {
+      actorType: 'user' as const,
+      actorId: signer.actorId,
+      tenantId: tenant.tenantId,
+      sessionId: 'session-001',
+    };
+    await expect(signed.context.run({ tenant, actor: signer }, () =>
+      signed.service.signCycle(
+        'invalid',
+        'invalid',
+        'invalid',
+        token as never,
+        'payroll_owner',
+      ))).rejects.toBe(failure);
+    expect(signed.strongAuth.requireVerifiedEvidence).not.toHaveBeenCalled();
+    expect(signed.idempotency.execute).not.toHaveBeenCalled();
+    expect(signed.cycles.findOne).not.toHaveBeenCalled();
+
+    const cycle = setupRead();
+    cycle.boundary.assertLegacy.mockImplementation(() => {
+      throw failure;
+    });
+    const reader: ActorContext = {
+      actorType: 'user',
+      actorId: 'finance-reader',
+      tenantId: tenant.tenantId,
+      roleCodes: [],
+      scopes: ['erp:payroll:shadow:read'],
+      departmentIds: [],
+      traceId: 'trace-shadow-boundary-read',
+    };
+    await expect(cycle.context.run({ tenant, actor: reader }, () =>
+      cycle.service.getCycle('invalid'))).rejects.toBe(failure);
+    expect(cycle.cycles.findOne).not.toHaveBeenCalled();
+
+    const differences = setupRead();
+    differences.boundary.assertLegacy.mockImplementation(() => {
+      throw failure;
+    });
+    const differenceReader = {
+      ...reader,
+      scopes: ['erp:payroll:shadow:difference:read'],
+    };
+    await expect(differences.context.run({ tenant, actor: differenceReader }, () =>
+      differences.service.getDifferences('invalid'))).rejects.toBe(failure);
+    expect(differences.cycles.findOne).not.toHaveBeenCalled();
+    expect(differences.crypto.unprotect).not.toHaveBeenCalled();
+
+    const readiness = setupRead();
+    readiness.boundary.assertLegacy.mockImplementation(() => {
+      throw failure;
+    });
+    await expect(readiness.context.run({ tenant, actor: reader }, () =>
+      readiness.service.getReadiness('invalid'))).rejects.toBe(failure);
+    expect(readiness.readiness.findOne).not.toHaveBeenCalled();
+
+    const unauthorized = setupRead();
+    await expect(unauthorized.context.run({
+      tenant,
+      actor: { ...reader, scopes: [] },
+    }, () => unauthorized.service.getCycle('invalid')))
+      .rejects.toThrow('缺少影子工资权限');
+    expect(unauthorized.boundary.assertLegacy).not.toHaveBeenCalled();
+  });
+
   it('受信任连接器仅持久化密文行并形成零差异控制事件', async () => {
     const store = setupImport();
     const actor: ActorContext = {

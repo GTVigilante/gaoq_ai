@@ -170,8 +170,10 @@ function assemble(options: {
     _operation: string, _key: string, _request: unknown,
     handler: (value: ClientSession) => Promise<Record<string, unknown>>,
   ) => handler(session)) };
+  const boundary = { assertLegacy: vi.fn() };
   const service = new PayrollTaxFilingService(
-    idempotency as never, context, employments as never, persons as never,
+    idempotency as never, context, boundary as never,
+    employments as never, persons as never,
     strongAuth as never, crypto as never, archive, gateway,
     new ConfigService({ PAYROLL_TAX_GATEWAY_MODE: options.gatewayMode ?? 'sandbox' }) as never,
     productionAuthorization as never,
@@ -187,7 +189,7 @@ function assemble(options: {
   return {
     context, service, filings, archive, outbox, strongAuth, gateway,
     archived: () => archived, employments, persons, profiles, approvals, crypto,
-    productionAuthorization, idempotency, periods, lines, period: () => period,
+    productionAuthorization, idempotency, boundary, periods, lines, period: () => period,
     setPeriod: (value: Record<string, unknown> | null) => { period = value; },
     line, setLines: (value: readonly Record<string, unknown>[]) => { lineRecords = value; },
     setEmployments: (value: readonly Record<string, unknown>[]) => {
@@ -246,6 +248,52 @@ async function prepareAndApprove(store: ReturnType<typeof assemble>, key: string
 }
 
 describe('PayrollTaxFilingService', () => {
+  it('external 模式覆盖迁移、读取、制备、审批和税局提交入口', async () => {
+    const failure = new Error('PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM');
+    const reader: ActorContext = {
+      ...actor,
+      scopes: ['erp:payroll:tax:read'],
+    };
+    const cases: readonly [
+      ActorContext,
+      (store: ReturnType<typeof assemble>) => Promise<unknown>,
+    ][] = [
+      [migrationActor, (store) =>
+        store.service.importSubmittedFromMigration('boundary-tax-migration', {} as never)],
+      [reader, (store) => store.service.getStatus('invalid')],
+      [approver, (store) =>
+        store.service.approve(
+          'boundary-tax-approve',
+          'invalid',
+          0,
+          'invalid',
+          approvalToken,
+        )],
+      [connector, (store) => store.service.submit('boundary-tax-submit', 'invalid', 0)],
+      [actor, (store) => store.service.prepare('boundary-tax-prepare', 'invalid', 0)],
+    ];
+    for (const [principal, execute] of cases) {
+      const store = assemble();
+      store.boundary.assertLegacy.mockImplementation(() => { throw failure; });
+      await expect(store.context.run({ tenant, actor: principal }, () => execute(store)))
+        .rejects.toBe(failure);
+      expect(store.idempotency.execute).not.toHaveBeenCalled();
+      expect(store.filings.findOne).not.toHaveBeenCalled();
+      expect(store.strongAuth.requireVerifiedEvidence).not.toHaveBeenCalled();
+      expect(store.archive.put).not.toHaveBeenCalled();
+      expect(store.gateway.submit).not.toHaveBeenCalled();
+      expect(store.productionAuthorization.authorize).not.toHaveBeenCalled();
+      expect(store.crypto.protect).not.toHaveBeenCalled();
+    }
+
+    const unauthorized = assemble();
+    await expect(unauthorized.context.run({
+      tenant, actor,
+    }, () => unauthorized.service.getStatus('invalid')))
+      .rejects.toMatchObject({ response: { code: 'AUTH_SCOPE_DENIED' } });
+    expect(unauthorized.boundary.assertLegacy).not.toHaveBeenCalled();
+  });
+
   it('迁移时重建清单并恢复已提交回执但不调用归档或税局网关', async () => {
     const store = assemble();
     const result = await store.context.run({

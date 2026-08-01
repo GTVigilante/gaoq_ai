@@ -997,9 +997,12 @@ function expectedApplicationActionsForMigratedOffer(
 
 function requiredDate(value: string): Date {
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) throw new RecruitmentDomainError(
-    'RECRUITMENT_INVALID_DATE', '时间格式无效',
-  );
+  if (Number.isNaN(date.getTime()) || date.toISOString() !== value) {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_INVALID_DATE',
+      '时间必须为规范毫秒级 UTC ISO',
+    );
+  }
   return date;
 }
 

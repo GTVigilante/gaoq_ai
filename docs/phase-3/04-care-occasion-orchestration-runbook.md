@@ -16,6 +16,13 @@ Outbox、BullMQ 周期对账和投递、Ed25519 签名回执、锁恢复、退�
 - `CARE_OCCASION_NOTIFICATION_ENDPOINT`、独立 Bearer Token、Ed25519 SPKI DER
   base64 公钥和 Key ID 必须成套配置。端点必须是独立标准 HTTPS 域名根地址。
 
+Adapter 每次调用均二次校验严格请求、唯一偏好渠道、可见 ASCII Token、规范
+Key ID 和 Ed25519 公钥；请求固定 `POST /v1/employee-care/dispatch`，显式声明
+`Accept-Encoding: identity`，正文不超过 128 KiB。成功回执只接受严格 JSON
+Content-Type、规范 Content-Length、16 KiB 有界流和 Fatal UTF-8，按原始字节
+验签后再校验租户、任务、控制摘要、允许渠道及 `scheduledAt..now+5m` 时间窗。
+非成功、压缩、超限、截断、流故障和签名错位均取消正文且不得记录上游内容。
+
 生产 Secret 只由 Secret Manager 注入，禁止进入仓库、日志、证据包或 MCP。
 API 的 Secret/ConfigMap 必须注入生日盲索引密钥环和租户策略；Worker 另须注入
 通知网关全套配置。通知网关解析出的已审批公网 CIDR 还必须加入 Helm
@@ -29,16 +36,30 @@ API 的 Secret/ConfigMap 必须注入生日盲索引密钥环和租户策略；W
    `verified` 等于清单总数且迁移记录为 `completed`。
 3. 先以一个非生产租户注入策略、盲索引密钥和通知沙箱配置，再启动 API 与 Worker。
 4. 身份服务通过 `POST /org/persons/:id/birthday-attestations` 登记证明；请求必须
-   使用服务身份、强 `If-Match` 和 `Idempotency-Key`，任何响应/审计不得出现月日。
+   使用服务身份、强 `If-Match` 和白名单 `Idempotency-Key`，请求体只接受规范
+   `MM-DD`、身份核验证据 ULID 与生日证明 ULID，未知字段、无效日历日期和非规范
+   标识均失败关闭。应用服务必须二次复核服务主体、Scope、租户、版本、幂等键和
+   幂等结果反向绑定；任何响应、日志和审计不得出现月日或证据标识。业务失败审计
+   故障不得覆盖原异常，业务提交后的成功审计故障不得把成功终态改写为失败。
 5. 员工本人创建偏好后，确认 `scheduled` 事件与任务同事务形成，BullMQ 投递只含
    `tenantId/occasionTaskId`，空载荷周期对账存在且无重复业务任务。
+6. 执行 `pnpm quality:org-person-birthday-entry-coverage`，确认 73 项严格请求、
+   可信服务身份、幂等结果闭包、隐私及提交后审计隔离测试通过，DTO、应用服务和
+   控制器三个生产文件的语句、分支、函数和行覆盖率均不低于 90%。
+7. 执行 `pnpm quality:org-care-occasion-source-coverage`，确认内部窄口只接受同租户
+   `service/system_job`，且 Employee、当前 Employment、Person、唯一开放关系、
+   复聘历史和生日证明三元组的完整性门禁四维覆盖率均不低于 90%。
+8. 执行 `pnpm quality:care-occasion-notification-boundary-coverage`，确认 25 项
+   通知信任边界测试通过，目标 Adapter 的语句、分支、函数和行覆盖率均不低于 90%。
 
 ## 沙箱验收矩阵
 
 - 时区：UTC±12/14、跨年、夏令时存在/缺失时刻；静默时段冲突必须失败关闭。
 - 日期：普通生日、2 月 29 日按 `feb28/mar01` 两种口径；当前复聘段与最初任职
   两种周年口径。
-- 身份：跨租户、伪造 employeeId、停职/离职、复聘、生日更正、盲索引密钥轮换。
+- 身份：普通用户持有内部 Scope、跨租户、伪造 employeeId、当前劳动关系错位、
+  Person 缺失、多个开放关系、复聘历史损坏、停职/离职、生日更正、证明与盲索引
+  不成套及盲索引密钥轮换均须覆盖；数据损坏不得被误判为正常离职并取消待发任务。
 - 偏好：未配置、单类型关闭、渠道清空、全局退订、版本冲突、并发更新。
 - 可靠性：重复/乱序事件、Worker 在抢占后崩溃、通知超时、外部成功后本地提交失败、
   签名/Key ID/控制摘要/渠道错配、达到上限进入 dead、审批后显式重放。
@@ -70,4 +91,5 @@ API 的 Secret/ConfigMap 必须注入生日盲索引密钥环和租户策略；W
 只读能力固定为 `care_occasion_summary_get_self`、
 `erp://care/occasions/mine` 和 `care_occasion_summary_guide`。输出只有关怀开关及
 pending/delivered/dead 计数；不得返回具体日期、员工引用、渠道、联系方式、模板、
-正文或证据，也不得提供修改偏好、退订、发送、渠道授权、对账或重放能力。
+正文或证据，也不得直接调用 Org 关怀来源窄口或提供修改偏好、退订、发送、渠道
+授权、对账或重放能力。

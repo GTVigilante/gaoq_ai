@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -12,6 +14,7 @@ import {
 } from '../../core/audit/audit.service.js';
 import { TenantContextService } from '../../core/tenant/tenant-context.service.js';
 import { ESignEvidenceService } from './esign-evidence.service.js';
+import { ESignIssuanceService } from './esign-issuance.service.js';
 import { ESignReconciliationService } from './esign-reconciliation.service.js';
 import { projectESignFlow } from './esign-flow-projection.js';
 import { ESignFlowRecord, type ESignFlowDocument } from './esign-flow.schema.js';
@@ -25,8 +28,13 @@ import {
   ESIGN_PROCESS_WEBHOOK_JOB,
   ESIGN_ARCHIVE_EVIDENCE_JOB,
   ESIGN_RECONCILE_FLOWS_JOB,
+  ESIGN_ISSUE_FLOW_JOB,
   ESIGN_WEBHOOK_QUEUE,
+  createESignEvidenceJobId,
+  createESignIssuanceJobId,
+  createESignWebhookJobId,
   type ESignEvidenceArchiveJobData,
+  type ESignIssuanceJobData,
   type ESignQueueJobData,
   type ESignWebhookJobData,
 } from './esign-webhook.queue.js';
@@ -43,12 +51,17 @@ const knownEnvelopeSchema = z.object({
 const KNOWN_ACTIONS = new Set(['SIGN_MISSON_COMPLETE', 'SIGN_FLOW_COMPLETE']);
 const tenantIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
 const webhookJobSchema = z.object({
-  inboxId: z.string().regex(ULID_PATTERN), tenantId: tenantIdSchema,
+  inboxId: z.string().regex(ULID_PATTERN),
+  tenantId: tenantIdSchema,
+  providerEventId: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
 }).strict();
 const evidenceJobSchema = z.object({
   flowId: z.string().regex(ULID_PATTERN), tenantId: tenantIdSchema,
 }).strict();
 const reconciliationJobSchema = z.object({}).strict();
+const issuanceJobSchema = z.object({
+  requestId: z.string().regex(ULID_PATTERN), tenantId: tenantIdSchema,
+}).strict();
 const PROCESSING_LEASE_MS = 15 * 60 * 1_000;
 
 /** eSign 回调 Worker；仅投影供应商状态，不在未归档签署文件时标记 Offer 已签。 */
@@ -64,6 +77,7 @@ export class ESignWebhookProcessor extends WorkerHost {
     private readonly crypto: ESignWebhookCryptoService,
     private readonly audit: AuditService,
     private readonly evidence: ESignEvidenceService,
+    private readonly issuance: ESignIssuanceService,
     private readonly reconciliation: ESignReconciliationService,
     private readonly context: TenantContextService,
     @InjectQueue(ESIGN_WEBHOOK_QUEUE)
@@ -75,10 +89,41 @@ export class ESignWebhookProcessor extends WorkerHost {
   override async process(job: Job<ESignQueueJobData>): Promise<number> {
     if (job.name === ESIGN_RECONCILE_FLOWS_JOB) {
       reconciliationJobSchema.parse(job.data);
-      return this.reconciliation.runStaleBatch();
+      const [reconciled, recovered] = await Promise.all([
+        this.reconciliation.runStaleBatch(),
+        this.issuance.recoverAndEnqueue(),
+      ]);
+      return reconciled + recovered;
+    }
+    if (job.name === ESIGN_ISSUE_FLOW_JOB) {
+      const data: ESignIssuanceJobData = issuanceJobSchema.parse(job.data);
+      if (
+        String(job.id ?? '') !== createESignIssuanceJobId(
+          data.tenantId,
+          data.requestId,
+        )
+      ) throw new Error('ESIGN_ISSUANCE_JOB_ID_MISMATCH');
+      return this.context.run({
+        tenant: { tenantId: data.tenantId, source: 'service_identity' },
+        actor: {
+          actorType: 'system_job',
+          actorId: 'system:esign-issuance',
+          tenantId: data.tenantId,
+          roleCodes: ['INTEGRATION_WORKER'],
+          scopes: [
+            'erp:integration:esign:create',
+            'erp:recruitment:offer:read_all',
+          ],
+          departmentIds: [],
+          traceId: data.requestId,
+        },
+      }, async () => this.issuance.process(data.requestId));
     }
     if (job.name === ESIGN_ARCHIVE_EVIDENCE_JOB) {
       const data: ESignEvidenceArchiveJobData = evidenceJobSchema.parse(job.data);
+      if (String(job.id ?? '') !== createESignEvidenceJobId(data.tenantId, data.flowId)) {
+        throw new Error('ESIGN_EVIDENCE_JOB_ID_MISMATCH');
+      }
       await this.context.run({
         tenant: { tenantId: data.tenantId, source: 'service_identity' },
         actor: {
@@ -95,6 +140,13 @@ export class ESignWebhookProcessor extends WorkerHost {
     }
     if (job.name !== ESIGN_PROCESS_WEBHOOK_JOB) throw new Error('ESIGN_WEBHOOK_JOB_UNKNOWN');
     const webhookData: ESignWebhookJobData = webhookJobSchema.parse(job.data);
+    const jobId = String(job.id ?? '');
+    if (jobId !== createESignWebhookJobId(
+      webhookData.tenantId,
+      webhookData.inboxId,
+      webhookData.providerEventId,
+    )) throw new Error('ESIGN_WEBHOOK_JOB_ID_MISMATCH');
+    const processingToken = randomBytes(16).toString('base64url');
     const staleAt = new Date(Date.now() - PROCESSING_LEASE_MS);
     const claimed = await this.inbox.findOneAndUpdate(
       {
@@ -105,12 +157,28 @@ export class ESignWebhookProcessor extends WorkerHost {
         ],
       },
       {
-        $set: { status: 'processing', processingStartedAt: new Date(), failureCode: null },
+        $set: {
+          status: 'processing',
+          processingStartedAt: new Date(),
+          processingToken,
+          processingJobId: jobId,
+          failureCode: null,
+        },
         $inc: { attempts: 1 },
       },
       { returnDocument: 'after', runValidators: true },
     ).lean().exec();
     if (claimed === null) return 0;
+    if (
+      claimed.providerEventId !== webhookData.providerEventId ||
+      claimed.processingToken !== processingToken ||
+      claimed.processingJobId !== jobId
+    ) throw new Error('ESIGN_WEBHOOK_CLAIM_INTEGRITY_INVALID');
+    const lease = Object.freeze({
+      attempts: claimed.attempts,
+      processingToken,
+      processingJobId: jobId,
+    });
     try {
       if (!KNOWN_ACTIONS.has(claimed.action)) {
         await this.auditSystemAfterBusiness(claimed.tenantId, {
@@ -121,7 +189,9 @@ export class ESignWebhookProcessor extends WorkerHost {
           code: 'ESIGN_WEBHOOK_IGNORE_AUDIT_FAILED',
           tenantId: claimed.tenantId, inboxId: claimed.id,
         });
-        await this.finishInbox(claimed.tenantId, claimed.id, 'ignored', 'ESIGN_ACTION_UNKNOWN');
+        await this.finishInbox(
+          claimed.tenantId, claimed.id, lease, 'ignored', 'ESIGN_ACTION_UNKNOWN',
+        );
         return 1;
       }
       const raw = this.crypto.unprotect(claimed.tenantId, claimed.id, claimed);
@@ -143,7 +213,9 @@ export class ESignWebhookProcessor extends WorkerHost {
         flow.providerOccurredAt !== null &&
         claimed.providerOccurredAt.getTime() < flow.providerOccurredAt.getTime()
       ) {
-        await this.finishInbox(claimed.tenantId, claimed.id, 'ignored', 'ESIGN_EVENT_OUT_OF_ORDER');
+        await this.finishInbox(
+          claimed.tenantId, claimed.id, lease, 'ignored', 'ESIGN_EVENT_OUT_OF_ORDER',
+        );
         return 1;
       }
       const projection = projectESignFlow(
@@ -179,10 +251,15 @@ export class ESignWebhookProcessor extends WorkerHost {
       if (projection.status === 'provider_completed') {
         await this.enqueueEvidence(flow.id, flow.tenantId);
       }
-      await this.finishInbox(claimed.tenantId, claimed.id, 'completed', null);
+      await this.finishInbox(claimed.tenantId, claimed.id, lease, 'completed', null);
       return 1;
     } catch (error) {
-      await this.finishInbox(claimed.tenantId, claimed.id, 'failed', failureCode(error));
+      if (error instanceof Error && error.message === 'ESIGN_WEBHOOK_INBOX_LEASE_LOST') {
+        throw error;
+      }
+      await this.finishInbox(
+        claimed.tenantId, claimed.id, lease, 'failed', failureCode(error),
+      );
       throw error;
     }
   }
@@ -192,11 +269,11 @@ export class ESignWebhookProcessor extends WorkerHost {
       ESIGN_ARCHIVE_EVIDENCE_JOB,
       { flowId, tenantId },
       {
-        jobId: `esign_evidence_${flowId}`,
+        jobId: createESignEvidenceJobId(tenantId, flowId),
         attempts: 12,
         backoff: { type: 'exponential', delay: 10_000 },
         removeOnComplete: 1_000,
-        removeOnFail: 10_000,
+        removeOnFail: true,
       },
     );
   }
@@ -204,14 +281,28 @@ export class ESignWebhookProcessor extends WorkerHost {
   private async finishInbox(
     tenantId: string,
     id: string,
+    lease: {
+      readonly attempts: number;
+      readonly processingToken: string;
+      readonly processingJobId: string;
+    },
     status: 'completed' | 'ignored' | 'failed',
     failureCode: string | null,
   ): Promise<void> {
     const updated = await this.inbox.updateOne(
-      { tenantId, id, status: 'processing' },
+      {
+        tenantId,
+        id,
+        status: 'processing',
+        attempts: lease.attempts,
+        processingToken: lease.processingToken,
+        processingJobId: lease.processingJobId,
+      },
       { $set: {
         status, failureCode, processedAt: status === 'failed' ? null : new Date(),
         processingStartedAt: null,
+        processingToken: null,
+        processingJobId: null,
       } },
       { runValidators: true },
     );

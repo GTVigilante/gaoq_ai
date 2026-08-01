@@ -6,16 +6,25 @@ import { z } from 'zod';
 
 import type { AppEnvironment } from '../../../config/environment.js';
 import type { ProductionExecutionAuthorization } from '../../../core/production-execution/production-execution-authorization.service.js';
-import { readBoundedJson, safePayrollTaxEndpoint } from './payroll-tax-http.shared.js';
+import {
+  isPayrollTaxJsonContentType,
+  readBoundedJson,
+  safePayrollTaxEndpoint,
+} from './payroll-tax-http.shared.js';
 import { PayrollTaxGateway, type PayrollTaxSubmissionReceipt } from './payroll-tax.ports.js';
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 const HASH = /^[A-Za-z0-9_-]{43}$/;
+const OBJECT_REF = /^[A-Za-z0-9][A-Za-z0-9/._:-]{0,511}$/;
+const SUBMISSION_PATH = '/v1/submissions';
+const REQUEST_LIMIT_BYTES = 4 * 1024;
+const authorizationTimeSchema = z.iso.datetime({ offset: true });
 const receiptBase = {
   submissionId: z.string().regex(ID), evidenceId: z.string().regex(ID), accepted: z.literal(true),
-  tenantId: z.string().regex(ID), filingId: z.string().regex(ID),
+  tenantId: z.string().regex(ID), filingId: z.string().regex(ULID),
   period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
-  objectRef: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9/._:-]{0,511}$/),
+  objectRef: z.string().regex(OBJECT_REF),
   contentHash: z.string().regex(HASH), employeeCount: z.number().int().min(1).max(5_000),
   totalTaxableEarningsMinor: z.number().int().safe().nonnegative(),
   totalWithholdingTaxMinor: z.number().int().safe(),
@@ -43,9 +52,9 @@ export class HttpPayrollTaxGateway extends PayrollTaxGateway {
     readonly productionAuthorization: ProductionExecutionAuthorization | null;
   }): Promise<PayrollTaxSubmissionReceipt> {
     if (
-      !ID.test(input.tenantId) || !ID.test(input.filingId) ||
+      !ID.test(input.tenantId) || !ULID.test(input.filingId) ||
       !/^\d{4}-(0[1-9]|1[0-2])$/.test(input.period) ||
-      !/^[A-Za-z0-9][A-Za-z0-9/._:-]{0,511}$/.test(input.objectRef) ||
+      !OBJECT_REF.test(input.objectRef) ||
       !HASH.test(input.contentHash) || !Number.isSafeInteger(input.employeeCount) ||
       input.employeeCount < 1 || input.employeeCount > 5_000 ||
       !Number.isSafeInteger(input.totalTaxableEarningsMinor) ||
@@ -55,6 +64,7 @@ export class HttpPayrollTaxGateway extends PayrollTaxGateway {
     const token = this.config.get('PAYROLL_TAX_GATEWAY_BEARER_TOKEN', { infer: true });
     const submissionMode = this.config.get('PAYROLL_TAX_GATEWAY_MODE', { infer: true });
     if (endpoint === undefined || token === undefined) throw new Error('PAYROLL_TAX_GATEWAY_UNAVAILABLE');
+    if (!isCredential(token)) throw new Error('PAYROLL_TAX_GATEWAY_CREDENTIAL_INVALID');
     if (submissionMode !== 'sandbox' && submissionMode !== 'production') {
       throw new Error('PAYROLL_TAX_GATEWAY_MODE_INVALID');
     }
@@ -63,7 +73,12 @@ export class HttpPayrollTaxGateway extends PayrollTaxGateway {
     const body = JSON.stringify(submissionMode === 'sandbox'
       ? { ...submission, submissionMode }
       : { ...submission, submissionMode, productionAuthorization });
-    const response = await safeFetch(safePayrollTaxEndpoint(endpoint), {
+    if (Buffer.byteLength(body) > REQUEST_LIMIT_BYTES) {
+      throw new Error('PAYROLL_TAX_GATEWAY_REQUEST_TOO_LARGE');
+    }
+    const response = await safeFetch(safePayrollTaxEndpoint(
+      endpoint, SUBMISSION_PATH, 'PAYROLL_TAX_GATEWAY_ENDPOINT_INVALID',
+    ), {
       method: 'POST', redirect: 'error', signal: AbortSignal.timeout(60_000), body,
       headers: {
         authorization: `Bearer ${token}`, accept: 'application/json',
@@ -77,11 +92,15 @@ export class HttpPayrollTaxGateway extends PayrollTaxGateway {
         ]),
       },
     });
-    const parsed = receiptSchema.safeParse(await readBoundedJson(
-      response, 'PAYROLL_TAX_GATEWAY_RECEIPT_INVALID', 'PAYROLL_TAX_GATEWAY_RECEIPT_TOO_LARGE',
-    ));
+    const parsed = receiptSchema.safeParse(await readBoundedJson(response, {
+      invalidCode: 'PAYROLL_TAX_GATEWAY_RECEIPT_INVALID',
+      tooLargeCode: 'PAYROLL_TAX_GATEWAY_RECEIPT_TOO_LARGE',
+      lengthInvalidCode: 'PAYROLL_TAX_GATEWAY_RESPONSE_LENGTH_INVALID',
+      readErrorCode: 'PAYROLL_TAX_GATEWAY_RESPONSE_READ_ERROR',
+    }));
     if (
       !parsed.success || parsed.data.submissionMode !== submissionMode ||
+      parsed.data.submissionId === parsed.data.evidenceId ||
       Object.entries(submission).some(([key, value]) =>
         parsed.data[key as keyof typeof parsed.data] !== value) ||
       (parsed.data.submissionMode === 'production' && (
@@ -112,11 +131,16 @@ function assertAuthorization(
     return;
   }
   const expiresAt = authorization === null ? Number.NaN : Date.parse(authorization.expiresAt);
+  const now = Date.now();
   if (
     authorization === null || !ID.test(authorization.authorizationId) ||
-    !ID.test(authorization.evidenceId) || !/^[a-f0-9]{40}$/u.test(authorization.releaseCommitSha) ||
+    !ID.test(authorization.evidenceId) ||
+    authorization.authorizationId === authorization.evidenceId ||
+    !/^[a-f0-9]{40}$/u.test(authorization.releaseCommitSha) ||
     !/^sha256:[a-f0-9]{64}$/u.test(authorization.deploymentManifestHash) ||
-    !Number.isFinite(expiresAt) || expiresAt <= Date.now() + 10_000
+    !authorizationTimeSchema.safeParse(authorization.expiresAt).success ||
+    !Number.isFinite(expiresAt) || expiresAt <= now + 30_000 ||
+    expiresAt > now + 15 * 60_000
   ) throw new Error('PAYROLL_TAX_PRODUCTION_AUTHORIZATION_INVALID');
 }
 
@@ -124,7 +148,7 @@ async function safeFetch(endpoint: string, init: RequestInit): Promise<Response>
   let response: Response;
   try { response = await fetch(endpoint, init); } catch { throw new Error('PAYROLL_TAX_GATEWAY_UNAVAILABLE'); }
   if (!response.ok) throw new Error(`PAYROLL_TAX_GATEWAY_HTTP_${response.status}`);
-  if (!response.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
+  if (!isPayrollTaxJsonContentType(response.headers.get('content-type'))) {
     throw new Error('PAYROLL_TAX_GATEWAY_RECEIPT_INVALID');
   }
   return response;
@@ -132,4 +156,11 @@ async function safeFetch(endpoint: string, init: RequestInit): Promise<Response>
 
 function digest(parts: readonly string[]): string {
   return createHash('sha256').update(JSON.stringify(parts), 'utf8').digest('base64url');
+}
+
+function isCredential(value: string): boolean {
+  return value.length >= 32 && value.length <= 512 && [...value].every((character) => {
+    const code = character.charCodeAt(0);
+    return code >= 33 && code <= 126;
+  });
 }

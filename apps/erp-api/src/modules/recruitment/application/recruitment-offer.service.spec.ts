@@ -411,6 +411,22 @@ describe('RecruitmentOfferService', () => {
     expect(JSON.stringify(store.outbox.append.mock.calls)).not.toMatch(/标准福利计划|3000000/u);
   });
 
+  it.each([
+    ['缺少毫秒与 UTC 规范后缀', '2027-08-01T00:00:00Z'],
+    ['日期字符串不是时间戳', '2027-08-01'],
+    ['无法解析的时间', 'invalid-date'],
+  ])('创建 Offer 拒绝%s', async (_scenario, expiresAt) => {
+    const store = fixture();
+    await expect(store.service.create(APPLICATION_ID, 3, 'offer-create-key-002', {
+      completedInterviewId: INTERVIEW_ID, terms, expiresAt,
+      retentionExpiresAt: '2033-08-01T00:00:00.000Z',
+    })).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_INVALID_DATE' },
+    });
+    expect(store.offers.insert).not.toHaveBeenCalled();
+    expect(store.outbox.append).not.toHaveBeenCalled();
+  });
+
   it('提交时用 Offer 专用 R2 模板并原子推进申请到 offer_approval', async () => {
     const store = fixture();
     const result = await store.service.submit(OFFER_ID, 1, 'offer-submit-key-001');

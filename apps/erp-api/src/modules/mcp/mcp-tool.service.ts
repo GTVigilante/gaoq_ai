@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { GoneException, Injectable, Logger } from '@nestjs/common';
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type {
   CallToolResult,
@@ -8,7 +8,10 @@ import type {
 
 import { AuditService } from '../../core/audit/audit.service.js';
 import { TenantContextService } from '../../core/tenant/tenant-context.service.js';
-import { OrgApplicationService } from '../org/application/org-application.service.js';
+import {
+  OrgApplicationService,
+  toOrgChartView,
+} from '../org/application/org-application.service.js';
 import { ApprovalApplicationService } from '../approval/application/approval-application.service.js';
 import { RecruitmentApplicationService } from '../recruitment/application/recruitment-application.service.js';
 import { RecruitmentInterviewService } from '../recruitment/application/recruitment-interview.service.js';
@@ -22,10 +25,20 @@ import { CareOccasionApplicationService } from '../care/application/care-occasio
 import { CareAlumniCleanupApplicationService } from '../care/application/care-alumni-cleanup-application.service.js';
 import { AttendanceApplicationService } from '../attendance/application/attendance-application.service.js';
 import { PayrollRunService } from '../payroll/application/payroll-run.service.js';
-import { PayrollPayslipService } from '../payroll/application/payroll-payslip.service.js';
+import {
+  PayrollPayslipService,
+  type PayrollPayslipView,
+} from '../payroll/application/payroll-payslip.service.js';
 import { PayrollTaxFilingService } from '../payroll/application/payroll-tax-filing.service.js';
 import { PayrollReconciliationService } from '../payroll/application/payroll-reconciliation.service.js';
 import { PayrollShadowService } from '../payroll/application/payroll-shadow.service.js';
+import { PayrollAdjustmentService } from '../payroll/application/payroll-adjustment.service.js';
+import {
+  PayrollAdjustmentTaxCorrectionService,
+} from '../payroll/application/payroll-adjustment-tax-correction.service.js';
+import {
+  PayrollAnnualReconciliationService,
+} from '../payroll/application/payroll-annual-reconciliation.service.js';
 import { OpOperatingSummaryService } from '../op/application/op-operating-summary.service.js';
 import { OpApprovalBridgeService } from '../op/application/op-approval-bridge.service.js';
 import { ManagementDashboardService } from '../analytics/application/management-dashboard.service.js';
@@ -84,6 +97,9 @@ export class McpToolService {
     private readonly taxFilings: PayrollTaxFilingService,
     private readonly reconciliations: PayrollReconciliationService,
     private readonly shadows: PayrollShadowService,
+    private readonly payrollAdjustments: PayrollAdjustmentService,
+    private readonly payrollAdjustmentTaxCorrections: PayrollAdjustmentTaxCorrectionService,
+    private readonly annualPayrollReconciliations: PayrollAnnualReconciliationService,
     private readonly opSummaries: OpOperatingSummaryService,
     private readonly opApprovalBridges: OpApprovalBridgeService,
     private readonly managementDashboard: ManagementDashboardService,
@@ -112,7 +128,22 @@ export class McpToolService {
         status: String(sideEffect.status),
         kind: String(sideEffect.kind),
       });
-      return structuredResult({ sideEffect });
+      return structuredResult({
+        sideEffect: Object.freeze({
+          eventId: sideEffect.eventId,
+          kind: sideEffect.kind,
+          aggregateId: sideEffect.aggregateId,
+          aggregateVersion: sideEffect.aggregateVersion,
+          channel: sideEffect.channel,
+          status: sideEffect.status,
+          attempts: sideEffect.attempts,
+          deliveryAttempts: sideEffect.deliveryAttempts,
+          nextAttemptAt: sideEffect.nextAttemptAt,
+          dispatchedAt: sideEffect.dispatchedAt,
+          completedAt: sideEffect.completedAt,
+          lastErrorCode: sideEffect.lastErrorCode,
+        }),
+      });
     });
   }
 
@@ -281,7 +312,16 @@ export class McpToolService {
         await this.auditTool(identity, 'talent_lifecycle_get', 'R0', 'denied');
         return scopeError('erp:talent-lifecycle:read');
       }
-      const lifecycle = await this.talentLifecycle.getForMcp(candidateId);
+      const source = await this.talentLifecycle.getForMcp(candidateId);
+      const lifecycle = Object.freeze({
+        candidateId: source.candidateId,
+        stage: source.stage,
+        currentApplicationStage: source.currentApplicationStage,
+        employeeStatus: source.employeeStatus,
+        openFollowUpCount: source.openFollowUpCount,
+        nextActionAt: source.nextActionAt,
+        updatedAt: source.updatedAt,
+      });
       await this.auditTool(identity, 'talent_lifecycle_get', 'R0', 'success');
       return structuredResult({ lifecycle });
     });
@@ -320,7 +360,17 @@ export class McpToolService {
         await this.auditTool(identity, 'payroll_payslip_get_self', 'R1', 'denied');
         return scopeError('erp:payroll:sheet:read_self');
       }
-      const payslip = await this.payslips.getMyPayslip(period);
+      let payslip: PayrollPayslipView;
+      try {
+        payslip = await this.payslips.getMyPayslip(period);
+      } catch (error) {
+        if (!isPayrollMigrationError(error)) throw error;
+        await this.auditTool(identity, 'payroll_payslip_get_self', 'R1', 'denied');
+        return businessError(
+          'PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM',
+          '工资能力已迁移至专业算薪系统',
+        );
+      }
       await this.auditTool(identity, 'payroll_payslip_get_self', 'R1', 'success', {
         period, inputHash: payslip.inputHash, resultHash: payslip.resultHash,
       });
@@ -394,6 +444,87 @@ export class McpToolService {
     });
   }
 
+  async getPayrollAdjustmentStatus(id: string, extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:payroll:adjustment:read')) {
+        await this.auditTool(identity, 'payroll_adjustment_status_get', 'R1', 'denied');
+        return scopeError('erp:payroll:adjustment:read');
+      }
+      const payrollAdjustment = await this.payrollAdjustments.getControlStatus(id);
+      await this.auditTool(identity, 'payroll_adjustment_status_get', 'R1', 'success', {
+        adjustmentId: payrollAdjustment.id, period: payrollAdjustment.period,
+        status: payrollAdjustment.status,
+        cashSettlementStatus: payrollAdjustment.cashSettlementStatus,
+        taxCorrectionStatus: payrollAdjustment.taxCorrectionStatus,
+        adjustmentHash: payrollAdjustment.adjustmentHash,
+      });
+      return structuredResult({ payrollAdjustment });
+    });
+  }
+
+  async getPayrollAdjustmentTaxCorrectionStatus(
+    id: string,
+    extra: McpExtra,
+  ): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      const scope = 'erp:payroll:adjustment:tax_correction:read';
+      if (!identity.scopes.includes(scope)) {
+        await this.auditTool(
+          identity,
+          'payroll_adjustment_tax_correction_status_get',
+          'R1',
+          'denied',
+        );
+        return scopeError(scope);
+      }
+      const payrollAdjustmentTaxCorrection =
+        await this.payrollAdjustmentTaxCorrections.getControlStatus(id);
+      await this.auditTool(
+        identity,
+        'payroll_adjustment_tax_correction_status_get',
+        'R1',
+        'success',
+        {
+          filingId: payrollAdjustmentTaxCorrection.id,
+          adjustmentId: payrollAdjustmentTaxCorrection.adjustmentId,
+          period: payrollAdjustmentTaxCorrection.period,
+          status: payrollAdjustmentTaxCorrection.status,
+          contentHash: payrollAdjustmentTaxCorrection.contentHash,
+        },
+      );
+      return structuredResult({ payrollAdjustmentTaxCorrection });
+    });
+  }
+
+  async getAnnualPayrollReconciliationStatus(
+    id: string,
+    extra: McpExtra,
+  ): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:payroll:annual:read')) {
+        await this.auditTool(
+          identity, 'payroll_annual_reconciliation_status_get', 'R1', 'denied',
+        );
+        return scopeError('erp:payroll:annual:read');
+      }
+      const annualPayrollReconciliation =
+        await this.annualPayrollReconciliations.getControlStatus(id);
+      await this.auditTool(
+        identity, 'payroll_annual_reconciliation_status_get', 'R1', 'success',
+        {
+          reconciliationId: annualPayrollReconciliation.id,
+          taxYear: annualPayrollReconciliation.taxYear,
+          status: annualPayrollReconciliation.status,
+          evidenceHash: annualPayrollReconciliation.evidenceHash,
+        },
+      );
+      return structuredResult({ annualPayrollReconciliation });
+    });
+  }
+
   async getOpOperatingSummary(date: string, extra: McpExtra): Promise<McpToolResult> {
     const identity = parseMcpIdentity(extra.authInfo);
     return this.run(identity, async () => {
@@ -404,7 +535,6 @@ export class McpToolService {
       const operatingSummary = await this.opSummaries.getLatest(date);
       await this.auditTool(identity, 'op_operating_summary_get', 'R0', 'success', {
         summaryDate: operatingSummary.summaryDate, revision: operatingSummary.revision,
-        payloadHash: operatingSummary.payloadHash,
       });
       return structuredResult({ operatingSummary });
     });
@@ -486,7 +616,7 @@ export class McpToolService {
         await this.auditTool(identity, 'management_dashboard_export_prepare', 'R2', 'denied');
         return scopeError(missing);
       }
-      await this.managementDashboard.get(asOf);
+      this.managementDashboard.validateAsOf(asOf);
       const command: AnalyticsMcpCommand = {
         operation: 'analytics.management_dashboard.export', asOf,
         format: 'json', expectedVersion: 1,
@@ -807,7 +937,7 @@ export class McpToolService {
           }],
         };
       }
-      const chart = await this.organization.getOrgChart();
+      const chart = toOrgChartView(await this.organization.getOrgChart());
       const data: Record<string, unknown> = {
         departments: chart.departments,
         employees: chart.employees,
@@ -1350,6 +1480,14 @@ function businessError(code: string, message: string): McpToolResult {
     isError: true,
     content: [{ type: 'text', text: JSON.stringify({ code, message }) }],
   };
+}
+
+function isPayrollMigrationError(error: unknown): error is GoneException {
+  if (!(error instanceof GoneException)) return false;
+  const response = error.getResponse();
+  return typeof response === 'object' && response !== null &&
+    'code' in response &&
+    response.code === 'PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM';
 }
 
 function preparedResult(prepared: McpPreparedOperation): McpToolResult {

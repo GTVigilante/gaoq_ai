@@ -2,7 +2,7 @@
 
 ## 交付状态
 
-Phase 2 当前已交付审批模板、受限条件 DSL、模板快照、实例状态机、会签/或签、委托、转交、加签、撤回、归档、乐观锁、加密持久化、REST 工作台、可靠事件、双平台通知、MCP R0/R1 能力，以及基于 WebAuthn 用户验证的 R2 确认链。
+Phase 2 当前已交付审批模板、受限条件 DSL、模板与实例草稿强版本修订、模板快照、实例状态机、会签/或签、委托、转交、加签、撤回、归档、乐观锁、加密持久化、REST 工作台、可靠事件、双平台通知、MCP R0/R1 能力，以及基于 WebAuthn 用户验证的 R2 确认链。
 
 尚未满足生产验收的项目：
 
@@ -18,8 +18,39 @@ Phase 2 当前已交付审批模板、受限条件 DSL、模板快照、实例�
 - REST、MCP 和 Worker 复用 `ApprovalApplicationService`；MCP 与通知适配器不得直接读写审批聚合。
 - 租户只能来自验签令牌或 HttpOnly ERP 会话；任何业务参数中的租户标识均无效。
 - 表单使用 AES-256-GCM 和租户/实例/定义摘要 AAD；通知、Outbox、MCP 确认和幂等快照不得包含表单正文。
+- `PUT /approvals/templates/:id` 只允许修改未发布模板草稿，编码与修订号不可变；
+  `PUT /approvals/instances/:id` 只允许发起人修改未提交实例草稿，模板快照不可替换。
+  两者均要求强 `If-Match` 和 `Idempotency-Key`，正文只参与幂等摘要，响应与事件
+  仅保留最小投影或摘要。
 - 审批写入、动作日志、Outbox 和通知意图位于同一 Mongo 事务；平台发送在独立 Worker 中执行。
+- 审批 Outbox 不是类型断言边界：十七类模板、历史、实例与委托事件必须逐类型
+  执行严格运行时白名单，绑定可信租户、聚合、版本和规范时间，拒绝未知字段、
+  payload 保留字段覆盖、表单正文及状态组合错位。规范事件是 OP 审批终态 Relay
+  的唯一输入；51 项专项测试与逐文件四维 90% 门禁已接入 `pnpm precheck` 和
+  `pnpm check`。
+- 通知 Worker 对数据库事实执行运行时白名单校验，认领与释放绑定通知、Worker 和
+  原尝试次数。飞书以通知 ULID 作为平台去重键，可安全重领过期租约；钉钉直连
+  发送没有已验收的请求幂等保证，过期执行租约或不可判定响应必须进入
+  `APPROVAL_NOTIFICATION_DELIVERY_INDETERMINATE` 死信，禁止自动重发。
+- 平台已经返回成功后，本地 `sent` 终态写入失败只记录
+  `state_unavailable` 并保持原执行租约，禁止通用失败处理把成功发送改写为重试或
+  死信。结果不确定的钉钉通知只有在平台对账后，才可用 R2
+  `approved_exception` 原因执行幂等人工恢复。
+- `GET /approvals/notifications/dead` 和
+  `GET /approvals/notifications/reconciliation` 只返回可信租户内脱敏投影；
+  `POST /approvals/notifications/:notificationId/retries` 严格拒绝未知正文、
+  非规范 ULID、分页和幂等键，并在应用服务再次校验读/操作 Scope。人工恢复按
+  `credentials_fixed`、`identity_bound`、`provider_recovered` 和
+  `approved_exception` 精确匹配对应错误类别，最多执行 100 次；业务失败后的
+  审计故障不得覆盖原始异常，事务提交后的成功审计故障不得改变成功响应。
+  这些运维入口不注册为 MCP Tool、Resource 或 Prompt。
 - R1 使用 `prepare → ERP 页面确认 → execute`；R2 使用与操作、租户、主体、浏览器会话绑定的一次性 WebAuthn challenge，要求认证器 UV 成功和独立审批人；R3 不注册工具。
+- 9 个审批 Tool 的能力发现固定使用 JSON Schema 2020-12，并以
+  `com.gaoq/riskLevel`、`com.gaoq/jsonSchemaDialect` 和
+  `com.gaoq/confirmationMode` 命名空间元数据分别声明 R0/R1/R2、Schema 方言和
+  `direct/prepare/execute`。所有审批 Tool 显式
+  `openWorldHint: false`；依赖补丁、协议集成测试和确定性目录哈希共同阻止 SDK
+  默认方言、风险或确认模式静默漂移。
 - Passkey 登记、清单和撤销要求 `erp:identity:passkey:manage`，生产 `WEB_ORIGIN` 必须为 HTTPS；服务端仅保存公钥、计数器、传输方式和备份状态。
 
 ## 上线门禁
@@ -31,4 +62,7 @@ Phase 2 当前已交付审批模板、受限条件 DSL、模板快照、实例�
 3. 部署并验证 [SLO 与告警](./03-observability-slo-runbook.md)。
 4. 完成 [平台与 MCP 兼容矩阵](./04-platform-mcp-compatibility.md)。
 5. 按 [PC 工作台契约](./05-web-console-contract.md) 验证浏览器会话、版本控制、风险边界与四类契约一致性。
-6. R2 实体认证器兼容、真实平台沙箱和 Sev1/Sev2 演练全部通过后，方可提交生产变更审批。
+6. 按 [审批主体解析与组织主数据完整性运行手册](./06-approval-actor-resolution-runbook.md)
+   验证发起员工在职状态、授权映射、部门字段类型、单节点人数上限，以及
+   REST、OP、MCP 对同一应用服务的复用。
+7. R2 实体认证器兼容、真实平台沙箱和 Sev1/Sev2 演练全部通过后，方可提交生产变更审批。

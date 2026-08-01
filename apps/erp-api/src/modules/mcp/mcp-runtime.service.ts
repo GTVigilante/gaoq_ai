@@ -3,12 +3,18 @@ import { ConfigService } from '@nestjs/config';
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { Response } from 'express';
 import { z } from 'zod';
 
 import type { AppEnvironment } from '../../config/environment.js';
 import type { ErpRequest } from '../../core/http/request-context.js';
+import {
+  analyticsExportViewSchema,
+  managementDashboardSchema,
+} from '../analytics/analytics.contract.js';
 import { DATA_MIGRATION_SCOPES } from '../data-migration/data-migration-contract.js';
+import { buildMcpAuthInfo } from './mcp-auth-context.js';
 import { McpToolService } from './mcp-tool.service.js';
 
 const permissionsOutputSchema = z.object({
@@ -21,7 +27,6 @@ const permissionsOutputSchema = z.object({
 const orgChartOutputSchema = z.object({
   departments: z.array(z.object({
     id: z.string(),
-    tenantId: z.string(),
     code: z.string(),
     name: z.string(),
     status: z.enum(['active', 'inactive']),
@@ -29,12 +34,9 @@ const orgChartOutputSchema = z.object({
     managerId: z.string().nullable(),
     sortOrder: z.number().int().nonnegative(),
     version: z.number().int().positive(),
-    createdAt: z.string(),
-    updatedAt: z.string(),
-  })),
+  }).strict()),
   employees: z.array(z.object({
     id: z.string(),
-    tenantId: z.string(),
     employeeNo: z.string(),
     displayName: z.string(),
     status: z.enum(['probation', 'active', 'suspended', 'terminated']),
@@ -43,10 +45,8 @@ const orgChartOutputSchema = z.object({
     positionIds: z.array(z.string()),
     jobLevelId: z.string().nullable(),
     version: z.number().int().positive(),
-    createdAt: z.string(),
-    updatedAt: z.string(),
-  })),
-});
+  }).strict()),
+}).strict();
 
 const approvalSummarySchema = z.object({
   id: z.string(),
@@ -124,7 +124,7 @@ const marketingEventIdSchema = z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/)
 const marketingSideEffectSchema = z.object({
   eventId: marketingEventIdSchema,
   kind: z.enum(['lead_notification', 'scheduled_publish']),
-  aggregateId: z.string(),
+  aggregateId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{7,127}$/),
   aggregateVersion: z.number().int().positive(),
   channel: z.enum(['email', 'feishu']).nullable(),
   status: z.enum([
@@ -132,14 +132,14 @@ const marketingSideEffectSchema = z.object({
   ]),
   attempts: z.number().int().nonnegative(),
   deliveryAttempts: z.number().int().nonnegative(),
-  nextAttemptAt: z.string(),
-  dispatchedAt: z.string().nullable(),
-  completedAt: z.string().nullable(),
-  lastErrorCode: z.string().nullable(),
-});
+  nextAttemptAt: z.string().datetime({ offset: true }),
+  dispatchedAt: z.string().datetime({ offset: true }).nullable(),
+  completedAt: z.string().datetime({ offset: true }).nullable(),
+  lastErrorCode: z.string().regex(/^[A-Z][A-Z0-9_]{2,127}$/).nullable(),
+}).strict();
 const marketingSideEffectOutputSchema = z.object({
   sideEffect: marketingSideEffectSchema,
-});
+}).strict();
 const recruitmentApplicationSchema = z.object({
   id: recruitmentIdSchema, candidateId: recruitmentIdSchema, positionId: recruitmentIdSchema,
   stage: z.enum([
@@ -310,16 +310,21 @@ const talentLifecycleSchema = z.object({
     'talent_pool', 'recruiting', 'offer', 'onboarding', 'employed',
     'offboarding', 'alumni', 'former_employee', 'inactive',
   ]),
-  currentApplicationStage: z.string().nullable(),
-  employeeStatus: z.string().nullable(),
+  currentApplicationStage: z.enum([
+    'applied', 'screening', 'interview', 'offer_approval', 'offer_sent',
+    'offer_accepted', 'preboarding', 'hired', 'rejected', 'withdrawn',
+  ]).nullable(),
+  employeeStatus: z.enum(['probation', 'active', 'suspended', 'terminated']).nullable(),
   openFollowUpCount: z.number().int().nonnegative(),
-  nextActionAt: z.string().nullable(),
-  updatedAt: z.string(),
-});
+  nextActionAt: z.string().datetime({ offset: true }).nullable(),
+  updatedAt: z.string().datetime({ offset: true }),
+}).strict();
 const attendanceMonthSchema = z.object({
   id: z.string(), employeeId: z.string(), month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
   snapshotVersion: z.number().int().positive(), rulesetVersion: z.string(),
-  sourceCutoffAt: z.string(), workedMinutes: z.number().int().nonnegative(),
+  sourceCutoffAt: z.string(), sourceProviderCount: z.number().int().nonnegative(),
+  sourceWatermarkDigest: z.string().length(43),
+  workedMinutes: z.number().int().nonnegative(),
   leaveMinutes: z.number().int().nonnegative(), overtimeMinutes: z.number().int().nonnegative(),
   absentMinutes: z.number().int().nonnegative(), sourceFactCount: z.number().int().nonnegative(),
   correctionCount: z.number().int().nonnegative(), snapshotHash: z.string().length(43),
@@ -369,6 +374,42 @@ const payrollPayslipSchema = z.object({
   postTaxDeductionMinor: z.number().int().nonnegative(), withholdingTaxMinor: z.number().int(),
   netPayMinor: z.number().int().nonnegative(), inputHash: z.string().length(43),
   resultHash: z.string().length(43), publishedAt: z.string(),
+});
+const payrollAdjustmentControlSchema = z.object({
+  id: recruitmentIdSchema,
+  period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  adjustmentNumber: z.number().int().positive(),
+  type: z.enum(['supplement', 'reversal', 'tax_only']),
+  reasonCode: z.string().regex(/^[A-Z][A-Z0-9_]{1,63}$/),
+  status: z.enum([
+    'prepared', 'pending_approval', 'approved', 'locked', 'settled', 'cancelled',
+  ]),
+  cashSettlementStatus: z.enum(['not_required', 'pending', 'settled']),
+  taxCorrectionStatus: z.enum(['not_required', 'pending', 'submitted']),
+  version: z.number().int().positive(),
+  adjustmentHash: z.string().length(43),
+});
+const payrollAdjustmentTaxCorrectionControlSchema = z.object({
+  id: recruitmentIdSchema,
+  adjustmentId: recruitmentIdSchema,
+  period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  format: z.literal('CN_IIT_WITHHOLDING_CORRECTION_V1'),
+  contentHash: z.string().length(43),
+  objectEvidenceId: z.string().nullable(),
+  taxSubmissionEvidenceId: z.string().nullable(),
+  status: z.enum(['archiving', 'prepared', 'approved', 'submitting', 'submitted']),
+  version: z.number().int().positive(),
+});
+const annualPayrollReconciliationControlSchema = z.object({
+  id: recruitmentIdSchema, taxYear: z.string().regex(/^\d{4}$/),
+  periodCount: z.number().int().min(1).max(12),
+  firstPeriod: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  lastPeriod: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  status: z.enum([
+    'awaiting_assessment', 'assessment_matched',
+    'requires_employee_settlement', 'frozen',
+  ]),
+  version: z.number().int().positive(), evidenceHash: z.string().length(43),
 });
 const payrollTaxFilingSchema = z.object({
   id: recruitmentIdSchema, periodId: recruitmentIdSchema,
@@ -436,7 +477,6 @@ const payrollCutoverReadinessSchema = z.object({
   version: z.number().int().positive(),
 });
 const opOperatingSummarySchema = z.object({
-  id: recruitmentIdSchema,
   summaryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   revision: z.number().int().positive(),
   currency: z.literal('CNY'),
@@ -447,9 +487,6 @@ const opOperatingSummarySchema = z.object({
     refundOrderCount: z.number().int().nonnegative(),
     activeCustomerCount: z.number().int().nonnegative(),
   }),
-  payloadHash: z.string().length(43),
-  occurredAt: z.string().datetime(),
-  receivedAt: z.string().datetime(),
 });
 const opApprovalBridgeSchema = z.object({
   externalEventId: z.string(), sourceDocumentType: z.string(), sourceDocumentId: z.string(),
@@ -457,67 +494,6 @@ const opApprovalBridgeSchema = z.object({
   approvalStatus: z.enum(['processing', 'running', 'approved', 'rejected', 'withdrawn']),
   approvalVersion: z.number().int().nonnegative(), completedAt: z.string().nullable(),
   updatedAt: z.string(),
-});
-const managementDashboardSchema = z.object({
-  asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  window: z.object({
-    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), timezone: z.literal('Asia/Shanghai'),
-  }),
-  generatedAt: z.string().datetime(),
-  freshness: z.object({
-    transactional: z.literal('live'),
-    operatingSummaryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
-    payrollPeriod: z.string().regex(/^\d{4}-\d{2}$/).nullable(),
-  }),
-  workforce: z.object({
-    activeHeadcount: z.number().int().nonnegative(),
-    probationHeadcount: z.number().int().nonnegative(),
-    suspendedHeadcount: z.number().int().nonnegative(),
-  }),
-  approvals: z.object({
-    running: z.number().int().nonnegative(), overdue48h: z.number().int().nonnegative(),
-    completed30d: z.number().int().nonnegative(),
-    approvalRateBps: z.number().int().min(0).max(10_000).nullable(),
-  }),
-  recruitment: z.object({
-    openPositionCount: z.number().int().nonnegative(),
-    openHeadcount: z.number().int().nonnegative(),
-    activeApplicationCount: z.number().int().nonnegative(),
-    hired30d: z.number().int().nonnegative(),
-  }),
-  learning: z.object({
-    mandatoryAssignments: z.number().int().nonnegative(),
-    completedMandatoryAssignments: z.number().int().nonnegative(),
-    expiredMandatoryAssignments: z.number().int().nonnegative(),
-    completionRateBps: z.number().int().min(0).max(10_000).nullable(),
-  }),
-  payroll: z.object({
-    period: z.string().regex(/^\d{4}-\d{2}$/).nullable(),
-    status: z.enum([
-      'draft', 'collecting', 'review', 'pending_approval', 'approved',
-      'locked', 'disbursing', 'reconciling', 'reconciled',
-    ]).nullable(),
-    employeeCount: z.number().int().nonnegative().nullable(),
-  }),
-  operating: z.object({
-    summaryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
-    revision: z.number().int().positive().nullable(), currency: z.literal('CNY').nullable(),
-    gmvMinor: z.number().int().nonnegative().nullable(),
-    paidOrderCount: z.number().int().nonnegative().nullable(),
-    refundMinor: z.number().int().nonnegative().nullable(),
-  }),
-  sources: z.array(z.string()).max(16),
-});
-const analyticsExportSchema = z.object({
-  id: recruitmentIdSchema,
-  asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  format: z.literal('json'),
-  status: z.enum(['queued', 'processing', 'ready', 'failed']),
-  resourceUri: z.string().regex(/^erp:\/\/analytics\/exports\/[0-7][0-9A-HJKMNP-TV-Z]{25}$/),
-  contentHash: z.string().length(43).nullable(),
-  artifact: z.record(z.string(), z.unknown()).nullable(),
-  expiresAt: z.string().datetime(),
 });
 const dataMigrationReportSchema = z.object({
   runId: recruitmentIdSchema, sourceSystem: z.string(),
@@ -569,26 +545,15 @@ export class McpRuntimeService {
     if (token === undefined || request.bearerToken === undefined || request.traceId === undefined) {
       throw new Error('MCP 认证上下文未建立');
     }
-    const auth: AuthInfo = {
-      token: request.bearerToken,
-      clientId: token.clientId,
-      scopes: [...token.scopes],
-      expiresAt: token.expiresAt,
-      resource: new URL(token.resource[0] ?? ''),
-      extra: {
-        tenantId: token.tenantId,
-        actorId: token.actorId,
-        actorType: token.actorType,
-        roleCodes: [...token.roleCodes],
-        departmentIds: [...token.departmentIds],
-        traceId: request.traceId,
-      },
-    };
+    const auth: AuthInfo = buildMcpAuthInfo(
+      request.bearerToken,
+      token,
+      request.traceId,
+    );
     // SDK 1.29 明确要求无状态模式每个 HTTP 请求创建独立 transport；复用会被拒绝。
     const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
     transport.onerror = (error) => this.logger.error(`MCP transport：${error.message}`);
-    const mcpServer = this.createMcpServer();
-    await mcpServer.connect(transport);
+    const mcpServer = await this.connect(transport);
     const headers = new Headers();
     for (const [name, value] of Object.entries(request.headers)) {
       if (typeof value === 'string') headers.set(name, value);
@@ -625,6 +590,13 @@ export class McpRuntimeService {
     } finally {
       await mcpServer.close();
     }
+  }
+
+  /** 创建独立 MCP Server 并连接标准 transport；身份必须由 transport 注入。 */
+  async connect(transport: Transport): Promise<McpServer> {
+    const server = this.createMcpServer();
+    await server.connect(transport);
+    return server;
   }
 
   private createMcpServer(): McpServer {
@@ -978,8 +950,8 @@ export class McpRuntimeService {
       'my-payroll-payslip',
       new ResourceTemplate('erp://payroll/payslips/{period}/me', { list: undefined }),
       {
-        title: '我的已发布薪资单',
-        description: '只按当前已验证员工返回已锁定月份的本人薪资单；属于 L4 数据。',
+        title: '我的已发布薪资单（legacy 兼容）',
+        description: '仅 legacy 模式按已验证员工返回本人 L4 薪资单；external 模式返回专业工资迁移错误。',
         mimeType: 'application/json',
       },
       async (uri, { period }, extra) => {
@@ -1057,6 +1029,69 @@ export class McpRuntimeService {
       async (uri, { id }, extra) => {
         const result = await this.tools.getPayrollCutoverReadiness(requiredResourceId(id), extra);
         if (result.isError === true) throw new Error('无权读取工资可切换资格');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
+    server.registerResource(
+      'payroll-adjustment-status',
+      new ResourceTemplate('erp://payroll/adjustments/{id}', { list: undefined }),
+      {
+        title: '工资调整脱敏控制状态',
+        description: '只返回补发/冲销控制状态和摘要，不返回员工、金额或更正输入。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getPayrollAdjustmentStatus(requiredResourceId(id), extra);
+        if (result.isError === true) throw new Error('无权读取工资调整控制状态');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
+    server.registerResource(
+      'payroll-adjustment-tax-correction-status',
+      new ResourceTemplate(
+        'erp://payroll/adjustment-tax-corrections/{id}',
+        { list: undefined },
+      ),
+      {
+        title: '工资调整税务更正脱敏控制状态',
+        description: '只返回更正清单、WORM 与税局回执控制状态，不返回员工、金额或税务正文。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getPayrollAdjustmentTaxCorrectionStatus(
+          requiredResourceId(id),
+          extra,
+        );
+        if (result.isError === true) throw new Error('无权读取工资调整税务更正控制状态');
+        return { contents: [{
+          uri: uri.toString(),
+          mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
+    server.registerResource(
+      'payroll-annual-reconciliation-status',
+      new ResourceTemplate('erp://payroll/annual-reconciliations/{id}', { list: undefined }),
+      {
+        title: '年度工资代扣脱敏控制状态',
+        description: '只返回税年、期间范围、状态和摘要，不返回员工、税额或税局证据。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getAnnualPayrollReconciliationStatus(
+          requiredResourceId(id), extra,
+        );
+        if (result.isError === true) throw new Error('无权读取年度工资代扣控制状态');
         return { contents: [{
           uri: uri.toString(), mimeType: 'application/json',
           text: JSON.stringify(result.structuredContent ?? {}),
@@ -1452,13 +1487,13 @@ export class McpRuntimeService {
     server.registerPrompt(
       'payroll_payslip_review_guide',
       {
-        title: '本人薪资单核对清单',
-        description: '指导 AI 只解释本人已发布薪资单，不推断他人薪酬或触发写操作。',
+        title: '本人薪资单核对清单（legacy 兼容）',
+        description: '指导 AI 只解释本人已发布薪资单；迁移后停止读取 ERP 旧工资数据。',
         argsSchema: { period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/) },
       },
       ({ period }) => ({ messages: [{ role: 'user', content: {
         type: 'text',
-        text: `请读取我 ${period} 的已发布薪资单，解释收入、个人扣款、预扣税和实发。不得推断或比较他人薪酬，不得触发重算、审批、锁定、导出或发薪。`,
+        text: `请读取我 ${period} 的已发布薪资单，解释收入、个人扣款、预扣税和实发。若返回专业工资迁移错误，停止读取 ERP 旧数据并提示我前往专业工资系统。不得推断或比较他人薪酬，不得触发重算、审批、锁定、导出或发薪。`,
       } }] }),
     );
 
@@ -1515,6 +1550,45 @@ export class McpRuntimeService {
     );
 
     server.registerPrompt(
+      'payroll_adjustment_review_guide',
+      {
+        title: '工资补发冲销控制核对指南',
+        description: '指导 AI 只读解释工资调整类型、原因、状态和摘要，不读取员工金额或执行调整。',
+        argsSchema: { adjustmentId: recruitmentIdSchema },
+      },
+      ({ adjustmentId }) => ({ messages: [{ role: 'user', content: {
+        type: 'text',
+        text: `请读取工资调整 ${adjustmentId} 的脱敏控制状态，解释补发、冲销或税务调整类型、标准原因、版本和摘要是否完整。不得索取员工、工资金额、更正输入或密文；不得准备、批准、锁定、支付、扣回或税务重报。`,
+      } }] }),
+    );
+
+    server.registerPrompt(
+      'payroll_adjustment_tax_correction_review_guide',
+      {
+        title: '工资调整税务更正控制核对指南',
+        description: '指导 AI 只读核对更正清单、归档、审批和税局受理状态，不读取员工税额或执行申报。',
+        argsSchema: { filingId: recruitmentIdSchema },
+      },
+      ({ filingId }) => ({ messages: [{ role: 'user', content: {
+        type: 'text',
+        text: `请读取工资调整税务更正 ${filingId} 的脱敏控制状态，核对格式、内容摘要、WORM 证据、版本、审批和税局受理证据是否完整。不得索取员工、金额、税务正文、WORM 地址或税局凭据；不得制备、审批、提交或修改更正清单。`,
+      } }] }),
+    );
+
+    server.registerPrompt(
+      'payroll_annual_reconciliation_review_guide',
+      {
+        title: '年度工资代扣控制核对指南',
+        description: '指导 AI 只读解释年度代扣核对状态，不读取员工税额或代替个人税务申报。',
+        argsSchema: { reconciliationId: recruitmentIdSchema },
+      },
+      ({ reconciliationId }) => ({ messages: [{ role: 'user', content: {
+        type: 'text',
+        text: `请读取年度工资代扣核对 ${reconciliationId} 的脱敏控制状态，解释税年、期间范围、状态和证据摘要。不得索取员工、工资、税额、税表或税局证据；不得代替个人综合所得申报、承诺退补税结果或执行任何收付。`,
+      } }] }),
+    );
+
+    server.registerPrompt(
       'op_operating_summary_review_guide',
       {
         title: 'OP 经营摘要核对指南',
@@ -1561,7 +1635,17 @@ export class McpRuntimeService {
         title: '查询我的审批待办',
         description: '返回当前主体可处理的审批摘要，不接受租户参数且不返回表单正文。风险等级 R0。',
         outputSchema: approvalInboxOutputSchema,
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+        _meta: {
+          'com.gaoq/riskLevel': 'R0',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'direct',
+        },
       },
       async (extra) => this.tools.getApprovalInbox(extra),
     );
@@ -1573,7 +1657,17 @@ export class McpRuntimeService {
         description: '按当前主体权限返回审批详情；L3/L4 字段由应用服务脱敏。风险等级 R0。',
         inputSchema: { instanceId: z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/) },
         outputSchema: approvalInstanceOutputSchema,
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+        _meta: {
+          'com.gaoq/riskLevel': 'R0',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'direct',
+        },
       },
       async ({ instanceId }, extra) => this.tools.getApprovalInstance(instanceId, extra),
     );
@@ -1585,7 +1679,17 @@ export class McpRuntimeService {
         description: '返回当前主体有权读取的追加式审批动作，不包含租户字段或表单正文。风险等级 R0。',
         inputSchema: { instanceId: z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/) },
         outputSchema: approvalTimelineOutputSchema,
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+        _meta: {
+          'com.gaoq/riskLevel': 'R0',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'direct',
+        },
       },
       async ({ instanceId }, extra) => this.tools.getApprovalTimeline(instanceId, extra),
     );
@@ -1598,6 +1702,11 @@ export class McpRuntimeService {
         inputSchema: approvalOperationInputSchema,
         outputSchema: preparedOperationOutputSchema,
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: {
+          'com.gaoq/riskLevel': 'R1',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'prepare',
+        },
       },
       async ({ instanceId, expectedVersion, prepareKey }, extra) =>
         this.tools.prepareApprovalSubmit(instanceId, expectedVersion, prepareKey, extra),
@@ -1611,6 +1720,11 @@ export class McpRuntimeService {
         inputSchema: confirmationExecuteInputSchema,
         outputSchema: approvalWriteOutputSchema,
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: {
+          'com.gaoq/riskLevel': 'R1',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'execute',
+        },
       },
       async ({ operationId, confirmationCredential }, extra) =>
         this.tools.executeApprovalSubmit(operationId, confirmationCredential, extra),
@@ -1624,6 +1738,11 @@ export class McpRuntimeService {
         inputSchema: approvalOperationInputSchema,
         outputSchema: preparedOperationOutputSchema,
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: {
+          'com.gaoq/riskLevel': 'R1',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'prepare',
+        },
       },
       async ({ instanceId, expectedVersion, prepareKey }, extra) =>
         this.tools.prepareApprovalWithdraw(instanceId, expectedVersion, prepareKey, extra),
@@ -1637,6 +1756,11 @@ export class McpRuntimeService {
         inputSchema: confirmationExecuteInputSchema,
         outputSchema: approvalWriteOutputSchema,
         annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+        _meta: {
+          'com.gaoq/riskLevel': 'R1',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'execute',
+        },
       },
       async ({ operationId, confirmationCredential }, extra) =>
         this.tools.executeApprovalWithdraw(operationId, confirmationCredential, extra),
@@ -1654,6 +1778,11 @@ export class McpRuntimeService {
         },
         outputSchema: preparedOperationOutputSchema,
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: {
+          'com.gaoq/riskLevel': 'R2',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'prepare',
+        },
       },
       async (input, extra) => this.tools.prepareApprovalDecision(input, extra),
     );
@@ -1666,6 +1795,11 @@ export class McpRuntimeService {
         inputSchema: confirmationExecuteInputSchema,
         outputSchema: approvalWriteOutputSchema,
         annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+        _meta: {
+          'com.gaoq/riskLevel': 'R2',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'execute',
+        },
       },
       async ({ operationId, confirmationCredential }, extra) =>
         this.tools.executeApprovalDecision(operationId, confirmationCredential, extra),
@@ -1856,7 +1990,7 @@ export class McpRuntimeService {
         title: '查询人才全周期脱敏摘要',
         description: '返回生命周期阶段、待跟进数量和下一行动时间，不返回身份或备注。风险等级 R0。',
         inputSchema: { candidateId: recruitmentIdSchema },
-        outputSchema: z.object({ lifecycle: talentLifecycleSchema }),
+        outputSchema: z.object({ lifecycle: talentLifecycleSchema }).strict(),
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
       },
       async ({ candidateId }, extra) => this.tools.getTalentLifecycle(candidateId, extra),
@@ -1891,8 +2025,8 @@ export class McpRuntimeService {
     server.registerTool(
       'payroll_payslip_get_self',
       {
-        title: '查询本人已发布薪资单',
-        description: '从已验证主体反查 ERP 员工，仅返回已锁定月份的本人 L4 薪资单。风险等级 R1。',
+        title: '查询本人已发布薪资单（legacy 兼容）',
+        description: '仅 legacy 模式从已验证主体反查 ERP 员工；external 模式失败关闭并引导专业工资系统。风险等级 R1。',
         inputSchema: { period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/) },
         outputSchema: z.object({ payslip: payrollPayslipSchema }),
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -1954,6 +2088,57 @@ export class McpRuntimeService {
         },
       },
       async ({ id }, extra) => this.tools.getPayrollCutoverReadiness(id, extra),
+    );
+
+    server.registerTool(
+      'payroll_adjustment_status_get',
+      {
+        title: '查询工资调整脱敏控制状态',
+        description: '只返回补发/冲销类型、原因码、状态和摘要；不返回员工、金额或更正输入。风险等级 R1。',
+        inputSchema: { id: recruitmentIdSchema },
+        outputSchema: z.object({ payrollAdjustment: payrollAdjustmentControlSchema }),
+        annotations: {
+          readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+        },
+      },
+      async ({ id }, extra) => this.tools.getPayrollAdjustmentStatus(id, extra),
+    );
+
+    server.registerTool(
+      'payroll_adjustment_tax_correction_status_get',
+      {
+        title: '查询工资调整税务更正脱敏控制状态',
+        description: '只返回更正清单、归档和税局受理控制字段；不返回员工、金额、税务正文或 WORM 地址。风险等级 R1。',
+        inputSchema: { id: recruitmentIdSchema },
+        outputSchema: z.object({
+          payrollAdjustmentTaxCorrection:
+            payrollAdjustmentTaxCorrectionControlSchema,
+        }),
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      async ({ id }, extra) =>
+        this.tools.getPayrollAdjustmentTaxCorrectionStatus(id, extra),
+    );
+
+    server.registerTool(
+      'payroll_annual_reconciliation_status_get',
+      {
+        title: '查询年度工资代扣脱敏控制状态',
+        description: '只返回税年、期间范围、状态和摘要；不返回员工、税额、税表或税局证据。风险等级 R1。',
+        inputSchema: { id: recruitmentIdSchema },
+        outputSchema: z.object({
+          annualPayrollReconciliation: annualPayrollReconciliationControlSchema,
+        }),
+        annotations: {
+          readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+        },
+      },
+      async ({ id }, extra) => this.tools.getAnnualPayrollReconciliationStatus(id, extra),
     );
 
     server.registerTool(
@@ -2039,7 +2224,7 @@ export class McpRuntimeService {
         title: '执行管理驾驶舱导出',
         description: '消费经 Passkey 强认证的一次性凭据并创建异步任务，返回可轮询资源链接。风险等级 R2。',
         inputSchema: confirmationExecuteInputSchema,
-        outputSchema: z.object({ export: analyticsExportSchema }),
+        outputSchema: z.object({ export: analyticsExportViewSchema }),
         annotations: {
           readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false,
         },

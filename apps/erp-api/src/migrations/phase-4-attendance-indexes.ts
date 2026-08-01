@@ -20,7 +20,10 @@ const SCHEMAS = Object.freeze([
 ]);
 
 export function buildPhaseFourAttendanceIndexManifest() {
-  return buildIndexManifestFromSchemas(SCHEMAS);
+  // v1 已发布，后续 shiftPlanId 关联索引必须留在独立 v2，禁止改变本清单 checksum。
+  return buildIndexManifestFromSchemas(SCHEMAS).filter(
+    (item) => item.key.shiftPlanId === undefined,
+  );
 }
 
 export async function runPhaseFourAttendanceIndexMigration(

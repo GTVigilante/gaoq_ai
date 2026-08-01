@@ -166,7 +166,7 @@ export class OpWebhookService {
         payloadHash, providerOccurredAt, receivedAt,
         expiresAt: new Date(receivedAt.getTime() + INBOX_RETENTION_MS), ...protectedPayload,
         status: 'pending', attempts: 0, failureCode: null, processedAt: null,
-        processingStartedAt: null,
+        processingStartedAt: null, processingJobId: null, processingToken: null,
       });
     } catch (error) {
       if (!isDuplicateKeyError(error)) throw error;
@@ -225,8 +225,13 @@ export class OpWebhookService {
   }
 
   private async enqueue(inboxId: string, tenantId: string, payloadHash: string): Promise<void> {
+    const jobKey = createHash('sha256')
+      .update(tenantId, 'utf8').update('\0')
+      .update(inboxId, 'utf8').update('\0')
+      .update(payloadHash, 'utf8')
+      .digest('base64url');
     await this.queue.add(OP_PROCESS_OPERATING_SUMMARY_JOB, { inboxId, tenantId }, {
-      jobId: `op_summary_${payloadHash}`, attempts: 12,
+      jobId: `op_summary_${jobKey}`, attempts: 12,
       backoff: { type: 'exponential', delay: 2_000 },
       removeOnComplete: 1_000, removeOnFail: 10_000,
     });

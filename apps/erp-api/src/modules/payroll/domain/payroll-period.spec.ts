@@ -7,6 +7,7 @@ import {
   createPayrollPeriod,
   lockPayrollPeriod,
   recordPayrollCalculation,
+  recordPayrollReconciliationMismatch,
   startPayrollCollection,
   startPayrollDisbursement,
   submitPayrollApproval,
@@ -147,5 +148,131 @@ describe('PayrollPeriod 职责分离状态机', () => {
       reconciledBy: 'employee-reconciler', reconciliationEvidenceId: 'recon-001',
       balanced: false, trustedReconciliation: true,
     }, NOW)).toThrow(/未守恒/u);
+  });
+
+  it('拒绝非法主键、期间、时间、运行控制量和缺失计算', () => {
+    expect(() => createPayrollPeriod({
+      id: '@', tenantId: 'tenant-001', period: '2026-07', preparedBy: 'maker',
+    }, NOW)).toThrow('标识非法');
+    expect(() => createPayrollPeriod({
+      id: 'period-001', tenantId: 'tenant-001', period: '2026-13', preparedBy: 'maker',
+    }, NOW)).toThrow('工资期间非法');
+    expect(() => createPayrollPeriod({
+      id: 'period-001', tenantId: 'tenant-001', period: '2026-07', preparedBy: 'maker',
+    }, new Date('invalid'))).toThrow('业务时间非法');
+
+    const draft = createPayrollPeriod({
+      id: 'period-001', tenantId: 'tenant-001', period: '2026-07', preparedBy: 'maker',
+    }, NOW);
+    expect(() => startPayrollCollection(
+      draft, { tenantId: 'tenant-002', expectedVersion: 1 }, NOW,
+    )).toThrow('租户不匹配');
+    expect(() => submitPayrollApproval(draft, {
+      tenantId: 'tenant-001', expectedVersion: 1,
+      approvalReferenceType: 'approval_instance', approvalInstanceId: 'approval-001',
+    }, NOW)).toThrow('状态迁移无效');
+
+    const collecting = startPayrollCollection(
+      draft, { tenantId: 'tenant-001', expectedVersion: 1 }, NOW,
+    );
+    const invalidRuns = [
+      {
+        id: '@', inputSnapshotHash: HASH_A, resultHash: HASH_B,
+        employeeCount: 1, totalGrossMinor: 1, totalTaxMinor: 0, totalNetMinor: 1,
+      },
+      {
+        id: 'run-001', inputSnapshotHash: 'bad', resultHash: HASH_B,
+        employeeCount: 1, totalGrossMinor: 1, totalTaxMinor: 0, totalNetMinor: 1,
+      },
+      {
+        id: 'run-001', inputSnapshotHash: HASH_A, resultHash: HASH_B,
+        employeeCount: 0, totalGrossMinor: 1, totalTaxMinor: 0, totalNetMinor: 1,
+      },
+      {
+        id: 'run-001', inputSnapshotHash: HASH_A, resultHash: HASH_B,
+        employeeCount: 1, totalGrossMinor: -1, totalTaxMinor: 0, totalNetMinor: 1,
+      },
+      {
+        id: 'run-001', inputSnapshotHash: HASH_A, resultHash: HASH_B,
+        employeeCount: 1, totalGrossMinor: 1, totalTaxMinor: 1.5, totalNetMinor: 1,
+      },
+    ] as const;
+    for (const run of invalidRuns) {
+      expect(() => recordPayrollCalculation(collecting, {
+        tenantId: 'tenant-001', expectedVersion: 2, run,
+      }, NOW)).toThrow();
+    }
+    expect(() => submitPayrollApproval(
+      { ...collecting, status: 'review' },
+      {
+        tenantId: 'tenant-001', expectedVersion: 2,
+        approvalReferenceType: 'approval_instance', approvalInstanceId: 'approval-001',
+      },
+      NOW,
+    )).toThrow('必须完成计算');
+  });
+
+  it('覆盖拒绝审批、代发、对账与冻结证据的全部职责边界', () => {
+    let period = approvedPeriod();
+    const pending = { ...period, status: 'pending_approval' as const, version: 4 };
+    const rejected = applyPayrollApproval(pending, {
+      tenantId: 'tenant-001', expectedVersion: 4,
+      approvalInstanceId: pending.approvalInstanceId!,
+      approvalReferenceType: pending.approvalReferenceType!,
+      outcome: 'rejected', decidedBy: 'approver-002',
+      approvalEvidenceId: 'evidence-002', trustedApproval: true,
+    }, NOW);
+    expect(rejected).toMatchObject({
+      status: 'review', approvalReferenceType: null, approvalInstanceId: null,
+    });
+
+    period = lockPayrollPeriod(period, {
+      tenantId: 'tenant-001', expectedVersion: 5,
+      lockedBy: 'locker-001', strongAuthEvidenceId: 'mfa-001',
+      strongAuthReferenceType: 'webauthn_evidence',
+    }, NOW);
+    expect(() => startPayrollDisbursement(period, {
+      tenantId: 'tenant-001', expectedVersion: 6,
+      batchId: 'batch-001', preparedBy: 'maker-002',
+      exportEvidenceId: 'export-001', trustedExport: false,
+    }, NOW)).toThrow('代发导出事实不可信');
+    expect(() => startPayrollDisbursement(period, {
+      tenantId: 'tenant-001', expectedVersion: 6,
+      batchId: 'batch-001', preparedBy: 'locker-001',
+      exportEvidenceId: 'export-001', trustedExport: true,
+    }, NOW)).toThrow('必须分离');
+    period = startPayrollDisbursement(period, {
+      tenantId: 'tenant-001', expectedVersion: 6,
+      batchId: 'batch-001', preparedBy: 'maker-002',
+      exportEvidenceId: 'export-001', trustedExport: true,
+    }, NOW);
+    expect(() => beginPayrollReconciliation(period, {
+      tenantId: 'tenant-001', expectedVersion: 7, batchId: 'other-batch',
+    }, NOW)).toThrow('引用不匹配');
+    period = beginPayrollReconciliation(period, {
+      tenantId: 'tenant-001', expectedVersion: 7, batchId: 'batch-001',
+    }, NOW);
+    expect(() => completePayrollReconciliation(period, {
+      tenantId: 'tenant-001', expectedVersion: 8,
+      reconciledBy: 'reconciler-001', reconciliationEvidenceId: 'recon-001',
+      balanced: true, trustedReconciliation: false,
+    }, NOW)).toThrow('受信任对账服务');
+    expect(() => completePayrollReconciliation(period, {
+      tenantId: 'tenant-001', expectedVersion: 8,
+      reconciledBy: 'maker-002', reconciliationEvidenceId: 'recon-001',
+      balanced: true, trustedReconciliation: true,
+    }, NOW)).toThrow('必须分离');
+    expect(() => recordPayrollReconciliationMismatch(period, {
+      tenantId: 'tenant-001', expectedVersion: 8,
+      reconciliationEvidenceId: 'recon-mismatch-001', trustedReconciliation: false,
+    }, NOW)).toThrow('受信任对账服务');
+    const frozen = recordPayrollReconciliationMismatch(period, {
+      tenantId: 'tenant-001', expectedVersion: 8,
+      reconciliationEvidenceId: 'recon-mismatch-001', trustedReconciliation: true,
+    }, NOW);
+    expect(frozen).toMatchObject({
+      status: 'reconciling', version: 9,
+      reconciliationEvidenceId: 'recon-mismatch-001',
+    });
   });
 });

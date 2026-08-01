@@ -41,7 +41,19 @@ export function parseCareAlumniCleanupTargets(
   const targetCodes = new Set<string>();
   const origins = new Set<string>();
   const tokens = new Set<string>();
-  const forbidden = new Set(forbiddenOrigins);
+  const signingKeyIds = new Set<string>();
+  const signingPublicKeys = new Set<string>();
+  const forbidden = new Set(forbiddenOrigins.map((value) => {
+    const url = new URL(value);
+    if (
+      url.username !== '' ||
+      url.password !== '' ||
+      url.pathname !== '/' ||
+      url.search !== '' ||
+      url.hash !== ''
+    ) throw new Error('禁止复用的 Origin 必须为标准根地址');
+    return url.origin;
+  }));
   const targets = parsed.data.map((target) => {
     const url = new URL(target.endpoint);
     const hostname = url.hostname.toLowerCase().replace(/\.$/u, '')
@@ -54,6 +66,8 @@ export function parseCareAlumniCleanupTargets(
       url.search !== '' ||
       url.hash !== '' ||
       (url.port !== '' && url.port !== '443') ||
+      url.hostname !== hostname ||
+      !hostname.includes('.') ||
       hostname === 'localhost' ||
       hostname.endsWith('.localhost') ||
       isIP(hostname) !== 0 ||
@@ -67,6 +81,12 @@ export function parseCareAlumniCleanupTargets(
     }
     if (tokens.has(target.bearerToken)) {
       throw new Error('下游清理 Bearer Token 禁止跨目标复用');
+    }
+    if (signingKeyIds.has(target.signingKeyId)) {
+      throw new Error('下游清理 signingKeyId 禁止跨目标复用');
+    }
+    if (signingPublicKeys.has(target.signingPublicKeyBase64)) {
+      throw new Error('下游清理 Ed25519 公钥禁止跨目标复用');
     }
     try {
       const decodedKey = Buffer.from(target.signingPublicKeyBase64, 'base64');
@@ -83,6 +103,8 @@ export function parseCareAlumniCleanupTargets(
     targetCodes.add(target.targetCode);
     origins.add(url.origin);
     tokens.add(target.bearerToken);
+    signingKeyIds.add(target.signingKeyId);
+    signingPublicKeys.add(target.signingPublicKeyBase64);
     return Object.freeze({ ...target, endpoint: url.origin });
   });
   return Object.freeze([...targets].sort((left, right) =>

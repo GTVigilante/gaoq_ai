@@ -14,6 +14,7 @@ COPY apps/website/package.json apps/website/package.json
 COPY packages/platform-contracts/package.json packages/platform-contracts/package.json
 COPY packages/shared-types/package.json packages/shared-types/package.json
 COPY packages/shared-utils/package.json packages/shared-utils/package.json
+COPY patches patches
 RUN pnpm install --frozen-lockfile
 
 FROM dependencies AS api-build

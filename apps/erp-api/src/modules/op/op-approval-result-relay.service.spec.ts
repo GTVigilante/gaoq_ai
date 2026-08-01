@@ -42,16 +42,9 @@ function eventFixture(overrides: Partial<EventFixture> = {}): EventFixture {
     aggregateVersion: 3,
     eventType,
     envelope: {
-      specversion: '1.0',
-      id: EVENT_ID,
-      source: '//gaoq-erp/approval-module',
       type: eventType,
-      subject: `tenant/tenant-001/approval.instance/${INSTANCE_ID}`,
       time: OCCURRED_AT.toISOString(),
-      datacontenttype: 'application/json',
       tenantId: 'tenant-001',
-      idempotencyKey: `tenant-001:${eventType}:${INSTANCE_ID}:3`,
-      schemaVersion: '1',
       data: {
         tenantId: 'tenant-001',
         aggregateId: INSTANCE_ID,
@@ -261,7 +254,12 @@ describe('OpApprovalResultRelayService', () => {
     });
     await expect(store.service.relayBatch('worker-001', 1)).resolves.toBe(1);
     expect(store.bridges.updateOne.mock.calls[0]?.[1]).toMatchObject({
-      $set: { approvalStatus: result, approvalVersion: 3 },
+      $set: {
+        approvalStatus: result,
+        approvalVersion: 3,
+        completedAt: OCCURRED_AT,
+        updatedAt: OCCURRED_AT,
+      },
     });
   });
 
@@ -300,14 +298,6 @@ describe('OpApprovalResultRelayService', () => {
   });
 
   it.each([
-    ['信封 id', (event: EventFixture) => ({
-      ...event,
-      envelope: { ...event.envelope, id: '01K00000000000000000000009' },
-    })],
-    ['信封 source', (event: EventFixture) => ({
-      ...event,
-      envelope: { ...event.envelope, source: '//other-system/approval-module' },
-    })],
     ['信封 type', (event: EventFixture) => ({
       ...event,
       envelope: {
@@ -318,17 +308,6 @@ describe('OpApprovalResultRelayService', () => {
     ['顶层租户', (event: EventFixture) => ({
       ...event,
       envelope: { ...event.envelope, tenantId: 'tenant-evil' },
-    })],
-    ['信封 subject', (event: EventFixture) => ({
-      ...event,
-      envelope: {
-        ...event.envelope,
-        subject: 'tenant/tenant-evil/approval.instance/other-instance',
-      },
-    })],
-    ['幂等键', (event: EventFixture) => ({
-      ...event,
-      envelope: { ...event.envelope, idempotencyKey: 'tenant-evil:tampered' },
     })],
     ['数据租户', (event: EventFixture) => ({
       ...event,

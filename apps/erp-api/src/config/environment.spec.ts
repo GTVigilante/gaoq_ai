@@ -28,6 +28,15 @@ const careOccasionSigning = {
     }).toString('base64'),
   CARE_OCCASION_NOTIFICATION_SIGNING_KEY_ID: 'care-key-001',
 };
+const payrollTaxSigning = {
+  PAYROLL_TAX_GATEWAY_SIGNING_PUBLIC_KEY_BASE64:
+    generateKeyPairSync('ed25519').publicKey.export({
+      format: 'der',
+      type: 'spki',
+    }).toString('base64'),
+  PAYROLL_TAX_GATEWAY_SIGNING_KEY_ID: 'payroll-tax-key-001',
+  PAYROLL_TAX_OFFICIAL_PORTAL_ORIGIN: 'https://official.tax.example.cn',
+};
 
 describe('validateEnvironment', () => {
   it('接受完整且合法的本地配置', () => {
@@ -35,7 +44,7 @@ describe('validateEnvironment', () => {
       NODE_ENV: 'test',
       PORT: '3001',
       MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0&directConnection=true',
-      REDIS_URL: 'redis://localhost:6379/0',
+      REDIS_URL: 'rediss://localhost:6379/0',
       WEB_ORIGIN: 'http://localhost:3000',
       LOG_LEVEL: 'info',
       AUTH_ISSUER: 'https://auth.example.internal',
@@ -51,6 +60,7 @@ describe('validateEnvironment', () => {
     });
 
     expect(environment.PORT).toBe(3001);
+    expect(environment.REDIS_URL).toBe('rediss://localhost:6379/0');
     expect(environment.AUTH_ACCESS_TOKEN_TTL_SECONDS).toBe(600);
     expect(environment.AUTH_SIGNING_PRIVATE_KEY_BASE64).toBeUndefined();
     expect(environment.AUDIT_INTEGRITY_KEYS).toBeUndefined();
@@ -76,6 +86,8 @@ describe('validateEnvironment', () => {
     expect(environment.TREASURY_BANK_RETURN_INBOX_ENDPOINT).toBeUndefined();
     expect(environment.PAYROLL_TAX_WORM_ARCHIVE_ENDPOINT).toBeUndefined();
     expect(environment.PAYROLL_TAX_GATEWAY_ENDPOINT).toBeUndefined();
+    expect(environment.PAYROLL_TAX_GATEWAY_SIGNING_KEY_ID).toBeUndefined();
+    expect(environment.PAYROLL_TAX_OFFICIAL_PORTAL_ORIGIN).toBeUndefined();
     expect(environment.PAYROLL_TAX_GATEWAY_MODE).toBe('sandbox');
     expect(environment.PHASE6_PRODUCTION_AUTHORIZATION_ENDPOINT).toBeUndefined();
     expect(environment.PHASE6_RELEASE_COMMIT_SHA).toBeUndefined();
@@ -801,6 +813,7 @@ describe('validateEnvironment', () => {
       PAYROLL_TAX_WORM_ARCHIVE_BEARER_TOKEN: 'tax-worm-token-that-is-at-least-32-characters',
       PAYROLL_TAX_GATEWAY_ENDPOINT: 'https://tax-gateway.example.net/v1/submissions',
       PAYROLL_TAX_GATEWAY_BEARER_TOKEN: 'tax-gateway-token-at-least-32-characters',
+      ...payrollTaxSigning,
     };
     expect(validateEnvironment(configured)).toMatchObject({
       PAYROLL_TAX_WORM_RETENTION_DAYS: 3_650,
@@ -821,6 +834,15 @@ describe('validateEnvironment', () => {
       ...configured,
       PAYROLL_TAX_WORM_ARCHIVE_BEARER_TOKEN: 'treasury-worm-token-at-least-32-characters',
     })).toThrow('不得复用');
+    expect(() => validateEnvironment({
+      ...configured,
+      PAYROLL_TAX_GATEWAY_SIGNING_PUBLIC_KEY_BASE64: 'AAAA',
+    })).toThrow('有效 Ed25519');
+    expect(() => validateEnvironment({
+      ...configured,
+      PAYROLL_TAX_OFFICIAL_PORTAL_ORIGIN:
+        'https://official.tax.example.cn/settlement',
+    })).toThrow('不得配置路径');
   });
 
   it('生产资金通道必须完整绑定独立 Phase 6 授权域与发布物', () => {
@@ -913,5 +935,47 @@ describe('validateEnvironment', () => {
     expect(() => validateEnvironment({
       ...base, AUDIT_WORM_ENDPOINT: 'https://worm.example.net/anchors?token=unsafe',
     })).toThrow('禁止凭据、查询、fragment');
+    expect(() => validateEnvironment({
+      ...base, AUDIT_WORM_ENDPOINT: 'https://worm.example.net:8443/anchors',
+    })).toThrow('非 443 端口');
+  });
+
+  it('历史访问令牌验签公钥只接受公开、唯一的 RSA 轮换集合', () => {
+    const base = {
+      NODE_ENV: 'test',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0',
+      WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://erp.example.com',
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://erp.example.com/.well-known/jwks.json',
+      AUTH_SIGNING_KEY_ID: 'signing-current-001',
+      MCP_AUTHORIZATION_SERVER: 'https://erp.example.com',
+      MCP_ALLOWED_ORIGINS: 'https://erp.example.com',
+    };
+    const { publicKey } = generateKeyPairSync('rsa', { modulusLength: 2_048 });
+    const verifyOnly = {
+      ...publicKey.export({ format: 'jwk' }),
+      kid: 'signing-history-001',
+      alg: 'RS256',
+      use: 'sig',
+      key_ops: ['verify'],
+    };
+    expect(validateEnvironment({
+      ...base,
+      AUTH_SIGNING_VERIFY_ONLY_JWKS_JSON: JSON.stringify([verifyOnly]),
+    }).AUTH_SIGNING_VERIFY_ONLY_JWKS_JSON).toBe(JSON.stringify([verifyOnly]));
+    expect(() => validateEnvironment({
+      ...base,
+      AUTH_SIGNING_VERIFY_ONLY_JWKS_JSON: JSON.stringify([{
+        ...verifyOnly,
+        kid: 'signing-current-001',
+      }]),
+    })).toThrow('kid 必须唯一');
+    expect(() => validateEnvironment({
+      ...base,
+      AUTH_SIGNING_VERIFY_ONLY_JWKS_JSON: JSON.stringify([{ ...verifyOnly, d: 'private' }]),
+    })).toThrow('AUTH_SIGNING_VERIFY_ONLY_JWKS_JSON');
   });
 });

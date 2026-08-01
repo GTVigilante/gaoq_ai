@@ -39,9 +39,28 @@ pnpm --filter @gaoq/erp-api migration:package -- compare \
 
 ## 全链路聚合验收
 
-每个 Scope 的比较摘要必须按控制面唯一事实源中的固定顺序写入 `gaoq.phase5.migration-rehearsal.v1` 聚合证据。聚合证据精确覆盖全部二十六个 Scope、三轮七十八个不重复 runId/封印、每轮不超过八小时的窗口、同一来源快照与来源包清单，以及中断续传、附件网关短暂不可用、重复输入三类故障演练。任何 Scope 缺失、次序变化、运行/封印/比较摘要复用、Critical/High 差异、审计失败或生产副作用均失败关闭。
+每个 Scope 的比较摘要必须按控制面唯一事实源中的固定顺序写入
+`gaoq.phase5.migration-rehearsal.v2` 聚合证据。聚合证据精确覆盖全部二十六个
+Scope、三轮七十八个不重复 runId/封印、每轮不超过八小时的窗口、同一来源快照
+与来源包清单，以及中断续传、附件网关短暂不可用、重复输入三类故障演练。任何
+Scope 缺失、次序变化、运行/封印/比较摘要复用、Critical/High 差异、审计失败
+或生产副作用均失败关闭。
 
-聚合证据同时绑定发布 commit、API/Worker/ERP Web/Website 四类镜像摘要、部署清单、生产等价隔离环境与区域，并要求架构、安全、数据和业务负责人使用不同证据 ID 签署。校验器输出的 suite 固定为 `gaoq.phase5.migration-rehearsal.verdict`，供 Go/No-Go 的 migration 门禁消费：
+聚合证据同时绑定发布 commit、API/Worker/ERP Web/Website 四类镜像摘要、部署
+清单、生产等价隔离环境与区域，并要求架构、安全、数据和业务负责人在演练结束后
+24 小时内，以不同主体、不同证据 ID、不同意见摘要和不同 Ed25519 公钥完成
+`approve` 签署。每个 `keyId` 必须等于对应 SPKI DER 公钥的 SHA-256；按角色
+排序的四方 `{role,keyId}` 规范 JSON 摘要必须与 Repository Variable
+`MIGRATION_REHEARSAL_SIGNER_KEYSET_SHA256` 完全相同。同一主体、公钥、证据、
+意见或签名不得跨角色复用。
+
+四方共同批准 payload 覆盖证据版本、总证据 ID、环境、commit、四类镜像、部署
+清单、来源快照、来源包、来源系统、三轮运行、全部 Scope 比较、三类故障演练、
+安全结论、完整 keyset 及四方角色、主体、决定、证据、意见与批准时间。每位负责
+人再以自己的职责密钥签署共同 payload 摘要、自身角色、keyId 和签名时间。任何
+签后修改迁移结果、伪造签名、角色换钥、复用主体/公钥或漂移受信 keyset 都会
+失败关闭。校验器输出的 suite 固定为
+`gaoq.phase5.migration-rehearsal.verdict`，供 Go/No-Go 的 migration 门禁消费：
 
 ```bash
 pnpm --silent migration:rehearsal:print-contract > /secure/migration/contract.json
@@ -49,10 +68,22 @@ pnpm migration:rehearsal:validate-evidence -- \
   /secure/migration/phase-5-rehearsal.json
 ```
 
-`.github/workflows/phase-5-migration-rehearsal.yml` 只允许在 `main` 手工启动，绑定 Required Reviewers 保护的 `phase-5-migration-rehearsal` Environment，并使用带同名标签的隔离单次 self-hosted Runner。只读现场摘要固定为 `/var/lib/gaoq/migration/phase-5-rehearsal.json`，不得为符号链接、不得允许组或其他用户写入，最大 1 MiB。Environment 固定环境、区域、四类镜像、部署清单、来源快照和来源包清单摘要；GitHub 只上传脱敏 verdict，原始 NDJSON、业务数据、附件和签署材料留在企业 WORM。
+`.github/workflows/phase-5-migration-rehearsal.yml` 只允许在 `main` 手工启动，
+使用 `phase-5-migration-rehearsal` workflow policy 和 GitHub Hosted
+`ubuntu-latest`。Repository Variables 配置非敏感证据网关 HTTPS URL、
+policy 专用 OIDC audience、预期文件 SHA-256、环境、区域、四类镜像、部署清单、来源
+快照、来源包清单摘要和 `MIGRATION_REHEARSAL_SIGNER_KEYSET_SHA256`。Runner
+以 `id-token: write` 取得单次 GitHub OIDC 身份，
+从网关读取最多 1 MiB 的严格脱敏聚合 JSON；下载器复核 policy、仓库 ID、
+当前 `main` commit、workflow、Hosted Runner claim、媒体类型、响应头摘要和实际
+字节摘要，并以 `0600` 写入 `$RUNNER_TEMP`。GitHub 只上传脱敏 verdict，原始
+NDJSON、业务数据、附件和签署材料留在企业 WORM。
 
 ## 人工与外部门禁
 
 自动比较通过后仍须保存三次运行的变更单、执行人、复核人、时间窗口、监控快照、停止条件、故障注入记录和恢复记录。至少覆盖一次中断续传、一次附件网关短暂不可用和一次重复输入；任何一次发生 Critical/High 差异、SLO 越线、审计链异常或来源快照变化，三次计数全部重新开始。
 
-证据文件按 L2 加密保存并限制访问；附件正文、来源凭据和个人敏感字段不得进入证据。架构、安全、数据负责人和业务负责人完成签署前，不得把 Phase 5 迁移预验收或 Phase 6 三次演练标记为完成。
+证据文件按 L2 加密保存并限制访问；附件正文、来源凭据和个人敏感字段不得进入
+证据。仓库自测只生成临时密钥且不保存私钥；真实人员身份、职责与角色密钥绑定、
+KMS/HSM 签署和 WORM 原始材料必须由现场验收。架构、安全、数据负责人和业务
+负责人完成有效签署前，不得把 Phase 5 迁移预验收或 Phase 6 三次演练标记为完成。

@@ -11,11 +11,14 @@ import type { AppEnvironment } from '../../../config/environment.js';
 @Injectable()
 export class CareAlumniCleanupTargetRegistry {
   private readonly configured: readonly CareAlumniCleanupTarget[];
+  private readonly byCode: ReadonlyMap<string, CareAlumniCleanupTarget>;
 
   constructor(config: ConfigService<AppEnvironment, true>) {
     this.configured = parseCareAlumniCleanupTargets(
       config.get('CARE_ALUMNI_CLEANUP_TARGETS_JSON', { infer: true }),
     );
+    this.byCode = new Map(this.configured.map((target) =>
+      [target.targetCode, target] as const));
   }
 
   targets(): readonly CareAlumniCleanupTarget[] {
@@ -23,8 +26,10 @@ export class CareAlumniCleanupTargetRegistry {
   }
 
   require(targetCode: string): CareAlumniCleanupTarget {
-    const target = this.configured.find((candidate) =>
-      candidate.targetCode === targetCode);
+    if (!/^[a-z][a-z0-9_-]{1,31}$/u.test(targetCode)) {
+      throw new Error('CARE_ALUMNI_CLEANUP_TARGET_CODE_INVALID');
+    }
+    const target = this.byCode.get(targetCode);
     if (target === undefined) throw new Error('CARE_ALUMNI_CLEANUP_TARGET_NOT_REGISTERED');
     return target;
   }

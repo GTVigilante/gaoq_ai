@@ -17,9 +17,12 @@ import { createTraceId } from '@gaoq/shared-utils';
 import { IsBoolean } from 'class-validator';
 import type { Request, Response } from 'express';
 import { decodeJwt } from 'jose';
-import { z } from 'zod';
 
 import type { AppEnvironment } from '../../config/environment.js';
+import {
+  authorizationCodeTokenRequestSchema,
+  clientCredentialsTokenRequestSchema,
+} from '../../contracts/rest-request-contracts.js';
 import { AuditService } from '../../core/audit/audit.service.js';
 import { PublicRoute, RawResponse } from '../../core/http/public-route.decorator.js';
 import type { ErpRequest } from '../../core/http/request-context.js';
@@ -36,24 +39,6 @@ export class OAuthDecisionRequest {
   @IsBoolean()
   approved!: boolean;
 }
-
-const authorizationCodeTokenRequestSchema = z.object({
-  grant_type: z.literal('authorization_code'),
-  client_id: z.string().min(1).max(128),
-  code: z.string().min(1).max(256),
-  redirect_uri: z.string().min(1).max(2_048),
-  resource: z.string().min(1).max(2_048),
-  code_verifier: z.string().min(43).max(128),
-}).strict();
-
-const clientCredentialsTokenRequestSchema = z.object({
-  grant_type: z.literal('client_credentials'),
-  resource: z.string().min(1).max(2_048),
-  scope: z.string().min(1).max(12_900).optional(),
-  client_id: z.string().min(1).max(128).optional(),
-  client_assertion_type: z.string().min(1).max(128).optional(),
-  client_assertion: z.string().min(1).max(8_192).optional(),
-}).strict();
 
 const SAFE_STATE_PATTERN = /^[\x21-\x7E]{1,512}$/;
 

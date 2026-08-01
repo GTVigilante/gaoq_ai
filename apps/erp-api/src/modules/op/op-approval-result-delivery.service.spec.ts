@@ -237,6 +237,7 @@ describe('OpApprovalResultDeliveryService', () => {
       status: 'succeeded',
       lastErrorCode: null,
     });
+    expect(lastUpdate(store).$set.updatedAt).toEqual(lastUpdate(store).$set.succeededAt);
     expect(store.audit.recordSystem).toHaveBeenCalledWith(
       'tenant-001',
       expect.objectContaining({
@@ -272,6 +273,7 @@ describe('OpApprovalResultDeliveryService', () => {
       attempts: 1,
       lastErrorCode: 'OP_APPROVAL_ROUTE_DISABLED',
     });
+    expect(lastUpdate(store).$set.updatedAt).toEqual(lastUpdate(store).$set.nextAttemptAt);
     expect(store.audit.recordSystem).toHaveBeenCalledWith(
       'tenant-001',
       expect.objectContaining({
@@ -372,6 +374,23 @@ describe('OpApprovalResultDeliveryService', () => {
     });
   });
 
+  it('非法出站 Secret 引用作为业务错误进入人工复核', async () => {
+    const store = fixture({
+      route: {
+        externalTenantId: 'op-tenant-001',
+        outboundClientId: 'erp-client-001',
+        outboundCredentialSecretRef: 'GAOQ_OP_WEBHOOK_TEST',
+      },
+    });
+    await expect(store.service.processBatch('worker-001', 1)).resolves.toBe(0);
+    expect(store.http.put).not.toHaveBeenCalled();
+    expect(lastUpdate(store).$set).toMatchObject({
+      status: 'manual_review',
+      attempts: 1,
+      lastErrorCode: 'OP_APPROVAL_SECRET_REF_INVALID',
+    });
+  });
+
   it.each([
     ['非法连接器错误码', new OpApprovalDeliveryError(
       'OP:FREE TEXT',
@@ -418,13 +437,18 @@ describe('OpApprovalResultDeliveryService', () => {
     });
   });
 
-  it('成功外呼后的持久化租约丢失必须显式失败且不写审计', async () => {
-    const store = fixture({ updateCounts: [0, 0] });
+  it('成功外呼后的持久化租约丢失必须显式失败且禁止回写投递失败', async () => {
+    const store = fixture({ updateCounts: [0] });
     await expect(store.service.processBatch('worker-001', 1))
       .rejects.toThrow('OP_APPROVAL_DELIVERY_LEASE_LOST');
     expect(store.http.put).toHaveBeenCalledOnce();
-    expect(store.deliveries.updateOne).toHaveBeenCalledTimes(2);
+    expect(store.deliveries.updateOne).toHaveBeenCalledOnce();
+    expect(lastUpdate(store).$set.status).toBe('succeeded');
     expect(store.audit.recordSystem).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith({
+      code: 'OP_APPROVAL_RESULT_LOCAL_FINALIZE_FAILED',
+      eventId: EVENT_ID,
+    });
   });
 
   it('失败终态持久化时丢失租约必须显式失败', async () => {

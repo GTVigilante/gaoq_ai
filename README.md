@@ -59,16 +59,28 @@
 ```bash
 cp .env.example .env
 pnpm install
-docker compose up -d
-pnpm dev
-# 另开终端启动后台任务 Worker
-pnpm --filter @gaoq/erp-api dev:worker
+pnpm dev:up
 ```
+
+- `pnpm dev:up` 自动探测 `docker compose` 或 `docker-compose`，等待 MongoDB
+  Replica Set、Redis 和本地 MinIO 对象存储就绪，再以前台子进程启动 API、
+  Worker、ERP Web 与官网。任一应用异常退出会终止其余应用，禁止留下看似正常
+  的半套开发环境。
+- 首次启动会把随机对象存储凭据以 `0600` 权限写入被 Git 忽略的
+  `.local-runtime/object-storage.env`；凭据不会写入仓库或打印到终端。
+- `Ctrl+C` 只停止应用进程并保留开发数据；执行 `pnpm dev:down` 停止本地依赖。
+- 若只需应用热更新而基础设施已就绪，可继续使用 `pnpm dev`，Worker 仍需独立
+  执行 `pnpm --filter @gaoq/erp-api dev:worker`。
 
 - Web：`http://localhost:3000`
 - API 存活探针：`http://localhost:3001/api/health/live`
 - API 就绪探针：`http://localhost:3001/api/health/ready`
 - Worker：独立进程消费 Outbox、钉钉/飞书组织同步与审批通知任务，不开放 HTTP 端口
+- MinIO S3 API：`http://localhost:9000`；控制台：`http://localhost:9001`
+
+对象存储只是本地开发模拟，不提供 WORM、恶意文件扫描、KMS 或生产访问控制，
+不得作为外部验收、CI 或生产对象存储证据。详细边界见
+[本地开发运行时手册](./docs/phase-1/07-local-development-runtime.md)。
 
 ### MCP OAuth 公共客户端
 

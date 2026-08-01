@@ -10,21 +10,40 @@ import { AttendanceMonthlySnapshotRecord, AttendanceMonthlySnapshotRecordSchema 
 import { OrgModule } from '../org/org.module.js';
 import { OutboxRecord, OutboxRecordSchema } from '../org/persistence/outbox.schema.js';
 import { PayrollMasterDataService } from './application/payroll-master-data.service.js';
+import { PayrollAdjustmentService } from './application/payroll-adjustment.service.js';
+import { PayrollAdjustmentReceivableService } from './application/payroll-adjustment-receivable.service.js';
+import { PayrollAdjustmentTaxCorrectionService } from './application/payroll-adjustment-tax-correction.service.js';
+import { PayrollAnnualReconciliationService } from './application/payroll-annual-reconciliation.service.js';
 import { PayrollApprovalService } from './application/payroll-approval.service.js';
 import { PayrollRunService } from './application/payroll-run.service.js';
 import { PayrollPayslipService } from './application/payroll-payslip.service.js';
 import { PayrollTaxFilingService } from './application/payroll-tax-filing.service.js';
 import { PayrollReconciliationService } from './application/payroll-reconciliation.service.js';
 import { PayrollShadowService } from './application/payroll-shadow.service.js';
+import { HttpPayrollAnnualAssessmentGateway } from './integration/payroll-annual-assessment-http.adapter.js';
 import { HttpPayrollTaxImmutableArchive } from './integration/payroll-tax-archive-http.adapter.js';
 import { HttpPayrollTaxGateway } from './integration/payroll-tax-gateway-http.adapter.js';
-import { PayrollTaxGateway, PayrollTaxImmutableArchive } from './integration/payroll-tax.ports.js';
+import {
+  PayrollAnnualAssessmentGateway,
+  PayrollTaxGateway,
+  PayrollTaxImmutableArchive,
+} from './integration/payroll-tax.ports.js';
 import { PayrollController } from './payroll.controller.js';
 import { PayrollDataCryptoService } from './persistence/payroll-data-crypto.service.js';
 import { PayrollOutboxWriter } from './persistence/payroll-outbox.writer.js';
 import {
   PayrollCalculationLineRecord,
   PayrollCalculationLineRecordSchema,
+  PayrollAdjustmentRecord,
+  PayrollAdjustmentRecordSchema,
+  PayrollAdjustmentReceivableRecord,
+  PayrollAdjustmentReceivableRecordSchema,
+  PayrollAdjustmentReceivableRecoveryRecord,
+  PayrollAdjustmentReceivableRecoveryRecordSchema,
+  PayrollAdjustmentTaxCorrectionRecord,
+  PayrollAdjustmentTaxCorrectionRecordSchema,
+  PayrollAnnualReconciliationRecord,
+  PayrollAnnualReconciliationRecordSchema,
   PayrollCalculationRunRecord,
   PayrollCalculationRunRecordSchema,
   PayrollCompensationProfileRecord,
@@ -55,6 +74,7 @@ import {
   PayrollCutoverReadinessRecordSchema,
 } from './persistence/payroll.schemas.js';
 import { LegacyPayrollBoundaryGuard } from './legacy-payroll-boundary.guard.js';
+import { LegacyPayrollBoundaryService } from './legacy-payroll-boundary.service.js';
 
 @Module({
   imports: [
@@ -76,6 +96,23 @@ import { LegacyPayrollBoundaryGuard } from './legacy-payroll-boundary.guard.js';
       { name: PayrollCalculationRunRecord.name, schema: PayrollCalculationRunRecordSchema },
       { name: PayrollInputSnapshotRecord.name, schema: PayrollInputSnapshotRecordSchema },
       { name: PayrollCalculationLineRecord.name, schema: PayrollCalculationLineRecordSchema },
+      { name: PayrollAdjustmentRecord.name, schema: PayrollAdjustmentRecordSchema },
+      {
+        name: PayrollAdjustmentReceivableRecord.name,
+        schema: PayrollAdjustmentReceivableRecordSchema,
+      },
+      {
+        name: PayrollAdjustmentReceivableRecoveryRecord.name,
+        schema: PayrollAdjustmentReceivableRecoveryRecordSchema,
+      },
+      {
+        name: PayrollAdjustmentTaxCorrectionRecord.name,
+        schema: PayrollAdjustmentTaxCorrectionRecordSchema,
+      },
+      {
+        name: PayrollAnnualReconciliationRecord.name,
+        schema: PayrollAnnualReconciliationRecordSchema,
+      },
       { name: PayrollTaxFilingRecord.name, schema: PayrollTaxFilingRecordSchema },
       { name: PayrollReconciliationRecord.name, schema: PayrollReconciliationRecordSchema },
       { name: PayrollShadowCycleRecord.name, schema: PayrollShadowCycleRecordSchema },
@@ -90,6 +127,10 @@ import { LegacyPayrollBoundaryGuard } from './legacy-payroll-boundary.guard.js';
   controllers: [PayrollController],
   providers: [
     PayrollRunService,
+    PayrollAdjustmentService,
+    PayrollAdjustmentReceivableService,
+    PayrollAdjustmentTaxCorrectionService,
+    PayrollAnnualReconciliationService,
     PayrollPayslipService,
     PayrollApprovalService,
     PayrollMasterDataService,
@@ -98,18 +139,29 @@ import { LegacyPayrollBoundaryGuard } from './legacy-payroll-boundary.guard.js';
     PayrollShadowService,
     PayrollDataCryptoService,
     PayrollOutboxWriter,
+    LegacyPayrollBoundaryService,
     LegacyPayrollBoundaryGuard,
+    HttpPayrollAnnualAssessmentGateway,
     HttpPayrollTaxImmutableArchive,
     HttpPayrollTaxGateway,
+    {
+      provide: PayrollAnnualAssessmentGateway,
+      useExisting: HttpPayrollAnnualAssessmentGateway,
+    },
     { provide: PayrollTaxImmutableArchive, useExisting: HttpPayrollTaxImmutableArchive },
     { provide: PayrollTaxGateway, useExisting: HttpPayrollTaxGateway },
   ],
   exports: [
     PayrollRunService, PayrollPayslipService,
+    PayrollAdjustmentService,
+    PayrollAdjustmentReceivableService,
+    PayrollAdjustmentTaxCorrectionService,
+    PayrollAnnualReconciliationService,
     PayrollApprovalService,
     PayrollMasterDataService,
     PayrollTaxFilingService, PayrollReconciliationService,
     PayrollShadowService,
+    LegacyPayrollBoundaryService,
     LegacyPayrollBoundaryGuard,
   ],
 })

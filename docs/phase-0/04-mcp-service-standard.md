@@ -20,8 +20,30 @@ MCP 是 GaoQ-OS 的标准 AI 接入面，不是独立业务实现。Web、REST�
 - 访问令牌必须校验 `iss/aud/resource/sub/tenant_id/scope/exp/jti`。
 - MCP令牌只用于ERP MCP资源；禁止原样透传给OP、钉钉、飞书或其他上游。
 - 废弃长期明文 MCP API Key；客户端凭据只保存哈希或非对称公钥材料并支持吊销、轮换和有效期。
+- Client Credentials 的限流、失败审计和租户归属只能从实际呈现的规范 Basic
+  凭据或已验签断言主体派生；请求体 `client_id` 只能作一致性约束，不能建立身份。
+  `private_key_jwt` 必须绑定固定 token endpoint/issuer audience、`iss=sub`、短时
+  `iat/exp`、唯一 `jti` 和 Redis 原子防重放；Redis 不可用时失败关闭。
+- 客户端认证通过后的 resource 或 Scope 越权必须在签发前拒绝，并记录不含资源
+  正文、Scope 明细、密钥、断言或 Token 的稳定 R1 失败审计。
 
-### 2.2 Scope与数据范围
+### 2.2 本地 stdio 身份引导
+
+- stdio 只作为同机 AI 客户端、开发和 Inspector 的本地传输入口，不替代远程
+  Streamable HTTP、OAuth 发现、PKCE 或 Client Credentials。
+- 启动进程必须从本机秘密管理器注入短时 `MCP_STDIO_ACCESS_TOKEN`；禁止把
+  Token 写入仓库、客户端共享配置、命令行参数、日志或标准输出。
+- Token 必须通过与 HTTP `/mcp` 完全相同的 `AccessTokenVerifier`，并具有
+  `erp:mcp:server:connect` Scope。租户、主体、角色、数据范围和会话只能来自
+  验证后的 Token，stdio 消息不得自报这些身份事实。
+- 启动前执行一次预检；连接后的每条 JSON-RPC 消息都重新验签并检查即时撤销、
+  会话状态、有效期和连接 Scope。任何失败立即关闭 transport，且只输出稳定错误码。
+- stdout 只允许 MCP JSON-RPC 帧；运行日志和稳定故障码只能写 stderr。不得输出
+  Token、环境变量、请求正文、绝对路径、堆栈或验证器错误详情。
+- 客户端必须使用 stdio 服务程序的绝对路径。通用接入示例和本地验收命令见
+  [Phase 5 stdio 客户端接入手册](../phase-5/20-mcp-stdio-client-onboarding.md)。
+
+### 2.3 Scope与数据范围
 
 Scope格式固定为 `erp:{domain}:{resource}:{action}`，例如：
 
@@ -92,7 +114,12 @@ R1/R2统一采用：
 
 每个业务Issue必须同时列出REST、事件和MCP契约；不能把MCP集中留到后期回填。
 
-Phase 3 招聘的候选人身份、面试地点/评价和 Offer 条款属于 L3/L4，不得进入 MCP 确认记录的 `commandJson`。涉及这些原文的创建能力必须先形成服务端加密草稿引用，再把引用放入 `*_prepare`；在加密草稿能力交付前不得注册对应写 Tool。候选人接受、eSign 完成和入职终态由可信门户、Webhook 或 Worker 驱动，永久不提供 AI 执行 Tool。
+审批 MCP 只能提交或处理服务端已有实例，不接收自定义审批人、部门、角色或解析
+结果。`approval_submit_prepare` 与 `approval_submit_execute` 经确认后必须复用
+审批应用服务，由 ERP 当前组织和授权主数据生成不可变审批人快照；MCP 服务不得
+直接查询组织数据库或信任 AI 提供的路由。
+
+Phase 3 招聘的候选人身份、面试地点/评价和 Offer 条款属于 L3/L4，不得进入 MCP 确认记录的 `commandJson`。涉及这些原文的创建能力必须先形成服务端加密草稿引用，再把引用放入 `*_prepare`；在加密草稿能力交付前不得注册对应写 Tool。候选人接受、eSign 发起/重试/人工处置/完成和入职终态由可信 ERP 用户、门户、Webhook 或 Worker 驱动，永久不提供 AI 执行 Tool；eSign 供应商文件、外部 flowId、签署主体和人工核验结果也不得成为 Resource 或 Prompt。
 
 授权撤回/到期后的个人数据删除、匿名化、密钥销毁、不可变证明、死信重放和灾后
 重建均属于服务端或人工治理能力，不注册 MCP 写 Tool。AI 只可经业务应用服务读取
@@ -115,6 +142,8 @@ Phase 3 招聘的候选人身份、面试地点/评价和 Offer 条款属于 L3/
 ## 8. 兼容与验收
 
 - 使用官方TypeScript SDK和MCP Inspector执行协议测试。
+- stdio 必须以真实字节流完成官方 Client 的初始化、Tool/Resource/Prompt 发现
+  契约测试；生产远程入口继续单独验证 Streamable HTTP 与 OAuth。
 - 建立Claude、Kimi、Cursor当前版本兼容矩阵；仅承诺兼容支持当前稳定MCP规范的客户端。
 - 必测协议协商、OAuth发现、PKCE、Client Credentials、分页、结构化输出、超时、幂等、确认过期、跨租户拒绝、字段脱敏和审计脱敏。
 - 升级协议版本必须先做ADR、双版本契约测试和迁移公告，不得静默破坏客户端。

@@ -101,6 +101,74 @@ const submittedTaxFiling = {
   taxSubmissionId: 'submission-001',
   taxSubmissionEvidenceId: 'worm-submission-001',
 };
+const adjustment = {
+  id: '01J8ZQK7V0A2M4N6P8R0T2W4A3',
+  periodId: '01J8ZQK7V0A2M4N6P8R0T2W4P1',
+  period: '2026-07',
+  originalCalculationLineId: '01J8ZQK7V0A2M4N6P8R0T2W4N1',
+  adjustmentNumber: 1,
+  type: 'supplement',
+  reasonCode: 'RETROACTIVE_SALARY_CHANGE',
+  status: 'locked',
+  version: 4,
+  adjustmentHash: 'a'.repeat(43),
+  grossDeltaMinor: 100_000,
+  taxDeltaMinor: 3_000,
+  netDeltaMinor: 97_000,
+  payableMinor: 97_000,
+  receivableMinor: 0,
+  approvalInstanceId: '01J8ZQK7V0A2M4N6P8R0T2W4A1',
+  cashSettlementStatus: 'pending',
+  taxCorrectionStatus: 'pending',
+} as const;
+const receivable = {
+  id: '01J8ZQK7V0A2M4N6P8R0T2W4V1',
+  adjustmentId: adjustment.id,
+  adjustmentHash: adjustment.adjustmentHash,
+  currency: 'CNY',
+  originalAmountMinor: 97_000,
+  recoveredAmountMinor: 40_000,
+  outstandingAmountMinor: 57_000,
+  status: 'open',
+  version: 2,
+} as const;
+const adjustmentTaxCorrection = {
+  id: '01J8ZQK7V0A2M4N6P8R0T2W4F1',
+  adjustmentId: adjustment.id,
+  adjustmentHash: adjustment.adjustmentHash,
+  period: '2026-07',
+  format: 'CN_IIT_WITHHOLDING_CORRECTION_V1',
+  contentHash: 'c'.repeat(43),
+  correctedTaxableEarningsMinor: 1_100_000,
+  correctedWithholdingTaxMinor: 13_500,
+  taxableEarningsDeltaMinor: 100_000,
+  withholdingTaxDeltaMinor: 3_000,
+  objectEvidenceId: 'worm-correction-001',
+  taxSubmissionId: null,
+  taxSubmissionEvidenceId: null,
+  status: 'approved',
+  version: 3,
+} as const;
+const annualReconciliation = {
+  id: '01J8ZQK7V0A2M4N6P8R0T2W4Y1',
+  employeeId: 'employee-001',
+  taxYear: '2026',
+  currency: 'CNY',
+  periodCount: 12,
+  firstPeriod: '2026-01',
+  lastPeriod: '2026-12',
+  totalTaxableEarningsMinor: 12_000_000,
+  totalPayrollWithheldMinor: 360_000,
+  totalFiledWithholdingMinor: 360_000,
+  cumulativeTaxLiabilityMinor: 360_000,
+  officialAssessedTaxMinor: null,
+  employeePayableToTaxAuthorityMinor: 0,
+  employeeRefundFromTaxAuthorityMinor: 0,
+  differences: [],
+  status: 'awaiting_assessment',
+  evidenceHash: 'e'.repeat(43),
+  version: 1,
+} as const;
 
 function fixture() {
   const runs = {
@@ -181,8 +249,39 @@ function fixture() {
     signCycle: vi.fn().mockResolvedValue(signedShadow),
   };
   const record = vi.fn().mockResolvedValue(undefined);
+  const adjustments = {
+    prepare: vi.fn().mockResolvedValue(adjustment),
+    requestApproval: vi.fn().mockResolvedValue(adjustment),
+    applyApproval: vi.fn().mockResolvedValue(adjustment),
+    lock: vi.fn().mockResolvedValue(adjustment),
+    get: vi.fn().mockResolvedValue(adjustment),
+  };
+  const adjustmentReceivables = {
+    open: vi.fn().mockResolvedValue(receivable),
+    get: vi.fn().mockResolvedValue(receivable),
+    recordRecovery: vi.fn().mockResolvedValue(receivable),
+  };
+  const adjustmentTaxCorrections = {
+    prepare: vi.fn().mockResolvedValue(adjustmentTaxCorrection),
+    get: vi.fn().mockResolvedValue(adjustmentTaxCorrection),
+    approve: vi.fn().mockResolvedValue(adjustmentTaxCorrection),
+    submit: vi.fn().mockResolvedValue(adjustmentTaxCorrection),
+  };
+  const annualReconciliations = {
+    prepare: vi.fn().mockResolvedValue(annualReconciliation),
+    resolveOfficialAssessment: vi.fn().mockResolvedValue(annualReconciliation),
+    createMySettlementLink: vi.fn().mockResolvedValue({
+      settlementUrl: 'https://official.tax.example.cn/settlement?token=opaque',
+      expiresAt: '2026-07-30T05:05:00.000Z',
+    }),
+    get: vi.fn().mockResolvedValue(annualReconciliation),
+  };
   const controller = new PayrollController(
     runs as unknown as PayrollRunService,
+    adjustments as never,
+    adjustmentReceivables as never,
+    adjustmentTaxCorrections as never,
+    annualReconciliations as never,
     approvals as unknown as PayrollApprovalService,
     payslips as unknown as PayrollPayslipService,
     masterData as unknown as PayrollMasterDataService,
@@ -201,10 +300,36 @@ function fixture() {
     taxFilings,
     reconciliations,
     shadows,
+    adjustments,
+    adjustmentReceivables,
+    adjustmentTaxCorrections,
+    annualReconciliations,
   };
 }
 
 const routeCases = [
+  ['prepareAnnualReconciliation', 'annual-reconciliations/prepare', RequestMethod.POST, ['erp:payroll:annual:prepare']],
+  ['resolveAnnualAssessment', 'annual-reconciliations/resolve-assessment', RequestMethod.POST, ['erp:payroll:annual:assessment:resolve']],
+  ['createMyAnnualSettlementLink', 'annual-reconciliations/:id/settlement-link', RequestMethod.POST, ['erp:payroll:annual:settlement:self']],
+  ['getAnnualReconciliation', 'annual-reconciliations/:id', RequestMethod.GET, ['erp:payroll:annual:read']],
+  ['prepareAdjustment', 'adjustments/prepare', RequestMethod.POST, ['erp:payroll:adjustment:prepare']],
+  ['requestAdjustmentApproval', 'adjustments/:id/approval', RequestMethod.POST, ['erp:payroll:adjustment:approval:request']],
+  ['applyAdjustmentApproval', 'adjustments/:id/approval-result', RequestMethod.POST, ['erp:payroll:adjustment:approval:sync']],
+  ['lockAdjustment', 'adjustments/:id/lock', RequestMethod.POST, ['erp:payroll:adjustment:lock']],
+  ['getAdjustment', 'adjustments/:id', RequestMethod.GET, ['erp:payroll:adjustment:read']],
+  ['openAdjustmentReceivable', 'adjustments/:id/receivable', RequestMethod.POST, [
+    'erp:payroll:adjustment:receivable:open',
+    'erp:payroll:adjustment:receivable:source:read',
+  ]],
+  ['getAdjustmentReceivable', 'adjustment-receivables/:id', RequestMethod.GET, ['erp:payroll:adjustment:receivable:read']],
+  ['recordAdjustmentReceivableRecovery', 'adjustment-receivables/:id/recoveries', RequestMethod.POST, ['erp:payroll:adjustment:receivable:settle']],
+  ['prepareAdjustmentTaxCorrection', 'adjustments/:id/tax-corrections', RequestMethod.POST, [
+    'erp:payroll:adjustment:tax_correction:prepare',
+    'erp:payroll:adjustment:tax_correction:source:read',
+  ]],
+  ['getAdjustmentTaxCorrection', 'adjustment-tax-corrections/:id', RequestMethod.GET, ['erp:payroll:adjustment:tax_correction:read']],
+  ['approveAdjustmentTaxCorrection', 'adjustment-tax-corrections/:id/approval', RequestMethod.POST, ['erp:payroll:adjustment:tax_correction:approve']],
+  ['submitAdjustmentTaxCorrection', 'adjustment-tax-corrections/:id/submission', RequestMethod.POST, ['erp:payroll:adjustment:tax_correction:submit']],
   ['getShadowCycle', 'shadow-cycles/:id', RequestMethod.GET, ['erp:payroll:shadow:read']],
   ['getShadowDifferences', 'shadow-cycles/:id/differences', RequestMethod.GET, ['erp:payroll:shadow:difference:read']],
   ['getCutoverReadiness', 'cutover-readiness/:id', RequestMethod.GET, ['erp:payroll:shadow:read']],
@@ -266,6 +391,199 @@ describe('PayrollController', () => {
       metadata: { differenceCount: 2, explainedDifferenceCount: 1 },
     });
     expect(JSON.stringify(differenceAudit)).not.toContain('employee-sensitive');
+  });
+
+  it('委托年度核对与工资调整审批锁定入口并保持控制摘要审计', async () => {
+    const store = fixture();
+    const response = { setHeader: vi.fn() };
+    const annualBody = {
+      employeeId: 'employee-001',
+      taxYear: '2026',
+    };
+    const prepareBody = {
+      periodId: adjustment.periodId,
+      originalCalculationLineId: adjustment.originalCalculationLineId,
+      rulePackId: 'rule-pack-001',
+      rulePackVersion: 1,
+      reasonCode: adjustment.reasonCode,
+      correctedLine: {
+        employeeId: 'employee-001',
+        compensationProfileId: 'profile-001',
+        additionalCompensationProfileIds: ['profile-002'],
+        attendanceSnapshotId: 'attendance-001',
+      },
+    };
+
+    await expect(store.controller.prepareAnnualReconciliation(KEY, annualBody))
+      .resolves.toBe(annualReconciliation);
+    await expect(store.controller.resolveAnnualAssessment(KEY, annualBody))
+      .resolves.toBe(annualReconciliation);
+    const settlementLink = await store.controller.createMyAnnualSettlementLink(
+      KEY,
+      annualReconciliation.id,
+      response as never,
+    );
+    expect(settlementLink.settlementUrl).toContain('official.tax.example.cn');
+    await expect(store.controller.getAnnualReconciliation(annualReconciliation.id))
+      .resolves.toBe(annualReconciliation);
+    await expect(store.controller.prepareAdjustment(KEY, prepareBody))
+      .resolves.toBe(adjustment);
+    await store.controller.requestAdjustmentApproval(
+      KEY,
+      adjustment.id,
+      { expectedVersion: 1 },
+    );
+    await store.controller.applyAdjustmentApproval(
+      KEY,
+      adjustment.id,
+      {
+        expectedVersion: 2,
+        approvalInstanceId: '01J8ZQK7V0A2M4N6P8R0T2W4A1',
+      },
+    );
+    await store.controller.lockAdjustment(
+      KEY,
+      adjustment.id,
+      { expectedVersion: 3, strongAuthEvidenceId: 'auth-adjustment-001' },
+      request(),
+    );
+    await expect(store.controller.getAdjustment(adjustment.id)).resolves.toBe(adjustment);
+
+    expect(store.annualReconciliations.prepare).toHaveBeenCalledWith(KEY, annualBody);
+    expect(store.annualReconciliations.resolveOfficialAssessment)
+      .toHaveBeenCalledWith(KEY, annualBody);
+    expect(store.annualReconciliations.createMySettlementLink)
+      .toHaveBeenCalledWith(KEY, annualReconciliation.id);
+    expect(response.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
+    expect(response.setHeader).toHaveBeenCalledWith('Pragma', 'no-cache');
+    expect(JSON.stringify(store.record.mock.calls)).not.toContain('token=opaque');
+    expect(store.adjustments.prepare).toHaveBeenCalledWith(KEY, prepareBody);
+    expect(store.adjustments.lock).toHaveBeenCalledWith(
+      KEY,
+      adjustment.id,
+      3,
+      'auth-adjustment-001',
+      TOKEN,
+    );
+  });
+
+  it('年度核对可省略税局评估，调整可省略附加薪酬档案', async () => {
+    const store = fixture();
+
+    await store.controller.prepareAnnualReconciliation(KEY, {
+      employeeId: 'employee-001',
+      taxYear: '2026',
+    });
+    await store.controller.prepareAdjustment(KEY, {
+      periodId: adjustment.periodId,
+      originalCalculationLineId: adjustment.originalCalculationLineId,
+      rulePackId: 'rule-pack-001',
+      rulePackVersion: 1,
+      reasonCode: adjustment.reasonCode,
+      correctedLine: {
+        employeeId: 'employee-001',
+        compensationProfileId: 'profile-001',
+        attendanceSnapshotId: 'attendance-001',
+      },
+    });
+
+    expect(store.annualReconciliations.prepare).toHaveBeenLastCalledWith(KEY, {
+      employeeId: 'employee-001',
+      taxYear: '2026',
+    });
+    expect(store.adjustments.prepare).toHaveBeenLastCalledWith(
+      KEY,
+      expect.objectContaining({
+        correctedLine: {
+          employeeId: 'employee-001',
+          compensationProfileId: 'profile-001',
+          attendanceSnapshotId: 'attendance-001',
+        },
+      }),
+    );
+  });
+
+  it('委托员工应收与税务更正闭环且不把正文写入审计', async () => {
+    const store = fixture();
+    const recovery = {
+      expectedReceivableVersion: 1,
+      method: 'authorized_payroll_deduction',
+      amountMinor: 40_000,
+      sourceReferenceId: 'payroll-run-2026-08',
+      sourceEvidenceId: 'worm-payroll-run-2026-08',
+      legalAuthorizationEvidenceId: 'employee-consent-001',
+      receivedAt: '2026-08-01T00:00:00.000Z',
+    } as const;
+
+    await store.controller.openAdjustmentReceivable(
+      KEY,
+      adjustment.id,
+      { expectedVersion: 4 },
+    );
+    await store.controller.getAdjustmentReceivable(receivable.id);
+    await store.controller.recordAdjustmentReceivableRecovery(
+      KEY,
+      receivable.id,
+      recovery,
+    );
+    await store.controller.prepareAdjustmentTaxCorrection(
+      KEY,
+      adjustment.id,
+      { expectedVersion: 4 },
+    );
+    await store.controller.getAdjustmentTaxCorrection(adjustmentTaxCorrection.id);
+    await store.controller.approveAdjustmentTaxCorrection(
+      KEY,
+      adjustmentTaxCorrection.id,
+      { expectedVersion: 2, strongAuthEvidenceId: 'auth-tax-correction-001' },
+      request(),
+    );
+    await store.controller.submitAdjustmentTaxCorrection(
+      KEY,
+      adjustmentTaxCorrection.id,
+      { expectedVersion: 3 },
+    );
+
+    expect(store.adjustmentReceivables.recordRecovery).toHaveBeenCalledWith(
+      KEY,
+      receivable.id,
+      recovery,
+    );
+    expect(store.adjustmentTaxCorrections.approve).toHaveBeenCalledWith(
+      KEY,
+      adjustmentTaxCorrection.id,
+      2,
+      'auth-tax-correction-001',
+      TOKEN,
+    );
+  });
+
+  it('银行回款恢复可省略法定工资抵扣授权', async () => {
+    const store = fixture();
+    await store.controller.recordAdjustmentReceivableRecovery(
+      KEY,
+      receivable.id,
+      {
+        expectedReceivableVersion: 1,
+        method: 'bank_repayment',
+        amountMinor: 40_000,
+        sourceReferenceId: 'bank-return-001',
+        sourceEvidenceId: 'worm-bank-return-001',
+        receivedAt: '2026-08-01T00:00:00.000Z',
+      },
+    );
+    expect(store.adjustmentReceivables.recordRecovery).toHaveBeenCalledWith(
+      KEY,
+      receivable.id,
+      {
+        expectedReceivableVersion: 1,
+        method: 'bank_repayment',
+        amountMinor: 40_000,
+        sourceReferenceId: 'bank-return-001',
+        sourceEvidenceId: 'worm-bank-return-001',
+        receivedAt: '2026-08-01T00:00:00.000Z',
+      },
+    );
   });
 
   it('委托全部影子周期写操作并绑定强认证角色', async () => {
@@ -424,6 +742,19 @@ describe('PayrollController', () => {
       { expectedVersion: 1, strongAuthEvidenceId: 'auth-001' },
       request(null),
     )],
+    ['工资调整锁定', (controller: PayrollController) => controller.lockAdjustment(
+      KEY,
+      adjustment.id,
+      { expectedVersion: 3, strongAuthEvidenceId: 'auth-001' },
+      request(null),
+    )],
+    ['工资调整税务更正审批', (controller: PayrollController) =>
+      controller.approveAdjustmentTaxCorrection(
+        KEY,
+        adjustmentTaxCorrection.id,
+        { expectedVersion: 2, strongAuthEvidenceId: 'auth-001' },
+        request(null),
+      )],
   ])('%s 缺少已验证人员令牌时在业务调用前失败关闭', async (_name, operation) => {
     const store = fixture();
 
@@ -432,6 +763,8 @@ describe('PayrollController', () => {
     expect(store.shadows.signCycle).not.toHaveBeenCalled();
     expect(store.taxFilings.approve).not.toHaveBeenCalled();
     expect(store.approvals.lockPeriod).not.toHaveBeenCalled();
+    expect(store.adjustments.lock).not.toHaveBeenCalled();
+    expect(store.adjustmentTaxCorrections.approve).not.toHaveBeenCalled();
     expect(store.record).not.toHaveBeenCalled();
   });
 
