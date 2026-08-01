@@ -20,6 +20,11 @@ export class PrepareTreasuryDisbursementDto {
   @Matches(/^\d{4}-\d{2}-\d{2}$/) requestedExecutionDate!: string;
 }
 
+export class PrepareTreasuryAdjustmentSupplementDto {
+  @IsInt() @Min(1) expectedAdjustmentVersion!: number;
+  @Matches(/^\d{4}-\d{2}-\d{2}$/) requestedExecutionDate!: string;
+}
+
 export class ApproveTreasuryExportDto {
   @IsInt() @Min(1) expectedVersion!: number;
   @Matches(ULID) strongAuthEvidenceId!: string;

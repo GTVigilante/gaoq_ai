@@ -35,6 +35,42 @@ export type RefreshRotationResult =
 const hashToken = (token: string): string => createHash('sha256').update(token).digest('base64url');
 const generateToken = (): string => `rt_${randomBytes(48).toString('base64url')}`;
 const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+const REFRESH_TOKEN_PATTERN = /^rt_[A-Za-z0-9_-]{64}$/;
+const FAMILY_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const MAX_REFRESH_GENERATION = 1_000_000;
+
+const requireId = (value: unknown): string => {
+  if (typeof value !== 'string' || !ID_PATTERN.test(value)) {
+    throw new Error('刷新令牌持久化状态非法');
+  }
+  return value;
+};
+
+const requireFutureDate = (value: unknown, now: Date): Date => {
+  if (!(value instanceof Date) || !Number.isFinite(value.getTime()) || value <= now) {
+    throw new Error('刷新令牌持久化状态非法');
+  }
+  return value;
+};
+
+const requireFamilyId = (value: unknown): string => {
+  if (typeof value !== 'string' || !FAMILY_ID_PATTERN.test(value)) {
+    throw new Error('刷新令牌持久化状态非法');
+  }
+  return value;
+};
+
+const requireGeneration = (value: unknown): number => {
+  if (
+    typeof value !== 'number' ||
+    !Number.isSafeInteger(value) ||
+    value < 0 ||
+    value > MAX_REFRESH_GENERATION
+  ) {
+    throw new Error('刷新令牌持久化状态非法');
+  }
+  return value;
+};
 
 @Injectable()
 export class RefreshTokenService {
@@ -49,19 +85,25 @@ export class RefreshTokenService {
     input: InitialRefreshTokenInput,
     mongoSession: ClientSession,
   ): Promise<{ readonly refreshToken: string; readonly familyId: string }> {
+    const now = new Date();
+    const tenantId = requireId(input.tenantId);
+    const actorId = requireId(input.actorId);
+    const sessionId = requireId(input.sessionId);
+    const clientId = requireId(input.clientId);
+    const expiresAt = requireFutureDate(input.expiresAt, now);
     const refreshToken = generateToken();
     const familyId = randomUUID();
     await this.tokens.create(
       [
         {
           tokenHash: hashToken(refreshToken),
-          tenantId: input.tenantId,
-          actorId: input.actorId,
-          sessionId: input.sessionId,
+          tenantId,
+          actorId,
+          sessionId,
           familyId,
-          clientId: input.clientId,
+          clientId,
           generation: 0,
-          expiresAt: input.expiresAt,
+          expiresAt,
         },
       ],
       { session: mongoSession },
@@ -77,7 +119,7 @@ export class RefreshTokenService {
     expectedClientId: string,
     mongoSession: ClientSession,
   ): Promise<RefreshRotationResult> {
-    if (!/^rt_[A-Za-z0-9_-]{64}$/.test(presentedToken)) {
+    if (!REFRESH_TOKEN_PATTERN.test(presentedToken) || !ID_PATTERN.test(expectedClientId)) {
       return { status: 'invalid' };
     }
     const tokenHash = hashToken(presentedToken);
@@ -97,36 +139,54 @@ export class RefreshTokenService {
       return this.handleInvalidOrReplay(tokenHash, mongoSession);
     }
 
+    const tenantId = requireId(current.tenantId);
+    const actorId = requireId(current.actorId);
+    const sessionId = requireId(current.sessionId);
+    const familyId = requireFamilyId(current.familyId);
+    const clientId = requireId(current.clientId);
+    const expiresAt = requireFutureDate(current.expiresAt, consumedAt);
+    const generation = requireGeneration(current.generation);
+    if (clientId !== expectedClientId || generation === MAX_REFRESH_GENERATION) {
+      throw new Error('刷新令牌持久化状态非法');
+    }
     const refreshToken = generateToken();
     const replacementHash = hashToken(refreshToken);
     await this.tokens.create(
       [
         {
           tokenHash: replacementHash,
-          tenantId: current.tenantId,
-          actorId: current.actorId,
-          sessionId: current.sessionId,
-          familyId: current.familyId,
-          clientId: current.clientId,
-          generation: current.generation + 1,
-          expiresAt: current.expiresAt,
+          tenantId,
+          actorId,
+          sessionId,
+          familyId,
+          clientId,
+          generation: generation + 1,
+          expiresAt,
         },
       ],
       { session: mongoSession },
     );
-    await this.tokens.updateOne(
-      { _id: current._id, tokenHash },
+    const linked = await this.tokens.updateOne(
+      {
+        _id: current._id,
+        tokenHash,
+        consumedAt,
+        replacedByHash: { $exists: false },
+      },
       { $set: { replacedByHash: replacementHash } },
       { session: mongoSession },
     );
+    if (linked.matchedCount !== 1 || linked.modifiedCount !== 1) {
+      throw new Error('刷新令牌轮换链写入冲突');
+    }
     return {
       status: 'rotated',
       refreshToken,
-      tenantId: current.tenantId,
-      actorId: current.actorId,
-      sessionId: current.sessionId,
-      clientId: current.clientId,
-      expiresAt: current.expiresAt,
+      tenantId,
+      actorId,
+      sessionId,
+      clientId,
+      expiresAt,
     };
   }
 
@@ -136,6 +196,8 @@ export class RefreshTokenService {
     sessionId: string,
     mongoSession: ClientSession,
   ): Promise<void> {
+    requireId(tenantId);
+    requireId(sessionId);
     await this.tokens.updateMany(
       { tenantId, sessionId, revokedAt: { $exists: false } },
       { $set: { revokedAt: new Date() } },
@@ -170,13 +232,20 @@ export class RefreshTokenService {
     if (existing === null) {
       return { status: 'invalid' };
     }
+    const tenantId = requireId(existing.tenantId);
+    requireId(existing.actorId);
+    const sessionId = requireId(existing.sessionId);
+    const familyId = requireFamilyId(existing.familyId);
+    requireId(existing.clientId);
+    requireFutureDate(existing.expiresAt, new Date(0));
+    requireGeneration(existing.generation);
     const revokedAt = new Date();
     await this.tokens.updateMany(
-      { tenantId: existing.tenantId, familyId: existing.familyId, revokedAt: { $exists: false } },
+      { tenantId, familyId, revokedAt: { $exists: false } },
       { $set: { revokedAt } },
       { session: mongoSession },
     );
-    await this.sessions.revoke(existing.tenantId, existing.sessionId, mongoSession);
+    await this.sessions.revoke(tenantId, sessionId, mongoSession);
     return { status: 'replay' };
   }
 

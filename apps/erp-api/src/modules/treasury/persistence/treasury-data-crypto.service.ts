@@ -18,6 +18,9 @@ const BASE64URL_256_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 const ACCOUNT_PATTERN = /^[0-9]{8,32}$/;
 const MAX_PLAINTEXT_BYTES = 8 * 1024 * 1024;
+const IV_BASE64URL_LENGTH = 16;
+const AUTH_TAG_BASE64URL_LENGTH = 22;
+const MAX_CIPHERTEXT_BASE64URL_LENGTH = Math.ceil(MAX_PLAINTEXT_BYTES * 4 / 3);
 
 const encryptionRingSchema = z.object({
   activeKeyId: z.string().regex(KEY_PATTERN),
@@ -115,11 +118,20 @@ export class TreasuryDataCryptoService {
 
   unprotect(context: TreasuryCryptoContext, value: ProtectedTreasuryData): unknown {
     this.assertContext(context);
+    const candidate = value as Partial<ProtectedTreasuryData> | null | undefined;
     if (
-      !KEY_PATTERN.test(value.keyId) || !BASE64URL_PATTERN.test(value.iv) ||
-      !BASE64URL_PATTERN.test(value.ciphertext) || !BASE64URL_PATTERN.test(value.authTag)
+      candidate === null || candidate === undefined || typeof candidate !== 'object' ||
+      typeof candidate.keyId !== 'string' || !KEY_PATTERN.test(candidate.keyId) ||
+      typeof candidate.iv !== 'string' || candidate.iv.length !== IV_BASE64URL_LENGTH ||
+      !BASE64URL_PATTERN.test(candidate.iv) ||
+      typeof candidate.ciphertext !== 'string' || candidate.ciphertext.length < 1 ||
+      candidate.ciphertext.length > MAX_CIPHERTEXT_BASE64URL_LENGTH ||
+      !BASE64URL_PATTERN.test(candidate.ciphertext) ||
+      typeof candidate.authTag !== 'string' ||
+      candidate.authTag.length !== AUTH_TAG_BASE64URL_LENGTH ||
+      !BASE64URL_PATTERN.test(candidate.authTag)
     ) throw this.invalidCiphertext();
-    const configured = this.loadEncryptionRing().keys.find((key) => key.keyId === value.keyId);
+    const configured = this.loadEncryptionRing().keys.find((key) => key.keyId === candidate.keyId);
     if (configured === undefined) throw new TreasuryDataCryptoError(
       'TREASURY_DATA_KEY_UNAVAILABLE', '资金数据解密密钥不可用',
     );
@@ -127,12 +139,12 @@ export class TreasuryDataCryptoService {
     const key = this.deriveKey(master);
     let plaintext: Buffer | undefined;
     try {
-      const iv = this.decode(value.iv);
-      const ciphertext = this.decode(value.ciphertext);
-      const authTag = this.decode(value.authTag);
+      const iv = this.decode(candidate.iv);
+      const ciphertext = this.decode(candidate.ciphertext);
+      const authTag = this.decode(candidate.authTag);
       if (
         iv.length !== 12 || authTag.length !== 16 ||
-        ciphertext.length > MAX_PLAINTEXT_BYTES + 16
+        ciphertext.length > MAX_PLAINTEXT_BYTES
       ) throw this.invalidCiphertext();
       const decipher = createDecipheriv('aes-256-gcm', key, iv, { authTagLength: 16 });
       decipher.setAAD(this.aad(context));
@@ -232,8 +244,11 @@ export class TreasuryDataCryptoService {
   }
 
   private decodeKey(value: string): Buffer {
-    const decoded = this.decode(value);
-    if (decoded.length !== 32) throw this.invalidKeyRing();
+    const decoded = Buffer.from(value, 'base64url');
+    if (decoded.length !== 32 || decoded.toString('base64url') !== value) {
+      decoded.fill(0);
+      throw this.invalidKeyRing();
+    }
     return decoded;
   }
 

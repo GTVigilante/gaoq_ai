@@ -5,7 +5,11 @@
 
 ## 目标与不可降级边界
 
-本门禁统一验收 MongoDB、Redis/BullMQ、对象/WORM、KMS、无状态服务、旧系统回滚和全部外部连接的业务连续性。恢复点目标固定为 RPO 不超过 900 秒，服务恢复目标固定为 RTO 不超过 14,400 秒；OP、钉钉、飞书、e签宝、银行、税务、附件网关和 WORM 必须分别经历不少于 7,200 秒的不可用，并在连接恢复后 3,600 秒内自动追赶完成。
+本门禁统一验收 MongoDB、Redis/BullMQ、对象/WORM、KMS、无状态服务、旧系统
+回滚和全部外部连接的业务连续性。恢复点目标固定为 RPO 不超过 900 秒，服务
+恢复目标固定为 RTO 不超过 14,400 秒；OP、钉钉、飞书、e签宝、银行、税务、
+附件网关、WORM 和独立专业算薪必须分别经历不少于 7,200 秒的不可用，并在连接
+恢复后 3,600 秒内自动追赶完成。
 
 工具交付不代表演练已经通过。真实演练只允许在生产等价、网络隔离、合成数据的恢复环境进行；生产流量、生产端点、真实资金、真实申报、真实合同、真实消息和 R3 操作必须全部关闭。任何临时人工改库、补数据、跳过对账、调高 RPO/RTO 或删除失败证据都直接判为 No-Go。
 
@@ -15,7 +19,7 @@
 
 1. 使用副本集与时间点恢复，把独立区域故障声明前的最后可恢复点恢复到隔离区域；以 UTC 时间戳计算实际 RPO，不接受人工填写但与时间戳不一致的数值。
 2. 至少恢复 20 个集合，验证副本集健康、事务、索引和集合校验和；组织、审批、招聘、考勤、薪酬、OP、审计和迁移八个域必须逐域核对记录数、关联数与确定性摘要。
-3. 数据库可查询不等于业务恢复。RTO 从故障声明开始，到 API、Worker、Web 均至少两个健康副本且全部恢复冒烟测试通过为止。
+3. 数据库可查询不等于业务恢复。RTO 从故障声明开始，到 API、Worker、ERP Web、Website 均至少两个健康副本且全部恢复冒烟测试通过为止。
 4. 审计 HMAC 前向链与不同权限域 WORM 锚点必须连续；未解释记录差异和未解释金额差异必须同时为零。
 
 ### Redis、BullMQ、对象证据与 KMS
@@ -39,6 +43,7 @@
 | 税务 | 双向 | 申报提交与受理回执，只使用沙箱且不产生真实申报 |
 | 附件网关 | 请求—响应 | 验签、恶意文件扫描与结果回执可恢复，正文不进入日志 |
 | WORM | 请求—响应 | 幂等归档与不可变回执恢复，不生成重复对象 |
+| 独立专业算薪 | 双向 | OAuth Resource、本人薪资/期间/对账/税务只读能力、七类共享事件回放与 ERP 旧工资事实源隔离 |
 
 每个连接在断连期间至少发起 20 次请求并积压至少 10 个事件，断路器和告警必须实际触发。连接恢复后只能由既有 relay、补拉和幂等服务自动追赶；所有积压必须在 1 小时内清零，丢失、重复业务效果、乱序、死信和未对账事件均为零，`manualDataRepair` 必须为 `false`。
 
@@ -48,31 +53,75 @@
 
 ## 受保护验收工作流
 
-`.github/workflows/phase-5-resilience.yml` 只能手工启动，并且只接受 `main` 上已合并的受信任代码。现场验收绑定有 Required Reviewers 的 `phase-5-resilience` GitHub Environment，并使用带 `self-hosted`、`linux`、`x64`、`phase-5-resilience` 标签的单次、隔离 Runner。Runner 不得承接 Pull Request 工作负载，任务后由平台销毁。
+`.github/workflows/phase-5-resilience.yml` 只能手工启动，并且只接受 `main` 上
+已合并的受信任代码。现场验收使用 `phase-5-resilience` workflow policy，并只使用 GitHub Hosted
+`ubuntu-latest`。作业授予最小 `contents: read` 与 `id-token: write`，不响应
+Pull Request、push 或 `workflow_call`，不保存任何长期凭据。
 
-Environment 只配置非敏感变量：
+Repository Variables 只配置非敏感值：
 
 - `RESILIENCE_ENVIRONMENT_NAME`：固定恢复环境名，必须带 `dr/recovery/resilience/stage/staging/preprod/uat` 独立标签；
 - `RESILIENCE_REGION`：固定隔离区域名；
-- `RESILIENCE_API_IMAGE_DIGEST`、`RESILIENCE_WORKER_IMAGE_DIGEST`、`RESILIENCE_WEB_IMAGE_DIGEST`：现场实际部署的三类不可变镜像 SHA-256；
+- `RESILIENCE_API_IMAGE_DIGEST`、`RESILIENCE_WORKER_IMAGE_DIGEST`、`RESILIENCE_WEB_IMAGE_DIGEST`、`RESILIENCE_WEBSITE_IMAGE_DIGEST`：现场实际部署的四类不可变镜像 SHA-256；
+- `RESILIENCE_PAYROLL_IMAGE_DIGEST`：独立专业算薪服务的不可变镜像 SHA-256；
+- `RESILIENCE_PAYROLL_RESOURCE`、`RESILIENCE_PAYROLL_AUTHORIZATION_SERVER`：
+  专业算薪 HTTPS Resource Origin 与独立授权服务器 Origin；
+- `RESILIENCE_PAYROLL_CONTRACT_HASH`、`RESILIENCE_PAYROLL_CATALOG_HASH`：
+  七类共享事件契约和四 Tool/两 Resource Template/两 Prompt 目录摘要；
 - `RESILIENCE_DEPLOYMENT_MANIFEST_SHA256`：本次隔离环境部署清单 SHA-256。
+- `RESILIENCE_SIGNER_KEYSET_SHA256`：按角色排序的七方
+  `{role,keyId}` 规范 JSON 的 SHA-256，用于固定本次允许签署的职责密钥集合。
 
-受控编排平台把严格白名单的证据摘要以只读普通文件放置在 `/var/lib/gaoq/resilience/phase-5-resilience.json`。文件不得是符号链接，不得允许组或其他用户写入，最大 512 KiB。GitHub 只上传校验结论，不上传原始备份、恢复日志、员工数据、工资行、外部报文、Token、证书或密钥；完整原始证据必须在企业 WORM 中按证据 ID 和 SHA-256 管理。
+受控证据网关只向匹配当前仓库 ID、`main` commit、workflow、policy、
+专用 audience 和 Hosted Runner claim 的 GitHub OIDC 主体返回严格白名单摘要。
+响应必须为 `application/json`，在 Header 返回批准的 SHA-256，正文不得超过
+512 KiB；Runner 再核对 Repository Variable 中的预期摘要并以 `0600` 写入
+`$RUNNER_TEMP`。GitHub 只上传校验结论，不上传原始备份、恢复日志、员工数据、
+工资行、外部报文、Token、证书或密钥；完整原始证据必须在企业 WORM 中按证据
+ID 和 SHA-256 管理。
 
 ```bash
+pnpm --silent resilience:print-contract \
+  > /secure/resilience/phase-5-resilience-contract.json
 pnpm resilience:validate-evidence -- /secure/resilience/phase-5-resilience.json
 ```
 
-现场工作流额外使用 `--enforce-environment`，把证据中的环境、区域、当前 `main` commit、三类镜像和部署清单与 GitHub Environment 精确绑定，防止拿其他环境或旧版本的通过报告冒充本次演练。
+现场工作流额外使用 `--enforce-environment`，把证据中的业务环境、区域、当前
+`main` commit、五类镜像、部署清单和受信 signer keyset 与当前 workflow policy
+精确绑定，防止拿其他环境、其他职责密钥或旧版本的通过报告冒充本次演练。契约
+输出固定八个业务域、九类外部连接、七个签署角色、四项恢复目标、签名编码和当前
+校验器/工作流组合摘要，外部证据生产器必须先锁定该输出再组装现场证据。
 
 ## 证据与签署
 
-`gaoq.phase5.resilience.v1` 证据绑定 commit、API/Worker/Web 镜像摘要、部署清单和当前校验器/工作流摘要；严格拒绝未知字段。八个业务域、Outbox、Inbox、BullMQ、审计链、业务金额、八类外部连接、备份清单、恢复日志、监控、告警、运行手册和回滚决定均以独立 SHA-256 引用，不在 GitHub 复制正文。
+`gaoq.phase5.resilience.v4` 证据绑定 commit、API/Worker/ERP Web/Website 与
+独立专业算薪镜像摘要、专业算薪 Resource/授权服务器/平台契约/事件契约/MCP
+目录、部署清单和当前校验器/工作流摘要；严格拒绝未知字段。
+八个业务域、Outbox、Inbox、BullMQ、审计链、业务金额、九类外部连接、备份
+清单、恢复日志、监控、告警、运行手册和回滚决定均以独立 SHA-256 引用，不在
+GitHub 复制正文。专业算薪按双向连接执行至少两小时断连、自动追赶、对账和零
+丢失/零重复业务效果验收，不得用 ERP 旧 Payroll 集合或本地兼容模式代替。
 
-SRE、平台、数据、集成、安全、QA 和业务连续性七类负责人必须在演练结束后以不同证据 ID 作出 `approve` 签署。签署只表示本门禁通过，不替代最终由项目发起人、产品、架构、HR、财务、法务等角色共同完成的 Go/No-Go。
+SRE、平台、数据、集成、安全、QA 和业务连续性七类负责人必须在演练结束后
+24 小时内，以不同主体、不同证据 ID、不同意见摘要和不同 Ed25519 公钥作出
+`approve` 签署。每个 `keyId` 必须等于对应 SPKI DER 公钥的 SHA-256，七个
+角色与 keyId 的规范集合必须等于 Repository Variable 固定的受信 keyset 摘要；
+同一主体、公钥、证据、意见或签名不得跨角色复用。
+
+共同批准 payload 覆盖证据版本、run、环境、commit、五类镜像、专业算薪
+Resource/授权服务器/目录与事件契约、部署清单、RPO/RTO、恢复组件、八域对账、
+Outbox/Inbox/BullMQ、审计、九类外部连接、安全断言、全部产物摘要，以及七方
+角色、主体、决定、证据、意见和批准时间。
+每位负责人再用自己的角色密钥签署该共同 payload 摘要、自身角色、keyId 与
+签名时间。这样任何签后修改演练结果、替换角色密钥、伪造签名或漂移受信
+keyset 都会失败关闭。仓库自测只生成临时密钥，不保存私钥；真实人员身份、
+职责与角色密钥绑定、KMS/HSM 签署和 WORM 原始材料仍属于现场验收。
+
+签署只表示本门禁通过，不替代最终由项目发起人、产品、架构、HR、财务、法务
+等角色共同完成的 Go/No-Go。
 
 AI 与 MCP 不得启动故障注入、恢复、回滚、重放、死信处理或签署，也不得读取备份和原始日志。后续 MCP 能力目录只能暴露经权限、脱敏和审计保护的只读门禁状态；任何恢复写操作均按 R3 永久不注册 Tool。
 
 ## No-Go 条件
 
-以下任一项成立即失败关闭：RPO 或 RTO 超标；八个业务域未全部对账；Redis 被当作唯一事实源；对象/WORM、KMS、审计链或服务副本验证不完整；Outbox/Inbox/BullMQ 存在丢失、重复业务效果、乱序、孤儿、死信或超时积压；任一外部连接断连不足两小时、追赶超过一小时或需要人工改数；回滚超过四小时或仍有差异；使用生产数据/端点或产生真实外部副作用；证据复用、篡改、环境错配或签署不全。
+以下任一项成立即失败关闭：RPO 或 RTO 超标；八个业务域未全部对账；Redis 被当作唯一事实源；对象/WORM、KMS、审计链或服务副本验证不完整；Outbox/Inbox/BullMQ 存在丢失、重复业务效果、乱序、孤儿、死信或超时积压；任一外部连接断连不足两小时、追赶超过一小时或需要人工改数；回滚超过四小时或仍有差异；使用生产数据/端点或产生真实外部副作用；证据复用、篡改、环境错配、伪签名、角色/主体/公钥复用、签署超时或 keyset 漂移。

@@ -5,6 +5,7 @@ targetNamespace: ''
 release:
   commitSha: ''
   deploymentManifestHash: ''
+  websitePublicConfigHash: ''
   rolloutId: ''
 
 images:
@@ -17,14 +18,24 @@ images:
   web:
     repository: ''
     digest: ''
+  website:
+    repository: ''
+    digest: ''
   pullPolicy: IfNotPresent
   pullSecrets: []
 
 runtime:
   apiConfigMapName: ''
+  apiConfigMapHash: ''
   apiSecretName: ''
   workerConfigMapName: ''
+  workerConfigMapHash: ''
   workerSecretName: ''
+  contractHash: ''
+  webConfigMapName: ''
+  webSecretName: ''
+  websiteConfigMapName: ''
+  websiteSecretName: ''
 
 serviceAccount:
   name: ''
@@ -33,6 +44,7 @@ replicas:
   api: 3
   worker: 2
   web: 3
+  website: 3
 
 resources:
   api:
@@ -44,6 +56,9 @@ resources:
   web:
     requests: { cpu: 250m, memory: 384Mi, ephemeral-storage: 128Mi }
     limits: { cpu: '1', memory: 1Gi, ephemeral-storage: 512Mi }
+  website:
+    requests: { cpu: 200m, memory: 320Mi, ephemeral-storage: 128Mi }
+    limits: { cpu: '1', memory: 768Mi, ephemeral-storage: 512Mi }
 
 autoscaling:
   api:
@@ -58,11 +73,18 @@ autoscaling:
     maxReplicas: 12
     cpuUtilization: 65
     memoryUtilization: 75
+  website:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 12
+    cpuUtilization: 65
+    memoryUtilization: 75
 
 podDisruptionBudget:
   apiMinAvailable: 2
   workerMinAvailable: 1
   webMinAvailable: 2
+  websiteMinAvailable: 2
 
 ingress:
   enabled: false
@@ -70,9 +92,11 @@ ingress:
   annotations: {}
   apiHost: ''
   webHost: ''
+  websiteHost: ''
   tlsSecretName: ''
   apiPath: /api
   webPath: /
+  websitePath: /
 
 networkPolicy:
   ingressNamespaceLabels: {}

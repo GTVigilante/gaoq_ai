@@ -33,6 +33,8 @@ export class AttendanceSourceFactRecord extends ProtectedRecord {
   @Prop({ type: String, required: true, immutable: true, enum: FACT_TYPES })
   factType!: typeof FACT_TYPES[number];
   @Prop({ type: String, required: true, immutable: true, match: DATE_PATTERN }) businessDate!: string;
+  @Prop({ type: String, default: null, immutable: true, maxlength: 128, match: ID_PATTERN })
+  shiftPlanId!: string | null;
   @Prop({ type: Date, required: true, immutable: true }) sourceObservedAt!: Date;
   @Prop({ type: [{ type: String, match: BLIND_INDEX_PATTERN }], required: true, immutable: true })
   sourceEventBlindIndexes!: string[];
@@ -60,11 +62,72 @@ AttendanceSourceFactRecordSchema.index(
   { tenantId: 1, sourceEventBlindIndexes: 1 }, { unique: true },
 );
 AttendanceSourceFactRecordSchema.index({ tenantId: 1, employeeId: 1, businessDate: 1 });
+AttendanceSourceFactRecordSchema.index(
+  { tenantId: 1, shiftPlanId: 1 },
+  { unique: true, partialFilterExpression: { shiftPlanId: { $type: 'string' } } },
+);
 AttendanceSourceFactRecordSchema.index({ tenantId: 1, sourceObservedAt: 1 });
 AttendanceSourceFactRecordSchema.index(
   { tenantId: 1, migrationEvidenceRef: 1 },
   { unique: true, partialFilterExpression: { migrationEvidenceRef: { $type: 'string' } } },
 );
+
+/** 版本化日班次计划；时间、窗口和休息规则属于 L4 排班明细。 */
+@Schema({ collection: 'attendance_shift_plans', timestamps: true, versionKey: false, id: false })
+export class AttendanceShiftPlanRecord extends ProtectedRecord {
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  id!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  tenantId!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  employeeId!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  providerCode!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
+  planCode!: string;
+  @Prop({ type: String, required: true, immutable: true, match: DATE_PATTERN })
+  businessDate!: string;
+  @Prop({ type: String, required: true, immutable: true, maxlength: 64, match: ID_PATTERN })
+  rulesetVersion!: string;
+  @Prop({ type: Date, required: true, immutable: true }) sourceObservedAt!: Date;
+  @Prop({ type: Date, required: true, immutable: true }) evaluationDueAt!: Date;
+  @Prop({ type: String, required: true, enum: ['pending', 'completed'] })
+  evaluationStatus!: 'pending' | 'completed';
+  @Prop({ type: Date, default: null }) evaluatedAt!: Date | null;
+  @Prop({ type: String, default: null, maxlength: 128, match: ID_PATTERN })
+  evaluatedSourceFactId!: string | null;
+  @Prop({ type: [{ type: String, match: BLIND_INDEX_PATTERN }], required: true, immutable: true })
+  sourcePlanBlindIndexes!: string[];
+  createdAt!: Date;
+  updatedAt!: Date;
+}
+export type AttendanceShiftPlanDocument = HydratedDocument<AttendanceShiftPlanRecord>;
+export const AttendanceShiftPlanRecordSchema = SchemaFactory.createForClass(
+  AttendanceShiftPlanRecord,
+);
+AttendanceShiftPlanRecordSchema.pre('validate', function () {
+  const record = this as AttendanceShiftPlanRecord;
+  if (record.sourcePlanBlindIndexes.length === 0) {
+    throw new Error('班次计划缺少来源盲索引');
+  }
+  if (record.evaluationStatus === 'completed' &&
+    (record.evaluatedAt === null || record.evaluatedSourceFactId === null)) {
+    throw new Error('已完成班次计划缺少派生事实检查点');
+  }
+  if (record.evaluationStatus === 'pending' &&
+    (record.evaluatedAt !== null || record.evaluatedSourceFactId !== null)) {
+    throw new Error('待计算班次计划不得包含派生事实检查点');
+  }
+});
+AttendanceShiftPlanRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
+AttendanceShiftPlanRecordSchema.index(
+  { tenantId: 1, sourcePlanBlindIndexes: 1 },
+  { unique: true },
+);
+AttendanceShiftPlanRecordSchema.index(
+  { tenantId: 1, employeeId: 1, businessDate: 1, id: 1 },
+);
+AttendanceShiftPlanRecordSchema.index({ evaluationStatus: 1, evaluationDueAt: 1, id: 1 });
 
 /** 审批通过后的替换影响只追加，不覆盖源事实。 */
 @Schema({ collection: 'attendance_corrections', timestamps: true, versionKey: false, id: false })
@@ -145,6 +208,10 @@ export class AttendanceMonthlySnapshotRecord extends ProtectedRecord {
   @Prop({ type: String, required: true, immutable: true, maxlength: 64, match: ID_PATTERN })
   rulesetVersion!: string;
   @Prop({ type: Date, required: true, immutable: true }) sourceCutoffAt!: Date;
+  @Prop({ type: Number, required: true, immutable: true, min: 0 })
+  sourceProviderCount!: number;
+  @Prop({ type: String, required: true, immutable: true, match: HASH_PATTERN })
+  sourceWatermarkDigest!: string;
   @Prop({ type: Number, required: true, immutable: true, min: 0 }) workedMinutes!: number;
   @Prop({ type: Number, required: true, immutable: true, min: 0 }) leaveMinutes!: number;
   @Prop({ type: Number, required: true, immutable: true, min: 0 }) overtimeMinutes!: number;

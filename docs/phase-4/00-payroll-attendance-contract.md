@@ -5,7 +5,8 @@
 | 聚合/记录 | 权威模块 | 不变量 |
 | --- | --- | --- |
 | `AttendanceSourceEvent` | Attendance | 供应商原始事实加密、追加写；租户/平台/外部事件盲指纹唯一 |
-| `AttendanceDay` | Attendance | 由原始事实和有效修订投影；业务日期绑定 Employment 工作地 IANA 时区 |
+| `AttendanceShiftPlan` | Attendance | 日班次计划追加写；规则版本、捕获窗口和开始业务日归属固定，外部计划盲指纹唯一 |
+| `AttendanceDay` | Attendance | 由班次规则派生事实和有效修订投影；业务日期绑定班次开始时刻的 IANA 时区 |
 | `AttendanceCorrection` | Attendance + Approval | 必须保存前后摘要、原因、申请人、审批实例与决定；不得改原始事实 |
 | `AttendanceMonthlySnapshot` | Attendance | 员工/月/版本唯一；固化来源水位线、规则版本、日摘要、总计和 SHA-256 |
 | `CompensationProfileVersion` | Payroll | 员工薪酬结构 L4 加密；生效区间不得重叠；审批后不可改 |
@@ -32,7 +33,7 @@ collecting → reconciling → review → closing → closed
 ```
 
 - `closed` 快照不可修改。迟到数据或批准修订必须创建更高版本快照，并显式使旧快照 `superseded`。
-- 关闭前必须完成来源水位线追平、重复/缺失/跨天异常处理和 Employment 有效性核对。
+- 关闭前必须完成来源水位线追平、重复/缺失/跨天异常处理和 Employment 有效性核对。跨日班次的水位必须覆盖结束业务日。
 
 工资周期：
 
@@ -62,6 +63,10 @@ draft → collecting → calculating → review → pending_approval → approve
 - 本人只读自己的已发布薪资单；直属经理默认不得读取个人工资。HR、薪酬、财务、审计和管理层分别使用服务端字段白名单与行级范围，不能依赖前端隐藏。
 - 制单、复核、审批、锁定、导出、上传回盘、解除冻结不能由同一主体独占。R2/R3 操作强制近期 MFA、强 `If-Match`、幂等键、目的和审计。
 - 导出使用短期单次下载、受控对象存储和水印；审计只记批次、字段策略、行数、摘要和操作者，不记工资、账号或文件正文。
+- REST 写入口只能在业务事务、WORM 或外部副作用成功后记录成功审计。此时审计
+  故障不得向客户端反向暴露失败或触发重试，只记录动作、资源类型、资源标识和
+  风险级别组成的稳定告警；禁止记录异常正文、访问令牌、工资、账户、考勤明细或
+  文件正文。敏感读取没有业务提交，审计不可用时继续失败关闭。
 
 ## 5. 外部集成
 
@@ -70,6 +75,7 @@ draft → collecting → calculating → review → pending_approval → approve
 - Adapter 只提供水位线补拉、Webhook 验签、原始事件标准化和对账摘要；不直接写月结或薪资集合。
 - Webhook 先验签并加密入 Inbox；外部事件 ID 使用渠道隔离盲指纹去重。补拉游标加密，任务按租户/绑定隔离并支持失败显式重放。
 - 统一时间模型保存供应商原始时刻、UTC 时刻、IANA 时区、业务日期和跨天归属规则；不得从服务器默认时区推导考勤日。
+- Provider 的单条上下班卡分钟影响固定为零。受信任排班服务先追加版本化日班次，规则引擎按不重叠捕获窗口生成唯一 `attendance_rules/shift` 派生事实；早到晚退不自动形成加班，缺卡先形成整班缺勤，再走审批修订。
 - 请假、加班和出差审批事实只从 ERP Approval 或经绑定验证的外部审批映射进入，不接受客户端自报“已批准”。
 
 ### 5.2 银行、税务与对象存储
@@ -83,10 +89,12 @@ draft → collecting → calculating → review → pending_approval → approve
 
 | 用例 | REST | 事件 | MCP | 风险 |
 | --- | --- | --- | --- | --- |
+| 追加版本化日班次 | `POST /attendance/shift-plans` | `cn.gaoq.erp.attendance.shift_plan.assigned.v1` | 不开放；仅受信任排班服务 | R1 |
+| 计算班次事实 | `POST /attendance/shift-plans/{shiftPlanId}/evaluate` | `cn.gaoq.erp.attendance.shift.evaluated.v1` | 不开放；仅系统任务 | R1 |
 | 查询本人考勤月结 | `GET /attendance/months/{month}/me` | 无 | Resource + `attendance_month_get` | R0 |
-| 提交考勤修订请求 | `POST /attendance/correction-requests` | `attendance.correction.requested.v1` | `attendance_correction_prepare/execute`，只形成请求 | R1 |
-| 关闭考勤月份 | 内部月结命令 | `attendance.month.closed.v1` | 不开放 | R2 |
-| 查询本人薪资单 | `GET /payroll/payslips/{period}/me` | 无 | Resource + `payroll_payslip_get`，默认脱敏 | R0 |
+| 提交考勤修订请求 | `POST /attendance/correction-requests` | `cn.gaoq.erp.attendance.correction.requested.v1` | `attendance_correction_prepare/execute`，只形成请求 | R1 |
+| 关闭考勤月份 | `POST /attendance/months/close` | `cn.gaoq.erp.attendance.month.closed.v1` | 不开放 | R2 |
+| 查询本人薪资单（legacy 兼容） | `GET /payroll/payslips/{period}/me` | 无 | Resource + `payroll_payslip_get_self`；external 模式失败关闭 | R1 |
 | 计算/重算工资 | 内部 Worker 命令 | `payroll.run.completed/failed.v1` | 不开放 | R2 |
 | 审批与锁定工资 | Approval + 内部命令 | `payroll.period.approved/locked.v1` | 只读状态，不开放执行 | R2/R3 |
 | 受控聚合分析 | `POST /payroll/analytics` | 无 | `payroll_aggregate_analyze`，最小分组阈值 | R1 |
@@ -95,6 +103,14 @@ draft → collecting → calculating → review → pending_approval → approve
 | 影子差异归因 | `POST /payroll/shadow-cycles/{cycleId}/differences/{differenceId}/explanation` | `payroll.shadow_difference.explained.v1` | 不开放 | R2 |
 | 薪酬/财务双签影子周期 | 两个角色隔离的 `payroll-signoff` / `finance-signoff` 端点 | `payroll.shadow_cycle.signed.v1` | 不开放 | R3 |
 | 查询影子周期与两期资格 | 脱敏 `GET` | `payroll.cutover_readiness.eligible.v1` | 只读 Tools + Resources | R1 |
+
+考勤、旧 Payroll 与旧 Treasury 控制器的所有路由、HTTP 方法、最小 Scope、
+幂等/月份/强认证边界和提交后审计语义由
+`pnpm quality:phase4-entry-controllers-coverage` 逐文件四维 90% 失败关闭。
+`PAYROLL_SYSTEM_MODE=external` 时旧 Payroll/Treasury 控制器仍由统一边界守卫
+返回 410；本人薪资单应用服务同步返回
+`PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM`，MCP 兼容入口不得绕过 REST 守卫读取
+旧集合。该质量门禁不扩大 MCP 能力，也不重新启用旧工资事实源。
 
 MCP Server 必须继续使用 MCP 2025-11-25、OAuth 2.1 Resource Server、JSON Schema、结构化内容、风险注解和审计。任何 AI 客户端都只能通过应用服务读取脱敏投影；禁止 MCP 直接查数据库、接触银行/税务文件、执行发薪或绕过 Approval。
 

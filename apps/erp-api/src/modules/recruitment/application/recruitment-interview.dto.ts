@@ -15,7 +15,9 @@ import {
 } from 'class-validator';
 
 const RESOURCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-const TIMEZONE_PATTERN = /^(?:UTC|[A-Za-z_]+\/[A-Za-z0-9_+.-]+)$/;
+const TIMEZONE_PATTERN = /^(?:UTC|[A-Za-z_]+(?:\/[A-Za-z0-9_+.-]+)+)$/;
+const UTC_MILLISECONDS_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 export class ScheduleRecruitmentInterviewDto {
   @IsInt()
@@ -27,9 +29,11 @@ export class ScheduleRecruitmentInterviewDto {
   mode!: 'phone' | 'video' | 'onsite';
 
   @IsISO8601({ strict: true, strictSeparator: true })
+  @Matches(UTC_MILLISECONDS_PATTERN)
   startsAt!: string;
 
   @IsISO8601({ strict: true, strictSeparator: true })
+  @Matches(UTC_MILLISECONDS_PATTERN)
   endsAt!: string;
 
   @Matches(TIMEZONE_PATTERN)
@@ -45,6 +49,7 @@ export class ScheduleRecruitmentInterviewDto {
   @IsString()
   @MinLength(1)
   @MaxLength(2_048)
+  @Matches(/\S/u)
   location!: string;
 }
 
@@ -60,5 +65,6 @@ export class SubmitRecruitmentInterviewFeedbackDto {
   @IsString()
   @MinLength(1)
   @MaxLength(8_192)
+  @Matches(/\S/u)
   notes!: string;
 }

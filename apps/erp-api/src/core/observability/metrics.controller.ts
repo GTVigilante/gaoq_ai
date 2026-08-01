@@ -17,6 +17,7 @@ export class MetricsController {
   async scrape(@Res({ passthrough: true }) response: Response): Promise<string> {
     response.setHeader('Content-Type', this.metrics.contentType);
     response.setHeader('Cache-Control', 'no-store');
+    response.setHeader('X-Content-Type-Options', 'nosniff');
     return this.metrics.render();
   }
 }

@@ -1,11 +1,14 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 
-import { Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import type { Model } from 'mongoose';
 import { z } from 'zod';
 
-import { AuditService } from '../../core/audit/audit.service.js';
+import {
+  AuditService,
+  type SystemAuditRecordInput,
+} from '../../core/audit/audit.service.js';
 import {
   calculateOpApprovalNextAttemptAt,
   OP_APPROVAL_MAX_ATTEMPTS,
@@ -30,18 +33,15 @@ const responseSchema = z.object({
   }).strict(),
 }).strict();
 
-class OpApprovalPostCommitAuditError extends Error {
-  constructor(cause: unknown) {
-    super('OP_APPROVAL_POST_COMMIT_AUDIT_FAILED', { cause });
-    this.name = 'OpApprovalPostCommitAuditError';
-  }
-}
-
 /** OP 审批结果专用 Secret 解析器；禁止复用入站与组织下发凭据前缀。 */
 @Injectable()
 export class OpApprovalOutboundSecretResolver {
   resolve(reference: string): string {
-    if (!SECRET_REF.test(reference)) throw new Error('OP_APPROVAL_SECRET_REF_INVALID');
+    if (!SECRET_REF.test(reference)) throw new OpApprovalDeliveryError(
+      'OP_APPROVAL_SECRET_REF_INVALID',
+      'business',
+      'OP_APPROVAL_SECRET_REF_INVALID: OP 审批结果凭据引用非法',
+    );
     const secret = process.env[reference];
     if (secret === undefined || secret.length < 32 || secret.length > 2_048) {
       throw new ServiceUnavailableException({
@@ -55,6 +55,8 @@ export class OpApprovalOutboundSecretResolver {
 /** 按持久化租约向 OP 可靠回推审批终态；仅发送状态与控制标识。 */
 @Injectable()
 export class OpApprovalResultDeliveryService {
+  private readonly logger = new Logger(OpApprovalResultDeliveryService.name);
+
   constructor(
     @InjectModel(OpApprovalResultDeliveryRecord.name)
     private readonly deliveries: Model<OpApprovalResultDeliveryDocument>,
@@ -73,30 +75,34 @@ export class OpApprovalResultDeliveryService {
       if (delivery === null) break;
       try {
         await this.deliver(delivery);
-        await this.markSucceeded(delivery, workerId, new Date());
-        succeeded += 1;
-        try {
-          await this.audit.recordSystem(delivery.tenantId, {
-            action: 'op.approval.result.deliver', resourceType: 'op_approval_result',
-            resourceId: delivery.approvalInstanceId, riskLevel: 'R2', outcome: 'success',
-            traceId: delivery.eventId,
-            metadata: {
-              result: delivery.result, approvalVersion: delivery.approvalVersion,
-              sourceDocumentType: delivery.sourceDocumentType,
-            },
-          });
-        } catch (error) {
-          throw new OpApprovalPostCommitAuditError(error);
-        }
       } catch (error) {
-        if (error instanceof OpApprovalPostCommitAuditError) throw error;
         await this.markFailed(delivery, workerId, error, new Date());
-        await this.audit.recordSystem(delivery.tenantId, {
+        await this.auditAfterCommit(delivery.tenantId, {
           action: 'op.approval.result.deliver', resourceType: 'op_approval_result',
           resourceId: delivery.approvalInstanceId, riskLevel: 'R2', outcome: 'failure',
           traceId: delivery.eventId, metadata: { failureCode: failureCode(error) },
         });
+        continue;
       }
+      try {
+        await this.markSucceeded(delivery, workerId, new Date());
+      } catch (error) {
+        this.logger.error({
+          code: 'OP_APPROVAL_RESULT_LOCAL_FINALIZE_FAILED',
+          eventId: delivery.eventId,
+        });
+        throw error;
+      }
+      succeeded += 1;
+      await this.auditAfterCommit(delivery.tenantId, {
+        action: 'op.approval.result.deliver', resourceType: 'op_approval_result',
+        resourceId: delivery.approvalInstanceId, riskLevel: 'R2', outcome: 'success',
+        traceId: delivery.eventId,
+        metadata: {
+          result: delivery.result, approvalVersion: delivery.approvalVersion,
+          sourceDocumentType: delivery.sourceDocumentType,
+        },
+      });
     }
     return succeeded;
   }
@@ -176,7 +182,7 @@ export class OpApprovalResultDeliveryService {
       { eventId: delivery.eventId, status: 'processing', lockedBy: workerId },
       { $set: {
         status: 'succeeded', succeededAt: now, lockedAt: null, lockedBy: null,
-        lastErrorCode: null,
+        lastErrorCode: null, updatedAt: now,
       } },
       { timestamps: false },
     );
@@ -197,11 +203,25 @@ export class OpApprovalResultDeliveryService {
       { $set: {
         status: terminal ? (category === 'retryable' ? 'dead' : 'manual_review') : 'pending',
         attempts, nextAttemptAt: terminal ? now : calculateOpApprovalNextAttemptAt(attempts, now),
-        lockedAt: null, lockedBy: null, lastErrorCode: failureCode(error),
+        lockedAt: null, lockedBy: null, lastErrorCode: failureCode(error), updatedAt: now,
       } },
       { timestamps: false },
     );
     if (updated.modifiedCount !== 1) throw new Error('OP_APPROVAL_DELIVERY_LEASE_LOST');
+  }
+
+  private async auditAfterCommit(
+    tenantId: string,
+    input: SystemAuditRecordInput,
+  ): Promise<void> {
+    try {
+      await this.audit.recordSystem(tenantId, input);
+    } catch {
+      this.logger.error({
+        code: 'OP_APPROVAL_RESULT_AUDIT_AFTER_COMMIT_FAILED',
+        outcome: input.outcome,
+      });
+    }
   }
 
   private assertInput(workerId: string, limit: number): void {
@@ -211,14 +231,17 @@ export class OpApprovalResultDeliveryService {
   }
 }
 
+const FAILURE_CODE_PATTERN = /^[A-Z0-9_]{3,128}$/;
+
 function failureCode(error: unknown): string {
-  if (error instanceof OpApprovalDeliveryError && /^[A-Z0-9_:-]{3,128}$/.test(error.code)) {
+  if (error instanceof OpApprovalDeliveryError && FAILURE_CODE_PATTERN.test(error.code)) {
     return error.code;
   }
   if (error instanceof ServiceUnavailableException) {
     const response = error.getResponse();
     if (typeof response === 'object' && response !== null &&
-      typeof (response as { code?: unknown }).code === 'string') {
+      typeof (response as { code?: unknown }).code === 'string' &&
+      FAILURE_CODE_PATTERN.test((response as { code: string }).code)) {
       return (response as { code: string }).code;
     }
   }

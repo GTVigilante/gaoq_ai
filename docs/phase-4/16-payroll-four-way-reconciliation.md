@@ -16,6 +16,13 @@
 ## 事务和状态
 
 - `POST /treasury/disbursements/:id/reconciliation` 只允许拥有 `erp:payroll:reconciliation:execute` 的受信任 `service` 或 `system_job` 调用，要求 `Idempotency-Key` 和代发批次预期版本。普通用户与 MCP 永久不可执行。
+- Treasury 在线执行与迁移导入均各自校验受信任服务/迁移主体及最小 Scope，并
+  复用 `LegacyPayrollBoundaryService`；`external` 模式在幂等记录、Mongo、
+  Payroll 读取和任何状态推进前失败关闭。
+- `PayrollReconciliationService` 的 REST/MCP 只读、Treasury 批次内部读取及
+  在线/迁移执行也各自完成同样的主体、Scope 与共享模式校验；边界位于输入解释、
+  Mongo 和状态推进前。因此 Treasury 与 Payroll 两侧都不能依靠上层调用授权
+  绕过专业算薪切换。
 - 输入批次必须为 `reconciling`，具有银行提交回执、WORM 证据以及签名通过、恶意文件扫描通过的 `accepted` 终态回盘；个税必须为 `submitted` 并具有可信提交回执。
 - 同一 Mongo 事务生成不可变对账快照、推进 Payroll 周期、推进 Treasury 批次并写双侧 Outbox。为了兼容已落地的代发链，服务会用领域状态机补齐 `locked → disbursing → reconciling` 事件版本，禁止静默跳版本。
 - 全部守恒时，Payroll 与 Treasury 均进入 `reconciled`。任一标准差异出现时，对账快照为 `frozen`，Treasury 批次以 `FOUR_WAY_MISMATCH` 冻结，Payroll 保留在 `reconciling` 并绑定差异证据；不得自动解冻、重发或重报。
@@ -36,3 +43,11 @@
 - MCP Prompt：`payroll_reconciliation_review_guide`。
 
 MCP 复用 `PayrollReconciliationService.getStatus`，只解释控制量和标准差异码，不访问 Model、数据库或外部连接器，不执行对账、解冻、补发或税务重报。
+
+`pnpm quality:treasury-reconciliation-coverage` 覆盖 11 项身份、模式边界、迁移、
+证据链、守恒和写冲突用例，目标服务达到
+93.75%/94.57%/100%/96.33%（语句/分支/函数/行），逐文件四维 90% 门禁已接入
+`pnpm check`。`pnpm quality:payroll-reconciliation-coverage` 另覆盖 19 项
+Payroll 侧只读、内部读取、在线/迁移及守恒用例，达到
+96.58%/96.82%/100%/99%。该仓库证据不替代真实专业算薪、银行/税务回执及
+财务签署。

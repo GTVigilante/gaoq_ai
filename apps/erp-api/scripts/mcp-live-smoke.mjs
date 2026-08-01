@@ -30,6 +30,7 @@ const serviceClients = [{
   tenantId: 'local-smoke-tenant',
   actorId: 'local-smoke-agent',
   allowedScopes: ['erp:mcp:server:connect'],
+  allowedResources: [resource],
   roleCodes: ['service-reader'],
   departmentIds: [],
   status: 'active',
@@ -183,10 +184,10 @@ async function verifyMcpSdk(token) {
       client.listResourceTemplates(),
       client.listPrompts(),
     ]);
-    assert.equal(tools.tools.length, 41);
+    assert.equal(tools.tools.length, 47);
     assert.ok(resources.resources.length >= 4);
-    assert.equal(templates.resourceTemplates.length, 18);
-    assert.equal(prompts.prompts.length, 16);
+    assert.equal(templates.resourceTemplates.length, 24);
+    assert.equal(prompts.prompts.length, 22);
     const toolNames = new Set(tools.tools.map((tool) => tool.name));
     for (const forbidden of [
       'treasury_disbursement_submit',

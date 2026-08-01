@@ -75,6 +75,11 @@ export interface PersonCreatedPayload {
   readonly status: Person['status'];
 }
 
+export interface PersonBirthdayAttestedPayload {
+  readonly birthdayEvidenceId: string;
+  readonly status: Person['status'];
+}
+
 export interface EmploymentEstablishedPayload {
   readonly personId: string;
   readonly employeeId: string;
@@ -137,6 +142,10 @@ export type EmployeeStatusChangedEvent = OrgEventBase<
   EmployeeStatusChangedPayload
 >;
 export type PersonCreatedEvent = OrgEventBase<'person.created', PersonCreatedPayload>;
+export type PersonBirthdayAttestedEvent = OrgEventBase<
+  'person.birthday_attested',
+  PersonBirthdayAttestedPayload
+>;
 export type EmploymentEstablishedEvent = OrgEventBase<
   'employment.established',
   EmploymentEstablishedPayload
@@ -162,6 +171,7 @@ export type OrgDomainEvent =
   | EmployeeUpdatedEvent
   | EmployeeStatusChangedEvent
   | PersonCreatedEvent
+  | PersonBirthdayAttestedEvent
   | EmploymentEstablishedEvent
   | EmploymentTerminatedEvent
   | EmploymentStatusChangedEvent
@@ -287,6 +297,27 @@ export function buildPersonCreatedEvent(person: Person, occurredAt: Date): Perso
     type: 'person.created', tenantId: person.tenantId, aggregateId: person.id,
     version: person.version, occurredAt: occurredAt.toISOString(),
     payload: { sourceCandidateId: person.sourceCandidateId, status: person.status },
+  };
+}
+
+/** 生日月日不进入事件；消费者只能获知证明已建立。 */
+export function buildPersonBirthdayAttestedEvent(
+  person: Person,
+  occurredAt: Date,
+): PersonBirthdayAttestedEvent {
+  if (person.birthdayEvidenceId === null || person.birthdayAttestedAt === null) {
+    throw new Error('自然人生日证明事件缺少可信证据');
+  }
+  return {
+    type: 'person.birthday_attested',
+    tenantId: person.tenantId,
+    aggregateId: person.id,
+    version: person.version,
+    occurredAt: occurredAt.toISOString(),
+    payload: {
+      birthdayEvidenceId: person.birthdayEvidenceId,
+      status: person.status,
+    },
   };
 }
 

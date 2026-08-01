@@ -1,10 +1,17 @@
-import { createHash } from 'node:crypto';
+import {
+  createHash,
+  createPublicKey,
+  generateKeyPairSync,
+  sign,
+  verify,
+} from 'node:crypto';
 import { lstat, readFile } from 'node:fs/promises';
 
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
 const HASH = /^[A-Za-z0-9_-]{43}$/u;
 const COMMIT = /^[a-f0-9]{40}$/u;
 const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/u;
+const SIGNATURE = /^[A-Za-z0-9_-]{86}$/u;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const ENVIRONMENT_NAME = /^[a-z][a-z0-9-]{2,31}$/u;
 const REGION = /^[a-z0-9-]{2,32}$/u;
@@ -15,6 +22,8 @@ const FAULT_EXERCISES = [
 const SIGNOFF_ROLES = [
   'architecture_owner', 'business_owner', 'data_owner', 'security_owner',
 ];
+const SIGNOFF_SIGNATURE_SUITE = 'gaoq.phase5.migration-rehearsal.signoff.v1';
+const SIGNOFF_WINDOW_MS = 24 * 60 * 60 * 1_000;
 const CONTRACT_LOCATION = new URL(
   '../../apps/erp-api/src/modules/data-migration/data-migration-contract.ts',
   import.meta.url,
@@ -43,12 +52,15 @@ if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
   process.stdout.write('Phase 5 全量迁移三次演练聚合证据门禁自测通过。\n');
 } else if (argumentsList.length === 1 && argumentsList[0] === '--print-contract') {
   process.stdout.write(`${JSON.stringify({
-    formatVersion: 1,
+    formatVersion: 2,
     suite: 'gaoq.phase5.migration-rehearsal.contract',
     scopeCount: SCOPES.length,
     scopes: SCOPES,
     rehearsalCount: ROUND_COUNT,
     expectedRunCount: SCOPES.length * ROUND_COUNT,
+    signoffRoles: SIGNOFF_ROLES,
+    signatureSuite: SIGNOFF_SIGNATURE_SUITE,
+    signatureAlgorithm: 'Ed25519',
     harnessSha256: HARNESS_DIGEST,
   }, null, 2)}\n`);
 } else {
@@ -67,13 +79,15 @@ if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
     enforceEnvironment,
   );
   process.stdout.write(`${JSON.stringify({
-    formatVersion: 1,
+    formatVersion: 2,
     suite: 'gaoq.phase5.migration-rehearsal.verdict',
     evidenceId: summary.evidenceId,
     outcome: 'PASSED',
     commitSha: summary.commitSha,
     scopeCount: summary.scopeCount,
     runCount: summary.runCount,
+    signerKeysetHash: summary.signerKeysetHash,
+    approvalPayloadHash: summary.approvalPayloadHash,
     comparisonChecksum: digest(canonical(summary)),
   }, null, 2)}\n`);
 }
@@ -82,23 +96,46 @@ if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
 function validateEvidence(document, enforceEnvironment = false) {
   object(document, [
     'formatVersion', 'suite', 'evidenceId', 'environment', 'source', 'sourceSystems',
-    'rounds', 'scopes', 'faultExercises', 'safety', 'signoffs',
+    'rounds', 'scopes', 'faultExercises', 'safety', 'signingAuthorities', 'signoffs',
   ], 'PHASE5_MIGRATION_REHEARSAL_DOCUMENT_INVALID');
-  equal(document.formatVersion, 1, 'PHASE5_MIGRATION_REHEARSAL_FORMAT_INVALID');
+  equal(document.formatVersion, 2, 'PHASE5_MIGRATION_REHEARSAL_FORMAT_INVALID');
   equal(
     document.suite,
-    'gaoq.phase5.migration-rehearsal.v1',
+    'gaoq.phase5.migration-rehearsal.v2',
     'PHASE5_MIGRATION_REHEARSAL_SUITE_INVALID',
   );
   pattern(document.evidenceId, ULID, 'PHASE5_MIGRATION_REHEARSAL_EVIDENCE_ID_INVALID');
   const environment = validateEnvironment(document.environment, enforceEnvironment);
   const source = validateSource(document.source, enforceEnvironment);
+  const authorities = validateSigningAuthorities(document.signingAuthorities);
+  if (enforceEnvironment) {
+    pattern(
+      process.env.MIGRATION_REHEARSAL_EXPECTED_SIGNER_KEYSET_SHA256,
+      SHA256,
+      'PHASE5_MIGRATION_REHEARSAL_EXPECTED_SIGNER_KEYSET_REQUIRED',
+    );
+    equal(
+      authorities.keysetHash,
+      process.env.MIGRATION_REHEARSAL_EXPECTED_SIGNER_KEYSET_SHA256,
+      'PHASE5_MIGRATION_REHEARSAL_SIGNER_KEYSET_MISMATCH',
+    );
+  }
   const sourceSystems = validateSourceSystems(document.sourceSystems);
   const rounds = validateRounds(document.rounds, environment);
   const scopes = validateScopes(document.scopes, sourceSystems);
   validateFaultExercises(document.faultExercises, environment);
   validateSafety(document.safety);
-  const signoffEvidenceIds = validateSignoffs(document.signoffs, environment.endedAt);
+  validateSignoffMetadata(document.signoffs, environment.endedAt);
+  const approvalPayloadHash = digest(migrationApprovalPayload(
+    document,
+    authorities.keysetHash,
+  ));
+  const signoffEvidenceIds = validateSignoffSignatures(
+    document.signoffs,
+    authorities.byRole,
+    approvalPayloadHash,
+    environment.endedAt,
+  );
   return Object.freeze({
     evidenceId: document.evidenceId,
     commitSha: source.commitSha,
@@ -119,6 +156,8 @@ function validateEvidence(document, enforceEnvironment = false) {
       artifactChecksums: scope.runs.map((run) => run.artifactChecksum),
     })),
     signoffEvidenceIds,
+    signerKeysetHash: authorities.keysetHash,
+    approvalPayloadHash,
   });
 }
 
@@ -183,11 +222,15 @@ function validateSource(source, enforceEnvironment) {
     'packageManifestHash', 'harnessSha256',
   ], 'PHASE5_MIGRATION_REHEARSAL_SOURCE_INVALID');
   pattern(source.commitSha, COMMIT, 'PHASE5_MIGRATION_REHEARSAL_COMMIT_INVALID');
-  object(source.images, ['api', 'worker', 'web'], 'PHASE5_MIGRATION_REHEARSAL_IMAGES_INVALID');
+  object(
+    source.images,
+    ['api', 'worker', 'web', 'website'],
+    'PHASE5_MIGRATION_REHEARSAL_IMAGES_INVALID',
+  );
   for (const value of Object.values(source.images)) {
     pattern(value, SHA256, 'PHASE5_MIGRATION_REHEARSAL_IMAGES_INVALID');
   }
-  if (new Set(Object.values(source.images)).size !== 3) {
+  if (new Set(Object.values(source.images)).size !== 4) {
     fail('PHASE5_MIGRATION_REHEARSAL_IMAGES_INVALID');
   }
   for (const field of [
@@ -208,6 +251,7 @@ function validateExpectedSource(source) {
     api: process.env.MIGRATION_REHEARSAL_EXPECTED_API_IMAGE,
     worker: process.env.MIGRATION_REHEARSAL_EXPECTED_WORKER_IMAGE,
     web: process.env.MIGRATION_REHEARSAL_EXPECTED_WEB_IMAGE,
+    website: process.env.MIGRATION_REHEARSAL_EXPECTED_WEBSITE_IMAGE,
     deploymentManifestHash: process.env.MIGRATION_REHEARSAL_EXPECTED_DEPLOYMENT_MANIFEST,
     sourceSnapshotHash: process.env.MIGRATION_REHEARSAL_EXPECTED_SOURCE_SNAPSHOT,
     packageManifestHash: process.env.MIGRATION_REHEARSAL_EXPECTED_PACKAGE_MANIFEST,
@@ -218,11 +262,11 @@ function validateExpectedSource(source) {
     'PHASE5_MIGRATION_REHEARSAL_EXPECTED_SOURCE_REQUIRED',
   );
   for (const field of [
-    'api', 'worker', 'web', 'deploymentManifestHash', 'sourceSnapshotHash',
+    'api', 'worker', 'web', 'website', 'deploymentManifestHash', 'sourceSnapshotHash',
     'packageManifestHash',
   ]) pattern(expected[field], SHA256, 'PHASE5_MIGRATION_REHEARSAL_EXPECTED_SOURCE_REQUIRED');
   equal(source.commitSha, expected.commitSha, 'PHASE5_MIGRATION_REHEARSAL_COMMIT_MISMATCH');
-  for (const image of ['api', 'worker', 'web']) {
+  for (const image of ['api', 'worker', 'web', 'website']) {
     equal(source.images[image], expected[image], 'PHASE5_MIGRATION_REHEARSAL_IMAGE_MISMATCH');
   }
   equal(
@@ -409,27 +453,197 @@ function validateSafety(safety) {
   );
 }
 
-function validateSignoffs(signoffs, endedAt) {
+function validateSigningAuthorities(authorities) {
+  if (!Array.isArray(authorities) || authorities.length !== SIGNOFF_ROLES.length) {
+    fail('PHASE5_MIGRATION_REHEARSAL_SIGNING_AUTHORITIES_INCOMPLETE');
+  }
+  const roles = [];
+  const keyIds = new Set();
+  const byRole = new Map();
+  const keyset = [];
+  for (const authority of authorities) {
+    object(
+      authority,
+      ['role', 'algorithm', 'keyId', 'publicKeySpkiBase64'],
+      'PHASE5_MIGRATION_REHEARSAL_SIGNING_AUTHORITY_INVALID',
+    );
+    if (!SIGNOFF_ROLES.includes(authority.role)) {
+      fail('PHASE5_MIGRATION_REHEARSAL_SIGNING_AUTHORITY_INVALID');
+    }
+    equal(
+      authority.algorithm,
+      'Ed25519',
+      'PHASE5_MIGRATION_REHEARSAL_SIGNING_AUTHORITY_INVALID',
+    );
+    pattern(
+      authority.keyId,
+      SHA256,
+      'PHASE5_MIGRATION_REHEARSAL_SIGNING_AUTHORITY_INVALID',
+    );
+    const publicKey = publicKeyFromSpkiBase64(authority.publicKeySpkiBase64);
+    equal(
+      authority.keyId,
+      publicKeyHash(publicKey),
+      'PHASE5_MIGRATION_REHEARSAL_SIGNING_AUTHORITY_KEY_MISMATCH',
+    );
+    roles.push(authority.role);
+    keyIds.add(authority.keyId);
+    byRole.set(authority.role, Object.freeze({ keyId: authority.keyId, publicKey }));
+    keyset.push(Object.freeze({ role: authority.role, keyId: authority.keyId }));
+  }
+  exactStringSet(
+    roles,
+    SIGNOFF_ROLES,
+    'PHASE5_MIGRATION_REHEARSAL_SIGNING_AUTHORITIES_INCOMPLETE',
+  );
+  if (keyIds.size !== SIGNOFF_ROLES.length || byRole.size !== SIGNOFF_ROLES.length) {
+    fail('PHASE5_MIGRATION_REHEARSAL_SIGNING_AUTHORITIES_NOT_INDEPENDENT');
+  }
+  return Object.freeze({ byRole, keysetHash: signerKeysetHash(keyset) });
+}
+
+function validateSignoffMetadata(signoffs, endedAt) {
   if (!Array.isArray(signoffs) || signoffs.length !== SIGNOFF_ROLES.length) {
     fail('PHASE5_MIGRATION_REHEARSAL_SIGNOFFS_INCOMPLETE');
   }
   const roles = [];
   const evidenceIds = new Set();
+  const actorHashes = new Set();
+  const commentHashes = new Set();
   for (const signoff of signoffs) {
-    object(signoff, ['role', 'evidenceId', 'signedAt'],
-      'PHASE5_MIGRATION_REHEARSAL_SIGNOFF_INVALID');
+    object(signoff, [
+      'role', 'actorHash', 'decision', 'evidenceId', 'commentHash', 'approvedAt',
+      'signedAt', 'algorithm', 'keyId', 'signedPayloadSha256', 'signature',
+    ], 'PHASE5_MIGRATION_REHEARSAL_SIGNOFF_INVALID');
+    if (!SIGNOFF_ROLES.includes(signoff.role)) {
+      fail('PHASE5_MIGRATION_REHEARSAL_SIGNOFF_INVALID');
+    }
+    pattern(
+      signoff.actorHash,
+      SHA256,
+      'PHASE5_MIGRATION_REHEARSAL_SIGNOFF_ACTOR_INVALID',
+    );
+    equal(signoff.decision, 'approve', 'PHASE5_MIGRATION_REHEARSAL_SIGNOFF_REJECTED');
     pattern(signoff.evidenceId, ULID, 'PHASE5_MIGRATION_REHEARSAL_SIGNOFF_INVALID');
-    if (timestamp(signoff.signedAt) < endedAt) {
+    pattern(
+      signoff.commentHash,
+      SHA256,
+      'PHASE5_MIGRATION_REHEARSAL_SIGNOFF_COMMENT_INVALID',
+    );
+    const approvedAt = timestamp(signoff.approvedAt);
+    if (approvedAt < endedAt || approvedAt - endedAt > SIGNOFF_WINDOW_MS) {
       fail('PHASE5_MIGRATION_REHEARSAL_SIGNOFF_TIME_INVALID');
     }
     roles.push(signoff.role);
+    actorHashes.add(signoff.actorHash);
     evidenceIds.add(signoff.evidenceId);
+    commentHashes.add(signoff.commentHash);
+  }
+  exactStringSet(roles, SIGNOFF_ROLES, 'PHASE5_MIGRATION_REHEARSAL_SIGNOFFS_INCOMPLETE');
+  if (actorHashes.size !== SIGNOFF_ROLES.length) {
+    fail('PHASE5_MIGRATION_REHEARSAL_SIGNOFF_ACTORS_NOT_INDEPENDENT');
   }
   if (
-    canonical(roles.sort()) !== canonical([...SIGNOFF_ROLES].sort()) ||
-    evidenceIds.size !== SIGNOFF_ROLES.length
-  ) fail('PHASE5_MIGRATION_REHEARSAL_SIGNOFFS_INCOMPLETE');
-  return [...evidenceIds];
+    evidenceIds.size !== SIGNOFF_ROLES.length ||
+    commentHashes.size !== SIGNOFF_ROLES.length
+  ) fail('PHASE5_MIGRATION_REHEARSAL_SIGNOFF_EVIDENCE_REUSED');
+}
+
+function validateSignoffSignatures(
+  signoffs,
+  signingAuthorities,
+  approvalPayloadHash,
+  endedAt,
+) {
+  const signatures = new Set();
+  const evidenceIds = [];
+  for (const signoff of signoffs) {
+    equal(
+      signoff.algorithm,
+      'Ed25519',
+      'PHASE5_MIGRATION_REHEARSAL_SIGNOFF_PROOF_INVALID',
+    );
+    pattern(
+      signoff.keyId,
+      SHA256,
+      'PHASE5_MIGRATION_REHEARSAL_SIGNOFF_PROOF_INVALID',
+    );
+    pattern(
+      signoff.signedPayloadSha256,
+      SHA256,
+      'PHASE5_MIGRATION_REHEARSAL_SIGNOFF_PROOF_INVALID',
+    );
+    pattern(
+      signoff.signature,
+      SIGNATURE,
+      'PHASE5_MIGRATION_REHEARSAL_SIGNOFF_PROOF_INVALID',
+    );
+    const signedAt = timestamp(signoff.signedAt);
+    const approvedAt = timestamp(signoff.approvedAt);
+    if (
+      signedAt < approvedAt ||
+      signedAt - endedAt > SIGNOFF_WINDOW_MS
+    ) fail('PHASE5_MIGRATION_REHEARSAL_SIGNOFF_SIGNATURE_TIME_INVALID');
+    const authority = signingAuthorities.get(signoff.role);
+    if (authority === undefined) {
+      fail('PHASE5_MIGRATION_REHEARSAL_SIGNOFF_AUTHORITY_INVALID');
+    }
+    equal(
+      signoff.keyId,
+      authority.keyId,
+      'PHASE5_MIGRATION_REHEARSAL_SIGNOFF_KEY_MISMATCH',
+    );
+    const payload = migrationSignoffPayload(approvalPayloadHash, signoff);
+    equal(
+      signoff.signedPayloadSha256,
+      digest(payload),
+      'PHASE5_MIGRATION_REHEARSAL_SIGNOFF_PAYLOAD_MISMATCH',
+    );
+    const signature = decodeSignature(signoff.signature);
+    if (!verify(null, Buffer.from(payload, 'utf8'), authority.publicKey, signature)) {
+      fail('PHASE5_MIGRATION_REHEARSAL_SIGNOFF_SIGNATURE_INVALID');
+    }
+    signatures.add(signoff.signature);
+    evidenceIds.push(signoff.evidenceId);
+  }
+  if (signatures.size !== SIGNOFF_ROLES.length) {
+    fail('PHASE5_MIGRATION_REHEARSAL_SIGNOFF_PROOF_REUSED');
+  }
+  return evidenceIds;
+}
+
+function migrationApprovalPayload(document, signerKeysetHashValue) {
+  return canonical({
+    formatVersion: document.formatVersion,
+    suite: document.suite,
+    evidenceId: document.evidenceId,
+    environment: document.environment,
+    source: document.source,
+    sourceSystems: document.sourceSystems,
+    rounds: document.rounds,
+    scopes: document.scopes,
+    faultExercises: document.faultExercises,
+    safety: document.safety,
+    signerKeysetHash: signerKeysetHashValue,
+    signoffs: document.signoffs.map((signoff) => ({
+      role: signoff.role,
+      actorHash: signoff.actorHash,
+      decision: signoff.decision,
+      evidenceId: signoff.evidenceId,
+      commentHash: signoff.commentHash,
+      approvedAt: signoff.approvedAt,
+    })),
+  });
+}
+
+function migrationSignoffPayload(approvalPayloadHash, signoff) {
+  return canonical({
+    suite: SIGNOFF_SIGNATURE_SUITE,
+    approvalPayloadHash,
+    role: signoff.role,
+    keyId: signoff.keyId,
+    signedAt: signoff.signedAt,
+  });
 }
 
 function runSelfTest() {
@@ -463,30 +677,132 @@ function runSelfTest() {
     'PHASE5_MIGRATION_REHEARSAL_PRODUCTION_SIDE_EFFECT_FORBIDDEN',
   );
   withExpectedEnvironment(valid, () => {
-    validateEvidence(fixture(), true);
+    validateEvidence(valid, true);
     const mismatch = fixture();
     mismatch.source.sourceSnapshotHash = digest('different-source-snapshot');
     expectFailure(
       () => validateEvidence(mismatch, true),
       'PHASE5_MIGRATION_REHEARSAL_SOURCE_SNAPSHOT_MISMATCH',
     );
+    process.env.MIGRATION_REHEARSAL_EXPECTED_SIGNER_KEYSET_SHA256 =
+      digest('unapproved-keyset');
+    expectFailure(
+      () => validateEvidence(valid, true),
+      'PHASE5_MIGRATION_REHEARSAL_SIGNER_KEYSET_MISMATCH',
+    );
   });
+
+  const missingSignoff = fixture();
+  missingSignoff.signoffs.pop();
+  expectFailure(
+    () => validateEvidence(missingSignoff),
+    'PHASE5_MIGRATION_REHEARSAL_SIGNOFFS_INCOMPLETE',
+  );
+
+  const forgedSignature = fixture();
+  forgedSignature.signoffs[0].signature =
+    `${forgedSignature.signoffs[0].signature[0] === 'A' ? 'B' : 'A'}${
+      forgedSignature.signoffs[0].signature.slice(1)
+    }`;
+  expectFailure(
+    () => validateEvidence(forgedSignature),
+    'PHASE5_MIGRATION_REHEARSAL_SIGNOFF_SIGNATURE_INVALID',
+  );
+
+  const tamperedAfterSigning = fixture();
+  tamperedAfterSigning.rounds[0].bundleHash = digest('tampered-round-bundle');
+  expectFailure(
+    () => validateEvidence(tamperedAfterSigning),
+    'PHASE5_MIGRATION_REHEARSAL_SIGNOFF_PAYLOAD_MISMATCH',
+  );
+
+  const reusedActorBundle = fixtureBundle();
+  reusedActorBundle.document.signoffs[1].actorHash =
+    reusedActorBundle.document.signoffs[0].actorHash;
+  signFixture(reusedActorBundle.document, reusedActorBundle.privateKeys);
+  expectFailure(
+    () => validateEvidence(reusedActorBundle.document),
+    'PHASE5_MIGRATION_REHEARSAL_SIGNOFF_ACTORS_NOT_INDEPENDENT',
+  );
+
+  const reusedEvidenceBundle = fixtureBundle();
+  reusedEvidenceBundle.document.signoffs[1].evidenceId =
+    reusedEvidenceBundle.document.signoffs[0].evidenceId;
+  signFixture(reusedEvidenceBundle.document, reusedEvidenceBundle.privateKeys);
+  expectFailure(
+    () => validateEvidence(reusedEvidenceBundle.document),
+    'PHASE5_MIGRATION_REHEARSAL_SIGNOFF_EVIDENCE_REUSED',
+  );
+
+  const reusedAuthority = fixture();
+  reusedAuthority.signingAuthorities[1].keyId =
+    reusedAuthority.signingAuthorities[0].keyId;
+  reusedAuthority.signingAuthorities[1].publicKeySpkiBase64 =
+    reusedAuthority.signingAuthorities[0].publicKeySpkiBase64;
+  expectFailure(
+    () => validateEvidence(reusedAuthority),
+    'PHASE5_MIGRATION_REHEARSAL_SIGNING_AUTHORITIES_NOT_INDEPENDENT',
+  );
+
+  const swappedRoleKey = fixture();
+  const firstKeyId = swappedRoleKey.signoffs[0].keyId;
+  swappedRoleKey.signoffs[0].keyId = swappedRoleKey.signoffs[1].keyId;
+  swappedRoleKey.signoffs[1].keyId = firstKeyId;
+  expectFailure(
+    () => validateEvidence(swappedRoleKey),
+    'PHASE5_MIGRATION_REHEARSAL_SIGNOFF_KEY_MISMATCH',
+  );
+
+  const lateSignatureBundle = fixtureBundle();
+  lateSignatureBundle.document.signoffs[0].signedAt = '2026-07-05T00:00:01.000Z';
+  signFixture(lateSignatureBundle.document, lateSignatureBundle.privateKeys);
+  expectFailure(
+    () => validateEvidence(lateSignatureBundle.document),
+    'PHASE5_MIGRATION_REHEARSAL_SIGNOFF_SIGNATURE_TIME_INVALID',
+  );
 }
 
 function fixture() {
+  return fixtureBundle().document;
+}
+
+function fixtureBundle() {
+  const privateKeys = new Map();
+  const signingAuthorities = SIGNOFF_ROLES.map((role) => {
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    const keyId = publicKeyHash(publicKey);
+    privateKeys.set(role, privateKey);
+    return {
+      role,
+      algorithm: 'Ed25519',
+      keyId,
+      publicKeySpkiBase64: publicKey.export({
+        format: 'der',
+        type: 'spki',
+      }).toString('base64'),
+    };
+  });
+  const authoritiesByRole = new Map(
+    signingAuthorities.map((authority) => [authority.role, authority]),
+  );
   const environment = {
     name: 'migration-rehearsal', region: 'cn-test-1', productionEquivalent: true,
     productionTraffic: false, syntheticData: true,
     startedAt: '2026-07-01T00:00:00.000Z', endedAt: '2026-07-04T00:00:00.000Z',
   };
-  return {
-    formatVersion: 1,
-    suite: 'gaoq.phase5.migration-rehearsal.v1',
+  const document = {
+    formatVersion: 2,
+    suite: 'gaoq.phase5.migration-rehearsal.v2',
     evidenceId: ulid(1),
     environment,
     source: {
       commitSha: 'a'.repeat(40),
-      images: { api: digest('api'), worker: digest('worker'), web: digest('web') },
+      images: {
+        api: digest('api'),
+        worker: digest('worker'),
+        web: digest('web'),
+        website: digest('website'),
+      },
       deploymentManifestHash: digest('deployment-manifest'),
       sourceSnapshotHash: digest('source-snapshot'),
       packageManifestHash: digest('package-manifest'),
@@ -523,12 +839,37 @@ function fixture() {
       checksumMismatchCount: 0,
       productionSideEffects: false,
     },
+    signingAuthorities,
     signoffs: SIGNOFF_ROLES.map((role, index) => ({
       role,
+      actorHash: digest(`actor-${role}`),
+      decision: 'approve',
       evidenceId: ulid(400 + index),
-      signedAt: '2026-07-04T01:00:00.000Z',
+      commentHash: digest(`comment-${role}`),
+      approvedAt: `2026-07-04T0${index + 1}:00:00.000Z`,
+      signedAt: `2026-07-04T0${index + 2}:00:00.000Z`,
+      algorithm: 'Ed25519',
+      keyId: authoritiesByRole.get(role)?.keyId,
+      signedPayloadSha256: digest('unsigned'),
+      signature: 'A'.repeat(86),
     })),
   };
+  signFixture(document, privateKeys);
+  return Object.freeze({ document, privateKeys });
+}
+
+function signFixture(document, privateKeys) {
+  const keysetHash = signerKeysetHash(document.signingAuthorities);
+  const approvalPayloadHash = digest(migrationApprovalPayload(document, keysetHash));
+  for (const signoff of document.signoffs) {
+    const payload = migrationSignoffPayload(approvalPayloadHash, signoff);
+    signoff.signedPayloadSha256 = digest(payload);
+    signoff.signature = sign(
+      null,
+      Buffer.from(payload, 'utf8'),
+      privateKeys.get(signoff.role),
+    ).toString('base64url');
+  }
 }
 
 function scopeFixture(scope, scopeIndex) {
@@ -583,10 +924,13 @@ function withExpectedEnvironment(document, action) {
     MIGRATION_REHEARSAL_EXPECTED_API_IMAGE: document.source.images.api,
     MIGRATION_REHEARSAL_EXPECTED_WORKER_IMAGE: document.source.images.worker,
     MIGRATION_REHEARSAL_EXPECTED_WEB_IMAGE: document.source.images.web,
+    MIGRATION_REHEARSAL_EXPECTED_WEBSITE_IMAGE: document.source.images.website,
     MIGRATION_REHEARSAL_EXPECTED_DEPLOYMENT_MANIFEST:
       document.source.deploymentManifestHash,
     MIGRATION_REHEARSAL_EXPECTED_SOURCE_SNAPSHOT: document.source.sourceSnapshotHash,
     MIGRATION_REHEARSAL_EXPECTED_PACKAGE_MANIFEST: document.source.packageManifestHash,
+    MIGRATION_REHEARSAL_EXPECTED_SIGNER_KEYSET_SHA256:
+      signerKeysetHash(document.signingAuthorities),
   };
   const previous = Object.fromEntries(
     Object.keys(values).map((key) => [key, process.env[key]]),
@@ -600,6 +944,58 @@ function withExpectedEnvironment(document, action) {
       else process.env[key] = value;
     }
   }
+}
+
+function publicKeyFromSpkiBase64(value) {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/u.test(value)) {
+    fail('PHASE5_MIGRATION_REHEARSAL_SIGNING_AUTHORITY_INVALID');
+  }
+  let der;
+  try {
+    der = Buffer.from(value, 'base64');
+  } catch {
+    fail('PHASE5_MIGRATION_REHEARSAL_SIGNING_AUTHORITY_INVALID');
+  }
+  if (
+    der.length < 32 ||
+    der.length > 256 ||
+    der.toString('base64') !== value
+  ) fail('PHASE5_MIGRATION_REHEARSAL_SIGNING_AUTHORITY_INVALID');
+  let publicKey;
+  try {
+    publicKey = createPublicKey({ key: der, format: 'der', type: 'spki' });
+  } catch {
+    fail('PHASE5_MIGRATION_REHEARSAL_SIGNING_AUTHORITY_INVALID');
+  }
+  if (publicKey.asymmetricKeyType !== 'ed25519') {
+    fail('PHASE5_MIGRATION_REHEARSAL_SIGNING_AUTHORITY_INVALID');
+  }
+  return publicKey;
+}
+
+function publicKeyHash(publicKey) {
+  return digest(publicKey.export({ format: 'der', type: 'spki' }));
+}
+
+function signerKeysetHash(authorities) {
+  return digest(canonical(
+    authorities
+      .map(({ role, keyId }) => ({ role, keyId }))
+      .sort((left, right) => left.role.localeCompare(right.role)),
+  ));
+}
+
+function decodeSignature(value) {
+  let signature;
+  try {
+    signature = Buffer.from(value, 'base64url');
+  } catch {
+    fail('PHASE5_MIGRATION_REHEARSAL_SIGNOFF_SIGNATURE_INVALID');
+  }
+  if (signature.length !== 64 || signature.toString('base64url') !== value) {
+    fail('PHASE5_MIGRATION_REHEARSAL_SIGNOFF_SIGNATURE_INVALID');
+  }
+  return signature;
 }
 
 function parseScopes(source) {
@@ -629,6 +1025,15 @@ function object(value, keys, code) {
   if (
     typeof value !== 'object' || value === null || Array.isArray(value) ||
     canonical(Object.keys(value).sort()) !== canonical([...keys].sort())
+  ) fail(code);
+}
+
+function exactStringSet(actual, expected, code) {
+  if (
+    !Array.isArray(actual) ||
+    actual.some((item) => typeof item !== 'string') ||
+    new Set(actual).size !== expected.length ||
+    canonical([...actual].sort()) !== canonical([...expected].sort())
   ) fail(code);
 }
 

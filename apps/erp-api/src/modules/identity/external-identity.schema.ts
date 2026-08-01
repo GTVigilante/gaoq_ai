@@ -8,6 +8,8 @@ export type ExternalIdentityProvider = (typeof EXTERNAL_IDENTITY_PROVIDERS)[numb
 /** 外部身份绑定状态：bound 已绑定可用，disabled 已解绑/停用。 */
 export const EXTERNAL_IDENTITY_STATUSES = ['bound', 'disabled'] as const;
 export type ExternalIdentityStatus = (typeof EXTERNAL_IDENTITY_STATUSES)[number];
+const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+const EXTERNAL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/;
 
 /**
  * 外部身份映射：将钉钉/飞书/OP 等外部租户内的用户身份
@@ -17,7 +19,7 @@ export type ExternalIdentityStatus = (typeof EXTERNAL_IDENTITY_STATUSES)[number]
 @Schema({ collection: 'identity_external_identities', timestamps: true, versionKey: false })
 export class ExternalIdentity {
   /** 本系统租户标识，所有查询必须携带。 */
-  @Prop({ type: String, required: true, immutable: true, index: true })
+  @Prop({ type: String, required: true, immutable: true, index: true, maxlength: 128, match: ID_PATTERN })
   tenantId!: string;
 
   /** 外部身份提供方。 */
@@ -25,23 +27,23 @@ export class ExternalIdentity {
   provider!: ExternalIdentityProvider;
 
   /** 外部平台侧的企业/组织标识（如钉钉 corpId、飞书 tenant_key）。 */
-  @Prop({ type: String, required: true, immutable: true })
+  @Prop({ type: String, required: true, immutable: true, maxlength: 256, match: EXTERNAL_ID_PATTERN })
   externalTenantId!: string;
 
   /** 外部平台跨应用统一用户标识。 */
-  @Prop({ type: String, required: true, immutable: true })
+  @Prop({ type: String, required: true, immutable: true, maxlength: 256, match: EXTERNAL_ID_PATTERN })
   unionId!: string;
 
   /** 外部平台企业内的用户标识。 */
-  @Prop({ type: String, required: true, immutable: true })
+  @Prop({ type: String, required: true, immutable: true, maxlength: 256, match: EXTERNAL_ID_PATTERN })
   externalUserId!: string;
 
   /** 本系统租户内的操作主体标识。 */
-  @Prop({ type: String, required: true })
+  @Prop({ type: String, required: true, maxlength: 128, match: ID_PATTERN })
   actorId!: string;
 
   /** 本系统租户内的员工标识；人员 SSO 不允许绑定到服务主体。 */
-  @Prop({ type: String, required: true, immutable: true })
+  @Prop({ type: String, required: true, immutable: true, maxlength: 128, match: ID_PATTERN })
   employeeId!: string;
 
   /** 绑定状态。 */

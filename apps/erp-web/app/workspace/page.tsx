@@ -4,8 +4,10 @@ import {
   ApartmentOutlined,
   AuditOutlined,
   FileTextOutlined,
+  GlobalOutlined,
   RobotOutlined,
   SafetyCertificateOutlined,
+  SolutionOutlined,
 } from '@ant-design/icons';
 import { Card, Col, Row, Space, Tag, Typography } from 'antd';
 import Link from 'next/link';
@@ -13,6 +15,16 @@ import Link from 'next/link';
 const { Title, Paragraph, Text } = Typography;
 
 const modules = [
+  {
+    href: '/workspace/marketing', icon: <GlobalOutlined />, title: '官网 CMS',
+    description: '管理中英文营销内容、版本审核与官网发布，AI 生成内容必须人工确认。',
+    tag: 'Marketing',
+  },
+  {
+    href: '/workspace/recruitment', icon: <SolutionOutlined />, title: '智能简历库',
+    description: 'AI 读取脱敏简历，生成结构化履历和受控标签；招聘人员确认后进入人才检索。',
+    tag: 'Recruitment',
+  },
   {
     href: '/workspace/approvals', icon: <AuditOutlined />, title: '审批中心',
     description: '查看服务端裁剪的待办与表单详情，按版本形成幂等审批决策。',

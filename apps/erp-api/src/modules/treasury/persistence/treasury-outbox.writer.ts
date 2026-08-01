@@ -18,6 +18,7 @@ export interface TreasuryEvent {
     | 'treasury.disbursement.submitted'
     | 'treasury.disbursement.migrated'
     | 'treasury.disbursement.recovery_requested'
+    | 'treasury.disbursement.adjustment_supplement_requested'
     | 'treasury.bank_return.applied'
     | 'treasury.bank_return.migrated'
     | 'treasury.reconciliation.completed'
@@ -117,6 +118,20 @@ export class TreasuryOutboxWriter {
         !positiveInteger(data['failedMinor']) || data['status'] !== 'materializing' ||
         data['strongAuthMethod'] !== 'webauthn_uv' ||
         typeof data['returnHash'] !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(data['returnHash'])
+      ) throw new Error('TREASURY_OUTBOX_DATA_INVALID');
+      return;
+    }
+    if (event.type === 'treasury.disbursement.adjustment_supplement_requested') {
+      if (
+        keys !==
+          'adjustmentId,lineCount,parentBatchId,payrollPeriodId,payrollRunId,status,totalMinor' ||
+        !safeId(data['adjustmentId']) ||
+        !safeId(data['parentBatchId']) ||
+        !safeId(data['payrollPeriodId']) ||
+        !safeId(data['payrollRunId']) ||
+        data['lineCount'] !== 1 ||
+        !positiveInteger(data['totalMinor']) ||
+        data['status'] !== 'materializing'
       ) throw new Error('TREASURY_OUTBOX_DATA_INVALID');
       return;
     }

@@ -1,5 +1,5 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import type { Queue } from 'bullmq';
 import type { Model } from 'mongoose';
@@ -13,6 +13,7 @@ import { ESignWebhookCryptoService } from './esign-webhook-crypto.service.js';
 import {
   ESIGN_ARCHIVE_EVIDENCE_JOB,
   ESIGN_WEBHOOK_QUEUE,
+  createESignEvidenceJobId,
   type ESignQueueJobData,
 } from './esign-webhook.queue.js';
 import { ESignSecretResolver } from './esign-webhook.service.js';
@@ -22,6 +23,8 @@ const STALE_AFTER_MS = 10 * 60 * 1_000;
 /** 每 15 分钟拉取长时间未更新流程，作为 Webhook 丢失的可验证补偿通道。 */
 @Injectable()
 export class ESignReconciliationService {
+  private readonly logger = new Logger(ESignReconciliationService.name);
+
   constructor(
     private readonly adapter: ESignAdapter,
     private readonly secrets: ESignSecretResolver,
@@ -37,7 +40,7 @@ export class ESignReconciliationService {
 
   async runStaleBatch(now = new Date(), limit = 50): Promise<number> {
     const candidates = await this.flows.find({
-      status: { $in: ['awaiting_signature', 'partial_signed'] },
+      status: { $in: ['awaiting_signature', 'partial_signed', 'provider_completed'] },
       reviewRequired: false,
       updatedAt: { $lte: new Date(now.getTime() - STALE_AFTER_MS) },
     }).sort({ updatedAt: 1 }).limit(Math.max(1, Math.min(limit, 100))).lean().exec();
@@ -47,10 +50,14 @@ export class ESignReconciliationService {
         await this.reconcileOne(flow, now);
         processed += 1;
       } catch (error) {
-        await this.audit.recordSystem(flow.tenantId, {
+        await this.auditSystemAfterBusiness(flow.tenantId, {
           action: 'integration.esign.reconcile', resourceType: 'esign_flow',
           resourceId: flow.id, riskLevel: 'R2', outcome: 'failure', traceId: flow.id,
           metadata: { failureCode: safeFailureCode(error) },
+        }, {
+          code: 'ESIGN_RECONCILIATION_FAILURE_AUDIT_FAILED',
+          tenantId: flow.tenantId,
+          flowId: flow.id,
         });
       }
     }
@@ -58,6 +65,19 @@ export class ESignReconciliationService {
   }
 
   private async reconcileOne(flow: ESignFlowRecord, observedAt: Date): Promise<void> {
+    if (flow.status === 'provider_completed') {
+      await this.enqueueEvidence(flow.id, flow.tenantId);
+      await this.auditSystemAfterBusiness(flow.tenantId, {
+        action: 'integration.esign.reconcile', resourceType: 'esign_flow',
+        resourceId: flow.id, riskLevel: 'R2', outcome: 'success', traceId: flow.id,
+        metadata: { providerStatus: flow.providerStatus ?? 2, flowStatus: flow.status },
+      }, {
+        code: 'ESIGN_RECONCILIATION_RECOVERY_AUDIT_AFTER_COMMIT_FAILED',
+        tenantId: flow.tenantId,
+        flowId: flow.id,
+      });
+      return;
+    }
     const binding = await this.bindings.findOne({
       tenantId: flow.tenantId, provider: 'esign_cn', appId: flow.appId, status: 'active',
     }).lean().exec();
@@ -86,22 +106,44 @@ export class ESignReconciliationService {
       { runValidators: true, timestamps: false },
     );
     if (updated.modifiedCount !== 1) throw new Error('ESIGN_FLOW_VERSION_CONFLICT');
-    await this.audit.recordSystem(flow.tenantId, {
+    if (projection.status === 'provider_completed') {
+      await this.enqueueEvidence(flow.id, flow.tenantId);
+    }
+    await this.auditSystemAfterBusiness(flow.tenantId, {
       action: 'integration.esign.reconcile', resourceType: 'esign_flow',
       resourceId: flow.id, riskLevel: 'R2',
       outcome: projection.reviewRequired ? 'failure' : 'success', traceId: flow.id,
       metadata: { providerStatus, flowStatus: projection.status },
+    }, {
+      code: 'ESIGN_RECONCILIATION_AUDIT_AFTER_COMMIT_FAILED',
+      tenantId: flow.tenantId,
+      flowId: flow.id,
     });
-    if (projection.status === 'provider_completed') {
-      await this.queue.add(
-        ESIGN_ARCHIVE_EVIDENCE_JOB,
-        { flowId: flow.id, tenantId: flow.tenantId },
-        {
-          jobId: `esign_evidence_${flow.id}`, attempts: 12,
-          backoff: { type: 'exponential', delay: 10_000 },
-          removeOnComplete: 1_000, removeOnFail: 10_000,
-        },
-      );
+  }
+
+  private async enqueueEvidence(flowId: string, tenantId: string): Promise<void> {
+    await this.queue.add(
+      ESIGN_ARCHIVE_EVIDENCE_JOB,
+      { flowId, tenantId },
+      {
+        jobId: createESignEvidenceJobId(tenantId, flowId),
+        attempts: 12,
+        backoff: { type: 'exponential', delay: 10_000 },
+        removeOnComplete: 1_000,
+        removeOnFail: true,
+      },
+    );
+  }
+
+  private async auditSystemAfterBusiness(
+    tenantId: string,
+    input: Parameters<AuditService['recordSystem']>[1],
+    context: Readonly<Record<string, string>>,
+  ): Promise<void> {
+    try {
+      await this.audit.recordSystem(tenantId, input);
+    } catch {
+      this.logger.error(context);
     }
   }
 }

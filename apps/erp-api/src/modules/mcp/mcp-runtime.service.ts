@@ -3,12 +3,18 @@ import { ConfigService } from '@nestjs/config';
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { Response } from 'express';
 import { z } from 'zod';
 
 import type { AppEnvironment } from '../../config/environment.js';
 import type { ErpRequest } from '../../core/http/request-context.js';
+import {
+  analyticsExportViewSchema,
+  managementDashboardSchema,
+} from '../analytics/analytics.contract.js';
 import { DATA_MIGRATION_SCOPES } from '../data-migration/data-migration-contract.js';
+import { buildMcpAuthInfo } from './mcp-auth-context.js';
 import { McpToolService } from './mcp-tool.service.js';
 
 const permissionsOutputSchema = z.object({
@@ -21,7 +27,6 @@ const permissionsOutputSchema = z.object({
 const orgChartOutputSchema = z.object({
   departments: z.array(z.object({
     id: z.string(),
-    tenantId: z.string(),
     code: z.string(),
     name: z.string(),
     status: z.enum(['active', 'inactive']),
@@ -29,12 +34,9 @@ const orgChartOutputSchema = z.object({
     managerId: z.string().nullable(),
     sortOrder: z.number().int().nonnegative(),
     version: z.number().int().positive(),
-    createdAt: z.string(),
-    updatedAt: z.string(),
-  })),
+  }).strict()),
   employees: z.array(z.object({
     id: z.string(),
-    tenantId: z.string(),
     employeeNo: z.string(),
     displayName: z.string(),
     status: z.enum(['probation', 'active', 'suspended', 'terminated']),
@@ -43,10 +45,8 @@ const orgChartOutputSchema = z.object({
     positionIds: z.array(z.string()),
     jobLevelId: z.string().nullable(),
     version: z.number().int().positive(),
-    createdAt: z.string(),
-    updatedAt: z.string(),
-  })),
-});
+  }).strict()),
+}).strict();
 
 const approvalSummarySchema = z.object({
   id: z.string(),
@@ -120,6 +120,26 @@ const confirmationExecuteInputSchema = {
   confirmationCredential: z.string().regex(/^mcpc_[A-Za-z0-9_-]{43}$/),
 };
 const recruitmentIdSchema = z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/);
+const marketingEventIdSchema = z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/);
+const marketingSideEffectSchema = z.object({
+  eventId: marketingEventIdSchema,
+  kind: z.enum(['lead_notification', 'scheduled_publish']),
+  aggregateId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{7,127}$/),
+  aggregateVersion: z.number().int().positive(),
+  channel: z.enum(['email', 'feishu']).nullable(),
+  status: z.enum([
+    'pending', 'dispatching', 'dispatched', 'delivered', 'cancelled', 'dead',
+  ]),
+  attempts: z.number().int().nonnegative(),
+  deliveryAttempts: z.number().int().nonnegative(),
+  nextAttemptAt: z.string().datetime({ offset: true }),
+  dispatchedAt: z.string().datetime({ offset: true }).nullable(),
+  completedAt: z.string().datetime({ offset: true }).nullable(),
+  lastErrorCode: z.string().regex(/^[A-Z][A-Z0-9_]{2,127}$/).nullable(),
+}).strict();
+const marketingSideEffectOutputSchema = z.object({
+  sideEffect: marketingSideEffectSchema,
+}).strict();
 const recruitmentApplicationSchema = z.object({
   id: recruitmentIdSchema, candidateId: recruitmentIdSchema, positionId: recruitmentIdSchema,
   stage: z.enum([
@@ -191,6 +211,14 @@ const onboardingSchema = z.object({
 const knowledgeCourseSchema = z.object({
   id: z.string(), courseCode: z.string(), revision: z.number().int().positive(), title: z.string(),
   examRequired: z.boolean(), passingScoreBps: z.number().int().min(0).max(10_000).nullable(),
+  questionMode: z.enum(['objective', 'subjective', 'mixed']).nullable(),
+  timeLimitMinutes: z.number().int().min(5).max(240).nullable(),
+  maxAttempts: z.number().int().min(1).max(10).nullable(),
+  gradingPolicyVersion: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,63}$/u).nullable(),
+  passingRule: z.enum(['score_threshold', 'all_required_sections']).nullable(),
+  gradingSlaMinutes: z.number().int().min(1).max(60).nullable(),
+  manualReviewSlaMinutes: z.number().int().min(30).max(10_080).nullable(),
+  manualReviewRequired: z.boolean(),
   status: z.enum(['draft', 'published', 'retired']), version: z.number().int().positive(),
 });
 const knowledgeAssignmentSchema = z.object({
@@ -199,6 +227,40 @@ const knowledgeAssignmentSchema = z.object({
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   status: z.enum(['assigned', 'in_progress', 'completed', 'expired']),
   progressBps: z.number().int().min(0).max(10_000), version: z.number().int().positive(),
+});
+const knowledgeExamRunSchema = z.object({
+  id: z.string(),
+  assignmentId: z.string(),
+  courseVersionId: z.string(),
+  attemptNumber: z.number().int().min(1).max(10),
+  questionMode: z.enum(['objective', 'subjective', 'mixed']),
+  gradingPolicyVersion: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,63}$/u),
+  passingRule: z.enum(['score_threshold', 'all_required_sections']),
+  gradingSlaMinutes: z.number().int().min(1).max(60),
+  manualReviewSlaMinutes: z.number().int().min(30).max(10_080),
+  manualReviewRequired: z.boolean(),
+  status: z.enum(['starting', 'in_progress', 'submitted', 'pending_review', 'graded', 'dead']),
+  startedAt: z.string().datetime({ offset: true }).nullable(),
+  deadlineAt: z.string().datetime({ offset: true }).nullable(),
+  submittedAt: z.string().datetime({ offset: true }).nullable(),
+  submissionReason: z.enum(['learner', 'timeout']).nullable(),
+  timedOut: z.boolean(),
+  finalAttemptId: z.string().nullable(),
+  version: z.number().int().positive(),
+});
+const knowledgeSearchItemSchema = z.object({
+  course: knowledgeCourseSchema,
+  snippetText: z.string().min(1).max(512),
+  highlights: z.array(z.object({
+    start: z.number().int().nonnegative(),
+    end: z.number().int().positive(),
+  })).max(8),
+  scoreBps: z.number().int().min(0).max(10_000),
+  indexedAt: z.string().datetime({ offset: true }),
+});
+const knowledgeSearchOutputSchema = z.object({
+  items: z.array(knowledgeSearchItemSchema).max(20),
+  nextCursor: z.string().regex(/^[A-Za-z0-9_-]{16,256}$/).nullable(),
 });
 const careTaskStatusSchema = z.enum(['pending', 'completed']);
 const careCaseSchema = z.object({
@@ -216,10 +278,53 @@ const careCaseSchema = z.object({
   }),
   version: z.number().int().positive(),
 });
+const careOccasionSummarySchema = z.object({
+  configured: z.boolean(),
+  birthdayEnabled: z.boolean(),
+  anniversaryEnabled: z.boolean(),
+  unsubscribed: z.boolean(),
+  pendingCount: z.number().int().nonnegative(),
+  deliveredCount: z.number().int().nonnegative(),
+  attentionRequiredCount: z.number().int().nonnegative(),
+});
+const careAlumniCleanupStatusSchema = z.object({
+  consentStatus: z.enum(['active', 'withdrawn', 'expired']),
+  cleanupStatus: z.enum([
+    'not_required',
+    'pending',
+    'in_progress',
+    'completed',
+    'attention_required',
+    'configuration_required',
+  ]),
+  counts: z.object({
+    pending: z.number().int().nonnegative(),
+    dispatching: z.number().int().nonnegative(),
+    completed: z.number().int().nonnegative(),
+    dead: z.number().int().nonnegative(),
+  }),
+});
+const talentLifecycleSchema = z.object({
+  candidateId: recruitmentIdSchema,
+  stage: z.enum([
+    'talent_pool', 'recruiting', 'offer', 'onboarding', 'employed',
+    'offboarding', 'alumni', 'former_employee', 'inactive',
+  ]),
+  currentApplicationStage: z.enum([
+    'applied', 'screening', 'interview', 'offer_approval', 'offer_sent',
+    'offer_accepted', 'preboarding', 'hired', 'rejected', 'withdrawn',
+  ]).nullable(),
+  employeeStatus: z.enum(['probation', 'active', 'suspended', 'terminated']).nullable(),
+  openFollowUpCount: z.number().int().nonnegative(),
+  nextActionAt: z.string().datetime({ offset: true }).nullable(),
+  updatedAt: z.string().datetime({ offset: true }),
+}).strict();
 const attendanceMonthSchema = z.object({
   id: z.string(), employeeId: z.string(), month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
   snapshotVersion: z.number().int().positive(), rulesetVersion: z.string(),
-  sourceCutoffAt: z.string(), workedMinutes: z.number().int().nonnegative(),
+  sourceCutoffAt: z.string(), sourceProviderCount: z.number().int().nonnegative(),
+  sourceWatermarkDigest: z.string().length(43),
+  workedMinutes: z.number().int().nonnegative(),
   leaveMinutes: z.number().int().nonnegative(), overtimeMinutes: z.number().int().nonnegative(),
   absentMinutes: z.number().int().nonnegative(), sourceFactCount: z.number().int().nonnegative(),
   correctionCount: z.number().int().nonnegative(), snapshotHash: z.string().length(43),
@@ -269,6 +374,42 @@ const payrollPayslipSchema = z.object({
   postTaxDeductionMinor: z.number().int().nonnegative(), withholdingTaxMinor: z.number().int(),
   netPayMinor: z.number().int().nonnegative(), inputHash: z.string().length(43),
   resultHash: z.string().length(43), publishedAt: z.string(),
+});
+const payrollAdjustmentControlSchema = z.object({
+  id: recruitmentIdSchema,
+  period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  adjustmentNumber: z.number().int().positive(),
+  type: z.enum(['supplement', 'reversal', 'tax_only']),
+  reasonCode: z.string().regex(/^[A-Z][A-Z0-9_]{1,63}$/),
+  status: z.enum([
+    'prepared', 'pending_approval', 'approved', 'locked', 'settled', 'cancelled',
+  ]),
+  cashSettlementStatus: z.enum(['not_required', 'pending', 'settled']),
+  taxCorrectionStatus: z.enum(['not_required', 'pending', 'submitted']),
+  version: z.number().int().positive(),
+  adjustmentHash: z.string().length(43),
+});
+const payrollAdjustmentTaxCorrectionControlSchema = z.object({
+  id: recruitmentIdSchema,
+  adjustmentId: recruitmentIdSchema,
+  period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  format: z.literal('CN_IIT_WITHHOLDING_CORRECTION_V1'),
+  contentHash: z.string().length(43),
+  objectEvidenceId: z.string().nullable(),
+  taxSubmissionEvidenceId: z.string().nullable(),
+  status: z.enum(['archiving', 'prepared', 'approved', 'submitting', 'submitted']),
+  version: z.number().int().positive(),
+});
+const annualPayrollReconciliationControlSchema = z.object({
+  id: recruitmentIdSchema, taxYear: z.string().regex(/^\d{4}$/),
+  periodCount: z.number().int().min(1).max(12),
+  firstPeriod: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  lastPeriod: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  status: z.enum([
+    'awaiting_assessment', 'assessment_matched',
+    'requires_employee_settlement', 'frozen',
+  ]),
+  version: z.number().int().positive(), evidenceHash: z.string().length(43),
 });
 const payrollTaxFilingSchema = z.object({
   id: recruitmentIdSchema, periodId: recruitmentIdSchema,
@@ -336,7 +477,6 @@ const payrollCutoverReadinessSchema = z.object({
   version: z.number().int().positive(),
 });
 const opOperatingSummarySchema = z.object({
-  id: recruitmentIdSchema,
   summaryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   revision: z.number().int().positive(),
   currency: z.literal('CNY'),
@@ -347,9 +487,6 @@ const opOperatingSummarySchema = z.object({
     refundOrderCount: z.number().int().nonnegative(),
     activeCustomerCount: z.number().int().nonnegative(),
   }),
-  payloadHash: z.string().length(43),
-  occurredAt: z.string().datetime(),
-  receivedAt: z.string().datetime(),
 });
 const opApprovalBridgeSchema = z.object({
   externalEventId: z.string(), sourceDocumentType: z.string(), sourceDocumentId: z.string(),
@@ -357,67 +494,6 @@ const opApprovalBridgeSchema = z.object({
   approvalStatus: z.enum(['processing', 'running', 'approved', 'rejected', 'withdrawn']),
   approvalVersion: z.number().int().nonnegative(), completedAt: z.string().nullable(),
   updatedAt: z.string(),
-});
-const managementDashboardSchema = z.object({
-  asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  window: z.object({
-    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), timezone: z.literal('Asia/Shanghai'),
-  }),
-  generatedAt: z.string().datetime(),
-  freshness: z.object({
-    transactional: z.literal('live'),
-    operatingSummaryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
-    payrollPeriod: z.string().regex(/^\d{4}-\d{2}$/).nullable(),
-  }),
-  workforce: z.object({
-    activeHeadcount: z.number().int().nonnegative(),
-    probationHeadcount: z.number().int().nonnegative(),
-    suspendedHeadcount: z.number().int().nonnegative(),
-  }),
-  approvals: z.object({
-    running: z.number().int().nonnegative(), overdue48h: z.number().int().nonnegative(),
-    completed30d: z.number().int().nonnegative(),
-    approvalRateBps: z.number().int().min(0).max(10_000).nullable(),
-  }),
-  recruitment: z.object({
-    openPositionCount: z.number().int().nonnegative(),
-    openHeadcount: z.number().int().nonnegative(),
-    activeApplicationCount: z.number().int().nonnegative(),
-    hired30d: z.number().int().nonnegative(),
-  }),
-  learning: z.object({
-    mandatoryAssignments: z.number().int().nonnegative(),
-    completedMandatoryAssignments: z.number().int().nonnegative(),
-    expiredMandatoryAssignments: z.number().int().nonnegative(),
-    completionRateBps: z.number().int().min(0).max(10_000).nullable(),
-  }),
-  payroll: z.object({
-    period: z.string().regex(/^\d{4}-\d{2}$/).nullable(),
-    status: z.enum([
-      'draft', 'collecting', 'review', 'pending_approval', 'approved',
-      'locked', 'disbursing', 'reconciling', 'reconciled',
-    ]).nullable(),
-    employeeCount: z.number().int().nonnegative().nullable(),
-  }),
-  operating: z.object({
-    summaryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
-    revision: z.number().int().positive().nullable(), currency: z.literal('CNY').nullable(),
-    gmvMinor: z.number().int().nonnegative().nullable(),
-    paidOrderCount: z.number().int().nonnegative().nullable(),
-    refundMinor: z.number().int().nonnegative().nullable(),
-  }),
-  sources: z.array(z.string()).max(16),
-});
-const analyticsExportSchema = z.object({
-  id: recruitmentIdSchema,
-  asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  format: z.literal('json'),
-  status: z.enum(['queued', 'processing', 'ready', 'failed']),
-  resourceUri: z.string().regex(/^erp:\/\/analytics\/exports\/[0-7][0-9A-HJKMNP-TV-Z]{25}$/),
-  contentHash: z.string().length(43).nullable(),
-  artifact: z.record(z.string(), z.unknown()).nullable(),
-  expiresAt: z.string().datetime(),
 });
 const dataMigrationReportSchema = z.object({
   runId: recruitmentIdSchema, sourceSystem: z.string(),
@@ -469,26 +545,15 @@ export class McpRuntimeService {
     if (token === undefined || request.bearerToken === undefined || request.traceId === undefined) {
       throw new Error('MCP 认证上下文未建立');
     }
-    const auth: AuthInfo = {
-      token: request.bearerToken,
-      clientId: token.clientId,
-      scopes: [...token.scopes],
-      expiresAt: token.expiresAt,
-      resource: new URL(token.resource[0] ?? ''),
-      extra: {
-        tenantId: token.tenantId,
-        actorId: token.actorId,
-        actorType: token.actorType,
-        roleCodes: [...token.roleCodes],
-        departmentIds: [...token.departmentIds],
-        traceId: request.traceId,
-      },
-    };
+    const auth: AuthInfo = buildMcpAuthInfo(
+      request.bearerToken,
+      token,
+      request.traceId,
+    );
     // SDK 1.29 明确要求无状态模式每个 HTTP 请求创建独立 transport；复用会被拒绝。
     const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
     transport.onerror = (error) => this.logger.error(`MCP transport：${error.message}`);
-    const mcpServer = this.createMcpServer();
-    await mcpServer.connect(transport);
+    const mcpServer = await this.connect(transport);
     const headers = new Headers();
     for (const [name, value] of Object.entries(request.headers)) {
       if (typeof value === 'string') headers.set(name, value);
@@ -525,6 +590,13 @@ export class McpRuntimeService {
     } finally {
       await mcpServer.close();
     }
+  }
+
+  /** 创建独立 MCP Server 并连接标准 transport；身份必须由 transport 注入。 */
+  async connect(transport: Transport): Promise<McpServer> {
+    const server = this.createMcpServer();
+    await server.connect(transport);
+    return server;
   }
 
   private createMcpServer(): McpServer {
@@ -715,6 +787,47 @@ export class McpRuntimeService {
     );
 
     server.registerResource(
+      'knowledge-exam-run',
+      new ResourceTemplate('erp://knowledge/exam-runs/{id}', { list: undefined }),
+      {
+        title: '本人考试运行脱敏状态',
+        description: '读取本人考试运行状态与时限；不返回题目、答案、提交引用或评分证据。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getKnowledgeExamRun(requiredResourceId(id), extra);
+        if (result.isError === true) throw new Error('无权读取考试运行');
+        return { contents: [{
+          uri: uri.toString(),
+          mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
+    server.registerResource(
+      'knowledge-search',
+      new ResourceTemplate('erp://knowledge/search/{query}', { list: undefined }),
+      {
+        title: '本人授权知识检索',
+        description: '按当前有效任职读取首屏搜索结果；只接受受控纯文本，不返回内容引用或权限投影。',
+        mimeType: 'application/json',
+      },
+      async (uri, { query }, extra) => {
+        const result = await this.tools.searchKnowledge({
+          query: requiredKnowledgeSearchQuery(query),
+          limit: 10,
+        }, extra);
+        if (result.isError === true) throw new Error('无权检索知识内容');
+        return { contents: [{
+          uri: uri.toString(),
+          mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
+    server.registerResource(
       'care-case',
       new ResourceTemplate('erp://care/cases/{id}', { list: undefined }),
       {
@@ -725,6 +838,71 @@ export class McpRuntimeService {
       async (uri, { id }, extra) => {
         const result = await this.tools.getCareCase(requiredResourceId(id), extra);
         if (result.isError === true) throw new Error('无权读取离职案件');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
+    server.registerResource(
+      'care-occasion-summary-self',
+      new ResourceTemplate('erp://care/occasions/mine', { list: undefined }),
+      {
+        title: '本人关怀安排最小摘要',
+        description: '只返回开关和状态计数；不返回生日、具体日期、联系方式、模板正文或投递证据。',
+        mimeType: 'application/json',
+      },
+      async (uri, _variables, extra) => {
+        const result = await this.tools.getMyCareOccasionSummary(extra);
+        if (result.isError === true) throw new Error('无权读取本人关怀安排');
+        return { contents: [{
+          uri: uri.toString(),
+          mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
+    server.registerResource(
+      'care-alumni-cleanup-status',
+      new ResourceTemplate(
+        'erp://care/alumni-consents/{id}/cleanup',
+        { list: undefined },
+      ),
+      {
+        title: '校友授权下游清理脱敏状态',
+        description: '只返回终止状态和任务计数；不返回自然人、联系方式、下游证明或错误正文。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getCareAlumniCleanupStatus(
+          requiredResourceId(id),
+          extra,
+        );
+        if (result.isError === true) throw new Error('无权读取下游清理状态');
+        return { contents: [{
+          uri: uri.toString(),
+          mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
+    server.registerResource(
+      'talent-lifecycle',
+      new ResourceTemplate('erp://talent-lifecycle/people/{candidateId}', { list: undefined }),
+      {
+        title: '人才全周期脱敏摘要',
+        description: '读取生命周期阶段和跟进状态；不返回姓名、联系方式、服务备注或证据。',
+        mimeType: 'application/json',
+      },
+      async (uri, { candidateId }, extra) => {
+        const result = await this.tools.getTalentLifecycle(
+          requiredResourceId(candidateId),
+          extra,
+        );
+        if (result.isError === true) throw new Error('无权读取人才全周期摘要');
         return { contents: [{
           uri: uri.toString(), mimeType: 'application/json',
           text: JSON.stringify(result.structuredContent ?? {}),
@@ -772,8 +950,8 @@ export class McpRuntimeService {
       'my-payroll-payslip',
       new ResourceTemplate('erp://payroll/payslips/{period}/me', { list: undefined }),
       {
-        title: '我的已发布薪资单',
-        description: '只按当前已验证员工返回已锁定月份的本人薪资单；属于 L4 数据。',
+        title: '我的已发布薪资单（legacy 兼容）',
+        description: '仅 legacy 模式按已验证员工返回本人 L4 薪资单；external 模式返回专业工资迁移错误。',
         mimeType: 'application/json',
       },
       async (uri, { period }, extra) => {
@@ -851,6 +1029,69 @@ export class McpRuntimeService {
       async (uri, { id }, extra) => {
         const result = await this.tools.getPayrollCutoverReadiness(requiredResourceId(id), extra);
         if (result.isError === true) throw new Error('无权读取工资可切换资格');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
+    server.registerResource(
+      'payroll-adjustment-status',
+      new ResourceTemplate('erp://payroll/adjustments/{id}', { list: undefined }),
+      {
+        title: '工资调整脱敏控制状态',
+        description: '只返回补发/冲销控制状态和摘要，不返回员工、金额或更正输入。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getPayrollAdjustmentStatus(requiredResourceId(id), extra);
+        if (result.isError === true) throw new Error('无权读取工资调整控制状态');
+        return { contents: [{
+          uri: uri.toString(), mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
+    server.registerResource(
+      'payroll-adjustment-tax-correction-status',
+      new ResourceTemplate(
+        'erp://payroll/adjustment-tax-corrections/{id}',
+        { list: undefined },
+      ),
+      {
+        title: '工资调整税务更正脱敏控制状态',
+        description: '只返回更正清单、WORM 与税局回执控制状态，不返回员工、金额或税务正文。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getPayrollAdjustmentTaxCorrectionStatus(
+          requiredResourceId(id),
+          extra,
+        );
+        if (result.isError === true) throw new Error('无权读取工资调整税务更正控制状态');
+        return { contents: [{
+          uri: uri.toString(),
+          mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
+    server.registerResource(
+      'payroll-annual-reconciliation-status',
+      new ResourceTemplate('erp://payroll/annual-reconciliations/{id}', { list: undefined }),
+      {
+        title: '年度工资代扣脱敏控制状态',
+        description: '只返回税年、期间范围、状态和摘要，不返回员工、税额或税局证据。',
+        mimeType: 'application/json',
+      },
+      async (uri, { id }, extra) => {
+        const result = await this.tools.getAnnualPayrollReconciliationStatus(
+          requiredResourceId(id), extra,
+        );
+        if (result.isError === true) throw new Error('无权读取年度工资代扣控制状态');
         return { contents: [{
           uri: uri.toString(), mimeType: 'application/json',
           text: JSON.stringify(result.structuredContent ?? {}),
@@ -950,6 +1191,28 @@ export class McpRuntimeService {
       },
     );
 
+    server.registerResource(
+      'marketing-side-effect-status',
+      new ResourceTemplate('erp://marketing/side-effects/{eventId}', { list: undefined }),
+      {
+        title: '营销副作用可靠性状态',
+        description: '只读返回当前租户通知或排期副作用的路由、尝试次数和终态；不返回联系人或正文。',
+        mimeType: 'application/json',
+      },
+      async (uri, { eventId }, extra) => {
+        const result = await this.tools.getMarketingSideEffect(
+          requiredMarketingEventId(eventId),
+          extra,
+        );
+        if (result.isError === true) throw new Error('无权读取营销副作用状态');
+        return { contents: [{
+          uri: uri.toString(),
+          mimeType: 'application/json',
+          text: JSON.stringify(result.structuredContent ?? {}),
+        }] };
+      },
+    );
+
     server.registerPrompt(
       'approval_submission_guide',
       {
@@ -966,6 +1229,19 @@ export class McpRuntimeService {
           },
         }],
       }),
+    );
+
+    server.registerPrompt(
+      'marketing_side_effect_triage_guide',
+      {
+        title: '营销副作用故障核对清单',
+        description: '指导 AI 只读解释通知与排期副作用状态，不代替用户执行 R2 重放。',
+        argsSchema: { eventId: marketingEventIdSchema },
+      },
+      ({ eventId }) => ({ messages: [{ role: 'user', content: {
+        type: 'text',
+        text: `请读取营销副作用 ${eventId}，核对类型、渠道、入队/送达尝试、受控错误码和最终状态。不得索取或复述联系人、正文、凭据或上游响应；不得调用人工重放接口。若状态为 dead，只说明需要具备 R2 权限的人员在 ERP 审计页面复核。`,
+      } }] }),
     );
 
     server.registerPrompt(
@@ -1064,6 +1340,44 @@ export class McpRuntimeService {
     );
 
     server.registerPrompt(
+      'knowledge_exam_run_status_guide',
+      {
+        title: '考试运行状态检查指南',
+        description: '指导 AI 只读说明本人考试状态、时限和复核进度。',
+        argsSchema: { examRunId: recruitmentIdSchema },
+      },
+      ({ examRunId }) => ({
+        messages: [{
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `请仅用 knowledge_exam_run_get 读取考试运行 ${examRunId}，说明当前状态、截止时间以及是否等待人工复核。不要索取或推断题目、答案、答卷、提交引用、评分证据或网关会话；不要代替用户提交、重放或修改考试。`,
+          },
+        }],
+      }),
+    );
+
+    server.registerPrompt(
+      'knowledge_search_guide',
+      {
+        title: '本人授权知识检索指南',
+        description: '指导 AI 使用只读知识检索，不扩大权限、不拼接搜索 DSL 或索取下载地址。',
+        argsSchema: {
+          query: z.string().min(2).max(128).regex(/^[\p{L}\p{M}\p{N}\s._-]+$/u),
+        },
+      },
+      ({ query }) => ({
+        messages: [{
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `请仅用 knowledge_search 检索“${query}”，概括本人当前任职已授权课程中的命中内容并保留课程标题。不要尝试提供 tenantId、employeeId、部门、岗位、搜索 DSL、下载地址或扩大结果上限；不要把片段当作完整政策原文。`,
+          },
+        }],
+      }),
+    );
+
+    server.registerPrompt(
       'care_offboarding_progress_guide',
       {
         title: '离职清算进度检查清单',
@@ -1076,6 +1390,59 @@ export class McpRuntimeService {
           content: {
             type: 'text',
             text: `请读取离职案件 ${careCaseId} 的脱敏任务状态，列出待办和计划生效时间。不要索取离职原因、审批正文、交接材料或证据；不要代报清算完成，也不要执行劳动关系关闭或身份停用。`,
+          },
+        }],
+      }),
+    );
+
+    server.registerPrompt(
+      'care_occasion_summary_guide',
+      {
+        title: '本人关怀安排只读检查',
+        description: '只读取本人关怀状态计数；AI 不推断生日、不改偏好、不授权渠道也不触发发送。',
+      },
+      () => ({
+        messages: [{
+          role: 'user',
+          content: {
+            type: 'text',
+            text: '请仅调用 care_occasion_summary_get_self 概括本人生日与入职周年关怀是否启用，以及待处理、已送达和需人工关注的数量。不要推断或索取生日、具体关怀日期、联系方式、渠道授权、模板正文或投递证据；不要修改偏好、退订或触发发送。',
+          },
+        }],
+      }),
+    );
+
+    server.registerPrompt(
+      'care_alumni_cleanup_status_guide',
+      {
+        title: '校友授权下游清理只读检查',
+        description: '只读取脱敏状态计数；AI 不清理、不恢复授权，也不读取个人数据或证明。',
+        argsSchema: { consentId: recruitmentIdSchema },
+      },
+      ({ consentId }) => ({
+        messages: [{
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `请仅调用 care_alumni_cleanup_status_get 读取授权 ${consentId} 的脱敏清理状态和任务计数。不要索取自然人身份、联系方式、授权证明、下游证明摘要、错误正文或渠道数据；不要执行清理、重放或恢复授权。`,
+          },
+        }],
+      }),
+    );
+
+    server.registerPrompt(
+      'talent_lifecycle_follow_up_guide',
+      {
+        title: '人才全周期跟进检查清单',
+        description: '只读取脱敏阶段与待跟进状态；AI 不读取备注、不代替联系或改变业务状态。',
+        argsSchema: { candidateId: recruitmentIdSchema },
+      },
+      ({ candidateId }) => ({
+        messages: [{
+          role: 'user',
+          content: {
+            type: 'text',
+            text: `请读取候选人 ${candidateId} 的人才全周期脱敏摘要，说明当前阶段、待跟进数量和下一行动时间。不要索取姓名、联系方式、服务备注、面试评价、Offer 条款或离职原因；不要代替员工联系候选人，也不要创建或关闭跟进。`,
           },
         }],
       }),
@@ -1120,13 +1487,13 @@ export class McpRuntimeService {
     server.registerPrompt(
       'payroll_payslip_review_guide',
       {
-        title: '本人薪资单核对清单',
-        description: '指导 AI 只解释本人已发布薪资单，不推断他人薪酬或触发写操作。',
+        title: '本人薪资单核对清单（legacy 兼容）',
+        description: '指导 AI 只解释本人已发布薪资单；迁移后停止读取 ERP 旧工资数据。',
         argsSchema: { period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/) },
       },
       ({ period }) => ({ messages: [{ role: 'user', content: {
         type: 'text',
-        text: `请读取我 ${period} 的已发布薪资单，解释收入、个人扣款、预扣税和实发。不得推断或比较他人薪酬，不得触发重算、审批、锁定、导出或发薪。`,
+        text: `请读取我 ${period} 的已发布薪资单，解释收入、个人扣款、预扣税和实发。若返回专业工资迁移错误，停止读取 ERP 旧数据并提示我前往专业工资系统。不得推断或比较他人薪酬，不得触发重算、审批、锁定、导出或发薪。`,
       } }] }),
     );
 
@@ -1183,6 +1550,45 @@ export class McpRuntimeService {
     );
 
     server.registerPrompt(
+      'payroll_adjustment_review_guide',
+      {
+        title: '工资补发冲销控制核对指南',
+        description: '指导 AI 只读解释工资调整类型、原因、状态和摘要，不读取员工金额或执行调整。',
+        argsSchema: { adjustmentId: recruitmentIdSchema },
+      },
+      ({ adjustmentId }) => ({ messages: [{ role: 'user', content: {
+        type: 'text',
+        text: `请读取工资调整 ${adjustmentId} 的脱敏控制状态，解释补发、冲销或税务调整类型、标准原因、版本和摘要是否完整。不得索取员工、工资金额、更正输入或密文；不得准备、批准、锁定、支付、扣回或税务重报。`,
+      } }] }),
+    );
+
+    server.registerPrompt(
+      'payroll_adjustment_tax_correction_review_guide',
+      {
+        title: '工资调整税务更正控制核对指南',
+        description: '指导 AI 只读核对更正清单、归档、审批和税局受理状态，不读取员工税额或执行申报。',
+        argsSchema: { filingId: recruitmentIdSchema },
+      },
+      ({ filingId }) => ({ messages: [{ role: 'user', content: {
+        type: 'text',
+        text: `请读取工资调整税务更正 ${filingId} 的脱敏控制状态，核对格式、内容摘要、WORM 证据、版本、审批和税局受理证据是否完整。不得索取员工、金额、税务正文、WORM 地址或税局凭据；不得制备、审批、提交或修改更正清单。`,
+      } }] }),
+    );
+
+    server.registerPrompt(
+      'payroll_annual_reconciliation_review_guide',
+      {
+        title: '年度工资代扣控制核对指南',
+        description: '指导 AI 只读解释年度代扣核对状态，不读取员工税额或代替个人税务申报。',
+        argsSchema: { reconciliationId: recruitmentIdSchema },
+      },
+      ({ reconciliationId }) => ({ messages: [{ role: 'user', content: {
+        type: 'text',
+        text: `请读取年度工资代扣核对 ${reconciliationId} 的脱敏控制状态，解释税年、期间范围、状态和证据摘要。不得索取员工、工资、税额、税表或税局证据；不得代替个人综合所得申报、承诺退补税结果或执行任何收付。`,
+      } }] }),
+    );
+
+    server.registerPrompt(
       'op_operating_summary_review_guide',
       {
         title: 'OP 经营摘要核对指南',
@@ -1207,12 +1613,39 @@ export class McpRuntimeService {
     );
 
     server.registerTool(
+      'marketing_side_effect_get',
+      {
+        title: '查询营销副作用可靠性状态',
+        description: '按当前租户返回通知或排期副作用的受控状态、尝试次数与错误码，不返回联系人或正文。风险等级 R1。',
+        inputSchema: { eventId: marketingEventIdSchema },
+        outputSchema: marketingSideEffectOutputSchema,
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      async ({ eventId }, extra) => this.tools.getMarketingSideEffect(eventId, extra),
+    );
+
+    server.registerTool(
       'approval_get_inbox',
       {
         title: '查询我的审批待办',
         description: '返回当前主体可处理的审批摘要，不接受租户参数且不返回表单正文。风险等级 R0。',
         outputSchema: approvalInboxOutputSchema,
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+        _meta: {
+          'com.gaoq/riskLevel': 'R0',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'direct',
+        },
       },
       async (extra) => this.tools.getApprovalInbox(extra),
     );
@@ -1224,7 +1657,17 @@ export class McpRuntimeService {
         description: '按当前主体权限返回审批详情；L3/L4 字段由应用服务脱敏。风险等级 R0。',
         inputSchema: { instanceId: z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/) },
         outputSchema: approvalInstanceOutputSchema,
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+        _meta: {
+          'com.gaoq/riskLevel': 'R0',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'direct',
+        },
       },
       async ({ instanceId }, extra) => this.tools.getApprovalInstance(instanceId, extra),
     );
@@ -1236,7 +1679,17 @@ export class McpRuntimeService {
         description: '返回当前主体有权读取的追加式审批动作，不包含租户字段或表单正文。风险等级 R0。',
         inputSchema: { instanceId: z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/) },
         outputSchema: approvalTimelineOutputSchema,
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+        _meta: {
+          'com.gaoq/riskLevel': 'R0',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'direct',
+        },
       },
       async ({ instanceId }, extra) => this.tools.getApprovalTimeline(instanceId, extra),
     );
@@ -1249,6 +1702,11 @@ export class McpRuntimeService {
         inputSchema: approvalOperationInputSchema,
         outputSchema: preparedOperationOutputSchema,
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: {
+          'com.gaoq/riskLevel': 'R1',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'prepare',
+        },
       },
       async ({ instanceId, expectedVersion, prepareKey }, extra) =>
         this.tools.prepareApprovalSubmit(instanceId, expectedVersion, prepareKey, extra),
@@ -1262,6 +1720,11 @@ export class McpRuntimeService {
         inputSchema: confirmationExecuteInputSchema,
         outputSchema: approvalWriteOutputSchema,
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: {
+          'com.gaoq/riskLevel': 'R1',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'execute',
+        },
       },
       async ({ operationId, confirmationCredential }, extra) =>
         this.tools.executeApprovalSubmit(operationId, confirmationCredential, extra),
@@ -1275,6 +1738,11 @@ export class McpRuntimeService {
         inputSchema: approvalOperationInputSchema,
         outputSchema: preparedOperationOutputSchema,
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: {
+          'com.gaoq/riskLevel': 'R1',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'prepare',
+        },
       },
       async ({ instanceId, expectedVersion, prepareKey }, extra) =>
         this.tools.prepareApprovalWithdraw(instanceId, expectedVersion, prepareKey, extra),
@@ -1288,6 +1756,11 @@ export class McpRuntimeService {
         inputSchema: confirmationExecuteInputSchema,
         outputSchema: approvalWriteOutputSchema,
         annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+        _meta: {
+          'com.gaoq/riskLevel': 'R1',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'execute',
+        },
       },
       async ({ operationId, confirmationCredential }, extra) =>
         this.tools.executeApprovalWithdraw(operationId, confirmationCredential, extra),
@@ -1305,6 +1778,11 @@ export class McpRuntimeService {
         },
         outputSchema: preparedOperationOutputSchema,
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: {
+          'com.gaoq/riskLevel': 'R2',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'prepare',
+        },
       },
       async (input, extra) => this.tools.prepareApprovalDecision(input, extra),
     );
@@ -1317,6 +1795,11 @@ export class McpRuntimeService {
         inputSchema: confirmationExecuteInputSchema,
         outputSchema: approvalWriteOutputSchema,
         annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+        _meta: {
+          'com.gaoq/riskLevel': 'R2',
+          'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema',
+          'com.gaoq/confirmationMode': 'execute',
+        },
       },
       async ({ operationId, confirmationCredential }, extra) =>
         this.tools.executeApprovalDecision(operationId, confirmationCredential, extra),
@@ -1430,6 +1913,38 @@ export class McpRuntimeService {
     );
 
     server.registerTool(
+      'knowledge_exam_run_get',
+      {
+        title: '查询本人考试运行脱敏状态',
+        description: '返回状态、时限和人工复核进度，不返回题目、答案、提交引用或评分证据。风险等级 R0。',
+        inputSchema: { id: recruitmentIdSchema },
+        outputSchema: z.object({ examRun: knowledgeExamRunSchema }),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      },
+      async ({ id }, extra) => this.tools.getKnowledgeExamRun(id, extra),
+    );
+
+    server.registerTool(
+      'knowledge_search',
+      {
+        title: '检索本人授权知识',
+        description: '仅检索当前有效任职按分配、部门及岗位授权的已发布课程，返回纯文本片段与偏移高亮。风险等级 R0。',
+        inputSchema: {
+          query: z.string().min(2).max(128).regex(/^[\p{L}\p{M}\p{N}\s._-]+$/u),
+          cursor: z.string().regex(/^[A-Za-z0-9_-]{16,256}$/).optional(),
+          limit: z.number().int().min(1).max(20).optional(),
+        },
+        outputSchema: knowledgeSearchOutputSchema,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      },
+      async ({ query, cursor, limit }, extra) => this.tools.searchKnowledge({
+        query,
+        ...(cursor === undefined ? {} : { cursor }),
+        ...(limit === undefined ? {} : { limit }),
+      }, extra),
+    );
+
+    server.registerTool(
       'care_case_get',
       {
         title: '查询离职案件脱敏进度',
@@ -1439,6 +1954,46 @@ export class McpRuntimeService {
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
       },
       async ({ id }, extra) => this.tools.getCareCase(id, extra),
+    );
+
+    server.registerTool(
+      'care_occasion_summary_get_self',
+      {
+        title: '查询本人关怀安排最小摘要',
+        description: '仅返回本人关怀开关和状态计数，不返回生日、联系方式、正文或证据。风险等级 R0。',
+        outputSchema: z.object({ occasionSummary: careOccasionSummarySchema }),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      },
+      async (extra) => this.tools.getMyCareOccasionSummary(extra),
+    );
+
+    server.registerTool(
+      'care_alumni_cleanup_status_get',
+      {
+        title: '查询校友授权下游清理脱敏状态',
+        description: '仅返回授权终止状态、总体清理状态和固定状态计数。风险等级 R0。',
+        inputSchema: { consentId: recruitmentIdSchema },
+        outputSchema: z.object({ cleanupStatus: careAlumniCleanupStatusSchema }),
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+        },
+      },
+      async ({ consentId }, extra) =>
+        this.tools.getCareAlumniCleanupStatus(consentId, extra),
+    );
+
+    server.registerTool(
+      'talent_lifecycle_get',
+      {
+        title: '查询人才全周期脱敏摘要',
+        description: '返回生命周期阶段、待跟进数量和下一行动时间，不返回身份或备注。风险等级 R0。',
+        inputSchema: { candidateId: recruitmentIdSchema },
+        outputSchema: z.object({ lifecycle: talentLifecycleSchema }).strict(),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      },
+      async ({ candidateId }, extra) => this.tools.getTalentLifecycle(candidateId, extra),
     );
 
     server.registerTool(
@@ -1470,8 +2025,8 @@ export class McpRuntimeService {
     server.registerTool(
       'payroll_payslip_get_self',
       {
-        title: '查询本人已发布薪资单',
-        description: '从已验证主体反查 ERP 员工，仅返回已锁定月份的本人 L4 薪资单。风险等级 R1。',
+        title: '查询本人已发布薪资单（legacy 兼容）',
+        description: '仅 legacy 模式从已验证主体反查 ERP 员工；external 模式失败关闭并引导专业工资系统。风险等级 R1。',
         inputSchema: { period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/) },
         outputSchema: z.object({ payslip: payrollPayslipSchema }),
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -1533,6 +2088,57 @@ export class McpRuntimeService {
         },
       },
       async ({ id }, extra) => this.tools.getPayrollCutoverReadiness(id, extra),
+    );
+
+    server.registerTool(
+      'payroll_adjustment_status_get',
+      {
+        title: '查询工资调整脱敏控制状态',
+        description: '只返回补发/冲销类型、原因码、状态和摘要；不返回员工、金额或更正输入。风险等级 R1。',
+        inputSchema: { id: recruitmentIdSchema },
+        outputSchema: z.object({ payrollAdjustment: payrollAdjustmentControlSchema }),
+        annotations: {
+          readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+        },
+      },
+      async ({ id }, extra) => this.tools.getPayrollAdjustmentStatus(id, extra),
+    );
+
+    server.registerTool(
+      'payroll_adjustment_tax_correction_status_get',
+      {
+        title: '查询工资调整税务更正脱敏控制状态',
+        description: '只返回更正清单、归档和税局受理控制字段；不返回员工、金额、税务正文或 WORM 地址。风险等级 R1。',
+        inputSchema: { id: recruitmentIdSchema },
+        outputSchema: z.object({
+          payrollAdjustmentTaxCorrection:
+            payrollAdjustmentTaxCorrectionControlSchema,
+        }),
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      async ({ id }, extra) =>
+        this.tools.getPayrollAdjustmentTaxCorrectionStatus(id, extra),
+    );
+
+    server.registerTool(
+      'payroll_annual_reconciliation_status_get',
+      {
+        title: '查询年度工资代扣脱敏控制状态',
+        description: '只返回税年、期间范围、状态和摘要；不返回员工、税额、税表或税局证据。风险等级 R1。',
+        inputSchema: { id: recruitmentIdSchema },
+        outputSchema: z.object({
+          annualPayrollReconciliation: annualPayrollReconciliationControlSchema,
+        }),
+        annotations: {
+          readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+        },
+      },
+      async ({ id }, extra) => this.tools.getAnnualPayrollReconciliationStatus(id, extra),
     );
 
     server.registerTool(
@@ -1618,7 +2224,7 @@ export class McpRuntimeService {
         title: '执行管理驾驶舱导出',
         description: '消费经 Passkey 强认证的一次性凭据并创建异步任务，返回可轮询资源链接。风险等级 R2。',
         inputSchema: confirmationExecuteInputSchema,
-        outputSchema: z.object({ export: analyticsExportSchema }),
+        outputSchema: z.object({ export: analyticsExportViewSchema }),
         annotations: {
           readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false,
         },
@@ -1762,6 +2368,30 @@ export class McpRuntimeService {
 function requiredResourceId(value: string | string[] | undefined): string {
   if (typeof value !== 'string' || !/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(value)) {
     throw new Error('MCP_RECRUITMENT_RESOURCE_ID_INVALID');
+  }
+  return value;
+}
+
+function requiredKnowledgeSearchQuery(value: string | string[] | undefined): string {
+  if (typeof value !== 'string') throw new Error('MCP_KNOWLEDGE_SEARCH_QUERY_INVALID');
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    throw new Error('MCP_KNOWLEDGE_SEARCH_QUERY_INVALID');
+  }
+  const normalized = decoded.normalize('NFKC').trim().replace(/\s+/gu, ' ');
+  if (
+    normalized.length < 2 ||
+    normalized.length > 128 ||
+    !/^[\p{L}\p{M}\p{N}\s._-]+$/u.test(normalized)
+  ) throw new Error('MCP_KNOWLEDGE_SEARCH_QUERY_INVALID');
+  return normalized;
+}
+
+function requiredMarketingEventId(value: string | string[] | undefined): string {
+  if (typeof value !== 'string' || !/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(value)) {
+    throw new Error('MCP_MARKETING_EVENT_ID_INVALID');
   }
   return value;
 }

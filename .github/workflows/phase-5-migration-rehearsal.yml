@@ -36,24 +36,27 @@ jobs:
   evidence:
     name: 验收三轮全量迁移与故障演练聚合证据
     needs: contract
-    runs-on:
-      - self-hosted
-      - linux
-      - x64
-      - phase-5-migration-rehearsal
+    runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: phase-5-migration-rehearsal
+    permissions:
+      contents: read
+      id-token: write
     env:
-      MIGRATION_REHEARSAL_EVIDENCE_PATH: /var/lib/gaoq/migration/phase-5-rehearsal.json
+      GAOQ_OIDC_POLICY: phase-5-migration-rehearsal
+      MIGRATION_REHEARSAL_EVIDENCE_OIDC_AUDIENCE: ${{ vars.MIGRATION_REHEARSAL_EVIDENCE_OIDC_AUDIENCE }}
+      MIGRATION_REHEARSAL_EVIDENCE_URL: ${{ vars.MIGRATION_REHEARSAL_EVIDENCE_URL }}
+      MIGRATION_REHEARSAL_EVIDENCE_SHA256: ${{ vars.MIGRATION_REHEARSAL_EVIDENCE_SHA256 }}
       MIGRATION_REHEARSAL_EXPECTED_ENVIRONMENT: ${{ vars.MIGRATION_REHEARSAL_ENVIRONMENT_NAME }}
       MIGRATION_REHEARSAL_EXPECTED_REGION: ${{ vars.MIGRATION_REHEARSAL_REGION }}
       MIGRATION_REHEARSAL_EXPECTED_COMMIT: ${{ github.sha }}
       MIGRATION_REHEARSAL_EXPECTED_API_IMAGE: ${{ vars.MIGRATION_REHEARSAL_API_IMAGE_DIGEST }}
       MIGRATION_REHEARSAL_EXPECTED_WORKER_IMAGE: ${{ vars.MIGRATION_REHEARSAL_WORKER_IMAGE_DIGEST }}
       MIGRATION_REHEARSAL_EXPECTED_WEB_IMAGE: ${{ vars.MIGRATION_REHEARSAL_WEB_IMAGE_DIGEST }}
+      MIGRATION_REHEARSAL_EXPECTED_WEBSITE_IMAGE: ${{ vars.MIGRATION_REHEARSAL_WEBSITE_IMAGE_DIGEST }}
       MIGRATION_REHEARSAL_EXPECTED_DEPLOYMENT_MANIFEST: ${{ vars.MIGRATION_REHEARSAL_DEPLOYMENT_MANIFEST_SHA256 }}
       MIGRATION_REHEARSAL_EXPECTED_SOURCE_SNAPSHOT: ${{ vars.MIGRATION_REHEARSAL_SOURCE_SNAPSHOT_SHA256 }}
       MIGRATION_REHEARSAL_EXPECTED_PACKAGE_MANIFEST: ${{ vars.MIGRATION_REHEARSAL_PACKAGE_MANIFEST_SHA256 }}
+      MIGRATION_REHEARSAL_EXPECTED_SIGNER_KEYSET_SHA256: ${{ vars.MIGRATION_REHEARSAL_SIGNER_KEYSET_SHA256 }}
     steps:
       - name: 检出受信任代码
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -64,6 +67,24 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22
+
+      - name: 固定 Runner 临时证据路径
+        shell: bash
+        run: >-
+          printf 'MIGRATION_REHEARSAL_EVIDENCE_PATH=%s\n'
+          "$RUNNER_TEMP/phase-5-migration-rehearsal.json"
+          >> "$GITHUB_ENV"
+
+      - name: 通过 GitHub OIDC 拉取脱敏迁移聚合证据
+        run: >-
+          node scripts/github/fetch-oidc-protected-input.mjs
+          --url "$MIGRATION_REHEARSAL_EVIDENCE_URL"
+          --audience "$MIGRATION_REHEARSAL_EVIDENCE_OIDC_AUDIENCE"
+          --policy "$GAOQ_OIDC_POLICY"
+          --output "$MIGRATION_REHEARSAL_EVIDENCE_PATH"
+          --sha256 "$MIGRATION_REHEARSAL_EVIDENCE_SHA256"
+          --max-bytes 1048576
+          --media-type application/json
 
       - name: 验证版本绑定与三轮全量迁移聚合证据
         env:

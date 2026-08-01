@@ -19,6 +19,10 @@ import {
   type AlumniConsentSummary,
 } from './application/care-application.service.js';
 import {
+  CareAlumniCleanupApplicationService,
+  type CareAlumniCleanupStatusSummary,
+} from './application/care-alumni-cleanup-application.service.js';
+import {
   CreateAlumniConsentDto,
   CreateOffboardingCaseDto,
   RecordCareTaskEvidenceDto,
@@ -35,6 +39,7 @@ const TASKS = new Set<CareTaskCode>([
 export class CareController {
   constructor(
     private readonly care: CareApplicationService,
+    private readonly alumniCleanup: CareAlumniCleanupApplicationService,
     private readonly audit: AuditService,
   ) {}
 
@@ -163,6 +168,31 @@ export class CareController {
       action: 'care.alumni_consent.withdraw', resourceType: 'care_alumni_consent',
       resourceId: result.consent.id, riskLevel: 'R2', outcome: 'success',
       metadata: { status: result.consent.status, version: result.consent.version },
+    });
+    return result;
+  }
+
+  @Get('alumni-consents/:id/cleanup-status')
+  @RequiredScopes('erp:care:alumni:cleanup:read')
+  async getAlumniCleanupStatus(
+    @Param('id') id: string,
+  ): Promise<CareAlumniCleanupStatusSummary> {
+    const consentId = this.id(id);
+    const result = await this.alumniCleanup.getStatus(consentId);
+    await this.audit.record({
+      action: 'care.alumni_cleanup.read',
+      resourceType: 'care_alumni_consent',
+      resourceId: consentId,
+      riskLevel: 'R1',
+      outcome: 'success',
+      metadata: {
+        consentStatus: result.consentStatus,
+        cleanupStatus: result.cleanupStatus,
+        pending: result.counts.pending,
+        dispatching: result.counts.dispatching,
+        completed: result.counts.completed,
+        dead: result.counts.dead,
+      },
     });
     return result;
   }

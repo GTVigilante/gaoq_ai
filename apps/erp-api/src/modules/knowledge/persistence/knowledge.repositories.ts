@@ -48,7 +48,22 @@ export class CourseVersionRepository extends TenantRepository {
       id: value.id, tenantId: value.tenantId, courseCode: value.courseCode,
       revision: value.revision, title: value.title, contentRef: value.contentRef,
       questionBankRef: value.questionBankRef, questionBankDigest: value.questionBankDigest,
-      passingScoreBps: value.passingScoreBps, status: value.status, version: value.version,
+      passingScoreBps: value.passingScoreBps,
+      questionMode: value.questionMode ?? (value.questionBankRef === null ? null : 'objective'),
+      timeLimitMinutes: value.timeLimitMinutes ?? (value.questionBankRef === null ? null : 60),
+      maxAttempts: value.maxAttempts ?? (value.questionBankRef === null ? null : 3),
+      gradingPolicyVersion: value.gradingPolicyVersion ??
+        (value.questionBankRef === null ? null : 'objective-auto-v1'),
+      passingRule: value.passingRule ?? (value.questionBankRef === null ? null : 'score_threshold'),
+      gradingSlaMinutes: value.gradingSlaMinutes ?? (value.questionBankRef === null ? null : 5),
+      manualReviewSlaMinutes: value.manualReviewSlaMinutes ??
+        (value.questionBankRef === null ? null : 1_440),
+      manualReviewRequired: value.manualReviewRequired ?? false,
+      audienceMode: value.audienceMode ?? 'assigned_only',
+      audienceDepartmentIds: Object.freeze([...(value.audienceDepartmentIds ?? [])]),
+      audiencePositionIds: Object.freeze([...(value.audiencePositionIds ?? [])]),
+      status: value.status,
+      version: value.version,
       createdAt: value.createdAt.toISOString(), updatedAt: value.updatedAt.toISOString(),
     });
   }
@@ -63,14 +78,103 @@ export class CourseVersionRepository extends TenantRepository {
       id: value.id, tenantId: value.tenantId, courseCode: value.courseCode,
       revision: value.revision, title: value.title, contentRef: value.contentRef,
       questionBankRef: value.questionBankRef, questionBankDigest: value.questionBankDigest,
-      passingScoreBps: value.passingScoreBps, status: value.status, version: value.version,
+      passingScoreBps: value.passingScoreBps,
+      questionMode: value.questionMode ?? (value.questionBankRef === null ? null : 'objective'),
+      timeLimitMinutes: value.timeLimitMinutes ?? (value.questionBankRef === null ? null : 60),
+      maxAttempts: value.maxAttempts ?? (value.questionBankRef === null ? null : 3),
+      gradingPolicyVersion: value.gradingPolicyVersion ??
+        (value.questionBankRef === null ? null : 'objective-auto-v1'),
+      passingRule: value.passingRule ?? (value.questionBankRef === null ? null : 'score_threshold'),
+      gradingSlaMinutes: value.gradingSlaMinutes ?? (value.questionBankRef === null ? null : 5),
+      manualReviewSlaMinutes: value.manualReviewSlaMinutes ??
+        (value.questionBankRef === null ? null : 1_440),
+      manualReviewRequired: value.manualReviewRequired ?? false,
+      audienceMode: value.audienceMode ?? 'assigned_only',
+      audienceDepartmentIds: Object.freeze([...(value.audienceDepartmentIds ?? [])]),
+      audiencePositionIds: Object.freeze([...(value.audiencePositionIds ?? [])]),
+      status: value.status,
+      version: value.version,
       createdAt: value.createdAt.toISOString(), updatedAt: value.updatedAt.toISOString(),
+    })));
+  }
+
+  async findSearchEligible(
+    assignedCourseVersionIds: readonly string[],
+    departmentIds: readonly string[],
+    positionIds: readonly string[],
+  ): Promise<readonly CourseVersion[]> {
+    if (
+      assignedCourseVersionIds.length > 200 ||
+      departmentIds.length > 500 ||
+      positionIds.length > 200
+    ) throw new Error('知识搜索授权投影超过上限');
+    const authorization: Record<string, unknown>[] = [];
+    if (assignedCourseVersionIds.length > 0) {
+      authorization.push({ id: { $in: [...assignedCourseVersionIds] } });
+    }
+    if (departmentIds.length > 0 || positionIds.length > 0) authorization.push({
+      audienceMode: 'employment_scope',
+      $and: [
+        {
+          $or: [
+            { audienceDepartmentIds: { $size: 0 } },
+            ...(departmentIds.length === 0
+              ? []
+              : [{ audienceDepartmentIds: { $in: [...departmentIds] } }]),
+          ],
+        },
+        {
+          $or: [
+            { audiencePositionIds: { $size: 0 } },
+            ...(positionIds.length === 0
+              ? []
+              : [{ audiencePositionIds: { $in: [...positionIds] } }]),
+          ],
+        },
+      ],
+    });
+    if (authorization.length === 0) return Object.freeze([]);
+    const values = await this.records.find({
+      tenantId: this.tenantId(),
+      status: 'published',
+      $or: authorization,
+    }).sort({ courseCode: 1, revision: -1, id: 1 }).limit(201).lean().exec();
+    if (values.length > 200) throw new Error('知识搜索授权课程超过 200 条上限');
+    return Object.freeze(values.map((value) => Object.freeze({
+      id: value.id,
+      tenantId: value.tenantId,
+      courseCode: value.courseCode,
+      revision: value.revision,
+      title: value.title,
+      contentRef: value.contentRef,
+      questionBankRef: value.questionBankRef,
+      questionBankDigest: value.questionBankDigest,
+      passingScoreBps: value.passingScoreBps,
+      questionMode: value.questionMode ?? (value.questionBankRef === null ? null : 'objective'),
+      timeLimitMinutes: value.timeLimitMinutes ?? (value.questionBankRef === null ? null : 60),
+      maxAttempts: value.maxAttempts ?? (value.questionBankRef === null ? null : 3),
+      gradingPolicyVersion: value.gradingPolicyVersion ??
+        (value.questionBankRef === null ? null : 'objective-auto-v1'),
+      passingRule: value.passingRule ?? (value.questionBankRef === null ? null : 'score_threshold'),
+      gradingSlaMinutes: value.gradingSlaMinutes ?? (value.questionBankRef === null ? null : 5),
+      manualReviewSlaMinutes: value.manualReviewSlaMinutes ??
+        (value.questionBankRef === null ? null : 1_440),
+      manualReviewRequired: value.manualReviewRequired ?? false,
+      audienceMode: value.audienceMode ?? 'assigned_only',
+      audienceDepartmentIds: Object.freeze([...(value.audienceDepartmentIds ?? [])]),
+      audiencePositionIds: Object.freeze([...(value.audiencePositionIds ?? [])]),
+      status: value.status,
+      version: value.version,
+      createdAt: value.createdAt.toISOString(),
+      updatedAt: value.updatedAt.toISOString(),
     })));
   }
 
   async insert(course: CourseVersion, session: ClientSession): Promise<void> {
     this.assertTenant(course.tenantId);
     await this.records.create([{ ...course,
+      audienceDepartmentIds: [...course.audienceDepartmentIds],
+      audiencePositionIds: [...course.audiencePositionIds],
       createdAt: new Date(course.createdAt), updatedAt: new Date(course.updatedAt),
     }], { session });
   }
@@ -184,6 +288,13 @@ export class ExamAttemptRepository extends TenantRepository {
     return (value?.attemptNumber ?? 0) + 1;
   }
 
+  async countByAssignment(assignmentId: string): Promise<number> {
+    return this.records.countDocuments({
+      tenantId: this.tenantId(),
+      assignmentId,
+    }).exec();
+  }
+
   async insert(attempt: ExamAttempt, session: ClientSession): Promise<void> {
     this.assertTenant(attempt.tenantId);
     await this.records.create([{ ...attempt, gradedAt: new Date(attempt.gradedAt) }], { session });
@@ -194,6 +305,11 @@ export class ExamAttemptRepository extends TenantRepository {
       id: value.id, tenantId: value.tenantId, assignmentId: value.assignmentId,
       attemptNumber: value.attemptNumber, submissionRef: value.submissionRef,
       questionSetDigest: value.questionSetDigest, gradingEvidenceId: value.gradingEvidenceId,
+      questionMode: value.questionMode ?? 'objective',
+      gradingPolicyVersion: value.gradingPolicyVersion ?? 'objective-auto-v1',
+      passingRule: value.passingRule ?? 'score_threshold',
+      manualReviewEvidenceId: value.manualReviewEvidenceId ?? null,
+      submissionReason: value.submissionReason ?? 'learner',
       scoreBps: value.scoreBps, passed: value.passed, gradedAt: value.gradedAt.toISOString(),
     });
   }

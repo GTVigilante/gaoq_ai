@@ -11,6 +11,7 @@ import {
 
 const HASH = /^[A-Za-z0-9_-]{43}$/;
 const SOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const SOURCE_VERSION = /^[\x21-\x7E]{1,64}$/;
 
 @Schema({ collection: 'data_migration_runs', timestamps: true, versionKey: false, id: false })
 export class DataMigrationRunRecord {
@@ -50,7 +51,8 @@ export class DataMigrationItemRecord {
   @Prop({ type: String, required: true, immutable: true, match: ULID_PATTERN }) runId!: string;
   @Prop({ type: Number, required: true, immutable: true, min: 1 }) sequence!: number;
   @Prop({ type: String, required: true, immutable: true, match: SOURCE_ID }) sourceRecordId!: string;
-  @Prop({ type: String, required: true, immutable: true, maxlength: 64 }) sourceVersion!: string;
+  @Prop({ type: String, required: true, immutable: true, match: SOURCE_VERSION })
+  sourceVersion!: string;
   @Prop({ type: String, required: true, immutable: true, enum: DATA_MIGRATION_ENTITY_TYPES })
   entityType!: DataMigrationEntityType;
   @Prop({ type: String, required: true, immutable: true, match: HASH }) payloadHash!: string;
@@ -78,7 +80,7 @@ export class DataMigrationMappingRecord {
   @Prop({ type: String, required: true, immutable: true, enum: DATA_MIGRATION_ENTITY_TYPES })
   entityType!: DataMigrationEntityType;
   @Prop({ type: String, required: true, immutable: true, match: SOURCE_ID }) sourceRecordId!: string;
-  @Prop({ type: String, required: true, maxlength: 64 }) sourceVersion!: string;
+  @Prop({ type: String, required: true, match: SOURCE_VERSION }) sourceVersion!: string;
   @Prop({ type: String, required: true, match: HASH }) payloadHash!: string;
   @Prop({ type: String, required: true, maxlength: 128 }) targetId!: string;
   @Prop({ type: Number, required: true, min: 1 }) targetVersion!: number;

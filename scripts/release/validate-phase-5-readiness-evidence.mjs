@@ -1,9 +1,16 @@
-import { createHash } from 'node:crypto';
+import {
+  createHash,
+  createPublicKey,
+  generateKeyPairSync,
+  sign,
+  verify,
+} from 'node:crypto';
 import { lstat, readFile } from 'node:fs/promises';
 
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
 const COMMIT = /^[a-f0-9]{40}$/u;
 const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/u;
+const SIGNATURE = /^[A-Za-z0-9_-]{86}$/u;
 const ENVIRONMENT_NAME = /^[a-z][a-z0-9-]{2,31}$/u;
 const REGION = /^[a-z0-9-]{2,32}$/u;
 const DOMAINS = [
@@ -27,6 +34,19 @@ const SIGNOFF_ROLES = Object.freeze({
   'production-images': ['platform_owner', 'security_owner', 'sre_owner'],
   'supply-chain': ['architecture_owner', 'legal_owner', 'security_owner'],
 });
+const SIGNER_ROLES = Object.freeze(
+  [...new Set(Object.values(SIGNOFF_ROLES).flat())].sort(),
+);
+const SIGNOFF_SIGNATURE_SUITE = 'gaoq.phase5.readiness.signoff.v1';
+const GATE_SECTION_FIELDS = Object.freeze({
+  authorization: 'authorization',
+  'business-uat': 'businessUat',
+  'engineering-quality': 'engineeringQuality',
+  operations: 'operations',
+  'privacy-compliance': 'privacyCompliance',
+  'production-images': 'productionImages',
+  'supply-chain': 'supplyChain',
+});
 const WORKFLOW_LOCATION = new URL(
   '../../.github/workflows/phase-5-readiness.yml',
   import.meta.url,
@@ -42,9 +62,21 @@ if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
   process.stdout.write('Phase 5 七类发布就绪证据门禁自测通过。\n');
 } else if (argumentsList.length === 1 && argumentsList[0] === '--print-contract') {
   process.stdout.write(`${JSON.stringify({
-    formatVersion: 1,
+    formatVersion: 2,
     suite: 'gaoq.phase5.readiness.contract',
     gates: Object.entries(GATE_SUITES).map(([name, suite]) => ({ name, suite })),
+    signerRoles: SIGNER_ROLES,
+    signatureSuite: SIGNOFF_SIGNATURE_SUITE,
+    signatureAlgorithm: 'Ed25519',
+    signatureEncoding: 'base64url-unpadded',
+    signerKeysetHash: 'sha256(canonical(sorted[{role,keyId}]))',
+    gatePayloadFields: [
+      'formatVersion', 'suite', 'evidenceId', 'gateName', 'environment', 'source',
+      'section', 'signerKeysetHash',
+    ],
+    signoffPayloadFields: [
+      'suite', 'gateName', 'gatePayloadHash', 'role', 'keyId', 'signedAt',
+    ],
     harnessSha256: HARNESS_DIGEST,
   }, null, 2)}\n`);
 } else {
@@ -63,10 +95,11 @@ if (argumentsList.length === 1 && argumentsList[0] === '--self-test') {
     enforceEnvironment,
   );
   process.stdout.write(`${JSON.stringify({
-    formatVersion: 1,
+    formatVersion: 2,
     suite: 'gaoq.phase5.readiness.verdict-bundle',
     evidenceId: result.evidenceId,
     commitSha: result.commitSha,
+    signerKeysetHash: result.signerKeysetHash,
     verdicts: result.verdicts,
     bundleChecksum: digest(canonical(result)),
   }, null, 2)}\n`);
@@ -77,13 +110,26 @@ function validateEvidence(document, enforceEnvironment = false) {
   object(document, [
     'formatVersion', 'suite', 'evidenceId', 'environment', 'source',
     'engineeringQuality', 'supplyChain', 'productionImages', 'authorization',
-    'businessUat', 'privacyCompliance', 'operations',
+    'businessUat', 'privacyCompliance', 'operations', 'signingAuthorities',
   ], 'PHASE5_READINESS_DOCUMENT_INVALID');
-  equal(document.formatVersion, 1, 'PHASE5_READINESS_FORMAT_INVALID');
-  equal(document.suite, 'gaoq.phase5.readiness.v1', 'PHASE5_READINESS_SUITE_INVALID');
+  equal(document.formatVersion, 2, 'PHASE5_READINESS_FORMAT_INVALID');
+  equal(document.suite, 'gaoq.phase5.readiness.v2', 'PHASE5_READINESS_SUITE_INVALID');
   pattern(document.evidenceId, ULID, 'PHASE5_READINESS_EVIDENCE_ID_INVALID');
   const environment = validateEnvironment(document.environment, enforceEnvironment);
   const source = validateSource(document.source, enforceEnvironment);
+  const authorities = validateSigningAuthorities(document.signingAuthorities);
+  if (enforceEnvironment) {
+    pattern(
+      process.env.READINESS_EXPECTED_SIGNER_KEYSET_SHA256,
+      SHA256,
+      'PHASE5_READINESS_EXPECTED_SIGNER_KEYSET_REQUIRED',
+    );
+    equal(
+      authorities.keysetHash,
+      process.env.READINESS_EXPECTED_SIGNER_KEYSET_SHA256,
+      'PHASE5_READINESS_SIGNER_KEYSET_MISMATCH',
+    );
+  }
   const sections = [
     ['engineering-quality', document.engineeringQuality, validateEngineeringQuality],
     ['supply-chain', document.supplyChain, validateSupplyChain],
@@ -95,12 +141,25 @@ function validateEvidence(document, enforceEnvironment = false) {
     ['operations', document.operations, validateOperations],
   ];
   const rawEvidenceHashes = [];
-  const signoffEvidenceIds = [];
+  const allSignoffs = [];
   const verdicts = sections.map(([name, section, validator]) => {
-    const control = validateControl(section.control, name, environment.evaluatedAt);
+    const control = validateControlMetadata(section.control, name, environment.evaluatedAt);
     rawEvidenceHashes.push(control.rawEvidenceHash);
-    signoffEvidenceIds.push(...control.signoffs.map((signoff) => signoff.evidenceId));
     validator(section);
+    const gatePayloadHash = digest(readinessGatePayload(
+      document,
+      name,
+      section,
+      authorities.keysetHash,
+    ));
+    validateSignoffSignatures(
+      control.signoffs,
+      authorities.byRole,
+      name,
+      gatePayloadHash,
+      environment.evaluatedAt,
+    );
+    allSignoffs.push(...control.signoffs);
     return Object.freeze({
       name,
       suite: GATE_SUITES[name],
@@ -115,6 +174,8 @@ function validateEvidence(document, enforceEnvironment = false) {
           images: source.images,
           deploymentManifestHash: source.deploymentManifestHash,
         },
+        signerKeysetHash: authorities.keysetHash,
+        gatePayloadHash,
         section,
       })),
       completedAt: control.completedAt,
@@ -124,15 +185,16 @@ function validateEvidence(document, enforceEnvironment = false) {
   if (
     new Set(verdicts.map((item) => item.evidenceId)).size !== verdicts.length ||
     new Set(verdicts.map((item) => item.evidenceHash)).size !== verdicts.length ||
-    new Set(rawEvidenceHashes).size !== verdicts.length ||
-    new Set(signoffEvidenceIds).size !== signoffEvidenceIds.length
+    new Set(rawEvidenceHashes).size !== verdicts.length
   ) fail('PHASE5_READINESS_GATE_EVIDENCE_REUSED');
+  validateSignoffSeparation(allSignoffs);
   return Object.freeze({
     evidenceId: document.evidenceId,
     commitSha: source.commitSha,
     images: source.images,
     deploymentManifestHash: source.deploymentManifestHash,
     environment: document.environment,
+    signerKeysetHash: authorities.keysetHash,
     verdicts,
   });
 }
@@ -184,11 +246,11 @@ function validateSource(source, enforceEnvironment) {
     'commitSha', 'images', 'deploymentManifestHash', 'harnessSha256',
   ], 'PHASE5_READINESS_SOURCE_INVALID');
   pattern(source.commitSha, COMMIT, 'PHASE5_READINESS_COMMIT_INVALID');
-  object(source.images, ['api', 'worker', 'web'], 'PHASE5_READINESS_IMAGES_INVALID');
+  object(source.images, ['api', 'worker', 'web', 'website'], 'PHASE5_READINESS_IMAGES_INVALID');
   for (const value of Object.values(source.images)) {
     pattern(value, SHA256, 'PHASE5_READINESS_IMAGES_INVALID');
   }
-  if (new Set(Object.values(source.images)).size !== 3) {
+  if (new Set(Object.values(source.images)).size !== 4) {
     fail('PHASE5_READINESS_IMAGES_INVALID');
   }
   pattern(
@@ -203,14 +265,15 @@ function validateSource(source, enforceEnvironment) {
       api: process.env.READINESS_EXPECTED_API_IMAGE,
       worker: process.env.READINESS_EXPECTED_WORKER_IMAGE,
       web: process.env.READINESS_EXPECTED_WEB_IMAGE,
+      website: process.env.READINESS_EXPECTED_WEBSITE_IMAGE,
       manifest: process.env.READINESS_EXPECTED_DEPLOYMENT_MANIFEST,
     };
     pattern(expected.commitSha, COMMIT, 'PHASE5_READINESS_EXPECTED_SOURCE_REQUIRED');
-    for (const field of ['api', 'worker', 'web', 'manifest']) {
+    for (const field of ['api', 'worker', 'web', 'website', 'manifest']) {
       pattern(expected[field], SHA256, 'PHASE5_READINESS_EXPECTED_SOURCE_REQUIRED');
     }
     equal(source.commitSha, expected.commitSha, 'PHASE5_READINESS_COMMIT_MISMATCH');
-    for (const image of ['api', 'worker', 'web']) {
+    for (const image of ['api', 'worker', 'web', 'website']) {
       equal(source.images[image], expected[image], 'PHASE5_READINESS_IMAGE_MISMATCH');
     }
     equal(
@@ -222,7 +285,7 @@ function validateSource(source, enforceEnvironment) {
   return source;
 }
 
-function validateControl(control, gateName, evaluatedAt) {
+function validateControlMetadata(control, gateName, evaluatedAt) {
   object(control, [
     'evidenceId', 'rawEvidenceHash', 'completedAt', 'expiresAt', 'signoffs',
   ], 'PHASE5_READINESS_CONTROL_INVALID');
@@ -234,7 +297,7 @@ function validateControl(control, gateName, evaluatedAt) {
     completedAt > evaluatedAt || evaluatedAt - completedAt > 30 * 24 * 60 * 60 * 1_000 ||
     expiresAt <= evaluatedAt || expiresAt - completedAt > 90 * 24 * 60 * 60 * 1_000
   ) fail('PHASE5_READINESS_CONTROL_STALE');
-  validateSignoffs(control.signoffs, SIGNOFF_ROLES[gateName], completedAt, evaluatedAt);
+  validateSignoffMetadata(control.signoffs, SIGNOFF_ROLES[gateName], completedAt, evaluatedAt);
   return control;
 }
 
@@ -267,11 +330,15 @@ function validateSupplyChain(section) {
   for (const field of [
     'criticalVulnerabilities', 'highVulnerabilities', 'unexpiredSecurityExceptions',
   ]) equal(section[field], 0, 'PHASE5_READINESS_SUPPLY_CHAIN_FAILED');
-  object(section.sbomHashes, ['api', 'worker', 'web'], 'PHASE5_READINESS_SBOM_INVALID');
+  object(
+    section.sbomHashes,
+    ['api', 'worker', 'web', 'website'],
+    'PHASE5_READINESS_SBOM_INVALID',
+  );
   for (const value of Object.values(section.sbomHashes)) {
     pattern(value, SHA256, 'PHASE5_READINESS_SBOM_INVALID');
   }
-  if (new Set(Object.values(section.sbomHashes)).size !== 3) {
+  if (new Set(Object.values(section.sbomHashes)).size !== 4) {
     fail('PHASE5_READINESS_SBOM_INVALID');
   }
 }
@@ -280,8 +347,12 @@ function validateProductionImages(section, expectedImages) {
   object(section, [
     'control', 'images', 'admissionPolicyEnforced',
   ], 'PHASE5_READINESS_PRODUCTION_IMAGES_INVALID');
-  object(section.images, ['api', 'worker', 'web'], 'PHASE5_READINESS_PRODUCTION_IMAGES_INVALID');
-  for (const name of ['api', 'worker', 'web']) {
+  object(
+    section.images,
+    ['api', 'worker', 'web', 'website'],
+    'PHASE5_READINESS_PRODUCTION_IMAGES_INVALID',
+  );
+  for (const name of ['api', 'worker', 'web', 'website']) {
     const image = section.images[name];
     object(image, [
       'digest', 'signatureVerified', 'slsaProvenanceVerified', 'sbomHash', 'nonRoot',
@@ -386,65 +457,322 @@ function validateOperations(section) {
   pattern(section.wormEvidenceHash, SHA256, 'PHASE5_READINESS_OPERATIONS_INVALID');
 }
 
-function validateSignoffs(signoffs, expectedRoles, completedAt, evaluatedAt) {
+function validateSigningAuthorities(authorities) {
+  if (!Array.isArray(authorities) || authorities.length !== SIGNER_ROLES.length) {
+    fail('PHASE5_READINESS_SIGNING_AUTHORITIES_INCOMPLETE');
+  }
+  const roles = [];
+  const keyIds = new Set();
+  const byRole = new Map();
+  const keyset = [];
+  for (const authority of authorities) {
+    object(
+      authority,
+      ['role', 'algorithm', 'keyId', 'publicKeySpkiBase64'],
+      'PHASE5_READINESS_SIGNING_AUTHORITY_INVALID',
+    );
+    if (!SIGNER_ROLES.includes(authority.role)) {
+      fail('PHASE5_READINESS_SIGNING_AUTHORITY_INVALID');
+    }
+    equal(authority.algorithm, 'Ed25519', 'PHASE5_READINESS_SIGNING_AUTHORITY_INVALID');
+    pattern(authority.keyId, SHA256, 'PHASE5_READINESS_SIGNING_AUTHORITY_INVALID');
+    const publicKey = publicKeyFromSpkiBase64(authority.publicKeySpkiBase64);
+    equal(
+      authority.keyId,
+      publicKeyHash(publicKey),
+      'PHASE5_READINESS_SIGNING_AUTHORITY_KEY_MISMATCH',
+    );
+    roles.push(authority.role);
+    keyIds.add(authority.keyId);
+    byRole.set(authority.role, Object.freeze({ keyId: authority.keyId, publicKey }));
+    keyset.push(Object.freeze({ role: authority.role, keyId: authority.keyId }));
+  }
+  exactStringSet(
+    roles,
+    SIGNER_ROLES,
+    'PHASE5_READINESS_SIGNING_AUTHORITIES_INCOMPLETE',
+  );
+  if (keyIds.size !== SIGNER_ROLES.length || byRole.size !== SIGNER_ROLES.length) {
+    fail('PHASE5_READINESS_SIGNING_AUTHORITIES_NOT_INDEPENDENT');
+  }
+  return Object.freeze({ byRole, keysetHash: signerKeysetHash(keyset) });
+}
+
+function validateSignoffMetadata(signoffs, expectedRoles, completedAt, evaluatedAt) {
   if (!Array.isArray(signoffs) || signoffs.length !== expectedRoles.length) {
     fail('PHASE5_READINESS_SIGNOFFS_INCOMPLETE');
   }
   const roles = [];
-  const evidenceIds = new Set();
   for (const signoff of signoffs) {
-    object(signoff, ['role', 'evidenceId', 'signedAt'], 'PHASE5_READINESS_SIGNOFF_INVALID');
+    object(signoff, [
+      'role', 'actorHash', 'decision', 'evidenceId', 'evidenceHash', 'approvedAt', 'signedAt',
+      'algorithm', 'keyId', 'signedPayloadSha256', 'signature',
+    ], 'PHASE5_READINESS_SIGNOFF_INVALID');
+    if (!expectedRoles.includes(signoff.role)) fail('PHASE5_READINESS_SIGNOFF_INVALID');
+    pattern(signoff.actorHash, SHA256, 'PHASE5_READINESS_SIGNOFF_INVALID');
+    equal(signoff.decision, 'approved', 'PHASE5_READINESS_SIGNOFF_REJECTED');
     pattern(signoff.evidenceId, ULID, 'PHASE5_READINESS_SIGNOFF_INVALID');
-    const signedAt = timestamp(signoff.signedAt);
-    if (signedAt < completedAt || signedAt > evaluatedAt) {
+    pattern(signoff.evidenceHash, SHA256, 'PHASE5_READINESS_SIGNOFF_INVALID');
+    const approvedAt = timestamp(signoff.approvedAt);
+    if (approvedAt < completedAt || approvedAt > evaluatedAt) {
       fail('PHASE5_READINESS_SIGNOFF_TIME_INVALID');
     }
     roles.push(signoff.role);
+  }
+  exactStringSet(roles, expectedRoles, 'PHASE5_READINESS_SIGNOFFS_INCOMPLETE');
+}
+
+function validateSignoffSignatures(
+  signoffs,
+  signingAuthorities,
+  gateName,
+  gatePayloadHash,
+  evaluatedAt,
+) {
+  const signatures = new Set();
+  for (const signoff of signoffs) {
+    equal(signoff.algorithm, 'Ed25519', 'PHASE5_READINESS_SIGNOFF_PROOF_INVALID');
+    pattern(signoff.keyId, SHA256, 'PHASE5_READINESS_SIGNOFF_PROOF_INVALID');
+    pattern(
+      signoff.signedPayloadSha256,
+      SHA256,
+      'PHASE5_READINESS_SIGNOFF_PROOF_INVALID',
+    );
+    pattern(signoff.signature, SIGNATURE, 'PHASE5_READINESS_SIGNOFF_PROOF_INVALID');
+    const approvedAt = timestamp(signoff.approvedAt);
+    const signedAt = timestamp(signoff.signedAt);
+    if (
+      signedAt < approvedAt ||
+      signedAt - approvedAt > 24 * 60 * 60 * 1_000 ||
+      signedAt > evaluatedAt
+    ) fail('PHASE5_READINESS_SIGNOFF_SIGNATURE_TIME_INVALID');
+    const authority = signingAuthorities.get(signoff.role);
+    if (authority === undefined) fail('PHASE5_READINESS_SIGNOFF_AUTHORITY_INVALID');
+    equal(signoff.keyId, authority.keyId, 'PHASE5_READINESS_SIGNOFF_KEY_MISMATCH');
+    const payload = readinessSignoffPayload(gateName, gatePayloadHash, signoff);
+    equal(
+      signoff.signedPayloadSha256,
+      digest(payload),
+      'PHASE5_READINESS_SIGNOFF_PAYLOAD_MISMATCH',
+    );
+    const signature = decodeSignature(signoff.signature);
+    if (!verify(null, Buffer.from(payload, 'utf8'), authority.publicKey, signature)) {
+      fail('PHASE5_READINESS_SIGNOFF_SIGNATURE_INVALID');
+    }
+    signatures.add(signoff.signature);
+  }
+  if (signatures.size !== signoffs.length) fail('PHASE5_READINESS_SIGNOFF_PROOF_REUSED');
+}
+
+function validateSignoffSeparation(signoffs) {
+  const roleActors = new Map();
+  const actorRoles = new Map();
+  const evidenceIds = new Set();
+  const evidenceHashes = new Set();
+  const signatures = new Set();
+  for (const signoff of signoffs) {
+    const existingActor = roleActors.get(signoff.role);
+    if (existingActor !== undefined && existingActor !== signoff.actorHash) {
+      fail('PHASE5_READINESS_SIGNOFF_ACTOR_INCONSISTENT');
+    }
+    const existingRole = actorRoles.get(signoff.actorHash);
+    if (existingRole !== undefined && existingRole !== signoff.role) {
+      fail('PHASE5_READINESS_SIGNOFF_ACTORS_NOT_INDEPENDENT');
+    }
+    roleActors.set(signoff.role, signoff.actorHash);
+    actorRoles.set(signoff.actorHash, signoff.role);
     evidenceIds.add(signoff.evidenceId);
+    evidenceHashes.add(signoff.evidenceHash);
+    signatures.add(signoff.signature);
   }
   if (
-    canonical(roles.sort()) !== canonical([...expectedRoles].sort()) ||
-    evidenceIds.size !== expectedRoles.length
-  ) fail('PHASE5_READINESS_SIGNOFFS_INCOMPLETE');
+    roleActors.size !== SIGNER_ROLES.length ||
+    actorRoles.size !== SIGNER_ROLES.length ||
+    evidenceIds.size !== signoffs.length ||
+    evidenceHashes.size !== signoffs.length ||
+    signatures.size !== signoffs.length
+  ) fail('PHASE5_READINESS_SIGNOFF_EVIDENCE_REUSED');
+}
+
+function readinessGatePayload(document, gateName, section, signerKeysetHashValue) {
+  return canonical({
+    formatVersion: document.formatVersion,
+    suite: document.suite,
+    evidenceId: document.evidenceId,
+    gateName,
+    environment: document.environment,
+    source: document.source,
+    section: {
+      ...section,
+      control: {
+        evidenceId: section.control.evidenceId,
+        rawEvidenceHash: section.control.rawEvidenceHash,
+        completedAt: section.control.completedAt,
+        expiresAt: section.control.expiresAt,
+        signoffs: section.control.signoffs.map((signoff) => ({
+          role: signoff.role,
+          actorHash: signoff.actorHash,
+          decision: signoff.decision,
+          evidenceId: signoff.evidenceId,
+          evidenceHash: signoff.evidenceHash,
+          approvedAt: signoff.approvedAt,
+        })),
+      },
+    },
+    signerKeysetHash: signerKeysetHashValue,
+  });
+}
+
+function readinessSignoffPayload(gateName, gatePayloadHash, signoff) {
+  return canonical({
+    suite: SIGNOFF_SIGNATURE_SUITE,
+    gateName,
+    gatePayloadHash,
+    role: signoff.role,
+    keyId: signoff.keyId,
+    signedAt: signoff.signedAt,
+  });
 }
 
 function runSelfTest() {
   const valid = fixture();
   validateEvidence(valid);
+
   const tenantEscape = fixture();
   tenantEscape.authorization.crossTenantDenied -= 1;
   expectFailure(() => validateEvidence(tenantEscape), 'PHASE5_READINESS_TENANT_ESCAPE');
+
   const unsignedUat = fixture();
   unsignedUat.businessUat.control.signoffs.pop();
   expectFailure(() => validateEvidence(unsignedUat), 'PHASE5_READINESS_SIGNOFFS_INCOMPLETE');
+
+  const forgedSignature = fixture();
+  forgedSignature.authorization.control.signoffs[0].signature =
+    `${forgedSignature.authorization.control.signoffs[0].signature[0] === 'A' ? 'B' : 'A'}${
+      forgedSignature.authorization.control.signoffs[0].signature.slice(1)
+    }`;
+  expectFailure(
+    () => validateEvidence(forgedSignature),
+    'PHASE5_READINESS_SIGNOFF_SIGNATURE_INVALID',
+  );
+
+  const gateTamperedAfterSigning = fixture();
+  gateTamperedAfterSigning.engineeringQuality.testCases += 1;
+  expectFailure(
+    () => validateEvidence(gateTamperedAfterSigning),
+    'PHASE5_READINESS_SIGNOFF_PAYLOAD_MISMATCH',
+  );
+
   const privacyFinding = fixture();
   privacyFinding.privacyCompliance.unresolvedPrivacyFindings = 1;
   expectFailure(() => validateEvidence(privacyFinding), 'PHASE5_READINESS_PRIVACY_FAILED');
-  const reusedSignoff = fixture();
-  reusedSignoff.operations.control.signoffs[0].evidenceId =
-    reusedSignoff.privacyCompliance.control.signoffs[0].evidenceId;
+
+  const reusedSignoffBundle = fixtureBundle();
+  reusedSignoffBundle.document.operations.control.signoffs[0].evidenceId =
+    reusedSignoffBundle.document.privacyCompliance.control.signoffs[0].evidenceId;
+  signFixture(reusedSignoffBundle.document, reusedSignoffBundle.privateKeys);
   expectFailure(
-    () => validateEvidence(reusedSignoff),
-    'PHASE5_READINESS_GATE_EVIDENCE_REUSED',
+    () => validateEvidence(reusedSignoffBundle.document),
+    'PHASE5_READINESS_SIGNOFF_EVIDENCE_REUSED',
   );
+
+  const reusedActorBundle = fixtureBundle();
+  reusedActorBundle.document.operations.control.signoffs[0].actorHash =
+    reusedActorBundle.document.privacyCompliance.control.signoffs[0].actorHash;
+  signFixture(reusedActorBundle.document, reusedActorBundle.privateKeys);
+  expectFailure(
+    () => validateEvidence(reusedActorBundle.document),
+    'PHASE5_READINESS_SIGNOFF_ACTORS_NOT_INDEPENDENT',
+  );
+
+  const inconsistentActorBundle = fixtureBundle();
+  const qaSignoff = inconsistentActorBundle.document.authorization.control.signoffs
+    .find((item) => item.role === 'qa_owner');
+  if (qaSignoff === undefined) fail('PHASE5_READINESS_SELF_TEST_INVALID');
+  qaSignoff.actorHash = digest('different-qa-owner');
+  signFixture(inconsistentActorBundle.document, inconsistentActorBundle.privateKeys);
+  expectFailure(
+    () => validateEvidence(inconsistentActorBundle.document),
+    'PHASE5_READINESS_SIGNOFF_ACTOR_INCONSISTENT',
+  );
+
+  const reusedAuthority = fixture();
+  reusedAuthority.signingAuthorities[1].keyId = reusedAuthority.signingAuthorities[0].keyId;
+  reusedAuthority.signingAuthorities[1].publicKeySpkiBase64 =
+    reusedAuthority.signingAuthorities[0].publicKeySpkiBase64;
+  expectFailure(
+    () => validateEvidence(reusedAuthority),
+    'PHASE5_READINESS_SIGNING_AUTHORITIES_NOT_INDEPENDENT',
+  );
+
+  const swappedRoleKey = fixture();
+  const firstKeyId = swappedRoleKey.operations.control.signoffs[0].keyId;
+  swappedRoleKey.operations.control.signoffs[0].keyId =
+    swappedRoleKey.operations.control.signoffs[1].keyId;
+  swappedRoleKey.operations.control.signoffs[1].keyId = firstKeyId;
+  expectFailure(
+    () => validateEvidence(swappedRoleKey),
+    'PHASE5_READINESS_SIGNOFF_KEY_MISMATCH',
+  );
+
+  const futureSignatureBundle = fixtureBundle();
+  futureSignatureBundle.document.authorization.control.signoffs[0].signedAt =
+    '2026-07-24T00:00:00.000Z';
+  signFixture(futureSignatureBundle.document, futureSignatureBundle.privateKeys);
+  expectFailure(
+    () => validateEvidence(futureSignatureBundle.document),
+    'PHASE5_READINESS_SIGNOFF_SIGNATURE_TIME_INVALID',
+  );
+
   const unsignedImage = fixture();
   unsignedImage.productionImages.images.api.signatureVerified = false;
   expectFailure(
     () => validateEvidence(unsignedImage),
     'PHASE5_READINESS_PRODUCTION_IMAGE_FAILED',
   );
-  withExpectedEnvironment(valid, () => {
-    validateEvidence(fixture(), true);
-    const mismatch = fixture();
+
+  const bound = fixture();
+  withExpectedEnvironment(bound, () => {
+    validateEvidence(bound, true);
+    const mismatch = structuredClone(bound);
     mismatch.source.commitSha = 'b'.repeat(40);
     expectFailure(() => validateEvidence(mismatch, true), 'PHASE5_READINESS_COMMIT_MISMATCH');
+    process.env.READINESS_EXPECTED_SIGNER_KEYSET_SHA256 = digest('unapproved-keyset');
+    expectFailure(
+      () => validateEvidence(bound, true),
+      'PHASE5_READINESS_SIGNER_KEYSET_MISMATCH',
+    );
   });
 }
 
 function fixture() {
-  const images = { api: digest('api'), worker: digest('worker'), web: digest('web') };
+  return fixtureBundle().document;
+}
+
+function fixtureBundle() {
+  const images = {
+    api: digest('api'),
+    worker: digest('worker'),
+    web: digest('web'),
+    website: digest('website'),
+  };
   let nextId = 10;
   const evidenceId = () => ulid(nextId++);
+  const privateKeys = new Map();
+  const signingAuthorities = SIGNER_ROLES.map((role) => {
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    const keyId = publicKeyHash(publicKey);
+    privateKeys.set(role, privateKey);
+    return {
+      role,
+      algorithm: 'Ed25519',
+      keyId,
+      publicKeySpkiBase64: publicKey.export({ format: 'der', type: 'spki' }).toString('base64'),
+    };
+  });
+  const authoritiesByRole = new Map(
+    signingAuthorities.map((authority) => [authority.role, authority]),
+  );
   const control = (gate) => ({
     evidenceId: evidenceId(),
     rawEvidenceHash: digest(`raw-${gate}`),
@@ -452,13 +780,21 @@ function fixture() {
     expiresAt: '2026-08-21T00:00:00.000Z',
     signoffs: SIGNOFF_ROLES[gate].map((role) => ({
       role,
+      actorHash: digest(`actor-${role}`),
+      decision: 'approved',
       evidenceId: evidenceId(),
-      signedAt: '2026-07-22T01:00:00.000Z',
+      evidenceHash: digest(`signoff-${gate}-${role}`),
+      approvedAt: '2026-07-22T01:00:00.000Z',
+      signedAt: '2026-07-22T01:05:00.000Z',
+      algorithm: 'Ed25519',
+      keyId: authoritiesByRole.get(role)?.keyId,
+      signedPayloadSha256: digest('unsigned'),
+      signature: 'A'.repeat(86),
     })),
   });
-  return {
-    formatVersion: 1,
-    suite: 'gaoq.phase5.readiness.v1',
+  const document = {
+    formatVersion: 2,
+    suite: 'gaoq.phase5.readiness.v2',
     evidenceId: evidenceId(),
     environment: {
       name: 'release-uat', region: 'cn-test-1', productionEquivalent: true,
@@ -480,7 +816,12 @@ function fixture() {
       sastPassed: true, scaPassed: true, secretScanPassed: true, licensePassed: true,
       dependencyAuditPassed: true, criticalVulnerabilities: 0, highVulnerabilities: 0,
       unexpiredSecurityExceptions: 0,
-      sbomHashes: { api: digest('sbom-api'), worker: digest('sbom-worker'), web: digest('sbom-web') },
+      sbomHashes: {
+        api: digest('sbom-api'),
+        worker: digest('sbom-worker'),
+        web: digest('sbom-web'),
+        website: digest('sbom-website'),
+      },
     },
     productionImages: {
       control: control('production-images'),
@@ -521,7 +862,33 @@ function fixture() {
       incidentCommanderAssigned: true, supportHandoffComplete: true,
       wormEvidenceHash: digest('operations-worm'),
     },
+    signingAuthorities,
   };
+  signFixture(document, privateKeys);
+  return Object.freeze({ document, privateKeys });
+}
+
+function signFixture(document, privateKeys) {
+  const keysetHash = signerKeysetHash(document.signingAuthorities);
+  for (const gateName of Object.keys(GATE_SUITES)) {
+    const sectionField = GATE_SECTION_FIELDS[gateName];
+    const section = document[sectionField];
+    const gatePayloadHash = digest(readinessGatePayload(
+      document,
+      gateName,
+      section,
+      keysetHash,
+    ));
+    for (const signoff of section.control.signoffs) {
+      const payload = readinessSignoffPayload(gateName, gatePayloadHash, signoff);
+      signoff.signedPayloadSha256 = digest(payload);
+      signoff.signature = sign(
+        null,
+        Buffer.from(payload, 'utf8'),
+        privateKeys.get(signoff.role),
+      ).toString('base64url');
+    }
+  }
 }
 
 function withExpectedEnvironment(document, action) {
@@ -532,7 +899,10 @@ function withExpectedEnvironment(document, action) {
     READINESS_EXPECTED_API_IMAGE: document.source.images.api,
     READINESS_EXPECTED_WORKER_IMAGE: document.source.images.worker,
     READINESS_EXPECTED_WEB_IMAGE: document.source.images.web,
+    READINESS_EXPECTED_WEBSITE_IMAGE: document.source.images.website,
     READINESS_EXPECTED_DEPLOYMENT_MANIFEST: document.source.deploymentManifestHash,
+    READINESS_EXPECTED_SIGNER_KEYSET_SHA256:
+      signerKeysetHash(document.signingAuthorities),
   };
   const previous = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]));
   Object.assign(process.env, values);
@@ -544,6 +914,58 @@ function withExpectedEnvironment(document, action) {
       else process.env[key] = value;
     }
   }
+}
+
+function publicKeyFromSpkiBase64(value) {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/u.test(value)) {
+    fail('PHASE5_READINESS_SIGNING_AUTHORITY_INVALID');
+  }
+  let der;
+  try {
+    der = Buffer.from(value, 'base64');
+  } catch {
+    fail('PHASE5_READINESS_SIGNING_AUTHORITY_INVALID');
+  }
+  if (
+    der.length < 32 ||
+    der.length > 256 ||
+    der.toString('base64') !== value
+  ) fail('PHASE5_READINESS_SIGNING_AUTHORITY_INVALID');
+  let publicKey;
+  try {
+    publicKey = createPublicKey({ key: der, format: 'der', type: 'spki' });
+  } catch {
+    fail('PHASE5_READINESS_SIGNING_AUTHORITY_INVALID');
+  }
+  if (publicKey.asymmetricKeyType !== 'ed25519') {
+    fail('PHASE5_READINESS_SIGNING_AUTHORITY_INVALID');
+  }
+  return publicKey;
+}
+
+function publicKeyHash(publicKey) {
+  return digest(publicKey.export({ format: 'der', type: 'spki' }));
+}
+
+function signerKeysetHash(authorities) {
+  return digest(canonical(
+    authorities
+      .map(({ role, keyId }) => ({ role, keyId }))
+      .sort((left, right) => left.role.localeCompare(right.role)),
+  ));
+}
+
+function decodeSignature(value) {
+  let signature;
+  try {
+    signature = Buffer.from(value, 'base64url');
+  } catch {
+    fail('PHASE5_READINESS_SIGNOFF_SIGNATURE_INVALID');
+  }
+  if (signature.length !== 64 || signature.toString('base64url') !== value) {
+    fail('PHASE5_READINESS_SIGNOFF_SIGNATURE_INVALID');
+  }
+  return signature;
 }
 
 function parseDocument(text) {
@@ -558,6 +980,15 @@ function object(value, keys, code) {
   if (
     typeof value !== 'object' || value === null || Array.isArray(value) ||
     canonical(Object.keys(value).sort()) !== canonical([...keys].sort())
+  ) fail(code);
+}
+
+function exactStringSet(actual, expected, code) {
+  if (
+    !Array.isArray(actual) ||
+    actual.some((item) => typeof item !== 'string') ||
+    new Set(actual).size !== expected.length ||
+    canonical([...actual].sort()) !== canonical([...expected].sort())
   ) fail(code);
 }
 

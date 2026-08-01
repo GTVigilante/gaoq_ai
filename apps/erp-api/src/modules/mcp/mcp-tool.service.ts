@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { GoneException, Injectable, Logger } from '@nestjs/common';
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type {
   CallToolResult,
@@ -8,7 +8,10 @@ import type {
 
 import { AuditService } from '../../core/audit/audit.service.js';
 import { TenantContextService } from '../../core/tenant/tenant-context.service.js';
-import { OrgApplicationService } from '../org/application/org-application.service.js';
+import {
+  OrgApplicationService,
+  toOrgChartView,
+} from '../org/application/org-application.service.js';
 import { ApprovalApplicationService } from '../approval/application/approval-application.service.js';
 import { RecruitmentApplicationService } from '../recruitment/application/recruitment-application.service.js';
 import { RecruitmentInterviewService } from '../recruitment/application/recruitment-interview.service.js';
@@ -16,18 +19,33 @@ import { RecruitmentManagementService } from '../recruitment/application/recruit
 import { RecruitmentOfferService } from '../recruitment/application/recruitment-offer.service.js';
 import { OnboardingApplicationService } from '../onboarding/application/onboarding-application.service.js';
 import { KnowledgeApplicationService } from '../knowledge/application/knowledge-application.service.js';
+import { KnowledgeExamRunService } from '../knowledge/application/knowledge-exam-run.service.js';
 import { CareApplicationService } from '../care/application/care-application.service.js';
+import { CareOccasionApplicationService } from '../care/application/care-occasion-application.service.js';
+import { CareAlumniCleanupApplicationService } from '../care/application/care-alumni-cleanup-application.service.js';
 import { AttendanceApplicationService } from '../attendance/application/attendance-application.service.js';
 import { PayrollRunService } from '../payroll/application/payroll-run.service.js';
-import { PayrollPayslipService } from '../payroll/application/payroll-payslip.service.js';
+import {
+  PayrollPayslipService,
+  type PayrollPayslipView,
+} from '../payroll/application/payroll-payslip.service.js';
 import { PayrollTaxFilingService } from '../payroll/application/payroll-tax-filing.service.js';
 import { PayrollReconciliationService } from '../payroll/application/payroll-reconciliation.service.js';
 import { PayrollShadowService } from '../payroll/application/payroll-shadow.service.js';
+import { PayrollAdjustmentService } from '../payroll/application/payroll-adjustment.service.js';
+import {
+  PayrollAdjustmentTaxCorrectionService,
+} from '../payroll/application/payroll-adjustment-tax-correction.service.js';
+import {
+  PayrollAnnualReconciliationService,
+} from '../payroll/application/payroll-annual-reconciliation.service.js';
 import { OpOperatingSummaryService } from '../op/application/op-operating-summary.service.js';
 import { OpApprovalBridgeService } from '../op/application/op-approval-bridge.service.js';
 import { ManagementDashboardService } from '../analytics/application/management-dashboard.service.js';
 import { AnalyticsExportService } from '../analytics/application/analytics-export.service.js';
 import { DataMigrationService } from '../data-migration/application/data-migration.service.js';
+import { TalentLifecycleService } from '../talent-lifecycle/application/talent-lifecycle.service.js';
+import { MarketingCmsService } from '../marketing-cms/marketing-cms.service.js';
 import { parseMcpIdentity, type McpIdentity } from './mcp-auth-context.js';
 import {
   McpConfirmationService,
@@ -58,6 +76,8 @@ type McpExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 /** MCP 工具应用层；只复用业务应用服务，不直接访问数据库或上游 Token。 */
 @Injectable()
 export class McpToolService {
+  private readonly logger = new Logger(McpToolService.name);
+
   constructor(
     private readonly tenantContext: TenantContextService,
     private readonly audit: AuditService,
@@ -69,6 +89,7 @@ export class McpToolService {
     private readonly recruitmentOffers: RecruitmentOfferService,
     private readonly onboarding: OnboardingApplicationService,
     private readonly knowledge: KnowledgeApplicationService,
+    private readonly knowledgeExamRuns: KnowledgeExamRunService,
     private readonly care: CareApplicationService,
     private readonly attendance: AttendanceApplicationService,
     private readonly payroll: PayrollRunService,
@@ -76,13 +97,55 @@ export class McpToolService {
     private readonly taxFilings: PayrollTaxFilingService,
     private readonly reconciliations: PayrollReconciliationService,
     private readonly shadows: PayrollShadowService,
+    private readonly payrollAdjustments: PayrollAdjustmentService,
+    private readonly payrollAdjustmentTaxCorrections: PayrollAdjustmentTaxCorrectionService,
+    private readonly annualPayrollReconciliations: PayrollAnnualReconciliationService,
     private readonly opSummaries: OpOperatingSummaryService,
     private readonly opApprovalBridges: OpApprovalBridgeService,
     private readonly managementDashboard: ManagementDashboardService,
     private readonly analyticsExports: AnalyticsExportService,
     private readonly dataMigrations: DataMigrationService,
+    private readonly talentLifecycle: TalentLifecycleService,
+    private readonly marketing: MarketingCmsService,
     private readonly confirmations: McpConfirmationService,
+    private readonly careOccasions: CareOccasionApplicationService,
+    private readonly careAlumniCleanup: CareAlumniCleanupApplicationService,
   ) {}
+
+  async getMarketingSideEffect(
+    eventId: string,
+    extra: McpExtra,
+  ): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:marketing:operations:read')) {
+        await this.auditTool(identity, 'marketing_side_effect_get', 'R1', 'denied');
+        return scopeError('erp:marketing:operations:read');
+      }
+      const sideEffect = await this.marketing.getSideEffectStatus(eventId);
+      await this.auditTool(identity, 'marketing_side_effect_get', 'R1', 'success', {
+        eventId,
+        status: String(sideEffect.status),
+        kind: String(sideEffect.kind),
+      });
+      return structuredResult({
+        sideEffect: Object.freeze({
+          eventId: sideEffect.eventId,
+          kind: sideEffect.kind,
+          aggregateId: sideEffect.aggregateId,
+          aggregateVersion: sideEffect.aggregateVersion,
+          channel: sideEffect.channel,
+          status: sideEffect.status,
+          attempts: sideEffect.attempts,
+          deliveryAttempts: sideEffect.deliveryAttempts,
+          nextAttemptAt: sideEffect.nextAttemptAt,
+          dispatchedAt: sideEffect.dispatchedAt,
+          completedAt: sideEffect.completedAt,
+          lastErrorCode: sideEffect.lastErrorCode,
+        }),
+      });
+    });
+  }
 
   async getRecruitmentApplication(id: string, extra: McpExtra): Promise<McpToolResult> {
     return this.getRecruitmentResource(
@@ -140,6 +203,35 @@ export class McpToolService {
     );
   }
 
+  async getKnowledgeExamRun(id: string, extra: McpExtra): Promise<McpToolResult> {
+    return this.getRecruitmentResource(
+      extra,
+      'knowledge_exam_run_get',
+      'erp:knowledge:exam:read',
+      'examRun',
+      () => this.knowledgeExamRuns.get(id),
+    );
+  }
+
+  async searchKnowledge(
+    input: { readonly query: string; readonly cursor?: string; readonly limit?: number },
+    extra: McpExtra,
+  ): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:knowledge:search')) {
+        await this.auditTool(identity, 'knowledge_search', 'R0', 'denied');
+        return scopeError('erp:knowledge:search');
+      }
+      const result = await this.knowledge.searchMyKnowledge(input);
+      await this.auditTool(identity, 'knowledge_search', 'R0', 'success', {
+        count: result.items.length,
+        hasNextPage: result.nextCursor !== null,
+      });
+      return structuredResult(result);
+    });
+  }
+
   async getCareCase(id: string, extra: McpExtra): Promise<McpToolResult> {
     const identity = parseMcpIdentity(extra.authInfo);
     return this.run(identity, async () => {
@@ -152,6 +244,86 @@ export class McpToolService {
       const careCase = await this.care.getForMcp(id);
       await this.auditTool(identity, 'care_case_get', 'R0', 'success');
       return structuredResult({ careCase });
+    });
+  }
+
+  async getMyCareOccasionSummary(extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      const scope = 'erp:care:occasion:preference:read';
+      if (!identity.scopes.includes(scope)) {
+        await this.auditTool(identity, 'care_occasion_summary_get_self', 'R0', 'denied');
+        return scopeError(scope);
+      }
+      const summary = await this.careOccasions.getMySummaryForMcp();
+      await this.auditTool(
+        identity,
+        'care_occasion_summary_get_self',
+        'R0',
+        'success',
+        {
+          configured: summary.configured,
+          pendingCount: summary.pendingCount,
+          attentionRequiredCount: summary.attentionRequiredCount,
+        },
+      );
+      return structuredResult({ occasionSummary: summary });
+    });
+  }
+
+  async getCareAlumniCleanupStatus(
+    consentId: string,
+    extra: McpExtra,
+  ): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      const scope = 'erp:care:alumni:cleanup:read';
+      if (!identity.scopes.includes(scope)) {
+        await this.auditTool(
+          identity,
+          'care_alumni_cleanup_status_get',
+          'R0',
+          'denied',
+        );
+        return scopeError(scope);
+      }
+      const cleanupStatus =
+        await this.careAlumniCleanup.getStatusForMcp(consentId);
+      await this.auditTool(
+        identity,
+        'care_alumni_cleanup_status_get',
+        'R0',
+        'success',
+        {
+          consentStatus: cleanupStatus.consentStatus,
+          cleanupStatus: cleanupStatus.cleanupStatus,
+          pending: cleanupStatus.counts.pending,
+          dead: cleanupStatus.counts.dead,
+        },
+      );
+      return structuredResult({ cleanupStatus });
+    });
+  }
+
+  async getTalentLifecycle(candidateId: string, extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:talent-lifecycle:read')) {
+        await this.auditTool(identity, 'talent_lifecycle_get', 'R0', 'denied');
+        return scopeError('erp:talent-lifecycle:read');
+      }
+      const source = await this.talentLifecycle.getForMcp(candidateId);
+      const lifecycle = Object.freeze({
+        candidateId: source.candidateId,
+        stage: source.stage,
+        currentApplicationStage: source.currentApplicationStage,
+        employeeStatus: source.employeeStatus,
+        openFollowUpCount: source.openFollowUpCount,
+        nextActionAt: source.nextActionAt,
+        updatedAt: source.updatedAt,
+      });
+      await this.auditTool(identity, 'talent_lifecycle_get', 'R0', 'success');
+      return structuredResult({ lifecycle });
     });
   }
 
@@ -188,7 +360,17 @@ export class McpToolService {
         await this.auditTool(identity, 'payroll_payslip_get_self', 'R1', 'denied');
         return scopeError('erp:payroll:sheet:read_self');
       }
-      const payslip = await this.payslips.getMyPayslip(period);
+      let payslip: PayrollPayslipView;
+      try {
+        payslip = await this.payslips.getMyPayslip(period);
+      } catch (error) {
+        if (!isPayrollMigrationError(error)) throw error;
+        await this.auditTool(identity, 'payroll_payslip_get_self', 'R1', 'denied');
+        return businessError(
+          'PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM',
+          '工资能力已迁移至专业算薪系统',
+        );
+      }
       await this.auditTool(identity, 'payroll_payslip_get_self', 'R1', 'success', {
         period, inputHash: payslip.inputHash, resultHash: payslip.resultHash,
       });
@@ -262,6 +444,87 @@ export class McpToolService {
     });
   }
 
+  async getPayrollAdjustmentStatus(id: string, extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:payroll:adjustment:read')) {
+        await this.auditTool(identity, 'payroll_adjustment_status_get', 'R1', 'denied');
+        return scopeError('erp:payroll:adjustment:read');
+      }
+      const payrollAdjustment = await this.payrollAdjustments.getControlStatus(id);
+      await this.auditTool(identity, 'payroll_adjustment_status_get', 'R1', 'success', {
+        adjustmentId: payrollAdjustment.id, period: payrollAdjustment.period,
+        status: payrollAdjustment.status,
+        cashSettlementStatus: payrollAdjustment.cashSettlementStatus,
+        taxCorrectionStatus: payrollAdjustment.taxCorrectionStatus,
+        adjustmentHash: payrollAdjustment.adjustmentHash,
+      });
+      return structuredResult({ payrollAdjustment });
+    });
+  }
+
+  async getPayrollAdjustmentTaxCorrectionStatus(
+    id: string,
+    extra: McpExtra,
+  ): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      const scope = 'erp:payroll:adjustment:tax_correction:read';
+      if (!identity.scopes.includes(scope)) {
+        await this.auditTool(
+          identity,
+          'payroll_adjustment_tax_correction_status_get',
+          'R1',
+          'denied',
+        );
+        return scopeError(scope);
+      }
+      const payrollAdjustmentTaxCorrection =
+        await this.payrollAdjustmentTaxCorrections.getControlStatus(id);
+      await this.auditTool(
+        identity,
+        'payroll_adjustment_tax_correction_status_get',
+        'R1',
+        'success',
+        {
+          filingId: payrollAdjustmentTaxCorrection.id,
+          adjustmentId: payrollAdjustmentTaxCorrection.adjustmentId,
+          period: payrollAdjustmentTaxCorrection.period,
+          status: payrollAdjustmentTaxCorrection.status,
+          contentHash: payrollAdjustmentTaxCorrection.contentHash,
+        },
+      );
+      return structuredResult({ payrollAdjustmentTaxCorrection });
+    });
+  }
+
+  async getAnnualPayrollReconciliationStatus(
+    id: string,
+    extra: McpExtra,
+  ): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:payroll:annual:read')) {
+        await this.auditTool(
+          identity, 'payroll_annual_reconciliation_status_get', 'R1', 'denied',
+        );
+        return scopeError('erp:payroll:annual:read');
+      }
+      const annualPayrollReconciliation =
+        await this.annualPayrollReconciliations.getControlStatus(id);
+      await this.auditTool(
+        identity, 'payroll_annual_reconciliation_status_get', 'R1', 'success',
+        {
+          reconciliationId: annualPayrollReconciliation.id,
+          taxYear: annualPayrollReconciliation.taxYear,
+          status: annualPayrollReconciliation.status,
+          evidenceHash: annualPayrollReconciliation.evidenceHash,
+        },
+      );
+      return structuredResult({ annualPayrollReconciliation });
+    });
+  }
+
   async getOpOperatingSummary(date: string, extra: McpExtra): Promise<McpToolResult> {
     const identity = parseMcpIdentity(extra.authInfo);
     return this.run(identity, async () => {
@@ -272,7 +535,6 @@ export class McpToolService {
       const operatingSummary = await this.opSummaries.getLatest(date);
       await this.auditTool(identity, 'op_operating_summary_get', 'R0', 'success', {
         summaryDate: operatingSummary.summaryDate, revision: operatingSummary.revision,
-        payloadHash: operatingSummary.payloadHash,
       });
       return structuredResult({ operatingSummary });
     });
@@ -354,7 +616,7 @@ export class McpToolService {
         await this.auditTool(identity, 'management_dashboard_export_prepare', 'R2', 'denied');
         return scopeError(missing);
       }
-      await this.managementDashboard.get(asOf);
+      this.managementDashboard.validateAsOf(asOf);
       const command: AnalyticsMcpCommand = {
         operation: 'analytics.management_dashboard.export', asOf,
         format: 'json', expectedVersion: 1,
@@ -395,11 +657,15 @@ export class McpToolService {
         }
         const exportView = await this.analyticsExports.request(operationId, claimed.command.asOf);
         const result: Record<string, unknown> = { export: exportView };
+        const response = exportResourceResult(result);
         await this.confirmations.complete(operationId, result);
-        await this.auditTool(identity, 'management_dashboard_export_execute', 'R2', 'success', {
-          operationId, replayed: false, asOf: claimed.command.asOf,
-        });
-        return exportResourceResult(result);
+        await this.auditAfterCommit(
+          identity,
+          'management_dashboard_export_execute',
+          'R2',
+          { operationId, replayed: false, asOf: claimed.command.asOf },
+        );
+        return response;
       } catch (error) {
         await this.confirmations.release(operationId);
         await this.auditTool(identity, 'management_dashboard_export_execute', 'R2', 'failure', {
@@ -492,11 +758,15 @@ export class McpToolService {
           },
           reasonCode: claimed.command.reasonCode,
         });
+        const response = structuredResult(result);
         await this.confirmations.complete(operationId, result);
-        await this.auditTool(identity, 'attendance_correction_execute', 'R1', 'success', {
-          operationId, replayed: false,
-        });
-        return structuredResult(result);
+        await this.auditAfterCommit(
+          identity,
+          'attendance_correction_execute',
+          'R1',
+          { operationId, replayed: false },
+        );
+        return response;
       } catch (error) {
         await this.confirmations.release(operationId);
         await this.auditTool(identity, 'attendance_correction_execute', 'R1', 'failure', {
@@ -667,7 +937,7 @@ export class McpToolService {
           }],
         };
       }
-      const chart = await this.organization.getOrgChart();
+      const chart = toOrgChartView(await this.organization.getOrgChart());
       const data: Record<string, unknown> = {
         departments: chart.departments,
         employees: chart.employees,
@@ -969,15 +1239,15 @@ export class McpToolService {
           throw new Error('MCP_APPROVAL_COMMAND_TYPE_MISMATCH');
         }
         const result = await this.dispatchApprovalCommand(claimed.command, operationId);
+        const response = structuredResult(result);
         await this.confirmations.complete(operationId, result);
-        await this.auditTool(
+        await this.auditAfterCommit(
           identity,
           `${operation.replace('.', '_')}_execute`,
           riskLevel,
-          'success',
           { operationId, replayed: false },
         );
-        return structuredResult(result);
+        return response;
       } catch (error) {
         await this.confirmations.release(operationId);
         await this.auditTool(
@@ -1101,12 +1371,13 @@ export class McpToolService {
           throw new Error('MCP_RECRUITMENT_COMMAND_TYPE_MISMATCH');
         }
         const result = await this.dispatchRecruitmentCommand(claimed.command, operationId);
+        const response = structuredResult(result);
         await this.confirmations.complete(operationId, result);
-        await this.auditTool(
-          identity, `${operation.replaceAll('.', '_')}_execute`, riskLevel, 'success',
+        await this.auditAfterCommit(
+          identity, `${operation.replaceAll('.', '_')}_execute`, riskLevel,
           { operationId, replayed: false },
         );
-        return structuredResult(result);
+        return response;
       } catch (error) {
         await this.confirmations.release(operationId);
         await this.auditTool(
@@ -1154,6 +1425,24 @@ export class McpToolService {
     });
   }
 
+  /** 业务与确认账本均已提交后，审计故障只形成稳定告警，不得释放已完成操作。 */
+  private async auditAfterCommit(
+    identity: McpIdentity,
+    tool: string,
+    riskLevel: 'R1' | 'R2',
+    metadata: Readonly<Record<string, string | number | boolean>>,
+  ): Promise<void> {
+    try {
+      await this.auditTool(identity, tool, riskLevel, 'success', metadata);
+    } catch {
+      this.logger.error({
+        code: 'MCP_TOOL_AUDIT_AFTER_COMMIT_FAILED',
+        tool,
+        riskLevel,
+      });
+    }
+  }
+
   private run<T>(identity: McpIdentity, operation: () => Promise<T>): Promise<T> {
     return this.tenantContext.run(
       {
@@ -1191,6 +1480,14 @@ function businessError(code: string, message: string): McpToolResult {
     isError: true,
     content: [{ type: 'text', text: JSON.stringify({ code, message }) }],
   };
+}
+
+function isPayrollMigrationError(error: unknown): error is GoneException {
+  if (!(error instanceof GoneException)) return false;
+  const response = error.getResponse();
+  return typeof response === 'object' && response !== null &&
+    'code' in response &&
+    response.code === 'PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM';
 }
 
 function preparedResult(prepared: McpPreparedOperation): McpToolResult {

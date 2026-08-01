@@ -6,7 +6,35 @@ export interface ApprovalDelegationCreateInput {
   readonly validUntil: string;
 }
 
+export interface ApprovalDecisionAttemptIdentity {
+  readonly instance: Pick<ApprovalSummary, 'id'>;
+  readonly actorId: string;
+  readonly outcome: 'approved' | 'rejected';
+}
+
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+
+/** 仅允许服务端授予决策 Scope 的 R1 运行中待办显示普通决策入口。 */
+export function canSubmitApprovalDecision(
+  scopes: readonly string[],
+  instance: Pick<ApprovalSummary, 'riskLevel' | 'status'>,
+): boolean {
+  return instance.status === 'running' &&
+    instance.riskLevel === 'R1' &&
+    scopes.includes('erp:approval:task:decide');
+}
+
+/** 比较待确认决策的不可变请求身份，禁止换实例、换主体或换动作复用幂等键。 */
+export function isSameApprovalDecisionAttempt(
+  attempt: ApprovalDecisionAttemptIdentity,
+  instanceId: string,
+  actorId: string,
+  outcome: 'approved' | 'rejected',
+): boolean {
+  return attempt.instance.id === instanceId &&
+    attempt.actorId === actorId &&
+    attempt.outcome === outcome;
+}
 
 /** 校验转交/加签响应，拒绝租户字段和非运行中实例。 */
 export function parseApprovalTaskResponse(value: unknown): ApprovalSummary {

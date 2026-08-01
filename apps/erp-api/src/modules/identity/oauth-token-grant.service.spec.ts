@@ -55,6 +55,8 @@ describe('OAuthTokenGrantService', () => {
       tenantId: 'tenant-001', actorId: 'actor-001', sessionId: 'session-001',
       actorType: 'user', clientId: 'mcp-client-001', roleCodes: ['employee'],
       scopes: ['erp:mcp:server:connect', 'erp:org:chart:read'], departmentIds: ['department-001'],
+      employeeId: 'employee-001',
+      resource: 'https://erp.example.com/mcp',
     });
     expect(store.recordTrustedUser).toHaveBeenCalledWith('tenant-001', expect.objectContaining({
       actorId: 'actor-001', traceId: 'trace-token-001', outcome: 'success',
@@ -90,4 +92,61 @@ describe('OAuthTokenGrantService', () => {
       }));
     },
   );
+
+  it('签名失败时记录稳定原因；失败审计异常不覆盖原始签名错误', async () => {
+    const store = fixture();
+    const failure = new Error('signing unavailable');
+    store.sign.mockRejectedValueOnce(failure);
+    store.recordTrustedUser.mockRejectedValueOnce(new Error('audit unavailable'));
+
+    await expect(store.service.exchange({
+      code: `oc_${'A'.repeat(43)}`,
+      clientId: 'mcp-client-001',
+      redirectUri: 'https://client.example.com/oauth/callback',
+      resource: 'https://erp.example.com/mcp',
+      codeVerifier: 'B'.repeat(43),
+      traceId: 'trace-token-signing-failure',
+    })).rejects.toBe(failure);
+    expect(store.recordTrustedUser).toHaveBeenCalledWith(
+      'tenant-001',
+      expect.objectContaining({
+        outcome: 'failure',
+        metadata: { reason: 'signing_failed' },
+      }),
+    );
+  });
+
+  it('授权快照失效后的审计异常不改变 invalid_grant 结果', async () => {
+    const store = fixture();
+    store.isActive.mockResolvedValueOnce(false);
+    store.recordTrustedUser.mockRejectedValueOnce(new Error('audit unavailable'));
+
+    await expect(store.service.exchange({
+      code: `oc_${'A'.repeat(43)}`,
+      clientId: 'mcp-client-001',
+      redirectUri: 'https://client.example.com/oauth/callback',
+      resource: 'https://erp.example.com/mcp',
+      codeVerifier: 'B'.repeat(43),
+      traceId: 'trace-token-inactive-audit',
+    })).rejects.toMatchObject({
+      response: { code: 'OAUTH_INVALID_GRANT' },
+    });
+    expect(store.sign).not.toHaveBeenCalled();
+  });
+
+  it('成功令牌的审计不可用时失败关闭，不向调用方返回已签名令牌', async () => {
+    const store = fixture();
+    const failure = new Error('audit unavailable');
+    store.recordTrustedUser.mockRejectedValueOnce(failure);
+
+    await expect(store.service.exchange({
+      code: `oc_${'A'.repeat(43)}`,
+      clientId: 'mcp-client-001',
+      redirectUri: 'https://client.example.com/oauth/callback',
+      resource: 'https://erp.example.com/mcp',
+      codeVerifier: 'B'.repeat(43),
+      traceId: 'trace-token-success-audit',
+    })).rejects.toBe(failure);
+    expect(store.sign).toHaveBeenCalledOnce();
+  });
 });

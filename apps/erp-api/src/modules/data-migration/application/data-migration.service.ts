@@ -3616,10 +3616,13 @@ function payrollCompensationPayload(
     !isPlainMigrationObject(value.data)) throw invalidPayload();
   exactKeys(value.data, [
     'attendanceAdjustment', 'currency', 'employeeHousingFundMinor',
-    'employeeSocialInsuranceMinor', 'nonTaxableEarnings', 'otherPreTaxWithholdingMinor',
+    'employeeSocialInsuranceMinor', 'jurisdictionCode', 'nonTaxableEarnings',
+    'otherPreTaxWithholdingMinor',
     'postTaxDeductionMinor', 'specialAdditionalDeductionMinor', 'taxableEarnings',
   ]);
   if (value.data.currency !== 'CNY' ||
+    typeof value.data.jurisdictionCode !== 'string' ||
+    !SOURCE_ID_PATTERN.test(value.data.jurisdictionCode) ||
     !Array.isArray(value.data.taxableEarnings) || value.data.taxableEarnings.length > 128 ||
     !Array.isArray(value.data.nonTaxableEarnings) || value.data.nonTaxableEarnings.length > 128 ||
     !isPlainMigrationObject(value.data.attendanceAdjustment)) throw invalidPayload();
@@ -3650,7 +3653,7 @@ function payrollCompensationPayload(
     approvalHistorySourceId: value.approvalHistorySourceId,
     approvalEvidenceChecksum: value.approvalEvidenceChecksum,
     data: {
-      currency: 'CNY',
+      currency: 'CNY', jurisdictionCode: value.data.jurisdictionCode,
       taxableEarnings: value.data.taxableEarnings.map(component),
       nonTaxableEarnings: value.data.nonTaxableEarnings.map(component),
       employeeSocialInsuranceMinor: Number(value.data.employeeSocialInsuranceMinor),

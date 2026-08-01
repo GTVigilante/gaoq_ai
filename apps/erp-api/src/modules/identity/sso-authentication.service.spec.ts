@@ -8,6 +8,10 @@ import type { SsoStateService } from './sso-state.service.js';
 
 const createService = (externalTenantId = 'external-tenant-001', mapping: object | null = {
   tenantId: 'tenant-001',
+  provider: 'feishu',
+  externalTenantId: 'external-tenant-001',
+  unionId: 'union-001',
+  externalUserId: 'user-001',
   actorId: 'actor-001',
   employeeId: 'employee-001',
 }) => {
@@ -59,6 +63,10 @@ describe('SsoAuthenticationService', () => {
       provider: 'feishu',
       returnPath: '/',
     });
+    const identity = await service.verifyAuthorizationCode({
+      provider: 'feishu', state: 'state-002', code: 'code-002',
+    });
+    expect(Object.isFrozen(identity)).toBe(true);
     expect(consume).toHaveBeenCalledWith('state-001', 'feishu');
     expect(exchangeAuthorizationCode).toHaveBeenCalledWith({
       code: 'code-001',
@@ -86,5 +94,43 @@ describe('SsoAuthenticationService', () => {
     await expect(
       service.verifyAuthorizationCode({ provider: 'feishu', state: 'state-001', code: 'code-001' }),
     ).rejects.toMatchObject({ response: { code: 'SSO_BINDING_REQUIRED' } });
+  });
+
+  it('适配器返回错误平台时在查询映射前拒绝', async () => {
+    const fixture = createService();
+    fixture.exchangeAuthorizationCode.mockResolvedValue({
+      provider: 'dingtalk',
+      externalTenantId: 'external-tenant-001',
+      unionId: 'union-001',
+      externalUserId: 'user-001',
+      displayName: '员工甲',
+    });
+    await expect(fixture.service.verifyAuthorizationCode({
+      provider: 'feishu', state: 'state-001', code: 'code-001',
+    })).rejects.toMatchObject({ response: { code: 'SSO_IDENTITY_INVALID' } });
+    expect(fixture.findBoundByExternalProfile).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { field: 'tenantId', value: 'tenant-attacker' },
+    { field: 'provider', value: 'dingtalk' },
+    { field: 'externalTenantId', value: 'external-attacker' },
+    { field: 'unionId', value: 'union-attacker' },
+    { field: 'externalUserId', value: 'user-attacker' },
+  ])('映射字段 $field 与已验证身份不一致时失败关闭', async ({ field, value }) => {
+    const mapping = {
+      tenantId: 'tenant-001',
+      provider: 'feishu',
+      externalTenantId: 'external-tenant-001',
+      unionId: 'union-001',
+      externalUserId: 'user-001',
+      actorId: 'actor-001',
+      employeeId: 'employee-001',
+      [field]: value,
+    };
+    const { service } = createService('external-tenant-001', mapping);
+    await expect(service.verifyAuthorizationCode({
+      provider: 'feishu', state: 'state-001', code: 'code-001',
+    })).rejects.toMatchObject({ response: { code: 'SSO_IDENTITY_INVALID' } });
   });
 });

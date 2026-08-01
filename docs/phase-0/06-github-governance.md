@@ -1,8 +1,10 @@
 # 告趣ERP（GaoQ-OS）GitHub 治理规范
 
 - 文档编号：phase-0/06
-- 版本：v1.0
-- 状态：规范约定，**不代表任何已配置的仓库状态**
+- 版本：v1.2
+- 状态：规范约定；Milestone、Issue、标签、Draft PR 和只读治理自动化已配置，
+  Project 看板因最小权限未授权仍待 Issue #41 配置，实时边界见
+  [仓库实施完成度审计](../implementation-completion-audit.md)
 - 适用范围：告趣ERP 全部 GitHub 仓库的 Issue、Project、分支、PR、CI 与版本管理
 
 ---
@@ -65,7 +67,7 @@
 | 阶段 | `phase:` | `0`至`6` |
 | 优先级 | `priority:` | `p0`、`p1`、`p2`、`p3` |
 | 风险 | `risk:` | `r0`、`r1`、`r2`、`r3` |
-| 状态辅助 | `status:` | `blocked`、`needs-info`、`wontfix`、`duplicate` |
+| 状态辅助 | `status:` | `implementation-delivered`、`external-acceptance`、`blocked`、`needs-info`、`wontfix`、`duplicate` |
 
 环境标签 `env:dev|staging|prod` 仅 Bug 使用。
 
@@ -73,6 +75,21 @@
 - 每个 Issue 至少 1 个 `type:*` + 1 个 `domain:*` + 1 个 `phase:*` + 1 个 `priority:*`；MCP可触达操作另加`risk:*`；
 - `priority:p0` 只能由产品负责人、首席架构师或值班负责人设置；
 - 新标签需经 ADR 或治理 Issue 评审后加入，禁止随手建标签。
+
+交付状态纪律：
+
+- `status:implementation-delivered` 表示仓库内代码、契约、测试、脚本或运行手册
+  已交付并有可复核路径；它不表示已合入 `main`、Hosted Actions 已运行或生产验收
+  已通过。
+- `status:external-acceptance` 表示仍需真实外部系统、目标基础设施、生产等价环境、
+  业务 UAT、人工签署、切换或 Hypercare 证据。
+- 两个标签可以同时存在，用于明确“工程实现已交付、外部验收未完成”；禁止以
+  `implementation-delivered` 关闭仍有外部验收项的 Issue。
+- `status:blocked` 必须在正文写明阻塞原因、解除条件和责任边界；账号付费限制、
+  缺少 GitHub 权限和缺少目标环境均不得伪装成代码失败。
+- Epic 只有在全部仓库内子项都具备实施证据后才能添加
+  `status:implementation-delivered`；只有全部子 Issue 满足 DoD 并关闭后才能进入
+  Project 的 `Done`。
 
 ---
 
@@ -85,6 +102,11 @@
 ### 4.2 Story
 
 - 用户故事（作为……我希望……以便……）；**验收标准（可测试的 Given/When/Then 至少 1 条）**；涉及模块与租户影响说明；关联 Epic；预估工作量。
+- 正文必须包含 `## REST / 事件 / MCP 契约（仓库基线）`，并以
+  `- REST：`、`- 事件：`、`- MCP：` 三行分别列出契约；某一接入面没有新增
+  能力时必须说明原因，禁止省略或用“统一处理”代替。
+- `scripts/github/validate-repository-governance.mjs` 对全部 Story 失败关闭校验
+  上述结构，错误码为 `GOV-STORY-CONTRACT-SURFACES`。
 
 ### 4.3 Task
 
@@ -160,6 +182,31 @@ Backlog → Ready → In Progress → In Review → Security Review → UAT → 
 - 必过：lint + 类型检查 + 单元测试 + 安全扫描（依赖漏洞 + 密钥扫描）；
 - PR 合入前 CI 全绿；`main` 红时冻结非 hotfix 合入；
 - hotfix 走 `hotfix/<issue号>-*` 分支，评审不可省略，事后 24h 内补测试。
+
+### 6.5 GitHub 元数据自动门禁
+
+- `.github/workflows/github-governance.yml` 在 Milestone、Issue、PR 元数据变化及
+  治理实现进入 `main` 时运行；仅授予 `contents:read`、`issues:read` 和
+  `pull-requests:read`，不得修改元数据或持有长期 Token。
+- `scripts/github/validate-repository-governance.mjs` 必须失败关闭以下漂移：
+  固定七个 Milestone 缺失或新增未知项；Issue 缺少唯一类型/阶段/优先级、至少
+  一个领域标签、标题类型前缀或阶段/里程碑不一致；外部验收或阻塞 Issue 被错误
+  关闭；阻塞正文缺少“当前阻塞/解除方式”；Epic 缺少真实子 Issue；PR 缺少
+  唯一已知 Milestone、未经 `## CR 结论` 和 `[OK]` 就从 Draft 转 Ready、
+  从 `main` 发起、未关联真实 Issue 或缺少验证证据。
+- Epic 可引用其他阶段的真实依赖 Issue；只有 Epic 自身关闭时，全部勾选框子项
+  才必须已经关闭。跨阶段依赖不得被伪装成同阶段子项，也不得以 PR 编号替代
+  Issue 关联。
+- 本地使用 `pnpm github:governance:self-test` 验证负向场景；已认证 `gh` 环境
+  使用 `pnpm github:governance:validate --repository <owner/repo>` 只读校验
+  实时元数据。工作流使用 GitHub 注入的短时 `GITHUB_TOKEN`，错误仅输出稳定
+  `GOV-*` 码与资源编号，禁止输出 Token 或 API 响应正文。
+- Hosted Actions 因账号付费或 Spending limit 在 Runner 分配前被拦截时，只能
+  记录“工作流未执行”；本地实时校验通过不能冒充 Hosted Actions 通过。
+- 全部工作流只允许 GitHub Hosted `ubuntu-latest`；受保护 workflow/policy
+  通过 `id-token: write` 获取单次 OIDC 身份。GitHub Free 私有仓库不依赖付费
+  Environment；禁止 NAS、自建/虚拟机 Runner、本地证据挂载和长期云/Kubernetes
+  凭据。
 
 ---
 

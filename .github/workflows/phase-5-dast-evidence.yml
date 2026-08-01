@@ -1,0 +1,102 @@
+name: Phase 5 DAST 与 ASVS 证据验收
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-5-dast-evidence
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    name: 校验受信任分支与 DAST 证据契约
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 只允许默认分支执行现场验收
+        shell: bash
+        run: test "$GITHUB_REF" = 'refs/heads/main'
+
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - name: 校验 DAST 与 ASVS 证据的失败关闭边界
+        run: node scripts/security/validate-phase-5-dast-evidence.mjs --self-test
+
+  evidence:
+    name: 验收生产等价隔离环境的 DAST 与 ASVS 证据
+    needs: contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GAOQ_OIDC_POLICY: phase-5-dast-evidence
+      DAST_EVIDENCE_OIDC_AUDIENCE: ${{ vars.DAST_EVIDENCE_OIDC_AUDIENCE }}
+      DAST_EVIDENCE_URL: ${{ vars.DAST_EVIDENCE_URL }}
+      DAST_EVIDENCE_SHA256: ${{ vars.DAST_EVIDENCE_SHA256 }}
+      DAST_EXPECTED_ENVIRONMENT: ${{ vars.DAST_ENVIRONMENT_NAME }}
+      DAST_EXPECTED_REGION: ${{ vars.DAST_REGION }}
+      DAST_EXPECTED_TARGET_ORIGIN_SHA256: ${{ vars.DAST_TARGET_ORIGIN_SHA256 }}
+      DAST_EXPECTED_COMMIT: ${{ github.sha }}
+      DAST_EXPECTED_API_IMAGE: ${{ vars.DAST_API_IMAGE_DIGEST }}
+      DAST_EXPECTED_WORKER_IMAGE: ${{ vars.DAST_WORKER_IMAGE_DIGEST }}
+      DAST_EXPECTED_WEB_IMAGE: ${{ vars.DAST_WEB_IMAGE_DIGEST }}
+      DAST_EXPECTED_WEBSITE_IMAGE: ${{ vars.DAST_WEBSITE_IMAGE_DIGEST }}
+      DAST_EXPECTED_SIGNER_KEYSET_SHA256: ${{ vars.DAST_SIGNER_KEYSET_SHA256 }}
+    steps:
+      - name: 检出受信任代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - name: 固定 Runner 临时证据路径
+        shell: bash
+        run: >-
+          printf 'DAST_EVIDENCE_PATH=%s\n'
+          "$RUNNER_TEMP/phase-5-dast-asvs.json"
+          >> "$GITHUB_ENV"
+
+      - name: 通过 GitHub OIDC 拉取脱敏 DAST 与 ASVS 证据
+        run: >-
+          node scripts/github/fetch-oidc-protected-input.mjs
+          --url "$DAST_EVIDENCE_URL"
+          --audience "$DAST_EVIDENCE_OIDC_AUDIENCE"
+          --policy "$GAOQ_OIDC_POLICY"
+          --output "$DAST_EVIDENCE_PATH"
+          --sha256 "$DAST_EVIDENCE_SHA256"
+          --max-bytes 524288
+          --media-type application/json
+
+      - name: 验证版本绑定、授权探针与四方签署
+        env:
+          DAST_VERDICT_PATH: ${{ runner.temp }}/phase-5-dast-asvs-verdict.json
+        run: >-
+          node scripts/security/validate-phase-5-dast-evidence.mjs
+          --enforce-environment
+          "$DAST_EVIDENCE_PATH"
+          > "$DAST_VERDICT_PATH"
+
+      - name: 保存不含目标、报告和业务数据的验收结论
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: phase-5-dast-asvs-verdict-${{ github.sha }}
+          path: ${{ runner.temp }}/phase-5-dast-asvs-verdict.json
+          if-no-files-found: error
+          retention-days: 30

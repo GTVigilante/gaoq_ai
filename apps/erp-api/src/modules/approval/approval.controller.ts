@@ -5,13 +5,16 @@ import {
   Get,
   Headers,
   HttpCode,
+  Logger,
   Param,
   Post,
+  Put,
   Res,
 } from '@nestjs/common';
 import type { Response } from 'express';
 
 import { AuditService } from '../../core/audit/audit.service.js';
+import type { AuditRecordInput } from '../../core/audit/audit.types.js';
 import { RequiredScopes } from '../identity/auth.decorators.js';
 import {
   ApprovalApplicationService,
@@ -29,6 +32,8 @@ import {
   CreateApprovalTemplateDto,
   DecideApprovalInstanceDto,
   TransferApprovalTaskDto,
+  UpdateApprovalInstanceDto,
+  UpdateApprovalTemplateDto,
 } from './application/approval.dto.js';
 
 const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
@@ -37,6 +42,8 @@ const IF_MATCH_PATTERN = /^"([1-9][0-9]*)"$/;
 /** 审批 REST 工作台；租户与主体完全来自已验证身份上下文。 */
 @Controller('approvals')
 export class ApprovalController {
+  private readonly logger = new Logger(ApprovalController.name);
+
   constructor(
     private readonly approvals: ApprovalApplicationService,
     private readonly audit: AuditService,
@@ -115,6 +122,26 @@ export class ApprovalController {
     return result;
   }
 
+  @Put('templates/:id')
+  @RequiredScopes('erp:approval:template:write')
+  async updateTemplate(
+    @Param('id') id: string,
+    @Headers('if-match') ifMatch: string | undefined,
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: UpdateApprovalTemplateDto,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<{ readonly template: ApprovalTemplateSummary }> {
+    const result = await this.approvals.updateTemplate(
+      this.requireUlid(id),
+      this.requireVersion(ifMatch),
+      this.requireKey(key),
+      body,
+    );
+    this.setVersion(response, result.template.version);
+    await this.auditSuccess('approval.template.update', 'approval_template', result.template);
+    return result;
+  }
+
   @Post('templates/:id/publish')
   @HttpCode(200)
   @RequiredScopes('erp:approval:template:publish')
@@ -141,6 +168,27 @@ export class ApprovalController {
     this.setVersion(response, result.instance.version);
     await this.auditInstance('approval.instance.create', result.instance);
     return result;
+  }
+
+  @Put('instances/:id')
+  @RequiredScopes('erp:approval:instance:submit')
+  async updateInstance(
+    @Param('id') id: string,
+    @Headers('if-match') ifMatch: string | undefined,
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: UpdateApprovalInstanceDto,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<{ readonly instance: ApprovalInstanceSummary }> {
+    return this.instanceWrite(
+      'approval.instance.update',
+      response,
+      this.approvals.updateInstance(
+        this.requireUlid(id),
+        this.requireVersion(ifMatch),
+        this.requireKey(key),
+        body,
+      ),
+    );
   }
 
   @Get('instances/inbox')
@@ -334,7 +382,7 @@ export class ApprovalController {
   }
 
   private async auditDelegation(action: string, delegation: ApprovalDelegationView): Promise<void> {
-    await this.audit.record({
+    await this.auditAfterCommit({
       action,
       resourceType: 'approval_delegation',
       resourceId: delegation.id,
@@ -349,7 +397,7 @@ export class ApprovalController {
     resourceType: string,
     resource: { readonly id: string; readonly riskLevel: 'R1' | 'R2'; readonly version: number },
   ): Promise<void> {
-    await this.audit.record({
+    await this.auditAfterCommit({
       action,
       resourceType,
       resourceId: resource.id,
@@ -357,5 +405,19 @@ export class ApprovalController {
       outcome: 'success',
       metadata: { version: resource.version },
     });
+  }
+
+  private async auditAfterCommit(input: AuditRecordInput): Promise<void> {
+    try {
+      await this.audit.record(input);
+    } catch {
+      this.logger.error({
+        code: 'APPROVAL_AUDIT_AFTER_COMMIT_FAILED',
+        action: input.action,
+        resourceType: input.resourceType,
+        resourceId: input.resourceId,
+        riskLevel: input.riskLevel,
+      });
+    }
   }
 }

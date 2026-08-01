@@ -7,6 +7,10 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
 
 import { AppModule } from './app.module.js';
+import {
+  buildAllowedCorsOrigins,
+  isCorsOriginAllowed,
+} from './config/cors-origin-policy.js';
 import type { AppEnvironment } from './config/environment.js';
 
 /**
@@ -20,20 +24,32 @@ const bootstrap = async (): Promise<void> => {
   app.useBodyParser('json', { limit: '8mb' });
   app.useBodyParser('urlencoded', { limit: '1mb', extended: true });
   const config = app.get<ConfigService<AppEnvironment, true>>(ConfigService);
-  const allowedOrigins = [
-    config.get('WEB_ORIGIN', { infer: true }),
-    ...config
-      .get('MCP_ALLOWED_ORIGINS', { infer: true })
-      .split(',')
-      .map((origin) => origin.trim())
-      .filter(Boolean),
-  ];
+  // 生产 NetworkPolicy 只允许单层入口网关访问 API；据此解析最接近网关写入的客户端 IP。
+  app.set('trust proxy', 1);
+  const allowedOrigins = buildAllowedCorsOrigins({
+    webOrigin: config.get('WEB_ORIGIN', { infer: true }),
+    marketingWebsiteOrigin:
+      config.get('MARKETING_WEBSITE_ORIGIN', { infer: true }),
+    mcpAllowedOrigins: config.get('MCP_ALLOWED_ORIGINS', { infer: true }),
+  });
 
   app.use(helmet());
   app.enableCors({
-    origin: [...new Set(allowedOrigins)],
+    origin: (
+      origin: string | undefined,
+      callback: (error: Error | null, allowed?: boolean) => void,
+    ) => callback(null, isCorsOriginAllowed(origin, allowedOrigins)),
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: [
+      'authorization',
+      'content-type',
+      'idempotency-key',
+      'if-match',
+      'x-csrf-token',
+    ],
+    exposedHeaders: ['etag', 'x-trace-id'],
+    maxAge: 600,
   });
   app.useGlobalPipes(
     new ValidationPipe({

@@ -48,4 +48,21 @@ describe('OAuthRateLimitService', () => {
     await expect(malformedResult.assertAllowed('token_ip', '203.0.113.10'))
       .rejects.toBeInstanceOf(ServiceUnavailableException);
   });
+
+  it('拒绝空主体、超长主体、错误元组长度和非安全计数', async () => {
+    const unused = vi.fn();
+    const service = new OAuthRateLimitService({ eval: unused } as unknown as Redis);
+    await expect(service.assertAllowed('token_client', '')).rejects.toBeInstanceOf(HttpException);
+    await expect(service.assertAllowed('token_client', 'x'.repeat(2_049)))
+      .rejects.toBeInstanceOf(HttpException);
+    expect(unused).not.toHaveBeenCalled();
+
+    for (const result of [[1], [Number.NaN, 60], [1, Number.NaN]]) {
+      const malformed = new OAuthRateLimitService({
+        eval: vi.fn().mockResolvedValue(result),
+      } as unknown as Redis);
+      await expect(malformed.assertAllowed('token_client', 'client-001'))
+        .rejects.toBeInstanceOf(ServiceUnavailableException);
+    }
+  });
 });

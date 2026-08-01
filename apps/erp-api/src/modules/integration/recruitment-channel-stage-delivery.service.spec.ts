@@ -10,11 +10,13 @@ import {
   RecruitmentChannelEvidenceVerifier,
   RecruitmentChannelNormalizer,
   RecruitmentChannelRegistry,
+  RecruitmentChannelTransportError,
 } from './recruitment-channel.adapter.js';
 import { RecruitmentChannelStageDeliveryService } from './recruitment-channel-stage-delivery.service.js';
 import type {
   RecruitmentChannelBindingDocument,
   RecruitmentChannelStageDeliveryDocument,
+  RecruitmentExternalMappingRecord,
   RecruitmentExternalMappingDocument,
 } from './recruitment-channel.schemas.js';
 
@@ -51,29 +53,47 @@ function fixture(sourceChannel = 'sandbox_ats') {
   const delivery = {
     eventId: EVENT_ID, tenantId: 'tenant-001', applicationId: APPLICATION_ID,
     applicationVersion: 4, stage: 'offer' as const, status: 'processing', attempts: 1,
+    nextAttemptAt: new Date(), lockedAt: new Date(), lockedBy: 'fixture-worker',
   };
+  const claimState = { value: delivery as typeof delivery | null };
   const deliveries = {
-    findOneAndUpdate: vi.fn(() => query(delivery)),
+    findOneAndUpdate: vi.fn((
+      _filter: unknown,
+      update: { $set?: Record<string, unknown>; $inc?: { attempts?: number } },
+    ) => {
+      const claimed = claimState.value;
+      claimState.value = null;
+      if (claimed !== null) {
+        Object.assign(claimed, update.$set);
+        claimed.attempts += update.$inc?.attempts ?? 0;
+      }
+      return query(claimed);
+    }),
+    updateMany: vi.fn().mockResolvedValue({ modifiedCount: 0 }),
     exists: vi.fn().mockResolvedValue(null),
     updateOne: vi.fn().mockResolvedValue({ modifiedCount: 1 }),
   };
-  const bindings = { findOne: vi.fn(() => query({
+  const bindingState = { value: {
     id: BINDING_ID, tenantId: 'tenant-001', channelCode: 'sandbox_ats', status: 'active',
     credentialSecretRef: 'GAOQ_RECRUITMENT_CHANNEL_SANDBOX',
-  })) };
-  const mappings = { findOne: vi.fn(() => query({
+  } as Record<string, unknown> | null };
+  const bindings = { findOne: vi.fn(() => query(bindingState.value)) };
+  const mappingState = { value: {
     id: MAPPING_ID, tenantId: 'tenant-001', channelCode: 'sandbox_ats',
     entityType: 'application', erpEntityId: APPLICATION_ID, status: 'active',
+    externalIdBlindIndexes: [FINGERPRINT],
     externalIdKeyId: 'key', externalIdIv: 'iv',
     externalIdCiphertext: 'cipher', externalIdAuthTag: 'tag',
-  })) };
+  } as RecruitmentExternalMappingRecord | null };
+  const mappings = { findOne: vi.fn(() => query(mappingState.value)) };
   const context = new TenantContextService();
+  const application = { id: APPLICATION_ID, sourceChannel, version: 5 };
   const recruitment = {
     getApplicationForChannelDelivery: vi.fn().mockImplementation(() => {
       expect(context.getActorRequired()).toMatchObject({
         actorType: 'system_job', scopes: ['erp:recruitment:channel:ack'],
       });
-      return Promise.resolve({ id: APPLICATION_ID, sourceChannel, version: 5 });
+      return Promise.resolve(application);
     }),
   };
   const crypto = {
@@ -82,6 +102,7 @@ function fixture(sourceChannel = 'sandbox_ats') {
   };
   const adapter = new Adapter();
   const audit = { record: vi.fn().mockResolvedValue(undefined) };
+  const secrets = { resolve: vi.fn().mockReturnValue('credential-not-logged') };
   const service = new RecruitmentChannelStageDeliveryService(
     deliveries as unknown as Model<RecruitmentChannelStageDeliveryDocument>,
     bindings as unknown as Model<RecruitmentChannelBindingDocument>,
@@ -91,12 +112,38 @@ function fixture(sourceChannel = 'sandbox_ats') {
     recruitment as unknown as RecruitmentApplicationService,
     crypto as unknown as RecruitmentDataCryptoService,
     new RecruitmentChannelRegistry([adapter], [new Normalizer()], [new Verifier()]),
-    { resolve: vi.fn().mockReturnValue('credential-not-logged') },
+    secrets,
   );
-  return { service, deliveries, bindings, mappings, recruitment, crypto, adapter, audit };
+  return {
+    service, delivery, claimState, deliveries, bindingState, bindings, mappingState, mappings,
+    application, recruitment, crypto, adapter, audit, secrets,
+  };
+}
+
+function failureState(store: ReturnType<typeof fixture>) {
+  const call = store.deliveries.updateOne.mock.calls.find(
+    (candidate) => {
+      const status = (candidate[1] as { $set?: { status?: string } }).$set?.status;
+      return status === 'pending' || status === 'dead' || status === 'manual_review';
+    },
+  );
+  return (call?.[1] as { $set?: Record<string, unknown> } | undefined)?.$set;
 }
 
 describe('RecruitmentChannelStageDeliveryService', () => {
+  it.each([0, 101, 1.5])('拒绝非法批量上限 %s', async (limit) => {
+    await expect(fixture().service.processBatch(limit)).rejects.toThrow(
+      'RECRUITMENT_CHANNEL_BATCH_LIMIT_INVALID',
+    );
+  });
+
+  it('没有可领取投递时立即返回零', async () => {
+    const store = fixture();
+    store.claimState.value = null;
+    await expect(store.service.processBatch(2)).resolves.toBe(0);
+    expect(store.deliveries.exists).not.toHaveBeenCalled();
+  });
+
   it('按版本读取窄投影、解密外部申请 ID，并以稳定幂等键回传阶段', async () => {
     const store = fixture();
     await expect(store.service.processBatch(1)).resolves.toBe(1);
@@ -134,6 +181,225 @@ describe('RecruitmentChannelStageDeliveryService', () => {
     );
     expect((skipped?.[1] as { $set?: unknown }).$set).toMatchObject({
       status: 'skipped', receiptFingerprint: null,
+    });
+  });
+
+  it('手工导入申请同样只记录 skipped', async () => {
+    const store = fixture('manual_import');
+    await expect(store.service.processBatch(1)).resolves.toBe(1);
+    expect(store.adapter.acknowledgeStage).not.toHaveBeenCalled();
+  });
+
+  it.each(['sandbox_ats', 'portal'])(
+    '业务终态提交后审计失败只告警，不得回写失败：%s',
+    async (sourceChannel) => {
+      const store = fixture(sourceChannel);
+      store.audit.record.mockRejectedValueOnce(new Error('AUDIT_STORE_UNAVAILABLE'));
+      await expect(store.service.processBatch(1)).resolves.toBe(1);
+      expect(store.audit.record).toHaveBeenCalledTimes(1);
+      expect(failureState(store)).toBeUndefined();
+    },
+  );
+
+  it('更早申请版本未完成时阻断阶段回传', async () => {
+    const store = fixture();
+    store.deliveries.exists.mockResolvedValueOnce({ eventId: 'earlier-event' });
+    await expect(store.service.processBatch(1)).resolves.toBe(0);
+    expect(failureState(store)?.failureCode).toBe('RECRUITMENT_CHANNEL_STAGE_ORDER_BLOCKED');
+    expect(store.adapter.acknowledgeStage).not.toHaveBeenCalled();
+  });
+
+  it('ERP 申请版本落后于投递版本时拒绝外发', async () => {
+    const store = fixture();
+    store.application.version = 3;
+    await expect(store.service.processBatch(1)).resolves.toBe(0);
+    expect(failureState(store)?.failureCode).toBe('RECRUITMENT_CHANNEL_STAGE_VERSION_AHEAD');
+  });
+
+  it('渠道绑定不存在时失败关闭且不解析密钥', async () => {
+    const store = fixture();
+    store.bindingState.value = null;
+    await expect(store.service.processBatch(1)).resolves.toBe(0);
+    expect(failureState(store)?.failureCode).toBe('RECRUITMENT_CHANNEL_BINDING_NOT_FOUND');
+    expect(store.secrets.resolve).not.toHaveBeenCalled();
+  });
+
+  it('外部申请映射不存在时失败关闭', async () => {
+    const store = fixture();
+    store.mappingState.value = null;
+    await expect(store.service.processBatch(1)).resolves.toBe(0);
+    expect(failureState(store)?.failureCode).toBe(
+      'RECRUITMENT_CHANNEL_APPLICATION_MAPPING_NOT_FOUND',
+    );
+    expect(store.adapter.acknowledgeStage).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, '<script>'])('拒绝解密后的非法外部申请标识：%s', async (value) => {
+    const store = fixture();
+    store.crypto.unprotect.mockReturnValue(value);
+    await expect(store.service.processBatch(1)).resolves.toBe(0);
+    expect(failureState(store)?.failureCode).toBe(
+      'RECRUITMENT_CHANNEL_MAPPING_CIPHERTEXT_INVALID',
+    );
+    expect(store.adapter.acknowledgeStage).not.toHaveBeenCalled();
+  });
+
+  it.each(['', '<script>'])('拒绝渠道返回的非法阶段回执：%s', async (receiptId) => {
+    const store = fixture();
+    store.adapter.acknowledgeStage.mockResolvedValueOnce({ receiptId });
+    await expect(store.service.processBatch(1)).resolves.toBe(0);
+    expect(failureState(store)?.failureCode).toBe(
+      'RECRUITMENT_CHANNEL_STAGE_FINALIZE_UNAVAILABLE',
+    );
+  });
+
+  it('回执盲指纹密钥不可用时不提交成功终态', async () => {
+    const store = fixture();
+    store.crypto.channelFingerprints.mockReturnValueOnce([]);
+    await expect(store.service.processBatch(1)).resolves.toBe(0);
+    expect(failureState(store)).toMatchObject({
+      status: 'manual_review',
+      failureCode: 'RECRUITMENT_CHANNEL_STAGE_FINALIZE_UNAVAILABLE',
+    });
+  });
+
+  it('外部成功后终态租约丢失时进入人工核验且不得自动重放', async () => {
+    const store = fixture();
+    store.deliveries.updateOne
+      .mockResolvedValueOnce({ modifiedCount: 0 })
+      .mockResolvedValueOnce({ modifiedCount: 1 });
+    await expect(store.service.processBatch(1)).resolves.toBe(0);
+    expect(failureState(store)).toMatchObject({
+      status: 'manual_review',
+      failureCode: 'RECRUITMENT_CHANNEL_STAGE_FINALIZE_UNAVAILABLE',
+    });
+  });
+
+  it('失败终态租约丢失时立即抛错且不得伪造失败审计', async () => {
+    const store = fixture();
+    store.deliveries.exists.mockRejectedValueOnce(new Error('UPSTREAM_TIMEOUT'));
+    store.deliveries.updateOne.mockResolvedValueOnce({ modifiedCount: 0 });
+    await expect(store.service.processBatch(1)).rejects.toThrow(
+      'RECRUITMENT_CHANNEL_STAGE_FAILURE_LEASE_LOST',
+    );
+    expect(store.audit.record).not.toHaveBeenCalled();
+  });
+
+  it('达到最大尝试次数后进入 dead 且不再退避重试', async () => {
+    const store = fixture();
+    store.delivery.attempts = 11;
+    store.deliveries.exists.mockRejectedValueOnce(new Error('UPSTREAM_TIMEOUT'));
+    await expect(store.service.processBatch(1)).resolves.toBe(0);
+    expect(failureState(store)).toMatchObject({
+      status: 'dead', failureCode: 'UPSTREAM_TIMEOUT',
+      lockedAt: null, lockedBy: null,
+    });
+    expect(failureState(store)?.nextAttemptAt).toBeInstanceOf(Date);
+  });
+
+  it('供应商稳定响应错误码优先写入失败状态', async () => {
+    const store = fixture();
+    store.deliveries.exists.mockRejectedValueOnce({
+      response: { code: 'CHANNEL_TEMPORARILY_UNAVAILABLE' },
+    });
+    await expect(store.service.processBatch(1)).resolves.toBe(0);
+    expect(failureState(store)?.failureCode).toBe('CHANNEL_TEMPORARILY_UNAVAILABLE');
+  });
+
+  it('不稳定异常消息统一归类为通用失败码', async () => {
+    const store = fixture();
+    store.deliveries.exists.mockRejectedValueOnce(new Error('temporary failure'));
+    await expect(store.service.processBatch(1)).resolves.toBe(0);
+    expect(failureState(store)?.failureCode).toBe(
+      'RECRUITMENT_CHANNEL_STAGE_DELIVERY_FAILED',
+    );
+  });
+
+  it('过期 processing 只隔离为人工核验，领取查询只接受 pending', async () => {
+    const store = fixture();
+    await expect(store.service.processBatch(1)).resolves.toBe(1);
+    const quarantineCall = store.deliveries.updateMany.mock.calls[0] as unknown as [
+      { readonly status?: unknown; readonly lockedAt?: { readonly $lt?: unknown } },
+      { readonly $set?: Record<string, unknown> },
+      Record<string, unknown>,
+    ];
+    expect(quarantineCall[0]).toMatchObject({ status: 'processing' });
+    expect(quarantineCall[0].lockedAt?.$lt).toBeInstanceOf(Date);
+    expect(quarantineCall[1].$set).toMatchObject({
+      status: 'manual_review',
+      failureCode: 'RECRUITMENT_CHANNEL_STAGE_OUTCOME_UNKNOWN',
+    });
+    expect(quarantineCall[2]).toEqual({ runValidators: true });
+    expect(store.deliveries.findOneAndUpdate.mock.calls[0]?.[0]).toMatchObject({
+      status: 'pending',
+      attempts: { $lt: 12 },
+    });
+  });
+
+  it('未分类的渠道回传异常按结果未知进入人工核验', async () => {
+    const store = fixture();
+    store.adapter.acknowledgeStage.mockRejectedValueOnce(new Error('socket timeout'));
+    await expect(store.service.processBatch(1)).resolves.toBe(0);
+    expect(failureState(store)).toMatchObject({
+      status: 'manual_review',
+      failureCode: 'RECRUITMENT_CHANNEL_STAGE_OUTCOME_UNKNOWN',
+    });
+  });
+
+  it('渠道明确未提交时才允许自动退避重试', async () => {
+    const store = fixture();
+    store.adapter.acknowledgeStage.mockRejectedValueOnce(
+      new RecruitmentChannelTransportError('CHANNEL_RATE_LIMITED', 'not_committed'),
+    );
+    await expect(store.service.processBatch(1)).resolves.toBe(0);
+    expect(failureState(store)).toMatchObject({
+      status: 'pending',
+      failureCode: 'CHANNEL_RATE_LIMITED',
+    });
+  });
+
+  it('拒绝跨租户申请映射回读且不得调用渠道', async () => {
+    const store = fixture();
+    if (store.mappingState.value !== null) store.mappingState.value.tenantId = 'tenant-002';
+    await expect(store.service.processBatch(1)).resolves.toBe(0);
+    expect(failureState(store)?.failureCode).toBe(
+      'RECRUITMENT_CHANNEL_APPLICATION_MAPPING_INVALID',
+    );
+    expect(store.adapter.acknowledgeStage).not.toHaveBeenCalled();
+  });
+
+  it('领取记录非法时不得创建可信上下文或读取申请', async () => {
+    const store = fixture();
+    store.delivery.tenantId = '<script>';
+    await expect(store.service.processBatch(1)).resolves.toBe(0);
+    expect(failureState(store)).toMatchObject({
+      status: 'manual_review',
+      failureCode: 'RECRUITMENT_CHANNEL_STAGE_RECORD_INVALID',
+    });
+    expect(store.recruitment.getApplicationForChannelDelivery).not.toHaveBeenCalled();
+  });
+
+  it('渠道回执多余字段也视为结果未知', async () => {
+    const store = fixture();
+    store.adapter.acknowledgeStage.mockResolvedValueOnce({
+      receiptId: 'stage-receipt-001',
+      debugToken: 'must-not-cross-boundary',
+    });
+    await expect(store.service.processBatch(1)).resolves.toBe(0);
+    expect(failureState(store)).toMatchObject({
+      status: 'manual_review',
+      failureCode: 'RECRUITMENT_CHANNEL_STAGE_FINALIZE_UNAVAILABLE',
+    });
+  });
+
+  it('失败状态已提交后审计故障只告警，不改变退避状态', async () => {
+    const store = fixture();
+    store.deliveries.exists.mockRejectedValueOnce(new Error('UPSTREAM_TIMEOUT'));
+    store.audit.record.mockRejectedValueOnce(new Error('AUDIT_UNAVAILABLE'));
+    await expect(store.service.processBatch(1)).resolves.toBe(0);
+    expect(failureState(store)).toMatchObject({
+      status: 'pending',
+      failureCode: 'UPSTREAM_TIMEOUT',
     });
   });
 });

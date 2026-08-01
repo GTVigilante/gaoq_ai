@@ -1,7 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 
 import {
-  BadRequestException,
   Inject,
   Injectable,
   ServiceUnavailableException,
@@ -26,6 +25,7 @@ import {
   type OAuthJwtCredential,
   type OAuthServiceClient,
 } from './oauth-service-client-registry.js';
+import { requireAuthorizationResource } from './authorization-resources.js';
 
 const CLIENT_ASSERTION_TYPE = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
 const CLIENT_ID_PATTERN = /^[A-Za-z0-9._-]{8,128}$/;
@@ -66,9 +66,7 @@ export class OAuthClientCredentialsGrantService {
   ) {}
 
   async issue(input: OAuthClientCredentialsInput): Promise<OAuthClientCredentialsGrant> {
-    if (input.resource !== this.config.get('AUTH_RESOURCE', { infer: true })) {
-      throw new BadRequestException({ code: 'OAUTH_RESOURCE_INVALID', message: 'resource 非法' });
-    }
+    requireAuthorizationResource(this.config, input.resource);
     let authenticated: AuthenticatedClient;
     try {
       authenticated = input.authorization === undefined
@@ -79,7 +77,19 @@ export class OAuthClientCredentialsGrantService {
       throw error;
     }
 
-    const scopes = this.clients.filterAllowedScopes(authenticated.client, input.scopes);
+    try {
+      this.clients.assertResource(authenticated.client, input.resource);
+    } catch (error) {
+      await this.recordFailure(authenticated.client, input.traceId, 'resource_denied');
+      throw error;
+    }
+    let scopes: readonly string[];
+    try {
+      scopes = this.clients.filterAllowedScopes(authenticated.client, input.scopes);
+    } catch (error) {
+      await this.recordFailure(authenticated.client, input.traceId, 'scope_denied');
+      throw error;
+    }
     let signed;
     try {
       signed = await this.signer.sign({
@@ -91,6 +101,7 @@ export class OAuthClientCredentialsGrantService {
         roleCodes: authenticated.client.roleCodes,
         scopes,
         departmentIds: authenticated.client.departmentIds,
+        resource: input.resource,
       });
     } catch (error) {
       await this.recordFailure(authenticated.client, input.traceId, 'signing_failed');
@@ -120,18 +131,8 @@ export class OAuthClientCredentialsGrantService {
     if (input.clientId !== undefined || input.clientAssertion !== undefined || input.clientAssertionType !== undefined) {
       throw this.invalidClient();
     }
-    if (authorization.length > 512) throw this.invalidClient();
-    const match = /^Basic ([A-Za-z0-9+/]+={0,2})$/.exec(authorization);
-    if (match === null) throw this.invalidClient();
-    const encoded = match[1] ?? '';
-    let decoded: string;
-    try {
-      const bytes = Buffer.from(encoded, 'base64');
-      if (bytes.toString('base64') !== encoded) throw new Error('non-canonical');
-      decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-    } catch {
-      throw this.invalidClient();
-    }
+    const decoded = this.decodeBasicCredential(authorization);
+    if (decoded === undefined) throw this.invalidClient();
     const separator = decoded.indexOf(':');
     if (separator < 1 || decoded.indexOf(':', separator + 1) !== -1) throw this.invalidClient();
     const clientId = decoded.slice(0, separator);
@@ -250,8 +251,9 @@ export class OAuthClientCredentialsGrantService {
   }
 
   private async auditKnownFailure(input: OAuthClientCredentialsInput, reason: string): Promise<void> {
-    const clientId = input.clientId ?? this.basicClientId(input.authorization) ??
-      this.assertionClientId(input.clientAssertion);
+    const clientId = input.authorization === undefined
+      ? this.assertionClientId(input.clientAssertion)
+      : this.basicClientId(input.authorization);
     if (clientId === undefined) return;
     const client = this.clients.resolveActive(clientId);
     if (client !== undefined) await this.recordFailure(client, input.traceId, reason);
@@ -270,15 +272,26 @@ export class OAuthClientCredentialsGrantService {
   }
 
   private basicClientId(authorization: string | undefined): string | undefined {
-    const match = authorization === undefined
-      ? null
-      : /^Basic ([A-Za-z0-9+/]+={0,2})$/.exec(authorization);
+    if (authorization === undefined) return undefined;
+    const decoded = this.decodeBasicCredential(authorization);
+    if (decoded === undefined) return undefined;
+    const separator = decoded.indexOf(':');
+    const clientId = separator > 0 && decoded.indexOf(':', separator + 1) === -1
+      ? decoded.slice(0, separator)
+      : '';
+    return CLIENT_ID_PATTERN.test(clientId) ? clientId : undefined;
+  }
+
+  /** Basic 解析与审计归属共用同一严格、规范 Base64 和 UTF-8 边界。 */
+  private decodeBasicCredential(authorization: string): string | undefined {
+    if (authorization.length > 512) return undefined;
+    const match = /^Basic ([A-Za-z0-9+/]+={0,2})$/.exec(authorization);
     if (match === null) return undefined;
     try {
-      const decoded = Buffer.from(match[1] ?? '', 'base64').toString('utf8');
-      const separator = decoded.indexOf(':');
-      const clientId = separator > 0 ? decoded.slice(0, separator) : '';
-      return CLIENT_ID_PATTERN.test(clientId) ? clientId : undefined;
+      const encoded = match[1] ?? '';
+      const bytes = Buffer.from(encoded, 'base64');
+      if (bytes.toString('base64') !== encoded) return undefined;
+      return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
     } catch {
       return undefined;
     }

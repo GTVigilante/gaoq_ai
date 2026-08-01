@@ -57,8 +57,18 @@ type PayrollStatus =
   | 'locked' | 'disbursing' | 'reconciling' | 'reconciled';
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const DASHBOARD_SOURCES = Object.freeze([
+  'org_employees',
+  'approval_instances',
+  'approval_actions',
+  'recruitment_positions',
+  'recruitment_applications',
+  'knowledge_training_assignments',
+  'payroll_periods',
+  'op_operating_summaries',
+] as const);
 const SOURCE_LABELS: Readonly<Record<string, string>> = {
-  org_employees: '员工主数据', approval_instances: '审批实例',
+  org_employees: '员工主数据', approval_instances: '审批实例', approval_actions: '审批动作日志',
   recruitment_positions: '招聘职位', recruitment_applications: '候选申请',
   knowledge_training_assignments: '培训任务', payroll_periods: '薪资周期',
   op_operating_summaries: 'OP 经营日摘要',
@@ -311,9 +321,9 @@ function nullablePayrollStatus(value: unknown): PayrollStatus | null {
   return value as PayrollStatus;
 }
 function parseSources(value: unknown): readonly string[] {
-  if (!Array.isArray(value) || value.length < 1 || value.length > 16 ||
-    value.some((item) => typeof item !== 'string' || !(item in SOURCE_LABELS))) throw invalid();
-  return Object.freeze(value as string[]);
+  if (!Array.isArray(value) || value.length !== DASHBOARD_SOURCES.length ||
+    value.some((item, index) => item !== DASHBOARD_SOURCES[index])) throw invalid();
+  return Object.freeze([...DASHBOARD_SOURCES]);
 }
 function invalid(): Error { return new Error('DASHBOARD_RESPONSE_INVALID'); }
 

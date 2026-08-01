@@ -37,6 +37,36 @@ describe('BrowserRefreshCookieService', () => {
     });
   });
 
+  it('开发环境使用非 __Host Cookie，清理属性与设置属性保持一致', () => {
+    const cookie = vi.fn();
+    const clearCookie = vi.fn();
+    const response = { cookie, clearCookie } as unknown as Response;
+    const service = createService('development');
+    const token = `rt_${'A'.repeat(64)}`;
+
+    service.set(response, token);
+    service.clear(response);
+
+    expect(cookie).toHaveBeenCalledWith(
+      'gaoq_refresh',
+      token,
+      expect.objectContaining({ secure: false }),
+    );
+    expect(clearCookie).toHaveBeenCalledWith('gaoq_refresh', {
+      httpOnly: true,
+      secure: false,
+      sameSite: 'strict',
+      path: '/',
+    });
+  });
+
+  it('禁止把内部受损的刷新令牌写入 Cookie', () => {
+    const cookie = vi.fn();
+    expect(() => createService().set({ cookie } as unknown as Response, 'invalid'))
+      .toThrow('刷新令牌格式非法');
+    expect(cookie).not.toHaveBeenCalled();
+  });
+
   it('刷新请求必须来自精确 WEB_ORIGIN', () => {
     const service = createService();
 
@@ -56,5 +86,17 @@ describe('BrowserRefreshCookieService', () => {
     expect(() =>
       service.readRequired(createRequest({ cookie: '__Host-gaoq_refresh=attacker' })),
     ).toThrow(UnauthorizedException);
+  });
+
+  it.each([
+    ['缺失', undefined],
+    [
+      '重复',
+      `__Host-gaoq_refresh=rt_${'A'.repeat(64)}; __Host-gaoq_refresh=rt_${'B'.repeat(64)}`,
+    ],
+    ['超长', `other=${'A'.repeat(8_193)}`],
+  ])('拒绝%s刷新 Cookie，避免 Cookie tossing 与超长头歧义', (_name, cookie) => {
+    expect(() => createService().readRequired(createRequest({ cookie })))
+      .toThrow(UnauthorizedException);
   });
 });

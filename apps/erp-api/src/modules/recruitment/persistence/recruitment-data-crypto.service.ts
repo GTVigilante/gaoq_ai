@@ -63,7 +63,8 @@ export interface RecruitmentCryptoContext {
     | 'interview_feedback'
     | 'channel_inbox'
     | 'channel_cursor'
-    | 'channel_mapping';
+    | 'channel_mapping'
+    | 'talent_touchpoint';
   readonly resourceId: string;
 }
 
@@ -254,7 +255,7 @@ export class RecruitmentDataCryptoService {
       !RECRUITMENT_ID_PATTERN.test(context.resourceId) ||
       ![
         'candidate_identity', 'offer_terms', 'interview_location', 'interview_feedback',
-        'channel_inbox', 'channel_cursor', 'channel_mapping',
+        'channel_inbox', 'channel_cursor', 'channel_mapping', 'talent_touchpoint',
       ].includes(context.resourceType)
     ) throw this.invalidPayload();
   }

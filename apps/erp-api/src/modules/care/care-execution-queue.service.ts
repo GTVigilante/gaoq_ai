@@ -5,18 +5,28 @@ import { Injectable } from '@nestjs/common';
 import type { Queue } from 'bullmq';
 
 import { TenantContextService } from '../../core/tenant/tenant-context.service.js';
-import type { CareCaseSummary } from './application/care-application.service.js';
+import type {
+  AlumniConsentSummary,
+  CareCaseSummary,
+} from './application/care-application.service.js';
 import {
+  CARE_DISPATCH_OCCASION_JOB,
+  CARE_DISPATCH_ALUMNI_CLEANUP_JOB,
   CARE_EXECUTE_CASE_JOB,
   CARE_EXECUTION_QUEUE,
-  type CareExecutionJobData,
+  CARE_RECONCILE_ALUMNI_CLEANUP_JOB,
+  CARE_RECONCILE_OCCASIONS_JOB,
+  CARE_RELAY_ALUMNI_CLEANUP_JOB,
+  type CareJobData,
 } from './care-execution.queue.js';
+import { buildCareConsentExpiryJob } from './care-consent-expiry-job.js';
+import type { AlumniCleanupTask, CareOccasionTask } from './domain/index.js';
 
 @Injectable()
 export class CareExecutionQueueService {
   constructor(
     private readonly context: TenantContextService,
-    @InjectQueue(CARE_EXECUTION_QUEUE) private readonly queue: Queue<CareExecutionJobData>,
+    @InjectQueue(CARE_EXECUTION_QUEUE) private readonly queue: Queue<CareJobData>,
   ) {}
 
   async schedule(careCase: CareCaseSummary): Promise<void> {
@@ -35,5 +45,101 @@ export class CareExecutionQueueService {
         removeOnComplete: 1_000, removeOnFail: 10_000,
       },
     );
+  }
+
+  async scheduleAlumniConsentExpiry(consent: AlumniConsentSummary): Promise<void> {
+    if (consent.status !== 'active') return;
+    const tenantId = this.context.getTenantRequired().tenantId;
+    const job = buildCareConsentExpiryJob({
+      tenantId, consentId: consent.id, expiresAt: consent.expiresAt,
+    });
+    await this.queue.add(job.name, job.data, job.opts);
+  }
+
+  async scheduleOccasion(task: CareOccasionTask): Promise<void> {
+    if (task.status !== 'pending') return;
+    const tenantId = this.context.getTenantRequired().tenantId;
+    if (task.tenantId !== tenantId) throw new Error('CARE_OCCASION_QUEUE_CROSS_TENANT');
+    const jobId = createHash('sha256').update(JSON.stringify([
+      'care-occasion-dispatch-v1',
+      tenantId,
+      task.id,
+      task.version,
+    ]), 'utf8').digest('base64url');
+    await this.queue.add(
+      CARE_DISPATCH_OCCASION_JOB,
+      { tenantId, occasionTaskId: task.id },
+      {
+        jobId,
+        delay: Math.max(0, Date.parse(task.nextAttemptAt) - Date.now()),
+        attempts: 12,
+        backoff: { type: 'exponential', delay: 30_000 },
+        removeOnComplete: 1_000,
+        removeOnFail: 10_000,
+      },
+    );
+  }
+
+  async scheduleAlumniCleanup(task: AlumniCleanupTask): Promise<void> {
+    if (task.status !== 'pending') return;
+    const tenantId = this.context.getTenantRequired().tenantId;
+    if (task.tenantId !== tenantId) throw new Error('CARE_ALUMNI_CLEANUP_QUEUE_CROSS_TENANT');
+    const jobId = createHash('sha256').update(JSON.stringify([
+      'care-alumni-cleanup-dispatch-v1',
+      tenantId,
+      task.id,
+      task.version,
+    ]), 'utf8').digest('base64url');
+    await this.queue.add(
+      CARE_DISPATCH_ALUMNI_CLEANUP_JOB,
+      { tenantId, cleanupTaskId: task.id },
+      {
+        jobId,
+        delay: Math.max(0, Date.parse(task.nextAttemptAt) - Date.now()),
+        attempts: 1,
+        removeOnComplete: 1_000,
+        removeOnFail: 10_000,
+      },
+    );
+  }
+
+  /** 注册空载荷周期对账；重复调用由固定 jobId 去重。 */
+  async ensureOccasionReconcileSchedule(): Promise<void> {
+    await this.queue.add(
+      CARE_RECONCILE_OCCASIONS_JOB,
+      {},
+      {
+        jobId: 'care-occasion-reconcile-v1',
+        repeat: { every: 15 * 60_000 },
+        removeOnComplete: 100,
+        removeOnFail: 1_000,
+      },
+    );
+  }
+
+  /** 固定空载荷任务驱动 Outbox relay 和恢复对账，禁止队列指定租户或目标。 */
+  async ensureAlumniCleanupSchedules(): Promise<void> {
+    await Promise.all([
+      this.queue.add(
+        CARE_RELAY_ALUMNI_CLEANUP_JOB,
+        {},
+        {
+          jobId: 'care-alumni-cleanup-relay-v1',
+          repeat: { every: 60_000 },
+          removeOnComplete: 100,
+          removeOnFail: 1_000,
+        },
+      ),
+      this.queue.add(
+        CARE_RECONCILE_ALUMNI_CLEANUP_JOB,
+        {},
+        {
+          jobId: 'care-alumni-cleanup-reconcile-v1',
+          repeat: { every: 60_000 },
+          removeOnComplete: 100,
+          removeOnFail: 1_000,
+        },
+      ),
+    ]);
   }
 }

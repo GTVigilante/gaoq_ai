@@ -17,10 +17,12 @@ import {
   type AttendanceMonthlySnapshotDocument,
 } from '../../attendance/persistence/attendance.schemas.js';
 import { AccessProfileRepository } from '../../identity/access-profile.repository.js';
+import { LegacyPayrollBoundaryService } from '../legacy-payroll-boundary.service.js';
 import {
   calculatePayroll,
   createPayrollPeriod,
   payrollDigest,
+  proratePayrollCompensation,
   recordPayrollCalculation,
   startPayrollCollection,
   type PayrollCalculationInput,
@@ -61,6 +63,7 @@ const componentSchema = z.object({
 }).strict();
 const compensationProfileDataSchema = z.object({
   currency: z.literal('CNY'),
+  jurisdictionCode: z.string().regex(ID_PATTERN),
   taxableEarnings: z.array(componentSchema).max(128),
   nonTaxableEarnings: z.array(componentSchema).max(128),
   employeeSocialInsuranceMinor: z.number().int().safe().nonnegative(),
@@ -98,6 +101,8 @@ const payrollResultSchema = z.object({
 export interface PayrollRunLineInput {
   readonly employeeId: string;
   readonly compensationProfileId: string;
+  /** 月中变更时按生效顺序补充精确档案引用；不得由服务自行猜选。 */
+  readonly additionalCompensationProfileIds?: readonly string[];
   readonly attendanceSnapshotId: string;
 }
 
@@ -194,12 +199,19 @@ interface CalculatedPayrollLine {
   readonly attendanceSnapshotHash: string;
 }
 
+export interface PayrollAdjustmentCalculationCandidate {
+  readonly input: PayrollCalculationInput;
+  readonly result: PayrollCalculationResult;
+  readonly attendanceSnapshotHash: string;
+}
+
 /** 工资周期与计算运行应用服务；仅系统任务可提交已冻结的规范输入。 */
 @Injectable()
 export class PayrollRunService {
   constructor(
     private readonly idempotency: IdempotencyService,
     private readonly context: TenantContextService,
+    private readonly boundary: LegacyPayrollBoundaryService,
     private readonly profiles: AccessProfileRepository,
     private readonly crypto: PayrollDataCryptoService,
     private readonly outbox: PayrollOutboxWriter,
@@ -225,6 +237,7 @@ export class PayrollRunService {
     input: ImportPayrollPeriodFromMigrationInput,
   ): Promise<PayrollPeriodSummary> {
     this.assertMigrationWriter();
+    this.boundary.assertLegacy();
     assertPeriodMigrationInput(input);
     return this.run(() => this.idempotency.execute(
       'payroll.period.import_from_migration', key, input, async (session) => {
@@ -282,6 +295,7 @@ export class PayrollRunService {
     input: ImportPayrollCalculationRunFromMigrationInput,
   ): Promise<PayrollCalculationRunMigrationSummary> {
     this.assertMigrationWriter();
+    this.boundary.assertLegacy();
     assertCalculationRunMigrationInput(input);
     return this.run(() => this.idempotency.execute(
       'payroll.run.import_from_migration', key, input, async (session) => {
@@ -342,6 +356,9 @@ export class PayrollRunService {
         const inputSnapshotHash = payrollDigest(calculated.map((line) => ({
           employeeId: line.input.employeeId,
           compensationProfileId: line.reference.compensationProfileId,
+          ...(line.reference.additionalCompensationProfileIds === undefined ? {} : {
+            compensationProfileIds: compensationProfileIds(line.reference),
+          }),
           attendanceSnapshotId: line.reference.attendanceSnapshotId,
           attendanceSnapshotHash: line.attendanceSnapshotHash,
           inputHash: line.result.inputHash,
@@ -392,6 +409,7 @@ export class PayrollRunService {
     if (trusted.actor.actorType !== 'user') throw new ForbiddenException({
       code: 'PAYROLL_PERIOD_HUMAN_REQUIRED', message: '工资周期只能由已验证人员创建',
     });
+    this.boundary.assertLegacy();
     return this.run(() => this.idempotency.execute(
       'payroll.period.create', key, { period }, async (session) => {
       const created = createPayrollPeriod({
@@ -415,6 +433,7 @@ export class PayrollRunService {
     expectedVersion: number,
   ): Promise<PayrollPeriodSummary> {
     this.assertScope('erp:payroll:period:prepare');
+    this.boundary.assertLegacy();
     return this.run(() => this.idempotency.execute(
       'payroll.period.start_collection', key, { periodId, expectedVersion }, async (session) => {
         const current = await this.periods.findOne({
@@ -445,6 +464,7 @@ export class PayrollRunService {
         code: 'PAYROLL_RUN_SERVICE_REQUIRED', message: '工资计算只允许受信任计算服务执行',
       });
     }
+    this.boundary.assertLegacy();
     this.assertRunInput(input);
     return this.run(() => this.idempotency.execute(
       'payroll.run.execute', key, input, async (session) => {
@@ -474,6 +494,9 @@ export class PayrollRunService {
       const inputSnapshotHash = payrollDigest(calculated.map((line) => ({
         employeeId: line.input.employeeId,
         compensationProfileId: line.reference.compensationProfileId,
+        ...(line.reference.additionalCompensationProfileIds === undefined ? {} : {
+          compensationProfileIds: [...compensationProfileIds(line.reference)],
+        }),
         attendanceSnapshotId: line.reference.attendanceSnapshotId,
         attendanceSnapshotHash: line.attendanceSnapshotHash,
         inputHash: line.result.inputHash,
@@ -501,6 +524,7 @@ export class PayrollRunService {
           id: snapshotId, tenantId: this.tenantId(), runId, periodId: current.id,
           employeeId: line.input.employeeId,
           compensationProfileId: line.reference.compensationProfileId,
+          compensationProfileIds: [...compensationProfileIds(line.reference)],
           attendanceSnapshotId: line.reference.attendanceSnapshotId,
           attendanceSnapshotHash: line.attendanceSnapshotHash,
           inputHash: line.result.inputHash, ...protectedRecord(inputCiphertext),
@@ -541,8 +565,35 @@ export class PayrollRunService {
     ));
   }
 
+  /**
+   * 仅供 PayrollAdjustmentService 在同一事务中重算更正候选。
+   * 调用方仍须验证原周期已锁定、原结果摘要与调整审批链。
+   */
+  async calculateAdjustmentCandidate(
+    period: PayrollPeriodRecord,
+    rulePackId: string,
+    rulePackVersion: number,
+    line: PayrollRunLineInput,
+    session: ClientSession,
+  ): Promise<PayrollAdjustmentCalculationCandidate> {
+    this.boundary.assertLegacy();
+    const rulePack = await this.requireEffectiveRulePack(
+      period, rulePackId, rulePackVersion, session,
+    );
+    const calculated = await this.calculateLines(
+      period, [line], toRuleSnapshot(rulePack), session,
+    );
+    const candidate = required(calculated[0]);
+    return Object.freeze({
+      input: candidate.input,
+      result: candidate.result,
+      attendanceSnapshotHash: candidate.attendanceSnapshotHash,
+    });
+  }
+
   async getPeriod(id: string): Promise<PayrollPeriodSummary> {
     this.assertScope('erp:payroll:period:read');
+    this.boundary.assertLegacy();
     if (!ID_PATTERN.test(id)) throw new BadRequestException({
       code: 'PAYROLL_PERIOD_ID_INVALID', message: '工资周期标识非法',
     });
@@ -559,6 +610,7 @@ export class PayrollRunService {
     expectedVersion: number,
   ): Promise<LockedPayrollDisbursementSource> {
     this.assertScope('erp:treasury:disbursement:prepare');
+    this.boundary.assertLegacy();
     return this.loadLockedDisbursementSource(periodId, expectedVersion, false);
   }
 
@@ -576,6 +628,7 @@ export class PayrollRunService {
         message: '迁移工资支付来源只允许受信任服务身份读取',
       });
     }
+    this.boundary.assertLegacy();
     return this.loadLockedDisbursementSource(periodId, expectedVersion, true);
   }
 
@@ -684,6 +737,7 @@ export class PayrollRunService {
           id, tenantId: this.tenantId(), runId, periodId: period.id,
           employeeId: line.input.employeeId,
           compensationProfileId: line.reference.compensationProfileId,
+          compensationProfileIds: [...compensationProfileIds(line.reference)],
           attendanceSnapshotId: line.reference.attendanceSnapshotId,
           attendanceSnapshotHash: line.attendanceSnapshotHash,
           inputHash: line.result.inputHash, ...protectedRecord(protectedData),
@@ -812,26 +866,50 @@ export class PayrollRunService {
     }> = [];
     for (const line of sorted) {
       this.assertLineReference(line);
-      const compensation = await this.compensationProfiles.findOne({
-        tenantId: this.tenantId(), id: line.compensationProfileId,
-        employeeId: line.employeeId, status: 'active',
-        effectiveFrom: { $lte: `${period.period}-01` },
-        $or: [{ effectiveTo: null }, { effectiveTo: { $gte: monthEnd(period.period) } }],
-      }).session(session).lean().exec();
-      if (compensation === null) throw new Error('PAYROLL_COMPENSATION_PROFILE_NOT_EFFECTIVE');
+      const requestedProfileIds = compensationProfileIds(line);
+      const compensations = requestedProfileIds.length === 1
+        ? [await this.compensationProfiles.findOne({
+          tenantId: this.tenantId(), id: required(requestedProfileIds[0]),
+          employeeId: line.employeeId, status: 'active',
+          effectiveFrom: { $lte: `${period.period}-01` },
+          $or: [{ effectiveTo: null }, { effectiveTo: { $gte: monthEnd(period.period) } }],
+        }).session(session).lean().exec()]
+        : await this.compensationProfiles.find({
+          tenantId: this.tenantId(), id: { $in: requestedProfileIds },
+          employeeId: line.employeeId, status: 'active',
+          effectiveFrom: { $lte: monthEnd(period.period) },
+          $or: [{ effectiveTo: null }, { effectiveTo: { $gte: `${period.period}-01` } }],
+        }).sort({ effectiveFrom: 1, version: 1 }).session(session).lean().exec();
+      if (compensations.some((item) => item === null) ||
+        compensations.length !== requestedProfileIds.length) {
+        throw new Error('PAYROLL_COMPENSATION_PROFILE_NOT_EFFECTIVE');
+      }
       const attendance = await this.attendanceSnapshots.findOne({
         tenantId: this.tenantId(), id: line.attendanceSnapshotId,
         employeeId: line.employeeId, month: period.period,
         status: 'active',
       }).session(session).lean().exec();
       if (attendance === null) throw new Error('PAYROLL_ATTENDANCE_SNAPSHOT_INVALID');
-      const profileData = compensationProfileDataSchema.parse(this.crypto.unprotect({
-        tenantId: this.tenantId(), resourceType: 'compensation_profile',
-        resourceId: compensation.id, version: compensation.version,
-      }, protectedValue(compensation)));
-      if (payrollDigest(profileData) !== compensation.profileHash) {
-        throw new Error('PAYROLL_COMPENSATION_PROFILE_INTEGRITY_FAILED');
-      }
+      const profileSegments = compensations.map((value) => {
+        const compensation = required(value);
+        const profileData = compensationProfileDataSchema.parse(this.crypto.unprotect({
+          tenantId: this.tenantId(), resourceType: 'compensation_profile',
+          resourceId: compensation.id, version: compensation.version,
+        }, protectedValue(compensation)));
+        if (payrollDigest(profileData) !== compensation.profileHash ||
+          profileData.jurisdictionCode !== compensation.jurisdictionCode) {
+          throw new Error('PAYROLL_COMPENSATION_PROFILE_INTEGRITY_FAILED');
+        }
+        return Object.freeze({
+          profileId: compensation.id, profileVersion: compensation.version,
+          profileHash: compensation.profileHash, effectiveFrom: compensation.effectiveFrom,
+          effectiveTo: compensation.effectiveTo, data: profileData,
+        });
+      });
+      const proratedProfile = profileSegments.length === 1
+        ? null
+        : proratePayrollCompensation(period.period, profileSegments);
+      const profileData = proratedProfile ?? required(profileSegments[0]).data;
       const cumulativeBefore = await this.resolveCumulativeBefore(
         period, line.employeeId, session, allowMigratedPrior,
       );
@@ -865,6 +943,9 @@ export class PayrollRunService {
           profileData.postTaxDeductionMinor, attendanceDeductionMinor,
         ),
         cumulativeBefore,
+        ...(proratedProfile === null ? {} : {
+          compensationAllocations: proratedProfile.allocations,
+        }),
       });
       output.push(Object.freeze({
         input: calculation, result: calculatePayroll(calculation), reference: line,
@@ -968,11 +1049,18 @@ export class PayrollRunService {
   }
 
   private assertLineReference(line: PayrollRunLineInput): void {
+    const keys = Object.keys(line).sort().join(',');
+    const profileIds = compensationProfileIds(line);
     if (
-      Object.keys(line).sort().join(',') !==
-        'attendanceSnapshotId,compensationProfileId,employeeId' ||
+      ![
+        'attendanceSnapshotId,compensationProfileId,employeeId',
+        'additionalCompensationProfileIds,attendanceSnapshotId,compensationProfileId,employeeId',
+      ].includes(keys) ||
       !ID_PATTERN.test(line.employeeId) || !ID_PATTERN.test(line.compensationProfileId) ||
-      !ID_PATTERN.test(line.attendanceSnapshotId)
+      !ID_PATTERN.test(line.attendanceSnapshotId) ||
+      profileIds.length < 1 || profileIds.length > 31 ||
+      profileIds.some((profileId) => !ID_PATTERN.test(profileId)) ||
+      new Set(profileIds).size !== profileIds.length
     ) throw new BadRequestException({
       code: 'PAYROLL_RUN_LINE_REFERENCE_INVALID', message: '工资员工行引用非法',
     });
@@ -1280,6 +1368,13 @@ function lineReference(
     employeeId: line.employeeId, compensationProfileId: line.compensationProfileId,
     attendanceSnapshotId: line.attendanceSnapshotId,
   };
+}
+
+function compensationProfileIds(line: PayrollRunLineInput): readonly string[] {
+  return Object.freeze([
+    line.compensationProfileId,
+    ...(line.additionalCompensationProfileIds ?? []),
+  ]);
 }
 
 function strictMigrationInstant(value: string): Date {

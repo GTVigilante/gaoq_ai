@@ -302,7 +302,8 @@ export class RecruitmentOfferService {
     return this.run(async () => {
       const current = await this.requireOffer(id);
       if (current.status === 'pending_approval' && current.approvalInstanceId !== null) {
-        return this.linkApproval(id, expectedVersion, key, current.approvalInstanceId);
+        if (current.version !== expectedVersion) throw versionConflict();
+        return { offer: offerSummary(current) };
       }
       submitRecruitmentOffer(current, {
         tenantId: this.context.getTenantRequired().tenantId, expectedVersion,
@@ -352,9 +353,8 @@ export class RecruitmentOfferService {
       const current = await this.requireOffer(id);
       if (current.status === 'approved' || current.status === 'rejected') {
         if (current.approvalInstanceId === null) throw new Error('RECRUITMENT_OFFER_APPROVAL_INVALID');
-        return this.applyApproval(
-          id, expectedVersion, key, current.approvalInstanceId, current.status,
-        );
+        if (current.version !== expectedVersion) throw versionConflict();
+        return { offer: offerSummary(current) };
       }
       if (current.status !== 'pending_approval' || current.approvalInstanceId === null) {
         throw new ConflictException({
@@ -997,9 +997,12 @@ function expectedApplicationActionsForMigratedOffer(
 
 function requiredDate(value: string): Date {
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) throw new RecruitmentDomainError(
-    'RECRUITMENT_INVALID_DATE', '时间格式无效',
-  );
+  if (Number.isNaN(date.getTime()) || date.toISOString() !== value) {
+    throw new RecruitmentDomainError(
+      'RECRUITMENT_INVALID_DATE',
+      '时间必须为规范毫秒级 UTC ISO',
+    );
+  }
   return date;
 }
 

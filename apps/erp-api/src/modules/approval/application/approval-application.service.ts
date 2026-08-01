@@ -18,6 +18,7 @@ import {
   buildApprovalDelegationEvent,
   buildApprovalLegacyHistoryMigratedEvent,
   buildApprovalInstanceCreatedEvent,
+  buildApprovalInstanceUpdatedEvent,
   buildApprovalInstanceMigratedEvent,
   buildApprovalTemplateEvent,
   buildApprovalTemplateMigratedEvent,
@@ -34,6 +35,8 @@ import {
   revokeApprovalDelegation,
   submitApprovalInstance,
   transferApprovalTask,
+  updateApprovalInstanceDraft,
+  updateApprovalTemplateDraft,
   withdrawApprovalInstance,
   currentApprovalNode,
   ApprovalDomainError,
@@ -162,6 +165,19 @@ export interface PayrollPeriodApprovalDecision {
   readonly formDataHash: string;
 }
 
+export interface PayrollAdjustmentApprovalDecision {
+  readonly id: string;
+  readonly outcome: 'approved' | 'rejected';
+  readonly decidedBy: string;
+  readonly completedAt: string;
+  readonly adjustmentId: string;
+  readonly adjustmentHash: string;
+  readonly period: string;
+  readonly adjustmentType: 'supplement' | 'reversal' | 'tax_only';
+  readonly reasonCode: string;
+  readonly formDataHash: string;
+}
+
 export interface OpApprovalSubmissionInput {
   readonly instanceId: string;
   readonly templateCode: string;
@@ -279,6 +295,19 @@ export interface ApprovalTreasuryMigrationReference {
     | 'treasury_disbursement_export_approval';
   readonly completedAt: string;
   readonly evidenceChecksum: string;
+}
+
+export interface ApprovalTreasuryBankAccountDecision {
+  readonly id: string;
+  readonly completedAt: string;
+  readonly approvedBy: string;
+  readonly ownerType: 'organization' | 'employee';
+  readonly ownerId: string;
+  readonly accountName: string;
+  readonly account: string;
+  readonly clearingCode: string;
+  readonly currency: 'CNY';
+  readonly formDataHash: string;
 }
 
 /** 审批应用服务：唯一事务编排入口，REST、Worker 与 MCP 必须复用本服务。 */
@@ -653,6 +682,34 @@ export class ApprovalApplicationService {
     ));
   }
 
+  /** 修改当前模板草稿；编码和修订号不可变，发布或退役版本永久拒绝覆盖。 */
+  async updateTemplate(
+    id: string,
+    expectedVersion: number,
+    key: string,
+    input: {
+      readonly name: string;
+      readonly riskLevel: 'R1' | 'R2';
+      readonly definition: ApprovalTemplateDefinition;
+    },
+  ): Promise<{ readonly template: ApprovalTemplateSummary }> {
+    return this.run(async () => this.idempotency.execute(
+      'approval.template.update', key, { id, expectedVersion, ...input }, async (session) => {
+        const current = await this.requireTemplate(id, session);
+        const trusted = this.context.getRequired();
+        const updated = updateApprovalTemplateDraft(current, {
+          tenantId: trusted.tenant.tenantId,
+          expectedVersion,
+          actorId: trusted.actor.actorId,
+          ...input,
+        }, new Date());
+        await this.templates.replace(updated, expectedVersion, session);
+        await this.outbox.append(buildApprovalTemplateEvent(updated, 'draft_updated'), session);
+        return { template: templateSummary(updated) };
+      },
+    ));
+  }
+
   /** 返回可发起模板的最小表单投影；不暴露节点解析器、审批人或租户。 */
   async listPublishedTemplateForms(): Promise<readonly ApprovalPublishedTemplateFormView[]> {
     const templates = await this.templates.findPublished();
@@ -758,6 +815,33 @@ export class ApprovalApplicationService {
         await this.instances.insert(instance, session);
         await this.outbox.append(buildApprovalInstanceCreatedEvent(instance), session);
         return { instance: instanceSummary(instance) };
+      },
+    ));
+  }
+
+  /** 修改本人未提交实例草稿；模板快照不可替换，正文只进入加密聚合。 */
+  async updateInstance(
+    id: string,
+    expectedVersion: number,
+    key: string,
+    input: {
+      readonly title: string;
+      readonly formData: ApprovalFormData;
+    },
+  ): Promise<{ readonly instance: ApprovalInstanceSummary }> {
+    return this.run(async () => this.idempotency.execute(
+      'approval.instance.update', key, { id, expectedVersion, ...input }, async (session) => {
+        const current = await this.requireInstance(id, session);
+        const trusted = this.context.getRequired();
+        const updated = updateApprovalInstanceDraft(current, {
+          tenantId: trusted.tenant.tenantId,
+          expectedVersion,
+          actorId: trusted.actor.actorId,
+          ...input,
+        }, new Date());
+        await this.instances.replace(updated, expectedVersion, session);
+        await this.outbox.append(buildApprovalInstanceUpdatedEvent(updated), session);
+        return { instance: instanceSummary(updated) };
       },
     ));
   }
@@ -1179,6 +1263,131 @@ export class ApprovalApplicationService {
     });
   }
 
+  /**
+   * Treasury 账户登记只读取专用审批的可信通过终态。
+   *
+   * L4 表单只在同进程应用服务调用期间返回，不进入 REST、MCP、事件、审计或日志。
+   */
+  async getTreasuryBankAccountDecision(
+    id: string,
+    session: ClientSession,
+  ): Promise<ApprovalTreasuryBankAccountDecision> {
+    const actor = this.context.getActorRequired();
+    if (!actor.scopes.includes('erp:treasury:account:attest')) throw new ForbiddenException({
+      code: 'APPROVAL_TREASURY_INTEGRATION_STATUS_DENIED',
+      message: '无权读取资金账户审批终态',
+    });
+    const instance = await this.requireInstance(id, session);
+    if (instance.templateSnapshot.templateCode !== 'treasury_bank_account_attestation') {
+      throw new ForbiddenException({
+        code: 'APPROVAL_TREASURY_INTEGRATION_TEMPLATE_DENIED',
+        message: '资金账户审批模板与登记动作不匹配',
+      });
+    }
+    if (instance.status !== 'approved' || instance.completedAt === null) {
+      throw new ConflictException({
+        code: 'APPROVAL_TREASURY_DECISION_INCOMPLETE',
+        message: '资金账户审批尚未形成可信通过终态',
+      });
+    }
+    const finalDecision = instance.resolvedNodes
+      .flatMap((node) => node.decisions)
+      .filter((decision) => decision.outcome === 'approved')
+      .sort((left, right) => left.decidedAt < right.decidedAt ? -1 : 1)
+      .at(-1);
+    if (finalDecision === undefined || finalDecision.decidedAt !== instance.completedAt) {
+      throw new ConflictException({
+        code: 'APPROVAL_TREASURY_DECISION_INVALID',
+        message: '资金账户审批终态证据不完整',
+      });
+    }
+    const form = instance.formData;
+    const ownerType = requiredTreasuryFormString(
+      form, 'owner_type', /^(organization|employee)$/u,
+    );
+    const currency = requiredTreasuryFormString(form, 'currency', /^CNY$/u);
+    return Object.freeze({
+      id: instance.id,
+      completedAt: instance.completedAt,
+      approvedBy: finalDecision.decidedBy,
+      ownerType: ownerType as 'organization' | 'employee',
+      ownerId: requiredTreasuryFormString(
+        form, 'owner_id', /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u,
+      ),
+      accountName: requiredTreasuryFormString(
+        form, 'account_name', /^(?!.*[\p{Cc}\p{Cf}])[\s\S]{1,140}$/u,
+      ),
+      account: requiredTreasuryFormString(form, 'account', /^[0-9]{8,32}$/u),
+      clearingCode: requiredTreasuryFormString(
+        form, 'clearing_code', /^[0-9A-Z]{8,12}$/u,
+      ),
+      currency: currency as 'CNY',
+      formDataHash: instance.formDataHash,
+    });
+  }
+
+  /** Payroll 调整只读取专用审批的可信终态和固定控制摘要，不暴露员工或金额。 */
+  async getPayrollAdjustmentDecision(id: string): Promise<PayrollAdjustmentApprovalDecision> {
+    const actor = this.context.getActorRequired();
+    if (!actor.scopes.includes('erp:payroll:adjustment:approval:sync')) {
+      throw new ForbiddenException({
+        code: 'APPROVAL_PAYROLL_ADJUSTMENT_STATUS_DENIED',
+        message: '无权同步工资调整审批状态',
+      });
+    }
+    const instance = await this.requireInstance(id);
+    if (instance.templateSnapshot.templateCode !== 'payroll_adjustment_approval') {
+      throw new ForbiddenException({
+        code: 'APPROVAL_PAYROLL_ADJUSTMENT_TEMPLATE_DENIED',
+        message: '工资调整审批模板与执行动作不匹配',
+      });
+    }
+    if (
+      (instance.status !== 'approved' && instance.status !== 'rejected') ||
+      instance.completedAt === null
+    ) throw new ConflictException({
+      code: 'APPROVAL_PAYROLL_ADJUSTMENT_INCOMPLETE',
+      message: '工资调整审批尚未形成可信终态',
+    });
+    const outcome = instance.status;
+    const finalDecision = instance.resolvedNodes
+      .flatMap((node) => node.decisions)
+      .filter((decision) => decision.outcome === outcome)
+      .sort((left, right) => left.decidedAt < right.decidedAt ? -1 : 1)
+      .at(-1);
+    if (finalDecision === undefined || finalDecision.decidedAt !== instance.completedAt) {
+      throw new ConflictException({
+        code: 'APPROVAL_PAYROLL_ADJUSTMENT_DECISION_INVALID',
+        message: '工资调整审批终态证据不完整',
+      });
+    }
+    const adjustmentType = requiredPayrollFormString(
+      instance.formData,
+      'adjustment_type',
+      /^(supplement|reversal|tax_only)$/,
+    ) as PayrollAdjustmentApprovalDecision['adjustmentType'];
+    return Object.freeze({
+      id: instance.id,
+      outcome,
+      decidedBy: finalDecision.decidedBy,
+      completedAt: instance.completedAt,
+      adjustmentId: requiredPayrollFormString(
+        instance.formData, 'adjustment_id', ULID_PATTERN,
+      ),
+      adjustmentHash: requiredPayrollFormString(
+        instance.formData, 'adjustment_hash', HASH_PATTERN,
+      ),
+      period: requiredPayrollFormString(
+        instance.formData, 'period', /^\d{4}-(0[1-9]|1[0-2])$/,
+      ),
+      adjustmentType,
+      reasonCode: requiredPayrollFormString(
+        instance.formData, 'reason_code', /^[A-Z][A-Z0-9_]{1,63}$/,
+      ),
+      formDataHash: instance.formDataHash,
+    });
+  }
+
   private async requireApprovedAttendanceInstance(
     id: string,
     templateCode: 'attendance_correction' | 'attendance_month_reopen',
@@ -1414,6 +1623,19 @@ function requiredPayrollFormString(
   const value = form[field];
   if (typeof value !== 'string' || !pattern.test(value)) throw new ConflictException({
     code: 'APPROVAL_PAYROLL_FORM_INVALID', message: `工资审批字段 ${field} 非法或缺失`,
+  });
+  return value;
+}
+
+function requiredTreasuryFormString(
+  form: ApprovalFormData,
+  field: string,
+  pattern: RegExp,
+): string {
+  const value = form[field];
+  if (typeof value !== 'string' || !pattern.test(value)) throw new ConflictException({
+    code: 'APPROVAL_TREASURY_FORM_INVALID',
+    message: `资金账户审批字段 ${field} 非法或缺失`,
   });
   return value;
 }

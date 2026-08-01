@@ -15,6 +15,7 @@ import { OAuthServiceClientRegistry } from './oauth-service-client-registry.js';
 
 const ISSUER = 'https://erp.example.com';
 const RESOURCE = 'https://erp.example.com/mcp';
+const PAYROLL_RESOURCE = 'https://payroll.example.com/api';
 const SECRET = 'A'.repeat(43);
 const TRACE_ID = 'trace-service-001';
 
@@ -22,6 +23,9 @@ const config = (clients: unknown): ConfigService<AppEnvironment, true> => ({
   get: (key: keyof AppEnvironment) => {
     if (key === 'MCP_SERVICE_CLIENTS_JSON') return JSON.stringify(clients);
     if (key === 'AUTH_RESOURCE') return RESOURCE;
+    if (key === 'AUTH_ADDITIONAL_RESOURCES_JSON') {
+      return JSON.stringify([{ resource: PAYROLL_RESOURCE, audience: 'gaoq-payroll' }]);
+    }
     if (key === 'AUTH_ISSUER') return ISSUER;
     return undefined;
   },
@@ -30,6 +34,7 @@ const config = (clients: unknown): ConfigService<AppEnvironment, true> => ({
 const commonClient = {
   clientId: 'service-client-001', clientName: '自动代理', tenantId: 'tenant-001',
   actorId: 'mcp-agent-001', allowedScopes: ['erp:mcp:server:connect', 'erp:org:chart:read'],
+  allowedResources: [RESOURCE],
   roleCodes: ['service-reader'], departmentIds: ['department-001'], status: 'active',
 } as const;
 
@@ -101,6 +106,25 @@ describe('OAuthClientCredentialsGrantService', () => {
     );
   });
 
+  it('签名失败时记录稳定失败原因并保留原始错误', async () => {
+    const store = createService([basicClient()]);
+    const failure = new Error('signer unavailable');
+    store.signer.sign.mockRejectedValueOnce(failure);
+    await expect(store.service.issue({
+      authorization: `Basic ${Buffer.from(`service-client-001:${SECRET}`).toString('base64')}`,
+      resource: RESOURCE,
+      scopes: ['erp:org:chart:read'],
+      traceId: TRACE_ID,
+    })).rejects.toBe(failure);
+    expect(store.audit.recordTrustedService).toHaveBeenCalledWith(
+      'tenant-001',
+      expect.objectContaining({
+        outcome: 'failure',
+        metadata: { reason: 'signing_failed' },
+      }),
+    );
+  });
+
   it.each([
     'wrong-secret-value-that-is-still-long-enough-1234567890',
     'short',
@@ -113,6 +137,44 @@ describe('OAuthClientCredentialsGrantService', () => {
     })).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
+  it.each([
+    ['超长头', `Basic ${'A'.repeat(507)}`],
+    ['认证方案错误', 'Bearer token'],
+    ['非规范 Base64', 'Basic YR=='],
+    ['非法 UTF-8', 'Basic /w=='],
+    ['缺少分隔符', `Basic ${Buffer.from('service-client-001').toString('base64')}`],
+    ['包含多个分隔符', `Basic ${Buffer.from(`service-client-001:${SECRET}:extra`).toString('base64')}`],
+    ['未知客户端', `Basic ${Buffer.from(`unknown-client-001:${SECRET}`).toString('base64')}`],
+  ])('严格拒绝%s且不为无法识别的凭据建立审计归属', async (_name, authorization) => {
+    const store = createService([basicClient()]);
+    await expect(store.service.issue({
+      authorization,
+      resource: RESOURCE,
+      traceId: TRACE_ID,
+    })).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(store.signer.sign).not.toHaveBeenCalled();
+    expect(store.audit.recordTrustedService).not.toHaveBeenCalled();
+  });
+
+  it('已识别 Basic 客户端认证失败时只记录最小失败审计', async () => {
+    const store = createService([basicClient()]);
+    await expect(store.service.issue({
+      authorization: `Basic ${Buffer.from(
+        'service-client-001:wrong-secret-value-that-is-long-enough-001',
+      ).toString('base64')}`,
+      resource: RESOURCE,
+      traceId: TRACE_ID,
+    })).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(store.audit.recordTrustedService).toHaveBeenCalledWith(
+      'tenant-001',
+      expect.objectContaining({
+        outcome: 'failure',
+        resourceId: 'service-client-001',
+        metadata: { reason: 'client_authentication_failed' },
+      }),
+    );
+  });
+
   it('拒绝错误 resource、重复 scope 以及 Basic 与断言混用', async () => {
     const store = createService([basicClient()]);
     const authorization = `Basic ${Buffer.from(`service-client-001:${SECRET}`).toString('base64')}`;
@@ -122,9 +184,49 @@ describe('OAuthClientCredentialsGrantService', () => {
       authorization, resource: RESOURCE,
       scopes: ['erp:org:chart:read', 'erp:org:chart:read'], traceId: TRACE_ID,
     })).rejects.toThrow('scope 请求非法');
+    expect(store.audit.recordTrustedService).toHaveBeenCalledWith(
+      'tenant-001',
+      expect.objectContaining({
+        outcome: 'failure',
+        metadata: { reason: 'scope_denied' },
+      }),
+    );
     await expect(store.service.issue({
       authorization, clientAssertion: 'jwt', resource: RESOURCE, traceId: TRACE_ID,
     })).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('认证后拒绝未授权资源，并为显式授权资源传递正确 resource', async () => {
+    const authorization = `Basic ${Buffer.from(`service-client-001:${SECRET}`).toString('base64')}`;
+    const denied = createService([basicClient()]);
+    await expect(denied.service.issue({
+      authorization,
+      resource: PAYROLL_RESOURCE,
+      scopes: ['erp:org:chart:read'],
+      traceId: TRACE_ID,
+    })).rejects.toThrow('resource 超出客户端授权范围');
+    expect(denied.signer.sign).not.toHaveBeenCalled();
+    expect(denied.audit.recordTrustedService).toHaveBeenCalledWith(
+      'tenant-001',
+      expect.objectContaining({
+        outcome: 'failure',
+        metadata: { reason: 'resource_denied' },
+      }),
+    );
+
+    const allowed = createService([{
+      ...basicClient(),
+      allowedResources: [RESOURCE, PAYROLL_RESOURCE],
+    }]);
+    await expect(allowed.service.issue({
+      authorization,
+      resource: PAYROLL_RESOURCE,
+      scopes: ['erp:org:chart:read'],
+      traceId: TRACE_ID,
+    })).resolves.toMatchObject({ accessToken: 'signed' });
+    expect(allowed.signer.sign).toHaveBeenCalledWith(
+      expect.objectContaining({ resource: PAYROLL_RESOURCE }),
+    );
   });
 
   it('验证无 kid 的 private_key_jwt、接受 issuer audience 并阻断断言重放', async () => {
@@ -223,6 +325,114 @@ describe('OAuthClientCredentialsGrantService', () => {
       clientAssertion: assertion, resource: RESOURCE, traceId: TRACE_ID,
     })).rejects.toBeInstanceOf(UnauthorizedException);
     expect(store.signer.sign).not.toHaveBeenCalled();
+    expect(store.audit.recordTrustedService).toHaveBeenCalledWith(
+      'tenant-001',
+      expect.objectContaining({
+        outcome: 'failure',
+        resourceId: 'service-client-001',
+        metadata: { reason: 'client_authentication_failed' },
+      }),
+    );
+  });
+
+  it('无可信断言主体时不允许 body client_id 注入失败审计归属', async () => {
+    const store = createService([basicClient()]);
+    await expect(store.service.issue({
+      clientId: commonClient.clientId,
+      clientAssertionType: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+      clientAssertion: 'not-a-jwt',
+      resource: RESOURCE,
+      traceId: TRACE_ID,
+    })).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(store.audit.recordTrustedService).not.toHaveBeenCalled();
+  });
+
+  it('拒绝缺失类型、超长、错误算法及无法验签的 private_key_jwt', async () => {
+    const { publicKey, privateKey } = await generateKeyPair('ES256', { extractable: true });
+    const publicJwk = await exportJWK(publicKey);
+    const client = {
+      ...commonClient,
+      authentication: { method: 'private_key_jwt', credentials: [{
+        ...commonCredential,
+        publicJwk: {
+          ...publicJwk, kty: 'EC', crv: 'P-256', kid: 'service-key-invalid-001',
+          alg: 'ES256', use: 'sig', key_ops: ['verify'],
+        },
+      }] },
+    };
+    const store = createService([client]);
+    await expect(store.service.issue({
+      clientAssertion: 'missing-type',
+      resource: RESOURCE,
+      traceId: TRACE_ID,
+    })).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(store.service.issue({
+      clientAssertionType: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+      clientAssertion: 'x'.repeat(8_193),
+      resource: RESOURCE,
+      traceId: TRACE_ID,
+    })).rejects.toBeInstanceOf(UnauthorizedException);
+    const now = Math.floor(Date.now() / 1000);
+    const unsupported = await new SignJWT({})
+      .setProtectedHeader({ alg: 'ES256', typ: 'not-jwt' })
+      .setIssuer(commonClient.clientId).setSubject(commonClient.clientId).setAudience(ISSUER)
+      .setJti('assertion-invalid-header-001').setIssuedAt(now).setExpirationTime(now + 120)
+      .sign(privateKey);
+    await expect(store.service.issue({
+      clientAssertionType: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+      clientAssertion: unsupported,
+      resource: RESOURCE,
+      traceId: TRACE_ID,
+    })).rejects.toBeInstanceOf(UnauthorizedException);
+    const { privateKey: wrongPrivateKey } = await generateKeyPair('ES256');
+    const wrongSignature = await new SignJWT({})
+      .setProtectedHeader({ alg: 'ES256', typ: 'JWT', kid: 'service-key-invalid-001' })
+      .setIssuer(commonClient.clientId).setSubject(commonClient.clientId).setAudience(ISSUER)
+      .setJti('assertion-wrong-signature-001').setIssuedAt(now).setExpirationTime(now + 120)
+      .sign(wrongPrivateKey);
+    await expect(store.service.issue({
+      clientAssertionType: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+      clientAssertion: wrongSignature,
+      resource: RESOURCE,
+      traceId: TRACE_ID,
+    })).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(store.signer.sign).not.toHaveBeenCalled();
+  });
+
+  it('拒绝缺少 iat 的已验签断言，并将失败归属到断言 issuer', async () => {
+    const { publicKey, privateKey } = await generateKeyPair('ES256', { extractable: true });
+    const publicJwk = await exportJWK(publicKey);
+    const client = {
+      ...commonClient,
+      authentication: { method: 'private_key_jwt', credentials: [{
+        ...commonCredential,
+        publicJwk: {
+          ...publicJwk, kty: 'EC', crv: 'P-256', kid: 'service-key-time-001',
+          alg: 'ES256', use: 'sig', key_ops: ['verify'],
+        },
+      }] },
+    };
+    const assertion = await new SignJWT({})
+      .setProtectedHeader({ alg: 'ES256', typ: 'JWT', kid: 'service-key-time-001' })
+      .setIssuer(commonClient.clientId).setSubject(commonClient.clientId).setAudience(ISSUER)
+      .setJti('assertion-missing-iat-001')
+      .setExpirationTime(Math.floor(Date.now() / 1000) + 120)
+      .sign(privateKey);
+    const store = createService([client]);
+    await expect(store.service.issue({
+      clientAssertionType: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+      clientAssertion: assertion,
+      resource: RESOURCE,
+      traceId: TRACE_ID,
+    })).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(store.redisSet).not.toHaveBeenCalled();
+    expect(store.audit.recordTrustedService).toHaveBeenCalledWith(
+      'tenant-001',
+      expect.objectContaining({
+        resourceId: commonClient.clientId,
+        metadata: { reason: 'client_authentication_failed' },
+      }),
+    );
   });
 
   it('断言防重放存储不可用时 fail closed', async () => {

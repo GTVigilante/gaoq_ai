@@ -87,4 +87,17 @@ describe('IdentityLifecycleService', () => {
     expect(String(error)).not.toContain('$where');
     expect(store.profiles.findActorIdByEmployee).not.toHaveBeenCalled();
   });
+
+  it('单员工主体异常膨胀时在任何停用写入前失败关闭', async () => {
+    const store = fixture();
+    store.profiles.findActorIdByEmployee.mockResolvedValue(null);
+    store.external.findActorIdsByEmployee.mockResolvedValue(
+      Object.freeze(Array.from({ length: 101 }, (_, index) => `actor-${index}`)),
+    );
+    await expect(store.service.terminateEmployee(
+      'tenant-001', 'employee-001', mongoSession,
+    )).rejects.toThrow('员工身份主体数量超过安全上限');
+    expect(store.profiles.disableByEmployee).not.toHaveBeenCalled();
+    expect(store.external.disableAllByEmployee).not.toHaveBeenCalled();
+  });
 });

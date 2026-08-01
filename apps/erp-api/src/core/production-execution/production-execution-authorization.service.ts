@@ -181,7 +181,12 @@ async function readJson(response: Response): Promise<unknown> {
 }
 
 function safeEndpoint(value: string): string {
-  const endpoint = new URL(value);
+  let endpoint: URL;
+  try {
+    endpoint = new URL(value);
+  } catch {
+    throw new Error('PHASE6_PRODUCTION_AUTHORIZATION_ENDPOINT_INVALID');
+  }
   if (
     endpoint.protocol !== 'https:' || endpoint.username !== '' || endpoint.password !== '' ||
     endpoint.search !== '' || endpoint.hash !== '' ||

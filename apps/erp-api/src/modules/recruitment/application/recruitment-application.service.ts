@@ -370,6 +370,9 @@ export class RecruitmentApplicationService {
       'recruitment.application.transition', key, { id, expectedVersion, ...input },
       async (session) => {
         const current = await this.requireApplication(id, session);
+        const position = await this.positions.findById(current.positionId, session);
+        if (position === null) throw new Error('RECRUITMENT_POSITION_REFERENCE_INVALID');
+        this.assertDepartmentWrite(position.departmentId);
         const result = transitionCandidateApplication(current, {
           tenantId: this.context.getTenantRequired().tenantId,
           expectedVersion,
@@ -439,6 +442,17 @@ export class RecruitmentApplicationService {
         message: '候选人迁移必须由受信任服务身份执行',
       });
     }
+  }
+
+  private assertDepartmentWrite(departmentId: string): void {
+    const actor = this.context.getActorRequired();
+    if (
+      !actor.scopes.includes('erp:recruitment:management:write_all') &&
+      !actor.departmentIds.includes(departmentId)
+    ) throw new ForbiddenException({
+      code: 'RECRUITMENT_APPLICATION_WRITE_DENIED',
+      message: '无权修改该部门候选申请',
+    });
   }
 
   private async run<T>(operation: () => Promise<T>): Promise<T> {

@@ -35,4 +35,36 @@ export abstract class PayrollTaxGateway {
     readonly productionAuthorization: ProductionExecutionAuthorization | null;
   }): Promise<PayrollTaxSubmissionReceipt>;
 }
+
+export interface PayrollOfficialAnnualAssessment {
+  readonly assessmentId: string;
+  readonly assessmentEvidenceId: string;
+  readonly assessedTaxMinor: number;
+  readonly sourceDigest: string;
+}
+
+export interface PayrollAnnualSettlementLink {
+  readonly settlementUrl: string;
+  readonly expiresAt: string;
+}
+
+export abstract class PayrollAnnualAssessmentGateway {
+  /** 从隔离税务网关读取并验签官方年度评估；ERP 不接受调用方声明的评估值。 */
+  abstract resolve(input: {
+    readonly tenantId: string;
+    readonly employeeId: string;
+    readonly taxYear: string;
+    readonly idempotencyKey: string;
+  }): Promise<PayrollOfficialAnnualAssessment>;
+
+  /** 创建员工本人短时官方办理链接；网关不得代 ERP 执行个人申报。 */
+  abstract createSettlementLink(input: {
+    readonly tenantId: string;
+    readonly employeeId: string;
+    readonly annualReconciliationId: string;
+    readonly taxYear: string;
+    readonly evidenceHash: string;
+    readonly idempotencyKey: string;
+  }): Promise<PayrollAnnualSettlementLink>;
+}
 import type { ProductionExecutionAuthorization } from '../../../core/production-execution/production-execution-authorization.service.js';

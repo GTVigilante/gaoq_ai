@@ -115,7 +115,7 @@ export class RecruitmentChannelStageRelayService {
   private async release(workerId: string, event: ClaimedStageEvent, code: string): Promise<void> {
     const attempts = event.attempts + 1;
     const now = new Date();
-    await this.outbox.updateOne(
+    const updated = await this.outbox.updateOne(
       { eventId: event.eventId, status: 'dispatching', lockedBy: workerId },
       { $set: {
         status: attempts >= MAX_ATTEMPTS ? 'dead' : 'pending', attempts,
@@ -124,6 +124,9 @@ export class RecruitmentChannelStageRelayService {
       } },
       { timestamps: false },
     );
+    if (updated.matchedCount !== 1) {
+      throw new Error('RECRUITMENT_CHANNEL_STAGE_RELEASE_LEASE_LOST');
+    }
   }
 }
 

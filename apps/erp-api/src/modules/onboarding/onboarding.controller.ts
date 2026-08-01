@@ -5,6 +5,7 @@ import {
   Get,
   Headers,
   HttpCode,
+  Logger,
   Param,
   Post,
   Res,
@@ -28,6 +29,8 @@ const HUMAN_TASKS = new Set<OnboardingTaskCode>([
 
 @Controller('onboarding')
 export class OnboardingController {
+  private readonly logger = new Logger(OnboardingController.name);
+
   constructor(
     private readonly onboarding: OnboardingApplicationService,
     private readonly audit: AuditService,
@@ -158,10 +161,19 @@ export class OnboardingController {
     riskLevel: 'R1' | 'R2' | 'R3',
     metadata: Readonly<Record<string, unknown>> = {},
   ): Promise<void> {
-    await this.audit.record({
-      action, resourceType: 'onboarding_instance', resourceId: instance.id,
-      riskLevel, outcome: 'success',
-      metadata: { status: instance.status, version: instance.version, ...metadata },
-    });
+    try {
+      await this.audit.record({
+        action, resourceType: 'onboarding_instance', resourceId: instance.id,
+        riskLevel, outcome: 'success',
+        metadata: { status: instance.status, version: instance.version, ...metadata },
+      });
+    } catch {
+      this.logger.error({
+        code: 'ONBOARDING_AUDIT_AFTER_COMMIT_FAILED',
+        action,
+        resourceId: instance.id,
+        riskLevel,
+      });
+    }
   }
 }

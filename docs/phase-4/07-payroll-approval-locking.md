@@ -2,6 +2,15 @@
 
 本批次把工资周期状态机接入 Approval 可信终态与 WebAuthn 用户验证证据。锁定属于 R3，MCP 不注册请求、执行或变通入口。
 
+## 专业算薪模式边界
+
+`PayrollApprovalService` 的历史审批/锁定导入、在线申请、审批同步和强认证锁定
+均先校验迁移或用户主体、最小 Scope 及主体绑定，再调用共享
+`LegacyPayrollBoundaryService`。默认 `external` 模式在输入解释、Approval
+读取/创建、WebAuthn、幂等和 Mongo 前失败关闭；任何上层 Guard、Worker 或
+迁移服务都不能代替该服务自身的校验。24 项专项测试使目标服务四维 100%。
+真实 Approval 终态、强认证设备和薪酬业务 UAT 仍须外部验收。
+
 ## 审批模板契约
 
 生产前必须发布代码为 `payroll_period_approval` 的 R2 模板，表单固定包含以下只读字段：

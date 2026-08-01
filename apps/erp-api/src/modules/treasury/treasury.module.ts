@@ -11,6 +11,7 @@ import { OutboxRecord, OutboxRecordSchema } from '../org/persistence/outbox.sche
 import { PayrollModule } from '../payroll/payroll.module.js';
 import { TreasuryBankAccountService } from './application/treasury-bank-account.service.js';
 import { TreasuryBankReturnService } from './application/treasury-bank-return.service.js';
+import { TreasuryAdjustmentSupplementService } from './application/treasury-adjustment-supplement.service.js';
 import { TreasuryDisbursementService } from './application/treasury-disbursement.service.js';
 import { TreasuryRecoveryService } from './application/treasury-recovery.service.js';
 import { TreasuryReconciliationService } from './application/treasury-reconciliation.service.js';
@@ -55,6 +56,7 @@ import { TreasuryController } from './treasury.controller.js';
   providers: [
     TreasuryBankAccountService,
     TreasuryBankReturnService,
+    TreasuryAdjustmentSupplementService,
     TreasuryDisbursementService,
     TreasuryRecoveryService,
     TreasuryReconciliationService,

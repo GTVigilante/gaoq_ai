@@ -25,7 +25,7 @@ import {
   type PhaseOneIndexDefinition,
 } from './phase-1-indexes.js';
 
-const MIGRATION_ID = 'phase-2-indexes-v2';
+const MIGRATION_ID = 'phase-2-indexes-v3';
 const LOCK_ID = `${MIGRATION_ID}:lock`;
 const LOCK_TTL_MS = 30 * 60 * 1_000;
 const INDEX_NAME_PATTERN = /^[A-Za-z0-9._:-]{1,127}$/;

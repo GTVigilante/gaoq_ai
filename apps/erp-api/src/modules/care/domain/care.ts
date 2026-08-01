@@ -73,7 +73,8 @@ export interface AlumniConsent {
   readonly grantedAt: string;
   readonly expiresAt: string;
   readonly withdrawnAt: string | null;
-  readonly status: 'active' | 'withdrawn';
+  readonly expiredAt: string | null;
+  readonly status: 'active' | 'withdrawn' | 'expired';
   readonly version: number;
 }
 
@@ -263,7 +264,7 @@ export function createAlumniConsent(input: {
     careCaseId: input.careCaseId, purpose: input.purpose, channels,
     consentVersion: input.consentVersion, consentEvidenceId: input.consentEvidenceId,
     grantedAt, expiresAt,
-    withdrawnAt: null, status: 'active', version: 1,
+    withdrawnAt: null, expiredAt: null, status: 'active', version: 1,
   });
 }
 
@@ -275,8 +276,28 @@ export function withdrawAlumniConsent(
   if (consent.tenantId !== input.tenantId) invalid('CARE_CROSS_TENANT', '禁止跨租户操作校友授权');
   if (consent.version !== input.expectedVersion) invalid('CARE_VERSION_CONFLICT', '校友授权版本冲突');
   if (consent.status === 'withdrawn') return consent;
+  if (consent.status === 'expired') invalid(
+    'CARE_CONSENT_ALREADY_EXPIRED', '已到期授权不能再撤回',
+  );
   return Object.freeze({
     ...consent, status: 'withdrawn', withdrawnAt: now.toISOString(),
+    version: consent.version + 1,
+  });
+}
+
+export function expireAlumniConsent(
+  consent: AlumniConsent,
+  input: { readonly tenantId: string; readonly expectedVersion: number },
+  now: Date,
+): AlumniConsent {
+  if (consent.tenantId !== input.tenantId) invalid('CARE_CROSS_TENANT', '禁止跨租户操作校友授权');
+  if (consent.version !== input.expectedVersion) invalid('CARE_VERSION_CONFLICT', '校友授权版本冲突');
+  if (consent.status === 'expired' || consent.status === 'withdrawn') return consent;
+  if (now.getTime() < Date.parse(consent.expiresAt)) invalid(
+    'CARE_CONSENT_EXPIRY_TOO_EARLY', '未到授权失效时间，禁止提前终止',
+  );
+  return Object.freeze({
+    ...consent, status: 'expired', expiredAt: now.toISOString(),
     version: consent.version + 1,
   });
 }

@@ -13,6 +13,7 @@ import {
   buildRecruitmentInterviewFeedbackEvent,
   buildRecruitmentOfferEvent,
   buildRecruitmentOfferMigratedEvent,
+  buildRecruitmentResumeAnalysisEvent,
 } from './recruitment-events.js';
 import { createRecruitmentRequisition } from './requisition.js';
 
@@ -82,7 +83,7 @@ describe('RecruitmentDomainEvents', () => {
       id: 'feedback-001', tenantId: 'tenant-001', interviewerId: 'employee-001',
       expectedVersion: 1,
       recommendation: 'hire', score: 4, notes: '候选人能力匹配，建议继续',
-    }, now);
+    }, new Date('2026-07-22T08:30:00.000Z'));
     const events = [
       buildRecruitmentInterviewEvent(interview, 'scheduled'),
       buildRecruitmentInterviewFeedbackEvent(feedback.interview, feedback.feedback),
@@ -125,6 +126,34 @@ describe('RecruitmentDomainEvents', () => {
     });
     expect(JSON.stringify(migratedEvent)).not.toMatch(
       /salary|currency|benefit|workLocation|标准福利计划|3000000|candidate-001/iu,
+    );
+  });
+
+  it('简历复核事件只输出控制引用与确认计数', () => {
+    const event = buildRecruitmentResumeAnalysisEvent({
+      id: 'analysis-001',
+      tenantId: 'tenant-001',
+      candidateId: 'candidate-001',
+      resumeEvidenceId: 'resume-evidence-001',
+      status: 'approved',
+      version: 3,
+      updatedAt: new Date('2026-07-27T00:00:00.000Z'),
+      tags: [
+        { status: 'confirmed' },
+        { status: 'rejected' },
+      ],
+    }, 'reviewed');
+    expect(event).toMatchObject({
+      type: 'recruitment.resume_analysis.reviewed',
+      aggregateType: 'recruitment.resume_analysis',
+      payload: {
+        candidateId: 'candidate-001',
+        resumeEvidenceId: 'resume-evidence-001',
+        confirmedTagCount: 1,
+      },
+    });
+    expect(JSON.stringify(event)).not.toMatch(
+      /headline|summary|confidence|evidence"|skill|model|resumeText|candidateName/iu,
     );
   });
 });

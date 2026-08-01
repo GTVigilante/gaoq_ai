@@ -14,7 +14,10 @@ const MAX_CIPHERTEXT_LENGTH = 11_184_811;
 
 abstract class ProtectedTreasuryRecord {
   @Prop({ type: String, required: true, maxlength: 64, match: ID_PATTERN }) dataKeyId!: string;
-  @Prop({ type: String, required: true, maxlength: 32, match: BASE64URL_PATTERN }) dataIv!: string;
+  @Prop({
+    type: String, required: true, minlength: 16, maxlength: 16, match: BASE64URL_PATTERN,
+  })
+  dataIv!: string;
   @Prop({ type: String, required: true, maxlength: MAX_CIPHERTEXT_LENGTH, match: BASE64URL_PATTERN })
   dataCiphertext!: string;
   @Prop({ type: String, required: true, minlength: 22, maxlength: 22, match: BASE64URL_PATTERN })
@@ -152,6 +155,10 @@ export class TreasuryDisbursementBatchRecord extends ProtectedTreasuryRecord {
   parentBatchId!: string | null;
   @Prop({ type: String, default: null, immutable: true, match: ULID_PATTERN })
   recoverySourceBatchId!: string | null;
+  @Prop({ type: String, default: null, immutable: true, match: ULID_PATTERN })
+  adjustmentSourceId!: string | null;
+  @Prop({ type: String, default: null, immutable: true, match: HASH_PATTERN })
+  adjustmentSourceHash!: string | null;
   @Prop({ type: String, required: true, immutable: true, enum: ['regular', 'supplement', 'recovery'] })
   purpose!: 'regular' | 'supplement' | 'recovery';
   @Prop({ type: String, required: true, immutable: true, enum: ['ISO20022_PAIN_001_001_03'] })
@@ -235,6 +242,16 @@ TreasuryDisbursementBatchRecordSchema.pre('validate', function () {
     record.migrationEvidenceRef === null) {
     throw new Error('历史导出审批批次必须绑定迁移证据');
   }
+  const hasAdjustment = record.adjustmentSourceId !== null && record.adjustmentSourceHash !== null;
+  if (
+    (record.adjustmentSourceId === null) !== (record.adjustmentSourceHash === null) ||
+    (record.purpose === 'supplement' && (!hasAdjustment || record.parentBatchId === null)) ||
+    (record.purpose !== 'supplement' && hasAdjustment) ||
+    (record.purpose === 'recovery' &&
+      (record.recoverySourceBatchId === null || record.parentBatchId === null)) ||
+    (record.purpose !== 'recovery' && record.recoverySourceBatchId !== null) ||
+    (record.purpose === 'regular' && record.parentBatchId !== null)
+  ) throw new Error('代发批次用途与父级、恢复或工资调整来源不一致');
 });
 TreasuryDisbursementBatchRecordSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 TreasuryDisbursementBatchRecordSchema.index(
@@ -248,6 +265,10 @@ TreasuryDisbursementBatchRecordSchema.index(
 TreasuryDisbursementBatchRecordSchema.index(
   { tenantId: 1, recoverySourceBatchId: 1 },
   { unique: true, partialFilterExpression: { recoverySourceBatchId: { $type: 'string' } } },
+);
+TreasuryDisbursementBatchRecordSchema.index(
+  { tenantId: 1, adjustmentSourceId: 1 },
+  { unique: true, partialFilterExpression: { adjustmentSourceId: { $type: 'string' } } },
 );
 TreasuryDisbursementBatchRecordSchema.index(
   { tenantId: 1, migrationEvidenceRef: 1 },

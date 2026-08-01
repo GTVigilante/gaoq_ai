@@ -3,6 +3,9 @@ import type { Job } from 'bullmq';
 
 import { DataMigrationAttachmentService } from './application/data-migration-attachment.service.js';
 import {
+  assertDataMigrationAttachmentJobData,
+  assertDataMigrationAttachmentJobId,
+  createDataMigrationAttachmentJobId,
   DATA_MIGRATION_ATTACHMENT_QUEUE,
   DATA_MIGRATION_ATTACHMENT_TRANSFER_JOB,
   type DataMigrationAttachmentJobData,
@@ -17,6 +20,11 @@ export class DataMigrationAttachmentProcessor extends WorkerHost {
   async process(job: Job<DataMigrationAttachmentJobData>): Promise<void> {
     if (job.name !== DATA_MIGRATION_ATTACHMENT_TRANSFER_JOB) {
       throw new Error('DATA_MIGRATION_ATTACHMENT_JOB_UNKNOWN');
+    }
+    assertDataMigrationAttachmentJobData(job.data);
+    assertDataMigrationAttachmentJobId(job.id);
+    if (job.id !== createDataMigrationAttachmentJobId(job.data)) {
+      throw new Error('DATA_MIGRATION_ATTACHMENT_JOB_ID_MISMATCH');
     }
     await this.attachments.process(job.data);
   }

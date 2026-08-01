@@ -74,6 +74,20 @@ describe('审批持久化 Schema', () => {
     await valid(new TemplateModel({
       ...template(), status: 'published', approvedBy: 'publisher-001', publishedAt: NOW,
     }));
+    await invalid(new TemplateModel({
+      ...template(), approvedBy: 'publisher-001', publishedAt: NOW,
+    }), '草稿模板不能包含发布审批信息');
+    await invalid(new TemplateModel({
+      ...template(), status: 'published', approvedBy: 'publisher-001',
+      publishedAt: NOW, retiredAt: NOW,
+    }), '未退役模板不能包含退役时间');
+    await invalid(new TemplateModel({
+      ...template(), status: 'retired', approvedBy: 'publisher-001', publishedAt: NOW,
+    }), '退役模板必须包含退役时间');
+    await valid(new TemplateModel({
+      ...template(), status: 'retired', approvedBy: 'publisher-001',
+      publishedAt: NOW, retiredAt: NOW,
+    }));
   });
 
   it('实例只接受密文字段并校验运行态/终态不变量', async () => {
@@ -90,6 +104,21 @@ describe('审批持久化 Schema', () => {
       ...instance(), status: 'approved', submittedAt: NOW, completedAt: NOW,
       currentActorIds: ['manager-001'],
     }), '终态不能保留当前待办');
+    await invalid(new InstanceModel({
+      ...instance(), currentNodeIndex: 0,
+    }), '草稿审批不能包含运行态字段');
+    await invalid(new InstanceModel({
+      ...instance(), status: 'withdrawn',
+    }), '业务终态必须包含完成时间');
+    await invalid(new InstanceModel({
+      ...instance(), status: 'approved', completedAt: NOW,
+    }), '通过或拒绝必须包含提交时间');
+    await invalid(new InstanceModel({
+      ...instance(), status: 'archived', completedAt: NOW,
+    }), '归档审批必须包含归档时间');
+    await valid(new InstanceModel({
+      ...instance(), status: 'withdrawn', completedAt: NOW,
+    }));
   });
 
   it('旧审批历史只接受最小不可变字段与迁移账本证据引用', async () => {
@@ -121,6 +150,42 @@ describe('审批持久化 Schema', () => {
     await invalid(new ActionModel({
       ...action(), principalApproverId: 'manager-001',
     }), '非决策动作不能包含决策字段');
+    const decided = {
+      ...action(), actionType: 'instance.decided', nodeId: 'manager',
+      principalApproverId: 'manager-001', outcome: 'approved',
+      resultingStatus: 'approved',
+    };
+    await valid(new ActionModel(decided));
+    for (const field of ['nodeId', 'principalApproverId', 'outcome', 'resultingStatus']) {
+      await invalid(new ActionModel({ ...decided, [field]: null }), '决策动作字段不完整');
+    }
+    await invalid(new ActionModel({ ...action(), outcome: 'approved' }),
+      '非决策动作不能包含决策字段');
+    await invalid(new ActionModel({ ...action(), delegated: true }),
+      '非决策动作不能包含决策字段');
+    for (const field of ['nodeId', 'fromApproverId', 'toApproverId']) {
+      await invalid(new ActionModel({
+        ...action(), actionType: 'instance.approver_transferred',
+        nodeId: 'manager', fromApproverId: 'manager-001', toApproverId: 'manager-002',
+        [field]: null,
+      }), '转交动作字段不完整');
+    }
+    await valid(new ActionModel({
+      ...action(), actionType: 'instance.approver_transferred',
+      nodeId: 'manager', fromApproverId: 'manager-001', toApproverId: 'manager-002',
+    }));
+    for (const field of ['nodeId', 'addedApproverId']) {
+      await invalid(new ActionModel({
+        ...action(), actionType: 'instance.approver_added',
+        nodeId: 'manager', addedApproverId: 'manager-003', [field]: null,
+      }), '加签动作字段不完整');
+    }
+    await invalid(new ActionModel({
+      ...action(), canceledApproverIds: ['manager-001'],
+    }), '非撤回动作不能包含取消审批人');
+    await valid(new ActionModel({
+      ...action(), actionType: 'instance.withdrawn', canceledApproverIds: ['manager-001'],
+    }));
   });
 
   it('委托禁止自委托、倒置有效期和无撤销人撤销', async () => {
@@ -135,6 +200,12 @@ describe('审批持久化 Schema', () => {
     await invalid(new DelegationModel({ ...delegation, validUntil: NOW }), '必须晚于');
     await invalid(new DelegationModel({ ...delegation, coverageDays: ['2026-07-22'] }), '覆盖日槽无效');
     await invalid(new DelegationModel({ ...delegation, status: 'revoked' }), '必须记录撤销人');
+    await invalid(new DelegationModel({
+      ...delegation, revokedBy: 'manager-001',
+    }), '有效委托不能包含撤销人');
+    await valid(new DelegationModel({
+      ...delegation, status: 'revoked', revokedBy: 'manager-001',
+    }));
   });
 
   it('关键唯一与待办查询索引已声明', () => {

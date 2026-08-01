@@ -14,8 +14,9 @@ import { z } from 'zod';
 
 import type { AppEnvironment } from '../../config/environment.js';
 import { REDIS_CLIENT } from '../../infrastructure/redis/redis.constants.js';
-import { OAuthClientRegistry } from './oauth-client-registry.js';
+import { type OAuthClient, OAuthClientRegistry } from './oauth-client-registry.js';
 import type { BrowserOAuthIdentity } from './token-grant.service.js';
+import { requireAuthorizationResource } from './authorization-resources.js';
 
 const AUTHORIZATION_REQUEST_TTL_SECONDS = 10 * 60;
 const AUTHORIZATION_CODE_TTL_SECONDS = 60;
@@ -107,6 +108,7 @@ export class OAuthAuthorizationTransactionService {
     const client = this.clients.resolveActive(input.clientId);
     if (client === undefined) throw this.invalidClient();
     this.clients.assertRedirect(client, input.redirectUri);
+    this.clients.assertResource(client, input.resource);
     const scopes = this.clients.filterAllowedScopes(client, input.scopes);
     const payload = storedRequestSchema.parse({ ...input, scopes: [...scopes] });
     for (let attempt = 0; attempt < MAX_RANDOM_ATTEMPTS; attempt += 1) {
@@ -137,8 +139,7 @@ export class OAuthAuthorizationTransactionService {
   /** 以不可猜测 requestId 获取同意页最小展示信息，不返回租户或主体。 */
   async describe(requestId: string): Promise<OAuthAuthorizationRequestView> {
     const stored = await this.readRequest(requestId);
-    const client = this.clients.resolveActive(stored.clientId);
-    if (client === undefined) throw this.invalidRequest();
+    const client = this.resolveCurrentRequestClient(stored);
     return Object.freeze({
       requestId,
       clientName: client.clientName,
@@ -159,8 +160,7 @@ export class OAuthAuthorizationTransactionService {
     if (raw === null) throw this.invalidRequest();
     const parsed = storedRequestSchema.safeParse(parseJson(raw));
     if (!parsed.success) throw this.invalidRequest();
-    const client = this.clients.resolveActive(parsed.data.clientId);
-    if (client === undefined) throw this.invalidRequest();
+    const client = this.resolveCurrentRequestClient(parsed.data);
     this.clients.assertTenant(client, identity.tenantId);
     const redirect = new URL(parsed.data.redirectUri);
     if (!approved) {
@@ -239,7 +239,14 @@ export class OAuthAuthorizationTransactionService {
     ) throw this.invalidGrant();
     const client = this.clients.resolveActive(input.clientId);
     if (client === undefined) throw this.invalidGrant();
-    this.clients.assertRedirect(client, input.redirectUri);
+    try {
+      this.clients.assertRedirect(client, input.redirectUri);
+      this.clients.assertResource(client, parsed.data.resource);
+      this.clients.assertTenant(client, parsed.data.tenantId);
+      this.clients.filterAllowedScopes(client, parsed.data.scopes);
+    } catch {
+      throw this.invalidGrant();
+    }
     const consumed = await this.compareAndDelete(codeKey, raw);
     if (!consumed) throw this.invalidGrant();
     return Object.freeze({
@@ -253,9 +260,7 @@ export class OAuthAuthorizationTransactionService {
   }
 
   private assertProtocolInput(input: BeginOAuthAuthorizationInput): void {
-    if (input.resource !== this.config.get('AUTH_RESOURCE', { infer: true })) {
-      throw new BadRequestException({ code: 'OAUTH_RESOURCE_INVALID', message: 'resource 非法' });
-    }
+    requireAuthorizationResource(this.config, input.resource);
     if (!STATE_PATTERN.test(input.state)) {
       throw new BadRequestException({ code: 'OAUTH_STATE_INVALID', message: 'state 非法' });
     }
@@ -279,6 +284,22 @@ export class OAuthAuthorizationTransactionService {
 
   private codeKey(code: string): string {
     return digestKey(CODE_KEY_PREFIX, code);
+  }
+
+  /** Redis 中的请求只能在当前客户端配置仍完整授权时继续使用。 */
+  private resolveCurrentRequestClient(
+    stored: z.infer<typeof storedRequestSchema>,
+  ): OAuthClient {
+    const client = this.clients.resolveActive(stored.clientId);
+    if (client === undefined) throw this.invalidRequest();
+    try {
+      this.clients.assertRedirect(client, stored.redirectUri);
+      this.clients.assertResource(client, stored.resource);
+      this.clients.filterAllowedScopes(client, stored.scopes);
+    } catch {
+      throw this.invalidRequest();
+    }
+    return client;
   }
 
   private pkceMatches(expected: string, codeVerifier: string): boolean {

@@ -1,0 +1,155 @@
+'use client';
+
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import type { Locale } from '../lib/content';
+import {
+  parseCaptchaTokenMessage,
+  parsePublicLeadResponse,
+  shouldRetainPublicLeadRequest,
+} from '../lib/marketing-public-contract';
+
+const API_ORIGIN = process.env.NEXT_PUBLIC_ERP_API_ORIGIN ?? 'http://localhost:3001';
+const CAPTCHA_WIDGET_URL = process.env.NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL;
+const CAPTCHA_WIDGET_ORIGIN =
+  process.env.NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_ORIGIN;
+
+/** 双边预约表单；租户与站点始终由服务端固定映射。 */
+export function LeadForm({ locale, audience }: {
+  readonly locale: Locale;
+  readonly audience: 'creator' | 'brand';
+}) {
+  const [state, setState] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
+  const [captchaToken, setCaptchaToken] = useState('');
+  const captchaFrame = useRef<HTMLIFrameElement>(null);
+  const submissionInFlight = useRef(false);
+  const pendingSubmission = useRef<{
+    readonly fingerprint: string;
+    readonly idempotencyKey: string;
+  } | null>(null);
+  const zh = locale === 'zh-CN';
+
+  useEffect(() => {
+    if (
+      CAPTCHA_WIDGET_URL === undefined ||
+      CAPTCHA_WIDGET_ORIGIN === undefined
+    ) return;
+    const listener = (event: MessageEvent<unknown>) => {
+      const source = captchaFrame.current?.contentWindow;
+      if (source === null || source === undefined) return;
+      const token = parseCaptchaTokenMessage(
+        CAPTCHA_WIDGET_ORIGIN,
+        source,
+        event,
+      );
+      if (token === null) return;
+      setCaptchaToken(token);
+      setState((current) => current === 'error' ? 'idle' : current);
+    };
+    window.addEventListener('message', listener);
+    return () => window.removeEventListener('message', listener);
+  }, []);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submissionInFlight.current || captchaToken === '') return;
+    submissionInFlight.current = true;
+    setState('sending');
+    const form = new FormData(event.currentTarget);
+    const lead = {
+      audience,
+      name: form.get('name'),
+      contact: form.get('contact'),
+      requestSummary: form.get('requestSummary'),
+      privacyAccepted: form.get('privacyAccepted') === 'on',
+      website: form.get('website'),
+    };
+    const fingerprint = JSON.stringify(lead);
+    if (pendingSubmission.current?.fingerprint !== fingerprint) {
+      pendingSubmission.current = {
+        fingerprint,
+        idempotencyKey: `lead.${crypto.randomUUID()}`,
+      };
+    }
+    try {
+      const response = await fetch(`${API_ORIGIN}/api/marketing/public/leads`, {
+        method: 'POST',
+        mode: 'cors',
+        credentials: 'omit',
+        cache: 'no-store',
+        referrerPolicy: 'strict-origin-when-cross-origin',
+        signal: AbortSignal.timeout(15_000),
+        headers: {
+          accept: 'application/json',
+          'content-type': 'application/json',
+          'idempotency-key': pendingSubmission.current.idempotencyKey,
+        },
+        body: JSON.stringify({
+          ...lead,
+          captchaToken,
+        }),
+      }).catch(() => null);
+      const responseBody: unknown = response === null
+        ? null
+        : await response.json().catch(() => null);
+      if (response?.ok === true) {
+        try {
+          parsePublicLeadResponse(responseBody);
+          pendingSubmission.current = null;
+          setState('success');
+          return;
+        } catch {
+          setCaptchaToken('');
+          setState('error');
+          return;
+        }
+      }
+      if (!shouldRetainPublicLeadRequest(response?.status ?? null, responseBody)) {
+        pendingSubmission.current = null;
+      }
+      setCaptchaToken('');
+      setState('error');
+    } finally {
+      submissionInFlight.current = false;
+    }
+  }
+
+  if (state === 'success') return (
+    <div className="form-success" role="status">
+      <strong>{zh ? '已收到你的需求' : 'Thank you — we have your enquiry.'}</strong>
+      <p>{zh ? '顾问会尽快与你联系。' : 'A specialist will get back to you shortly.'}</p>
+    </div>
+  );
+  return (
+    <form className="lead-form" onSubmit={(event) => void submit(event)}>
+      <label>{zh ? '称呼' : 'Name'}<input name="name" required maxLength={100} /></label>
+      <label>{zh ? '联系方式' : 'Email or phone'}<input name="contact" required maxLength={254} /></label>
+      <label className="form-wide">{zh ? '你希望解决什么问题？' : 'What would you like to achieve?'}
+        <textarea name="requestSummary" required minLength={10} maxLength={2000} rows={5} />
+      </label>
+      <input className="honeypot" name="website" tabIndex={-1} autoComplete="off" aria-hidden="true" />
+      <label className="form-wide checkbox">
+        <input type="checkbox" name="privacyAccepted" required />
+        {zh ? '我同意按照隐私政策处理本次咨询信息' : 'I agree to the processing described in the privacy policy'}
+      </label>
+      {CAPTCHA_WIDGET_URL === undefined || CAPTCHA_WIDGET_ORIGIN === undefined ? (
+        <p className="form-wide form-error">
+          {zh ? '预约验证组件尚未配置。' : 'The enquiry verification widget is not configured.'}
+        </p>
+      ) : (
+        <iframe
+          ref={captchaFrame}
+          className="captcha-frame"
+          src={CAPTCHA_WIDGET_URL}
+          title={zh ? '人机验证' : 'Human verification'}
+          sandbox="allow-scripts allow-same-origin allow-forms"
+          referrerPolicy="no-referrer"
+          onLoad={() => setCaptchaToken('')}
+        />
+      )}
+      <button type="submit" disabled={state === 'sending' || captchaToken === ''}>
+        {state === 'sending' ? (zh ? '正在提交…' : 'Sending…') : (zh ? '提交预约' : 'Send enquiry')}
+      </button>
+      {state === 'error' ? <p className="form-error">{zh ? '暂时无法提交，请稍后重试。' : 'Unable to send. Please try again.'}</p> : null}
+    </form>
+  );
+}

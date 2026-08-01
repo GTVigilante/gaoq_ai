@@ -144,7 +144,7 @@ export class RecruitmentChannelPositionRelayService {
   ): Promise<void> {
     const attempts = event.attempts + 1;
     const now = new Date();
-    await this.outbox.updateOne(
+    const updated = await this.outbox.updateOne(
       { eventId: event.eventId, status: 'dispatching', lockedBy: workerId },
       { $set: {
         status: attempts >= MAX_ATTEMPTS ? 'dead' : 'pending', attempts,
@@ -153,6 +153,9 @@ export class RecruitmentChannelPositionRelayService {
       } },
       { timestamps: false },
     );
+    if (updated.matchedCount !== 1) {
+      throw new Error('RECRUITMENT_CHANNEL_POSITION_RELEASE_LEASE_LOST');
+    }
   }
 }
 

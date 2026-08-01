@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildApprovalDelegationCreateInput,
+  canSubmitApprovalDecision,
+  isSameApprovalDecisionAttempt,
   parseApprovalTaskResponse,
 } from '../../lib/approval-task-contract.js';
 
@@ -12,6 +14,25 @@ const RUNNING = {
 } as const;
 
 describe('审批任务与委托共享契约', () => {
+  it('普通决策入口同时要求服务端 Scope、R1 和运行中状态', () => {
+    expect(canSubmitApprovalDecision(['erp:approval:task:decide'], RUNNING)).toBe(true);
+    expect(canSubmitApprovalDecision([], RUNNING)).toBe(false);
+    expect(canSubmitApprovalDecision(['erp:approval:task:decide'], { ...RUNNING, riskLevel: 'R2' })).toBe(false);
+    expect(canSubmitApprovalDecision(['erp:approval:task:decide'], { ...RUNNING, status: 'approved' })).toBe(false);
+  });
+
+  it('待确认决策只允许相同实例、主体和动作复用', () => {
+    const attempt = {
+      instance: RUNNING,
+      actorId: 'manager-001',
+      outcome: 'approved',
+    } as const;
+    expect(isSameApprovalDecisionAttempt(attempt, RUNNING.id, 'manager-001', 'approved')).toBe(true);
+    expect(isSameApprovalDecisionAttempt(attempt, '01K00000000000000000000001', 'manager-001', 'approved')).toBe(false);
+    expect(isSameApprovalDecisionAttempt(attempt, RUNNING.id, 'manager-002', 'approved')).toBe(false);
+    expect(isSameApprovalDecisionAttempt(attempt, RUNNING.id, 'manager-001', 'rejected')).toBe(false);
+  });
+
   it('任务操作响应只接受无租户字段的运行中实例', () => {
     expect(parseApprovalTaskResponse({ instance: RUNNING })).toEqual(RUNNING);
     expect(() => parseApprovalTaskResponse({ instance: { ...RUNNING, tenantId: 'tenant-001' } }))

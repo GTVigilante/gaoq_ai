@@ -39,6 +39,12 @@ const STATE_TTL_SECONDS = 300;
 const STATE_KEY_PREFIX = 'gaoq:sso:state:';
 const MAX_ISSUE_ATTEMPTS = 3;
 const SSO_STATE_INVALID_CODE = 'SSO_STATE_INVALID';
+const identifierSchema =
+  z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
+const externalTenantIdSchema =
+  z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/);
+const providerSchema = z.enum(['dingtalk', 'feishu', 'op']);
+const opaqueStateSchema = z.string().length(43).regex(/^[A-Za-z0-9_-]{43}$/);
 
 /**
  * 登录完成后的回跳地址只允许站内相对路径：
@@ -48,7 +54,8 @@ const isSafeReturnPath = (value: string): boolean =>
   value.startsWith('/') &&
   !value.startsWith('//') &&
   !value.includes('\\') &&
-  !value.includes(':');
+  !value.includes(':') &&
+  !/\p{Cc}/u.test(value);
 
 const returnPathSchema = z
   .string()
@@ -59,10 +66,10 @@ const returnPathSchema = z
 /** Redis 中存储的状态载荷，使用 strict 拒绝多余字段，防止注入意外数据。 */
 const storedStateSchema = z
   .object({
-    tenantId: z.string().min(1).max(128),
-    provider: z.enum(['dingtalk', 'feishu', 'op']),
-    externalTenantId: z.string().min(1).max(128),
-    codeVerifier: z.string().min(1).max(128),
+    tenantId: identifierSchema,
+    provider: providerSchema,
+    externalTenantId: externalTenantIdSchema,
+    codeVerifier: opaqueStateSchema,
     returnPath: returnPathSchema,
   })
   .strict();
@@ -82,6 +89,12 @@ const invalidStateError = (): UnauthorizedException =>
   new UnauthorizedException({
     code: SSO_STATE_INVALID_CODE,
     message: 'SSO 登录状态无效或已过期',
+  });
+
+const unavailableStateError = (): ServiceUnavailableException =>
+  new ServiceUnavailableException({
+    code: 'SSO_STATE_UNAVAILABLE',
+    message: 'SSO 登录状态服务暂时不可用',
   });
 
 /**
@@ -110,15 +123,20 @@ export class SsoStateService {
         codeVerifier,
         returnPath: input.returnPath,
       };
-      const created = await this.redis.set(
-        stateKey(state),
-        JSON.stringify(payload),
-        'EX',
-        STATE_TTL_SECONDS,
-        'NX',
-      );
+      let created: string | null;
+      try {
+        created = await this.redis.set(
+          stateKey(state),
+          JSON.stringify(payload),
+          'EX',
+          STATE_TTL_SECONDS,
+          'NX',
+        );
+      } catch {
+        throw unavailableStateError();
+      }
       if (created === 'OK') {
-        return { state, codeChallenge: pkceChallenge(codeVerifier) };
+        return Object.freeze({ state, codeChallenge: pkceChallenge(codeVerifier) });
       }
       // SET NX 冲突说明随机 state 碰撞，换一组随机数重试。
     }
@@ -135,7 +153,18 @@ export class SsoStateService {
    * 过期、缺失、JSON 异常、provider 不匹配均抛出统一的 SSO_STATE_INVALID。
    */
   async consume(state: string, expectedProvider: SsoProviderCode): Promise<ConsumedSsoState> {
-    const raw = await this.redis.getdel(stateKey(state));
+    if (
+      !opaqueStateSchema.safeParse(state).success ||
+      !providerSchema.safeParse(expectedProvider).success
+    ) {
+      throw invalidStateError();
+    }
+    let raw: string | null;
+    try {
+      raw = await this.redis.getdel(stateKey(state));
+    } catch {
+      throw unavailableStateError();
+    }
     if (raw === null) {
       throw invalidStateError();
     }
@@ -155,21 +184,21 @@ export class SsoStateService {
       throw invalidStateError();
     }
 
-    return {
+    return Object.freeze({
       tenantId: result.data.tenantId,
       provider: result.data.provider,
       externalTenantId: result.data.externalTenantId,
       codeVerifier: result.data.codeVerifier,
       returnPath: result.data.returnPath,
-    };
+    });
   }
 
   /** 签发前校验入参，失败与消费失败保持同一稳定错误码，避免泄露原值。 */
   private assertValidInput(input: IssueSsoStateInput): void {
-    const idSchema = z.string().min(1).max(128);
     if (
-      !idSchema.safeParse(input.tenantId).success ||
-      !idSchema.safeParse(input.externalTenantId).success ||
+      !identifierSchema.safeParse(input.tenantId).success ||
+      !providerSchema.safeParse(input.provider).success ||
+      !externalTenantIdSchema.safeParse(input.externalTenantId).success ||
       !returnPathSchema.safeParse(input.returnPath).success
     ) {
       throw invalidStateError();

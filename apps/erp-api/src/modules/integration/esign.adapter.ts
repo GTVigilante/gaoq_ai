@@ -11,6 +11,11 @@ const EXTERNAL_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const DOWNLOAD_URL_SECONDS = 300;
 const CONTENT_TYPE = 'application/json';
 const ACCEPT = '*/*';
+const MAX_FLOW_LIFETIME_MS = 90 * 24 * 60 * 60 * 1_000;
+const MIN_FLOW_LIFETIME_MS = 5 * 60 * 1_000;
+const SIGNER_ACCOUNT_PATTERN =
+  /^(?:\+?[1-9][0-9]{5,19}|[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9.-]{0,189}[A-Za-z0-9])?\.[A-Za-z]{2,63})$/;
+const SIGNER_NAME_PATTERN = /^.{1,128}$/su;
 
 const providerEnvelopeSchema = z.object({
   code: z.number().int(),
@@ -35,6 +40,14 @@ const verifyDataSchema = z.object({
   }).passthrough()).min(1).max(100),
 }).passthrough();
 
+const createFlowDataSchema = z.object({
+  signFlowId: z.string().regex(EXTERNAL_ID_PATTERN),
+}).passthrough();
+
+const signUrlDataSchema = z.object({
+  url: z.string().url(),
+}).passthrough();
+
 export interface ESignCredential {
   readonly appId: string;
   readonly appSecret: string;
@@ -51,8 +64,29 @@ export interface ESignVerificationResult {
   readonly providerResultDigest: string;
 }
 
+export interface ESignCreateFlowInput {
+  readonly providerFileId: string;
+  readonly signerAccount: string;
+  readonly signerName: string;
+  readonly expiresAtEpochMs: number;
+  readonly signaturePosition: {
+    readonly page: number;
+    readonly x: number;
+    readonly y: number;
+  };
+}
+
 export abstract class ESignAdapter {
+  abstract createFlow(
+    credential: ESignCredential,
+    input: ESignCreateFlowInput,
+  ): Promise<string>;
   abstract getFlow(credential: ESignCredential, externalFlowId: string): Promise<number>;
+  abstract signUrl(
+    credential: ESignCredential,
+    externalFlowId: string,
+    signerAccount: string,
+  ): Promise<string>;
   abstract listSignedFiles(
     credential: ESignCredential,
     externalFlowId: string,
@@ -75,10 +109,69 @@ export class ESignCnAdapter extends ESignAdapter {
     super();
   }
 
+  override async createFlow(
+    credential: ESignCredential,
+    input: ESignCreateFlowInput,
+  ): Promise<string> {
+    const providerFileId = assertExternalId(input.providerFileId);
+    const signerAccount = safeSignerAccount(input.signerAccount);
+    const signerName = safeSignerName(input.signerName);
+    const expiresAtEpochMs = safeFlowExpiry(input.expiresAtEpochMs);
+    const position = safeSignaturePosition(input.signaturePosition);
+    const body = await this.call(credential, 'POST', '/v3/sign-flow/create-by-file', {
+      docs: [{ fileId: providerFileId, fileName: '劳动合同.pdf' }],
+      signFlowConfig: {
+        signFlowTitle: '员工劳动合同签署',
+        signFlowExpireTime: expiresAtEpochMs,
+        autoStart: true,
+        autoFinish: true,
+        identityVerify: true,
+        noticeTypes: '',
+      },
+      signers: [{
+        signerType: 0,
+        psnSignerInfo: {
+          psnAccount: signerAccount,
+          psnInfo: { psnName: signerName },
+        },
+        signFields: [{
+          fileId: providerFileId,
+          signFieldType: 0,
+          normalSignFieldConfig: {
+            autoSign: false,
+            freeMode: false,
+            movableSignField: false,
+            signFieldPosition: {
+              positionPage: String(position.page),
+              positionX: position.x,
+              positionY: position.y,
+            },
+          },
+        }],
+      }],
+    });
+    return createFlowDataSchema.parse(body.data).signFlowId;
+  }
+
   override async getFlow(credential: ESignCredential, externalFlowId: string): Promise<number> {
     const path = `/v3/sign-flow/${safeExternalId(externalFlowId)}/detail`;
     const body = await this.call(credential, 'GET', path);
     return flowDataSchema.parse(body.data).signFlowStatus;
+  }
+
+  override async signUrl(
+    credential: ESignCredential,
+    externalFlowId: string,
+    signerAccount: string,
+  ): Promise<string> {
+    const path = `/v3/sign-flow/${safeExternalId(externalFlowId)}/sign-url`;
+    const body = await this.call(credential, 'POST', path, {
+      clientType: 'ALL',
+      needLogin: false,
+      operator: { psnAccount: safeSignerAccount(signerAccount) },
+      urlType: 2,
+    });
+    return safeESignPageUrl(signUrlDataSchema.parse(body.data).url);
   }
 
   override async listSignedFiles(
@@ -107,7 +200,7 @@ export class ESignCnAdapter extends ESignAdapter {
   ): Promise<ESignVerificationResult> {
     const path = `/v3/files/${safeExternalId(fileId)}/verify`;
     const response = await this.callRaw(credential, 'POST', path, {
-      signFlowId: externalFlowId, async: false,
+      signFlowId: assertExternalId(externalFlowId), async: false,
     });
     const body = this.parseEnvelope(response.body);
     const data = verifyDataSchema.parse(body.data);
@@ -188,8 +281,12 @@ export function signESignRequest(
 }
 
 function safeExternalId(value: string): string {
+  return encodeURIComponent(assertExternalId(value));
+}
+
+function assertExternalId(value: string): string {
   if (!EXTERNAL_ID_PATTERN.test(value)) throw new Error('ESIGN_EXTERNAL_ID_INVALID');
-  return encodeURIComponent(value);
+  return value;
 }
 
 function assertCredential(credential: ESignCredential): void {
@@ -197,4 +294,63 @@ function assertCredential(credential: ESignCredential): void {
     !/^[A-Za-z0-9_-]{4,128}$/.test(credential.appId) ||
     credential.appSecret.length < 16 || credential.appSecret.length > 2_048
   ) throw new Error('ESIGN_CREDENTIAL_INVALID');
+}
+
+function safeSignerAccount(value: string): string {
+  if (!SIGNER_ACCOUNT_PATTERN.test(value)) throw new Error('ESIGN_SIGNER_ACCOUNT_INVALID');
+  return value;
+}
+
+function safeSignerName(value: string): string {
+  const containsControlCharacter = [...value].some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 31 || codePoint === 127;
+  });
+  if (
+    !SIGNER_NAME_PATTERN.test(value) ||
+    containsControlCharacter ||
+    value.trim() !== value
+  ) {
+    throw new Error('ESIGN_SIGNER_NAME_INVALID');
+  }
+  return value;
+}
+
+function safeFlowExpiry(value: number): number {
+  const now = Date.now();
+  if (
+    !Number.isSafeInteger(value) ||
+    value < now + MIN_FLOW_LIFETIME_MS ||
+    value > now + MAX_FLOW_LIFETIME_MS
+  ) throw new Error('ESIGN_FLOW_EXPIRY_INVALID');
+  return value;
+}
+
+function safeSignaturePosition(
+  value: ESignCreateFlowInput['signaturePosition'],
+): ESignCreateFlowInput['signaturePosition'] {
+  if (
+    !Number.isInteger(value.page) ||
+    value.page < 1 ||
+    value.page > 10_000 ||
+    !Number.isFinite(value.x) ||
+    value.x < 0 ||
+    value.x > 100_000 ||
+    !Number.isFinite(value.y) ||
+    value.y < 0 ||
+    value.y > 100_000
+  ) throw new Error('ESIGN_SIGNATURE_POSITION_INVALID');
+  return Object.freeze({ page: value.page, x: value.x, y: value.y });
+}
+
+function safeESignPageUrl(value: string): string {
+  const url = new URL(value);
+  if (
+    url.protocol !== 'https:' ||
+    url.username !== '' ||
+    url.password !== '' ||
+    (url.port !== '' && url.port !== '443') ||
+    !(url.hostname === 'esign.cn' || url.hostname.endsWith('.esign.cn'))
+  ) throw new Error('ESIGN_SIGN_URL_INVALID');
+  return url.toString();
 }

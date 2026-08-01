@@ -2,6 +2,7 @@
 {{- $className := required "启用 ingress 时 ingress.className 必填" .Values.ingress.className }}
 {{- $apiHost := required "启用 ingress 时 ingress.apiHost 必填" .Values.ingress.apiHost }}
 {{- $webHost := required "启用 ingress 时 ingress.webHost 必填" .Values.ingress.webHost }}
+{{- $websiteHost := required "启用 ingress 时 ingress.websiteHost 必填" .Values.ingress.websiteHost }}
 {{- $tlsSecretName := required "启用 ingress 时 ingress.tlsSecretName 必填" .Values.ingress.tlsSecretName }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -21,6 +22,7 @@ spec:
       hosts:
         - {{ $apiHost | quote }}
         - {{ $webHost | quote }}
+        - {{ $websiteHost | quote }}
   rules:
     - host: {{ $apiHost | quote }}
       http:
@@ -42,4 +44,14 @@ spec:
                 name: {{ include "gaoq-erp.fullname" . }}-web
                 port:
                   number: 3000
+    - host: {{ $websiteHost | quote }}
+      http:
+        paths:
+          - path: {{ .Values.ingress.websitePath | quote }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "gaoq-erp.fullname" . }}-website
+                port:
+                  number: 3002
 {{- end }}

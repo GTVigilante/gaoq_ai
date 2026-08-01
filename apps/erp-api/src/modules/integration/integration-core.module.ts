@@ -44,6 +44,11 @@ import {
 import { ESignFlowRecord, ESignFlowRecordSchema } from './esign-flow.schema.js';
 import { ESignFlowService } from './esign-flow.service.js';
 import { ESignHttpClient, FetchESignHttpClient } from './esign-http.client.js';
+import {
+  ESignIssuanceRequestRecord,
+  ESignIssuanceRequestRecordSchema,
+} from './esign-issuance.schema.js';
+import { ESignIssuanceService } from './esign-issuance.service.js';
 import { ESignReconciliationService } from './esign-reconciliation.service.js';
 import { ESignWebhookCryptoService } from './esign-webhook-crypto.service.js';
 import {
@@ -96,6 +101,7 @@ import {
   RecruitmentCalendarBindingSchema,
 } from './recruitment-calendar-binding.schema.js';
 import { RecruitmentCalendarDeliveryService } from './recruitment-calendar-delivery.service.js';
+import { RecruitmentCalendarOperationsService } from './recruitment-calendar-operations.service.js';
 import { DingTalkRecruitmentCalendarAdapter } from './dingtalk-recruitment-calendar.adapter.js';
 import { FeishuRecruitmentCalendarAdapter } from './feishu-recruitment-calendar.adapter.js';
 import {
@@ -140,6 +146,7 @@ import {
 } from './recruitment-channel.schemas.js';
 import { RecruitmentChannelPositionRelayService } from './recruitment-channel-position-relay.service.js';
 import { RecruitmentChannelPositionDeliveryService } from './recruitment-channel-position-delivery.service.js';
+import { RecruitmentChannelOperationsService } from './recruitment-channel-operations.service.js';
 import { RecruitmentChannelStageRelayService } from './recruitment-channel-stage-relay.service.js';
 import { RecruitmentChannelStageDeliveryService } from './recruitment-channel-stage-delivery.service.js';
 import {
@@ -148,6 +155,7 @@ import {
   FeishuAttendanceProvider,
 } from './attendance-provider.adapter.js';
 import { AttendanceProviderPullService } from './attendance-provider-pull.service.js';
+import { AttendanceProviderCoverageService } from './attendance-provider-coverage.service.js';
 import { AttendanceProviderMappingRepository } from './attendance-provider-mapping.repository.js';
 import { ATTENDANCE_PROVIDER_QUEUE } from './attendance-provider.queue.js';
 import {
@@ -158,6 +166,7 @@ import {
   AttendanceProviderStateRecord,
   AttendanceProviderStateRecordSchema,
 } from './attendance-provider.schemas.js';
+import { PayrollMasterDataSnapshotService } from './payroll-master-data-snapshot.service.js';
 
 /** 外部集成底座：Outbox 多渠道扇出、版本防乱序、重试与对账。 */
 @Module({
@@ -193,6 +202,10 @@ import {
       { name: ESignBinding.name, schema: ESignBindingSchema },
       { name: ESignEvidenceRecord.name, schema: ESignEvidenceRecordSchema },
       { name: ESignFlowRecord.name, schema: ESignFlowRecordSchema },
+      {
+        name: ESignIssuanceRequestRecord.name,
+        schema: ESignIssuanceRequestRecordSchema,
+      },
       { name: ESignWebhookInboxRecord.name, schema: ESignWebhookInboxRecordSchema },
       {
         name: RecruitmentChannelBindingRecord.name,
@@ -223,9 +236,11 @@ import {
     ]),
   ],
   providers: [
+    PayrollMasterDataSnapshotService,
     OrgOutboxRelayService,
     RecruitmentCalendarOutboxRelayService,
     RecruitmentCalendarDeliveryService,
+    RecruitmentCalendarOperationsService,
     OrgDeliveryService,
     OrgDeliveryOperationsService,
     OrgExternalIdentityResolver,
@@ -236,6 +251,7 @@ import {
     OrgProvisioningCryptoService,
     ESignSecretResolver,
     ESignFlowService,
+    ESignIssuanceService,
     ESignEvidenceService,
     ESignReconciliationService,
     ESignWebhookCryptoService,
@@ -244,9 +260,11 @@ import {
     RecruitmentChannelSecretResolver,
     RecruitmentChannelPositionRelayService,
     RecruitmentChannelPositionDeliveryService,
+    RecruitmentChannelOperationsService,
     RecruitmentChannelStageRelayService,
     RecruitmentChannelStageDeliveryService,
     AttendanceProviderPullService,
+    AttendanceProviderCoverageService,
     AttendanceProviderMappingRepository,
     ESignCnAdapter,
     { provide: ESignAdapter, useExisting: ESignCnAdapter },
@@ -327,10 +345,12 @@ import {
     },
   ],
   exports: [
+    PayrollMasterDataSnapshotService,
     MongooseModule,
     OrgOutboxRelayService,
     RecruitmentCalendarOutboxRelayService,
     RecruitmentCalendarDeliveryService,
+    RecruitmentCalendarOperationsService,
     OrgDeliveryService,
     OrgDeliveryOperationsService,
     OrgReconciliationService,
@@ -340,6 +360,7 @@ import {
     ESignWebhookService,
     ESignWebhookCryptoService,
     ESignFlowService,
+    ESignIssuanceService,
     ESignEvidenceService,
     ESignReconciliationService,
     ESignAdapter,
@@ -348,9 +369,11 @@ import {
     RecruitmentChannelRegistry,
     RecruitmentChannelPositionRelayService,
     RecruitmentChannelPositionDeliveryService,
+    RecruitmentChannelOperationsService,
     RecruitmentChannelStageRelayService,
     RecruitmentChannelStageDeliveryService,
     AttendanceProviderPullService,
+    AttendanceProviderCoverageService,
     AttendanceProviderRegistry,
   ],
 })

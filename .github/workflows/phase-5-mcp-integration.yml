@@ -38,18 +38,30 @@ jobs:
           pnpm mcp:integration:self-test
 
   evidence:
-    name: 验收三类客户端与八类外部沙箱证据
+    name: 验收三类客户端、专业算薪与九类外部沙箱证据
     needs: contract
-    runs-on: [self-hosted, linux, x64, phase-5-mcp-integration]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: phase-5-mcp-integration
+    permissions:
+      contents: read
+      id-token: write
     env:
-      MCP_INTEGRATION_EVIDENCE_PATH: /var/lib/gaoq/mcp/phase-5-mcp-integration.json
+      GAOQ_OIDC_POLICY: phase-5-mcp-integration
+      MCP_INTEGRATION_EVIDENCE_OIDC_AUDIENCE: ${{ vars.MCP_INTEGRATION_EVIDENCE_OIDC_AUDIENCE }}
+      MCP_INTEGRATION_EVIDENCE_URL: ${{ vars.MCP_INTEGRATION_EVIDENCE_URL }}
+      MCP_INTEGRATION_EVIDENCE_SHA256: ${{ vars.MCP_INTEGRATION_EVIDENCE_SHA256 }}
       MCP_INTEGRATION_EXPECTED_ENVIRONMENT: ${{ vars.MCP_INTEGRATION_ENVIRONMENT_NAME }}
       MCP_INTEGRATION_EXPECTED_COMMIT: ${{ github.sha }}
       MCP_INTEGRATION_EXPECTED_API_IMAGE: ${{ vars.MCP_INTEGRATION_API_IMAGE_DIGEST }}
       MCP_INTEGRATION_EXPECTED_WORKER_IMAGE: ${{ vars.MCP_INTEGRATION_WORKER_IMAGE_DIGEST }}
       MCP_INTEGRATION_EXPECTED_WEB_IMAGE: ${{ vars.MCP_INTEGRATION_WEB_IMAGE_DIGEST }}
+      MCP_INTEGRATION_EXPECTED_WEBSITE_IMAGE: ${{ vars.MCP_INTEGRATION_WEBSITE_IMAGE_DIGEST }}
+      MCP_INTEGRATION_EXPECTED_PAYROLL_RESOURCE: ${{ vars.MCP_INTEGRATION_PAYROLL_RESOURCE }}
+      MCP_INTEGRATION_EXPECTED_PAYROLL_AUTHORIZATION_SERVER: ${{ vars.MCP_INTEGRATION_PAYROLL_AUTHORIZATION_SERVER }}
+      MCP_INTEGRATION_EXPECTED_PAYROLL_IMAGE: ${{ vars.MCP_INTEGRATION_PAYROLL_IMAGE_DIGEST }}
+      MCP_INTEGRATION_EXPECTED_PAYROLL_CONTRACT_HASH: ${{ vars.MCP_INTEGRATION_PAYROLL_CONTRACT_HASH }}
+      MCP_INTEGRATION_EXPECTED_PAYROLL_CATALOG_HASH: ${{ vars.MCP_INTEGRATION_PAYROLL_CATALOG_HASH }}
+      MCP_INTEGRATION_EXPECTED_SIGNER_KEYSET_SHA256: ${{ vars.MCP_INTEGRATION_SIGNER_KEYSET_SHA256 }}
     steps:
       - name: 检出受信任代码
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -64,11 +76,25 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - name: 固定 Runner 临时证据路径
+        shell: bash
+        run: >-
+          printf 'MCP_INTEGRATION_EVIDENCE_PATH=%s\n'
+          "$RUNNER_TEMP/phase-5-mcp-integration.json"
+          >> "$GITHUB_ENV"
       - name: 安装冻结依赖并验证现场证据
         env:
           MCP_INTEGRATION_VERDICT_PATH: ${{ runner.temp }}/phase-5-mcp-integration-verdict.json
         run: |
           pnpm install --frozen-lockfile
+          node scripts/github/fetch-oidc-protected-input.mjs \
+            --url "$MCP_INTEGRATION_EVIDENCE_URL" \
+            --audience "$MCP_INTEGRATION_EVIDENCE_OIDC_AUDIENCE" \
+            --policy "$GAOQ_OIDC_POLICY" \
+            --output "$MCP_INTEGRATION_EVIDENCE_PATH" \
+            --sha256 "$MCP_INTEGRATION_EVIDENCE_SHA256" \
+            --max-bytes 1048576 \
+            --media-type application/json
           node scripts/mcp/validate-phase-5-mcp-integration-evidence.mjs \
             --enforce-environment "$MCP_INTEGRATION_EVIDENCE_PATH" \
             > "$MCP_INTEGRATION_VERDICT_PATH"

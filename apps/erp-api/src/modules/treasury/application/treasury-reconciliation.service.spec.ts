@@ -21,7 +21,7 @@ function query<T>(resolve: () => T | Promise<T>) {
   return value;
 }
 
-function setup(balanced = true) {
+function setup(balanced = true, omitProfiles = false) {
   const context = new TenantContextService();
   const batch = {
     id: BATCH_ID, tenantId: tenant.tenantId,
@@ -79,16 +79,108 @@ function setup(balanced = true) {
     _operation: string, _key: string, _request: unknown,
     handler: (value: ClientSession) => Promise<unknown>,
   ) => handler(session)) };
+  const boundary = { assertLegacy: vi.fn() };
   const service = new TreasuryReconciliationService(
-    idempotency as never, context, payroll as never, outbox as never,
-    batches as never, returns as never, profiles as never,
+    idempotency as never, context, boundary as never,
+    payroll as never, outbox as never,
+    batches as never, returns as never, omitProfiles ? undefined : profiles as never,
   );
   return {
-    context, service, payroll, batches, returns, outbox, profiles, summary, batch, bankReturn,
+    context, idempotency, service, payroll, batches, returns, outbox,
+    profiles, boundary, summary, batch, bankReturn,
   };
 }
 
+const migrationPrincipal: ActorContext = {
+  actorType: 'service',
+  actorId: 'migration-worker',
+  tenantId: tenant.tenantId,
+  roleCodes: [],
+  scopes: [
+    'erp:migration:execute',
+    'erp:payroll:migration:write',
+    'erp:treasury:migration:write',
+  ],
+  departmentIds: [],
+  traceId: 'trace-four-way-migration',
+};
+
+function migrationInput(
+  store: ReturnType<typeof setup>,
+  targetId: string | null = null,
+) {
+  return {
+    targetId,
+    batchId: BATCH_ID,
+    bankReturnId: store.bankReturn.id,
+    taxFilingId: '01J8ZQK7V0A2M4N6P8R0T2W4F1',
+    reconciledByEmployeeId: 'employee-reconciler',
+    expectedBatchVersion: 5,
+    expectedPeriodVersion: 6,
+    reconciledAt: '2026-07-22T12:00:00.000Z',
+    migrationEvidenceRef:
+      'erp://data-migrations/runs/01J8ZQK7V0A2M4N6P8R0T2W4F2/attachments/recon-001',
+    evidenceChecksum: 'm'.repeat(43),
+  };
+}
+
+function runMigration(
+  store: ReturnType<typeof setup>,
+  key: string,
+  input = migrationInput(store),
+) {
+  return store.context.run({ tenant, actor: migrationPrincipal }, () =>
+    store.service.importBalancedFromMigration(key, input));
+}
+
 describe('TreasuryReconciliationService', () => {
+  it('external 模式在身份授权后、四方事实读取与事务前失败关闭', async () => {
+    const failure = new Error('PAYROLL_MOVED_TO_PROFESSIONAL_SYSTEM');
+    const migration = setup();
+    migration.boundary.assertLegacy.mockImplementation(() => { throw failure; });
+    const migrationActor: ActorContext = {
+      actorType: 'service',
+      actorId: 'migration-worker',
+      tenantId: tenant.tenantId,
+      roleCodes: [],
+      scopes: [
+        'erp:migration:execute',
+        'erp:payroll:migration:write',
+        'erp:treasury:migration:write',
+      ],
+      departmentIds: [],
+      traceId: 'trace-boundary-migration',
+    };
+    await expect(migration.context.run({ tenant, actor: migrationActor }, () =>
+      migration.service.importBalancedFromMigration(
+        'boundary-reconciliation-migration',
+        {} as never,
+      ))).rejects.toBe(failure);
+    expect(migration.idempotency.execute).not.toHaveBeenCalled();
+    expect(migration.batches.findOne).not.toHaveBeenCalled();
+
+    const online = setup();
+    online.boundary.assertLegacy.mockImplementation(() => { throw failure; });
+    await expect(online.context.run({ tenant, actor }, () => online.service.reconcile(
+      'boundary-reconciliation',
+      BATCH_ID,
+      5,
+    ))).rejects.toBe(failure);
+    expect(online.idempotency.execute).not.toHaveBeenCalled();
+    expect(online.batches.findOne).not.toHaveBeenCalled();
+
+    const unauthorized = setup();
+    await expect(unauthorized.context.run({
+      tenant,
+      actor: { ...actor, scopes: [] },
+    }, () => unauthorized.service.reconcile(
+      'boundary-reconciliation-unauthorized',
+      BATCH_ID,
+      5,
+    ))).rejects.toMatchObject({ response: { code: 'AUTH_SCOPE_DENIED' } });
+    expect(unauthorized.boundary.assertLegacy).not.toHaveBeenCalled();
+  });
+
   it('迁移服务重算四方守恒后恢复批次且不发布普通完成事件', async () => {
     const store = setup();
     const migrationActor: ActorContext = {
@@ -154,6 +246,50 @@ describe('TreasuryReconciliationService', () => {
     expect(store.outbox.append).not.toHaveBeenCalled();
   });
 
+  it('迁移输入、依赖、证据、时间、守恒与批次 CAS 均失败关闭', async () => {
+    const invalidInput = setup();
+    await expect(runMigration(invalidInput, 'migration-invalid-input', {
+      ...migrationInput(invalidInput),
+      expectedBatchVersion: 4,
+    })).rejects.toMatchObject({
+      response: { code: 'PAYROLL_RECONCILIATION_MIGRATION_INPUT_INVALID' },
+    });
+    expect(invalidInput.idempotency.execute).not.toHaveBeenCalled();
+
+    const missingProfiles = setup(true, true);
+    await expect(runMigration(missingProfiles, 'migration-profiles-missing'))
+      .rejects.toThrow('四方对账迁移身份依赖未装配');
+
+    const invalidReference = setup();
+    invalidReference.bankReturn.signatureVerified = false;
+    await expect(runMigration(invalidReference, 'migration-reference-invalid'))
+      .rejects.toMatchObject({
+        response: { code: 'PAYROLL_RECONCILIATION_MIGRATION_REFERENCE_INVALID' },
+      });
+
+    const invalidTime = setup();
+    await expect(runMigration(invalidTime, 'migration-time-invalid', {
+      ...migrationInput(invalidTime),
+      reconciledAt: '2026-07-22T10:00:00.000Z',
+    })).rejects.toMatchObject({
+      response: { code: 'PAYROLL_RECONCILIATION_MIGRATION_TIME_INVALID' },
+    });
+
+    const notBalanced = setup(false);
+    await expect(runMigration(notBalanced, 'migration-not-balanced'))
+      .rejects.toMatchObject({
+        response: { code: 'PAYROLL_RECONCILIATION_MIGRATION_NOT_BALANCED' },
+      });
+
+    const writeConflict = setup();
+    writeConflict.batches.updateOne.mockResolvedValueOnce({ modifiedCount: 0 });
+    await expect(runMigration(writeConflict, 'migration-write-conflict'))
+      .rejects.toMatchObject({
+        response: { code: 'PAYROLL_RECONCILIATION_MIGRATION_BATCH_CONFLICT' },
+      });
+    expect(writeConflict.outbox.append).not.toHaveBeenCalled();
+  });
+
   it('可信服务对账守恒时同步完成代发批次', async () => {
     const store = setup();
     const result = await store.context.run({ tenant, actor }, () =>
@@ -177,6 +313,121 @@ describe('TreasuryReconciliationService', () => {
     expect(store.batches.updateOne).toHaveBeenCalledWith(expect.anything(), { $set: {
       status: 'frozen', version: 6, freezeReason: 'FOUR_WAY_MISMATCH',
     } }, expect.anything());
+  });
+
+  it('在线对账对非法输入、缺失批次、未就绪状态和不可信回盘失败关闭', async () => {
+    const invalidInput = setup();
+    await expect(invalidInput.context.run({ tenant, actor }, () =>
+      invalidInput.service.reconcile(
+        'four-way-invalid-input',
+        'invalid',
+        0,
+      ))).rejects.toMatchObject({
+      response: { code: 'PAYROLL_RECONCILIATION_INPUT_INVALID' },
+    });
+    expect(invalidInput.idempotency.execute).not.toHaveBeenCalled();
+
+    const missing = setup();
+    missing.batches.findOne.mockReturnValue(query(() => null));
+    await expect(missing.context.run({ tenant, actor }, () =>
+      missing.service.reconcile(
+        'four-way-batch-missing',
+        BATCH_ID,
+        5,
+      ))).rejects.toMatchObject({
+      response: { code: 'TREASURY_BATCH_NOT_FOUND' },
+    });
+
+    const notReady = setup();
+    notReady.batch.status = 'submitted';
+    await expect(notReady.context.run({ tenant, actor }, () =>
+      notReady.service.reconcile(
+        'four-way-not-ready',
+        BATCH_ID,
+        5,
+      ))).rejects.toMatchObject({
+      response: { code: 'PAYROLL_RECONCILIATION_BATCH_NOT_READY' },
+    });
+
+    const untrusted = setup();
+    untrusted.bankReturn.signatureVerified = false;
+    await expect(untrusted.context.run({ tenant, actor }, () =>
+      untrusted.service.reconcile(
+        'four-way-return-untrusted',
+        BATCH_ID,
+        5,
+      ))).rejects.toMatchObject({
+      response: { code: 'PAYROLL_RECONCILIATION_RETURN_NOT_TRUSTED' },
+    });
+  });
+
+  it('在线重放返回既有对账，批次 CAS 冲突不得发布完成事件', async () => {
+    const replay = setup();
+    replay.batch.status = 'reconciled';
+    replay.batch.version = 6;
+    replay.payroll.getForBatch.mockResolvedValueOnce(replay.summary);
+    await expect(replay.context.run({ tenant, actor }, () =>
+      replay.service.reconcile(
+        'four-way-online-replay',
+        BATCH_ID,
+        5,
+      ))).resolves.toEqual(replay.summary);
+    expect(replay.payroll.reconcile).not.toHaveBeenCalled();
+    expect(replay.batches.updateOne).not.toHaveBeenCalled();
+
+    const conflict = setup();
+    conflict.batches.updateOne.mockResolvedValueOnce({ modifiedCount: 0 });
+    await expect(conflict.context.run({ tenant, actor }, () =>
+      conflict.service.reconcile(
+        'four-way-online-conflict',
+        BATCH_ID,
+        5,
+      ))).rejects.toMatchObject({
+      response: { code: 'PAYROLL_RECONCILIATION_BATCH_WRITE_CONFLICT' },
+    });
+    expect(conflict.outbox.append).not.toHaveBeenCalled();
+  });
+
+  it('结算链拒绝根批次类型、控制量和成功汇总非法', async () => {
+    const invalidRoot = setup();
+    invalidRoot.batch.purpose = 'recovery';
+    await expect(invalidRoot.context.run({ tenant, actor }, () =>
+      invalidRoot.service.reconcile(
+        'four-way-root-invalid',
+        BATCH_ID,
+        5,
+      ))).rejects.toMatchObject({
+      response: { code: 'PAYROLL_RECONCILIATION_CHAIN_ROOT_INVALID' },
+    });
+
+    const invalidControls = setup();
+    invalidControls.bankReturn.failedCount = 1;
+    await expect(invalidControls.context.run({ tenant, actor }, () =>
+      invalidControls.service.reconcile(
+        'four-way-controls-invalid',
+        BATCH_ID,
+        5,
+      ))).rejects.toMatchObject({
+      response: { code: 'PAYROLL_RECONCILIATION_CHAIN_EVIDENCE_INVALID' },
+    });
+
+    const zeroSuccess = setup();
+    zeroSuccess.batch.successfulCount = 0;
+    zeroSuccess.batch.successfulMinor = 0;
+    zeroSuccess.batch.failedCount = 2;
+    zeroSuccess.batch.failedMinor = zeroSuccess.batch.totalMinor;
+    zeroSuccess.bankReturn.successfulCount = 0;
+    zeroSuccess.bankReturn.successfulMinor = 0;
+    zeroSuccess.bankReturn.failedCount = 2;
+    zeroSuccess.bankReturn.failedMinor = zeroSuccess.batch.totalMinor;
+    await expect(zeroSuccess.context.run({ tenant, actor }, () =>
+      zeroSuccess.service.reconcile(
+        'four-way-zero-success',
+        BATCH_ID,
+        5,
+      ))).rejects.toMatchObject({
+      response: { code: 'PAYROLL_RECONCILIATION_CHAIN_TOTAL_INVALID' },
+    });
   });
 
   it('普通用户即使持有 Scope 也不能执行自动对账', async () => {

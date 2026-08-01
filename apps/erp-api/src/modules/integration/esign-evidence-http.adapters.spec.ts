@@ -14,6 +14,21 @@ const PDF = Buffer.from('%PDF-1.7\n受控测试合同');
 const SHA256 = createHash('sha256').update(PDF).digest('base64url');
 const OBJECT_KEY = `esign/${FLOW_ID}/${SHA256}.pdf`;
 
+function archiveInput(
+  overrides?: Partial<Parameters<HttpESignImmutableArchive['put']>[0]>,
+): Parameters<HttpESignImmutableArchive['put']>[0] {
+  return {
+    tenantId: 'tenant-001',
+    objectKey: OBJECT_KEY,
+    contentType: 'application/pdf' as const,
+    classification: 'L4' as const,
+    retentionPolicy: 'employment_contract' as const,
+    sha256: SHA256,
+    bytes: PDF,
+    ...overrides,
+  };
+}
+
 function config(overrides?: Readonly<Record<string, string | number>>) {
   const values: Readonly<Record<string, string | number>> = {
     ESIGN_MALWARE_SCAN_ENDPOINT: 'https://scanner.example.internal/v1/scan',
@@ -103,5 +118,110 @@ describe('eSign 证据 HTTPS Adapters', () => {
       tenantId: 'tenant-001', objectKey: OBJECT_KEY, contentType: 'application/pdf',
       classification: 'L4', retentionPolicy: 'employment_contract', sha256: SHA256, bytes: PDF,
     })).rejects.toThrow('ESIGN_ARCHIVE_RECEIPT_INVALID');
+  });
+
+  it('非 PDF、超限文件和错误对象键在外部调用前失败关闭', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const scanner = new HttpESignMalwareScanner(config());
+    await expect(scanner.scan({
+      tenantId: 'tenant-001',
+      flowId: FLOW_ID,
+      sha256: createHash('sha256').update('hello').digest('base64url'),
+      bytes: Buffer.from('hello'),
+    })).rejects.toThrow('ESIGN_EVIDENCE_PDF_INVALID');
+    const archive = new HttpESignImmutableArchive(config());
+    await expect(archive.put(archiveInput({
+      objectKey: `esign/${FLOW_ID}/wrong.pdf`,
+    }))).rejects.toThrow('ESIGN_ARCHIVE_OBJECT_KEY_INVALID');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('扫描回执摘要错位或结构非法时失败关闭', async () => {
+    const scanner = new HttpESignMalwareScanner(config());
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      clean: true,
+      evidenceId: 'scan-evidence-001',
+      sha256: 'A'.repeat(43),
+    }), { status: 200, headers: { 'content-type': 'application/json' } })));
+    await expect(scanner.scan({
+      tenantId: 'tenant-001', flowId: FLOW_ID, sha256: SHA256, bytes: PDF,
+    })).rejects.toThrow('ESIGN_MALWARE_SCAN_RECEIPT_INVALID');
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })));
+    await expect(scanner.scan({
+      tenantId: 'tenant-001', flowId: FLOW_ID, sha256: SHA256, bytes: PDF,
+    })).rejects.toThrow('ESIGN_MALWARE_SCAN_RECEIPT_INVALID');
+  });
+
+  it.each([
+    [vi.fn().mockRejectedValue(new Error('network')), 'ESIGN_MALWARE_SCANNER_UNAVAILABLE'],
+    [vi.fn().mockResolvedValue(new Response('{}', {
+      status: 503,
+      headers: { 'content-type': 'application/json' },
+    })), 'ESIGN_MALWARE_SCANNER_HTTP_503'],
+    [vi.fn().mockResolvedValue(new Response('{}', {
+      status: 200,
+      headers: { 'content-type': 'text/plain' },
+    })), 'ESIGN_MALWARE_SCANNER_RECEIPT_INVALID'],
+    [vi.fn().mockResolvedValue(new Response('{', {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })), 'ESIGN_MALWARE_SCAN_RECEIPT_INVALID'],
+    [vi.fn().mockResolvedValue(new Response('x'.repeat(16 * 1024 + 1), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })), 'ESIGN_MALWARE_SCAN_RECEIPT_TOO_LARGE'],
+  ])('扫描网关故障使用稳定错误：%s', async (fetchMock, code) => {
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(new HttpESignMalwareScanner(config()).scan({
+      tenantId: 'tenant-001', flowId: FLOW_ID, sha256: SHA256, bytes: PDF,
+    })).rejects.toThrow(code);
+  });
+
+  it.each([
+    ['http://scanner.example.internal/v1/scan'],
+    ['https://user:pass@scanner.example.internal/v1/scan'],
+    ['https://scanner.example.internal:8443/v1/scan'],
+    ['https://scanner.example.internal/v1/scan?token=secret'],
+    ['https://scanner.example.internal/v1/scan#fragment'],
+  ])('拒绝不安全的证据网关端点：%s', async (endpoint) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(new HttpESignMalwareScanner(config({
+      ESIGN_MALWARE_SCAN_ENDPOINT: endpoint,
+    })).scan({
+      tenantId: 'tenant-001', flowId: FLOW_ID, sha256: SHA256, bytes: PDF,
+    })).rejects.toThrow('ESIGN_EVIDENCE_ENDPOINT_INVALID');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('WORM 回执必须逐项绑定摘要、对象键、不可变性和保留期', async () => {
+    const archive = new HttpESignImmutableArchive(config());
+    for (const receipt of [
+      {
+        objectRef: 'worm/esign/object-001', receiptId: 'receipt-001', immutable: true,
+        sha256: 'A'.repeat(43), objectKey: OBJECT_KEY, retentionDays: 3_650,
+      },
+      {
+        objectRef: 'worm/esign/object-001', receiptId: 'receipt-001', immutable: true,
+        sha256: SHA256, objectKey: `esign/${FLOW_ID}/${'A'.repeat(43)}.pdf`,
+        retentionDays: 3_650,
+      },
+      {
+        objectRef: 'worm/esign/object-001', receiptId: 'receipt-001', immutable: true,
+        sha256: SHA256, objectKey: OBJECT_KEY, retentionDays: 3_649,
+      },
+    ]) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(receipt), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })));
+      await expect(archive.put(archiveInput()))
+        .rejects.toThrow('ESIGN_ARCHIVE_RECEIPT_INVALID');
+    }
   });
 });

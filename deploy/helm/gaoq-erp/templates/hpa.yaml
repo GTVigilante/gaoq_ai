@@ -1,4 +1,4 @@
-{{- range $component := list "api" "web" }}
+{{- range $component := list "api" "web" "website" }}
 {{- $settings := index $.Values.autoscaling $component }}
 {{- if $settings.enabled }}
 apiVersion: autoscaling/v2

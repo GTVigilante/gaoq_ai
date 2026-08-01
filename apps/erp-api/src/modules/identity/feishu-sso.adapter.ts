@@ -14,6 +14,8 @@ import { SsoHttpClient } from './sso-http-client.js';
 const FEISHU_TOKEN_URL = 'https://open.feishu.cn/open-apis/authen/v2/oauth/token';
 const FEISHU_PROFILE_URL = 'https://open.feishu.cn/open-apis/authen/v1/user_info';
 const FEISHU_AUTHORIZE_URL = 'https://accounts.feishu.cn/open-apis/authen/v1/authorize';
+const identifier = z.string().min(1).max(256)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/);
 
 const tokenSchema = z.object({
   code: z.number().optional(),
@@ -21,10 +23,10 @@ const tokenSchema = z.object({
 });
 const profileSchema = z.object({
   code: z.number().optional(),
-  tenant_key: z.string().min(1),
-  union_id: z.string().min(1),
-  user_id: z.string().min(1),
-  open_id: z.string().min(1),
+  tenant_key: identifier,
+  union_id: identifier,
+  user_id: identifier,
+  open_id: identifier,
   name: z.string().min(1).max(256),
 });
 
@@ -85,13 +87,16 @@ export class FeishuSsoAdapter extends FeishuSsoAdapterToken {
       throw new UnauthorizedException({ code: 'SSO_PROFILE_REJECTED', message: '无法验证飞书身份' });
     }
     const profile = profileResult.data;
-    return {
+    if (profile.tenant_key !== input.expectedExternalTenantId) {
+      throw new UnauthorizedException({ code: 'SSO_PROFILE_REJECTED', message: '无法验证飞书身份' });
+    }
+    return Object.freeze({
       provider: this.provider,
       externalTenantId: profile.tenant_key,
       unionId: profile.union_id,
       externalUserId: profile.user_id,
       displayName: profile.name,
-    };
+    });
   }
 
   private requiredConfig(

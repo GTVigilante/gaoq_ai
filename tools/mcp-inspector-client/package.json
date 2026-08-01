@@ -1,0 +1,12 @@
+{
+  "name": "@gaoq/mcp-inspector-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/inspector": "2.0.0"
+  }
+}

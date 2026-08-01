@@ -4,6 +4,7 @@ import {
   Controller,
   Get,
   Headers,
+  Logger,
   Param,
   Post,
   Res,
@@ -11,6 +12,7 @@ import {
 import type { Response } from 'express';
 
 import { AuditService } from '../../core/audit/audit.service.js';
+import type { AuditRecordInput } from '../../core/audit/audit.types.js';
 import { RequiredScopes } from '../identity/auth.decorators.js';
 import {
   AttendanceApplicationService,
@@ -20,6 +22,12 @@ import {
   type AttendanceMonthSummary,
 } from './application/attendance-application.service.js';
 import {
+  AttendanceShiftApplicationService,
+  type AttendanceShiftEvaluationSummary,
+  type AttendanceShiftPlanSummary,
+} from './application/attendance-shift-application.service.js';
+import {
+  AssignAttendanceShiftPlanDto,
   CloseAttendanceMonthDto,
   IngestAttendanceSourceFactDto,
   RegisterAttendanceCorrectionDto,
@@ -30,10 +38,57 @@ const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 @Controller('attendance')
 export class AttendanceController {
+  private readonly logger = new Logger(AttendanceController.name);
+
   constructor(
     private readonly attendance: AttendanceApplicationService,
+    private readonly shifts: AttendanceShiftApplicationService,
     private readonly audit: AuditService,
   ) {}
+
+  @Post('shift-plans')
+  @RequiredScopes('erp:attendance:shift_plan:write')
+  async assignShiftPlan(
+    @Headers('idempotency-key') key: string | undefined,
+    @Body() body: AssignAttendanceShiftPlanDto,
+  ): Promise<{ readonly shiftPlan: AttendanceShiftPlanSummary }> {
+    const result = await this.shifts.assign(this.key(key), body);
+    await this.auditAfterCommit({
+      action: 'attendance.shift_plan.assign',
+      resourceType: 'attendance_shift_plan',
+      resourceId: result.shiftPlan.id,
+      riskLevel: 'R1',
+      outcome: 'success',
+      metadata: {
+        employeeId: result.shiftPlan.employeeId,
+        businessDate: result.shiftPlan.businessDate,
+        planCode: result.shiftPlan.planCode,
+        rulesetVersion: result.shiftPlan.rulesetVersion,
+      },
+    });
+    return result;
+  }
+
+  @Post('shift-plans/:shiftPlanId/evaluate')
+  @RequiredScopes('erp:attendance:shift:evaluate')
+  async evaluateShift(
+    @Headers('idempotency-key') key: string | undefined,
+    @Param('shiftPlanId') shiftPlanId: string,
+  ): Promise<{ readonly evaluation: AttendanceShiftEvaluationSummary }> {
+    const result = await this.shifts.evaluate(this.key(key), shiftPlanId);
+    await this.auditAfterCommit({
+      action: 'attendance.shift.evaluate',
+      resourceType: 'attendance_shift_plan',
+      resourceId: result.evaluation.shiftPlanId,
+      riskLevel: 'R1',
+      outcome: 'success',
+      metadata: {
+        sourceFactId: result.evaluation.sourceFactId,
+        businessDate: result.evaluation.businessDate,
+      },
+    });
+    return result;
+  }
 
   @Post('source-facts')
   @RequiredScopes('erp:attendance:source:ingest')
@@ -42,7 +97,7 @@ export class AttendanceController {
     @Body() body: IngestAttendanceSourceFactDto,
   ): Promise<{ readonly fact: AttendanceFactSummary }> {
     const result = await this.attendance.ingest(this.key(key), body);
-    await this.audit.record({
+    await this.auditAfterCommit({
       action: 'attendance.source_fact.ingest', resourceType: 'attendance_source_fact',
       resourceId: result.fact.id, riskLevel: 'R1', outcome: 'success', metadata: {
         employeeId: result.fact.employeeId, providerCode: result.fact.providerCode,
@@ -59,7 +114,7 @@ export class AttendanceController {
     @Body() body: RegisterAttendanceCorrectionDto,
   ): Promise<{ readonly correction: AttendanceCorrectionSummary }> {
     const result = await this.attendance.registerCorrection(this.key(key), body);
-    await this.audit.record({
+    await this.auditAfterCommit({
       action: 'attendance.correction.register', resourceType: 'attendance_correction',
       resourceId: result.correction.id, riskLevel: 'R2', outcome: 'success', metadata: {
         employeeId: result.correction.employeeId,
@@ -78,7 +133,7 @@ export class AttendanceController {
     @Body() body: RequestAttendanceCorrectionDto,
   ): Promise<{ readonly request: AttendanceCorrectionRequestSummary }> {
     const result = await this.attendance.requestCorrection(this.key(key), body);
-    await this.audit.record({
+    await this.auditAfterCommit({
       action: 'attendance.correction.request', resourceType: 'attendance_correction_request',
       resourceId: result.request.approvalInstanceId, riskLevel: 'R1', outcome: 'success',
       metadata: {
@@ -99,7 +154,7 @@ export class AttendanceController {
   ): Promise<{ readonly month: AttendanceMonthSummary }> {
     const result = await this.attendance.closeMonth(this.key(key), body);
     response.setHeader('ETag', `"${result.month.snapshotVersion}"`);
-    await this.auditMonth('attendance.month.close', result.month, 'R2');
+    await this.auditMonth('attendance.month.close', result.month, 'R2', true);
     return result;
   }
 
@@ -133,13 +188,34 @@ export class AttendanceController {
     action: string,
     month: AttendanceMonthSummary,
     riskLevel: 'R0' | 'R2',
+    afterCommit = false,
   ): Promise<void> {
-    await this.audit.record({
+    const input: AuditRecordInput = {
       action, resourceType: 'attendance_monthly_snapshot', resourceId: month.id,
       riskLevel, outcome: 'success', metadata: {
         employeeId: month.employeeId, month: month.month,
         snapshotVersion: month.snapshotVersion, snapshotHash: month.snapshotHash,
       },
-    });
+    };
+    if (afterCommit) {
+      await this.auditAfterCommit(input);
+      return;
+    }
+    await this.audit.record(input);
+  }
+
+  /** 考勤写事务已提交后，审计故障只记录稳定告警，禁止客户端重复追加事实。 */
+  private async auditAfterCommit(input: AuditRecordInput): Promise<void> {
+    try {
+      await this.audit.record(input);
+    } catch {
+      this.logger.error({
+        code: 'ATTENDANCE_AUDIT_AFTER_COMMIT_FAILED',
+        action: input.action,
+        resourceType: input.resourceType,
+        resourceId: input.resourceId,
+        riskLevel: input.riskLevel,
+      });
+    }
   }
 }

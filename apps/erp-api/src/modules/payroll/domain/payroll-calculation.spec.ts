@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   calculatePayroll,
   payrollDigest,
+  type PayrollCalculationError,
   type PayrollCalculationInput,
 } from './payroll-calculation.js';
 
@@ -31,6 +32,31 @@ const base: PayrollCalculationInput = {
     otherDeductionMinor: 0, taxWithheldMinor: 0,
   },
 };
+const firstAllocation = {
+  profileId: 'profile-001',
+  profileVersion: 1,
+  profileHash: 'a'.repeat(43),
+  jurisdictionCode: 'CN-SH',
+  effectiveFrom: '2026-01-01',
+  effectiveTo: '2026-07-15',
+  allocatedFrom: '2026-07-01',
+  allocatedTo: '2026-07-15',
+  allocatedDays: 15,
+  periodDays: 31,
+  allocationMethod: 'CALENDAR_DAY_HALF_UP',
+} as const;
+const secondAllocation = {
+  ...firstAllocation,
+  profileId: 'profile-002',
+  profileVersion: 2,
+  profileHash: 'b'.repeat(43),
+  jurisdictionCode: 'CN-BJ',
+  effectiveFrom: '2026-07-16',
+  effectiveTo: null,
+  allocatedFrom: '2026-07-16',
+  allocatedTo: '2026-07-31',
+  allocatedDays: 16,
+} as const;
 
 describe('累计预扣确定性计算内核', () => {
   it('只用整数分和基点计算首月应税、预扣与实发', () => {
@@ -85,6 +111,56 @@ describe('累计预扣确定性计算内核', () => {
     expect(right.steps).toEqual(left.steps);
   });
 
+  it('月中跨法域薪酬分摊证据进入输入摘要且完整覆盖自然日', () => {
+    const withAllocations = calculatePayroll({
+      ...base,
+      compensationAllocations: [firstAllocation, secondAllocation],
+    });
+    const withoutAllocations = calculatePayroll(base);
+
+    expect(withAllocations.inputHash).not.toBe(withoutAllocations.inputHash);
+    expect(withAllocations.resultHash).not.toBe(withoutAllocations.resultHash);
+    expect(withAllocations.netPayMinor).toBe(withoutAllocations.netPayMinor);
+  });
+
+  it('薪酬分摊证据对引用、日期、法域、天数、方法和重复档案逐项失败关闭', () => {
+    const invalidAllocations = [
+      [],
+      [{ ...firstAllocation, profileId: '@' }, secondAllocation],
+      [{ ...firstAllocation, jurisdictionCode: '@' }, secondAllocation],
+      [{ ...firstAllocation, profileHash: 'short' }, secondAllocation],
+      [{ ...firstAllocation, profileVersion: 0 }, secondAllocation],
+      [{ ...firstAllocation, allocatedDays: 0 }, secondAllocation],
+      [{ ...firstAllocation, periodDays: 27 }, secondAllocation],
+      [{ ...firstAllocation, periodDays: 32 }, secondAllocation],
+      [{
+        ...firstAllocation,
+        allocationMethod: 'WORKING_DAY' as never,
+      }, secondAllocation],
+      [{ ...firstAllocation, effectiveFrom: '2026-7-01' }, secondAllocation],
+      [{ ...firstAllocation, effectiveTo: '2026-7-15' }, secondAllocation],
+      [{ ...firstAllocation, allocatedFrom: '2026-7-01' }, secondAllocation],
+      [{ ...firstAllocation, allocatedTo: '2026-7-15' }, secondAllocation],
+      [{
+        ...firstAllocation,
+        allocatedFrom: '2026-07-16',
+        allocatedTo: '2026-07-15',
+      }, secondAllocation],
+      [{ ...firstAllocation, periodDays: 30 }, secondAllocation],
+      [firstAllocation, { ...secondAllocation, profileId: firstAllocation.profileId }],
+      [firstAllocation, { ...secondAllocation, allocatedDays: 15 }],
+    ] as const;
+
+    for (const compensationAllocations of invalidAllocations) {
+      expect(() => calculatePayroll({
+        ...base,
+        compensationAllocations,
+      })).toThrow(expect.objectContaining<Partial<PayrollCalculationError>>({
+        code: 'PAYROLL_COMPENSATION_ALLOCATION_INVALID',
+      }));
+    }
+  });
+
   it('规范摘要对对象键顺序稳定，并拒绝日期对象和循环引用', () => {
     expect(payrollDigest({ amount: 1, code: 'BASE' }))
       .toBe(payrollDigest({ code: 'BASE', amount: 1 }));
@@ -93,6 +169,27 @@ describe('累计预扣确定性计算内核', () => {
     const cyclic: Record<string, unknown> = {};
     cyclic.self = cyclic;
     expect(() => payrollDigest(cyclic)).toThrow(/循环引用/u);
+  });
+
+  it('规范摘要覆盖所有允许类型并拒绝越界、深层及不可序列化值', () => {
+    expect(payrollDigest({
+      array: [null, true, 'text', 1],
+      nullable: null,
+      omitted: undefined,
+    })).toBe(payrollDigest({
+      nullable: null,
+      array: [null, true, 'text', 1],
+    }));
+    const nullPrototype = Object.create(null) as Record<string, unknown>;
+    nullPrototype.safe = 1;
+    expect(payrollDigest(nullPrototype)).toHaveLength(43);
+    expect(() => payrollDigest(Number.MAX_SAFE_INTEGER + 1))
+      .toThrow('规范摘要只接受安全整数');
+    expect(() => payrollDigest(undefined)).toThrow('包含不支持的值');
+    expect(() => payrollDigest(Symbol('invalid'))).toThrow('包含不支持的值');
+    let deep: unknown = 'leaf';
+    for (let index = 0; index < 22; index += 1) deep = [deep];
+    expect(() => payrollDigest(deep)).toThrow('嵌套深度超限');
   });
 
   it('累计已扣税高于当前累计税额时形成负税额调整并增加实发', () => {
@@ -122,5 +219,100 @@ describe('累计预扣确定性计算内核', () => {
     expect(() => calculatePayroll({
       ...base, postTaxDeductionMinor: 900_000,
     })).toThrow(/实发金额不能为负/u);
+  });
+
+  it('对标识、税率连续性、组件和金额边界逐项失败关闭', () => {
+    const invalidCases: readonly [
+      PayrollCalculationInput,
+      string,
+    ][] = [
+      [{ ...base, tenantId: '@' }, 'PAYROLL_IDENTIFIER_INVALID'],
+      [{ ...base, period: '2026-13' }, 'PAYROLL_PERIOD_INVALID'],
+      [{ ...base, rulePack: { ...base.rulePack, version: 0 } }, 'PAYROLL_RULE_VERSION_INVALID'],
+      [{ ...base, employeeHousingFundMinor: -1 }, 'PAYROLL_AMOUNT_INVALID'],
+      [{
+        ...base,
+        rulePack: { ...base.rulePack, roundingMode: 'BANKERS' as never },
+      }, 'PAYROLL_ROUNDING_MODE_UNSUPPORTED'],
+      [{
+        ...base,
+        rulePack: { ...base.rulePack, taxBrackets: [] },
+      }, 'PAYROLL_TAX_BRACKETS_INVALID'],
+      [{
+        ...base,
+        rulePack: {
+          ...base.rulePack,
+          taxBrackets: [{ upperBoundMinor: null, rateBps: 10_001, quickDeductionMinor: 0 }],
+        },
+      }, 'PAYROLL_TAX_RATE_INVALID'],
+      [{
+        ...base,
+        rulePack: {
+          ...base.rulePack,
+          taxBrackets: [
+            { upperBoundMinor: null, rateBps: 300, quickDeductionMinor: 0 },
+            { upperBoundMinor: null, rateBps: 300, quickDeductionMinor: 0 },
+          ],
+        },
+      }, 'PAYROLL_TAX_BRACKETS_INVALID'],
+      [{
+        ...base,
+        rulePack: {
+          ...base.rulePack,
+          taxBrackets: [
+            { upperBoundMinor: 100, rateBps: 300, quickDeductionMinor: 0 },
+            { upperBoundMinor: 100, rateBps: 300, quickDeductionMinor: 0 },
+            { upperBoundMinor: null, rateBps: 300, quickDeductionMinor: 0 },
+          ],
+        },
+      }, 'PAYROLL_TAX_BRACKETS_INVALID'],
+      [{
+        ...base,
+        rulePack: {
+          ...base.rulePack,
+          taxBrackets: [
+            { upperBoundMinor: 100, rateBps: 300, quickDeductionMinor: 0 },
+            { upperBoundMinor: null, rateBps: 200, quickDeductionMinor: 0 },
+          ],
+        },
+      }, 'PAYROLL_TAX_BRACKETS_INVALID'],
+      [{
+        ...base,
+        rulePack: {
+          ...base.rulePack,
+          taxBrackets: [
+            { upperBoundMinor: 100, rateBps: 300, quickDeductionMinor: 0 },
+            { upperBoundMinor: null, rateBps: 1_000, quickDeductionMinor: 0 },
+          ],
+        },
+      }, 'PAYROLL_TAX_BRACKETS_INVALID'],
+      [{
+        ...base,
+        taxableEarnings: [{ code: 'bad-code', amountMinor: 1 }],
+      }, 'PAYROLL_COMPONENT_CODE_INVALID'],
+      [{
+        ...base,
+        taxableEarnings: [{ code: 'BASE', amountMinor: -1 }],
+      }, 'PAYROLL_AMOUNT_INVALID'],
+      [{
+        ...base,
+        taxableEarnings: [
+          { code: 'BASE', amountMinor: Number.MAX_SAFE_INTEGER },
+          { code: 'BONUS', amountMinor: 1 },
+        ],
+      }, 'PAYROLL_AMOUNT_OVERFLOW'],
+      [{
+        ...base,
+        cumulativeBefore: {
+          ...base.cumulativeBefore,
+          taxableIncomeMinor: Number.MAX_SAFE_INTEGER,
+        },
+      }, 'PAYROLL_AMOUNT_OVERFLOW'],
+    ];
+    for (const [input, code] of invalidCases) {
+      expect(() => calculatePayroll(input)).toThrow(
+        expect.objectContaining<Partial<PayrollCalculationError>>({ code }),
+      );
+    }
   });
 });

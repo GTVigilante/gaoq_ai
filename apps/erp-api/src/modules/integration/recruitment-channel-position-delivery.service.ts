@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { createEventId } from '@gaoq/shared-utils';
+import { createEventId, ULID_PATTERN } from '@gaoq/shared-utils';
 import type { Model } from 'mongoose';
 
 import { AuditService } from '../../core/audit/audit.service.js';
@@ -11,7 +11,10 @@ import { DepartmentRepository } from '../org/persistence/org.repositories.js';
 import { RecruitmentManagementService } from '../recruitment/application/recruitment-management.service.js';
 import { RecruitmentDataCryptoService } from '../recruitment/persistence/recruitment-data-crypto.service.js';
 import { calculateNextAttemptAt } from './org-delivery.policy.js';
-import { RecruitmentChannelRegistry } from './recruitment-channel.adapter.js';
+import {
+  RecruitmentChannelRegistry,
+  RecruitmentChannelTransportError,
+} from './recruitment-channel.adapter.js';
 import { RecruitmentChannelSecretResolver } from './recruitment-channel-pull.service.js';
 import {
   RecruitmentChannelBindingRecord,
@@ -24,11 +27,19 @@ import {
 
 const LOCK_TIMEOUT_MS = 5 * 60 * 1_000;
 const MAX_ATTEMPTS = 12;
+const TENANT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const CHANNEL_PATTERN = /^[a-z][a-z0-9_]{1,31}$/;
+const SECRET_REF_PATTERN = /^GAOQ_RECRUITMENT_CHANNEL_[A-Z0-9_]{1,96}$/;
+const CODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+/** 外部调用可能已经提交；只能进入人工核验，禁止通用重试。 */
+class RecruitmentChannelPositionOutcomeUnknownError extends Error {}
 
 /** 执行职位发布/下架投递，用强版本和外部映射防止乱序、重复职位。 */
 @Injectable()
 export class RecruitmentChannelPositionDeliveryService {
   private readonly workerId = `recruitment-channel-${randomUUID()}`;
+  private readonly logger = new Logger(RecruitmentChannelPositionDeliveryService.name);
 
   constructor(
     @InjectModel(RecruitmentChannelPositionDeliveryRecord.name)
@@ -50,10 +61,25 @@ export class RecruitmentChannelPositionDeliveryService {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
       throw new Error('RECRUITMENT_CHANNEL_BATCH_LIMIT_INVALID');
     }
+    await this.quarantineStaleProcessing(new Date());
     let count = 0;
     for (let index = 0; index < limit; index += 1) {
       const delivery = await this.claim();
       if (delivery === null) break;
+      try {
+        this.assertClaim(delivery);
+      } catch (error) {
+        await this.markManualReview(
+          delivery,
+          failureCode(error),
+          'RECRUITMENT_CHANNEL_POSITION_RECORD_INVALID',
+        );
+        this.logger.error({
+          code: 'RECRUITMENT_CHANNEL_POSITION_RECORD_INVALID',
+          eventId: safeLogValue(delivery.eventId),
+        });
+        continue;
+      }
       await this.context.run({
         tenant: { tenantId: delivery.tenantId, source: 'service_identity' },
         actor: {
@@ -67,15 +93,13 @@ export class RecruitmentChannelPositionDeliveryService {
           await this.deliver(delivery);
           count += 1;
         } catch (error) {
-          await this.fail(delivery, failureCode(error));
-          await this.audit.record({
-            action: 'integration.recruitment_channel.position.deliver',
-            resourceType: 'recruitment_position', resourceId: delivery.positionId,
-            riskLevel: 'R2', outcome: 'failure', metadata: {
-              channelCode: delivery.channelCode, action: delivery.action,
-              failureCode: failureCode(error), positionVersion: delivery.positionVersion,
-            },
-          });
+          const code = failureCode(error);
+          if (error instanceof RecruitmentChannelPositionOutcomeUnknownError) {
+            await this.markManualReview(delivery, code, code);
+          } else {
+            await this.fail(delivery, code);
+          }
+          await this.auditFailureAfterCommit(delivery, code);
         }
       });
     }
@@ -86,11 +110,9 @@ export class RecruitmentChannelPositionDeliveryService {
     const now = new Date();
     return this.deliveries.findOneAndUpdate(
       {
+        status: 'pending',
         nextAttemptAt: { $lte: now },
-        $or: [
-          { status: 'pending' },
-          { status: 'processing', lockedAt: { $lt: new Date(now.getTime() - LOCK_TIMEOUT_MS) } },
-        ],
+        attempts: { $lt: MAX_ATTEMPTS },
       },
       { $set: { status: 'processing', lockedAt: now, lockedBy: this.workerId }, $inc: { attempts: 1 } },
       { returnDocument: 'after', sort: { createdAt: 1 }, runValidators: true },
@@ -105,17 +127,10 @@ export class RecruitmentChannelPositionDeliveryService {
     });
     if (earlier !== null) throw new Error('RECRUITMENT_CHANNEL_POSITION_ORDER_BLOCKED');
     const position = await this.management.getPosition(delivery.positionId);
+    this.assertPosition(delivery, position);
     if (position.version > delivery.positionVersion) {
       await this.finish(delivery, 'superseded', null);
-      await this.audit.record({
-        action: 'integration.recruitment_channel.position.deliver',
-        resourceType: 'recruitment_position', resourceId: delivery.positionId,
-        riskLevel: 'R2', outcome: 'success', metadata: {
-          channelCode: delivery.channelCode, action: delivery.action,
-          targetStatus: delivery.targetStatus, positionVersion: delivery.positionVersion,
-          result: 'superseded',
-        },
-      });
+      await this.auditSuccessAfterCommit(delivery, 'superseded');
       return;
     }
     if (position.version !== delivery.positionVersion || position.status !== delivery.targetStatus) {
@@ -126,59 +141,83 @@ export class RecruitmentChannelPositionDeliveryService {
       channelCode: delivery.channelCode, status: 'active',
     }).lean().exec();
     if (binding === null) throw new Error('RECRUITMENT_CHANNEL_BINDING_NOT_FOUND');
+    this.assertBinding(delivery, binding);
     const credential = this.secrets.resolve(binding.credentialSecretRef);
     const adapter = this.registry.adapter(delivery.channelCode);
     let receiptId: string;
     if (delivery.action === 'publish') {
       const department = await this.departments.findById(position.departmentId);
-      if (department === null || department.status !== 'active') {
+      if (department === null) {
         throw new Error('RECRUITMENT_CHANNEL_DEPARTMENT_INVALID');
       }
-      const result = await adapter.publishPosition(credential, {
-        tenantId: delivery.tenantId, positionId: position.id, title: position.title,
-        departmentCode: department.code, location: position.location,
-        headcount: position.headcount,
-        idempotencyKey: idempotencyKey(['publish', delivery.tenantId, delivery.channelCode, position.id]),
-      });
-      if (!opaqueId(result.externalPositionId) || !opaqueId(result.receiptId)) {
-        throw new Error('RECRUITMENT_CHANNEL_POSITION_RECEIPT_INVALID');
+      this.assertDepartment(delivery, position.departmentId, department);
+      const result = await this.invokeExternal(
+        () => adapter.publishPosition(credential, {
+          tenantId: delivery.tenantId, positionId: position.id, title: position.title,
+          departmentCode: department.code, location: position.location,
+          headcount: position.headcount,
+          idempotencyKey: idempotencyKey([
+            'publish', delivery.tenantId, delivery.channelCode, position.id,
+          ]),
+        }),
+        'RECRUITMENT_CHANNEL_POSITION_PUBLISH_OUTCOME_UNKNOWN',
+      );
+      try {
+        this.assertPublishResult(result);
+        await this.ensurePositionMapping(delivery, result.externalPositionId, 'active');
+        receiptId = result.receiptId;
+      } catch (error) {
+        throw new RecruitmentChannelPositionOutcomeUnknownError(
+          'RECRUITMENT_CHANNEL_POSITION_PUBLISH_STATE_UNAVAILABLE',
+          { cause: error },
+        );
       }
-      await this.ensurePositionMapping(delivery, result.externalPositionId, 'active');
-      receiptId = result.receiptId;
     } else {
       const mapping = await this.mappingByPosition(delivery);
       if (mapping === null) {
         receiptId = `not-published:${delivery.eventId}`;
       } else {
+        this.assertMapping(delivery, mapping, 'position');
         const externalPositionId = this.decryptExternalId(mapping);
-        const result = await adapter.closePosition(credential, {
-          externalPositionId,
-          idempotencyKey: idempotencyKey([
-            'close', delivery.tenantId, delivery.channelCode,
-            delivery.positionId, delivery.targetStatus,
-          ]),
-        });
-        if (!opaqueId(result.receiptId)) throw new Error('RECRUITMENT_CHANNEL_POSITION_RECEIPT_INVALID');
-        await this.setMappingStatus(
-          mapping,
-          delivery.targetStatus === 'paused' ? 'paused' : 'closed',
+        const result = await this.invokeExternal(
+          () => adapter.closePosition(credential, {
+            externalPositionId,
+            idempotencyKey: idempotencyKey([
+              'close', delivery.tenantId, delivery.channelCode,
+              delivery.positionId, delivery.targetStatus,
+            ]),
+          }),
+          'RECRUITMENT_CHANNEL_POSITION_CLOSE_OUTCOME_UNKNOWN',
         );
-        receiptId = result.receiptId;
+        try {
+          this.assertReceiptResult(result);
+          await this.setMappingStatus(
+            mapping,
+            delivery.targetStatus === 'paused' ? 'paused' : 'closed',
+          );
+          receiptId = result.receiptId;
+        } catch (error) {
+          throw new RecruitmentChannelPositionOutcomeUnknownError(
+            'RECRUITMENT_CHANNEL_POSITION_CLOSE_STATE_UNAVAILABLE',
+            { cause: error },
+          );
+        }
       }
     }
-    const fingerprint = this.crypto.channelFingerprints(
-      delivery.tenantId, 'event', delivery.channelCode, receiptId,
-    )[0];
-    if (fingerprint === undefined) throw new Error('RECRUITMENT_CHANNEL_KEY_INVALID');
-    await this.finish(delivery, 'succeeded', fingerprint);
-    await this.audit.record({
-      action: 'integration.recruitment_channel.position.deliver',
-      resourceType: 'recruitment_position', resourceId: delivery.positionId,
-      riskLevel: 'R2', outcome: 'success', metadata: {
-        channelCode: delivery.channelCode, action: delivery.action,
-        targetStatus: delivery.targetStatus, positionVersion: delivery.positionVersion,
-      },
-    });
+    try {
+      const fingerprint = this.crypto.channelFingerprints(
+        delivery.tenantId, 'event', delivery.channelCode, receiptId,
+      )[0];
+      if (fingerprint === undefined) throw new Error('RECRUITMENT_CHANNEL_KEY_INVALID');
+      await this.finish(delivery, 'succeeded', fingerprint);
+    } catch (error) {
+      if (delivery.action === 'close' && receiptId.startsWith('not-published:')) throw error;
+      throw new RecruitmentChannelPositionOutcomeUnknownError(
+        'RECRUITMENT_CHANNEL_POSITION_FINALIZE_UNAVAILABLE',
+        { cause: error },
+      );
+    }
+    await this.auditSuccessAfterCommit(delivery, 'succeeded');
   }
 
   private async ensurePositionMapping(
@@ -191,6 +230,7 @@ export class RecruitmentChannelPositionDeliveryService {
     );
     const current = await this.mappingByPosition(delivery);
     if (current !== null) {
+      this.assertMapping(delivery, current, 'position');
       if (!current.externalIdBlindIndexes.some((value) => fingerprints.includes(value))) {
         throw new Error('RECRUITMENT_CHANNEL_POSITION_MAPPING_CONFLICT');
       }
@@ -215,6 +255,7 @@ export class RecruitmentChannelPositionDeliveryService {
       const raced = await this.mappingByPosition(delivery);
       if (
         raced === null ||
+        !this.isMapping(delivery, raced, 'position') ||
         !raced.externalIdBlindIndexes.some((value) => fingerprints.includes(value))
       ) throw new Error('RECRUITMENT_CHANNEL_POSITION_MAPPING_CONFLICT', { cause: error });
       await this.setMappingStatus(raced, status);
@@ -254,6 +295,205 @@ export class RecruitmentChannelPositionDeliveryService {
     return value;
   }
 
+  private async invokeExternal<T>(
+    operation: () => Promise<T>,
+    outcomeUnknownCode: string,
+  ): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (
+        error instanceof RecruitmentChannelTransportError &&
+        error.outcome === 'not_committed'
+      ) throw error;
+      throw new RecruitmentChannelPositionOutcomeUnknownError(
+        outcomeUnknownCode,
+        { cause: error },
+      );
+    }
+  }
+
+  private async quarantineStaleProcessing(now: Date): Promise<void> {
+    await this.deliveries.updateMany(
+      {
+        status: 'processing',
+        lockedAt: { $lt: new Date(now.getTime() - LOCK_TIMEOUT_MS) },
+      },
+      { $set: {
+        status: 'manual_review',
+        nextAttemptAt: now,
+        lockedAt: null,
+        lockedBy: null,
+        failureCode: 'RECRUITMENT_CHANNEL_POSITION_OUTCOME_UNKNOWN',
+      } },
+      { runValidators: true },
+    );
+  }
+
+  private async markManualReview(
+    delivery: RecruitmentChannelPositionDeliveryRecord,
+    code: string,
+    fallbackCode: string,
+  ): Promise<void> {
+    const now = new Date();
+    const updated = await this.deliveries.updateOne(
+      {
+        tenantId: delivery.tenantId,
+        eventId: delivery.eventId,
+        bindingId: delivery.bindingId,
+        status: 'processing',
+        lockedBy: this.workerId,
+      },
+      { $set: {
+        status: 'manual_review',
+        failureCode: /^[A-Z0-9_]{3,128}$/.test(code) ? code : fallbackCode,
+        nextAttemptAt: now,
+        lockedAt: null,
+        lockedBy: null,
+      } },
+      { runValidators: true },
+    );
+    if (updated.modifiedCount !== 1) {
+      throw new Error('RECRUITMENT_CHANNEL_POSITION_MANUAL_REVIEW_LEASE_LOST');
+    }
+  }
+
+  private assertClaim(delivery: RecruitmentChannelPositionDeliveryRecord): void {
+    if (
+      !isPlainRecord(delivery) ||
+      !ULID_PATTERN.test(delivery.eventId) ||
+      !TENANT_ID_PATTERN.test(delivery.tenantId) ||
+      !ULID_PATTERN.test(delivery.bindingId) ||
+      !CHANNEL_PATTERN.test(delivery.channelCode) ||
+      !this.registry.supports(delivery.channelCode) ||
+      !ULID_PATTERN.test(delivery.positionId) ||
+      !Number.isSafeInteger(delivery.positionVersion) ||
+      delivery.positionVersion < 1 ||
+      (delivery.action !== 'publish' && delivery.action !== 'close') ||
+      !['open', 'paused', 'closed'].includes(delivery.targetStatus) ||
+      (delivery.action === 'publish' && delivery.targetStatus !== 'open') ||
+      (delivery.action === 'close' && delivery.targetStatus === 'open') ||
+      delivery.status !== 'processing' ||
+      !Number.isInteger(delivery.attempts) ||
+      delivery.attempts < 1 ||
+      delivery.attempts > MAX_ATTEMPTS ||
+      !(delivery.lockedAt instanceof Date) ||
+      delivery.lockedBy !== this.workerId
+    ) throw new Error('RECRUITMENT_CHANNEL_POSITION_RECORD_INVALID');
+  }
+
+  private assertPosition(
+    delivery: RecruitmentChannelPositionDeliveryRecord,
+    position: {
+      readonly id: string;
+      readonly title: string;
+      readonly departmentId: string;
+      readonly location: string;
+      readonly headcount: number;
+      readonly status: string;
+      readonly version: number;
+    },
+  ): void {
+    if (
+      !isPlainRecord(position) ||
+      position.id !== delivery.positionId ||
+      !safeText(position.title) ||
+      !CODE_PATTERN.test(position.departmentId) ||
+      !safeText(position.location) ||
+      !Number.isSafeInteger(position.headcount) ||
+      position.headcount < 1 ||
+      position.headcount > 100_000 ||
+      !['draft', 'open', 'paused', 'closed'].includes(position.status) ||
+      !Number.isSafeInteger(position.version) ||
+      position.version < 1
+    ) throw new Error('RECRUITMENT_CHANNEL_POSITION_PROJECTION_INVALID');
+  }
+
+  private assertDepartment(
+    delivery: RecruitmentChannelPositionDeliveryRecord,
+    departmentId: string,
+    department: {
+      readonly id: string;
+      readonly tenantId: string;
+      readonly code: string;
+      readonly status: string;
+    },
+  ): void {
+    if (
+      !isPlainRecord(department) ||
+      department.id !== departmentId ||
+      department.tenantId !== delivery.tenantId ||
+      !CODE_PATTERN.test(department.code) ||
+      department.status !== 'active'
+    ) throw new Error('RECRUITMENT_CHANNEL_DEPARTMENT_INVALID');
+  }
+
+  private assertBinding(
+    delivery: RecruitmentChannelPositionDeliveryRecord,
+    binding: RecruitmentChannelBindingRecord,
+  ): void {
+    if (
+      !isPlainRecord(binding) ||
+      binding.id !== delivery.bindingId ||
+      binding.tenantId !== delivery.tenantId ||
+      binding.channelCode !== delivery.channelCode ||
+      binding.status !== 'active' ||
+      !SECRET_REF_PATTERN.test(binding.credentialSecretRef) ||
+      !this.registry.supports(binding.channelCode)
+    ) throw new Error('RECRUITMENT_CHANNEL_BINDING_INVALID');
+  }
+
+  private isMapping(
+    delivery: RecruitmentChannelPositionDeliveryRecord,
+    mapping: RecruitmentExternalMappingRecord,
+    entityType: RecruitmentExternalMappingRecord['entityType'],
+  ): boolean {
+    return isPlainRecord(mapping) &&
+      ULID_PATTERN.test(mapping.id) &&
+      mapping.tenantId === delivery.tenantId &&
+      mapping.channelCode === delivery.channelCode &&
+      mapping.entityType === entityType &&
+      mapping.erpEntityId === delivery.positionId &&
+      ['active', 'paused', 'closed'].includes(mapping.status) &&
+      Array.isArray(mapping.externalIdBlindIndexes) &&
+      mapping.externalIdBlindIndexes.length >= 1 &&
+      mapping.externalIdBlindIndexes.every(
+        (value) => typeof value === 'string' && value.length <= 128,
+      ) &&
+      [mapping.externalIdKeyId, mapping.externalIdIv, mapping.externalIdCiphertext,
+        mapping.externalIdAuthTag].every(
+        (value) => typeof value === 'string' && value.length >= 1,
+      );
+  }
+
+  private assertMapping(
+    delivery: RecruitmentChannelPositionDeliveryRecord,
+    mapping: RecruitmentExternalMappingRecord,
+    entityType: RecruitmentExternalMappingRecord['entityType'],
+  ): void {
+    if (!this.isMapping(delivery, mapping, entityType)) {
+      throw new Error('RECRUITMENT_CHANNEL_POSITION_MAPPING_INVALID');
+    }
+  }
+
+  private assertPublishResult(value: unknown): asserts value is {
+    readonly externalPositionId: string;
+    readonly receiptId: string;
+  } {
+    if (
+      !hasExactDataProperties(value, ['externalPositionId', 'receiptId']) ||
+      !canonicalOpaqueId(value.externalPositionId) ||
+      !canonicalOpaqueId(value.receiptId)
+    ) throw new Error('RECRUITMENT_CHANNEL_POSITION_RECEIPT_INVALID');
+  }
+
+  private assertReceiptResult(value: unknown): asserts value is { readonly receiptId: string } {
+    if (
+      !hasExactDataProperties(value, ['receiptId']) ||
+      !canonicalOpaqueId(value.receiptId)
+    ) throw new Error('RECRUITMENT_CHANNEL_POSITION_RECEIPT_INVALID');
+  }
+
   private async finish(
     delivery: RecruitmentChannelPositionDeliveryRecord,
     status: 'succeeded' | 'superseded',
@@ -276,7 +516,7 @@ export class RecruitmentChannelPositionDeliveryService {
   private async fail(delivery: RecruitmentChannelPositionDeliveryRecord, code: string): Promise<void> {
     const exhausted = delivery.attempts >= MAX_ATTEMPTS;
     const now = new Date();
-    await this.deliveries.updateOne(
+    const updated = await this.deliveries.updateOne(
       {
         tenantId: delivery.tenantId, eventId: delivery.eventId,
         bindingId: delivery.bindingId, status: 'processing', lockedBy: this.workerId,
@@ -288,6 +528,58 @@ export class RecruitmentChannelPositionDeliveryService {
       } },
       { runValidators: true },
     );
+    if (updated.modifiedCount !== 1) {
+      throw new Error('RECRUITMENT_CHANNEL_POSITION_FAILURE_LEASE_LOST');
+    }
+  }
+
+  private async auditSuccessAfterCommit(
+    delivery: RecruitmentChannelPositionDeliveryRecord,
+    result: 'succeeded' | 'superseded',
+  ): Promise<void> {
+    try {
+      await this.audit.record({
+        action: 'integration.recruitment_channel.position.deliver',
+        resourceType: 'recruitment_position', resourceId: delivery.positionId,
+        riskLevel: 'R2', outcome: 'success', metadata: {
+          channelCode: delivery.channelCode, action: delivery.action,
+          targetStatus: delivery.targetStatus, positionVersion: delivery.positionVersion,
+          result,
+        },
+      });
+    } catch {
+      this.logger.error({
+        code: 'RECRUITMENT_CHANNEL_POSITION_AUDIT_AFTER_COMMIT_FAILED',
+        tenantId: delivery.tenantId,
+        eventId: delivery.eventId,
+        positionId: delivery.positionId,
+        result,
+      });
+    }
+  }
+
+  private async auditFailureAfterCommit(
+    delivery: RecruitmentChannelPositionDeliveryRecord,
+    code: string,
+  ): Promise<void> {
+    try {
+      await this.audit.record({
+        action: 'integration.recruitment_channel.position.deliver',
+        resourceType: 'recruitment_position', resourceId: delivery.positionId,
+        riskLevel: 'R2', outcome: 'failure', metadata: {
+          channelCode: delivery.channelCode, action: delivery.action,
+          failureCode: code, positionVersion: delivery.positionVersion,
+        },
+      });
+    } catch {
+      this.logger.error({
+        code: 'RECRUITMENT_CHANNEL_POSITION_FAILURE_AUDIT_AFTER_COMMIT_FAILED',
+        tenantId: delivery.tenantId,
+        eventId: delivery.eventId,
+        positionId: delivery.positionId,
+        failureCode: code,
+      });
+    }
   }
 }
 
@@ -297,6 +589,51 @@ function idempotencyKey(parts: readonly string[]): string {
 
 function opaqueId(value: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value);
+}
+
+function canonicalOpaqueId(value: unknown): value is string {
+  return typeof value === 'string' && value.normalize('NFKC') === value && opaqueId(value);
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const prototype = Reflect.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function safeText(value: unknown): value is string {
+  if (
+    typeof value !== 'string' ||
+    value.length < 1 ||
+    value.length > 512 ||
+    value.normalize('NFKC') !== value
+  ) return false;
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint === undefined || codePoint <= 31 || codePoint === 127) return false;
+  }
+  return true;
+}
+
+function hasExactDataProperties<K extends string>(
+  value: unknown,
+  keys: readonly K[],
+): value is Record<K, unknown> {
+  if (!isPlainRecord(value)) return false;
+  const ownKeys = Reflect.ownKeys(value);
+  if (
+    ownKeys.some((key) => typeof key !== 'string') ||
+    ownKeys.length !== keys.length ||
+    keys.some((key) => !ownKeys.includes(key))
+  ) return false;
+  return keys.every((key) => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor?.enumerable === true && 'value' in descriptor;
+  });
+}
+
+function safeLogValue(value: unknown): string {
+  return typeof value === 'string' && value.length <= 128 ? value : 'invalid';
 }
 
 function failureCode(error: unknown): string {

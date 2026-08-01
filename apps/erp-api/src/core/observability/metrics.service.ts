@@ -3,8 +3,43 @@ import { collectDefaultMetrics, Counter, Gauge, Histogram, Registry } from 'prom
 
 type AuditOutcome = 'success' | 'failure';
 type VerificationOutcome = 'success' | 'failure';
-type ApprovalNotificationOutcome = 'sent' | 'retry' | 'dead';
+type ApprovalNotificationOutcome = 'sent' | 'retry' | 'dead' | 'state_unavailable';
+type OrgDeliveryOutcome =
+  | 'succeeded'
+  | 'retry'
+  | 'dead'
+  | 'manual_review'
+  | 'busy'
+  | 'state_unavailable';
 type McpConfirmationStage = 'prepare' | 'confirm' | 'execute';
+type KnowledgeSearchIndexOutcome = 'success' | 'retry' | 'dead';
+type KnowledgeExamRunOutcome = 'success' | 'pending' | 'retry' | 'dead' | 'deferred';
+type CareOccasionOutcome =
+  | 'success'
+  | 'delivered'
+  | 'cancelled'
+  | 'retry'
+  | 'dead'
+  | 'deduplicated';
+type CareAlumniCleanupOutcome =
+  | 'success'
+  | 'completed'
+  | 'retry'
+  | 'dead'
+  | 'deduplicated'
+  | 'deferred';
+
+const HTTP_METHOD_LABELS = new Set([
+  'CONNECT',
+  'DELETE',
+  'GET',
+  'HEAD',
+  'OPTIONS',
+  'PATCH',
+  'POST',
+  'PUT',
+  'TRACE',
+]);
 
 /** 低基数 Prometheus 指标注册中心；严禁使用租户、用户、资源 ID 作为标签。 */
 @Injectable()
@@ -90,10 +125,123 @@ export class MetricsService {
     buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
     registers: [this.registry],
   });
+  private readonly orgDeliveries = new Counter({
+    name: 'gaoq_org_delivery_total',
+    help: 'ERP 组织主数据向固定外部平台投递结果总数。',
+    labelNames: ['channel', 'outcome'] as const,
+    registers: [this.registry],
+  });
+  private readonly orgDeliveryDuration = new Histogram({
+    name: 'gaoq_org_delivery_duration_seconds',
+    help: 'ERP 组织主数据单次外部平台投递耗时（秒）。',
+    labelNames: ['channel', 'outcome'] as const,
+    buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
+    registers: [this.registry],
+  });
   private readonly mcpConfirmations = new Counter({
     name: 'gaoq_mcp_confirmation_total',
     help: 'MCP 服务端确认各阶段结果总数。',
     labelNames: ['stage', 'risk_level', 'outcome'] as const,
+    registers: [this.registry],
+  });
+  private readonly knowledgeSearchIndexDeliveries = new Counter({
+    name: 'gaoq_knowledge_search_index_delivery_total',
+    help: 'Knowledge 搜索索引事务任务投递结果总数。',
+    labelNames: ['operation', 'outcome'] as const,
+    registers: [this.registry],
+  });
+  private readonly knowledgeSearchIndexConvergence = new Histogram({
+    name: 'gaoq_knowledge_search_index_convergence_seconds',
+    help: 'Knowledge 搜索索引从事务任务创建到签名回执索引时间的收敛耗时（秒）。',
+    labelNames: ['operation'] as const,
+    buckets: [0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 900, 3_600],
+    registers: [this.registry],
+  });
+  private readonly knowledgeSearchIndexLastSuccess = new Gauge({
+    name: 'gaoq_knowledge_search_index_last_success_timestamp_seconds',
+    help: 'Knowledge 搜索索引最近一次成功签名回执的 Unix 时间戳（秒）。',
+    labelNames: ['operation'] as const,
+    registers: [this.registry],
+  });
+  private readonly knowledgeExamRunTransitions = new Counter({
+    name: 'gaoq_knowledge_exam_run_transition_total',
+    help: 'Knowledge 考试运行状态推进结果总数。',
+    labelNames: ['operation', 'outcome'] as const,
+    registers: [this.registry],
+  });
+  private readonly knowledgeExamRunLastSuccess = new Gauge({
+    name: 'gaoq_knowledge_exam_run_last_success_timestamp_seconds',
+    help: 'Knowledge 考试运行最近一次成功推进时间。',
+    labelNames: ['operation'] as const,
+    registers: [this.registry],
+  });
+  private readonly knowledgeExamRunBacklog = new Gauge({
+    name: 'gaoq_knowledge_exam_run_backlog',
+    help: 'Knowledge 考试运行各固定状态待处理数量。',
+    labelNames: ['status'] as const,
+    registers: [this.registry],
+  });
+  private readonly knowledgeExamRunOldestAge = new Gauge({
+    name: 'gaoq_knowledge_exam_run_oldest_age_seconds',
+    help: 'Knowledge 考试运行各固定状态最老记录年龄（秒）。',
+    labelNames: ['status'] as const,
+    registers: [this.registry],
+  });
+  private readonly knowledgeExamGradingDuration = new Histogram({
+    name: 'gaoq_knowledge_exam_grading_duration_seconds',
+    help: 'Knowledge 从提交到最终评分完成耗时（秒）。',
+    labelNames: ['review_mode'] as const,
+    buckets: [1, 5, 15, 30, 60, 120, 300, 900, 3_600, 14_400, 86_400, 604_800],
+    registers: [this.registry],
+  });
+  private readonly careOccasionTransitions = new Counter({
+    name: 'gaoq_care_occasion_transition_total',
+    help: '员工关怀编排固定状态推进结果总数。',
+    labelNames: ['operation', 'outcome'] as const,
+    registers: [this.registry],
+  });
+  private readonly careOccasionDispatchDuration = new Histogram({
+    name: 'gaoq_care_occasion_dispatch_duration_seconds',
+    help: '员工关怀单次通知编排耗时（秒）。',
+    labelNames: ['outcome'] as const,
+    buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
+    registers: [this.registry],
+  });
+  private readonly careOccasionBacklog = new Gauge({
+    name: 'gaoq_care_occasion_backlog',
+    help: '员工关怀任务各固定待处理状态数量。',
+    labelNames: ['status'] as const,
+    registers: [this.registry],
+  });
+  private readonly careOccasionOldestAge = new Gauge({
+    name: 'gaoq_care_occasion_oldest_age_seconds',
+    help: '员工关怀任务各固定待处理状态最老记录年龄（秒）。',
+    labelNames: ['status'] as const,
+    registers: [this.registry],
+  });
+  private readonly careAlumniCleanupTransitions = new Counter({
+    name: 'gaoq_care_alumni_cleanup_transition_total',
+    help: '校友授权终止后下游清理固定状态推进结果总数。',
+    labelNames: ['operation', 'outcome'] as const,
+    registers: [this.registry],
+  });
+  private readonly careAlumniCleanupDispatchDuration = new Histogram({
+    name: 'gaoq_care_alumni_cleanup_dispatch_duration_seconds',
+    help: '校友下游清理单次投递与不可变证明验证耗时（秒）。',
+    labelNames: ['outcome'] as const,
+    buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60],
+    registers: [this.registry],
+  });
+  private readonly careAlumniCleanupBacklog = new Gauge({
+    name: 'gaoq_care_alumni_cleanup_backlog',
+    help: '校友下游清理任务各固定待处理状态数量。',
+    labelNames: ['status'] as const,
+    registers: [this.registry],
+  });
+  private readonly careAlumniCleanupOldestAge = new Gauge({
+    name: 'gaoq_care_alumni_cleanup_oldest_age_seconds',
+    help: '校友下游清理任务各固定待处理状态最老记录年龄（秒）。',
+    labelNames: ['status'] as const,
     registers: [this.registry],
   });
 
@@ -117,10 +265,10 @@ export class MetricsService {
     readonly durationSeconds: number;
   }): void {
     const labels = {
-      method: input.method,
+      method: normalizeHttpMethod(input.method),
       controller: input.controller,
       handler: input.handler,
-      status_code: String(input.statusCode),
+      status_code: normalizeHttpStatus(input.statusCode),
     };
     this.httpRequests.inc(labels);
     this.httpDuration.observe(labels, input.durationSeconds);
@@ -164,6 +312,15 @@ export class MetricsService {
     this.approvalNotificationDuration.observe({ channel, outcome }, durationSeconds);
   }
 
+  recordOrgDelivery(
+    channel: 'dingtalk' | 'feishu' | 'op',
+    outcome: OrgDeliveryOutcome,
+    durationSeconds: number,
+  ): void {
+    this.orgDeliveries.inc({ channel, outcome });
+    this.orgDeliveryDuration.observe({ channel, outcome }, Math.max(0, durationSeconds));
+  }
+
   recordMcpConfirmation(
     stage: McpConfirmationStage,
     riskLevel: 'R1' | 'R2',
@@ -171,6 +328,118 @@ export class MetricsService {
   ): void {
     this.mcpConfirmations.inc({ stage, risk_level: riskLevel, outcome });
   }
+
+  recordKnowledgeSearchIndex(
+    operation: 'upsert' | 'delete',
+    outcome: KnowledgeSearchIndexOutcome,
+    convergenceSeconds?: number,
+    indexedAt?: Date,
+  ): void {
+    this.knowledgeSearchIndexDeliveries.inc({ operation, outcome });
+    if (
+      outcome === 'success' &&
+      convergenceSeconds !== undefined &&
+      indexedAt !== undefined
+    ) {
+      this.knowledgeSearchIndexConvergence.observe(
+        { operation },
+        Math.max(0, convergenceSeconds),
+      );
+      this.knowledgeSearchIndexLastSuccess.set(
+        { operation },
+        indexedAt.getTime() / 1_000,
+      );
+    }
+  }
+
+  recordKnowledgeExamRun(
+    operation: 'start' | 'timeout' | 'review' | 'grade' | 'gateway',
+    outcome: KnowledgeExamRunOutcome,
+  ): void {
+    this.knowledgeExamRunTransitions.inc({ operation, outcome });
+    if (outcome === 'success') {
+      this.knowledgeExamRunLastSuccess.set({ operation }, Date.now() / 1_000);
+    }
+  }
+
+  setKnowledgeExamRunBacklog(
+    status: 'starting' | 'in_progress' | 'submitted' | 'pending_review' | 'dead',
+    count: number,
+    oldestAgeSeconds: number,
+  ): void {
+    this.knowledgeExamRunBacklog.set({ status }, Math.max(0, count));
+    this.knowledgeExamRunOldestAge.set({ status }, Math.max(0, oldestAgeSeconds));
+  }
+
+  observeKnowledgeExamGrading(
+    reviewMode: 'automatic' | 'manual',
+    durationSeconds: number,
+  ): void {
+    this.knowledgeExamGradingDuration.observe(
+      { review_mode: reviewMode },
+      Math.max(0, durationSeconds),
+    );
+  }
+
+  recordCareOccasion(
+    operation: 'dispatch' | 'replay' | 'reconcile',
+    outcome: CareOccasionOutcome,
+    durationSeconds?: number,
+  ): void {
+    this.careOccasionTransitions.inc({ operation, outcome });
+    if (operation === 'dispatch' && durationSeconds !== undefined) {
+      this.careOccasionDispatchDuration.observe(
+        { outcome },
+        Math.max(0, durationSeconds),
+      );
+    }
+  }
+
+  setCareOccasionBacklog(
+    status: 'pending' | 'dispatching' | 'dead',
+    count: number,
+    oldestAgeSeconds: number,
+  ): void {
+    this.careOccasionBacklog.set({ status }, Math.max(0, count));
+    this.careOccasionOldestAge.set({ status }, Math.max(0, oldestAgeSeconds));
+  }
+
+  recordCareAlumniCleanup(
+    operation: 'relay' | 'dispatch' | 'reconcile' | 'replay',
+    outcome: CareAlumniCleanupOutcome,
+    durationSeconds?: number,
+  ): void {
+    this.careAlumniCleanupTransitions.inc({ operation, outcome });
+    if (operation === 'dispatch' && durationSeconds !== undefined) {
+      this.careAlumniCleanupDispatchDuration.observe(
+        { outcome },
+        Math.max(0, durationSeconds),
+      );
+    }
+  }
+
+  setCareAlumniCleanupBacklog(
+    status: 'pending' | 'dispatching' | 'dead',
+    count: number,
+    oldestAgeSeconds: number,
+  ): void {
+    this.careAlumniCleanupBacklog.set({ status }, Math.max(0, count));
+    this.careAlumniCleanupOldestAge.set(
+      { status },
+      Math.max(0, oldestAgeSeconds),
+    );
+  }
+}
+
+function normalizeHttpMethod(method: string): string {
+  const normalized = method.toUpperCase();
+  return HTTP_METHOD_LABELS.has(normalized) ? normalized : 'OTHER';
+}
+
+function normalizeHttpStatus(statusCode: number): string {
+  return Number.isInteger(statusCode) && statusCode >= 100 && statusCode <= 599
+    ? String(statusCode)
+    : '500';
 }
 
 /** 单调时钟耗时，避免系统时间校准导致负值。 */

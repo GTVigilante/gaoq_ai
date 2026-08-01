@@ -31,6 +31,7 @@ import {
   type LockedPayrollDisbursementSource,
 } from '../../payroll/application/payroll-run.service.js';
 import { payrollDigest } from '../../payroll/domain/index.js';
+import { LegacyPayrollBoundaryService } from '../../payroll/legacy-payroll-boundary.service.js';
 import {
   approveDisbursementExport,
   type DisbursementBatch,
@@ -80,6 +81,8 @@ const batchSnapshotSchema = z.object({
   debtorAgentClearingCode: z.string().regex(/^[0-9A-Z]{8,12}$/),
   payrollResultHash: z.string().regex(HASH_PATTERN),
   payableResultHash: z.string().regex(HASH_PATTERN),
+  adjustmentId: z.string().regex(ID_PATTERN).optional(),
+  adjustmentHash: z.string().regex(HASH_PATTERN).optional(),
 }).strict();
 const instructionDataSchema = z.object({
   instructionId: z.string().regex(ID_PATTERN),
@@ -91,7 +94,7 @@ const instructionDataSchema = z.object({
   creditorAccount: z.string().regex(/^[0-9]{8,32}$/),
   creditorAgentClearingCode: z.string().regex(/^[0-9A-Z]{8,12}$/),
   amountMinor: z.number().int().safe().positive(),
-  purposeCode: z.literal('PAYROLL'),
+  purposeCode: z.enum(['PAYROLL', 'PAYROLL_ADJUSTMENT']),
 }).strict();
 
 export interface TreasuryDisbursementSummary extends Record<string, unknown> {
@@ -142,6 +145,7 @@ export class TreasuryDisbursementService {
   constructor(
     private readonly idempotency: IdempotencyService,
     private readonly context: TenantContextService,
+    private readonly boundary: LegacyPayrollBoundaryService,
     private readonly payroll: PayrollRunService,
     private readonly strongAuth: WebAuthnService,
     private readonly crypto: TreasuryDataCryptoService,
@@ -168,6 +172,7 @@ export class TreasuryDisbursementService {
     input: ImportTreasuryDisbursementFromMigrationInput,
   ): Promise<TreasuryDisbursementSummary> {
     this.assertMigrationWriter();
+    this.boundary.assertLegacy();
     assertDisbursementMigrationInput(input);
     const profiles = this.profiles;
     const approvals = this.approvals;
@@ -280,7 +285,9 @@ export class TreasuryDisbursementService {
           id: batchId, tenantId: this.tenantId(), payrollPeriodId: source.periodId,
           payrollRunId: source.payrollRunId, payrollResultHash: source.resultHash,
           payableResultHash: controls.payableResultHash, batchSequence: 1,
-          parentBatchId: null, recoverySourceBatchId: null, purpose: 'regular' as const,
+          parentBatchId: null, recoverySourceBatchId: null,
+          adjustmentSourceId: null, adjustmentSourceHash: null,
+          purpose: 'regular' as const,
           format: 'ISO20022_PAIN_001_001_03' as const, fileHash: document.contentHash,
           lineCount: controls.lineCount, totalMinor: controls.totalMinor,
           preparedBy, payrollLockedBy: source.payrollLockedBy, exportApprovedBy,
@@ -323,6 +330,7 @@ export class TreasuryDisbursementService {
         code: 'TREASURY_BANK_SUBMISSION_SERVICE_REQUIRED', message: '只允许受信任银行提交服务执行',
       });
     }
+    this.boundary.assertLegacy();
     if (!ID_PATTERN.test(batchId)) throw new BadRequestException({
       code: 'TREASURY_BATCH_ID_INVALID', message: '代发批次标识非法',
     });
@@ -447,6 +455,7 @@ export class TreasuryDisbursementService {
     ) throw new ForbiddenException({
       code: 'TREASURY_EXPORT_APPROVER_IDENTITY_INVALID', message: '代发导出批准身份上下文非法',
     });
+    this.boundary.assertLegacy();
     if (!ID_PATTERN.test(batchId)) throw new BadRequestException({
       code: 'TREASURY_BATCH_ID_INVALID', message: '代发批次标识非法',
     });
@@ -502,6 +511,7 @@ export class TreasuryDisbursementService {
     input: PrepareTreasuryDisbursementDto,
   ): Promise<TreasuryDisbursementSummary> {
     this.assertHumanPreparer();
+    this.boundary.assertLegacy();
     if (!isCalendarDate(input.requestedExecutionDate)) throw new BadRequestException({
       code: 'TREASURY_EXECUTION_DATE_INVALID', message: '代发执行日期非法',
     });
@@ -584,6 +594,7 @@ export class TreasuryDisbursementService {
       payrollRunId: source.payrollRunId, payrollResultHash: source.resultHash,
       payableResultHash,
       batchSequence: 1, parentBatchId: null, recoverySourceBatchId: null,
+      adjustmentSourceId: null, adjustmentSourceHash: null,
       purpose: 'regular', format: 'ISO20022_PAIN_001_001_03', fileHash: null,
       lineCount: payable.length, totalMinor: Number(total), preparedBy,
       payrollLockedBy: source.payrollLockedBy, exportApprovedBy: null,
@@ -638,6 +649,8 @@ export class TreasuryDisbursementService {
 
   /** 仅供已在 Treasury 事务中建立可信密文快照的编排服务继续 WORM 物化。 */
   async materializeStaged(key: string, batchId: string): Promise<TreasuryDisbursementSummary> {
+    this.assertMaterializer();
+    this.boundary.assertLegacy();
     const batch = await this.batches.findOne({ tenantId: this.tenantId(), id: batchId }).lean().exec();
     if (batch === null) throw new NotFoundException({
       code: 'TREASURY_BATCH_NOT_FOUND', message: '代发批次不存在',
@@ -691,6 +704,11 @@ export class TreasuryDisbursementService {
       header.messageId !== batch.id || header.paymentInformationId !== batch.id ||
       header.payrollResultHash !== batch.payrollResultHash ||
       header.payableResultHash !== batch.payableResultHash ||
+      (batch.purpose === 'supplement' &&
+        (header.adjustmentId !== batch.adjustmentSourceId ||
+          header.adjustmentHash !== batch.adjustmentSourceHash)) ||
+      (batch.purpose !== 'supplement' &&
+        (header.adjustmentId !== undefined || header.adjustmentHash !== undefined)) ||
       payrollDigest(resultReferences.sort((left, right) =>
         left.employeeId.localeCompare(right.employeeId))) !== batch.payableResultHash
     ) throw new ConflictException({
@@ -923,7 +941,7 @@ export class TreasuryDisbursementService {
     return batch;
   }
 
-  /** 生产模式要求独立授权域按租户、批次、摘要、版本和发布物签发短时一次性授权。 */
+  /** 生产模式要求独立授权域按租户、批次、文件、审批证据、版本和发布物签发短时一次性授权。 */
   private async authorizeProductionSubmission(
     batchId: string,
     expectedVersion: number,
@@ -938,10 +956,12 @@ export class TreasuryDisbursementService {
     ) return null;
     if (
       !['exported', 'submitting'].includes(batch.status) || batch.version !== expectedVersion ||
-      batch.fileHash === null || batch.objectRef === null
+      batch.fileHash === null || batch.objectRef === null || batch.objectEvidenceId === null ||
+      batch.exportApprovedBy === null || batch.strongAuthEvidenceId === null ||
+      batch.strongAuthReferenceType === null
     ) throw new ConflictException({
       code: 'TREASURY_PRODUCTION_AUTHORIZATION_SUBJECT_INVALID',
-      message: '代发批次状态、版本或不可变文件不足以申请生产执行授权',
+      message: '代发批次状态、版本、不可变文件或审批证据不足以申请生产执行授权',
     });
     return this.productionAuthorization.authorize({
       action: 'treasury-bank-submission',
@@ -950,6 +970,8 @@ export class TreasuryDisbursementService {
       subjectHash: productionExecutionSubjectHash([
         batch.payrollPeriodId, batch.payrollRunId, batch.objectRef, batch.fileHash,
         batch.lineCount, batch.totalMinor,
+        batch.objectEvidenceId, batch.exportApprovedBy,
+        batch.strongAuthEvidenceId, batch.strongAuthReferenceType,
       ]),
       expectedVersion,
     });
@@ -962,6 +984,20 @@ export class TreasuryDisbursementService {
     });
     if (actor.actorType !== 'user') throw new ForbiddenException({
       code: 'TREASURY_PREPARER_HUMAN_REQUIRED', message: '代发制备只能由已验证人员执行',
+    });
+  }
+
+  private assertMaterializer(): void {
+    const actor = this.context.getActorRequired();
+    if (
+      actor.actorType !== 'user' ||
+      (
+        !actor.scopes.includes('erp:treasury:disbursement:prepare') &&
+        !actor.scopes.includes('erp:treasury:recovery:create')
+      )
+    ) throw new ForbiddenException({
+      code: 'TREASURY_MATERIALIZATION_CALLER_DENIED',
+      message: '代发文件物化必须由已授权的制备或恢复编排调用',
     });
   }
 

@@ -21,13 +21,21 @@ export class ApprovalNotificationProcessor extends WorkerHost {
   override async process(
     job: Job<Record<string, never>, unknown, ApprovalNotificationJobName>,
   ): Promise<number> {
+    if (
+      typeof job.data !== 'object' ||
+      job.data === null ||
+      Array.isArray(job.data) ||
+      Object.keys(job.data).length !== 0
+    ) {
+      throw new Error('APPROVAL_NOTIFICATION_JOB_DATA_INVALID');
+    }
     switch (job.name) {
       case 'deliver:dingtalk':
         return this.deliveries.processBatch('dingtalk', this.workerId, 25);
       case 'deliver:feishu':
         return this.deliveries.processBatch('feishu', this.workerId, 25);
       default:
-        throw new Error('未知审批通知任务');
+        throw new Error('APPROVAL_NOTIFICATION_JOB_INVALID');
     }
   }
 }

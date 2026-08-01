@@ -26,4 +26,10 @@ describe('Phase 3 Knowledge 索引追加迁移', () => {
       )).toBe(true);
     }
   });
+
+  it('历史 v1 清单不吸收后续人工复核证据索引', () => {
+    expect(buildPhaseThreeKnowledgeIndexManifest().some(
+      (item) => item.key.manualReviewEvidenceId === 1,
+    )).toBe(false);
+  });
 });

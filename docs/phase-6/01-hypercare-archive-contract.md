@@ -7,7 +7,7 @@
 
 从生产开放后的首个完整自然日开始，连续 28 天按 `Asia/Shanghai` 生成不可变日报。每日必须包含：
 
-- API、Worker、Web、MongoDB、Redis/BullMQ 的核心 SLO 与告警审查；
+- API、Worker、ERP Web、Website、MongoDB、Redis/BullMQ 的核心 SLO 与告警审查；
 - 组织、审批、电子签、薪酬、队列、外部回调和 MCP 七域对账；
 - Sev1/Sev2、跨租户拒绝、权限失败、数据丢失、重复业务效果和未解释金额差异；
 - 每个有差异事项的处置记录、根因、责任人证据和复盘引用。
@@ -19,6 +19,27 @@
 切换后旧系统必须始终只读，保留访问审计、导出清单、对象数量、内容校验和、加密与法定保留策略。不得以“归档”为由删除法定、财务、薪酬、合同或审计证据。
 
 第 28 日结束且全部日报通过后，法务、财务和数据负责人必须分别签署。三方签署只批准进入受控归档，不授权删除。销毁必须由未来独立的数据保留流程按法律保留期执行。
+
+三方批准使用 `gaoq.phase6.hypercare-archive.v2`。数据、财务和法务负责人必须是
+三个不同主体并使用三个不同 Ed25519 SPKI 公钥；`keyId` 等于公钥 DER 的
+SHA-256，角色/keyId 规范集合的 `signerKeysetHash` 必须与 Repository Variable
+`PHASE6_HYPERCARE_SIGNER_KEYSET_SHA256` 匹配。每份签名共同绑定 release、
+发布源、生产环境、切换 verdict、完整 28 日日报、汇总、旧系统保全状态及三份
+批准元数据，再单独绑定角色、`keyId` 和签署时间。公钥复用、主体复用、角色换钥、
+签后篡改、未来签名或 keyset 漂移均失败关闭。
+
+`archive` 是三方批准后执行的受控只读归档结果，因此不进入批准 payload；验证器
+另外要求归档时间晚于全部有效签名，并强制只读、不可变、写探针拒绝和
+`deletionAuthorized=false`。三方签名不能授权删除，也不能替代独立保留期流程。
+
+机器可读契约：
+
+```bash
+pnpm release:phase6:hypercare:print-contract
+```
+
+真实自然人—角色—密钥绑定、私钥托管、撤销、轮换和 WORM 审计仍须由企业
+IAM/KMS 与归档平台现场验收。
 
 ## MCP 边界
 

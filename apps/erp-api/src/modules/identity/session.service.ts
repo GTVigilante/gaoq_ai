@@ -6,6 +6,12 @@ import { IdentitySession, type IdentitySessionDocument } from './session.schema.
 
 const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 
+const isValidId = (value: unknown): value is string =>
+  typeof value === 'string' && ID_PATTERN.test(value);
+
+const isValidDate = (value: unknown): value is Date =>
+  value instanceof Date && Number.isFinite(value.getTime());
+
 export interface OpenIdentitySessionInput {
   readonly tenantId: string;
   readonly sessionId: string;
@@ -29,6 +35,7 @@ export class SessionService {
     requireExisting: boolean,
     mongoSession?: ClientSession,
   ): Promise<boolean> {
+    if (!isValidId(tenantId) || !isValidId(sessionId)) return false;
     const query = this.sessions.findOne(
       { tenantId, sessionId },
       { revokedAt: 1, expiresAt: 1 },
@@ -40,11 +47,22 @@ export class SessionService {
     if (session === null) {
       return !requireExisting;
     }
+    if (
+      !isValidDate(session.expiresAt) ||
+      (session.revokedAt !== undefined && !isValidDate(session.revokedAt))
+    ) return false;
     return session.revokedAt === undefined && session.expiresAt > new Date();
   }
 
   /** 创建新的人员会话；sessionId 必须由授权设施生成且不可复用。 */
   async open(input: OpenIdentitySessionInput, mongoSession?: ClientSession): Promise<void> {
+    if (
+      !isValidId(input.tenantId) ||
+      !isValidId(input.sessionId) ||
+      !isValidId(input.actorId) ||
+      !isValidDate(input.expiresAt) ||
+      input.expiresAt <= new Date()
+    ) throw new Error('会话创建参数非法');
     await this.sessions.create(
       [{
         tenantId: input.tenantId,
@@ -62,6 +80,7 @@ export class SessionService {
     sessionId: string,
     mongoSession?: ClientSession,
   ): Promise<boolean> {
+    if (!isValidId(tenantId) || !isValidId(sessionId)) return false;
     const result = await this.sessions.updateOne(
       { tenantId, sessionId, revokedAt: { $exists: false } },
       { $set: { revokedAt: new Date() } },

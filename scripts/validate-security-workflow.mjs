@@ -2,6 +2,10 @@ import { readFile } from 'node:fs/promises';
 
 const workflowPath = new URL('../.github/workflows/phase-5-security.yml', import.meta.url);
 const performanceWorkflowPath = new URL('../.github/workflows/phase-5-performance.yml', import.meta.url);
+const dastEvidenceWorkflowPath = new URL(
+  '../.github/workflows/phase-5-dast-evidence.yml',
+  import.meta.url,
+);
 const migrationRehearsalWorkflowPath = new URL(
   '../.github/workflows/phase-5-migration-rehearsal.yml',
   import.meta.url,
@@ -16,6 +20,7 @@ const bearerIgnorePath = new URL('../bearer.ignore', import.meta.url);
 const gitleaksConfigPath = new URL('../.gitleaks.toml', import.meta.url);
 const workflow = await readFile(workflowPath, 'utf8');
 const performanceWorkflow = await readFile(performanceWorkflowPath, 'utf8');
+const dastEvidenceWorkflow = await readFile(dastEvidenceWorkflowPath, 'utf8');
 const migrationRehearsalWorkflow = await readFile(migrationRehearsalWorkflowPath, 'utf8');
 const resilienceWorkflow = await readFile(resilienceWorkflowPath, 'utf8');
 const readinessWorkflow = await readFile(readinessWorkflowPath, 'utf8');
@@ -64,10 +69,12 @@ for (const marker of [
   'node scripts/migration/validate-phase-5-migration-rehearsal-evidence.mjs --self-test',
   'resilience-contract:',
   'node scripts/resilience/validate-phase-5-resilience-evidence.mjs --self-test',
+  'node scripts/resilience/validate-phase-5-resilience-evidence.mjs --print-contract > /dev/null',
   'readiness-contract:',
   'node scripts/release/validate-phase-5-readiness-evidence.mjs --self-test',
   'go-no-go-contract:',
   'node scripts/release/validate-phase-5-go-no-go-evidence.mjs --self-test',
+  'node scripts/release/validate-phase-5-go-no-go-evidence.mjs --print-contract > /dev/null',
   'mcp-catalog-contract:',
   'pnpm mcp:catalog:self-test',
   'kubernetes-deployment:',
@@ -100,17 +107,28 @@ if (performanceActionReferences.length !== 5 || performanceActionReferences.some
 
 for (const marker of [
   'workflow_dispatch:', "test \"$GITHUB_REF\" = 'refs/heads/main'",
-  'environment: phase-5-performance', '- phase-5-performance',
-  'PERFORMANCE_EVIDENCE_RUN_1_PATH: /var/lib/gaoq/performance/run-1.json',
-  'PERFORMANCE_EVIDENCE_RUN_2_PATH: /var/lib/gaoq/performance/run-2.json',
-  'PERFORMANCE_EVIDENCE_RUN_3_PATH: /var/lib/gaoq/performance/run-3.json',
+  'runs-on: ubuntu-latest', 'id-token: write',
+  'GAOQ_OIDC_POLICY: phase-5-performance', '--policy "$GAOQ_OIDC_POLICY"',
+  'PERFORMANCE_EVIDENCE_OIDC_AUDIENCE: ${{ vars.PERFORMANCE_EVIDENCE_OIDC_AUDIENCE }}',
+  'PERFORMANCE_EVIDENCE_RUN_1_URL: ${{ vars.PERFORMANCE_EVIDENCE_RUN_1_URL }}',
+  'PERFORMANCE_EVIDENCE_RUN_1_SHA256: ${{ vars.PERFORMANCE_EVIDENCE_RUN_1_SHA256 }}',
+  '$RUNNER_TEMP/phase-5-performance-run-1.json',
+  'PERFORMANCE_EVIDENCE_RUN_2_URL: ${{ vars.PERFORMANCE_EVIDENCE_RUN_2_URL }}',
+  'PERFORMANCE_EVIDENCE_RUN_2_SHA256: ${{ vars.PERFORMANCE_EVIDENCE_RUN_2_SHA256 }}',
+  '$RUNNER_TEMP/phase-5-performance-run-2.json',
+  'PERFORMANCE_EVIDENCE_RUN_3_URL: ${{ vars.PERFORMANCE_EVIDENCE_RUN_3_URL }}',
+  'PERFORMANCE_EVIDENCE_RUN_3_SHA256: ${{ vars.PERFORMANCE_EVIDENCE_RUN_3_SHA256 }}',
+  '$RUNNER_TEMP/phase-5-performance-run-3.json',
+  'scripts/github/fetch-oidc-protected-input.mjs',
   'PERFORMANCE_EXPECTED_ENVIRONMENT: ${{ vars.PERFORMANCE_ENVIRONMENT_NAME }}',
   'PERFORMANCE_EXPECTED_REGION: ${{ vars.PERFORMANCE_REGION }}',
   'PERFORMANCE_EXPECTED_COMMIT: ${{ github.sha }}',
   'PERFORMANCE_EXPECTED_API_IMAGE: ${{ vars.PERFORMANCE_API_IMAGE_DIGEST }}',
   'PERFORMANCE_EXPECTED_WORKER_IMAGE: ${{ vars.PERFORMANCE_WORKER_IMAGE_DIGEST }}',
   'PERFORMANCE_EXPECTED_WEB_IMAGE: ${{ vars.PERFORMANCE_WEB_IMAGE_DIGEST }}',
+  'PERFORMANCE_EXPECTED_WEBSITE_IMAGE: ${{ vars.PERFORMANCE_WEBSITE_IMAGE_DIGEST }}',
   'PERFORMANCE_EXPECTED_DEPLOYMENT_MANIFEST: ${{ vars.PERFORMANCE_DEPLOYMENT_MANIFEST_SHA256 }}',
+  'PERFORMANCE_EXPECTED_SIGNER_KEYSET_SHA256: ${{ vars.PERFORMANCE_SIGNER_KEYSET_SHA256 }}',
   '--enforce-environment', 'phase-5-performance-verdict-${{ github.sha }}',
   'retention-days: 30',
 ]) {
@@ -120,10 +138,60 @@ for (const marker of [
 }
 for (const forbidden of [
   'pull_request:', 'push:', 'workflow_call:', '${{ inputs.', '${{ secrets.',
+  'self-hosted', '/var/lib/gaoq', 'environment:',
 ]) {
   if (performanceWorkflow.includes(forbidden)) {
     throw new Error('PHASE5_PERFORMANCE_WORKFLOW_UNSAFE');
   }
+}
+if ((performanceWorkflow.match(/runs-on: ubuntu-latest/gu) ?? []).length !== 2) {
+  throw new Error('PHASE5_PERFORMANCE_HOSTED_RUNNER_INVALID');
+}
+
+const dastEvidenceActionReferences = [
+  ...dastEvidenceWorkflow.matchAll(/^\s*uses:\s*([^\s#]+)(?:\s*#.*)?$/gmu),
+].map((match) => match[1]);
+if (
+  dastEvidenceActionReferences.length !== 5 ||
+  dastEvidenceActionReferences.some(
+    (reference) => reference === undefined || !/@[a-f0-9]{40}$/u.test(reference),
+  )
+) throw new Error('PHASE5_DAST_EVIDENCE_ACTION_NOT_PINNED');
+for (const marker of [
+  'workflow_dispatch:', "test \"$GITHUB_REF\" = 'refs/heads/main'",
+  'runs-on: ubuntu-latest', 'id-token: write',
+  'GAOQ_OIDC_POLICY: phase-5-dast-evidence', '--policy "$GAOQ_OIDC_POLICY"',
+  'DAST_EVIDENCE_OIDC_AUDIENCE: ${{ vars.DAST_EVIDENCE_OIDC_AUDIENCE }}',
+  'DAST_EVIDENCE_URL: ${{ vars.DAST_EVIDENCE_URL }}',
+  'DAST_EVIDENCE_SHA256: ${{ vars.DAST_EVIDENCE_SHA256 }}',
+  '$RUNNER_TEMP/phase-5-dast-asvs.json',
+  'scripts/github/fetch-oidc-protected-input.mjs',
+  'DAST_EXPECTED_ENVIRONMENT: ${{ vars.DAST_ENVIRONMENT_NAME }}',
+  'DAST_EXPECTED_REGION: ${{ vars.DAST_REGION }}',
+  'DAST_EXPECTED_TARGET_ORIGIN_SHA256: ${{ vars.DAST_TARGET_ORIGIN_SHA256 }}',
+  'DAST_EXPECTED_COMMIT: ${{ github.sha }}',
+  'DAST_EXPECTED_API_IMAGE: ${{ vars.DAST_API_IMAGE_DIGEST }}',
+  'DAST_EXPECTED_WORKER_IMAGE: ${{ vars.DAST_WORKER_IMAGE_DIGEST }}',
+  'DAST_EXPECTED_WEB_IMAGE: ${{ vars.DAST_WEB_IMAGE_DIGEST }}',
+  'DAST_EXPECTED_WEBSITE_IMAGE: ${{ vars.DAST_WEBSITE_IMAGE_DIGEST }}',
+  'DAST_EXPECTED_SIGNER_KEYSET_SHA256: ${{ vars.DAST_SIGNER_KEYSET_SHA256 }}',
+  '--enforce-environment', 'phase-5-dast-asvs-verdict-${{ github.sha }}',
+  'retention-days: 30',
+]) {
+  if (!dastEvidenceWorkflow.includes(marker)) {
+    throw new Error('PHASE5_DAST_EVIDENCE_WORKFLOW_INCOMPLETE');
+  }
+}
+for (const forbidden of [
+  'pull_request:', 'push:', 'workflow_call:', '${{ inputs.', '${{ secrets.',
+  'self-hosted', '/var/lib/gaoq', 'environment:',
+]) {
+  if (dastEvidenceWorkflow.includes(forbidden)) {
+    throw new Error('PHASE5_DAST_EVIDENCE_WORKFLOW_UNSAFE');
+  }
+}
+if ((dastEvidenceWorkflow.match(/runs-on: ubuntu-latest/gu) ?? []).length !== 2) {
+  throw new Error('PHASE5_DAST_EVIDENCE_HOSTED_RUNNER_INVALID');
 }
 
 const migrationRehearsalActionReferences = [
@@ -135,17 +203,24 @@ if (migrationRehearsalActionReferences.length !== 5 ||
   )) throw new Error('PHASE5_MIGRATION_REHEARSAL_ACTION_NOT_PINNED');
 for (const marker of [
   'workflow_dispatch:', "test \"$GITHUB_REF\" = 'refs/heads/main'",
-  'environment: phase-5-migration-rehearsal', '- phase-5-migration-rehearsal',
-  'MIGRATION_REHEARSAL_EVIDENCE_PATH: /var/lib/gaoq/migration/phase-5-rehearsal.json',
+  'runs-on: ubuntu-latest', 'id-token: write',
+  'GAOQ_OIDC_POLICY: phase-5-migration-rehearsal', '--policy "$GAOQ_OIDC_POLICY"',
+  'MIGRATION_REHEARSAL_EVIDENCE_OIDC_AUDIENCE: ${{ vars.MIGRATION_REHEARSAL_EVIDENCE_OIDC_AUDIENCE }}',
+  'MIGRATION_REHEARSAL_EVIDENCE_URL: ${{ vars.MIGRATION_REHEARSAL_EVIDENCE_URL }}',
+  'MIGRATION_REHEARSAL_EVIDENCE_SHA256: ${{ vars.MIGRATION_REHEARSAL_EVIDENCE_SHA256 }}',
+  '$RUNNER_TEMP/phase-5-migration-rehearsal.json',
+  'scripts/github/fetch-oidc-protected-input.mjs',
   'MIGRATION_REHEARSAL_EXPECTED_ENVIRONMENT: ${{ vars.MIGRATION_REHEARSAL_ENVIRONMENT_NAME }}',
   'MIGRATION_REHEARSAL_EXPECTED_REGION: ${{ vars.MIGRATION_REHEARSAL_REGION }}',
   'MIGRATION_REHEARSAL_EXPECTED_COMMIT: ${{ github.sha }}',
   'MIGRATION_REHEARSAL_EXPECTED_API_IMAGE: ${{ vars.MIGRATION_REHEARSAL_API_IMAGE_DIGEST }}',
   'MIGRATION_REHEARSAL_EXPECTED_WORKER_IMAGE: ${{ vars.MIGRATION_REHEARSAL_WORKER_IMAGE_DIGEST }}',
   'MIGRATION_REHEARSAL_EXPECTED_WEB_IMAGE: ${{ vars.MIGRATION_REHEARSAL_WEB_IMAGE_DIGEST }}',
+  'MIGRATION_REHEARSAL_EXPECTED_WEBSITE_IMAGE: ${{ vars.MIGRATION_REHEARSAL_WEBSITE_IMAGE_DIGEST }}',
   'MIGRATION_REHEARSAL_EXPECTED_DEPLOYMENT_MANIFEST: ${{ vars.MIGRATION_REHEARSAL_DEPLOYMENT_MANIFEST_SHA256 }}',
   'MIGRATION_REHEARSAL_EXPECTED_SOURCE_SNAPSHOT: ${{ vars.MIGRATION_REHEARSAL_SOURCE_SNAPSHOT_SHA256 }}',
   'MIGRATION_REHEARSAL_EXPECTED_PACKAGE_MANIFEST: ${{ vars.MIGRATION_REHEARSAL_PACKAGE_MANIFEST_SHA256 }}',
+  'MIGRATION_REHEARSAL_EXPECTED_SIGNER_KEYSET_SHA256: ${{ vars.MIGRATION_REHEARSAL_SIGNER_KEYSET_SHA256 }}',
   '--enforce-environment', 'phase-5-migration-rehearsal-verdict-${{ github.sha }}',
   'retention-days: 30',
 ]) {
@@ -155,10 +230,14 @@ for (const marker of [
 }
 for (const forbidden of [
   'pull_request:', 'push:', 'workflow_call:', '${{ inputs.', '${{ secrets.',
+  'self-hosted', '/var/lib/gaoq', 'environment:',
 ]) {
   if (migrationRehearsalWorkflow.includes(forbidden)) {
     throw new Error('PHASE5_MIGRATION_REHEARSAL_WORKFLOW_UNSAFE');
   }
+}
+if ((migrationRehearsalWorkflow.match(/runs-on: ubuntu-latest/gu) ?? []).length !== 2) {
+  throw new Error('PHASE5_MIGRATION_REHEARSAL_HOSTED_RUNNER_INVALID');
 }
 
 const resilienceActionReferences = [
@@ -171,16 +250,30 @@ if (resilienceActionReferences.length !== 5 || resilienceActionReferences.some(
 for (const marker of [
   'workflow_dispatch:',
   "test \"$GITHUB_REF\" = 'refs/heads/main'",
-  'environment: phase-5-resilience',
-  '- phase-5-resilience',
-  'RESILIENCE_EVIDENCE_PATH: /var/lib/gaoq/resilience/phase-5-resilience.json',
+  'runs-on: ubuntu-latest',
+  'id-token: write',
+  'GAOQ_OIDC_POLICY: phase-5-resilience',
+  '--policy "$GAOQ_OIDC_POLICY"',
+  'RESILIENCE_EVIDENCE_OIDC_AUDIENCE: ${{ vars.RESILIENCE_EVIDENCE_OIDC_AUDIENCE }}',
+  'RESILIENCE_EVIDENCE_URL: ${{ vars.RESILIENCE_EVIDENCE_URL }}',
+  'RESILIENCE_EVIDENCE_SHA256: ${{ vars.RESILIENCE_EVIDENCE_SHA256 }}',
+  '$RUNNER_TEMP/phase-5-resilience.json',
+  'scripts/github/fetch-oidc-protected-input.mjs',
   'RESILIENCE_EXPECTED_ENVIRONMENT: ${{ vars.RESILIENCE_ENVIRONMENT_NAME }}',
   'RESILIENCE_EXPECTED_REGION: ${{ vars.RESILIENCE_REGION }}',
   'RESILIENCE_EXPECTED_COMMIT: ${{ github.sha }}',
   'RESILIENCE_EXPECTED_API_IMAGE: ${{ vars.RESILIENCE_API_IMAGE_DIGEST }}',
   'RESILIENCE_EXPECTED_WORKER_IMAGE: ${{ vars.RESILIENCE_WORKER_IMAGE_DIGEST }}',
   'RESILIENCE_EXPECTED_WEB_IMAGE: ${{ vars.RESILIENCE_WEB_IMAGE_DIGEST }}',
+  'RESILIENCE_EXPECTED_WEBSITE_IMAGE: ${{ vars.RESILIENCE_WEBSITE_IMAGE_DIGEST }}',
+  'RESILIENCE_EXPECTED_PAYROLL_IMAGE: ${{ vars.RESILIENCE_PAYROLL_IMAGE_DIGEST }}',
+  'RESILIENCE_EXPECTED_PAYROLL_RESOURCE: ${{ vars.RESILIENCE_PAYROLL_RESOURCE }}',
+  'RESILIENCE_EXPECTED_PAYROLL_AUTHORIZATION_SERVER: ${{ vars.RESILIENCE_PAYROLL_AUTHORIZATION_SERVER }}',
+  'RESILIENCE_EXPECTED_PAYROLL_CONTRACT_HASH: ${{ vars.RESILIENCE_PAYROLL_CONTRACT_HASH }}',
+  'RESILIENCE_EXPECTED_PAYROLL_CATALOG_HASH: ${{ vars.RESILIENCE_PAYROLL_CATALOG_HASH }}',
   'RESILIENCE_EXPECTED_DEPLOYMENT_MANIFEST: ${{ vars.RESILIENCE_DEPLOYMENT_MANIFEST_SHA256 }}',
+  'RESILIENCE_EXPECTED_SIGNER_KEYSET_SHA256: ${{ vars.RESILIENCE_SIGNER_KEYSET_SHA256 }}',
+  'node scripts/resilience/validate-phase-5-resilience-evidence.mjs --print-contract > /dev/null',
   '--enforce-environment',
   'phase-5-resilience-verdict-${{ github.sha }}',
   'retention-days: 30',
@@ -189,10 +282,14 @@ for (const marker of [
 }
 for (const forbidden of [
   'pull_request:', 'push:', 'workflow_call:', '${{ inputs.', '${{ secrets.',
+  'self-hosted', '/var/lib/gaoq', 'environment:',
 ]) {
   if (resilienceWorkflow.includes(forbidden)) {
     throw new Error('PHASE5_RESILIENCE_WORKFLOW_UNSAFE');
   }
+}
+if ((resilienceWorkflow.match(/runs-on: ubuntu-latest/gu) ?? []).length !== 2) {
+  throw new Error('PHASE5_RESILIENCE_HOSTED_RUNNER_INVALID');
 }
 
 const readinessActionReferences = [
@@ -203,15 +300,22 @@ if (readinessActionReferences.length !== 5 || readinessActionReferences.some(
 )) throw new Error('PHASE5_READINESS_ACTION_NOT_PINNED');
 for (const marker of [
   'workflow_dispatch:', "test \"$GITHUB_REF\" = 'refs/heads/main'",
-  'environment: phase-5-readiness', '- phase-5-readiness',
-  'READINESS_EVIDENCE_PATH: /var/lib/gaoq/readiness/phase-5-readiness.json',
+  'runs-on: ubuntu-latest', 'id-token: write',
+  'GAOQ_OIDC_POLICY: phase-5-readiness', '--policy "$GAOQ_OIDC_POLICY"',
+  'READINESS_EVIDENCE_OIDC_AUDIENCE: ${{ vars.READINESS_EVIDENCE_OIDC_AUDIENCE }}',
+  'READINESS_EVIDENCE_URL: ${{ vars.READINESS_EVIDENCE_URL }}',
+  'READINESS_EVIDENCE_SHA256: ${{ vars.READINESS_EVIDENCE_SHA256 }}',
+  '$RUNNER_TEMP/phase-5-readiness.json',
+  'scripts/github/fetch-oidc-protected-input.mjs',
   'READINESS_EXPECTED_ENVIRONMENT: ${{ vars.READINESS_ENVIRONMENT_NAME }}',
   'READINESS_EXPECTED_REGION: ${{ vars.READINESS_REGION }}',
   'READINESS_EXPECTED_COMMIT: ${{ github.sha }}',
   'READINESS_EXPECTED_API_IMAGE: ${{ vars.READINESS_API_IMAGE_DIGEST }}',
   'READINESS_EXPECTED_WORKER_IMAGE: ${{ vars.READINESS_WORKER_IMAGE_DIGEST }}',
   'READINESS_EXPECTED_WEB_IMAGE: ${{ vars.READINESS_WEB_IMAGE_DIGEST }}',
+  'READINESS_EXPECTED_WEBSITE_IMAGE: ${{ vars.READINESS_WEBSITE_IMAGE_DIGEST }}',
   'READINESS_EXPECTED_DEPLOYMENT_MANIFEST: ${{ vars.READINESS_DEPLOYMENT_MANIFEST_SHA256 }}',
+  'READINESS_EXPECTED_SIGNER_KEYSET_SHA256: ${{ vars.READINESS_SIGNER_KEYSET_SHA256 }}',
   '--enforce-environment', 'phase-5-readiness-verdicts-${{ github.sha }}',
   'retention-days: 30',
 ]) {
@@ -221,10 +325,14 @@ for (const marker of [
 }
 for (const forbidden of [
   'pull_request:', 'push:', 'workflow_call:', '${{ inputs.', '${{ secrets.',
+  'self-hosted', '/var/lib/gaoq', 'environment:',
 ]) {
   if (readinessWorkflow.includes(forbidden)) {
     throw new Error('PHASE5_READINESS_WORKFLOW_UNSAFE');
   }
+}
+if ((readinessWorkflow.match(/runs-on: ubuntu-latest/gu) ?? []).length !== 2) {
+  throw new Error('PHASE5_READINESS_HOSTED_RUNNER_INVALID');
 }
 
 const goNoGoActionReferences = [
@@ -237,16 +345,30 @@ if (goNoGoActionReferences.length !== 5 || goNoGoActionReferences.some(
 for (const marker of [
   'workflow_dispatch:',
   "test \"$GITHUB_REF\" = 'refs/heads/main'",
-  'environment: phase-5-go-no-go',
-  '- phase-5-go-no-go',
-  'GO_NO_GO_EVIDENCE_PATH: /var/lib/gaoq/go-no-go/phase-5-go-no-go.json',
+  'runs-on: ubuntu-latest',
+  'id-token: write',
+  'GAOQ_OIDC_POLICY: phase-5-go-no-go',
+  '--policy "$GAOQ_OIDC_POLICY"',
+  'GO_NO_GO_EVIDENCE_OIDC_AUDIENCE: ${{ vars.GO_NO_GO_EVIDENCE_OIDC_AUDIENCE }}',
+  'GO_NO_GO_EVIDENCE_URL: ${{ vars.GO_NO_GO_EVIDENCE_URL }}',
+  'GO_NO_GO_EVIDENCE_SHA256: ${{ vars.GO_NO_GO_EVIDENCE_SHA256 }}',
+  '$RUNNER_TEMP/phase-5-go-no-go.json',
+  'scripts/github/fetch-oidc-protected-input.mjs',
   'GO_NO_GO_EXPECTED_ENVIRONMENT: ${{ vars.GO_NO_GO_ENVIRONMENT_NAME }}',
   'GO_NO_GO_EXPECTED_REGION: ${{ vars.GO_NO_GO_REGION }}',
   'GO_NO_GO_EXPECTED_COMMIT: ${{ github.sha }}',
   'GO_NO_GO_EXPECTED_API_IMAGE: ${{ vars.GO_NO_GO_API_IMAGE_DIGEST }}',
   'GO_NO_GO_EXPECTED_WORKER_IMAGE: ${{ vars.GO_NO_GO_WORKER_IMAGE_DIGEST }}',
   'GO_NO_GO_EXPECTED_WEB_IMAGE: ${{ vars.GO_NO_GO_WEB_IMAGE_DIGEST }}',
+  'GO_NO_GO_EXPECTED_WEBSITE_IMAGE: ${{ vars.GO_NO_GO_WEBSITE_IMAGE_DIGEST }}',
   'GO_NO_GO_EXPECTED_DEPLOYMENT_MANIFEST: ${{ vars.GO_NO_GO_DEPLOYMENT_MANIFEST_SHA256 }}',
+  'GO_NO_GO_EXPECTED_PAYROLL_RESOURCE: ${{ vars.GO_NO_GO_PAYROLL_RESOURCE }}',
+  'GO_NO_GO_EXPECTED_PAYROLL_AUTHORIZATION_SERVER: ${{ vars.GO_NO_GO_PAYROLL_AUTHORIZATION_SERVER }}',
+  'GO_NO_GO_EXPECTED_PAYROLL_IMAGE: ${{ vars.GO_NO_GO_PAYROLL_IMAGE_DIGEST }}',
+  'GO_NO_GO_EXPECTED_PAYROLL_CONTRACT_HASH: ${{ vars.GO_NO_GO_PAYROLL_CONTRACT_HASH }}',
+  'GO_NO_GO_EXPECTED_PAYROLL_CATALOG_HASH: ${{ vars.GO_NO_GO_PAYROLL_CATALOG_HASH }}',
+  'GO_NO_GO_EXPECTED_SIGNER_KEYSET: ${{ vars.GO_NO_GO_SIGNER_KEYSET_SHA256 }}',
+  'node scripts/release/validate-phase-5-go-no-go-evidence.mjs --print-contract > /dev/null',
   '--enforce-environment',
   'phase-5-go-no-go-verdict-${{ github.sha }}',
   'retention-days: 30',
@@ -255,8 +377,12 @@ for (const marker of [
 }
 for (const forbidden of [
   'pull_request:', 'push:', 'workflow_call:', '${{ inputs.', '${{ secrets.',
+  'self-hosted', '/var/lib/gaoq', 'environment:',
 ]) {
   if (goNoGoWorkflow.includes(forbidden)) throw new Error('PHASE5_GO_NO_GO_WORKFLOW_UNSAFE');
+}
+if ((goNoGoWorkflow.match(/runs-on: ubuntu-latest/gu) ?? []).length !== 2) {
+  throw new Error('PHASE5_GO_NO_GO_HOSTED_RUNNER_INVALID');
 }
 
 const mcpIntegrationActions = [
@@ -267,10 +393,24 @@ if (mcpIntegrationActions.length !== 7 || mcpIntegrationActions.some(
 )) throw new Error('PHASE5_MCP_INTEGRATION_ACTION_NOT_PINNED');
 for (const marker of [
   'workflow_dispatch:', "test \"$GITHUB_REF\" = 'refs/heads/main'",
-  'environment: phase-5-mcp-integration', 'phase-5-mcp-integration]',
-  'MCP_INTEGRATION_EVIDENCE_PATH: /var/lib/gaoq/mcp/phase-5-mcp-integration.json',
+  'runs-on: ubuntu-latest', 'id-token: write',
+  'GAOQ_OIDC_POLICY: phase-5-mcp-integration', '--policy "$GAOQ_OIDC_POLICY"',
+  'MCP_INTEGRATION_EVIDENCE_OIDC_AUDIENCE: ${{ vars.MCP_INTEGRATION_EVIDENCE_OIDC_AUDIENCE }}',
+  'MCP_INTEGRATION_EVIDENCE_URL: ${{ vars.MCP_INTEGRATION_EVIDENCE_URL }}',
+  'MCP_INTEGRATION_EVIDENCE_SHA256: ${{ vars.MCP_INTEGRATION_EVIDENCE_SHA256 }}',
+  '$RUNNER_TEMP/phase-5-mcp-integration.json',
+  'scripts/github/fetch-oidc-protected-input.mjs',
   'MCP_INTEGRATION_EXPECTED_COMMIT: ${{ github.sha }}',
   'MCP_INTEGRATION_EXPECTED_API_IMAGE: ${{ vars.MCP_INTEGRATION_API_IMAGE_DIGEST }}',
+  'MCP_INTEGRATION_EXPECTED_WORKER_IMAGE: ${{ vars.MCP_INTEGRATION_WORKER_IMAGE_DIGEST }}',
+  'MCP_INTEGRATION_EXPECTED_WEB_IMAGE: ${{ vars.MCP_INTEGRATION_WEB_IMAGE_DIGEST }}',
+  'MCP_INTEGRATION_EXPECTED_WEBSITE_IMAGE: ${{ vars.MCP_INTEGRATION_WEBSITE_IMAGE_DIGEST }}',
+  'MCP_INTEGRATION_EXPECTED_PAYROLL_RESOURCE: ${{ vars.MCP_INTEGRATION_PAYROLL_RESOURCE }}',
+  'MCP_INTEGRATION_EXPECTED_PAYROLL_AUTHORIZATION_SERVER: ${{ vars.MCP_INTEGRATION_PAYROLL_AUTHORIZATION_SERVER }}',
+  'MCP_INTEGRATION_EXPECTED_PAYROLL_IMAGE: ${{ vars.MCP_INTEGRATION_PAYROLL_IMAGE_DIGEST }}',
+  'MCP_INTEGRATION_EXPECTED_PAYROLL_CONTRACT_HASH: ${{ vars.MCP_INTEGRATION_PAYROLL_CONTRACT_HASH }}',
+  'MCP_INTEGRATION_EXPECTED_PAYROLL_CATALOG_HASH: ${{ vars.MCP_INTEGRATION_PAYROLL_CATALOG_HASH }}',
+  'MCP_INTEGRATION_EXPECTED_SIGNER_KEYSET_SHA256: ${{ vars.MCP_INTEGRATION_SIGNER_KEYSET_SHA256 }}',
   '--enforce-environment "$MCP_INTEGRATION_EVIDENCE_PATH"',
   'phase-5-mcp-integration-verdict-${{ github.sha }}', 'retention-days: 30',
 ]) {
@@ -278,10 +418,16 @@ for (const marker of [
     throw new Error('PHASE5_MCP_INTEGRATION_WORKFLOW_INCOMPLETE');
   }
 }
-for (const forbidden of ['pull_request:', 'push:', 'workflow_call:', '${{ inputs.', '${{ secrets.']) {
+for (const forbidden of [
+  'pull_request:', 'push:', 'workflow_call:', '${{ inputs.', '${{ secrets.',
+  'self-hosted', '/var/lib/gaoq', 'environment:',
+]) {
   if (mcpIntegrationWorkflow.includes(forbidden)) {
     throw new Error('PHASE5_MCP_INTEGRATION_WORKFLOW_UNSAFE');
   }
+}
+if ((mcpIntegrationWorkflow.match(/runs-on: ubuntu-latest/gu) ?? []).length !== 2) {
+  throw new Error('PHASE5_MCP_INTEGRATION_HOSTED_RUNNER_INVALID');
 }
 
 if (workflow.includes('actions/dependency-review-action@')) {
@@ -294,6 +440,12 @@ const expectedBearerFingerprints = [
   'ec33c579b4fa5753a2cfe6ac4bb73ffb_0',
   'ec33c579b4fa5753a2cfe6ac4bb73ffb_1',
   '74ab5f22a836139b1aae3d64bb80ab50_0',
+  '15469c792b2494f8acdfe491364006da_0',
+  'ec33c579b4fa5753a2cfe6ac4bb73ffb_2',
+  'ec33c579b4fa5753a2cfe6ac4bb73ffb_3',
+  'b2c9a5f32bb09d448cbf32d5ae037ae8_0',
+  '0e856c0e70c5e93097a67a73bb5c9841_0',
+  '63a53819fc7bee2c39f18ac6a4c3abc7_0',
 ];
 const bearerEntries = Object.values(bearerIgnore);
 if (JSON.stringify(Object.keys(bearerIgnore).sort()) !==
@@ -322,6 +474,10 @@ for (const marker of [
   '"idempotency-key-001"',
   '"maximumApiP95Milliseconds"',
   '"01J8ZQK7V0A2M4N6P8R0T2W4H1"',
+  '"01J8ZQK7V0A2M4N6P8R0T2W4E1"',
+  '"approval-withdraw-001"',
+  '"edge-verification-secret-at-least-32-characters"',
+  '"marketing-key-001"',
 ]) {
   if (!gitleaksConfig.includes(marker)) throw new Error('PHASE5_SECURITY_GITLEAKS_ALLOWLIST_INVALID');
 }

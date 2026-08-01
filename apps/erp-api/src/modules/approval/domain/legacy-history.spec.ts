@@ -51,4 +51,28 @@ describe('ApprovalLegacyHistory', () => {
       ...history, updatedAt: '2026-07-22T00:00:01.000Z',
     })).toThrowError(expect.objectContaining({ code: 'APPROVAL_HISTORY_INTEGRITY_INVALID' }));
   });
+
+  it('拒绝未知结果、倒置归档时间与非规范日期', () => {
+    expect(() => createApprovalLegacyHistory({
+      ...input(), outcome: 'pending' as never,
+    }, new Date())).toThrowError(expect.objectContaining({
+      code: 'APPROVAL_HISTORY_OUTCOME_INVALID',
+    }));
+    expect(() => createApprovalLegacyHistory({
+      ...input(), archivedAt: '2020-01-01T00:00:00.000Z',
+    }, new Date())).toThrowError(expect.objectContaining({
+      code: 'APPROVAL_HISTORY_ARCHIVE_TIME_INVALID',
+    }));
+    expect(() => createApprovalLegacyHistory({
+      ...input(), completedAt: '2020-01-02T00:00:00Z',
+    }, new Date())).toThrowError(expect.objectContaining({
+      code: 'APPROVAL_HISTORY_DATE_INVALID',
+    }));
+    const history = createApprovalLegacyHistory({
+      ...input(), archivedAt: null,
+    }, new Date('2026-07-22T00:00:00.000Z'));
+    expect(history.archivedAt).toBeNull();
+    expect(() => restoreApprovalLegacyHistory({ ...history, version: 2 as never }))
+      .toThrowError(expect.objectContaining({ code: 'APPROVAL_HISTORY_INTEGRITY_INVALID' }));
+  });
 });

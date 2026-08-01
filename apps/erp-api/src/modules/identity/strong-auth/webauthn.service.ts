@@ -151,6 +151,7 @@ export class WebAuthnService {
     ceremonyId: string,
     response: RegistrationResponseJSON,
   ): Promise<{ readonly credentialId: string; readonly deviceType: string; readonly backedUp: boolean }> {
+    this.assertManageScope(identity);
     const ceremony = await this.requireCeremony(identity, ceremonyId, 'registration', null);
     let verification: Awaited<ReturnType<typeof verifyRegistrationResponse>>;
     try {

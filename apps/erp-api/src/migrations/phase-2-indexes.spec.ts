@@ -30,6 +30,16 @@ describe('Phase 2 索引迁移清单', () => {
         options: { unique: true },
       }),
       expect.objectContaining({
+        collection: 'approval_notification_deliveries',
+        name: 'tenantId_1_status_1_notificationId_-1_channel_1',
+        key: {
+          tenantId: 1,
+          status: 1,
+          notificationId: -1,
+          channel: 1,
+        },
+      }),
+      expect.objectContaining({
         collection: 'mcp_operation_confirmations',
         name: 'expiresAt_1',
         options: { expireAfterSeconds: 86_400 },

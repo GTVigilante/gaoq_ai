@@ -1,8 +1,9 @@
 import type { ExecutionContext } from '@nestjs/common';
 import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
+import { PUBLIC_ROUTE_KEY } from '../../core/http/public-route.decorator.js';
 import type { ErpRequest } from '../../core/http/request-context.js';
 import { AccessTokenVerifier } from './access-token-verifier.js';
 import type { VerifiedAccessToken } from './auth.types.js';
@@ -77,5 +78,46 @@ describe('BearerAuthGuard', () => {
     await expect(guard.canActivate(createContext(request))).rejects.toBeInstanceOf(
       ForbiddenException,
     );
+    Reflect.deleteMetadata(REQUIRED_SCOPES_KEY, handler);
+  });
+
+  it('公开端点不读取请求也不调用令牌验证', async () => {
+    const reflector = new Reflector();
+    Reflect.defineMetadata(PUBLIC_ROUTE_KEY, true, handler);
+    const verifier = new StubVerifier();
+    const verify = vi.spyOn(verifier, 'verify');
+    const guard = new BearerAuthGuard(reflector, verifier);
+
+    await expect(guard.canActivate(createContext({}))).resolves.toBe(true);
+    expect(verify).not.toHaveBeenCalled();
+    Reflect.deleteMetadata(PUBLIC_ROUTE_KEY, handler);
+  });
+
+  it('服务身份写入受信服务主体来源并保留令牌证据', async () => {
+    class ServiceVerifier extends StubVerifier {
+      override async verify(): Promise<VerifiedAccessToken> {
+        return {
+          ...await super.verify(),
+          actorId: 'service-payroll',
+          actorType: 'service',
+          roleCodes: [],
+          sessionId: 'service-session',
+        };
+      }
+    }
+    const guard = new BearerAuthGuard(new Reflector(), new ServiceVerifier());
+    const request = {
+      header: () => 'Bearer service.signed.token',
+    } as unknown as ErpRequest;
+
+    await expect(guard.canActivate(createContext(request))).resolves.toBe(true);
+    expect(request.user).toMatchObject({
+      actorId: 'service-payroll',
+      actorType: 'service',
+      identitySource: 'service_identity',
+      tenantId: 'trusted-tenant',
+    });
+    expect(request.bearerToken).toBe('service.signed.token');
+    expect(request.verifiedAccessToken?.actorType).toBe('service');
   });
 });

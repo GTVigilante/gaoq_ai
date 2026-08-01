@@ -70,4 +70,36 @@ describe('工资影子比较', () => {
       lines: [legacyLines[0]!, legacyLines[0]!],
     })).toThrow('员工唯一性非法');
   });
+
+  it('对来源引用、行结构、金额、摘要和来源行唯一性逐项失败关闭', () => {
+    expect(() => shadowPayrollManifestHash({
+      period: '2026-13', sourceSystem: 'legacy-payroll', sourceExportId: 'export-001',
+      lines: legacyLines,
+    })).toThrow('来源引用非法');
+    expect(() => compareShadowPayroll({ ...input(), extra: true } as never))
+      .toThrow('比较输入非法');
+    expect(() => compareShadowPayroll({
+      ...input(),
+      erpLines: [],
+    })).toThrow('行数量或员工唯一性非法');
+    expect(() => compareShadowPayroll({
+      ...input(),
+      erpLines: [{ ...erpLines[0]!, employeeId: '@' }],
+    })).toThrow('行格式非法');
+    expect(() => compareShadowPayroll({
+      ...input(),
+      erpLines: [{ ...erpLines[0]!, grossPayMinor: -1 }],
+    })).toThrow('行格式非法');
+    expect(() => compareShadowPayroll({
+      ...input(),
+      erpLines: [{ ...erpLines[0]!, withholdingTaxMinor: 1.5 }],
+    })).toThrow('行格式非法');
+    expect(() => shadowPayrollManifestHash({
+      period: '2026-07', sourceSystem: 'legacy-payroll', sourceExportId: 'export-001',
+      lines: [
+        legacyLines[0]!,
+        { ...legacyLines[1]!, sourceLineId: legacyLines[0]!.sourceLineId },
+      ],
+    })).toThrow('来源行重复');
+  });
 });
