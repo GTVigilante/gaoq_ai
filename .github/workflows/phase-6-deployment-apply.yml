@@ -110,16 +110,18 @@ jobs:
       - name: 固定 Runner 临时输入与 kubeconfig 路径
         shell: bash
         run: |
-          printf 'PHASE6_DEPLOYMENT_VALUES_PATH=%s\n' \
-            "$RUNNER_TEMP/production-values.yaml" >> "$GITHUB_ENV"
-          printf 'PHASE6_DEPLOYMENT_GO_NO_GO_PATH=%s\n' \
-            "$RUNNER_TEMP/phase-5-go-no-go.json" >> "$GITHUB_ENV"
-          printf 'PHASE6_DEPLOYMENT_PLATFORM_INTAKE_PATH=%s\n' \
-            "$RUNNER_TEMP/phase-6-platform-intake.json" >> "$GITHUB_ENV"
-          printf 'PHASE6_DEPLOYMENT_AUTHORIZATION_PATH=%s\n' \
-            "$RUNNER_TEMP/phase-6-deployment-authorization.json" >> "$GITHUB_ENV"
-          printf 'KUBECONFIG=%s\n' \
-            "$RUNNER_TEMP/phase-6-kubeconfig.json" >> "$GITHUB_ENV"
+          {
+            printf 'PHASE6_DEPLOYMENT_VALUES_PATH=%s\n' \
+              "$RUNNER_TEMP/production-values.yaml"
+            printf 'PHASE6_DEPLOYMENT_GO_NO_GO_PATH=%s\n' \
+              "$RUNNER_TEMP/phase-5-go-no-go.json"
+            printf 'PHASE6_DEPLOYMENT_PLATFORM_INTAKE_PATH=%s\n' \
+              "$RUNNER_TEMP/phase-6-platform-intake.json"
+            printf 'PHASE6_DEPLOYMENT_AUTHORIZATION_PATH=%s\n' \
+              "$RUNNER_TEMP/phase-6-deployment-authorization.json"
+            printf 'KUBECONFIG=%s\n' \
+              "$RUNNER_TEMP/phase-6-kubeconfig.json"
+          } >> "$GITHUB_ENV"
 
       - name: 通过 GitHub OIDC 拉取四份受保护输入
         shell: bash

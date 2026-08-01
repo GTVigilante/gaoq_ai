@@ -440,6 +440,12 @@ const expectedBearerFingerprints = [
   'ec33c579b4fa5753a2cfe6ac4bb73ffb_0',
   'ec33c579b4fa5753a2cfe6ac4bb73ffb_1',
   '74ab5f22a836139b1aae3d64bb80ab50_0',
+  '15469c792b2494f8acdfe491364006da_0',
+  'ec33c579b4fa5753a2cfe6ac4bb73ffb_2',
+  'ec33c579b4fa5753a2cfe6ac4bb73ffb_3',
+  'b2c9a5f32bb09d448cbf32d5ae037ae8_0',
+  '0e856c0e70c5e93097a67a73bb5c9841_0',
+  '63a53819fc7bee2c39f18ac6a4c3abc7_0',
 ];
 const bearerEntries = Object.values(bearerIgnore);
 if (JSON.stringify(Object.keys(bearerIgnore).sort()) !==
@@ -468,6 +474,10 @@ for (const marker of [
   '"idempotency-key-001"',
   '"maximumApiP95Milliseconds"',
   '"01J8ZQK7V0A2M4N6P8R0T2W4H1"',
+  '"01J8ZQK7V0A2M4N6P8R0T2W4E1"',
+  '"approval-withdraw-001"',
+  '"edge-verification-secret-at-least-32-characters"',
+  '"marketing-key-001"',
 ]) {
   if (!gitleaksConfig.includes(marker)) throw new Error('PHASE5_SECURITY_GITLEAKS_ALLOWLIST_INVALID');
 }

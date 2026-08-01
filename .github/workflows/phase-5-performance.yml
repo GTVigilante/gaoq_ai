@@ -73,12 +73,14 @@ jobs:
       - name: 固定 Runner 临时证据路径
         shell: bash
         run: |
-          printf 'PERFORMANCE_EVIDENCE_RUN_1_PATH=%s\n' \
-            "$RUNNER_TEMP/phase-5-performance-run-1.json" >> "$GITHUB_ENV"
-          printf 'PERFORMANCE_EVIDENCE_RUN_2_PATH=%s\n' \
-            "$RUNNER_TEMP/phase-5-performance-run-2.json" >> "$GITHUB_ENV"
-          printf 'PERFORMANCE_EVIDENCE_RUN_3_PATH=%s\n' \
-            "$RUNNER_TEMP/phase-5-performance-run-3.json" >> "$GITHUB_ENV"
+          {
+            printf 'PERFORMANCE_EVIDENCE_RUN_1_PATH=%s\n' \
+              "$RUNNER_TEMP/phase-5-performance-run-1.json"
+            printf 'PERFORMANCE_EVIDENCE_RUN_2_PATH=%s\n' \
+              "$RUNNER_TEMP/phase-5-performance-run-2.json"
+            printf 'PERFORMANCE_EVIDENCE_RUN_3_PATH=%s\n' \
+              "$RUNNER_TEMP/phase-5-performance-run-3.json"
+          } >> "$GITHUB_ENV"
 
       - name: 通过 GitHub OIDC 拉取三份脱敏容量证据
         run: |
