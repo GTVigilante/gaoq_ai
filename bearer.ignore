@@ -1,0 +1,68 @@
+{
+  "1d546f90f6a5a07e971e29ff4aec6097_0": {
+    "author": "GaoQ-OS 架构与安全 CR",
+    "comment": "误报：FetchSsoHttpClient 在 fetch 前通过 requireAllowedEndpoint 精确匹配钉钉、飞书和配置派生的 OP token/userinfo 端点；任意域、query、凭据、非 HTTPS 和非 443 端口均有回归测试。复核到期：2026-10-20。",
+    "false_positive": true,
+    "ignored_at": "2026-07-22T01:25:00Z"
+  },
+  "b951826b6dd26ef7f2d776a337264409_0": {
+    "author": "GaoQ-OS 架构与安全 CR",
+    "comment": "误报：该函数仅编码 ISO 20022 XML 文本节点，不生成 HTML；输入先按 XML 1.0 字符范围验证，再完整转义五个预定义实体，并由注入回归测试覆盖。复核到期：2026-10-20。",
+    "false_positive": true,
+    "ignored_at": "2026-07-22T01:25:00Z"
+  },
+  "ec33c579b4fa5753a2cfe6ac4bb73ffb_0": {
+    "author": "GaoQ-OS 架构与安全 CR",
+    "comment": "误报：该值仅为生产部署清单自测中的 Kubernetes Secret 对象引用名称，不包含 Secret 数据、凭据或可认证材料；验证器同时拒绝渲染清单中的 Secret 对象。复核到期：2026-10-23。",
+    "false_positive": true,
+    "ignored_at": "2026-07-23T07:20:00Z"
+  },
+  "ec33c579b4fa5753a2cfe6ac4bb73ffb_1": {
+    "author": "GaoQ-OS 架构与安全 CR",
+    "comment": "误报：该值仅为生产部署清单自测中的 Kubernetes Secret 对象引用名称，不包含 Secret 数据、凭据或可认证材料；验证器同时拒绝渲染清单中的 Secret 对象。复核到期：2026-10-23。",
+    "false_positive": true,
+    "ignored_at": "2026-07-23T07:20:00Z"
+  },
+  "74ab5f22a836139b1aae3d64bb80ab50_0": {
+    "author": "GaoQ-OS 架构与安全 CR",
+    "comment": "误报：该值仅用于生产平台准入验证器的负向自测，主动注入敏感字段并断言验证失败；不会进入运行时配置、认证或外部请求。复核到期：2026-10-23。",
+    "false_positive": true,
+    "ignored_at": "2026-07-23T01:20:00Z"
+  },
+  "15469c792b2494f8acdfe491364006da_0": {
+    "author": "GaoQ-OS 架构与安全 CR",
+    "comment": "误报：该值仅用于部署授权验证器的负向自测，主动注入 password 字段并断言验证失败；不会进入运行时配置或认证流程。复核到期：2026-11-01。",
+    "false_positive": true,
+    "ignored_at": "2026-08-01T00:20:00Z"
+  },
+  "ec33c579b4fa5753a2cfe6ac4bb73ffb_2": {
+    "author": "GaoQ-OS 架构与安全 CR",
+    "comment": "误报：该值是部署清单自测中的 Kubernetes Secret 资源名称，不包含 Secret 数据或认证材料；验证器同时拒绝清单内出现 Secret 对象。复核到期：2026-11-01。",
+    "false_positive": true,
+    "ignored_at": "2026-08-01T00:20:00Z"
+  },
+  "ec33c579b4fa5753a2cfe6ac4bb73ffb_3": {
+    "author": "GaoQ-OS 架构与安全 CR",
+    "comment": "误报：该值是部署清单自测中的 Kubernetes Secret 资源名称，不包含 Secret 数据或认证材料；验证器同时拒绝清单内出现 Secret 对象。复核到期：2026-11-01。",
+    "false_positive": true,
+    "ignored_at": "2026-08-01T00:20:00Z"
+  },
+  "b2c9a5f32bb09d448cbf32d5ae037ae8_0": {
+    "author": "GaoQ-OS 架构与安全 CR",
+    "comment": "误报：该值仅用于运行时配置验证器的负向自测，主动注入 DATABASE_PASSWORD 并断言验证失败；不会进入真实配置。复核到期：2026-11-01。",
+    "false_positive": true,
+    "ignored_at": "2026-08-01T00:20:00Z"
+  },
+  "0e856c0e70c5e93097a67a73bb5c9841_0": {
+    "author": "GaoQ-OS 架构与安全 CR",
+    "comment": "误报：该函数仅生成 application/rss+xml，按 XML 1.0 规则完整转义五个预定义实体，不生成或注入 HTML。复核到期：2026-11-01。",
+    "false_positive": true,
+    "ignored_at": "2026-08-01T00:20:00Z"
+  },
+  "63a53819fc7bee2c39f18ac6a4c3abc7_0": {
+    "author": "GaoQ-OS 架构与安全 CR",
+    "comment": "误报：entry.name 来自受控代码目录的 fs.readdir Dirent，不接受用户输入；递归仅处理本地 TypeScript 源文件。复核到期：2026-11-01。",
+    "false_positive": true,
+    "ignored_at": "2026-08-01T00:20:00Z"
+  }
+}

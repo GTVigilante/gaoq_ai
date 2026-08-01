@@ -1,0 +1,156 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "gaoq-erp.fullname" . }}-default-deny
+  namespace: {{ include "gaoq-erp.targetNamespace" . }}
+  labels:
+    {{- include "gaoq-erp.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "gaoq-erp.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "gaoq-erp.fullname" . }}-dns-egress
+  namespace: {{ include "gaoq-erp.targetNamespace" . }}
+  labels:
+    {{- include "gaoq-erp.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "gaoq-erp.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.dnsNamespaceLabels | nindent 14 }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.dnsPodLabels | nindent 14 }}
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+---
+{{- range $component, $port := dict "api" 3001 "web" 3000 "website" 3002 }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "gaoq-erp.fullname" $ }}-gateway-to-{{ $component }}
+  namespace: {{ include "gaoq-erp.targetNamespace" $ }}
+  labels:
+    {{- include "gaoq-erp.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "gaoq-erp.name" $ }}
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+      app.kubernetes.io/component: {{ $component }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml $.Values.networkPolicy.ingressNamespaceLabels | nindent 14 }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $.Values.networkPolicy.ingressPodLabels | nindent 14 }}
+      ports:
+        - { port: {{ $port }}, protocol: TCP }
+---
+{{- end }}
+{{- range $component, $port := dict "api" 3001 "worker" 9464 }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "gaoq-erp.fullname" $ }}-monitoring-to-{{ $component }}
+  namespace: {{ include "gaoq-erp.targetNamespace" $ }}
+  labels:
+    {{- include "gaoq-erp.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "gaoq-erp.name" $ }}
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+      app.kubernetes.io/component: {{ $component }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml $.Values.networkPolicy.monitoringNamespaceLabels | nindent 14 }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $.Values.networkPolicy.monitoringPodLabels | nindent 14 }}
+      ports:
+        - { port: {{ $port }}, protocol: TCP }
+---
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "gaoq-erp.fullname" . }}-backend-private-egress
+  namespace: {{ include "gaoq-erp.targetNamespace" . }}
+  labels:
+    {{- include "gaoq-erp.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "gaoq-erp.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [api, worker]
+  policyTypes: [Egress]
+  egress:
+    {{- range .Values.networkPolicy.httpsEgressCidrs }}
+    - to:
+        - ipBlock: { cidr: {{ . }} }
+      ports:
+        - { port: 443, protocol: TCP }
+    {{- end }}
+    {{- range .Values.networkPolicy.mongodbCidrs }}
+    - to:
+        - ipBlock: { cidr: {{ . }} }
+      ports:
+        - { port: 27017, protocol: TCP }
+    {{- end }}
+    {{- range .Values.networkPolicy.redisCidrs }}
+    - to:
+        - ipBlock: { cidr: {{ . }} }
+      ports:
+        - { port: 6379, protocol: TCP }
+    {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "gaoq-erp.fullname" . }}-frontend-to-api
+  namespace: {{ include "gaoq-erp.targetNamespace" . }}
+  labels:
+    {{- include "gaoq-erp.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "gaoq-erp.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [web, website]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "gaoq-erp.name" . }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: api
+      ports:
+        - { port: 3001, protocol: TCP }

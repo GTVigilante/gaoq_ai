@@ -1,0 +1,75 @@
+# Phase 2 PC 工作台契约
+
+## 交付范围
+
+本工作台提供企业 SSO 入口、审批发起、待办、详情与追加式动作时间线、R1 审批决策/转交/加签、限期委托管理、版本化表单设计、独立发布复核、组织主数据浏览与创建、身份授权快照、Passkey 入口和当前会话吊销。PC 与 H5 均从待办卡片进入详情并在第三步前完成 R1 决策。
+
+移动审批发起、R1 转交/加签和限期委托已复用本契约的应用服务、版本、幂等、Scope 与审计边界。真实设备无障碍和弱网响应丢失 UAT 仍属于后续验收范围，不因 PC/H5 页面代码交付而视为完成。
+
+## 浏览器会话
+
+- SSO 的 `state`、PKCE、租户绑定和回调校验由 API 生成，前端只提交租户公开标识和受限返回路径。
+- 刷新令牌仅存于 `HttpOnly` Cookie；短期访问令牌仅存于页面内存，不写入 LocalStorage、SessionStorage、URL、日志或服务端渲染输出。
+- 受保护请求通过统一客户端附加 Bearer 令牌；首次 `401` 清空内存并刷新一次，第二次失败直接返回，不形成无限重试。
+- 页面不得接收、缓存、展示或推导 `tenantId`。角色、Scope 和部门数据范围只使用服务端已验签结果。
+- API 响应必须符合统一 `code/message/data/traceId/timestamp` 信封；错误界面只展示安全消息和 `traceId`。
+
+## 写操作与风险控制
+
+- 所有组织、审批和模板写请求必须带一次性 `Idempotency-Key`。
+- 模板与实例草稿更新还必须带强 `If-Match`。同一正文在响应丢失或结果未知时
+  必须保留并复用原幂等键；正文、模板标识或版本任一变化时生成新键，禁止用新键
+  猜测重放旧请求。
+- PC 发起先创建草稿、再以草稿强版本和独立幂等键提交。创建成功但提交失败时必须保留草稿标识和原提交幂等键，只允许重试提交，禁止静默重复创建实例。
+- H5 发起遵循相同状态机：模板、表单正文、草稿和幂等键仅保留在页面内存；创建结果不确定时复用原正文与创建键，草稿提交失败时复用原版本与提交键。
+- 审批决策、草稿更新和模板发布必须带强 `If-Match`，并发版本冲突不得自动覆盖。
+  PC/H5 决策响应丢失或结果未知时，页面必须在内存中保留原实例、主体、动作、
+  版本与幂等键；仅允许复用完整原请求，服务端明确拒绝后才可丢弃。
+- R1 待办只在可信身份摘要包含 `erp:approval:task:decide` 时显示 PC/H5 普通
+  决策入口；R2 待办在普通工作台中只读，必须转入绑定操作摘要、主体、租户和
+  浏览器会话的 WebAuthn 受控确认流程。
+- R2 只读不是前端约定：普通 REST 决策、转交和加签在应用服务事务内读取不可变模板快照并返回 `APPROVAL_R2_STRONG_AUTH_REQUIRED`，不得产生动作、Outbox 或通知。只有已完成确认与强认证的 MCP 内部决策路径可以执行 R2。
+- R1 转交和加签必须同时具备细粒度 Scope、强 `If-Match` 和幂等键。PC 转交来源固定为当前可信主体；服务端仅允许主体本人或已验证的有效受托人操作，并复核目标为同租户有效 ERP 主体。加签只允许当前会签节点，或签和重复主体失败关闭。
+- 审批委托只允许当前可信主体为本人创建，代理人必须是同租户有效 ERP 主体；单次最长 30 天，同一委托人的有效期不得重叠。应用层先查重，UTC 覆盖日槽唯一多键索引对并发重叠最终兜底；同一 UTC 日内的相邻委托按保守策略视为冲突。撤销必须带强版本和独立幂等键。创建/撤销与最小披露 Outbox 事件同事务提交。
+- 模板创建、当前草稿更新、下一修订创建与发布分成明确状态；服务端继续强制
+  已发布版本不可修改，且创建人不能发布自己的草稿。
+- ERP 是组织与员工唯一主数据源。工作台不直接调用钉钉、飞书或 OP；下游分发由事务 Outbox、队列和平台适配器执行。
+
+## REST、事件、MCP 与审计一致性
+
+| 页面能力 | REST 应用服务 | 事件/集成 | MCP | 审计 |
+| --- | --- | --- | --- | --- |
+| 已发布模板目录与审批发起 | `GET /api/approvals/templates/published`、`PUT /api/approvals/instances/:id` 及实例创建/提交均复用 `ApprovalApplicationService` | 创建、草稿更新与提交分别通过事务 Outbox；外部平台只消费事件 | `erp://approval/templates/published` Resource 读取相同最小投影；既有 R1 Tool 仅提交已存在草稿，AI 不修改正文 | `approval.template.catalog.read`、`approval.instance.create/update/submit` |
+| 审批待办、详情与时间线 | `ApprovalApplicationService` | 无副作用；时间线读取追加日志投影 | `approval_get_inbox`、`approval_get`、`approval_timeline_get` | REST 时间线和 MCP Tool 分别记录 R0 读取审计 |
+| R1 审批决策 | 交互式 R1 应用服务边界 | 动作、Outbox、通知意图同事务 | AI 决策统一按 R2 prepare/execute 与强认证处理 | `approval.instance.decide` |
+| R1 转交与加签 | 交互式风险边界、`transferTask`、`addSigner` | 动作、Outbox、原待办取消与新待办通知同事务 | 当前不注册独立 Tool；AI 可从时间线读取结果 | `approval.instance.transfer/add_signer` |
+| 限期审批委托 | `GET/POST /api/approvals/delegations*` 与 `ApprovalApplicationService` | `approval_delegation.created/revoked` 最小事件 | `erp://approval/delegations/mine` R0 Resource；授权写入不注册 AI Tool | `approval.delegation.list/create/revoke` |
+| 模板草稿与发布 | `POST /api/approvals/templates`、`PUT /api/approvals/templates/:id` 与发布入口均复用 `ApprovalApplicationService` | 创建、草稿更新与发布事件进入事务 Outbox | 不注册模板写 Tool，业务能力不由前端或 AI 旁路 | `approval.template.create/update/publish` |
+| 组织浏览与创建 | `OrgApplicationService` | 组织版本事件进入 Outbox，下发钉钉/飞书/OP | 复用组织 R0/R1 工具 | `org.department.create`、`org.employee.create` |
+| 身份摘要与会话吊销 | 可信身份上下文与 `TokenGrantService` | 吊销不依赖外部平台成功 | OAuth/MCP 继续使用同一 Scope 模型 | `identity.profile.read`、`identity.session.revoke` |
+
+审批 Outbox 对上述模板、历史、实例和委托的十七类事件执行独立严格运行时契约。
+外层只接受 `type/tenantId/aggregateId/version/occurredAt/payload`，payload 按
+事件类型逐字段白名单；可信租户、聚合与版本在组装 CloudEvent data 时最后覆盖，
+因此调用方不能通过 payload 改写路由身份。事件时间必须为不晚于当前时刻的规范
+UTC ISO instant；决策结果与终态、代理标记、迁移状态与动作数、转交双方、撤回
+收件人及委托时段必须形成合法组合。任何受损事实都在事务 Outbox 写入和 OP 结果
+桥消费前失败关闭，稳定错误码为 `APPROVAL_OUTBOX_EVENT_INVALID` 或
+`APPROVAL_OUTBOX_TENANT_MISMATCH`。
+
+MCP 不得调用页面、读取浏览器令牌或直接访问数据库。页面新增呈现能力不得改变 MCP 风险分级，R3 始终不注册工具。
+
+已发布模板目录最多返回 200 个模板、每个模板最多 100 个字段，只包含模板标识、编码、名称、修订、风险级别、定义摘要、字段白名单和版本；不得返回 `tenantId`、流程节点、审批人解析器或发布审批人。MCP Resource 与 REST 使用同一应用服务投影。当前 MCP 确认记录不承载审批表单正文，避免 L3/L4 表单值进入明文命令；AI 可读取结构并辅助用户填写，但实例草稿必须由 ERP UI 创建，之后才可用既有 prepare/execute 提交。
+
+委托目录最多返回 200 条，只包含委托标识、委托人与代理人主体标识、有效期、状态和版本，不返回租户、权限快照、创建/撤销审计主体。AI 可以读取并解释当前授权关系，但创建、修改、延长和撤销持续授权均不注册 Tool，防止 AI 扩张审批权限。
+
+审批时间线以 `aggregateVersion` 升序读取，最多返回 500 条动作。仓储查询强制可信租户和实例标识；应用服务先执行与详情相同的实例读取授权。REST 与 MCP 仅返回动作标识、版本、类型、参与主体标识、结果和时间，不返回 `tenantId`、表单正文、Mongo 内部标识或平台凭据。
+
+## 验证与生产门禁
+
+仓库门禁包括 ESLint、TypeScript、Vitest、Next.js 生产构建、API 全量测试及既有安全/MCP/发布自测。这些结果只证明代码与门禁一致，不替代以下生产证据：
+
+- 目标域名、浏览器和实体认证器的 WebAuthn UAT；
+- 钉钉、飞书真实沙箱 SSO、消息、限流和令牌轮换联调；
+- PC/H5 无障碍、真实用户三步操作和关键分辨率验收；
+- 生产 Replica Set、Redis/BullMQ、WORM 审计、可观测性和回滚演练。

@@ -1,0 +1,201 @@
+import type { ActorContext } from '@gaoq/shared-types';
+import { describe, expect, it, vi } from 'vitest';
+
+import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
+import { payrollDigest } from '../domain/index.js';
+import { PayrollRunService } from './payroll-run.service.js';
+
+const tenant = { tenantId: 'tenant-001', source: 'access_token' as const };
+const actor: ActorContext = {
+  actorType: 'user', actorId: 'treasury-maker', tenantId: tenant.tenantId,
+  roleCodes: ['treasury'], scopes: ['erp:treasury:disbursement:prepare'],
+  departmentIds: [], traceId: 'trace-001',
+};
+const resultWithoutHash = {
+  currency: 'CNY' as const, inputHash: 'a'.repeat(43), grossPayMinor: 1_000_000,
+  taxableEarningsMinor: 1_000_000, withholdingTaxMinor: 10_500, netPayMinor: 839_500,
+  cumulativeAfter: {
+    taxableIncomeMinor: 1_000_000, basicDeductionMinor: 500_000,
+    socialInsuranceMinor: 100_000, housingFundMinor: 50_000,
+    specialAdditionalDeductionMinor: 0, otherDeductionMinor: 0, taxWithheldMinor: 10_500,
+  },
+  steps: [],
+};
+const result = Object.freeze({
+  ...resultWithoutHash, resultHash: payrollDigest(resultWithoutHash),
+});
+const runHash = payrollDigest([{
+  employeeId: 'employee-001', resultHash: result.resultHash,
+}]);
+
+function terminalQuery<T>(value: T) {
+  return { lean: () => ({ exec: () => Promise.resolve(value) }) };
+}
+
+function sortedQuery<T>(value: T) {
+  const query = { sort: vi.fn(), lean: vi.fn(), exec: vi.fn().mockResolvedValue(value) };
+  query.sort.mockReturnValue(query);
+  query.lean.mockReturnValue(query);
+  return query;
+}
+
+function assemble(aggregateHash = runHash) {
+  const context = new TenantContextService();
+  const period = {
+    id: 'period-001', tenantId: 'tenant-001', period: '2026-07', version: 6,
+    status: 'locked', activeRunId: 'run-001', lockedBy: 'payroll-locker',
+    strongAuthReferenceType: 'migration_lock_evidence',
+    resultHash: aggregateHash, employeeCount: 1, totalNetMinor: 839_500,
+    updatedAt: new Date('2026-07-22T08:00:00.000Z'),
+  };
+  const periods = { findOne: vi.fn().mockReturnValue(terminalQuery(period)) };
+  const calculationLines = { find: vi.fn().mockReturnValue(sortedQuery([{
+    id: 'line-001', employeeId: 'employee-001', resultHash: result.resultHash,
+    dataKeyId: 'key', dataIv: 'iv', dataCiphertext: 'cipher', dataAuthTag: 'tag',
+  }])) };
+  const crypto = { unprotect: vi.fn().mockReturnValue(result) };
+  const boundary = { assertLegacy: vi.fn() };
+  const service = new PayrollRunService(
+    {} as never, context, boundary as never,
+    {} as never, crypto as never, {} as never, periods as never,
+    {} as never, {} as never, {} as never, {} as never, {} as never,
+    calculationLines as never,
+  );
+  return { context, period, periods, calculationLines, crypto, boundary, service };
+}
+
+describe('Payroll 锁定代发源端口', () => {
+  it('逐行验密文结果并复核运行摘要、员工数和实发总额', async () => {
+    const store = assemble();
+    const source = await store.context.run({ tenant, actor }, () =>
+      store.service.getLockedDisbursementSource('period-001', 6));
+    expect(source).toEqual({
+      periodId: 'period-001', period: '2026-07', payrollRunId: 'run-001',
+      payrollLockedBy: 'payroll-locker', lockedAt: '2026-07-22T08:00:00.000Z',
+      payrollVersion: 6,
+      resultHash: runHash, totalNetMinor: 839_500,
+      lines: [{
+        calculationLineId: 'line-001', employeeId: 'employee-001',
+        netPayMinor: 839_500, resultHash: result.resultHash,
+      }],
+    });
+    expect(store.crypto.unprotect).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: 'tenant-001', resourceType: 'calculation_line', resourceId: 'line-001',
+    }), expect.any(Object));
+  });
+
+  it('迁移读取只接受可信服务与迁移锁定证据', async () => {
+    const store = assemble();
+    const migrationReader: ActorContext = {
+      actorType: 'service', actorId: 'migration-worker', tenantId: tenant.tenantId,
+      roleCodes: [], scopes: ['erp:migration:execute', 'erp:treasury:migration:write'],
+      departmentIds: [], traceId: 'trace-migration-001',
+    };
+    await expect(store.context.run({ tenant, actor: migrationReader }, () =>
+      store.service.getLockedDisbursementSourceForMigration('period-001', 6)))
+      .resolves.toMatchObject({ lockedAt: '2026-07-22T08:00:00.000Z' });
+
+    store.periods.findOne.mockReturnValue(terminalQuery({
+      ...store.period, strongAuthReferenceType: 'webauthn_evidence',
+    }));
+    await expect(store.context.run({ tenant, actor: migrationReader }, () =>
+      store.service.getLockedDisbursementSourceForMigration('period-001', 6)))
+      .rejects.toMatchObject({ response: { code: 'PAYROLL_DISBURSEMENT_SOURCE_NOT_LOCKED' } });
+
+    await expect(store.context.run({ tenant, actor }, () =>
+      store.service.getLockedDisbursementSourceForMigration('period-001', 6)))
+      .rejects.toMatchObject({ response: { code: 'PAYROLL_DISBURSEMENT_MIGRATION_READER_DENIED' } });
+
+    await expect(store.context.run({
+      tenant,
+      actor: {
+        ...migrationReader,
+        scopes: ['erp:treasury:migration:write'],
+      },
+    }, () => store.service.getLockedDisbursementSourceForMigration('period-001', 6)))
+      .rejects.toMatchObject({
+        response: { code: 'PAYROLL_DISBURSEMENT_MIGRATION_READER_DENIED' },
+      });
+  });
+
+  it('聚合摘要错位时拒绝向资金模块提供员工实发数据', async () => {
+    const store = assemble('z'.repeat(43));
+    await expect(store.context.run({ tenant, actor }, () =>
+      store.service.getLockedDisbursementSource('period-001', 6))).rejects.toMatchObject({
+      response: { code: 'PAYROLL_DISBURSEMENT_SOURCE_INTEGRITY_FAILED' },
+    });
+  });
+
+  it('代发来源引用要求白名单标识和正整数版本', async () => {
+    const store = assemble();
+    const invalid = [
+      ['bad id', 6],
+      ['period-001', 1.5],
+      ['period-001', 0],
+    ] as const;
+
+    for (const [periodId, version] of invalid) {
+      await expect(store.context.run({ tenant, actor }, () =>
+        store.service.getLockedDisbursementSource(periodId, version)))
+        .rejects.toMatchObject({
+          response: { code: 'PAYROLL_DISBURSEMENT_SOURCE_REFERENCE_INVALID' },
+        });
+    }
+    expect(store.periods.findOne).not.toHaveBeenCalled();
+  });
+
+  it('空员工集、重复员工和逐行摘要篡改均失败关闭', async () => {
+    const empty = assemble();
+    empty.period.employeeCount = 0;
+    empty.calculationLines.find.mockReturnValue(sortedQuery([]));
+    await expect(empty.context.run({ tenant, actor }, () =>
+      empty.service.getLockedDisbursementSource('period-001', 6)))
+      .rejects.toMatchObject({
+        response: { code: 'PAYROLL_DISBURSEMENT_SOURCE_INTEGRITY_FAILED' },
+      });
+
+    const duplicate = assemble();
+    duplicate.period.employeeCount = 2;
+    duplicate.calculationLines.find.mockReturnValue(sortedQuery([
+      {
+        id: 'line-001',
+        employeeId: 'employee-001',
+        resultHash: result.resultHash,
+        dataKeyId: 'key',
+        dataIv: 'iv',
+        dataCiphertext: 'cipher',
+        dataAuthTag: 'tag',
+      },
+      {
+        id: 'line-002',
+        employeeId: 'employee-001',
+        resultHash: result.resultHash,
+        dataKeyId: 'key',
+        dataIv: 'iv',
+        dataCiphertext: 'cipher',
+        dataAuthTag: 'tag',
+      },
+    ]));
+    await expect(duplicate.context.run({ tenant, actor }, () =>
+      duplicate.service.getLockedDisbursementSource('period-001', 6)))
+      .rejects.toMatchObject({
+        response: { code: 'PAYROLL_DISBURSEMENT_SOURCE_INTEGRITY_FAILED' },
+      });
+
+    const tampered = assemble();
+    tampered.calculationLines.find.mockReturnValue(sortedQuery([{
+      id: 'line-001',
+      employeeId: 'employee-001',
+      resultHash: 'x'.repeat(43),
+      dataKeyId: 'key',
+      dataIv: 'iv',
+      dataCiphertext: 'cipher',
+      dataAuthTag: 'tag',
+    }]));
+    await expect(tampered.context.run({ tenant, actor }, () =>
+      tampered.service.getLockedDisbursementSource('period-001', 6)))
+      .rejects.toMatchObject({
+        response: { code: 'PAYROLL_DISBURSEMENT_SOURCE_INTEGRITY_FAILED' },
+      });
+  });
+});

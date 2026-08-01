@@ -1,0 +1,42 @@
+namespaces:
+  control: ''
+  target: ''
+
+releaseName: ''
+workloadNamePrefix: ''
+serviceAccountName: ''
+
+identities:
+  planGroup: ''
+  applyGroup: ''
+
+runtimeReferences:
+  apiConfigMap: ''
+  workerConfigMap: ''
+
+targetQuota:
+  pods: '100'
+  services: '20'
+  configMaps: '20'
+  secrets: '20'
+  requestsCpu: '50'
+  requestsMemory: 100Gi
+  limitsCpu: '100'
+  limitsMemory: 200Gi
+
+targetLimitRange:
+  defaultCpu: '2'
+  defaultMemory: 2Gi
+  defaultEphemeralStorage: 1Gi
+  defaultRequestCpu: 100m
+  defaultRequestMemory: 128Mi
+  defaultRequestEphemeralStorage: 64Mi
+  maximumCpu: '4'
+  maximumMemory: 4Gi
+  maximumEphemeralStorage: 2Gi
+  minimumCpu: 10m
+  minimumMemory: 32Mi
+  minimumEphemeralStorage: 16Mi
+
+controlQuota:
+  configMaps: '25'

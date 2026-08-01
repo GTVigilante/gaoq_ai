@@ -1,0 +1,52 @@
+{{- range $component := list "api" "web" "website" }}
+{{- $settings := index $.Values.autoscaling $component }}
+{{- if $settings.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "gaoq-erp.fullname" $ }}-{{ $component }}
+  namespace: {{ include "gaoq-erp.targetNamespace" $ }}
+  labels:
+    {{- include "gaoq-erp.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "gaoq-erp.fullname" $ }}-{{ $component }}
+  minReplicas: {{ $settings.minReplicas }}
+  maxReplicas: {{ $settings.maxReplicas }}
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 25
+          periodSeconds: 60
+      selectPolicy: Min
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $settings.cpuUtilization }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ $settings.memoryUtilization }}
+---
+{{- end }}
+{{- end }}

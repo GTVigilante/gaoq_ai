@@ -1,0 +1,102 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "gaoq-platform-guardrails.policyName" . }}-target
+  labels:
+    {{- include "gaoq-platform-guardrails.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    namespaceSelector:
+      matchLabels:
+        gaoq.io/deployment-boundary: erp-target
+    resourceRules:
+      - apiGroups: ['']
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [serviceaccounts, services]
+      - apiGroups: [apps]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [deployments]
+      - apiGroups: [autoscaling]
+        apiVersions: [v2]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [horizontalpodautoscalers]
+      - apiGroups: [policy]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [poddisruptionbudgets]
+      - apiGroups: [networking.k8s.io]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [ingresses, networkpolicies]
+  variables:
+    - name: isApplyIdentity
+      expression: {{ printf "request.userInfo.groups.exists(group, group == '%s')" .Values.identities.applyGroup | quote }}
+    - name: subject
+      expression: "request.operation == 'DELETE' ? oldObject : object"
+  validations:
+    - expression: >-
+        variables.isApplyIdentity &&
+        (has(variables.subject.metadata.labels) &&
+        variables.subject.metadata.labels['app.kubernetes.io/part-of'] == 'gaoq-os' &&
+        variables.subject.metadata.labels['app.kubernetes.io/instance'] == '{{ .Values.releaseName }}' &&
+        (variables.subject.metadata.name == '{{ .Values.serviceAccountName }}' ||
+        variables.subject.metadata.name.startsWith('{{ .Values.workloadNamePrefix }}')))
+      message: 生产发布身份只能管理当前 GaoQ-OS release 的白名单资源。
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ include "gaoq-platform-guardrails.policyName" . }}-target
+  labels:
+    {{- include "gaoq-platform-guardrails.labels" . | nindent 4 }}
+spec:
+  policyName: {{ include "gaoq-platform-guardrails.policyName" . }}-target
+  validationActions: [Deny, Audit]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "gaoq-platform-guardrails.policyName" . }}-control
+  labels:
+    {{- include "gaoq-platform-guardrails.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    namespaceSelector:
+      matchLabels:
+        gaoq.io/deployment-boundary: helm-control
+    resourceRules:
+      - apiGroups: ['']
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [configmaps]
+  variables:
+    - name: isApplyIdentity
+      expression: {{ printf "request.userInfo.groups.exists(group, group == '%s')" .Values.identities.applyGroup | quote }}
+    - name: subject
+      expression: "request.operation == 'DELETE' ? oldObject : object"
+  validations:
+    - expression: >-
+        variables.isApplyIdentity &&
+        (variables.subject.metadata.name.startsWith('sh.helm.release.v1.{{ .Values.releaseName }}.v') &&
+        has(variables.subject.metadata.labels) &&
+        variables.subject.metadata.labels['owner'] == 'helm' &&
+        variables.subject.metadata.labels['name'] == '{{ .Values.releaseName }}')
+      message: 生产发布身份只能管理当前 Helm release 的非敏感 ConfigMap。
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ include "gaoq-platform-guardrails.policyName" . }}-control
+  labels:
+    {{- include "gaoq-platform-guardrails.labels" . | nindent 4 }}
+spec:
+  policyName: {{ include "gaoq-platform-guardrails.policyName" . }}-control
+  validationActions: [Deny, Audit]

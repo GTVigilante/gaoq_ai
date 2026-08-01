@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gaoq-erp.fullname" . }}-website
+  namespace: {{ include "gaoq-erp.targetNamespace" . }}
+  labels:
+    {{- include "gaoq-erp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: website
+  annotations:
+    gaoq.io/release-commit: {{ required "release.commitSha 必填" .Values.release.commitSha | quote }}
+    gaoq.io/deployment-manifest: {{ required "release.deploymentManifestHash 必填" .Values.release.deploymentManifestHash | quote }}
+    gaoq.io/website-public-config: {{ required "release.websitePublicConfigHash 必填" .Values.release.websitePublicConfigHash | quote }}
+spec:
+  replicas: {{ .Values.replicas.website }}
+  revisionHistoryLimit: 5
+  progressDeadlineSeconds: 600
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "gaoq-erp.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: website
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "gaoq-erp.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/part-of: gaoq-os
+        app.kubernetes.io/component: website
+      annotations:
+        gaoq.io/rollout-id: {{ required "release.rolloutId 必填" .Values.release.rolloutId | quote }}
+        gaoq.io/release-commit: {{ .Values.release.commitSha | quote }}
+        gaoq.io/deployment-manifest: {{ .Values.release.deploymentManifestHash | quote }}
+        gaoq.io/website-public-config: {{ .Values.release.websitePublicConfigHash | quote }}
+    spec:
+      serviceAccountName: {{ include "gaoq-erp.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      {{- with .Values.images.pullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: website
+          image: {{ include "gaoq-erp.image" .Values.images.website | quote }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          ports:
+            - { name: http, containerPort: 3002, protocol: TCP }
+          env:
+            - name: ERP_API_INTERNAL_ORIGIN
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ required "runtime.websiteConfigMapName 必填" .Values.runtime.websiteConfigMapName }}
+                  key: ERP_API_INTERNAL_ORIGIN
+            - name: MARKETING_REVALIDATE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "runtime.websiteSecretName 必填" .Values.runtime.websiteSecretName }}
+                  key: MARKETING_REVALIDATE_SECRET
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          startupProbe:
+            httpGet: { path: /zh-CN, port: http, scheme: HTTP }
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 24
+          livenessProbe:
+            httpGet: { path: /zh-CN, port: http, scheme: HTTP }
+            periodSeconds: 15
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /zh-CN, port: http, scheme: HTTP }
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources.website | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 128Mi }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: {{ .Values.topologySpreadKey }}
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "gaoq-erp.name" . }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: website
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      tolerations:
+        {{- toYaml .Values.tolerations | nindent 8 }}

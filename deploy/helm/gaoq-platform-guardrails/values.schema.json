@@ -1,0 +1,117 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "namespaces",
+    "releaseName",
+    "workloadNamePrefix",
+    "serviceAccountName",
+    "identities",
+    "runtimeReferences",
+    "targetQuota",
+    "targetLimitRange",
+    "controlQuota"
+  ],
+  "properties": {
+    "namespaces": {
+      "type": "object",
+      "required": ["control", "target"],
+      "properties": {
+        "control": { "$ref": "#/definitions/dnsLabel" },
+        "target": { "$ref": "#/definitions/dnsLabel" }
+      },
+      "additionalProperties": false
+    },
+    "releaseName": { "$ref": "#/definitions/dnsLabel" },
+    "workloadNamePrefix": { "$ref": "#/definitions/dnsLabel" },
+    "serviceAccountName": { "$ref": "#/definitions/dnsLabel" },
+    "identities": {
+      "type": "object",
+      "required": ["planGroup", "applyGroup"],
+      "properties": {
+        "planGroup": { "$ref": "#/definitions/group" },
+        "applyGroup": { "$ref": "#/definitions/group" }
+      },
+      "additionalProperties": false
+    },
+    "runtimeReferences": {
+      "type": "object",
+      "required": ["apiConfigMap", "workerConfigMap"],
+      "properties": {
+        "apiConfigMap": { "$ref": "#/definitions/dnsLabel" },
+        "workerConfigMap": { "$ref": "#/definitions/dnsLabel" }
+      },
+      "additionalProperties": false
+    },
+    "targetQuota": {
+      "type": "object",
+      "required": ["pods", "services", "configMaps", "secrets", "requestsCpu", "requestsMemory", "limitsCpu", "limitsMemory"],
+      "properties": {
+        "pods": { "$ref": "#/definitions/positiveIntegerString" },
+        "services": { "$ref": "#/definitions/positiveIntegerString" },
+        "configMaps": { "$ref": "#/definitions/positiveIntegerString" },
+        "secrets": { "$ref": "#/definitions/positiveIntegerString" },
+        "requestsCpu": { "$ref": "#/definitions/quantity" },
+        "requestsMemory": { "$ref": "#/definitions/quantity" },
+        "limitsCpu": { "$ref": "#/definitions/quantity" },
+        "limitsMemory": { "$ref": "#/definitions/quantity" }
+      },
+      "additionalProperties": false
+    },
+    "targetLimitRange": {
+      "type": "object",
+      "required": [
+        "defaultCpu", "defaultMemory", "defaultEphemeralStorage",
+        "defaultRequestCpu", "defaultRequestMemory", "defaultRequestEphemeralStorage",
+        "maximumCpu", "maximumMemory", "maximumEphemeralStorage",
+        "minimumCpu", "minimumMemory", "minimumEphemeralStorage"
+      ],
+      "properties": {
+        "defaultCpu": { "$ref": "#/definitions/quantity" },
+        "defaultMemory": { "$ref": "#/definitions/quantity" },
+        "defaultEphemeralStorage": { "$ref": "#/definitions/quantity" },
+        "defaultRequestCpu": { "$ref": "#/definitions/quantity" },
+        "defaultRequestMemory": { "$ref": "#/definitions/quantity" },
+        "defaultRequestEphemeralStorage": { "$ref": "#/definitions/quantity" },
+        "maximumCpu": { "$ref": "#/definitions/quantity" },
+        "maximumMemory": { "$ref": "#/definitions/quantity" },
+        "maximumEphemeralStorage": { "$ref": "#/definitions/quantity" },
+        "minimumCpu": { "$ref": "#/definitions/quantity" },
+        "minimumMemory": { "$ref": "#/definitions/quantity" },
+        "minimumEphemeralStorage": { "$ref": "#/definitions/quantity" }
+      },
+      "additionalProperties": false
+    },
+    "controlQuota": {
+      "type": "object",
+      "required": ["configMaps"],
+      "properties": {
+        "configMaps": { "$ref": "#/definitions/positiveIntegerString" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "dnsLabel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 63,
+      "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+    },
+    "group": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9:._/@-]+$"
+    },
+    "positiveIntegerString": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]{0,5}$"
+    },
+    "quantity": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*(?:m|Ki|Mi|Gi|Ti|Pi|Ei)?$"
+    }
+  }
+}

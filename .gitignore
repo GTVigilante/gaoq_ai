@@ -1,0 +1,14 @@
+.DS_Store
+wordpress backup/
+node_modules/
+.next/
+dist/
+coverage/
+coverage-gates/
+coverage-analysis/
+.env
+.env.*
+!.env.example
+.local-runtime/
+*.log
+*.tsbuildinfo

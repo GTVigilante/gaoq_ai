@@ -1,0 +1,26 @@
+{
+  "name": "@gaoq/website",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev -p 3002",
+    "build": "next build",
+    "coverage:public-contract": "vitest run app/lib/marketing-public-contract.test.ts app/lib/cms.test.ts app/api/revalidate/route.test.ts --coverage --coverage.include=app/lib/marketing-public-contract.ts --coverage.include=app/lib/cms.ts --coverage.include=app/api/revalidate/route.ts --coverage.reporter=text --coverage.reportsDirectory=coverage-gates/public-contract --coverage.thresholds.perFile --coverage.thresholds.lines=90 --coverage.thresholds.functions=90 --coverage.thresholds.branches=90 --coverage.thresholds.statements=90",
+    "start": "next start -p 3002",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "16.2.11",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.9.3",
+    "vitest": "4.1.10"
+  }
+}

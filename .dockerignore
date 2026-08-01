@@ -1,0 +1,20 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+**/.next
+apps/*/.next
+**/coverage
+apps/*/coverage
+packages/*/coverage
+**/dist
+apps/*/dist
+packages/*/dist
+**/node_modules
+apps/*/node_modules
+packages/*/node_modules
+bearer.ignore
+docs
+node_modules
+wordpress backup

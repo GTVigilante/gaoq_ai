@@ -1,0 +1,164 @@
+groups:
+  - name: gaoq-phase-1-api
+    interval: 30s
+    rules:
+      - alert: GaoqApiHighErrorRate
+        expr: |
+          sum(rate(gaoq_http_requests_total{status_code=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(gaoq_http_requests_total[5m])), 0.001) > 0.01
+        for: 10m
+        labels:
+          severity: critical
+          service: erp-api
+        annotations:
+          summary: ERP API 五分钟错误率超过 1%
+          runbook: docs/phase-1/03-observability-slo-runbook.md
+
+      - alert: GaoqApiP95LatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(gaoq_http_request_duration_seconds_bucket[5m]))
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          service: erp-api
+        annotations:
+          summary: ERP API P95 延迟持续超过 500ms
+          runbook: docs/phase-1/03-observability-slo-runbook.md
+
+      - alert: GaoqAuditAppendFailure
+        expr: increase(gaoq_audit_append_total{outcome="failure"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          service: audit
+        annotations:
+          summary: 持久审计链追加失败
+          runbook: docs/phase-1/02-audit-integrity-runbook.md
+
+      - alert: GaoqAuditTransactionRetryBurst
+        expr: increase(gaoq_audit_transaction_retries_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: audit
+        annotations:
+          summary: 审计链事务重试突增
+          runbook: docs/phase-1/02-audit-integrity-runbook.md
+
+      - alert: GaoqAuditVerificationFailure
+        expr: increase(gaoq_audit_verification_total{outcome="failure"}[15m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          service: audit
+        annotations:
+          summary: 审计链完整性验证失败
+          runbook: docs/phase-1/02-audit-integrity-runbook.md
+
+      - alert: GaoqAuditWormExportFailure
+        expr: increase(gaoq_audit_worm_exports_total{outcome="failure"}[15m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: audit
+        annotations:
+          summary: 外部 WORM 锚定失败
+          runbook: docs/phase-1/02-audit-integrity-runbook.md
+
+      - alert: GaoqAuditWormAnchorStale
+        expr: |
+          (time() - max(gaoq_audit_worm_last_success_timestamp_seconds) > 86400)
+          or absent(gaoq_audit_worm_last_success_timestamp_seconds)
+        for: 30m
+        labels:
+          severity: critical
+          service: audit
+        annotations:
+          summary: 超过 24 小时没有成功的外部 WORM 锚点
+          runbook: docs/phase-1/02-audit-integrity-runbook.md
+
+      - alert: GaoqQueueBacklogHigh
+        expr: sum by (queue) (gaoq_queue_jobs{state=~"waiting|delayed"}) > 100
+        for: 10m
+        labels:
+          severity: warning
+          service: worker
+        annotations:
+          summary: BullMQ 队列积压持续超过 100
+          runbook: docs/phase-1/03-observability-slo-runbook.md
+
+      - alert: GaoqQueueFailedJobs
+        expr: gaoq_queue_jobs{state="failed"} > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: worker
+        annotations:
+          summary: BullMQ 队列存在失败任务
+          runbook: docs/phase-1/03-observability-slo-runbook.md
+
+      - alert: GaoqQueueMetricsUnavailable
+        expr: increase(gaoq_queue_metrics_poll_failures_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: worker
+        annotations:
+          summary: BullMQ 队列指标采集失败
+          runbook: docs/phase-1/03-observability-slo-runbook.md
+
+      - alert: GaoqApprovalNotificationStateUnavailable
+        expr: |
+          increase(
+            gaoq_approval_notification_delivery_total{outcome="state_unavailable"}[5m]
+          ) > 0
+        for: 0m
+        labels:
+          severity: critical
+          service: approval-notification
+        annotations:
+          summary: 审批通知平台发送后本地终态不可确认
+          runbook: docs/phase-2/03-observability-slo-runbook.md
+
+      - alert: GaoqApprovalNotificationDeadLetter
+        expr: |
+          increase(
+            gaoq_approval_notification_delivery_total{outcome="dead"}[15m]
+          ) > 0
+        for: 0m
+        labels:
+          severity: warning
+          service: approval-notification
+        annotations:
+          summary: 审批通知进入死信或结果不确定状态
+          runbook: docs/phase-2/03-observability-slo-runbook.md
+
+      - alert: GaoqOrgDeliveryStateUnavailable
+        expr: |
+          increase(
+            gaoq_org_delivery_total{outcome="state_unavailable"}[5m]
+          ) > 0
+        for: 0m
+        labels:
+          severity: critical
+          service: org-integration
+        annotations:
+          summary: 组织主数据平台写入后本地终态不可确认
+          runbook: docs/phase-1/03-observability-slo-runbook.md
+
+      - alert: GaoqOrgDeliveryManualReview
+        expr: |
+          increase(
+            gaoq_org_delivery_total{outcome=~"manual_review|dead"}[15m]
+          ) > 0
+        for: 0m
+        labels:
+          severity: warning
+          service: org-integration
+        annotations:
+          summary: 组织主数据投递进入人工核验或死信
+          runbook: docs/phase-1/03-observability-slo-runbook.md

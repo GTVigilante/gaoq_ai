@@ -1,0 +1,12 @@
+namespaces:
+  control: gaoq-erp-release-control
+  target: gaoq-erp-prod
+releaseName: gaoq-prod
+workloadNamePrefix: gaoq-prod-gaoq-erp
+serviceAccountName: gaoq-erp
+identities:
+  planGroup: gaoq:phase6-deployment-plan
+  applyGroup: gaoq:phase6-deployment-apply
+runtimeReferences:
+  apiConfigMap: gaoq-erp-api-runtime-config
+  workerConfigMap: gaoq-erp-worker-runtime-config

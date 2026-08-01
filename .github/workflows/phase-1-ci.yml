@@ -1,0 +1,74 @@
+name: Phase 1 工程质量门禁
+
+on:
+  pull_request:
+    paths:
+      - 'apps/**'
+      - 'packages/**'
+      - 'docker/**'
+      - 'docker-compose.yml'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig.base.json'
+      - 'eslint.config.mjs'
+      - '.github/workflows/**'
+      - 'scripts/**'
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/**'
+      - 'packages/**'
+      - 'docker/**'
+      - 'docker-compose.yml'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig.base.json'
+      - 'eslint.config.mjs'
+      - '.github/workflows/**'
+      - 'scripts/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-1-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: 检查、测试与构建
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 10.29.2
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 执行工程门禁
+        run: pnpm check
+
+      - name: 构建工作区
+        env:
+          NEXT_PUBLIC_WEBSITE_ORIGIN: https://www.example.invalid
+          NEXT_PUBLIC_ERP_API_ORIGIN: https://erp.example.invalid
+          NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_ORIGIN: https://captcha.example.invalid
+          NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL: https://captcha.example.invalid/widget
+        run: pnpm build

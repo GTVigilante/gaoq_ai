@@ -1,0 +1,85 @@
+# Phase 1 可观测性、SLO 与负载基线运行手册
+
+## 1. 抓取边界
+
+- API 指标：`GET /api/metrics`；Worker 指标：独立端口 `GET /metrics`，默认 `9464`。
+- 两个端点都只接受 Secret Manager 注入的 `METRICS_BEARER_TOKEN`，不得复用用户、服务或 MCP OAuth Token。
+- Worker 指标端口只承载 `/metrics`，不会装配任何 ERP 业务控制器。生产网络策略仅允许 Prometheus 抓取节点访问。
+- 指标标签只允许规范 HTTP Method、编译期控制器/方法、状态码和固定结果枚举；
+  未知 Method 收敛为 `OTHER`，非法状态码收敛为 `500`；禁止租户、员工、资源
+  ID、trace ID 或外部响应文本进入标签。
+- 两类指标响应必须禁止缓存和 MIME 嗅探；Worker 未配置独立凭据时不启动监听，
+  鉴权失败返回标准 Bearer challenge，渲染异常不返回内部正文。健康探针、错误
+  收敛及连接边界详见
+  [`06-runtime-boundary-runbook.md`](./06-runtime-boundary-runbook.md)。
+
+## 2. Phase 1 指标与 SLO
+
+| 范围 | 指标 | Phase 1 门槛 |
+|---|---|---|
+| HTTP 可用性 | `gaoq_http_requests_total` | 月度非计划 5xx 比例 `< 0.1%` |
+| HTTP 延迟 | `gaoq_http_request_duration_seconds` | P95 `< 500ms`，P99 `< 1s` |
+| 审计写入 | `gaoq_audit_append_total` | 失败数必须为 `0`；业务写入随审计失败关闭 |
+| 审计并发 | `gaoq_audit_transaction_retries_total` | 5 分钟重试 `<= 10`，持续超限排查热点租户 |
+| 完整性验证 | `gaoq_audit_verification_total` | 失败数必须为 `0` |
+| 外部锚定 | `gaoq_audit_worm_exports_total` | 失败数必须为 `0` |
+| 锚点新鲜度 | `gaoq_audit_worm_last_success_timestamp_seconds` | 任一环境不得超过 24 小时无成功锚点 |
+| 队列积压/死信 | `gaoq_queue_jobs` | waiting+delayed 持续 `< 100`；failed 必须为 `0` |
+| 队列采集 | `gaoq_queue_metrics_poll_failures_total` | 失败数必须为 `0` |
+| 组织外部投递 | `gaoq_org_delivery_total` | `state_unavailable` 必须为 `0`；`manual_review`/`dead` 必须当班清零 |
+| 组织投递耗时 | `gaoq_org_delivery_duration_seconds` | P95 `< 5s`，持续超限检查平台限流与网络 |
+
+Prometheus 规则位于 `deploy/observability/phase-1-alerts.yml`。生产导入前必须用目标 Prometheus 版本的 `promtool check rules` 校验，并把 `critical` 路由到安全值班与平台值班双通道。
+
+生产 Kubernetes 抓取网络边界由 [`deploy/helm/gaoq-erp`](../../deploy/helm/gaoq-erp/README.md) 强制：监控命名空间和 Prometheus Pod 必须同时匹配受控标签；API 只开放 `3001`，Worker 只开放 `9464`，Web 不向监控开放后端端口。真实集群必须验证网络插件执行了 NetworkPolicy，不能只检查 YAML。
+
+## 3. WORM 锚定契约
+
+Worker 每六小时选择最久未锚定的租户，先完整验链，再生成固定字段顺序的 `gaoq.audit.anchor.v1` 载荷。载荷包含租户、序号、链头哈希、审计 HMAC key id、链更新时间和请求保留期；随后由独立 Ed25519 密钥签名。
+
+调度器固定为 `audit-maintenance:anchor-pending`，任务名固定为 `anchor-pending`，
+每批最多 100 个租户，失败最多五次并从 60 秒开始指数退避。Processor 不解析任何
+业务载荷；任务名或空载荷契约不匹配时使用稳定错误码失败。`audit-maintenance`
+队列在启动时立即、随后每十五秒采集 waiting/active/delayed/failed，前一次采集
+未结束时禁止并发访问 Redis。
+
+外部端点必须：
+
+1. 使用 `payloadHash` 作为幂等键，对相同键和相同载荷返回同一回执；
+2. 把载荷、签名、签名 key id 写入由另一权限域管理的合规保留/WORM 存储；
+3. 返回 `receiptId`、不可变 `objectVersion`、相同 `payloadHash`、`anchoredAt` 和不早于请求值的 `retainedUntil`；
+4. 请求必须以规范锚点载荷复算 SHA-256，并绑定规范 64 字节 Ed25519 签名、签名
+   key id 与保留期；端点和凭据必须成套配置，凭据不得进入 URL、日志或错误；
+5. 禁止重定向；只接受 HTTPS 443 和 UTF-8 `application/json`，声明长度与流式
+   实际长度均不得超过 16 KiB，网络超时为 10 秒；
+6. 回执 `anchoredAt` 不得超过当前时间五分钟或晚于 `retainedUntil`，回执保留期
+   不得短于请求；非规范对象版本、破损 JSON 和未知字段全部失败关闭；
+7. 独立保存 Ed25519 公钥和验签程序，定期从 WORM 平台抽样回读并验签。
+
+生产 `AUDIT_WORM_ENDPOINT` 必须是 HTTPS 443、不得带凭据/查询/fragment，且不得与 ERP 授权域同源。专用私钥不得复用 OAuth 签名密钥或审计 HMAC 密钥。
+
+## 4. 负载基线
+
+在隔离测试环境启动 API 后执行：
+
+```bash
+LOAD_BASE_URL=https://erp-test.example.com \
+LOAD_DURATION_SECONDS=60 \
+LOAD_CONCURRENCY=50 \
+node scripts/load/phase-1-http-load.mjs
+```
+
+脚本只访问存活探针和 OAuth 元数据，不创建业务数据。门禁为错误率 `<= 0.1%`、P95 `<= 250ms`、P99 `<= 500ms`；结果 JSON 必须随发布证据归档。此轻量基线不能替代带真实 MongoDB Replica Set、Redis、Worker、外部沙箱和 24 小时 soak test 的容量验收。
+
+## 5. 故障处置
+
+- 审计追加或验链失败：立即停止 R2/R3 写入发布，保全 MongoDB 快照，禁止修链或删除事件。
+- WORM 失败：确认外部端点、凭据、保留策略与幂等回执；在 24 小时窗口内恢复并重新运行待锚定任务。
+- `audit-maintenance` 出现 failed 或连续队列采集失败：冻结新增 R2/R3 发布，
+  先确认 WORM、Redis 和审计链完整性；禁止修改任务载荷、直接删除失败任务或经
+  MCP/AI 触发重放。
+- HTTP 错误率/延迟超限：按控制器和方法聚合定位；不得临时加入租户标签排查，使用 trace 日志做租户级诊断。
+- 指标端点鉴权失败：检查 Secret Manager 版本与 Prometheus 抓取配置，禁止把 token 写入 URL、日志或告警注释。
+- 组织投递 `state_unavailable`：立即冻结同聚合后续版本，按
+  [`04-org-delivery-reliability-runbook.md`](./04-org-delivery-reliability-runbook.md)
+  保全现场、平台只读核验和 R2 恢复；禁止直接重放过期 `processing`。

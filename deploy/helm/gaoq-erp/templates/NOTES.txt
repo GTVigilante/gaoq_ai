@@ -1,0 +1,10 @@
+高企 OS ERP 工作负载清单已生成，但这不代表获准部署。
+
+部署前必须满足：
+1. 外部创建 API、Worker、ERP Web 与 Website 各自的 ConfigMap/Secret，Chart 不创建或保存敏感值；
+   Website ConfigMap 只提供 ERP_API_INTERNAL_ORIGIN，Website Secret 只提供 MARKETING_REVALIDATE_SECRET；
+   NEXT_PUBLIC_* 必须在镜像构建时固化，禁止依赖 Pod 启动后注入；
+2. 镜像必须使用经过供应链验证的 sha256 摘要；
+3. release.commitSha、release.deploymentManifestHash、release.rolloutId 必须与发布授权证据一致；
+4. NetworkPolicy 中的入口、监控、DNS 标签及私网 CIDR 必须由平台负责人复核；
+5. 生产发布仍需通过 Go/No-Go、变更审批和人工执行窗口，AI/MCP 不得自行部署。

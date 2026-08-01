@@ -1,0 +1,510 @@
+name: Phase 5 安全与供应链门禁
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '23 18 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-5-security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  github-actions-contract:
+    name: GitHub Actions 语义门禁
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装校验过摘要的 Actionlint 1.7.12
+        shell: bash
+        run: |
+          mkdir --parents "$RUNNER_TEMP/actionlint-bin"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$RUNNER_TEMP/actionlint.tar.gz" \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $RUNNER_TEMP/actionlint.tar.gz" \
+            | sha256sum --check --strict
+          tar --extract --gzip --file "$RUNNER_TEMP/actionlint.tar.gz" \
+            --directory "$RUNNER_TEMP/actionlint-bin" actionlint
+
+      - name: 校验全部工作流语法、表达式与 Shell
+        run: |
+          "$RUNNER_TEMP/actionlint-bin/actionlint"
+
+  kubernetes-deployment:
+    name: Kubernetes 生产编排契约
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - name: 安装校验过摘要的 Helm 4.2.0
+        shell: bash
+        run: |
+          mkdir --parents "$RUNNER_TEMP/helm-bin"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$RUNNER_TEMP/helm.tar.gz" \
+            https://get.helm.sh/helm-v4.2.0-linux-amd64.tar.gz
+          echo "97dbeb971be4ac4b27e3839976d9564c0fb35c6f3b1da89dd1e292d236af4096  $RUNNER_TEMP/helm.tar.gz" \
+            | sha256sum --check --strict
+          tar --extract --gzip --file "$RUNNER_TEMP/helm.tar.gz" \
+            --directory "$RUNNER_TEMP/helm-bin"
+
+      - name: 安装校验过摘要的 Kubeconform 0.7.0
+        shell: bash
+        run: |
+          mkdir --parents "$RUNNER_TEMP/kubeconform-bin"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$RUNNER_TEMP/kubeconform.tar.gz" \
+            https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz
+          echo "c31518ddd122663b3f3aa874cfe8178cb0988de944f29c74a0b9260920d115d3  $RUNNER_TEMP/kubeconform.tar.gz" \
+            | sha256sum --check --strict
+          tar --extract --gzip --file "$RUNNER_TEMP/kubeconform.tar.gz" \
+            --directory "$RUNNER_TEMP/kubeconform-bin" kubeconform
+
+      - name: 校验并渲染生产编排
+        shell: bash
+        run: |
+          node scripts/validate-kubernetes-deployment.mjs
+          "$RUNNER_TEMP/helm-bin/linux-amd64/helm" lint deploy/helm/gaoq-erp \
+            --strict --values deploy/helm/gaoq-erp/ci-values.yaml
+          "$RUNNER_TEMP/helm-bin/linux-amd64/helm" template ci deploy/helm/gaoq-erp \
+            --values deploy/helm/gaoq-erp/ci-values.yaml \
+            > "$RUNNER_TEMP/gaoq-erp-rendered.yaml"
+          node scripts/validate-kubernetes-deployment.mjs "$RUNNER_TEMP/gaoq-erp-rendered.yaml"
+          "$RUNNER_TEMP/kubeconform-bin/kubeconform" \
+            -strict -summary -kubernetes-version 1.30.0 \
+            -schema-location 'https://raw.githubusercontent.com/yannh/kubernetes-json-schema/987aa4ee419358d6ae108f54f6c42f4e90f22b70/{{.NormalizedKubernetesVersion}}-standalone-strict/{{.ResourceKind}}.json' \
+            "$RUNNER_TEMP/gaoq-erp-rendered.yaml"
+          node scripts/validate-kubernetes-platform-guardrails.mjs
+          "$RUNNER_TEMP/helm-bin/linux-amd64/helm" lint deploy/helm/gaoq-platform-guardrails \
+            --strict --values deploy/helm/gaoq-platform-guardrails/ci-values.yaml
+          if "$RUNNER_TEMP/helm-bin/linux-amd64/helm" template guardrails-invalid \
+            deploy/helm/gaoq-platform-guardrails \
+            --namespace gaoq-erp-release-control \
+            --values deploy/helm/gaoq-platform-guardrails/ci-values.yaml > /dev/null 2>&1; then
+            echo "平台护栏不得把 release 存入控制命名空间" >&2
+            exit 1
+          fi
+          if "$RUNNER_TEMP/helm-bin/linux-amd64/helm" template guardrails-invalid \
+            deploy/helm/gaoq-platform-guardrails \
+            --namespace gaoq-platform-system \
+            --values deploy/helm/gaoq-platform-guardrails/ci-values.yaml \
+            --set forbidden=value > /dev/null 2>&1; then
+            echo "平台护栏 values schema 必须拒绝未知字段" >&2
+            exit 1
+          fi
+          "$RUNNER_TEMP/helm-bin/linux-amd64/helm" template guardrails deploy/helm/gaoq-platform-guardrails \
+            --namespace gaoq-platform-system \
+            --values deploy/helm/gaoq-platform-guardrails/ci-values.yaml \
+            > "$RUNNER_TEMP/gaoq-platform-guardrails-rendered.yaml"
+          node scripts/validate-kubernetes-platform-guardrails.mjs \
+            "$RUNNER_TEMP/gaoq-platform-guardrails-rendered.yaml"
+          "$RUNNER_TEMP/kubeconform-bin/kubeconform" \
+            -strict -summary -kubernetes-version 1.30.0 \
+            -schema-location 'https://raw.githubusercontent.com/yannh/kubernetes-json-schema/987aa4ee419358d6ae108f54f6c42f4e90f22b70/{{.NormalizedKubernetesVersion}}-standalone-strict/{{.ResourceKind}}.json' \
+            "$RUNNER_TEMP/gaoq-platform-guardrails-rendered.yaml"
+
+  dependency-review:
+    name: 依赖变更审查
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 10.29.2
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 从锁文件安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 阻断高危依赖
+        run: pnpm audit --audit-level high
+
+      - name: 阻断禁用或未识别许可证
+        run: pnpm security:licenses
+
+  sast:
+    name: Bearer SAST
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装校验过摘要的 Bearer 2.0.2
+        shell: bash
+        run: |
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$RUNNER_TEMP/bearer.tar.gz" \
+            https://github.com/Bearer/bearer/releases/download/v2.0.2/bearer_2.0.2_linux_amd64.tar.gz
+          echo "865c80c5f80aaca1f83e98bca4decb0fd5b5d024e13f8ec48e94d69430d0d23b  $RUNNER_TEMP/bearer.tar.gz" \
+            | sha256sum --check --strict
+          tar --extract --gzip --file "$RUNNER_TEMP/bearer.tar.gz" --directory "$RUNNER_TEMP"
+
+      - name: 阻断 High 与 Critical SAST 发现
+        run: >-
+          "$RUNNER_TEMP/bearer" scan .
+          --severity critical,high
+          --fail-on-severity critical,high
+          --exit-code 1
+          --ignore-file bearer.ignore
+          --skip-path node_modules,.next,dist,coverage
+          --disable-version-check
+          --quiet
+          --no-color
+
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出完整历史
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 安装校验过摘要的 Gitleaks 8.30.1
+        shell: bash
+        run: |
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$RUNNER_TEMP/gitleaks.tar.gz" \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $RUNNER_TEMP/gitleaks.tar.gz" \
+            | sha256sum --check --strict
+          tar --extract --gzip --file "$RUNNER_TEMP/gitleaks.tar.gz" --directory "$RUNNER_TEMP" gitleaks
+
+      - name: 扫描提交历史中的密钥
+        run: >-
+          "$RUNNER_TEMP/gitleaks" git
+          --config .gitleaks.toml
+          --redact
+          --no-banner
+          --exit-code 1
+          .
+
+  supply-chain:
+    name: SCA、SBOM 与仓库扫描
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 10.29.2
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 从锁文件安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 阻断高危和严重依赖漏洞
+        run: pnpm audit --audit-level high
+
+      - name: 生成 SPDX JSON SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: .
+          format: spdx-json
+          output-file: gaoq-os.spdx.json
+          artifact-name: gaoq-os-sbom
+          upload-artifact: true
+          upload-artifact-retention: 30
+
+      - name: 扫描依赖、密钥和错误配置
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: false
+          skip-dirs: node_modules,.next,dist,coverage
+          timeout: 10m
+
+  performance-contract:
+    name: 性能容量契约
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - name: 安装校验过摘要的 k6 2.0.0
+        shell: bash
+        run: |
+          mkdir --parents "$RUNNER_TEMP/k6-bin"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$RUNNER_TEMP/k6.tar.gz" \
+            https://github.com/grafana/k6/releases/download/v2.0.0/k6-v2.0.0-linux-amd64.tar.gz
+          echo "2ae87d976f6cdba17185bdd980d8819a3a98e9092c6f0638cd58272ecefc8b90  $RUNNER_TEMP/k6.tar.gz" \
+            | sha256sum --check --strict
+          tar --extract --gzip --file "$RUNNER_TEMP/k6.tar.gz" \
+            --directory "$RUNNER_TEMP/k6-bin" --strip-components=1
+
+      - name: 检查只读容量脚本与证据契约
+        run: |
+          "$RUNNER_TEMP/k6-bin/k6" inspect \
+            --env PERFORMANCE_INSPECT_ONLY=true \
+            --env PERFORMANCE_BASE_URL=https://erp.example.invalid \
+            --env PERFORMANCE_AS_OF=2026-07-01 \
+            --env PERFORMANCE_API_RESULT_PATH=/tmp/phase-5-k6-inspect.json \
+            scripts/load/phase-5-api-capacity.js
+          node scripts/performance/validate-phase-5-capacity.mjs --self-test
+
+  dast-asvs-contract:
+    name: DAST 与 ASVS 契约
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - name: 校验 OWASP ASVS 5.0.0 官方目录
+        shell: bash
+        run: |
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$RUNNER_TEMP/asvs-5.0.0.csv" \
+            https://github.com/OWASP/ASVS/releases/download/v5.0.0_release/OWASP_Application_Security_Verification_Standard_5.0.0_en.csv
+          echo "6124dba176dc563f66363a11ae0c47f9b86b8a4a84c66a793670bd196ed86cd5  $RUNNER_TEMP/asvs-5.0.0.csv" \
+            | sha256sum --check --strict
+
+      - name: 检查 DAST 安全边界与证据契约
+        run: |
+          node scripts/security/run-phase-5-dast.mjs --self-test
+          node scripts/security/validate-phase-5-dast-evidence.mjs --self-test
+
+  migration-rehearsal-contract:
+    name: 全量迁移三次演练聚合证据契约
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - name: 检查全部 Scope、三轮窗口与版本绑定契约
+        run: node scripts/migration/validate-phase-5-migration-rehearsal-evidence.mjs --self-test
+
+  resilience-contract:
+    name: 容灾恢复与外部断连契约
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - name: 检查韧性证据契约与现场工作流边界
+        run: |
+          node scripts/resilience/validate-phase-5-resilience-evidence.mjs --self-test
+          node scripts/resilience/validate-phase-5-resilience-evidence.mjs --print-contract > /dev/null
+          node scripts/validate-security-workflow.mjs
+
+  readiness-contract:
+    name: 七类发布就绪 verdict 契约
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - name: 检查工程、供应链、镜像、权限、UAT、隐私与运行证据
+        run: node scripts/release/validate-phase-5-readiness-evidence.mjs --self-test
+
+  go-no-go-contract:
+    name: 跨职能 Go-No-Go 契约
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 10.29.2
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 检查最终放行契约与现场工作流边界
+        run: |
+          pnpm install --frozen-lockfile
+          node scripts/release/validate-phase-5-go-no-go-evidence.mjs --self-test
+          node scripts/release/validate-phase-5-go-no-go-evidence.mjs --print-contract > /dev/null
+          node scripts/validate-security-workflow.mjs
+
+  mcp-catalog-contract:
+    name: MCP 完整能力目录契约
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 10.29.2
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装冻结依赖并验证真实运行时目录
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm mcp:catalog:self-test
+
+  container-images:
+    name: 生产镜像（${{ matrix.image }}）
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: api
+            target: erp-api
+          - image: worker
+            target: erp-worker
+          - image: web
+            target: erp-web
+          - image: website
+            target: erp-website
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+
+      - name: 构建不可变生产镜像
+        shell: bash
+        run: |
+          docker build \
+            --target "${{ matrix.target }}" \
+            --build-arg IMAGE_REVISION="$GITHUB_SHA" \
+            --build-arg NEXT_PUBLIC_ERP_API_ORIGIN=https://erp.example.invalid \
+            --build-arg NEXT_PUBLIC_WEBSITE_ORIGIN=https://www.example.invalid \
+            --build-arg NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_ORIGIN=https://captcha.example.invalid \
+            --build-arg NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL=https://captcha.example.invalid/widget \
+            --build-arg ERP_MOBILE_FRAME_ANCESTORS=https://container.example.invalid \
+            --tag "gaoq-os/${{ matrix.image }}:$GITHUB_SHA" \
+            .
+
+      - name: 验证非 root 用户与健康检查
+        shell: bash
+        run: |
+          image="gaoq-os/${{ matrix.image }}:$GITHUB_SHA"
+          configured_user="$(docker image inspect "$image" --format '{{.Config.User}}')"
+          healthcheck="$(docker image inspect "$image" --format '{{json .Config.Healthcheck.Test}}')"
+          test "$configured_user" = '65532:65532'
+          test "$healthcheck" != 'null'
+
+      - name: 生成生产镜像 SPDX JSON SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: gaoq-os/${{ matrix.image }}:${{ github.sha }}
+          format: spdx-json
+          output-file: gaoq-os-${{ matrix.image }}.spdx.json
+          artifact-name: gaoq-os-${{ matrix.image }}-sbom
+          upload-artifact: true
+          upload-artifact-retention: 30
+
+      - name: 阻断生产镜像 High 与 Critical 漏洞
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: gaoq-os/${{ matrix.image }}:${{ github.sha }}
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: false
+          timeout: 10m

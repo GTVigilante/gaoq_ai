@@ -1,0 +1,55 @@
+release:
+  commitSha: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  deploymentManifestHash: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  websitePublicConfigHash: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+  rolloutId: ci-render-001
+targetNamespace: erp-prod
+images:
+  api:
+    repository: registry.example.invalid/gaoq/erp-api
+    digest: sha256:1111111111111111111111111111111111111111111111111111111111111111
+  worker:
+    repository: registry.example.invalid/gaoq/erp-worker
+    digest: sha256:2222222222222222222222222222222222222222222222222222222222222222
+  web:
+    repository: registry.example.invalid/gaoq/erp-web
+    digest: sha256:3333333333333333333333333333333333333333333333333333333333333333
+  website:
+    repository: registry.example.invalid/gaoq/website
+    digest: sha256:4444444444444444444444444444444444444444444444444444444444444444
+runtime:
+  apiConfigMapName: gaoq-erp-api-runtime-config
+  apiConfigMapHash: sha256:5555555555555555555555555555555555555555555555555555555555555555
+  apiSecretName: gaoq-erp-api-runtime-secrets
+  workerConfigMapName: gaoq-erp-worker-runtime-config
+  workerConfigMapHash: sha256:6666666666666666666666666666666666666666666666666666666666666666
+  workerSecretName: gaoq-erp-worker-runtime-secrets
+  contractHash: sha256:7777777777777777777777777777777777777777777777777777777777777777
+  webConfigMapName: gaoq-erp-web-runtime-config
+  webSecretName: gaoq-erp-web-runtime-secrets
+  websiteConfigMapName: gaoq-website-runtime-config
+  websiteSecretName: gaoq-website-runtime-secrets
+serviceAccount:
+  name: gaoq-erp
+ingress:
+  enabled: true
+  className: internal-gateway
+  apiHost: api.erp.example.invalid
+  webHost: erp.example.invalid
+  websiteHost: www.example.invalid
+  tlsSecretName: gaoq-erp-ingress-tls
+networkPolicy:
+  ingressNamespaceLabels:
+    kubernetes.io/metadata.name: ingress-system
+  ingressPodLabels:
+    app.kubernetes.io/component: gateway
+  monitoringNamespaceLabels:
+    kubernetes.io/metadata.name: monitoring
+  monitoringPodLabels:
+    app.kubernetes.io/name: prometheus
+  httpsEgressCidrs:
+    - 10.20.0.0/24
+  mongodbCidrs:
+    - 10.20.10.0/24
+  redisCidrs:
+    - 10.20.20.0/24

@@ -1,0 +1,113 @@
+# =============================================================================
+# GaoQ-OS 本地开发基础设施
+#
+# 仅限本地开发使用，禁止用于任何生产 / 预发环境：
+#   - MongoDB 未启用访问控制（--noauth 默认），仅监听开发机端口；
+#   - Redis 无密码、无持久化备份策略；
+#   - 所有默认值均为开发便利而设，不构成安全基线。
+#
+# 用法：
+#   pnpm dev:up                   # 启动依赖、API、Worker 与两个 Web 应用
+#   pnpm dev:down                 # 停止本地依赖（保留数据卷）
+#
+# 若绕过编排器直接调用 Compose，必须自行提供 DEV_OBJECT_STORAGE_ACCESS_KEY、
+# DEV_OBJECT_STORAGE_SECRET_KEY 与 DEV_OBJECT_STORAGE_BUCKET；禁止在本文件写死凭据。
+#
+#   docker compose up -d          # 仅启动 MongoDB、Redis 与对象存储
+#   docker compose down           # 停止（保留数据卷）
+#
+# 连接串（与 .env.example 一致）：
+#   MONGODB_URI=mongodb://localhost:27017/gaoq_os?replicaSet=rs0&directConnection=true
+#   REDIS_URL=redis://localhost:6379/0
+# =============================================================================
+
+services:
+  mongo:
+    image: mongo:7.0
+    container_name: gaoq-mongo
+    restart: unless-stopped
+    # 单节点副本集 rs0：事务与 Change Stream 依赖副本集形态。
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "${MONGO_PORT:-27017}:27017"
+    volumes:
+      - gaoq-mongo-data:/data/db
+    healthcheck:
+      # ping 在副本集初始化前后均可用，仅证明 mongod 进程可服务。
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand({ ping: 1 }).ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  mongo-init:
+    image: mongo:7.0
+    container_name: gaoq-mongo-init
+    # 一次性初始化副本集，脚本可重复执行且不做任何破坏性操作。
+    restart: "no"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    volumes:
+      - ./docker/mongo-init.js:/scripts/mongo-init.js:ro
+    entrypoint: ["mongosh", "mongodb://mongo:27017", "--quiet", "/scripts/mongo-init.js"]
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: gaoq-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - gaoq-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  object-store:
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    container_name: gaoq-object-store
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${DEV_OBJECT_STORAGE_ACCESS_KEY:?请通过 pnpm dev:up 生成本地对象存储凭据}
+      MINIO_ROOT_PASSWORD: ${DEV_OBJECT_STORAGE_SECRET_KEY:?请通过 pnpm dev:up 生成本地对象存储凭据}
+    ports:
+      - "${OBJECT_STORAGE_PORT:-9000}:9000"
+      - "${OBJECT_STORAGE_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - gaoq-object-store-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  object-store-init:
+    image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
+    container_name: gaoq-object-store-init
+    restart: "no"
+    depends_on:
+      object-store:
+        condition: service_healthy
+    environment:
+      DEV_OBJECT_STORAGE_ACCESS_KEY: ${DEV_OBJECT_STORAGE_ACCESS_KEY:?请通过 pnpm dev:up 生成本地对象存储凭据}
+      DEV_OBJECT_STORAGE_SECRET_KEY: ${DEV_OBJECT_STORAGE_SECRET_KEY:?请通过 pnpm dev:up 生成本地对象存储凭据}
+      DEV_OBJECT_STORAGE_BUCKET: ${DEV_OBJECT_STORAGE_BUCKET:?请通过 pnpm dev:up 指定本地对象存储桶}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mc alias set local http://object-store:9000
+        "$$DEV_OBJECT_STORAGE_ACCESS_KEY" "$$DEV_OBJECT_STORAGE_SECRET_KEY" &&
+        mc mb --ignore-existing "local/$$DEV_OBJECT_STORAGE_BUCKET" &&
+        mc anonymous set none "local/$$DEV_OBJECT_STORAGE_BUCKET"
+
+volumes:
+  gaoq-mongo-data:
+  gaoq-redis-data:
+  gaoq-object-store-data:

@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gaoq-erp.fullname" . }}-web
+  namespace: {{ include "gaoq-erp.targetNamespace" . }}
+  labels:
+    {{- include "gaoq-erp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+  annotations:
+    gaoq.io/release-commit: {{ required "release.commitSha 必填" .Values.release.commitSha | quote }}
+    gaoq.io/deployment-manifest: {{ required "release.deploymentManifestHash 必填" .Values.release.deploymentManifestHash | quote }}
+spec:
+  replicas: {{ .Values.replicas.web }}
+  revisionHistoryLimit: 5
+  progressDeadlineSeconds: 600
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "gaoq-erp.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "gaoq-erp.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/part-of: gaoq-os
+        app.kubernetes.io/component: web
+      annotations:
+        gaoq.io/rollout-id: {{ required "release.rolloutId 必填" .Values.release.rolloutId | quote }}
+        gaoq.io/release-commit: {{ .Values.release.commitSha | quote }}
+        gaoq.io/deployment-manifest: {{ .Values.release.deploymentManifestHash | quote }}
+    spec:
+      serviceAccountName: {{ include "gaoq-erp.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      {{- with .Values.images.pullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: web
+          image: {{ include "gaoq-erp.image" .Values.images.web | quote }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          ports:
+            - { name: http, containerPort: 3000, protocol: TCP }
+          envFrom:
+            - configMapRef: { name: {{ required "runtime.webConfigMapName 必填" .Values.runtime.webConfigMapName }} }
+            - secretRef: { name: {{ required "runtime.webSecretName 必填" .Values.runtime.webSecretName }} }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          startupProbe:
+            httpGet: { path: /, port: http, scheme: HTTP }
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 24
+          livenessProbe:
+            httpGet: { path: /, port: http, scheme: HTTP }
+            periodSeconds: 15
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /, port: http, scheme: HTTP }
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources.web | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 128Mi }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: {{ .Values.topologySpreadKey }}
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "gaoq-erp.name" . }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: web
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      tolerations:
+        {{- toYaml .Values.tolerations | nindent 8 }}

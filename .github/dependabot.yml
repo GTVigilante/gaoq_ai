@@ -1,0 +1,44 @@
+version: 2
+
+updates:
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "01:15"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    labels:
+      - type:task
+      - domain:security
+    commit-message:
+      prefix: "[镜像] 升级"
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "01:30"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 10
+    labels:
+      - type:task
+      - domain:security
+    commit-message:
+      prefix: "[依赖] 升级"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "02:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    labels:
+      - type:task
+      - domain:devops
+    commit-message:
+      prefix: "[CI] 升级"

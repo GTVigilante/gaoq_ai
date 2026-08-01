@@ -1,0 +1,132 @@
+/** 首期同时正式支持的组织下发渠道。 */
+export type OrgPushChannel = 'dingtalk' | 'feishu' | 'op';
+
+export interface PushDepartmentCommand {
+  readonly tenantId: string;
+  readonly departmentId: string;
+  readonly version: number;
+  readonly code: string;
+  readonly name: string;
+  readonly status: 'active' | 'inactive';
+  readonly parentExternalId: string | null;
+  readonly managerExternalId: string | null;
+  readonly sortOrder: number;
+  readonly currentExternalId: string | null;
+  readonly idempotencyKey: string;
+}
+
+export interface PushEmployeeCommand {
+  readonly tenantId: string;
+  readonly employeeId: string;
+  readonly version: number;
+  readonly employeeNo: string;
+  readonly displayName: string;
+  readonly status: 'probation' | 'active' | 'suspended' | 'terminated';
+  readonly departmentExternalIds: readonly string[];
+  readonly primaryDepartmentExternalId: string;
+  readonly currentExternalId: string | null;
+  readonly idempotencyKey: string;
+}
+
+export interface OrgPushResult {
+  readonly externalId: string;
+  readonly requestId?: string;
+}
+
+export interface ProvisionEmployeeCommand {
+  readonly tenantId: string;
+  readonly employeeId: string;
+  readonly externalUserId: string;
+  readonly employeeNo: string;
+  readonly displayName: string;
+  readonly departmentExternalIds: readonly string[];
+  readonly idempotencyKey: string;
+  readonly contact: {
+    readonly email?: string;
+    readonly mobile?: {
+      readonly countryCode: string;
+      readonly subscriberNumber: string;
+    };
+  };
+}
+
+export interface ProvisionEmployeeResult {
+  readonly externalUserId: string;
+  readonly unionId: string;
+  readonly requestId?: string;
+}
+
+export interface ChangeEmployeeStatusCommand {
+  readonly tenantId: string;
+  readonly employeeId: string;
+  readonly externalId: string;
+  readonly version: number;
+  readonly status: 'probation' | 'active' | 'suspended' | 'terminated';
+  readonly idempotencyKey: string;
+}
+
+export interface ExternalOrgSnapshot {
+  readonly departments: ReadonlyMap<string, Readonly<Record<string, unknown>>>;
+  readonly employees: ReadonlyMap<string, Readonly<Record<string, unknown>>>;
+}
+
+/** 平台适配器只接收 canonical command，禁止接收领域数据库对象或上游 Token。 */
+export abstract class OrgPushAdapter {
+  abstract readonly channel: OrgPushChannel;
+
+  abstract pushDepartment(command: PushDepartmentCommand): Promise<OrgPushResult>;
+
+  abstract pushEmployee(command: PushEmployeeCommand): Promise<OrgPushResult>;
+
+  /** 只允许私密开户 Worker 调用，常规 Outbox 不得携带联系方式。 */
+  abstract provisionEmployee(command: ProvisionEmployeeCommand): Promise<ProvisionEmployeeResult>;
+
+  abstract changeEmployeeStatus(command: ChangeEmployeeStatusCommand): Promise<OrgPushResult>;
+
+  abstract fetchSnapshot(tenantId: string): Promise<ExternalOrgSnapshot>;
+}
+
+export type OrgPushFailureCategory = 'retryable' | 'business' | 'conflict';
+
+/** 适配器稳定错误；消息不得包含凭据、原始响应或个人敏感信息。 */
+export class OrgPushError extends Error {
+  constructor(
+    readonly code: string,
+    readonly category: OrgPushFailureCategory,
+    message: string,
+    readonly status?: number,
+    /** 仅保留无敏感内容的数值型平台错误码，供适配器执行幂等恢复。 */
+    readonly providerCode?: number,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = 'OrgPushError';
+  }
+}
+
+export const DINGTALK_ORG_PUSH_ADAPTER = Symbol('DINGTALK_ORG_PUSH_ADAPTER');
+export const FEISHU_ORG_PUSH_ADAPTER = Symbol('FEISHU_ORG_PUSH_ADAPTER');
+export const OP_ORG_PUSH_ADAPTER = Symbol('OP_ORG_PUSH_ADAPTER');
+
+/** 钉钉与飞书必须同时装配；Phase 5 可附加独立 OP 适配器。 */
+export class OrgPushAdapterRegistry {
+  private readonly adapters: ReadonlyMap<OrgPushChannel, OrgPushAdapter>;
+
+  constructor(dingtalk: OrgPushAdapter, feishu: OrgPushAdapter, op?: OrgPushAdapter) {
+    if (dingtalk.channel !== 'dingtalk' || feishu.channel !== 'feishu' ||
+      (op !== undefined && op.channel !== 'op')) {
+      throw new Error('组织下发适配器渠道装配错误');
+    }
+    this.adapters = new Map([
+      ['dingtalk', dingtalk],
+      ['feishu', feishu],
+      ...(op === undefined ? [] : [['op', op] as const]),
+    ]);
+  }
+
+  get(channel: OrgPushChannel): OrgPushAdapter {
+    const adapter = this.adapters.get(channel);
+    if (adapter === undefined) throw new Error(`组织下发适配器未装配：${channel}`);
+    return adapter;
+  }
+}
