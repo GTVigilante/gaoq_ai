@@ -14,8 +14,8 @@ MCP、AI 客户端和业务服务均无触发或绕过权限。
 两个入口均使用 GitHub Hosted `ubuntu-latest`；Plan 专用 OIDC audience 与
 Apply 专用 OIDC audience 必须按 workflow/policy 分离。
 
-仓库是 GitHub Free Private Repository，不能把付费 GitHub Environment 或
-Required Reviewers 当作可用控制。保护链改为：
+仓库当前是 GitHub Free Public Repository；生产保护不把可变的仓库可见性、
+套餐能力或 Environment/Required Reviewers 当作唯一控制。保护链为：
 
 1. GitHub Hosted Runner 以 Plan 专用 OIDC policy/audience 取得只读短期身份；
 2. Plan 重新验收输入、渲染、Schema、RBAC 与 diff，输出不可变绑定；
@@ -158,8 +158,8 @@ HELM_DRIVER=configmap helm upgrade --install <release> deploy/helm/gaoq-erp \
 
 ## 6. 当前阻断
 
-代码、本地门禁和工作流已交付，但当前 Hosted Actions 在 Runner 分配前被账户
-付款或 Spending limit 状态阻塞；企业证据/凭据代理、Ed25519 签名服务、WORM、
-目标集群 OIDC/RBAC 和真实证据也尚未验收。因此当前不得执行或声称生产部署通过。
-恢复 GitHub 免费额度/账户状态并完成上述外部配置后，才能运行 Plan、人工签署、
-再独立运行 Apply；不得降级为长期密钥、管理员 kubeconfig、NAS 或自托管 Runner。
+代码、本地门禁和工作流已交付，2026-08-01 的 `main` Hosted Actions 已实际通过
+Phase 1、Phase 5 和文档门禁。企业证据/凭据代理、Ed25519 签名服务、WORM、
+目标集群 OIDC/RBAC 和真实证据仍未验收，因此当前不得执行或声称生产部署通过。
+完成上述外部配置后，才能运行 Plan、人工签署、再独立运行 Apply；不得降级为
+长期密钥、管理员 kubeconfig、NAS 或自托管 Runner。

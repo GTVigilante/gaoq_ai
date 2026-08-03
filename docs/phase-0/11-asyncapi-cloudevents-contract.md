@@ -76,5 +76,5 @@ AsyncAPI 中的 Channel 地址是逻辑事件 type。物理 Broker、Topic、ACL
 仓库中假定。
 
 外部验收至少包括重复、乱序、超时、签名失败、跨租户、旧版本、死信重放、
-断连追赶和对账。当前 GitHub Hosted Actions 仍在 Runner 启动前受账号付款或
-Spending limit 阻塞，本地生成与校验不能替代远端 CI 或真实事件总线验收。
+断连追赶和对账。2026-08-01 的 `main` 已实际通过仓库 GitHub Hosted Actions；
+该结果不能替代真实事件总线验收。

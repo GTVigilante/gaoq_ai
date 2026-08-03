@@ -74,7 +74,8 @@
   WebAuthn 不再误报。生成器拒绝未命名/unknown 写请求、顶层 unknown 成功响应、
   失效运行时来源、动态路由/Scope、重复操作、路径参数漂移、公开/Scope 冲突及
   悬空引用，自测与逐字节漂移校验通过 `pretypecheck` 接入 `pnpm check`；
-  GitHub Hosted Actions 仍受账号付款或 Spending limit 阻塞。
+  2026-08-01 已在 `main` 的 GitHub Hosted Actions 实际通过 Phase 1 工程质量、
+  Phase 5 安全与供应链及文档质量门禁；该结果不替代外部系统和目标环境验收。
 - 2026-07-30 已建立 AsyncAPI 3.0 / CloudEvents 1.0 机器契约：从固定生产
   Outbox 与专业算薪平台契约确定性收集 184 个现行事件，其中 ERP/平台出站
   180 个、专业算薪入站 4 个；每项声明固定 source、方向、权威系统、分级、
@@ -263,14 +264,14 @@
   角色密钥、现场签署、WORM、切换和连续 28 日运行仍待外部验收。
 - 2026-07-29 已把覆盖率门禁本身纳入失败关闭治理：
   `scripts/validate-critical-coverage-policy.mjs` 从 `precheck/check` 解析 134 个
-  ERP API 专项脚本，展开其 `--coverage.include` 后要求 336 个生产文件逐一具有
+  ERP API 专项脚本，展开其 `--coverage.include` 后要求 337 个生产文件逐一具有
   四维 90% 阈值、路径真实存在且专项清单完全闭合；同时把租户、Identity、
-  Approval、Payroll、Treasury 与 MCP 六类章程关键域解析为 128 个权威文件，
+  Approval、Payroll、Treasury 与 MCP 六类章程关键域解析为 129 个权威文件，
   新文件不得逃出专项门禁，并锁定全生产源码 `src/**/*.ts` 四维 80% 分母。
   本轮补齐了 34 个此前仅在全量报告中的关键文件以及租户上下文、招聘渠道人工
   运维三个组合报告文件，负向自测覆盖分母、阈值、专项遗漏、关键域分类遗漏和
-  生命周期断开。该仓库门禁不替代 GitHub Hosted Actions 真实执行或 Phase 0
-  人工签署。
+  生命周期断开。该仓库门禁已由 2026-08-01 的 `main` Hosted Actions 实际执行，
+  但仍不替代 Phase 0 人工签署或目标环境验收。
 - 2026-07-27 已冻结独立专业算薪边界：ERP 负责统一身份与组织主数据，专业算薪
   负责工资唯一事实源；`PAYROLL_SYSTEM_MODE=external` 关闭 ERP 旧工资/资金 REST。
 - 2026-07-29 已关闭 Issue #30 的管理分析 Worker 旁路：驾驶舱 REST、标准 MCP
@@ -608,13 +609,13 @@
   复核仓库、commit、workflow、policy、audience 与 Hosted Runner claims，
   通过批准的 HTTPS 网关读取固定摘要脱敏证据，并以不含静态 Token 的
   ExecCredential 接入 Kubernetes；Plan/Apply 使用不同 audience 和 RBAC Group。
-  仓库为 GitHub Free Private，不能依赖付费 Environment/Required Reviewers；
-  生产 Plan/Apply 已拆成不可自动串联的独立工作流，Apply 额外验收变更负责人
+  仓库当前为 GitHub Free Public，生产保护不把可见性或付费
+  Environment/Required Reviewers 作为唯一控制；生产 Plan/Apply 已拆成不可自动
+  串联的独立工作流，Apply 额外验收变更负责人
   与 SRE 使用不同批准密钥形成的两份 Ed25519 签名、Plan run/计划包和两小时
-  有效期。全部 workflow
-  已无 self-hosted 标签。Hosted Actions
-  仍在任何步骤执行前被账户付款或 Spending limit 拦截；在免费额度或账号状态
-  恢复前，外部门禁保持未执行，不得记为代码测试失败或门禁通过。
+  有效期。全部 workflow 已无 self-hosted 标签。2026-08-01 的 `main` Hosted
+  Actions 已实际通过 Phase 1、Phase 5 和文档门禁；生产 Plan/Apply 仍须在真实
+  企业证据代理、OIDC/RBAC、职责签名和目标集群就绪后分别人工执行。
 - 2026-07-29 已把 GitHub 元数据规范转为只读失败关闭门禁：
   `scripts/github/validate-repository-governance.mjs` 校验固定七个 Milestone、
   Issue 标签/状态/Epic 子项，以及 PR 唯一 Milestone、Ready 前 CR、真实 Issue
@@ -622,8 +623,8 @@
   一次性治理收敛为 67 个历史 PR 补齐 Milestone、37 个历史 PR 补齐真实 Issue
   关联，并为 Issue #12 补齐阻塞与解除章节；本地 `gh` 实时校验 7/50/79
   （Milestone/Issue/PR）通过。专用 Hosted Actions 工作流只申请 contents、
-  issues、pull-requests 读权限；付费门禁仍在 Runner 分配前拦截，不能记为远端
-  通过。
+  issues、pull-requests 读权限；2026-08-01 的 `main` push 因该工作流仅接受 PR
+  事件而取消，不属于治理校验失败，后续治理 PR 必须以实际工作流结果为准。
 - 2026-07-29 已按当前提交候选的实现、迁移、MCP 协议与专项覆盖证据同步
   Issue #123–#126：四个 Story 的仓库验收项已逐项标记完成，真实通知/CRM/
   校友渠道、搜索集群、评分服务、代表性数据和业务 UAT 继续保持未完成与
@@ -1257,11 +1258,12 @@
   `runtimeContractHash=sha256:61c70d725186519dd7473857f69cd2e85e4846232930f60aab2e608e166b14a9`。
   两个探针均未调用模型或业务 Tool；Claude/Cursor 未安装，不能据此宣称实体
   客户端通过。
-- Draft PR #129 的上述提交自然触发 Hosted Actions run
-  `30493181184`、`30493181191`、`30493181203` 和 `30493181220`，全部在任何
-  步骤执行前被账户付款或 Spending limit 拦截；代表 Job 的 `steps` 为空。
-  这是外部门禁未执行，不得记为代码测试失败或门禁通过；按零付费约束不重跑，
-  不使用 NAS、自建 Runner 或虚拟机绕过。
+- Draft PR #129 的早期 Hosted Actions run `30493181184`、`30493181191`、
+  `30493181203` 和 `30493181220` 曾在步骤执行前受账户状态拦截，不能记为代码
+  失败或门禁通过。仓库公开后已在后续候选修复 CI，并通过堆叠 PR 合入
+  `main@6219644`；2026-08-01 的 main run `30685077655`、`30685077683` 和
+  `30685077646` 分别实际通过 Phase 1、Phase 5 和文档门禁。CI 已解除阻断，
+  但真实外部联调、迁移演练、UAT、切换和 Hypercare 仍保持未完成。
 
 ## 目录约定
 

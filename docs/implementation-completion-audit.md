@@ -24,7 +24,7 @@
 
 | Phase | 仓库实施证据 | 尚缺外部证据 | 结论 |
 |---|---|---|---|
-| 0 | `docs/phase-0/`、6 项 accepted ADR、19 类数据处理登记、20 项 STRIDE 威胁登记、Issue 模板、7 个 Milestone、标签、Draft PR、只读治理自动化、全量四维 80% 与 336 个生产文件逐文件四维 90% 门禁 | Issue #41 的 GitHub Project 需要 `project` 权限；Hosted Actions 真实执行及架构/安全/业务/数据/法务签署尚未取得 | 仓库实施已交付，外部/治理验收待完成 |
+| 0 | `docs/phase-0/`、6 项 accepted ADR、19 类数据处理登记、20 项 STRIDE 威胁登记、Issue 模板、7 个 Milestone、标签、Draft PR、只读治理自动化、全量四维 80% 与 337 个生产文件逐文件四维 90% 门禁 | Issue #41 的 GitHub Project 需要 `project` 权限；架构/安全/业务/数据/法务签署尚未取得；2026-08-01 的 `main` Hosted Actions 已实际通过 | 仓库实施已交付，外部/治理验收待完成 |
 | 1 | `apps/erp-api/src/modules/auth/`、`org/`、`security/`、`integration/`，`deploy/helm/`，Phase 1 工作流 | 境内云 VPC、WAF/KMS、真实 SSO/组织下发、监控告警、备份恢复与 RPO/RTO 演练 | 实施已交付，外部验收待完成 |
 | 2 | `apps/erp-api/src/modules/approval/`、审批前端、通知、迁移与 MCP 能力 | 氚云模板/历史/在途审批真实盘点迁移、三次演练和业务签署 | 实施已交付，外部验收待完成 |
 | 3 | 招聘、eSign、Onboarding、Knowledge、Care、Talent Lifecycle 360 及对应 REST/事件/MCP | 真实渠道、e签宝、对象/WORM、OpenAI/搜索/评分/通知、CRM/校友平台与跨角色 UAT | 实施已交付，外部验收待完成 |
@@ -145,10 +145,11 @@ type `data` 继续由列明的 Zod、TypeScript 和 JSON Schema 约束，禁止�
 
 - GitHub 是唯一代码协作、Issue、PR 与 CI 入口；不使用 NAS、自建 Runner、虚拟机
   或本地内网作为 CI 替代品。
-- 当前实现由以 Draft PR #122 为根的堆叠 PR 承载，最新 Knowledge 切片为
-  Draft PR #129；合入前仍需按顺序评审、可运行 CI 与所有适用 DoD。
-- GitHub Hosted Actions 当前在任何 Job 步骤开始前被账号付款或 Spending limit
-  拦截。该状态既不是代码测试失败，也不是 CI 通过；相同 commit 不重复空跑。
+- Phase 0–6 堆叠 PR 已按依赖顺序合入 `main@6219644`；2026-08-01 的 main run
+  `30685077655`、`30685077683` 和 `30685077646` 分别实际通过 Phase 1、
+  Phase 5 和文档门禁。
+- CI 已解除阻断；仓库门禁通过不替代真实外部联调、三次迁移演练、生产等价
+  性能/安全/容灾证据、UAT、Go/No-Go、统一切换或四周 Hypercare。
 - Issue #41 需要用户明确授权 `read:project,project` 后才能创建 Project。未获授权
   前保持阻塞，不扩大 OAuth 权限。
 - 2026-07-29 已对实时 GitHub 元数据完成一次性收敛：67 个历史 PR 补齐唯一
@@ -182,9 +183,9 @@ type `data` 继续由列明的 Zod、TypeScript 和 JSON Schema 约束，禁止�
 
 `scripts/validate-critical-coverage-policy.mjs` 进一步从 `precheck/check` 递归
 解析 134 个可达 ERP API 专项脚本，展开全部 `--coverage.include` glob，并要求
-336 个目标生产文件与 `vitest.config.ts` 的显式逐文件四维 90% 阈值一一闭合。
+337 个目标生产文件与 `vitest.config.ts` 的显式逐文件四维 90% 阈值一一闭合。
 租户、Identity、Approval、Payroll、Treasury 与 MCP 六类章程关键域按统一排除
-规则形成 128 个权威生产文件；未来新增关键文件若未进入专项脚本会立即失败。
+规则形成 129 个权威生产文件；未来新增关键文件若未进入专项脚本会立即失败。
 校验器同时拒绝缺失文件、未匹配 glob、重复属性、低阈值、只有阈值没有专项、
 只有专项没有阈值、关键域分类遗漏及未接入 `precheck`，并以六类负向自测证明
 失败关闭。本轮据此补齐 34 个此前仅受全量报告约束的关键文件，以及租户上下文
