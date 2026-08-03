@@ -95,5 +95,5 @@ JSON Schema，4 个内联类型由 TypeScript Program 展开。注册表绑定�
 4. 对不兼容变化给出版本策略、迁移窗口和回滚方案；
 5. 通过本地总门禁和可运行的 GitHub Hosted Actions。
 
-当前 GitHub Hosted Actions 在 Job 启动前受账号付款或 Spending limit 阻塞，
-所以仓库自测通过不等于远端 CI 或外部验收通过。
+2026-08-01 的 `main` 已实际通过 Phase 1、Phase 5 和文档 GitHub Hosted
+Actions；远端 CI 通过仍不等于外部系统或目标环境验收通过。
