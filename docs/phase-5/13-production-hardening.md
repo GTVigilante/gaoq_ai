@@ -58,4 +58,4 @@ MCP 目录和事件契约纳入七方签名；Go/No-Go v3 再与 MCP 联调结�
 
 Gitleaks 历史扫描只允许五项固定测试假值：两个 WebAuthn 证据 ULID、一个资金授权证据 ULID、一个幂等键和一个指标字段名。配置禁止按路径、Commit 或整条规则跳过；真实格式 Token 即使位于测试文件也必须阻断。
 
-依赖门禁固定 Next.js `16.2.11`，并通过根级 override 固定 PostCSS `8.5.10` 与 `@hono/node-server` `2.0.10`，对应修复 App Router/Server Actions High 风险、CSS stringify XSS、Windows 路径穿越和 WebSocket 握手内存泄漏。安全契约阻止降级，`pnpm audit` 必须保持无已知漏洞。
+依赖门禁固定 Next.js `16.2.11`，并通过根级 override 固定 `@hono/node-server` `2.0.10`、Brace Expansion `5.0.9`、Fast URI `3.1.5`、Hono `4.12.34`、IP Address `10.3.1` 与 PostCSS `8.5.23`。该基线覆盖 App Router/Server Actions、CSS stringify XSS、正则拒绝服务、URI/IP 地址解析和 WebSocket 握手等已披露风险。安全契约阻止版本降级或漏项，`pnpm audit` 必须保持无已知漏洞；禁止通过忽略公告或降低审计阈值绕过门禁。

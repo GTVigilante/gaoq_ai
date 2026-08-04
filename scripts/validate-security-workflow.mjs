@@ -494,8 +494,11 @@ if (webPackageDocument.dependencies?.next !== '16.2.11') {
   throw new Error('PHASE5_SECURITY_NEXT_PATCH_REQUIRED');
 }
 if (
-  packageDocument.pnpm?.overrides?.postcss !== '8.5.18' ||
-  packageDocument.pnpm?.overrides?.['brace-expansion'] !== '5.0.8' ||
+  packageDocument.pnpm?.overrides?.postcss !== '8.5.23' ||
+  packageDocument.pnpm?.overrides?.['brace-expansion'] !== '5.0.9' ||
+  packageDocument.pnpm?.overrides?.['fast-uri'] !== '3.1.5' ||
+  packageDocument.pnpm?.overrides?.hono !== '4.12.34' ||
+  packageDocument.pnpm?.overrides?.['ip-address'] !== '10.3.1' ||
   packageDocument.pnpm?.overrides?.['@hono/node-server'] !== '2.0.10'
 ) throw new Error('PHASE5_SECURITY_TRANSITIVE_PATCH_REQUIRED');
 
