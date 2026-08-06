@@ -419,6 +419,10 @@ async function deployApplication(images, runtime) {
       api: { enabled: false }, web: { enabled: false }, website: { enabled: false },
     },
     ingress: { enabled: false },
+    networkPolicy: {
+      mongodbCidrs: ['10.244.0.0/16'],
+      redisCidrs: ['10.244.0.0/16'],
+    },
     topologySpreadKey: 'topology.kubernetes.io/zone',
   };
   const valuesPath = await writeJson('smoke-values.json', values);

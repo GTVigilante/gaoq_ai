@@ -143,6 +143,8 @@ for (const marker of [
   'publishDependencyImages()',
   'localhost:${registryPort}/gaoq-dependencies/${name}',
   "imagePullPolicy: 'IfNotPresent'",
+  "mongodbCidrs: ['10.244.0.0/16']",
+  "redisCidrs: ['10.244.0.0/16']",
   'automountServiceAccountToken: false',
   'container.securityContext.readOnlyRootFilesystem',
   'container.securityContext.allowPrivilegeEscalation',
