@@ -125,6 +125,81 @@ jobs:
             -schema-location 'https://raw.githubusercontent.com/yannh/kubernetes-json-schema/987aa4ee419358d6ae108f54f6c42f4e90f22b70/{{.NormalizedKubernetesVersion}}-standalone-strict/{{.ResourceKind}}.json' \
             "$RUNNER_TEMP/gaoq-platform-guardrails-rendered.yaml"
 
+  kubernetes-runtime:
+    name: Kubernetes 真实运行时集成
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 10.29.2
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装冻结依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 安装校验过摘要的 Kind、kubectl 与 Helm
+        shell: bash
+        run: |
+          mkdir --parents "$RUNNER_TEMP/gaoq-kubernetes-bin"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$RUNNER_TEMP/gaoq-kubernetes-bin/kind" \
+            https://github.com/kubernetes-sigs/kind/releases/download/v0.26.0/kind-linux-amd64
+          echo 'd445b44c28297bc23fd67e51cc24bb294ae7b977712be2d4d312883d0835829b  '"$RUNNER_TEMP"'/gaoq-kubernetes-bin/kind' \
+            | sha256sum --check --strict
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$RUNNER_TEMP/gaoq-kubernetes-bin/kubectl" \
+            https://dl.k8s.io/release/v1.30.12/bin/linux/amd64/kubectl
+          echo '261a3c4eb12e09207b9e08f0b43d547220569317ed8d7a22638572100ace5b80  '"$RUNNER_TEMP"'/gaoq-kubernetes-bin/kubectl' \
+            | sha256sum --check --strict
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$RUNNER_TEMP/gaoq-kubernetes-bin/helm.tar.gz" \
+            https://get.helm.sh/helm-v4.2.0-linux-amd64.tar.gz
+          echo '97dbeb971be4ac4b27e3839976d9564c0fb35c6f3b1da89dd1e292d236af4096  '"$RUNNER_TEMP"'/gaoq-kubernetes-bin/helm.tar.gz' \
+            | sha256sum --check --strict
+          tar --extract --gzip --file "$RUNNER_TEMP/gaoq-kubernetes-bin/helm.tar.gz" \
+            --directory "$RUNNER_TEMP/gaoq-kubernetes-bin" linux-amd64/helm
+          chmod 0755 \
+            "$RUNNER_TEMP/gaoq-kubernetes-bin/kind" \
+            "$RUNNER_TEMP/gaoq-kubernetes-bin/kubectl"
+          install --mode 0755 "$RUNNER_TEMP/gaoq-kubernetes-bin/linux-amd64/helm" \
+            "$RUNNER_TEMP/gaoq-kubernetes-bin/helm"
+
+      - name: 部署四类生产镜像并验证 Worker、OAuth 与标准 MCP
+        env:
+          GAOQ_KIND_BIN: ${{ runner.temp }}/gaoq-kubernetes-bin/kind
+          GAOQ_KUBECTL_BIN: ${{ runner.temp }}/gaoq-kubernetes-bin/kubectl
+          GAOQ_HELM_BIN: ${{ runner.temp }}/gaoq-kubernetes-bin/helm
+          GAOQ_KIND_NODE_IMAGE: kindest/node:v1.30.8@sha256:17cd608b3971338d9180b00776cb766c50d0a0b6b904ab4ff52fd3fc5c6369bf
+          GAOQ_KIND_REGISTRY_IMAGE: registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+          GAOQ_KIND_MONGO_IMAGE: mongo:7.0@sha256:340c1c56fb10e95cf79ff547f8664b96bc6ead9909bc355238cbf865a9695a6f
+          GAOQ_KIND_REDIS_IMAGE: redis:7.2-alpine@sha256:05a97a479bc73de66f087dc05b569010772880f778cc8671fa6b8aadee32e5c6
+        run: pnpm smoke:kubernetes:live
+
+      - name: 兜底清理临时 Kubernetes 与 Registry
+        if: always()
+        shell: bash
+        run: |
+          if "$RUNNER_TEMP/gaoq-kubernetes-bin/kind" get clusters 2>/dev/null \
+            | grep --fixed-strings --line-regexp 'gaoq-runtime-smoke' > /dev/null; then
+            "$RUNNER_TEMP/gaoq-kubernetes-bin/kind" delete cluster \
+              --name gaoq-runtime-smoke
+          fi
+          registry_id="$(docker ps --all --quiet \
+            --filter 'name=^/gaoq-kind-registry$')"
+          if test -n "$registry_id"; then docker rm --force "$registry_id"; fi
+
   dependency-review:
     name: 依赖变更审查
     if: github.event_name == 'pull_request'

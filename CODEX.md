@@ -1327,6 +1327,13 @@ API 或 Worker 子进程。
 的 GitHub 临时运行时集成通过，不替代外部供应商沙箱、生产等价、UAT、切换与
 Hypercare 现场验收。
 
+`Phase 5 安全与供应链门禁`进一步创建固定摘要的 Kind/Kubernetes 1.30.8 集群，
+把四类生产镜像以不可变 digest 交给生产 Helm Chart 原子部署，并验证全部 11 个
+应用 Pod、ClusterIP 健康、Worker 指标鉴权、OAuth 与官方 MCP SDK 完整目录。
+临时凭据与测试依赖在 Runner 内生成并清理。该门禁补齐真实 Kubernetes API 和
+多副本服务运行证据，但不替代目标云的多可用区、准入/网络策略、托管数据、
+KMS/WORM、监控、外部连接及现场签署。
+
 ## Codex 执行规范
 
 - Codex 执行入口为 `.codex/AGENTS.md`，完整项目规范以 `AGENTS.md` 为准。
