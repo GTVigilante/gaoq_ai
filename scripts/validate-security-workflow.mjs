@@ -14,6 +14,10 @@ const resilienceWorkflowPath = new URL('../.github/workflows/phase-5-resilience.
 const readinessWorkflowPath = new URL('../.github/workflows/phase-5-readiness.yml', import.meta.url);
 const goNoGoWorkflowPath = new URL('../.github/workflows/phase-5-go-no-go.yml', import.meta.url);
 const mcpIntegrationWorkflowPath = new URL('../.github/workflows/phase-5-mcp-integration.yml', import.meta.url);
+const kubernetesRuntimeSmokePath = new URL(
+  '../scripts/kubernetes-runtime-smoke.mjs',
+  import.meta.url,
+);
 const packagePath = new URL('../package.json', import.meta.url);
 const webPackagePath = new URL('../apps/erp-web/package.json', import.meta.url);
 const pnpmLockPath = new URL('../pnpm-lock.yaml', import.meta.url);
@@ -35,6 +39,7 @@ const resilienceWorkflow = await readFile(resilienceWorkflowPath, 'utf8');
 const readinessWorkflow = await readFile(readinessWorkflowPath, 'utf8');
 const goNoGoWorkflow = await readFile(goNoGoWorkflowPath, 'utf8');
 const mcpIntegrationWorkflow = await readFile(mcpIntegrationWorkflowPath, 'utf8');
+const kubernetesRuntimeSmoke = await readFile(kubernetesRuntimeSmokePath, 'utf8');
 const packageDocument = JSON.parse(await readFile(packagePath, 'utf8'));
 const webPackageDocument = JSON.parse(await readFile(webPackagePath, 'utf8'));
 const pnpmLock = await readFile(pnpmLockPath, 'utf8');
@@ -108,8 +113,60 @@ for (const marker of [
   'gaoq-platform-guardrails-rendered.yaml',
   '平台护栏不得把 release 存入控制命名空间',
   '平台护栏 values schema 必须拒绝未知字段',
+  'kubernetes-runtime:',
+  'Kubernetes 真实运行时集成',
+  'kubernetes-sigs/kind/releases/download/v0.26.0/kind-linux-amd64',
+  'd445b44c28297bc23fd67e51cc24bb294ae7b977712be2d4d312883d0835829b',
+  'https://dl.k8s.io/release/v1.30.12/bin/linux/amd64/kubectl',
+  '261a3c4eb12e09207b9e08f0b43d547220569317ed8d7a22638572100ace5b80',
+  'GAOQ_KIND_NODE_IMAGE: kindest/node:v1.30.8@sha256:',
+  'GAOQ_KIND_REGISTRY_IMAGE: registry:2.8.3@sha256:',
+  'GAOQ_KIND_MONGO_IMAGE: mongo:7.0@sha256:',
+  'GAOQ_KIND_REDIS_IMAGE: redis:7.2-alpine@sha256:',
+  'run: pnpm smoke:kubernetes:live',
+  '兜底清理临时 Kubernetes 与 Registry',
 ]) {
   if (!workflow.includes(marker)) throw new Error('PHASE5_SECURITY_GATE_INCOMPLETE');
+}
+
+if (packageDocument.scripts?.['smoke:kubernetes:live'] !==
+  'node scripts/kubernetes-runtime-smoke.mjs') {
+  throw new Error('PHASE5_KUBERNETES_RUNTIME_COMMAND_INCOMPLETE');
+}
+if (packageDocument.devDependencies?.['@modelcontextprotocol/sdk'] !== '^1.29.0') {
+  throw new Error('PHASE5_KUBERNETES_RUNTIME_MCP_SDK_MISSING');
+}
+
+for (const marker of [
+  'assertTargetsAbsent()',
+  '/@sha256:[a-f0-9]{64}$/u',
+  'publishDependencyImages()',
+  'localhost:${registryPort}/gaoq-dependencies/${name}',
+  "imagePullPolicy: 'IfNotPresent'",
+  "mongodbCidrs: ['10.244.0.0/16']",
+  "redisCidrs: ['10.244.0.0/16']",
+  'automountServiceAccountToken: false',
+  'container.securityContext.readOnlyRootFilesystem',
+  'container.securityContext.allowPrivilegeEscalation',
+  'status.restartCount, 0',
+  '`${releaseName}-gaoq-erp-worker-metrics`',
+  'KUBERNETES_SMOKE_ENDPOINT_UNREACHABLE:',
+  'expectedCatalog.tools',
+  'expectedCatalog.resources',
+  'expectedCatalog.resourceTemplates',
+  'expectedCatalog.prompts',
+  'treasury_disbursement_submit',
+  'payroll_period_lock',
+  "'logs', '--namespace', namespace, pod.metadata.name",
+  "'--tail=100'",
+  "POD_LOG:${pod.metadata.name}",
+  '{ mode: 0o600 }',
+  "kind, ['delete', 'cluster', '--name', clusterName]",
+  "docker, ['rm', '--force', registryName]",
+]) {
+  if (!kubernetesRuntimeSmoke.includes(marker)) {
+    throw new Error('PHASE5_KUBERNETES_RUNTIME_GATE_INCOMPLETE');
+  }
 }
 
 const performanceActionReferences = [

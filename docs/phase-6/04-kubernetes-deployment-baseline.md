@@ -28,7 +28,7 @@
 
 所有容器固定 UID/GID `65532`，根文件系统只读，禁止提权并删除全部 Linux capabilities；ServiceAccount 不挂载 token。部署按可用区分散，API/ERP Web/Website 滚动升级不可中断现有副本，PDB 和 HPA 防止维护或扩缩容破坏最低服务能力。
 
-NetworkPolicy 从默认拒绝开始，再逐条开放精确组件与端口：入口网关到 API/ERP Web/Website、监控到 API/Worker、所有组件到 DNS、两个 Web 应用到 API、后端到三类独立私网 CIDR。公网 `0.0.0.0/0` 永久禁止；外部 SaaS、ERP 主数据、钉钉、飞书、电子签、银行、税务和 WORM 都必须由 HTTPS egress gateway 代理。
+NetworkPolicy 从默认拒绝开始，再逐条开放精确组件与端口：入口网关到 API/ERP Web/Website、监控到 API/Worker、所有组件到 DNS、两个 Web 应用到 API 的对称出站与入站、后端到三类独立私网 CIDR。公网 `0.0.0.0/0` 永久禁止；外部 SaaS、ERP 主数据、钉钉、飞书、电子签、银行、税务和 WORM 都必须由 HTTPS egress gateway 代理。
 
 ## 4. Secret 与配置责任
 
@@ -75,6 +75,29 @@ pnpm deployment:kubernetes:validate
 ```
 
 安全工作流使用固定摘要的 Helm 4.2.0 和 Kubeconform 0.7.0，执行严格 lint、完整渲染、仓库安全断言及 Kubernetes 1.30 strict schema 验证。schema 源也固定到明确 Git commit，避免 CI 隐式漂移。模板和 schema 检查不能替代目标集群的准入、服务端校验与真实网络测试。
+
+### 6.1 GitHub 临时 Kubernetes 运行时门禁
+
+`Phase 5 安全与供应链门禁`还会在 GitHub Hosted `ubuntu-latest` 创建固定摘要的
+Kind/Kubernetes 1.30.8 集群和回环 OCI Registry，构建 API、Worker、ERP Web、
+Website 四类生产镜像并以 `repository@sha256:digest` 交给本 Chart 部署。
+门禁使用单节点 MongoDB Replica Set 与 Redis 作为一次性测试依赖，验证：
+
+1. Kubernetes API 接受 Chart，四个 Deployment 按生产副本数滚动就绪；
+2. 11 个应用 Pod 全部使用摘要镜像、只读根文件系统、非提权安全上下文且不挂载
+   ServiceAccount Token，整个验证期间无容器重启；
+3. API、ERP Web、Website 健康端点和 Worker 指标鉴权可经 ClusterIP Service
+   访问，并验证两个 Web 应用在默认拒绝策略下可通过对称规则访问 API；
+4. OAuth Client Credentials 与官方 MCP SDK 在三副本 API Service 后完成握手，
+   Tool、Resource、Resource Template、Prompt 与权威目录逐项一致，并确认 R3
+   工具未暴露；
+5. 所有凭据只在内存或权限为 `0600` 的 Runner 临时文件生成，失败诊断不输出
+   Secret，结束后删除精确命名的 Kind 集群与 Registry。
+
+该门禁证明生产镜像、Helm 对象、Kubernetes Service 和多副本 MCP 在公共托管
+Runner 可运行，但不具备三个可用区、受控准入、生产 CNI 等价性、TLS、托管
+MongoDB/Redis、KMS/WORM、真实监控或外部 egress，因此仍不得替代第 7 节的目标
+云平台与现场验收。
 
 ## 7. 未完成的真实生产项
 
