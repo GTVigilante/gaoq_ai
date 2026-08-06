@@ -26,6 +26,16 @@ updates:
     labels:
       - type:task
       - domain:security
+    groups:
+      react-runtime:
+        patterns:
+          - react
+          - react-dom
+          - "@types/react"
+          - "@types/react-dom"
+        update-types:
+          - minor
+          - patch
     commit-message:
       prefix: "[依赖] 升级"
 
