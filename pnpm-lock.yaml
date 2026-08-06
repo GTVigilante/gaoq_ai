@@ -25,6 +25,9 @@ importers:
       '@eslint/js':
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.8.0)
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(patch_hash=6d5cb58a99d5394a0eb5fcb4039bbb24cd0639a3057f60072be200a27377078d)(zod@4.4.3)
       '@types/node':
         specifier: ^26.1.2
         version: 26.1.2

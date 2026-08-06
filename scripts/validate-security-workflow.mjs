@@ -133,6 +133,9 @@ if (packageDocument.scripts?.['smoke:kubernetes:live'] !==
   'node scripts/kubernetes-runtime-smoke.mjs') {
   throw new Error('PHASE5_KUBERNETES_RUNTIME_COMMAND_INCOMPLETE');
 }
+if (packageDocument.devDependencies?.['@modelcontextprotocol/sdk'] !== '^1.29.0') {
+  throw new Error('PHASE5_KUBERNETES_RUNTIME_MCP_SDK_MISSING');
+}
 
 for (const marker of [
   'assertTargetsAbsent()',
