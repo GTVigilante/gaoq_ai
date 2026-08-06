@@ -42,6 +42,54 @@
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
+                          "kty": {
+                            "type": "string",
+                            "x-typescript-type": "JWKKeyType"
+                          },
+                          "alg": {
+                            "type": "string",
+                            "x-typescript-type": "(string & {}) | \"HS256\" | \"HS384\" | \"HS512\" | \"RS256\" | \"RS384\" | \"RS512\" | \"PS256\" | \"PS384\" | \"PS512\" | \"ES256\" | \"ES384\" | \"ES512\" | \"EdDSA\" | \"Ed25519\" | \"ML-DSA-44\" | \"ML-DSA-65\" | \"ML-DSA-87\" | \"dir\" | \"A128KW\" | \"A192KW\" | \"A256KW\" | \"A128GCMKW\" | \"A192GCMKW\" | \"A256GCMKW\" | \"ECDH-ES\" | \"ECDH-ES+A128KW\" | \"ECDH-ES+A192KW\" | \"ECDH-ES+A256KW\" | \"RSA-OAEP\" | \"RSA-OAEP-256\" | \"RSA-OAEP-384\" | \"RSA-OAEP-512\" | \"PBES2-HS256+A128KW\" | \"PBES2-HS384+A192KW\" | \"PBES2-HS512+A256KW\" | \"A128CBC-HS256\" | \"A192CBC-HS384\" | \"A256CBC-HS512\" | \"A128GCM\" | \"A192GCM\" | \"A256GCM\""
+                          },
+                          "key_ops": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "x-typescript-type": "string"
+                            },
+                            "x-typescript-type": "string[]"
+                          },
+                          "ext": {
+                            "type": "boolean",
+                            "x-typescript-type": "boolean"
+                          },
+                          "use": {
+                            "type": "string",
+                            "x-typescript-type": "(string & {}) | \"sig\" | \"enc\""
+                          },
+                          "x5c": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "x-typescript-type": "string"
+                            },
+                            "x-typescript-type": "string[]"
+                          },
+                          "x5t": {
+                            "type": "string",
+                            "x-typescript-type": "string"
+                          },
+                          "x5t#S256": {
+                            "type": "string",
+                            "x-typescript-type": "string"
+                          },
+                          "x5u": {
+                            "type": "string",
+                            "x-typescript-type": "string"
+                          },
+                          "kid": {
+                            "type": "string",
+                            "x-typescript-type": "string"
+                          },
                           "crv": {
                             "type": "string",
                             "x-typescript-type": "string"
@@ -98,53 +146,28 @@
                             "type": "string",
                             "x-typescript-type": "string"
                           },
-                          "kty": {
-                            "type": "string",
-                            "x-typescript-type": "string"
-                          },
-                          "alg": {
-                            "type": "string",
-                            "x-typescript-type": "string"
-                          },
-                          "key_ops": {
+                          "oth": {
                             "type": "array",
                             "items": {
-                              "type": "string",
-                              "x-typescript-type": "string"
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "d": {
+                                  "type": "string",
+                                  "x-typescript-type": "string"
+                                },
+                                "r": {
+                                  "type": "string",
+                                  "x-typescript-type": "string"
+                                },
+                                "t": {
+                                  "type": "string",
+                                  "x-typescript-type": "string"
+                                }
+                              },
+                              "x-typescript-type": "{ d?: string; r?: string; t?: string; }"
                             },
-                            "x-typescript-type": "string[]"
-                          },
-                          "ext": {
-                            "type": "boolean",
-                            "x-typescript-type": "boolean"
-                          },
-                          "use": {
-                            "type": "string",
-                            "x-typescript-type": "string"
-                          },
-                          "x5c": {
-                            "type": "array",
-                            "items": {
-                              "type": "string",
-                              "x-typescript-type": "string"
-                            },
-                            "x-typescript-type": "string[]"
-                          },
-                          "x5t": {
-                            "type": "string",
-                            "x-typescript-type": "string"
-                          },
-                          "x5t#S256": {
-                            "type": "string",
-                            "x-typescript-type": "string"
-                          },
-                          "x5u": {
-                            "type": "string",
-                            "x-typescript-type": "string"
-                          },
-                          "kid": {
-                            "type": "string",
-                            "x-typescript-type": "string"
+                            "x-typescript-type": "{ d?: string; r?: string; t?: string; }[]"
                           }
                         },
                         "x-typescript-type": "JWK"
