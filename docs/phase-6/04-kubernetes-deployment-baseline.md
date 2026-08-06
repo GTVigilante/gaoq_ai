@@ -80,7 +80,7 @@ pnpm deployment:kubernetes:validate
 
 `Phase 5 安全与供应链门禁`还会在 GitHub Hosted `ubuntu-latest` 创建固定摘要的
 Kind/Kubernetes 1.30.8 集群和回环 OCI Registry，构建 API、Worker、ERP Web、
-Website 四类生产镜像并以 `repository@sha256:digest` 交给本 Chart 原子部署。
+Website 四类生产镜像并以 `repository@sha256:digest` 交给本 Chart 部署。
 门禁使用单节点 MongoDB Replica Set 与 Redis 作为一次性测试依赖，验证：
 
 1. Kubernetes API 接受 Chart，四个 Deployment 按生产副本数滚动就绪；

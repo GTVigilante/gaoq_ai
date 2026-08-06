@@ -426,7 +426,7 @@ async function deployApplication(images, runtime) {
     'upgrade', '--install', releaseName, 'deploy/helm/gaoq-erp',
     '--namespace', namespace,
     '--values', 'deploy/helm/gaoq-erp/ci-values.yaml', '--values', valuesPath,
-    '--atomic', '--wait', '--timeout', '10m',
+    '--wait', '--timeout', '5m',
   ], { cwd: root });
   for (const component of ['api', 'worker', 'web', 'website']) {
     await run(kubectl, [
@@ -623,8 +623,30 @@ async function collectDiagnostics() {
       const output = await run(kubectl, args, { capture: true, allowFailure: true });
       process.stderr.write(`${output.slice(-12_000)}\n`);
     } catch {
-      // 诊断失败不得覆盖原始异常。
+      /** 诊断失败不得覆盖原始异常。 */
     }
+  }
+  try {
+    const document = JSON.parse(await run(kubectl, [
+      'get', 'pods', '--namespace', namespace, '--output=json',
+    ], { capture: true, allowFailure: true }));
+    for (const pod of document.items ?? []) {
+      for (const container of pod.spec?.containers ?? []) {
+        for (const previous of [false, true]) {
+          const output = await run(kubectl, [
+            'logs', '--namespace', namespace, pod.metadata.name,
+            '--container', container.name, '--tail=100',
+            ...(previous ? ['--previous'] : []),
+          ], { capture: true, allowFailure: true });
+          if (output.trim() !== '') process.stderr.write(
+            `POD_LOG:${pod.metadata.name}:${container.name}:${previous ? 'previous' : 'current'}\n` +
+            `${output.slice(-12_000)}\n`,
+          );
+        }
+      }
+    }
+  } catch {
+    /** 容器日志诊断失败不得覆盖原始异常。 */
   }
 }
 
