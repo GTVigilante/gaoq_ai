@@ -55,8 +55,8 @@ try {
   await run(kubectl, ['label', 'node', `${clusterName}-control-plane`,
     'topology.kubernetes.io/zone=kind-zone-a', '--overwrite']);
 
-  await loadDependencyImages();
-  await deployDependencies();
+  const dependencyImages = await publishDependencyImages();
+  await deployDependencies(dependencyImages);
   await initializeMongoReplicaSet();
 
   const images = await buildAndPublishApplicationImages();
@@ -131,16 +131,22 @@ async function createCluster() {
   ]);
 }
 
-/** 将固定摘要的 MongoDB 与 Redis 装载到 Kind，避免运行时访问可变标签。 */
-async function loadDependencyImages() {
-  for (const image of [mongoImage, redisImage]) {
+/** 将固定上游摘要重新发布到回环 Registry，并返回 Registry 自身的不可变摘要。 */
+async function publishDependencyImages() {
+  const images = {};
+  for (const [name, image] of Object.entries({ mongo: mongoImage, redis: redisImage })) {
     await run(docker, ['pull', image]);
-    await run(kind, ['load', 'docker-image', '--name', clusterName, image]);
+    const repository = `localhost:${registryPort}/gaoq-dependencies/${name}`;
+    const taggedImage = `${repository}:${releaseCommit}`;
+    await run(docker, ['tag', image, taggedImage]);
+    await run(docker, ['push', taggedImage]);
+    images[name] = await resolveRepoDigest(repository, taggedImage, name);
   }
+  return images;
 }
 
 /** 部署只服务本次冒烟的单节点 MongoDB Replica Set 与 Redis。 */
-async function deployDependencies() {
+async function deployDependencies(images) {
   const objects = [
     {
       apiVersion: 'v1', kind: 'Namespace', metadata: { name: namespace },
@@ -164,7 +170,7 @@ async function deployDependencies() {
           spec: {
             automountServiceAccountToken: false,
             containers: [{
-              name: 'mongo', image: mongoImage, imagePullPolicy: 'Never',
+              name: 'mongo', image: images.mongo, imagePullPolicy: 'IfNotPresent',
               args: ['mongod', '--replSet', 'rs0', '--bind_ip_all'],
               ports: [{ name: 'mongodb', containerPort: 27017 }],
               readinessProbe: {
@@ -200,7 +206,7 @@ async function deployDependencies() {
           spec: {
             automountServiceAccountToken: false,
             containers: [{
-              name: 'redis', image: redisImage, imagePullPolicy: 'Never',
+              name: 'redis', image: images.redis, imagePullPolicy: 'IfNotPresent',
               args: ['redis-server', '--save', '', '--appendonly', 'no'],
               ports: [{ name: 'redis', containerPort: 6379 }],
               readinessProbe: {
@@ -267,17 +273,24 @@ async function buildAndPublishApplicationImages() {
       '--tag', taggedImage, '.',
     ], { cwd: root });
     await run(docker, ['push', taggedImage]);
-    const repoDigests = JSON.parse(await run(docker, [
-      'image', 'inspect', taggedImage, '--format', '{{json .RepoDigests}}',
-    ], { capture: true }));
-    assert.equal(Array.isArray(repoDigests), true);
-    const pinned = repoDigests.find((item) => item.startsWith(`${repository}@sha256:`));
-    assert.equal(typeof pinned, 'string', `KUBERNETES_SMOKE_${name.toUpperCase()}_DIGEST_MISSING`);
+    const pinned = await resolveRepoDigest(repository, taggedImage, name);
     const [pinnedRepository, digest] = pinned.split('@');
     assert.match(digest, /^sha256:[a-f0-9]{64}$/u);
     images[name] = { repository: pinnedRepository, digest };
   }
   return images;
+}
+
+/** 从本地镜像元数据解析指定 Registry 仓库的不可变摘要。 */
+async function resolveRepoDigest(repository, taggedImage, name) {
+  const repoDigests = JSON.parse(await run(docker, [
+    'image', 'inspect', taggedImage, '--format', '{{json .RepoDigests}}',
+  ], { capture: true }));
+  assert.equal(Array.isArray(repoDigests), true);
+  const pinned = repoDigests.find((item) => item.startsWith(`${repository}@sha256:`));
+  assert.equal(typeof pinned, 'string',
+    `KUBERNETES_SMOKE_${name.toUpperCase()}_DIGEST_MISSING`);
+  return pinned;
 }
 
 /** 创建 API、Worker 与两个 Web 应用的临时 ConfigMap/Secret。 */

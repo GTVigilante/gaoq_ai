@@ -140,7 +140,9 @@ if (packageDocument.devDependencies?.['@modelcontextprotocol/sdk'] !== '^1.29.0'
 for (const marker of [
   'assertTargetsAbsent()',
   '/@sha256:[a-f0-9]{64}$/u',
-  "imagePullPolicy: 'Never'",
+  'publishDependencyImages()',
+  'localhost:${registryPort}/gaoq-dependencies/${name}',
+  "imagePullPolicy: 'IfNotPresent'",
   'automountServiceAccountToken: false',
   'container.securityContext.readOnlyRootFilesystem',
   'container.securityContext.allowPrivilegeEscalation',
