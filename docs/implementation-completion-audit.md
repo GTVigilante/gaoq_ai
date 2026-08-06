@@ -1,12 +1,13 @@
 # 仓库实施完成度审计
 
-- 审计日期：2026-07-30
-- 审计对象：Phase 0–6、开放 Issue、当前堆叠 Draft PR 与 GitHub 治理配置
+- 审计日期：2026-08-06
+- 审计对象：Phase 0–6、开放 Issue、当前维护 Draft PR、`main@9e2ab5e` 与 GitHub 治理配置
 - 结论：应用、契约、迁移控制面、生产门禁、Helm/Kubernetes 编排和标准 MCP
   已形成仓库实施基线；真实外部联调、目标环境演练、UAT、切换与 Hypercare
-  尚未完成。全量 80% 与专项生产文件逐文件 90% 仓库门禁已经建立；Phase 0
-  的 GitHub Project 因最小权限未授权而未配置，GitHub Hosted Actions 及
-  架构/安全/业务签署尚无有效证据，因此所有 Phase 均不得标记生产完成。
+  尚未完成。全量 80% 与专项生产文件逐文件 90% 仓库门禁已经建立；2026-08-06
+  的 GitHub Hosted Actions 已对 `main@9e2ab5e` 实际通过工程质量、安全与
+  供应链及文档门禁。Phase 0 的 GitHub Project 因最小权限未授权而未配置，
+  架构/安全/业务等真实职责签署仍无有效证据，因此所有 Phase 均不得标记生产完成。
 
 本审计只判断“仓库是否已有可执行实现”，不把本地自测、静态校验器或模拟证据
 冒充现场验收。Issue 在外部证据齐全前保持 OPEN。
@@ -24,7 +25,7 @@
 
 | Phase | 仓库实施证据 | 尚缺外部证据 | 结论 |
 |---|---|---|---|
-| 0 | `docs/phase-0/`、6 项 accepted ADR、19 类数据处理登记、20 项 STRIDE 威胁登记、Issue 模板、7 个 Milestone、标签、Draft PR、只读治理自动化、全量四维 80% 与 337 个生产文件逐文件四维 90% 门禁 | Issue #41 的 GitHub Project 需要 `project` 权限；架构/安全/业务/数据/法务签署尚未取得；2026-08-01 的 `main` Hosted Actions 已实际通过 | 仓库实施已交付，外部/治理验收待完成 |
+| 0 | `docs/phase-0/`、6 项 accepted ADR、19 类数据处理登记、20 项 STRIDE 威胁登记、Issue 模板、7 个 Milestone、标签、Draft PR、只读治理自动化、全量四维 80% 与 337 个生产文件逐文件四维 90% 门禁；2026-08-06 的 `main@9e2ab5e` Hosted Actions 已实际通过 | Issue #41 的 GitHub Project 需要 `read:project,project` 权限；架构/安全/业务/数据/法务签署尚未取得 | 仓库实施已交付，外部/治理验收待完成 |
 | 1 | `apps/erp-api/src/modules/auth/`、`org/`、`security/`、`integration/`，`deploy/helm/`，Phase 1 工作流 | 境内云 VPC、WAF/KMS、真实 SSO/组织下发、监控告警、备份恢复与 RPO/RTO 演练 | 实施已交付，外部验收待完成 |
 | 2 | `apps/erp-api/src/modules/approval/`、审批前端、通知、迁移与 MCP 能力 | 氚云模板/历史/在途审批真实盘点迁移、三次演练和业务签署 | 实施已交付，外部验收待完成 |
 | 3 | 招聘、eSign、Onboarding、Knowledge、Care、Talent Lifecycle 360 及对应 REST/事件/MCP | 真实渠道、e签宝、对象/WORM、OpenAI/搜索/评分/通知、CRM/校友平台与跨角色 UAT | 实施已交付，外部验收待完成 |
@@ -36,7 +37,7 @@
 
 | Phase | 章程强制退出条件 | 当前可复核的仓库证据 | 尚缺证据/结论 |
 |---|---|---|---|
-| 0 | 架构/安全/业务共同签署；所有 P0 达到 DoR | 规范包、ADR、Issue 模板、Milestone、治理校验器和覆盖率门禁均已入库 | 三方真实签署及 Hosted Actions 未取得；**No-Go** |
+| 0 | 架构/安全/业务共同签署；所有 P0 达到 DoR | 规范包、ADR、Issue 模板、Milestone、治理校验器和覆盖率门禁均已入库；`main@9e2ab5e` 工程、安全和文档 Hosted Actions 已通过 | 三方真实签署及 Issue #41 Project 授权未取得；**No-Go** |
 | 1 | 租户逃逸为零；双平台身份与组织对账 100%；MCP 授权可用 | 可信租户上下文、跨租户负向测试、钉钉/飞书双适配器、组织对账服务、OAuth/PKCE/Client Credentials 与 MCP 协议测试 | 真实双平台租户、全量组织快照、正式 Token 和授权矩阵未验收；**No-Go** |
 | 2 | 状态机、并发、权限、通知、确认链全部验收 | 审批状态机、强版本、幂等、事务 Outbox、通知 Worker、R1/R2 prepare/execute 与 PC/H5 契约测试 | 真实历史/在途迁移、弱网、实体角色和业务签署未验收；**No-Go** |
 | 3 | 候选人到员工全链闭环；签署证据和隐私授权可审计 | 招聘、Offer、eSign、入职、知识、关怀、授权清理和证据链应用/Worker/REST/事件/MCP 均有代码与负向测试 | 真实渠道、e签宝、WORM、通知和跨角色 UAT 未验收；**No-Go** |
@@ -103,8 +104,9 @@ Zod 注册表、4 个来自 TypeScript 内联类型，共形成 135 个 Componen
 OAuth 表单、CSV、MCP SSE、WebAuthn 与无正文响应不再误报为默认 JSON。生成器
 拒绝未命名/unknown 写请求、顶层 unknown 成功响应、失效运行时来源、悬空引用和
 计数漂移。刻意开放的嵌套 `Record<string, unknown>` 显式标记，不把成功契约或
-仓库测试替代协议专用错误、真实外部联调及 UAT。GitHub Hosted Actions 尚未启动
-Runner，远端 CI 仍为 No-Go。
+仓库测试替代协议专用错误、真实外部联调及 UAT。2026-08-06 的
+`main@9e2ab5e` 已在 GitHub Hosted Actions 重新通过工程质量门禁；该结果只关闭
+远端 CI 证据缺口，目标系统联调与 UAT 仍为 No-Go。
 
 ### 2.7 AsyncAPI 与 CloudEvents 机器契约
 
@@ -121,7 +123,8 @@ ERP/平台出站 180 个、专业算薪入站 4 个。每个 Message/Channel/Ope
 OpenAPI 一起通过 `pretypecheck` 接入 `pnpm check`。统一信封完整展开，复杂逐
 type `data` 继续由列明的 Zod、TypeScript 和 JSON Schema 约束，禁止把目录当成
 绕过运行时校验的替代品。物理 Broker、Topic/ACL、mTLS、保留期、死信、断连
-追赶与真实外部回放仍待目标环境验收；Hosted Actions 未启动 Runner，远端仍为
+追赶与真实外部回放仍待目标环境验收；2026-08-06 的 `main@9e2ab5e` 已在
+GitHub Hosted Actions 重新通过工程质量门禁，但物理 Broker 与外部回放仍为
 **No-Go**。
 
 ## 3. 未完成 Issue 的实施证据
@@ -145,20 +148,26 @@ type `data` 继续由列明的 Zod、TypeScript 和 JSON Schema 约束，禁止�
 
 - GitHub 是唯一代码协作、Issue、PR 与 CI 入口；不使用 NAS、自建 Runner、虚拟机
   或本地内网作为 CI 替代品。
-- Phase 0–6 堆叠 PR 已按依赖顺序合入 `main@6219644`；2026-08-01 的 main run
-  `30685077655`、`30685077683` 和 `30685077646` 分别实际通过 Phase 1、
-  Phase 5 和文档门禁。
+- Phase 0–6 堆叠 PR 已按依赖顺序通过 #104 合入 `main@6219644`；后续安全与
+  工具链修复已进入 `main@9e2ab5e`。2026-08-06 的 main run `31082906936`、
+  `31082907668` 和 `31082906778` 分别实际通过 Phase 1、Phase 5 和文档门禁。
 - CI 已解除阻断；仓库门禁通过不替代真实外部联调、三次迁移演练、生产等价
   性能/安全/容灾证据、UAT、Go/No-Go、统一切换或四周 Hypercare。
 - Issue #41 需要用户明确授权 `read:project,project` 后才能创建 Project。未获授权
   前保持阻塞，不扩大 OAuth 权限。
+- 2026-08-06 已逐项验证 66 条开放堆叠 Draft 的 head commit 是 `main` 祖先，
+  并验证 #107/#109 分别由已合并的 #110/#112 及 #104 替代；共关闭 68 条历史
+  Draft，不删除远端分支或代码。当前仅保留 12 条依赖维护 Draft，真实外部验收
+  继续由 OPEN Issue 跟踪，禁止以关闭历史 PR 代替现场验收。
 - 2026-07-29 已对实时 GitHub 元数据完成一次性收敛：67 个历史 PR 补齐唯一
   Milestone，37 个历史 PR 补齐至少一个真实 Issue 关联，Issue #12 补齐明确的
   “当前阻塞/解除方式”。`scripts/github/validate-repository-governance.mjs`
-  随后只读验收 7 个 Milestone、51 个 Issue 和 79 个 PR 全部通过。
+  随后只读验收 7 个 Milestone、51 个 Issue 和 79 个 PR 全部通过；2026-08-06
+  对当前 104 个 PR 的实时复核再次通过。
 - `.github/workflows/github-governance.yml` 已把上述规则转成最小只读权限门禁，
   24 个负向自测覆盖标签、状态、Epic 子项、Story 三面契约、PR Ready 前 CR、真实 Issue 关联、
-  验证证据和来源分支；Hosted Actions 尚未分配 Runner，仍不得记为远端通过。
+  验证证据和来源分支；2026-08-06 的远端 run `31084698685` 已对实时
+  7 个 Milestone、51 个 Issue 和 104 个 PR 校验通过。
 - 2026-07-30 已将 27 个 Story 全部补齐
   `REST / 事件 / MCP 契约（仓库基线）`，三行分别说明 REST、事件和 MCP 的实现
   归属或“不新增”的安全理由，不改写原验收项，也不勾选外部证据。治理校验器新增
@@ -178,8 +187,8 @@ type `data` 继续由列明的 Zod、TypeScript 和 JSON Schema 约束，禁止�
 
 同日完整 `pnpm check`、显式公开 HTTPS Origin 的全工作区 `pnpm build` 与
 `pnpm audit --audit-level high` 均通过，依赖审计未发现已知漏洞。该本地证据
-只证明当前提交候选的工程门禁可重复执行，不替代 GitHub Hosted Actions、
-目标环境联调、生产等价演练或人工签署。
+只证明本地工程门禁可重复执行；`main@9e2ab5e` 的独立 Hosted Actions 已通过，
+两者均不替代目标环境联调、生产等价演练或人工签署。
 
 `scripts/validate-critical-coverage-policy.mjs` 进一步从 `precheck/check` 递归
 解析 134 个可达 ERP API 专项脚本，展开全部 `--coverage.include` glob，并要求
@@ -190,8 +199,8 @@ type `data` 继续由列明的 Zod、TypeScript 和 JSON Schema 约束，禁止�
 只有专项没有阈值、关键域分类遗漏及未接入 `precheck`，并以六类负向自测证明
 失败关闭。本轮据此补齐 34 个此前仅受全量报告约束的关键文件，以及租户上下文
 Service、招聘渠道人工运维 Service/Controller 三个组合报告下的单文件缺口。
-由此关闭的是仓库质量策略缺口；GitHub CI 真实执行和 Phase 0 人工签署仍属于
-独立验收条件。
+由此关闭的是仓库质量策略缺口；GitHub CI 已对 `main@9e2ab5e` 真实执行通过，
+Phase 0 人工签署仍属于独立验收条件。
 
 2026-07-29 标准 MCP 已新增本地 stdio 入口。入口与远程 `/mcp` 共用运行时能力
 注册和访问令牌验证器；短时 Token 必须具有 `erp:mcp:server:connect`，启动前
@@ -250,9 +259,9 @@ Token；Plan/Apply 使用不同 workflow、audience 与 RBAC Group。生产 Appl
 验证变更负责人和 SRE 使用不同批准密钥形成的两份外部 Ed25519 签名、批准
 keyset 以及独立 Plan 产物。四个入口的
 专项负向自测已接入根 `test/check`，Phase 5/6 工作流静态门禁会拒绝
-self-hosted 标签、本地挂载、长期 Secret 与未固定工具链。该仓库实现不证明企业
-证据/凭据代理、外部签名服务、目标集群 OIDC 信任或 Hosted Actions 已可用；
-当前账户仍在 Runner 分配前被计费状态阻塞，生产验收保持 No-Go。
+self-hosted 标签、本地挂载、长期 Secret 与未固定工具链。该仓库实现及已通过的
+Hosted Actions 不证明企业证据/凭据代理、外部签名服务、目标集群 OIDC 信任或
+生产 RBAC 已可用；生产验收保持 No-Go。
 
 2026-07-30 七类 Readiness 原始证据已从元数据式角色记录升级为
 `gaoq.phase5.readiness.v2`。架构、变更、工程、财务、HR、法务、平台、隐私、
@@ -1424,8 +1433,8 @@ Payroll/Treasury 在线、MCP、Worker、迁移和内部调用旁路。因此“
 1. 复核专业算薪资源服务器、共享事件、迁移连接器及运维 Worker 的真实部署契约，
    在目标环境取得 OAuth 主体映射、断连恢复、密钥轮换和历史回放原始证据；不得
    用旧 ERP 应用服务的本地失败关闭测试替代外部联调。
-2. 在不付费、不使用自建基础设施的前提下等待 GitHub Hosted Actions 免费额度或
-   账号限制恢复；新 commit 只触发一次并记录原始结论。
+2. 继续仅使用 GitHub Hosted Actions；每个发布候选记录工程、安全、文档和治理
+   原始 run，失败时按真实日志修复，禁止用本地结果替代远端结论。
 3. 用户批准最小 Project 权限后完成 Issue #41；未批准前继续以 Milestone、标签、
    Issue 和 Draft PR 管理，不把看板缺失描述为完成。
 4. 取得真实目标环境后按 Phase 1 → 5 → 6 顺序执行外部联调、迁移/性能/安全/容灾

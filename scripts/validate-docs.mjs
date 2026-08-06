@@ -107,7 +107,10 @@ const forbiddenGovernancePatterns = [
 
 const requiredGovernanceMarkers = new Map([
   ['AGENTS.md', ['Phase 0–6', '真实联调', '标准 MCP']],
-  ['CODEX.md', ['Phase 0–6', 'pnpm check', '生产完成', '.codex/AGENTS.md']],
+  [
+    'CODEX.md',
+    ['Phase 0–6', 'pnpm check', '生产完成', '.codex/AGENTS.md', '104 个 PR'],
+  ],
   [
     '.codex/AGENTS.md',
     [
@@ -133,6 +136,10 @@ const forbiddenDeliveryBoundaryPatterns = [
   /校友下游数据删除证明仍未交付/u,
   /补充\/冲正和年度汇算是旧 ERP 算薪基线的未实现能力/u,
   /它不包含审批锁定、工资单、银行代发或税务申报/u,
+  /GitHub Hosted Actions 尚未启动/u,
+  /Hosted Actions 尚未分配 Runner/u,
+  /当前账户仍在 Runner 分配前被计费状态阻塞/u,
+  /等待 GitHub Hosted Actions 免费额度/u,
 ];
 const requiredDeliveryBoundaryMarkers = new Map([
   ['docs/phase-0/06-github-governance.md',
@@ -144,6 +151,10 @@ const requiredDeliveryBoundaryMarkers = new Map([
       '生产完成',
       'PAYROLL_SYSTEM_MODE=external',
       '工资调整收付与税务结算闭环',
+      '2026-08-06',
+      '104 个 PR',
+      '12 条依赖维护 Draft',
+      'read:project,project',
     ]],
   ['docs/phase-3/README.md',
     ['Phase 3 只能标记“代码已交付”', '不得标记生产完成']],
