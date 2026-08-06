@@ -13,6 +13,7 @@
     "dev": "pnpm --parallel --filter './apps/*' dev",
     "dev:up": "node scripts/dev/local-runtime.mjs up",
     "dev:down": "node scripts/dev/local-runtime.mjs down",
+    "smoke:runtime:live": "pnpm --filter @gaoq/erp-api smoke:worker:live && pnpm --filter @gaoq/erp-api smoke:mcp:live",
     "prelint": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && pnpm --filter @gaoq/platform-contracts build",
     "lint": "eslint .",
     "pretypecheck": "pnpm contracts:openapi:self-test && pnpm contracts:openapi:validate && pnpm contracts:asyncapi:self-test && pnpm contracts:asyncapi:validate",

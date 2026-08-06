@@ -28,6 +28,7 @@ import { TenantContextModule } from '../../core/tenant/tenant-context.module.js'
 import { AttendanceCoreModule } from '../attendance/attendance-core.module.js';
 import { AttendanceShiftProcessor } from '../attendance/attendance-shift.processor.js';
 import { AttendanceShiftScheduler } from '../attendance/attendance-shift.scheduler.js';
+import { ATTENDANCE_SHIFT_QUEUE } from '../attendance/attendance-shift.queue.js';
 import { RecruitmentCoreModule } from '../recruitment/recruitment-core.module.js';
 
 /** 只在独立 Worker 进程装配队列消费者，API 进程不消费后台任务。 */
@@ -42,6 +43,7 @@ import { RecruitmentCoreModule } from '../recruitment/recruitment-core.module.js
     BullModule.registerQueue({ name: ESIGN_WEBHOOK_QUEUE }),
     BullModule.registerQueue({ name: RECRUITMENT_CHANNEL_QUEUE }),
     BullModule.registerQueue({ name: ATTENDANCE_PROVIDER_QUEUE }),
+    BullModule.registerQueue({ name: ATTENDANCE_SHIFT_QUEUE }),
     BullModule.registerQueue({ name: OP_OPERATING_SUMMARY_QUEUE }),
     BullModule.registerQueue({ name: OP_APPROVAL_BRIDGE_QUEUE }),
     OpCoreModule,
