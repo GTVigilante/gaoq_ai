@@ -474,7 +474,7 @@ async function verifyRuntime(images, runtime) {
 
   const forwards = await Promise.all([
     portForward(`${releaseName}-gaoq-erp-api`, '30112:3001'),
-    portForward(`${releaseName}-gaoq-erp-worker`, '30946:9464'),
+    portForward(`${releaseName}-gaoq-erp-worker-metrics`, '30946:9464'),
     portForward(`${releaseName}-gaoq-erp-web`, '30100:3000'),
     portForward(`${releaseName}-gaoq-erp-website`, '30102:3002'),
   ]);

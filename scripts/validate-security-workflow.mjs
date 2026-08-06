@@ -149,6 +149,7 @@ for (const marker of [
   'container.securityContext.readOnlyRootFilesystem',
   'container.securityContext.allowPrivilegeEscalation',
   'status.restartCount, 0',
+  '`${releaseName}-gaoq-erp-worker-metrics`',
   'expectedCatalog.tools',
   'expectedCatalog.resources',
   'expectedCatalog.resourceTemplates',
