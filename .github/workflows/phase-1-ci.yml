@@ -76,17 +76,19 @@ jobs:
       - name: 生成临时运行凭据
         shell: bash
         run: |
-          printf 'DEV_OBJECT_STORAGE_ACCESS_KEY=gaoq%s\n' "$(openssl rand -hex 10)" >> "$GITHUB_ENV"
-          printf 'DEV_OBJECT_STORAGE_SECRET_KEY=%s\n' "$(openssl rand -base64 32 | tr -d '\n')" >> "$GITHUB_ENV"
-          printf 'DEV_OBJECT_STORAGE_BUCKET=gaoq-ci\n' >> "$GITHUB_ENV"
-          printf 'MONGO_PORT=27020\n' >> "$GITHUB_ENV"
-          printf 'REDIS_PORT=6391\n' >> "$GITHUB_ENV"
+          {
+            printf 'DEV_OBJECT_STORAGE_ACCESS_KEY=gaoq%s\n' "$(openssl rand -hex 10)"
+            printf 'DEV_OBJECT_STORAGE_SECRET_KEY=%s\n' "$(openssl rand -base64 32 | tr -d '\n')"
+            printf 'DEV_OBJECT_STORAGE_BUCKET=gaoq-ci\n'
+            printf 'MONGO_PORT=27020\n'
+            printf 'REDIS_PORT=6391\n'
+          } >> "$GITHUB_ENV"
 
       - name: 启动临时 MongoDB Replica Set 与 Redis
         run: |
           docker compose up -d --wait mongo redis
           docker compose run --rm --no-deps mongo-init
-          for attempt in {1..30}; do
+          for _ in {1..30}; do
             if docker compose exec -T mongo mongosh --quiet --eval \
               'if (!db.hello().isWritablePrimary) quit(1)'; then
               exit 0
