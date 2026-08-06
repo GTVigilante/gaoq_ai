@@ -16,6 +16,15 @@ const goNoGoWorkflowPath = new URL('../.github/workflows/phase-5-go-no-go.yml', 
 const mcpIntegrationWorkflowPath = new URL('../.github/workflows/phase-5-mcp-integration.yml', import.meta.url);
 const packagePath = new URL('../package.json', import.meta.url);
 const webPackagePath = new URL('../apps/erp-web/package.json', import.meta.url);
+const pnpmLockPath = new URL('../pnpm-lock.yaml', import.meta.url);
+const vitestWorkspacePackagePaths = [
+  '../apps/erp-api/package.json',
+  '../apps/erp-web/package.json',
+  '../apps/website/package.json',
+  '../packages/platform-contracts/package.json',
+  '../packages/shared-types/package.json',
+  '../packages/shared-utils/package.json',
+].map((relativePath) => new URL(relativePath, import.meta.url));
 const bearerIgnorePath = new URL('../bearer.ignore', import.meta.url);
 const gitleaksConfigPath = new URL('../.gitleaks.toml', import.meta.url);
 const workflow = await readFile(workflowPath, 'utf8');
@@ -28,6 +37,11 @@ const goNoGoWorkflow = await readFile(goNoGoWorkflowPath, 'utf8');
 const mcpIntegrationWorkflow = await readFile(mcpIntegrationWorkflowPath, 'utf8');
 const packageDocument = JSON.parse(await readFile(packagePath, 'utf8'));
 const webPackageDocument = JSON.parse(await readFile(webPackagePath, 'utf8'));
+const pnpmLock = await readFile(pnpmLockPath, 'utf8');
+const vitestWorkspacePackageDocuments = await Promise.all(
+  vitestWorkspacePackagePaths.map(async (workspacePackagePath) =>
+    JSON.parse(await readFile(workspacePackagePath, 'utf8'))),
+);
 const bearerIgnore = JSON.parse(await readFile(bearerIgnorePath, 'utf8'));
 const gitleaksConfig = await readFile(gitleaksConfigPath, 'utf8');
 
@@ -492,6 +506,16 @@ if (typeof sharpOverride !== 'string' || sharpOverride !== '0.35.3') {
 
 if (webPackageDocument.dependencies?.next !== '16.2.11') {
   throw new Error('PHASE5_SECURITY_NEXT_PATCH_REQUIRED');
+}
+if (
+  packageDocument.devDependencies?.vite !== '7.3.6' ||
+  vitestWorkspacePackageDocuments.some(
+    (workspacePackageDocument) => workspacePackageDocument.devDependencies?.vite !== '7.3.6',
+  ) ||
+  /\bvitest@4\.1\.10[^\n]*\(vite@8\./u.test(pnpmLock) ||
+  !/\bvitest@4\.1\.10[^\n]*\(vite@7\.3\.6/u.test(pnpmLock)
+) {
+  throw new Error('PHASE5_TEST_TOOLCHAIN_VITE_BASELINE_REQUIRED');
 }
 if (
   packageDocument.pnpm?.overrides?.postcss !== '8.5.23' ||
