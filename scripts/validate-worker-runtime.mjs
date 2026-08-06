@@ -6,6 +6,10 @@ import ts from 'typescript';
 const root = path.resolve(new URL('..', import.meta.url).pathname);
 const workerModulePath = path.join(root, 'apps/erp-api/src/worker.module.ts');
 const workerMainPath = path.join(root, 'apps/erp-api/src/worker-main.ts');
+const integrationWorkerModulePath = path.join(
+  root,
+  'apps/erp-api/src/modules/integration/integration-worker.module.ts',
+);
 const apiSourceRoot = path.join(root, 'apps/erp-api/src');
 const forbiddenHttpShells = new Set([
   'analytics.module.js',
@@ -38,6 +42,23 @@ assert.equal(
   hasNamedImport(workerModule, './config/environment.js', 'validateEnvironment'),
   false,
   'WorkerModule 禁止回退为 API 全量环境校验',
+);
+
+const integrationWorkerModule = parse(
+  await readFile(integrationWorkerModulePath, 'utf8'),
+  integrationWorkerModulePath,
+);
+assert.ok(
+  hasNamedImport(
+    integrationWorkerModule,
+    '../attendance/attendance-shift.queue.js',
+    'ATTENDANCE_SHIFT_QUEUE',
+  ),
+  'IntegrationWorkerModule 必须导入考勤班次队列常量',
+);
+assert.ok(
+  hasBullQueueRegistration(integrationWorkerModule, 'ATTENDANCE_SHIFT_QUEUE'),
+  'IntegrationWorkerModule 必须在调度器同一模块作用域注册考勤班次队列',
 );
 
 const workerMain = parse(await readFile(workerMainPath, 'utf8'), workerMainPath);
@@ -147,6 +168,40 @@ function moduleImportsContain(source, className, importedName) {
     imports.initializer.elements.some(
       (element) => ts.isIdentifier(element) && element.text === importedName,
     );
+}
+
+/**
+ * 检查 Nest 模块是否显式注册指定 BullMQ 队列。
+ *
+ * @param {ts.SourceFile} source - AST。
+ * @param {string} queueName - 队列常量名。
+ * @returns {boolean} 是否注册。
+ */
+function hasBullQueueRegistration(source, queueName) {
+  let found = false;
+  const visit = (node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === 'BullModule' &&
+      node.expression.name.text === 'registerQueue'
+    ) {
+      const registration = node.arguments[0];
+      if (
+        registration !== undefined &&
+        ts.isObjectLiteralExpression(registration) &&
+        registration.properties.some((property) =>
+          ts.isPropertyAssignment(property) &&
+          property.name.getText(source) === 'name' &&
+          ts.isIdentifier(property.initializer) &&
+          property.initializer.text === queueName)
+      ) found = true;
+    }
+    if (!found) ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
 }
 
 /**

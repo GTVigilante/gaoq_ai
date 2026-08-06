@@ -9,6 +9,8 @@ import { fileURLToPath, URL, URLSearchParams } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
+import { catalog as expectedCatalog } from '../../../scripts/mcp/validate-phase-5-mcp-catalog.mjs';
+
 const apiRoot = fileURLToPath(new URL('..', import.meta.url));
 const entryFile = fileURLToPath(new URL('../dist/main.js', import.meta.url));
 const port = 30_112;
@@ -18,6 +20,7 @@ const clientId = 'local-mcp-smoke-client';
 const credentialId = 'local-mcp-smoke-credential';
 const clientSecret = randomBytes(32).toString('base64url');
 const auditKey = randomBytes(32).toString('base64url');
+const MCP_SMOKE_STABLE_READY_MS = 5_000;
 const signingKey = generateKeyPairSync('rsa', { modulusLength: 2_048 }).privateKey.export({
   type: 'pkcs8',
   format: 'pem',
@@ -113,6 +116,7 @@ try {
  */
 async function waitUntilReady(child) {
   const deadline = Date.now() + 30_000;
+  let readySince;
   while (Date.now() < deadline) {
     if (child.exitCode !== null) {
       throw new Error(`MCP 冒烟 API 提前退出：${logs.slice(-20).join('\n')}`);
@@ -121,9 +125,15 @@ async function waitUntilReady(child) {
       const response = await globalThis.fetch(`${issuer}/api/health/ready`, {
         signal: globalThis.AbortSignal.timeout(1_000),
       });
-      if (response.ok) return;
+      if (response.ok) {
+        readySince ??= Date.now();
+        if (Date.now() - readySince >= MCP_SMOKE_STABLE_READY_MS) return;
+      } else {
+        readySince = undefined;
+      }
     } catch {
       // API 正在启动；固定短间隔重试，不回显连接错误。
+      readySince = undefined;
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
@@ -184,10 +194,28 @@ async function verifyMcpSdk(token) {
       client.listResourceTemplates(),
       client.listPrompts(),
     ]);
-    assert.equal(tools.tools.length, 47);
-    assert.ok(resources.resources.length >= 4);
-    assert.equal(templates.resourceTemplates.length, 24);
-    assert.equal(prompts.prompts.length, 22);
+    assert.deepEqual(
+      tools.tools.map(({ name }) => name).sort(),
+      expectedCatalog.tools.map(({ name }) => name).sort(),
+      '运行时 Tool 目录与受控目录不一致',
+    );
+    assert.deepEqual(
+      resources.resources.map(({ name, uri }) => `${name}\0${uri}`).sort(),
+      expectedCatalog.resources.map(({ name, uri }) => `${name}\0${uri}`).sort(),
+      '运行时 Resource 目录与受控目录不一致',
+    );
+    assert.deepEqual(
+      templates.resourceTemplates.map(({ name, uriTemplate }) =>
+        `${name}\0${uriTemplate}`).sort(),
+      expectedCatalog.resourceTemplates.map(({ name, uriTemplate }) =>
+        `${name}\0${uriTemplate}`).sort(),
+      '运行时 Resource Template 目录与受控目录不一致',
+    );
+    assert.deepEqual(
+      prompts.prompts.map(({ name }) => name).sort(),
+      expectedCatalog.prompts.map(({ name }) => name).sort(),
+      '运行时 Prompt 目录与受控目录不一致',
+    );
     const toolNames = new Set(tools.tools.map((tool) => tool.name));
     for (const forbidden of [
       'treasury_disbursement_submit',

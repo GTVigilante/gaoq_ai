@@ -1321,6 +1321,12 @@ pnpm --filter @gaoq/erp-api smoke:worker:live
 脚本仅在内存生成临时密钥，使用独立测试数据库与 Redis DB，结束时关闭其创建的
 API 或 Worker 子进程。
 
+`Phase 1 工程质量门禁` 已在同一个 GitHub-hosted Runner 的构建步骤后自动启动
+临时 MongoDB Replica Set 与 Redis，并执行上述两项真实运行冒烟；MCP 目录直接与
+受控目录逐项比对，避免数量和名称随业务演进发生静默漂移。该证据仅代表当前提交
+的 GitHub 临时运行时集成通过，不替代外部供应商沙箱、生产等价、UAT、切换与
+Hypercare 现场验收。
+
 ## Codex 执行规范
 
 - Codex 执行入口为 `.codex/AGENTS.md`，完整项目规范以 `AGENTS.md` 为准。

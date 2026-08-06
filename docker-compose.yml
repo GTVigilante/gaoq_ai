@@ -24,7 +24,6 @@
 services:
   mongo:
     image: mongo:7.0
-    container_name: gaoq-mongo
     restart: unless-stopped
     # 单节点副本集 rs0：事务与 Change Stream 依赖副本集形态。
     command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
@@ -42,7 +41,6 @@ services:
 
   mongo-init:
     image: mongo:7.0
-    container_name: gaoq-mongo-init
     # 一次性初始化副本集，脚本可重复执行且不做任何破坏性操作。
     restart: "no"
     depends_on:
@@ -54,7 +52,6 @@ services:
 
   redis:
     image: redis:7.2-alpine
-    container_name: gaoq-redis
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     ports:
@@ -70,7 +67,6 @@ services:
 
   object-store:
     image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
-    container_name: gaoq-object-store
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
@@ -90,7 +86,6 @@ services:
 
   object-store-init:
     image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
-    container_name: gaoq-object-store-init
     restart: "no"
     depends_on:
       object-store:

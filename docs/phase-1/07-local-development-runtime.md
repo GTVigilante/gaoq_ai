@@ -18,6 +18,9 @@
 - 对象存储凭据只保存在 `.local-runtime/object-storage.env`，文件权限固定为
   `0600`，目录被 Git 忽略；脚本禁止把凭据打印到 stdout/stderr。
 - Compose 文件只引用运行时环境变量，禁止提供默认用户名、密码或 Token。
+- Compose 不固定全局容器名，由项目名隔离容器、网络与命名卷，允许不同工作区和
+  GitHub Runner 并行执行；应用只通过服务名 `mongo`、`redis` 与 `object-store`
+  做容器内发现。
 - MinIO 只模拟 S3 对象 API；它没有生产 WORM、KMS、病毒扫描、跨区复制和
   法定保留能力，任何本地结果均不能作为 Phase 3–6 外部证据。
 - `pnpm dev:down` 停止容器但保留命名卷；数据销毁属于独立危险操作，本入口不
@@ -61,3 +64,23 @@ pnpm dev:down
 
 本机具备 Docker 时可再执行 `pnpm dev:up` 做实体启动；缺少 Docker 或镜像网络
 时，静态门禁通过不代表实体运行通过。
+
+## 6. GitHub 临时运行时门禁
+
+`Phase 1 工程质量门禁` 在完成冻结依赖安装、`pnpm check` 和全工作区构建后，
+会在同一个 GitHub-hosted Runner 内继续执行以下集成验证：
+
+1. 只启动临时 MongoDB 7 单节点 Replica Set 与 Redis 7，等待主节点可写；
+2. 启动真实 Worker，验证健康端点、指标默认拒绝、Bearer 放行和队列装配；API
+   必须连续就绪 5 秒，避免 MongoDB 拓扑或开发索引初始化竞态；
+3. 启动真实 API，以进程内生成的临时 RSA/HMAC/Client Secret 完成 OAuth 2.1
+   Client Credentials 换票；
+4. 由官方 MCP SDK 经 Streamable HTTP 完成握手，并逐项比对 50 个 Tool、4 个
+   Resource、27 个 Resource Template、25 个 Prompt 的受控目录；
+5. 无论成功或失败均删除该 Runner 创建的容器和命名卷，失败时只输出 MongoDB 与
+   Redis 最近 100 行基础设施日志。
+
+该门禁不保存临时密钥，不接触生产数据或外部供应商，不执行 R3 工具，也不创建
+NAS、自建 Runner、虚拟机或长期基础设施。它证明当前提交能在真实数据库、队列、
+OAuth 和 MCP SDK 链路上启动运行，但不替代外部沙箱联调、生产等价演练、人工
+UAT、切换或 Hypercare 证据。

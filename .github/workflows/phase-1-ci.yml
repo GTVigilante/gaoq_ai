@@ -72,3 +72,38 @@ jobs:
           NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_ORIGIN: https://captcha.example.invalid
           NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL: https://captcha.example.invalid/widget
         run: pnpm build
+
+      - name: 生成临时运行凭据
+        shell: bash
+        run: |
+          {
+            printf 'DEV_OBJECT_STORAGE_ACCESS_KEY=gaoq%s\n' "$(openssl rand -hex 10)"
+            printf 'DEV_OBJECT_STORAGE_SECRET_KEY=%s\n' "$(openssl rand -base64 32 | tr -d '\n')"
+            printf 'DEV_OBJECT_STORAGE_BUCKET=gaoq-ci\n'
+            printf 'MONGO_PORT=27020\n'
+            printf 'REDIS_PORT=6391\n'
+          } >> "$GITHUB_ENV"
+
+      - name: 启动临时 MongoDB Replica Set 与 Redis
+        run: |
+          docker compose up -d --wait mongo redis
+          docker compose run --rm --no-deps mongo-init
+          for _ in {1..30}; do
+            if docker compose exec -T mongo mongosh --quiet --eval \
+              'if (!db.hello().isWritablePrimary) quit(1)'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1
+
+      - name: 验证真实 Worker、OAuth 与标准 MCP 运行时
+        run: pnpm smoke:runtime:live
+
+      - name: 输出运行时故障诊断
+        if: failure()
+        run: docker compose logs --no-color --tail 100 mongo redis
+
+      - name: 清理临时运行时
+        if: always()
+        run: docker compose down --volumes --remove-orphans
