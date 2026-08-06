@@ -352,16 +352,56 @@ const schemaForCompilerType = (
         ...extension,
       };
     }
+    const memberSchemas = members.map((member) =>
+      schemaForCompilerType(member, checker, context, { seen, depth: depth + 1 }),
+    );
+    if (
+      memberSchemas.every((schema) => schema.type === 'string') &&
+      memberSchemas.some(
+        (schema) => schema.const === undefined && schema.enum === undefined,
+      )
+    ) {
+      return { type: 'string', ...extension };
+    }
     return {
-      anyOf: members.map((member) =>
-        schemaForCompilerType(member, checker, context, { seen, depth: depth + 1 }),
-      ),
+      anyOf: memberSchemas,
       ...extension,
     };
   }
   if (type.isIntersection()) {
+    const members = type.types.filter((member) => {
+      if (!hasTypeFlag(member, ts.TypeFlags.Object)) {
+        return true;
+      }
+      const memberText = checker.typeToString(
+        member,
+        undefined,
+        ts.TypeFormatFlags.NoTruncation |
+          ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope,
+      );
+      if (memberText !== '{}') {
+        return true;
+      }
+      return (
+        checker.getPropertiesOfType(member).length > 0 ||
+        checker.getIndexTypeOfType(member, ts.IndexKind.String) !== undefined ||
+        checker.getIndexTypeOfType(member, ts.IndexKind.Number) !== undefined
+      );
+    });
+    if (members.length === 1) {
+      return {
+        ...schemaForCompilerType(members[0], checker, context, {
+          seen,
+          depth: depth + 1,
+        }),
+        ...extension,
+      };
+    }
+    if (members.length === 0) {
+      throw new Error(`${context} 空交叉对象类型没有可发布字段：${typeText}`);
+    }
     return {
-      allOf: type.types.map((member) =>
+      allOf: members.map((member) =>
         schemaForCompilerType(member, checker, context, { seen, depth: depth + 1 }),
       ),
       ...extension,

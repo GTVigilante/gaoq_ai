@@ -504,7 +504,7 @@ if (typeof sharpOverride !== 'string' || sharpOverride !== '0.35.3') {
   throw new Error('PHASE5_SECURITY_SHARP_OVERRIDE_REQUIRED');
 }
 
-if (webPackageDocument.dependencies?.next !== '16.2.11') {
+if (webPackageDocument.dependencies?.next !== '16.2.12') {
   throw new Error('PHASE5_SECURITY_NEXT_PATCH_REQUIRED');
 }
 if (
