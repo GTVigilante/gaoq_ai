@@ -131,7 +131,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "gaoq-erp.fullname" . }}-frontend-to-api
+  name: {{ include "gaoq-erp.fullname" . }}-frontend-to-api-egress
   namespace: {{ include "gaoq-erp.targetNamespace" . }}
   labels:
     {{- include "gaoq-erp.labels" . | nindent 4 }}
@@ -152,5 +152,32 @@ spec:
               app.kubernetes.io/name: {{ include "gaoq-erp.name" . }}
               app.kubernetes.io/instance: {{ .Release.Name }}
               app.kubernetes.io/component: api
+      ports:
+        - { port: 3001, protocol: TCP }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "gaoq-erp.fullname" . }}-frontend-to-api-ingress
+  namespace: {{ include "gaoq-erp.targetNamespace" . }}
+  labels:
+    {{- include "gaoq-erp.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "gaoq-erp.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: api
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "gaoq-erp.name" . }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values: [web, website]
       ports:
         - { port: 3001, protocol: TCP }

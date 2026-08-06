@@ -184,6 +184,9 @@ assertIncludes(contents.get('templates/networkpolicy.yaml'), [
   'gateway-to-',
   'monitoring-to-',
   'backend-private-egress',
+  'frontend-to-api-egress',
+  'frontend-to-api-ingress',
+  'values: [web, website]',
   'httpsEgressCidrs',
   'mongodbCidrs',
   'redisCidrs',
@@ -238,14 +241,14 @@ if (renderedPath !== undefined) {
     PodDisruptionBudget: 4,
     HorizontalPodAutoscaler: 3,
     Ingress: 1,
-    NetworkPolicy: 9,
+    NetworkPolicy: 10,
   })) {
     if (count(kind) !== expected) throw new Error(`KUBERNETES_RENDERED_${kind.toUpperCase()}_COUNT_INVALID`);
   }
 
   const namespaces = [...rendered.matchAll(/^\s{2}namespace:\s*([^\s]+)\s*$/gmu)]
     .map((match) => match[1]);
-  if (namespaces.length !== 26 || new Set(namespaces).size !== 1) {
+  if (namespaces.length !== 27 || new Set(namespaces).size !== 1) {
     throw new Error('KUBERNETES_RENDERED_TARGET_NAMESPACE_INVALID');
   }
 

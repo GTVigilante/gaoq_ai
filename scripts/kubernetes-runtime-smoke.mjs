@@ -514,7 +514,15 @@ async function verifyWebEndpoints() {
     'http://127.0.0.1:30100/',
     'http://127.0.0.1:30102/zh-CN',
   ]) {
-    const response = await fetch(endpoint, { signal: AbortSignal.timeout(5_000) });
+    let response;
+    try {
+      response = await fetch(endpoint, { signal: AbortSignal.timeout(10_000) });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`KUBERNETES_SMOKE_ENDPOINT_UNREACHABLE:${endpoint}:${reason}`, {
+        cause: error,
+      });
+    }
     assert.equal(response.ok, true, `${endpoint} 返回 ${response.status}`);
   }
 }

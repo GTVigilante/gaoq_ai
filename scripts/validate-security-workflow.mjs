@@ -150,6 +150,7 @@ for (const marker of [
   'container.securityContext.allowPrivilegeEscalation',
   'status.restartCount, 0',
   '`${releaseName}-gaoq-erp-worker-metrics`',
+  'KUBERNETES_SMOKE_ENDPOINT_UNREACHABLE:',
   'expectedCatalog.tools',
   'expectedCatalog.resources',
   'expectedCatalog.resourceTemplates',
