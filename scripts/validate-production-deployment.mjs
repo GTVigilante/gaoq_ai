@@ -2,11 +2,13 @@ import { readFile } from 'node:fs/promises';
 import process from 'node:process';
 import { URL } from 'node:url';
 
-const [dockerfile, compose, generator, mongoInit] = await Promise.all([
+const [dockerfile, compose, generator, imageSetter, mongoInit, publishWorkflow] = await Promise.all([
   readFile(new URL('../Dockerfile', import.meta.url), 'utf8'),
   readFile(new URL('../deploy/standalone/compose.yaml', import.meta.url), 'utf8'),
   readFile(new URL('./generate-production-runtime.mjs', import.meta.url), 'utf8'),
+  readFile(new URL('./set-production-image-digests.mjs', import.meta.url), 'utf8'),
   readFile(new URL('../docker/mongo-init.js', import.meta.url), 'utf8'),
+  readFile(new URL('../.github/workflows/publish-production-images.yml', import.meta.url), 'utf8'),
 ]);
 const [main, metadataController, bearerGuard] = await Promise.all([
   readFile(new URL('../apps/payroll-api/src/main.ts', import.meta.url), 'utf8'),
@@ -84,5 +86,24 @@ if (
   !bearerGuard.includes('WWW-Authenticate') ||
   !bearerGuard.includes('Bearer resource_metadata=')
 ) throw new Error('PAYROLL_MCP_AUTH_DISCOVERY_CHALLENGE_INCOMPLETE');
+
+for (const marker of [
+  'workflow_dispatch:',
+  'packages: write',
+  'cancel-in-progress: false',
+  'ghcr.io/gtvigilante/gaoq-payroll-${{ matrix.image }}',
+  'docker push "$IMAGE_NAME:$RELEASE_TAG"',
+  'docker push "$IMAGE_NAME:sha-$GITHUB_SHA"',
+]) if (!publishWorkflow.includes(marker)) throw new Error('PAYROLL_GHCR_PUBLISH_WORKFLOW_INCOMPLETE');
+if (/pull_request:|gaoq-payroll-.*:latest/u.test(publishWorkflow)) {
+  throw new Error('PAYROLL_GHCR_PUBLISH_WORKFLOW_BOUNDARY_INVALID');
+}
+for (const marker of [
+  'gaoq-payroll-${component}@sha256:',
+  'PAYROLL_COMPOSE_ENV_MUST_BE_REGULAR_FILE',
+  'PAYROLL_COMPOSE_IMAGE_KEY_INVALID',
+  "mode: 0o600, flag: 'wx'",
+  'await rename(temporaryPath, composeEnvironmentPath)',
+]) if (!imageSetter.includes(marker)) throw new Error('PAYROLL_IMAGE_DIGEST_SETTER_INCOMPLETE');
 
 process.stdout.write('算薪生产镜像、独立编排、凭据和数据边界静态校验通过。\n');

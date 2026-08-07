@@ -16,6 +16,7 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "deployment:production:validate": "node scripts/validate-production-deployment.mjs",
+    "deployment:production:set-images": "node scripts/set-production-image-digests.mjs",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },
   "devDependencies": {

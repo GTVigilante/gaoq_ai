@@ -32,6 +32,14 @@
 6. 公网域名、Nginx、证书、GaoQ OAuth 客户端和主数据同步属于共享入口变更，必须
    获得用户明确批准后单独启用。
 
+生产服务器无法直连构建基础镜像仓库时，只允许在 GitHub `main` 手动触发
+`publish-production-images.yml`，由已通过 Actions 门禁的相同 Dockerfile 发布到
+`ghcr.io/gtvigilante/gaoq-payroll-{api,worker,web}`。部署时必须把版本标签解析为
+`@sha256:` 摘要后写入 `compose.env`；禁止使用 `latest`、分支名或浮动标签。
+固定摘要时使用 `pnpm deployment:production:set-images -- <运行时绝对目录>
+<API摘要> <Worker摘要> <Web摘要>`；脚本会拒绝非官方仓库、组件错配、浮动标签、
+符号链接和重复环境变量，并以原子替换方式更新受保护的 `compose.env`。
+
 公网反向代理必须同时转发 `/api/payroll/v1`，以及 RFC 9728 对带路径 Resource
 规定的 `/.well-known/oauth-protected-resource/api/payroll/v1`；不得把元数据错误地
 放到 `/api/payroll/v1/.well-known/*`。
