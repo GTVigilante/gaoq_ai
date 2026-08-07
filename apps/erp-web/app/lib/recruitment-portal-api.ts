@@ -157,13 +157,16 @@ function apiOrigin(): string {
     !['localhost', '127.0.0.1', '::1', '[::1]'].includes(parsed.hostname) &&
     !parsed.hostname.endsWith('.local') &&
     (parsed.port === '' || parsed.port === '443');
+  const standaloneInternal =
+    parsed.protocol === 'http:' && parsed.hostname === 'api' && parsed.port === '3001';
   if (
     parsed.username !== '' ||
     parsed.password !== '' ||
     parsed.pathname !== '/' ||
     parsed.search !== '' ||
     parsed.hash !== '' ||
-    (!CLUSTER_ORIGIN.test(parsed.origin) && !localDevelopment && !publicHttps)
+    (!CLUSTER_ORIGIN.test(parsed.origin) && !localDevelopment && !publicHttps &&
+      !standaloneInternal)
   ) throw new Error('RECRUITMENT_PORTAL_API_ORIGIN_INVALID');
   return parsed.origin;
 }

@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="theme-color" content="#151714">
+  <title>GaoQ-OS｜系统介绍与交付状态</title>
+  <style>
+    :root {
+      --ink: #151714;
+      --paper: #f3f0e8;
+      --paper-strong: #fffdf7;
+      --acid: #d9ff45;
+      --purple: #7559ff;
+      --green: #2f8f4e;
+      --amber: #b76813;
+      --muted: #62665d;
+      --line: rgba(21, 23, 20, .16);
+      --radius: 26px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: Inter, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+      line-height: 1.65;
+    }
+    a { color: inherit; }
+    .shell { width: min(1180px, calc(100% - 40px)); margin: 0 auto; }
+    .topbar {
+      position: sticky;
+      z-index: 20;
+      top: 0;
+      border-bottom: 1px solid var(--line);
+      background: rgba(243, 240, 232, .9);
+      backdrop-filter: blur(18px);
+    }
+    .topbar .shell {
+      min-height: 72px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; font-weight: 800; }
+    .brand-mark {
+      display: grid;
+      width: 38px;
+      height: 38px;
+      place-items: center;
+      border-radius: 50%;
+      color: #fff;
+      background: var(--ink);
+      font-size: 12px;
+      letter-spacing: .04em;
+    }
+    .topbar nav { display: flex; gap: 22px; color: var(--muted); font-size: 13px; }
+    .topbar a { text-decoration: none; }
+    .topbar nav a:hover { color: var(--purple); }
+
+    .hero { position: relative; padding: 100px 0 80px; overflow: hidden; }
+    .hero::after {
+      position: absolute;
+      z-index: -1;
+      top: -170px;
+      right: -100px;
+      width: 520px;
+      height: 520px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 32% 25%, #fff 0, #9c8cff 33%, var(--purple) 68%, #5137d3 100%);
+      content: "";
+      opacity: .9;
+    }
+    .eyebrow { margin: 0 0 22px; font-size: 11px; font-weight: 850; letter-spacing: .18em; text-transform: uppercase; }
+    h1, h2 { font-family: Georgia, "Songti SC", serif; font-weight: 500; letter-spacing: -.045em; }
+    h1 { max-width: 900px; margin: 0; font-size: clamp(58px, 8vw, 116px); line-height: .94; }
+    .hero-copy { max-width: 720px; margin: 30px 0 34px; color: #4f534c; font-size: clamp(17px, 2vw, 22px); }
+    .status-line { display: flex; flex-wrap: wrap; gap: 12px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      padding: 11px 16px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 253, 247, .82);
+      font-size: 13px;
+      font-weight: 750;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 5px rgba(47,143,78,.12); }
+    .dot.amber { background: var(--amber); box-shadow: 0 0 0 5px rgba(183,104,19,.12); }
+
+    section { padding: 88px 0; }
+    .dark { color: #fff; background: var(--ink); }
+    .purple { color: #fff; background: var(--purple); }
+    .section-head { display: grid; grid-template-columns: 150px 1fr; gap: 30px; margin-bottom: 46px; }
+    .section-head h2 { max-width: 820px; margin: 0; font-size: clamp(38px, 5vw, 64px); line-height: 1.05; }
+    .section-head p { margin: 8px 0 0; font-size: 11px; font-weight: 800; letter-spacing: .15em; }
+    .intro { max-width: 880px; color: var(--muted); font-size: 18px; }
+    .dark .intro { color: #b9bdb5; }
+
+    .score-grid { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+    .score {
+      min-height: 180px;
+      padding: 24px;
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      background: rgba(255,253,247,.48);
+    }
+    .score strong { display: block; margin: 18px 0 7px; font-size: 38px; line-height: 1; }
+    .score span { color: var(--muted); font-size: 14px; }
+    .score small { font-size: 11px; font-weight: 800; letter-spacing: .1em; }
+
+    .cap-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .cap {
+      min-height: 210px;
+      padding: 25px;
+      border: 1px solid rgba(255,255,255,.18);
+      border-radius: var(--radius);
+      background: rgba(255,255,255,.045);
+    }
+    .cap b { display: inline-block; margin-bottom: 34px; color: var(--acid); font-size: 12px; letter-spacing: .12em; }
+    .cap h3 { margin: 0 0 12px; font-size: 23px; }
+    .cap p { margin: 0; color: #b9bdb5; font-size: 14px; }
+
+    .evidence-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 18px;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--paper-strong);
+    }
+    .check {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border-radius: 50%;
+      color: #fff;
+      background: var(--green);
+      font-weight: 900;
+    }
+    .evidence h3 { margin: 1px 0 5px; font-size: 17px; }
+    .evidence p { margin: 0; color: var(--muted); font-size: 14px; }
+
+    .todo-list { border-top: 1px solid rgba(255,255,255,.36); }
+    .todo {
+      display: grid;
+      grid-template-columns: 70px 1.15fr 1.4fr 140px;
+      gap: 22px;
+      align-items: start;
+      padding: 28px 0;
+      border-bottom: 1px solid rgba(255,255,255,.36);
+    }
+    .todo > span { font-size: 13px; font-weight: 800; }
+    .todo h3 { margin: 0; font-size: 21px; }
+    .todo p { margin: 0; color: #e2ddff; font-size: 14px; }
+    .owner { justify-self: end; padding: 7px 11px; border-radius: 999px; background: rgba(255,255,255,.14); font-size: 11px; font-weight: 800; }
+
+    .flow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-top: 42px; }
+    .flow article { position: relative; min-height: 155px; padding: 22px; border: 1px solid var(--line); border-radius: 18px; background: var(--paper-strong); }
+    .flow article:not(:last-child)::after { position: absolute; top: 50%; right: -9px; z-index: 2; content: "→"; color: var(--purple); font-weight: 900; }
+    .flow small { color: var(--purple); font-weight: 850; }
+    .flow strong { display: block; margin-top: 42px; }
+
+    .mcp-box { display: grid; grid-template-columns: .75fr 1.25fr; gap: 55px; align-items: center; }
+    .mcp-mark {
+      display: grid;
+      aspect-ratio: 1;
+      place-items: center;
+      border: 1px solid rgba(255,255,255,.25);
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(217,255,69,.22), transparent 65%);
+      font-family: Georgia, serif;
+      font-size: clamp(52px, 8vw, 100px);
+    }
+    .mcp-copy h2 { margin: 0 0 24px; font-size: clamp(38px, 5vw, 68px); line-height: 1.02; }
+    .mcp-copy p { color: #b9bdb5; }
+    .mcp-points { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 30px; }
+    .mcp-points span { padding: 13px 15px; border: 1px solid rgba(255,255,255,.18); border-radius: 12px; color: var(--acid); font-size: 13px; }
+
+    .decision { padding-bottom: 110px; }
+    .decision-box { padding: clamp(30px, 5vw, 58px); border-radius: 32px; color: #fff; background: var(--ink); }
+    .decision-box h2 { max-width: 860px; margin: 0 0 22px; font-size: clamp(40px, 6vw, 72px); line-height: 1.04; }
+    .decision-box p { max-width: 850px; color: #c3c7bf; font-size: 18px; }
+    .decision-box strong { color: var(--acid); }
+    footer { padding: 34px 0 50px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+    footer .shell { display: flex; justify-content: space-between; gap: 20px; }
+
+    @media (max-width: 900px) {
+      .topbar nav { display: none; }
+      .hero::after { width: 380px; height: 380px; right: -220px; }
+      .score-grid { grid-template-columns: repeat(2, 1fr); }
+      .cap-grid { grid-template-columns: repeat(2, 1fr); }
+      .todo { grid-template-columns: 48px 1fr; }
+      .todo p, .owner { grid-column: 2; justify-self: start; }
+      .flow { grid-template-columns: 1fr 1fr; }
+      .flow article:not(:last-child)::after { display: none; }
+      .mcp-box { grid-template-columns: 1fr; }
+      .mcp-mark { max-width: 360px; }
+    }
+    @media (max-width: 600px) {
+      .shell { width: min(100% - 28px, 1180px); }
+      .hero { padding: 74px 0 55px; }
+      section { padding: 65px 0; }
+      .section-head { grid-template-columns: 1fr; gap: 10px; }
+      .score-grid, .cap-grid, .evidence-grid, .flow, .mcp-points { grid-template-columns: 1fr; }
+      .score { min-height: 145px; }
+      .cap { min-height: 180px; }
+      footer .shell { flex-direction: column; }
+    }
+    @media print {
+      .topbar { position: static; }
+      .hero::after { display: none; }
+      body { background: #fff; }
+      section { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell">
+      <a class="brand" href="/zh-CN" aria-label="返回告趣官网">
+        <span class="brand-mark">GQ</span>
+        <span>GaoQ-OS 项目状态</span>
+      </a>
+      <nav aria-label="页面导航">
+        <a href="#overview">当前结论</a>
+        <a href="#capabilities">系统能力</a>
+        <a href="#evidence">验证证据</a>
+        <a href="#todo">待完成事项</a>
+        <a href="#mcp">AI / MCP</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="hero">
+      <div class="shell">
+        <p class="eyebrow">GaoQ Operating System / Delivery Brief</p>
+        <h1>一套连接人、流程、数据与 AI 的企业运营系统。</h1>
+        <p class="hero-copy">GaoQ-OS 是告趣 ERP 的统一技术与业务底座，覆盖组织人事、审批、招聘入职、培训关怀、薪酬协同、资金对账、经营分析和标准 MCP 服务。</p>
+        <div class="status-line">
+          <span class="pill"><i class="dot"></i>Phase 0–6 计划内代码已交付</span>
+          <span class="pill"><i class="dot"></i>首发版已上线</span>
+          <span class="pill"><i class="dot amber"></i>生产联调与业务验收进行中</span>
+        </div>
+      </div>
+    </div>
+
+    <section id="overview">
+      <div class="shell">
+        <div class="section-head"><p>01 / 当前结论</p><h2>代码交付完成，不等于整个项目已经完成。</h2></div>
+        <p class="intro">当前仓库规划内的业务代码、部署编排、迁移工具、质量门禁和 MCP 服务均已交付。公共 CI、自动化测试和临时 Kubernetes 运行自证已经通过；剩余工作集中在真实企业系统接入、生产等价验证、数据迁移、业务 UAT 与正式切换。</p>
+        <div class="score-grid">
+          <article class="score"><small>代码范围</small><strong>Phase 0–6</strong><span>计划内规范与实现已交付</span></article>
+          <article class="score"><small>自动化验证</small><strong>7,219</strong><span>项测试及协议、安全、部署门禁</span></article>
+          <article class="score"><small>治理事项</small><strong>47 / 47</strong><span>开放事项均标记“实现已交付”</span></article>
+          <article class="score"><small>上线状态</small><strong>Initial</strong><span>首发档位已运行，完整生产验收待完成</span></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="dark" id="capabilities">
+      <div class="shell">
+        <div class="section-head"><p>02 / 系统能力</p><h2>统一业务规则，多入口共享同一套可信服务。</h2></div>
+        <div class="cap-grid">
+          <article class="cap"><b>IDENTITY</b><h3>身份与组织主数据</h3><p>可信租户上下文、员工与部门主数据、角色权限、OAuth 2.1 与多平台身份接入边界。</p></article>
+          <article class="cap"><b>WORKFLOW</b><h3>审批与协同</h3><p>审批模板、实例、任务、通知、超时升级与完整审计，支持 Web、移动端和 AI 入口。</p></article>
+          <article class="cap"><b>TALENT</b><h3>招聘与人才全周期</h3><p>职位、候选人、简历智能处理、入职、任职、离职、校友与服务触点的统一视图。</p></article>
+          <article class="cap"><b>PEOPLE OPS</b><h3>培训、关怀与人事运营</h3><p>知识培训、员工关怀、服务跟踪和业务留痕，关键动作均受权限与审计控制。</p></article>
+          <article class="cap"><b>PAY &amp; FINANCE</b><h3>薪酬协同与资金对账</h3><p>ERP 负责统一身份组织，专业算薪作为工资事实源；发放、税务文件与对账按受控边界协同。</p></article>
+          <article class="cap"><b>INSIGHT</b><h3>经营分析与内容运营</h3><p>管理视图、受控指标、双语官网 CMS、招聘门户及线索入口，统一来源与发布流程。</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section id="evidence">
+      <div class="shell">
+        <div class="section-head"><p>03 / 验证证据</p><h2>已经完成的测试与工程自证。</h2></div>
+        <div class="evidence-grid">
+          <article class="evidence"><span class="check">✓</span><div><h3>单元、集成与协议测试</h3><p>业务规则、REST、事件、MCP、迁移和关键安全约束均纳入自动化验证。</p></div></article>
+          <article class="evidence"><span class="check">✓</span><div><h3>供应链与安全扫描</h3><p>包含依赖审计、SAST、SCA、Secret 扫描、SBOM 与生产镜像基线。</p></div></article>
+          <article class="evidence"><span class="check">✓</span><div><h3>容器与 Kubernetes 自证</h3><p>生产镜像、Helm、资源清单、NetworkPolicy 和临时集群运行路径已经验证。</p></div></article>
+          <article class="evidence"><span class="check">✓</span><div><h3>标准 MCP SDK 验证</h3><p>目录发现、OAuth 服务身份、只读资源与工具协议已通过官方 SDK 级握手验证。</p></div></article>
+          <article class="evidence"><span class="check">✓</span><div><h3>首发公网可用性</h3><p>ERP、招聘门户、官网的 HTTPS、健康检查和未授权拒绝路径已经验证。</p></div></article>
+          <article class="evidence"><span class="check">✓</span><div><h3>隔离与回滚准备</h3><p>首发服务使用独立容器、端口、网络和数据卷，并保留版本化镜像与回滚证据。</p></div></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="purple" id="todo">
+      <div class="shell">
+        <div class="section-head"><p>04 / 待完成事项</p><h2>剩余的是生产落地与现场验收链条。</h2></div>
+        <div class="todo-list">
+          <article class="todo"><span>01</span><h3>正式基础设施</h3><p>完成境内云 VPC、正式 Kubernetes、托管 MongoDB/Redis、KMS、WORM、WAF、监控告警和灾备配置。</p><span class="owner">平台 / 运维</span></article>
+          <article class="todo"><span>02</span><h3>企业系统真实联调</h3><p>接入钉钉、飞书、专业算薪、电子签、银行/税务文件、通知及招聘渠道的真实账号、沙箱和回调。</p><span class="owner">系统负责人</span></article>
+          <article class="todo"><span>03</span><h3>数据迁移与对账</h3><p>执行三次全量迁移演练，完成主数据、审批、人才、附件和薪酬边界的核对、回滚及恢复证明。</p><span class="owner">数据 / 业务</span></article>
+          <article class="todo"><span>04</span><h3>非功能验收</h3><p>在生产等价环境完成容量与性能、安全测试、容灾、断网恢复、告警演练和供应链最终证据。</p><span class="owner">安全 / QA</span></article>
+          <article class="todo"><span>05</span><h3>业务 UAT</h3><p>由 HR、财务、法务和业务团队完成关键场景签署，并实跑两轮完整影子算薪周期。</p><span class="owner">业务 Owner</span></article>
+          <article class="todo"><span>06</span><h3>切换与稳定期</h3><p>完成 Go/No-Go 决策、统一切换、回滚窗口和 28 天 Hypercare，形成最终上线验收结论。</p><span class="owner">项目委员会</span></article>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="shell">
+        <div class="section-head"><p>05 / 完成路径</p><h2>从“代码完成”走到“生产完成”。</h2></div>
+        <div class="flow">
+          <article><small>STEP 01</small><strong>生产资源与凭据就绪</strong></article>
+          <article><small>STEP 02</small><strong>外部系统与数据联调</strong></article>
+          <article><small>STEP 03</small><strong>迁移、性能、安全、容灾</strong></article>
+          <article><small>STEP 04</small><strong>业务 UAT 与影子周期</strong></article>
+          <article><small>STEP 05</small><strong>切换签署与 Hypercare</strong></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="dark" id="mcp">
+      <div class="shell mcp-box">
+        <div class="mcp-mark">MCP</div>
+        <div class="mcp-copy">
+          <p class="eyebrow">AI CONNECTION STANDARD</p>
+          <h2>为各类 AI 提供标准、受控、可审计的连接层。</h2>
+          <p>MCP 与业务模块同步交付，复用 ERP 应用服务，不允许 AI 直接访问数据库或绕过权限。服务支持标准发现与 OAuth 2.1，按租户、主体、角色、部门范围和最小权限控制访问。</p>
+          <div class="mcp-points">
+            <span>标准 Tool / Resource / Prompt</span>
+            <span>OAuth 2.1 与服务身份</span>
+            <span>可信租户与最小权限</span>
+            <span>只读优先、危险动作禁入</span>
+            <span>审计、幂等与协议测试</span>
+            <span>官方 MCP SDK 握手验证</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="decision">
+      <div class="shell">
+        <div class="decision-box">
+          <p class="eyebrow">MANAGEMENT VERDICT</p>
+          <h2>当前可以说“代码已交付”，还不能说“ERP 项目最终完成”。</h2>
+          <p><strong>准确口径：</strong>计划内代码交付完成，公共 CI、自动化测试、临时 Kubernetes 自证与首发版上线已完成；生产环境真实联调、现场验收和最终切换尚未完成。联调和 UAT 期间如发现接口差异，仍需按变更流程修复并回归验证。</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="shell"><span>GaoQ-OS 系统介绍与交付状态</span><span>信息更新：2026-08-07 · 面向项目相关人员</span></div>
+  </footer>
+</body>
+</html>

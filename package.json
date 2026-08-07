@@ -175,6 +175,8 @@
     "contracts:asyncapi:self-test": "node scripts/contracts/generate-asyncapi.mjs --self-test",
     "website:production:self-test": "node scripts/validate-website-production-build.mjs",
     "deployment:local-runtime:validate": "node scripts/validate-mongo-init.mjs && node scripts/validate-worker-runtime.mjs && node scripts/dev/local-runtime.mjs --self-test && node scripts/validate-local-development.mjs",
+    "deployment:standalone:validate": "node scripts/validate-standalone-deployment.mjs",
+    "deployment:standalone:production-inputs:validate": "node scripts/validate-standalone-production-inputs.mjs",
     "deployment:kubernetes:validate": "node scripts/validate-kubernetes-deployment.mjs",
     "deployment:kubernetes:guardrails:validate": "node scripts/validate-kubernetes-platform-guardrails.mjs",
     "security:validate": "node scripts/validate-security-workflow.mjs",
@@ -234,6 +236,7 @@
       "fast-uri": "3.1.5",
       "hono": "4.12.34",
       "ip-address": "10.3.1",
+      "js-yaml": "4.3.1",
       "postcss": "8.5.23",
       "sharp": "0.35.3"
     },

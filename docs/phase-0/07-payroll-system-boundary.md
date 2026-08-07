@@ -18,7 +18,8 @@
   `com.gaoq.*` 名称只通过显式迁移入口兼容一个发布迭代，主验证器永久拒绝。
 - 组织增量采用 Outbox CloudEvents；首次同步和事件版本缺口使用受服务身份保护的
   游标快照修复。
-- 快照只允许携带 `erp:payroll:master-data:read` 的可信 `service|system_job`
+- 快照只允许携带 `erp:payroll:master-data:read` 的可信
+  `service|mcp_client|system_job`
   身份读取。`snapshotId/snapshotDigest` 必须绑定可信租户、契约版本和稳定排序
   后的脱敏投影；游标只接受规范 Base64URL、精确 `digest/offset` 字段及 200 条
   页边界。跨租户重放、主数据变化、未知字段、非规范编码和伪造偏移均失败关闭。

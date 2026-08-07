@@ -45,6 +45,7 @@ export class PayrollMasterDataSnapshotService {
     const trusted = this.context.getRequired();
     if (
       trusted.actor.actorType !== 'service' &&
+      trusted.actor.actorType !== 'mcp_client' &&
       trusted.actor.actorType !== 'system_job'
     ) {
       throw new ForbiddenException({

@@ -35,6 +35,8 @@ const careOccasionPoliciesEnvironmentSchema = z.array(z.object({
 
 const environmentSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  /** full 强制全部企业外部系统；initial 仅允许未接通通道保持禁用。 */
+  GAOQ_RELEASE_PROFILE: z.enum(['full', 'initial']).default('full'),
   RUNTIME_ROLE: z.enum(['api', 'worker']).default('api'),
   PORT: z.coerce.number().int().min(1).max(65_535).default(3001),
   WORKER_METRICS_PORT: z.coerce.number().int().min(1).max(65_535).default(9464),
@@ -90,6 +92,11 @@ const environmentSchema = z.object({
   /** 额外受众资源，例如独立专业算薪 API；禁止与主资源重复。 */
   AUTH_ADDITIONAL_RESOURCES_JSON: z.string().default('[]'),
   AUTH_JWKS_URI: z.string().url(),
+  /** 内部取钥地址；只允许公开 JWKS 地址或 API 本进程回环地址。 */
+  AUTH_JWKS_FETCH_URI: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().url().optional(),
+  ),
   /** 工资事实源固定为独立专业算薪系统；legacy 仅供非生产回溯测试。 */
   PAYROLL_SYSTEM_MODE: z.enum(['external', 'legacy']).default('external'),
   PAYROLL_WEB_ORIGIN: z.string().url().default('http://localhost:3100'),
@@ -424,6 +431,8 @@ const environmentSchema = z.object({
   const issuer = new URL(environment.AUTH_ISSUER);
   const authorizationServer = new URL(environment.MCP_AUTHORIZATION_SERVER);
   const resource = new URL(environment.AUTH_RESOURCE);
+  const fullProduction =
+    environment.NODE_ENV === 'production' && environment.GAOQ_RELEASE_PROFILE === 'full';
   if (
     environment.NODE_ENV === 'production' &&
     environment.MARKETING_WEBSITE_ORIGIN === undefined
@@ -458,7 +467,7 @@ const environmentSchema = z.object({
     }
   }
   if (
-    environment.NODE_ENV === 'production' &&
+    fullProduction &&
     (
       environment.MARKETING_CAPTCHA_VERIFY_ENDPOINT === undefined ||
       environment.MARKETING_CAPTCHA_BEARER_TOKEN === undefined
@@ -799,6 +808,20 @@ const environmentSchema = z.object({
       message: '内建授权服务器的 AUTH_JWKS_URI 必须指向 issuer 的 /.well-known/jwks.json',
     });
   }
+  if (environment.AUTH_JWKS_FETCH_URI !== undefined) {
+    const fetchUri = new URL(environment.AUTH_JWKS_FETCH_URI);
+    const loopbackJwks = `http://127.0.0.1:${environment.PORT}/.well-known/jwks.json`;
+    if (
+      fetchUri.toString() !== environment.AUTH_JWKS_URI &&
+      fetchUri.toString() !== loopbackJwks
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['AUTH_JWKS_FETCH_URI'],
+        message: 'AUTH_JWKS_FETCH_URI 只允许公开 JWKS 地址或 API 本进程回环地址',
+      });
+    }
+  }
   try {
     parseVerifyOnlySigningJwks(
       environment.AUTH_SIGNING_VERIFY_ONLY_JWKS_JSON,
@@ -864,7 +887,7 @@ const environmentSchema = z.object({
     message: 'Treasury WORM 端点与凭据必须成套配置',
   });
   if (
-    environment.NODE_ENV === 'production' &&
+    fullProduction &&
     treasuryArchive.some((value) => value === undefined)
   ) context.addIssue({
     code: 'custom', path: ['TREASURY_WORM_ARCHIVE_ENDPOINT'],
@@ -893,7 +916,7 @@ const environmentSchema = z.object({
     message: 'Treasury 银行提交端点与凭据必须成套配置',
   });
   if (
-    environment.NODE_ENV === 'production' && treasuryBank.some((value) => value === undefined)
+    fullProduction && treasuryBank.some((value) => value === undefined)
   ) context.addIssue({
     code: 'custom', path: ['TREASURY_BANK_SUBMISSION_ENDPOINT'],
     message: '生产环境必须完整配置 Treasury 独立银行提交网关',
@@ -932,7 +955,7 @@ const environmentSchema = z.object({
     message: 'Treasury 回盘 Inbox 端点与凭据必须成套配置',
   });
   if (
-    environment.NODE_ENV === 'production' &&
+    fullProduction &&
     treasuryReturnInbox.some((value) => value === undefined)
   ) context.addIssue({
     code: 'custom', path: ['TREASURY_BANK_RETURN_INBOX_ENDPOINT'],
@@ -982,7 +1005,7 @@ const environmentSchema = z.object({
     message: 'Payroll Tax WORM 与税务网关端点及凭据必须成套配置',
   });
   if (
-    environment.NODE_ENV === 'production' &&
+    fullProduction &&
     payrollTaxInfrastructure.some((value) => value === undefined)
   ) context.addIssue({
     code: 'custom', path: ['PAYROLL_TAX_WORM_ARCHIVE_ENDPOINT'],
@@ -1157,7 +1180,7 @@ const environmentSchema = z.object({
       message: 'OP 审批 Webhook 不得复用经营摘要加密密钥环',
     });
   }
-  if (environment.NODE_ENV === 'production' && environment.OP_API_BASE_URL === undefined) {
+  if (fullProduction && environment.OP_API_BASE_URL === undefined) {
     context.addIssue({
       code: 'custom', path: ['OP_API_BASE_URL'],
       message: '生产环境必须配置 OP 组织下发独立 HTTPS API 根地址',
@@ -1183,7 +1206,7 @@ const environmentSchema = z.object({
     code: 'custom', path: ['OP_SSO_CLIENT_ID'],
     message: 'OP SSO clientId、clientSecret 与 redirectUri 必须成套配置',
   });
-  if (environment.NODE_ENV === 'production' && opSsoConfigured !== 3) context.addIssue({
+  if (fullProduction && opSsoConfigured !== 3) context.addIssue({
     code: 'custom', path: ['OP_SSO_CLIENT_ID'],
     message: '生产环境必须由 Secret Manager 注入 OP SSO 独立客户端凭据',
   });
@@ -1199,7 +1222,7 @@ const environmentSchema = z.object({
     });
   }
   if (
-    environment.NODE_ENV === 'production' &&
+    fullProduction &&
     environment.ESIGN_API_BASE_URL !== 'https://openapi.esign.cn'
   ) {
     context.addIssue({
@@ -1221,7 +1244,7 @@ const environmentSchema = z.object({
     message: 'eSign 扫描与 WORM 归档端点及凭据必须成套配置',
   });
   if (
-    environment.NODE_ENV === 'production' &&
+    fullProduction &&
     evidenceInfrastructure.some((value) => value === undefined)
   ) context.addIssue({
     code: 'custom', path: ['ESIGN_MALWARE_SCAN_ENDPOINT'],
@@ -1396,7 +1419,7 @@ const environmentSchema = z.object({
       }
     }
   }
-  if (environment.NODE_ENV === 'production') {
+  if (fullProduction) {
     const wormFields = [
       environment.AUDIT_WORM_ENDPOINT,
       environment.AUDIT_WORM_BEARER_TOKEN,
