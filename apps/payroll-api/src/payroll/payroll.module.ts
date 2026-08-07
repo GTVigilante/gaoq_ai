@@ -28,6 +28,6 @@ import {
   ],
   controllers: [PayrollController],
   providers: [PayrollDataCryptoService, PayrollApplicationService],
-  exports: [PayrollDataCryptoService, MongooseModule],
+  exports: [PayrollApplicationService, PayrollDataCryptoService, MongooseModule],
 })
 export class PayrollModule {}

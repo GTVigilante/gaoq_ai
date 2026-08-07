@@ -3,10 +3,13 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import type { CanActivate, ExecutionContext } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
 import { randomUUID } from 'node:crypto';
+import type { Response } from 'express';
 
 import { IS_PUBLIC_ROUTE } from '../common/public.decorator.js';
+import type { AppEnvironment } from '../config/environment.js';
 import { AccessTokenVerifier } from './access-token-verifier.js';
 import type { AuthenticatedPayrollRequest } from './identity.types.js';
 
@@ -16,6 +19,7 @@ export class BearerAuthGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     private readonly verifier: AccessTokenVerifier,
+    private readonly config: ConfigService<AppEnvironment, true>,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -24,6 +28,15 @@ export class BearerAuthGuard implements CanActivate {
       context.getClass(),
     ]) === true) return true;
     const request = context.switchToHttp().getRequest<AuthenticatedPayrollRequest>();
+    const response = context.switchToHttp().getResponse<Response>();
+    const resourceMetadata = new URL(
+      '/.well-known/oauth-protected-resource/api/payroll/v1',
+      this.config.get('AUTH_RESOURCE', { infer: true }),
+    ).toString();
+    response.setHeader(
+      'WWW-Authenticate',
+      `Bearer resource_metadata="${resourceMetadata}"`,
+    );
     const authorization = request.headers.authorization;
     if (authorization === undefined || !authorization.startsWith('Bearer ')) {
       throw new UnauthorizedException({

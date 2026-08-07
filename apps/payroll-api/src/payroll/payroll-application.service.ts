@@ -91,6 +91,31 @@ export interface SelfPayslipView extends PayrollLineResult {
   readonly status: 'locked' | 'reconciling' | 'reconciled';
 }
 
+export interface PayrollPeriodView {
+  readonly payrollRunId: string;
+  readonly period: string;
+  readonly status: string;
+  readonly employeeCount: number;
+  readonly resultDigest: string | null;
+  readonly version: number;
+}
+
+export interface PayrollReconciliationView {
+  readonly payrollRunId: string;
+  readonly period: string;
+  readonly status: 'not_started' | 'in_progress' | 'reconciled';
+  readonly evidenceDigest: string | null;
+  readonly version: number;
+}
+
+export interface PayrollTaxFilingView {
+  readonly payrollRunId: string;
+  readonly period: string;
+  readonly status: 'not_started';
+  readonly evidenceDigest: null;
+  readonly version: number;
+}
+
 /** 专业算薪应用服务：不可变档案、确定性运行和 L4 工资结果统一编排。 */
 @Injectable()
 export class PayrollApplicationService {
@@ -450,6 +475,57 @@ export class PayrollApplicationService {
     }).lean().exec();
     if (run === null) throw this.runNotFound();
     return runView(run);
+  }
+
+  async getPeriod(period: string): Promise<PayrollPeriodView> {
+    const actor = this.identity.requireScope('erp:payroll:period:read');
+    const parsed = createRunSchema.shape.period.safeParse(period);
+    if (!parsed.success) throw new BadRequestException({
+      code: 'PAYROLL_PERIOD_INVALID',
+      message: '工资周期必须使用 YYYY-MM',
+    });
+    const run = await this.runs.findOne({ tenantId: actor.tenantId, period })
+      .sort({ version: -1 }).lean().exec();
+    if (run === null) throw this.runNotFound();
+    return Object.freeze({
+      payrollRunId: run.id,
+      period: run.period,
+      status: run.status,
+      employeeCount: run.employeeCount,
+      resultDigest: run.resultDigest,
+      version: run.version,
+    });
+  }
+
+  async getReconciliation(payrollRunId: string): Promise<PayrollReconciliationView> {
+    const actor = this.identity.requireScope('erp:payroll:reconciliation:read');
+    const run = await this.runs.findOne({ tenantId: actor.tenantId, id: payrollRunId })
+      .lean().exec();
+    if (run === null) throw this.runNotFound();
+    const status = run.status === 'reconciled'
+      ? 'reconciled'
+      : run.status === 'reconciling' ? 'in_progress' : 'not_started';
+    return Object.freeze({
+      payrollRunId: run.id,
+      period: run.period,
+      status,
+      evidenceDigest: status === 'reconciled' ? run.resultDigest : null,
+      version: run.version,
+    });
+  }
+
+  async getTaxFiling(payrollRunId: string): Promise<PayrollTaxFilingView> {
+    const actor = this.identity.requireScope('erp:payroll:tax:read');
+    const run = await this.runs.findOne({ tenantId: actor.tenantId, id: payrollRunId })
+      .lean().exec();
+    if (run === null) throw this.runNotFound();
+    return Object.freeze({
+      payrollRunId: run.id,
+      period: run.period,
+      status: 'not_started',
+      evidenceDigest: null,
+      version: run.version,
+    });
   }
 
   private async assertEmployeeExists(

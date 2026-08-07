@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "@gaoq/payroll-core": "workspace:*",
-    "@gaoq/platform-contracts": "link:../../../gaoq_ai/packages/platform-contracts",
+    "@gaoq/platform-contracts": "workspace:1.0.0",
+    "@modelcontextprotocol/sdk": "1.29.0",
     "@nestjs/common": "^11.1.28",
     "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.1.28",

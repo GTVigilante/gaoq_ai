@@ -8,6 +8,10 @@
   Inbox、版本缺口检测和快照契约。
 - 已完成整数分确定性算薪核心、L4 AES-256-GCM 数据加密、独立 HMAC 盲索引、
   不可变薪酬档案和工资结果基础模型。
+- 已完成自包含平台契约、零已知依赖漏洞、三类生产镜像、独立认证 MongoDB
+  Replica Set/Redis 编排，以及专业算薪独立 OAuth Resource 的标准 MCP 最低目录。
+- MCP 使用 `2025-11-25` Streamable HTTP，固定四个只读 Tool、两个 Resource
+  Template、两个 Prompt 和可复核 `catalogHash`；不包含 R3 Tool。
 - 旧 `backend/` 与 `frontend/` 尚未删除；它们是待迁移功能参考，不得继续扩展为
   第二套正式架构。
 - 真实发薪事实源切换仍需两个完整影子周期、零未解释差异和薪酬/财务签署。

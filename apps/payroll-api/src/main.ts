@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 
-import { ValidationPipe } from '@nestjs/common';
+import { RequestMethod, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
@@ -24,7 +24,12 @@ const bootstrap = async (): Promise<void> => {
     whitelist: true,
     forbidNonWhitelisted: true,
   }));
-  app.setGlobalPrefix('api/payroll/v1');
+  app.setGlobalPrefix('api/payroll/v1', {
+    exclude: [{
+      path: '.well-known/oauth-protected-resource/api/payroll/v1',
+      method: RequestMethod.GET,
+    }],
+  });
   app.enableShutdownHooks();
   await app.listen(config.get('PORT', { infer: true }), '0.0.0.0');
 };

@@ -18,6 +18,9 @@
 - `apps/payroll-web`：Next.js App Router、Ant Design、GaoQ SSO BFF。
 - `apps/payroll-worker`：BullMQ 确定性算薪任务。
 - `packages/payroll-core`：只使用整数分和 BigInt 的无副作用算薪核心。
+- `apps/payroll-api/src/mcp`：独立 OAuth Resource 的 MCP 2025-11-25
+  Streamable HTTP 服务，固定提供四个只读 Tool、两个 Resource Template 和两个
+  Prompt；复用算薪应用服务，R3 Tool 永久为零。
 - `backend/`、`frontend/`：旧 MVP，迁移验收完成前只作为功能参考。
 
 ## 本地验证
@@ -39,6 +42,9 @@ docker compose -f docker-compose.platform.yml config
   `erp:payroll:payslip:self` 读取本人已锁定结果。
 - 薪酬档案和逐员工工资结果使用 AES-256-GCM 字段加密；查询使用租户绑定 HMAC
   盲索引，数据密钥与盲索引密钥禁止复用。
+- MCP 的 `payroll_payslip_get_self` 只从已验签令牌的 `employee_id` 读取本人结果；
+  期间、对账和税务 Tool 只返回控制摘要，不接受 `tenantId` 或员工参数，不代理 ERP、
+  不返回对方 Token，也不执行计算、审批、锁定、导出、发放或税务提交。
 
 ## GaoQ 配置要求
 
@@ -53,5 +59,12 @@ GaoQ 的 `AUTH_ADDITIONAL_RESOURCES_JSON` 必须注册算薪 API resource/audien
 客户端密钥、数据加密密钥和盲索引密钥只通过 Secret Manager 注入，示例环境文件
 故意不提供任何可用密钥。
 
-共享契约目前通过本地 `link:` 引用相邻 `gaoq_ai/packages/platform-contracts`；
-CI/生产必须改为内部 npm Registry 的精确版本。
+共享契约以精确版本纳入 `packages/platform-contracts`，不再依赖开发机相邻目录；
+来源 commit、同步规则与上线校验见 `docs/contract-provenance.md`。后续接入内部 npm
+Registry 时，必须保持相同版本和内容摘要后再切换依赖来源。
+
+## 生产部署
+
+生产镜像、独立 MongoDB Replica Set、Redis、回环端口、运行时 Secret 和回滚边界见
+`deploy/standalone/README.md`。该编排不会连接或修改 GaoQ ERP 与服务器其他项目的
+数据库；主数据同步在 OAuth 服务客户端完成注册和联调前保持关闭。

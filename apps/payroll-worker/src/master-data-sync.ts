@@ -87,16 +87,21 @@ const requestToken = async (
 ): Promise<string> => {
   const body = new URLSearchParams({
     grant_type: 'client_credentials',
-    client_id: config.clientId,
-    client_secret: config.clientSecret,
     resource,
     scope,
   });
+  const basicCredential = Buffer.from(
+    `${config.clientId}:${config.clientSecret}`,
+    'utf8',
+  ).toString('base64');
   const response = await requestJson<OAuthTokenResponse>(
     new URL(config.tokenUrl),
     {
       method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      headers: {
+        authorization: `Basic ${basicCredential}`,
+        'content-type': 'application/x-www-form-urlencoded',
+      },
       body,
     },
     fetcher,

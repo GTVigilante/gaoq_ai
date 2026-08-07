@@ -26,6 +26,11 @@ describe('ERP 主数据快照同步', () => {
     await expect(synchronizeMasterData(config, fetcher))
       .resolves.toEqual({ snapshotId: digest, pageCount: 2 });
     expect(fetcher).toHaveBeenCalledTimes(6);
+    const tokenRequest = fetcher.mock.calls[0]?.[1] as RequestInit | undefined;
+    expect(tokenRequest?.headers).toMatchObject({
+      authorization: `Basic ${Buffer.from('payroll-sync:test-only-secret').toString('base64')}`,
+    });
+    expect((tokenRequest?.body as URLSearchParams).toString()).not.toContain('client_secret');
     expect(String(fetcher.mock.calls[4]?.[0])).toContain('cursor=next-page');
     const payrollRequest = fetcher.mock.calls[3]?.[1] as RequestInit | undefined;
     expect(payrollRequest?.headers).toMatchObject({

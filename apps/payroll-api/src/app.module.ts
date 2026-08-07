@@ -8,6 +8,7 @@ import { HealthController } from './health.controller.js';
 import { BearerAuthGuard } from './identity/bearer-auth.guard.js';
 import { IdentityModule } from './identity/identity.module.js';
 import { MasterDataModule } from './master-data/master-data.module.js';
+import { McpModule } from './mcp/mcp.module.js';
 import { PayrollModule } from './payroll/payroll.module.js';
 
 @Module({
@@ -27,6 +28,7 @@ import { PayrollModule } from './payroll/payroll.module.js';
     IdentityModule,
     MasterDataModule,
     PayrollModule,
+    McpModule,
   ],
   controllers: [HealthController],
   providers: [

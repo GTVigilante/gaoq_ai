@@ -93,7 +93,11 @@ export class MasterDataService {
 
   async applyEvent(value: unknown): Promise<MasterDataApplyResult> {
     const actor = this.identity.requireScope('erp:payroll:master-data:sync');
-    if (actor.actorType !== 'service' && actor.actorType !== 'system_job') {
+    if (
+      actor.actorType !== 'service' &&
+      actor.actorType !== 'mcp_client' &&
+      actor.actorType !== 'system_job'
+    ) {
       throw new ForbiddenException({
         code: 'MASTER_DATA_SERVICE_IDENTITY_REQUIRED',
         message: '主数据同步只允许受信服务身份',
@@ -156,7 +160,11 @@ export class MasterDataService {
   /** 应用 ERP 权威快照页，用于首次同步和事件版本缺口修复。 */
   async applySnapshotPage(value: unknown): Promise<MasterDataSnapshotApplyResult> {
     const actor = this.identity.requireScope('erp:payroll:master-data:sync');
-    if (actor.actorType !== 'service' && actor.actorType !== 'system_job') {
+    if (
+      actor.actorType !== 'service' &&
+      actor.actorType !== 'mcp_client' &&
+      actor.actorType !== 'system_job'
+    ) {
       throw new ForbiddenException({
         code: 'MASTER_DATA_SERVICE_IDENTITY_REQUIRED',
         message: '主数据快照同步只允许受信服务身份',
@@ -326,14 +334,14 @@ const eventDescriptor = (
   readonly aggregateId: string;
   readonly aggregateVersion: number;
 } => {
-  if (event.type === 'com.gaoq.erp.org.department.upserted.v1') {
+  if (event.type === 'cn.gaoq.erp.department.upserted.v1') {
     return {
       kind: 'department',
       aggregateId: event.data.departmentId,
       aggregateVersion: event.data.aggregateVersion,
     };
   }
-  if (event.type === 'com.gaoq.erp.org.employee.upserted.v1') {
+  if (event.type === 'cn.gaoq.erp.employee.upserted.v1') {
     return {
       kind: 'employee',
       aggregateId: event.data.employeeId,
