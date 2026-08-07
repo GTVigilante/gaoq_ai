@@ -37,6 +37,47 @@ jobs:
           pnpm audit
           pnpm check
           pnpm deployment:production:validate
+      - name: 验证生产 Compose 严格解析
+        shell: bash
+        run: |
+          runtime_directory="/tmp/gaoq-payroll-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          release_tag="$(date -u +%Y%m%d)-${GITHUB_SHA:0:12}"
+          sudo "$(command -v node)" scripts/generate-production-runtime.mjs "$runtime_directory" "$release_tag"
+          sudo docker compose \
+            --env-file "$runtime_directory/compose.env" \
+            -f deploy/standalone/compose.yaml \
+            config --quiet
+      - name: 验证 Redis 最小权限运行时
+        shell: bash
+        run: |
+          container="payroll-redis-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          volume="payroll-redis-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker volume create "$volume"
+          docker run --detach --name "$container" \
+            --read-only \
+            --cap-drop ALL \
+            --cap-add CHOWN \
+            --cap-add SETGID \
+            --cap-add SETUID \
+            --security-opt no-new-privileges:true \
+            --tmpfs /tmp:size=32m,mode=1777 \
+            --volume "$volume:/data" \
+            redis:7.2-alpine@sha256:05a97a479bc73de66f087dc05b569010772880f778cc8671fa6b8aadee32e5c6 \
+            redis-server --appendonly yes --save 60 1000
+          for attempt in {1..30}; do
+            if docker exec "$container" redis-cli ping | grep -qx PONG; then exit 0; fi
+            sleep 1
+          done
+          docker logs "$container"
+          exit 1
+      - name: 清理 Redis 最小权限验证资源
+        if: always()
+        shell: bash
+        run: |
+          container="payroll-redis-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          volume="payroll-redis-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker rm --force "$container" 2>/dev/null || true
+          docker volume rm "$volume" 2>/dev/null || true
 
   container-images:
     name: 生产镜像（${{ matrix.image }}）
@@ -70,6 +111,29 @@ jobs:
           image="gaoq-payroll/${{ matrix.image }}:$GITHUB_SHA"
           test "$(docker image inspect "$image" --format '{{.Config.User}}')" = '65532:65532'
           test "$(docker image inspect "$image" --format '{{json .Config.Healthcheck.Test}}')" != 'null'
+      - name: 验证 API ESM 生产入口可启动
+        if: matrix.image == 'api'
+        shell: bash
+        run: |
+          image="gaoq-payroll/${{ matrix.image }}:$GITHUB_SHA"
+          docker run --detach --name payroll-api-esm-smoke --network none \
+            --env NODE_ENV=test \
+            --env MONGODB_URI='mongodb://127.0.0.1:1/payroll-smoke' \
+            --env WEB_ORIGIN='http://payroll.example.invalid' \
+            --env AUTH_ISSUER='http://auth.example.invalid' \
+            --env AUTH_AUDIENCE='gaoq-payroll' \
+            --env AUTH_RESOURCE='http://payroll.example.invalid/api/payroll/v1' \
+            --env AUTH_JWKS_URI='http://auth.example.invalid/.well-known/jwks.json' \
+            --env MCP_ALLOWED_ORIGINS='http://payroll.example.invalid' \
+            "$image"
+          sleep 5
+          if [ "$(docker inspect --format '{{.State.Running}}' payroll-api-esm-smoke)" != true ]; then
+            docker logs payroll-api-esm-smoke
+            exit 1
+          fi
+      - name: 清理 API ESM 启动验证容器
+        if: always() && matrix.image == 'api'
+        run: docker rm --force payroll-api-esm-smoke 2>/dev/null || true
       - name: 生成 SPDX SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:

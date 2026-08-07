@@ -43,11 +43,15 @@ for (const marker of [
   '--keyFile',
   'read_only: true',
   'cap_drop: ["ALL"]',
+  'cap_add: ["CHOWN", "SETGID", "SETUID"]',
   'no-new-privileges:true',
 ]) if (!compose.includes(marker)) throw new Error('PAYROLL_STANDALONE_ISOLATION_INCOMPLETE');
 
 if (!compose.includes('        - "db.getSiblingDB(\'admin\').auth(')) {
   throw new Error('PAYROLL_MONGO_HEALTHCHECK_YAML_SCALAR_INVALID');
+}
+if (!compose.match(/payroll-redis:[\s\S]*?cap_drop: \["ALL"\][\s\S]*?cap_add: \["CHOWN", "SETGID", "SETUID"\]/u)) {
+  throw new Error('PAYROLL_REDIS_MINIMUM_CAPABILITIES_INCOMPLETE');
 }
 
 if (/\n\s+ports:\s*\n\s+- ["']?\$\{?PAYROLL_MONGO_PORT/mu.test(compose) ||

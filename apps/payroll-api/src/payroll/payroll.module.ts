@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 
+import { IdentityModule } from '../identity/identity.module.js';
 import { PayrollDataCryptoService } from './payroll-data-crypto.service.js';
 import { MasterDataModule } from '../master-data/master-data.module.js';
 import { PayrollApplicationService } from './payroll-application.service.js';
@@ -16,6 +17,7 @@ import {
 
 @Module({
   imports: [
+    IdentityModule,
     MasterDataModule,
     MongooseModule.forFeature([
       {

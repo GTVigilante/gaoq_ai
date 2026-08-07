@@ -34,7 +34,7 @@ import { PayrollModule } from './payroll/payroll.module.js';
   providers: [
     {
       provide: APP_GUARD,
-      useClass: BearerAuthGuard,
+      useExisting: BearerAuthGuard,
     },
   ],
 })

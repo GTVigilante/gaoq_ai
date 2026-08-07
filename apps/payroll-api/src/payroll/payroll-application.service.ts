@@ -12,7 +12,7 @@ import {
   type PayrollLineResult,
 } from '@gaoq/payroll-core';
 import { createHash, randomUUID } from 'node:crypto';
-import { Connection, type Model } from 'mongoose';
+import type { Connection, Model } from 'mongoose';
 import { z } from 'zod';
 
 import { IdentityContextService } from '../identity/identity-context.service.js';

@@ -10,7 +10,7 @@ import {
   isErpToPayrollEvent,
   type ErpToPayrollEvent,
 } from '@gaoq/platform-contracts';
-import { Connection, type ClientSession, type Model } from 'mongoose';
+import type { ClientSession, Connection, Model } from 'mongoose';
 import { z } from 'zod';
 
 import { IdentityContextService } from '../identity/identity-context.service.js';
