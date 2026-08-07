@@ -42,7 +42,10 @@ export class RemoteJwksAccessTokenVerifier extends AccessTokenVerifier {
     private readonly serviceClients: OAuthServiceClientRegistry,
   ) {
     super();
-    this.jwks = createRemoteJWKSet(new URL(this.config.get('AUTH_JWKS_URI', { infer: true })), {
+    const fetchUri = this.config.get('AUTH_JWKS_FETCH_URI', { infer: true }) ??
+      this.config.get('AUTH_JWKS_URI', { infer: true });
+    if (fetchUri === undefined) throw new Error('AUTH_JWKS_URI_REQUIRED');
+    this.jwks = createRemoteJWKSet(new URL(fetchUri), {
       cooldownDuration: 30_000,
       timeoutDuration: 3_000,
     });

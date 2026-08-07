@@ -5,7 +5,7 @@
 
 ## 镜像边界
 
-根目录 `Dockerfile` 只允许输出 `erp-api`、`erp-worker`、`erp-web`、`website` 四个生产目标。构建阶段使用固定版本和 OCI 摘要的 Node.js 22 builder；最终运行阶段统一使用固定 OCI 摘要的 distroless Debian 13 Node.js 22 nonroot 镜像，不携带 shell、包管理器、应用源码、应用测试或构建工具。Debian 12 runtime 曾在首次 CI 被 Trivy 阻断 1 个 Critical 和 5 个 High 的 OpenSSL 漏洞，因此不得回退。API 与 Worker 共享同一份经过 `pnpm deploy --prod` 裁剪的生产依赖，但拥有独立入口与健康检查；两个 Next.js 应用分别构建 standalone 产物，不共享运行时 Secret。Docker 生态的 Dependabot 每周检查 builder 与 runtime 基础镜像更新，更新 PR 必须重新通过全部镜像门禁。
+根目录 `Dockerfile` 只允许输出 `erp-api`、`erp-worker`、`erp-web`、`erp-website` 四个生产目标。构建阶段使用固定版本和 OCI 摘要的 Node.js 22 builder；最终运行阶段统一使用固定 OCI 摘要的 distroless Debian 13 Node.js 22 nonroot 镜像，不携带 shell、包管理器、应用源码、应用测试或构建工具。Debian 12 runtime 曾在首次 CI 被 Trivy 阻断 1 个 Critical 和 5 个 High 的 OpenSSL 漏洞，因此不得回退。API 与 Worker 共享同一份经过 `pnpm deploy --prod` 裁剪的生产依赖，但拥有独立入口与健康检查；两个 Next.js 应用分别构建 standalone 产物，不共享运行时 Secret。Docker 生态的 Dependabot 每周检查 builder 与 runtime 基础镜像更新，更新 PR 必须重新通过全部镜像门禁。
 
 所有运行目标显式使用 UID/GID `65532:65532`，应用日志只写 stdout/stderr，业务证据只写 MongoDB、Redis、WORM 或受控网关。部署平台必须设置只读根文件系统、禁止提权、删除全部 Linux capabilities，并至少提供只读 Secret 挂载；不得把密钥写入镜像、Docker build arg、环境样例或镜像标签。
 
@@ -23,7 +23,7 @@ localhost。三项配置写入浏览器产物，必须在镜像 provenance 中�
 docker build --target erp-api --build-arg IMAGE_REVISION="$(git rev-parse HEAD)" -t gaoq-os/api:local .
 docker build --target erp-worker --build-arg IMAGE_REVISION="$(git rev-parse HEAD)" -t gaoq-os/worker:local .
 docker build --target erp-web --build-arg IMAGE_REVISION="$(git rev-parse HEAD)" --build-arg NEXT_PUBLIC_ERP_API_ORIGIN=https://erp.example.com --build-arg ERP_MOBILE_FRAME_ANCESTORS="https://h5.dingtalk.com https://open.feishu.cn" -t gaoq-os/web:local .
-docker build --target website --build-arg IMAGE_REVISION="$(git rev-parse HEAD)" --build-arg NEXT_PUBLIC_WEBSITE_ORIGIN=https://www.example.com --build-arg NEXT_PUBLIC_ERP_API_ORIGIN=https://erp.example.com --build-arg NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL=https://captcha.example.net/widget -t gaoq-os/website:local .
+docker build --target erp-website --build-arg IMAGE_REVISION="$(git rev-parse HEAD)" --build-arg NEXT_PUBLIC_WEBSITE_ORIGIN=https://www.example.com --build-arg NEXT_PUBLIC_ERP_API_ORIGIN=https://erp.example.com --build-arg NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_ORIGIN=https://captcha.example.net --build-arg NEXT_PUBLIC_MARKETING_CAPTCHA_WIDGET_URL=https://captcha.example.net/widget -t gaoq-os/website:local .
 ```
 
 构建时只允许仓库根目录作为 context；`.dockerignore` 必须排除 Git 元数据、环境文件、依赖目录和本地产物。生产发布必须使用不可变镜像 digest，禁止部署 `latest` 或仅靠可变 tag 定位。

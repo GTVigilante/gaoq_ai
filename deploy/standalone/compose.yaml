@@ -1,0 +1,124 @@
+name: gaoq-ai
+
+services:
+  redis:
+    image: redis:7@sha256:595cc6f2bb3af6e03347b90deb6123c6aa2c81dea05ce08128de8a174b6ac67b
+    user: "999:999"
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1000"]
+    restart: unless-stopped
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    volumes:
+      - redis-data:/data
+    networks: [private]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    image: ${GAOQ_API_IMAGE:?必须提供不可变 API 镜像引用}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    env_file:
+      - ${GAOQ_RUNTIME_DIR:?必须提供服务器运行时配置目录}/api.env
+    environment:
+      NODE_ENV: ${GAOQ_NODE_ENV:?必须明确 production 或 development}
+      GAOQ_RELEASE_PROFILE: ${GAOQ_RELEASE_PROFILE:?必须明确 full 或 initial}
+      PORT: "3001"
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "127.0.0.1:${GAOQ_API_PORT:-3201}:3001"
+    networks: [private]
+    depends_on:
+      redis:
+        condition: service_healthy
+    pids_limit: 512
+    mem_limit: 1536m
+    cpus: 1.5
+
+  worker:
+    image: ${GAOQ_WORKER_IMAGE:?必须提供不可变 Worker 镜像引用}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    env_file:
+      - ${GAOQ_RUNTIME_DIR:?必须提供服务器运行时配置目录}/api.env
+    environment:
+      NODE_ENV: ${GAOQ_NODE_ENV:?必须明确 production 或 development}
+      GAOQ_RELEASE_PROFILE: ${GAOQ_RELEASE_PROFILE:?必须明确 full 或 initial}
+      RUNTIME_ROLE: worker
+      REDIS_URL: redis://redis:6379/0
+      WORKER_METRICS_PORT: "9464"
+      AUTH_JWKS_FETCH_URI: https://aio.gaoq.com/.well-known/jwks.json
+    networks: [private]
+    depends_on:
+      redis:
+        condition: service_healthy
+    pids_limit: 512
+    mem_limit: 1536m
+    cpus: 1.5
+
+  web:
+    image: ${GAOQ_WEB_IMAGE:?必须提供不可变 ERP Web 镜像引用}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    env_file:
+      - ${GAOQ_RUNTIME_DIR:?必须提供服务器运行时配置目录}/web.env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      ERP_API_ORIGIN: http://api:3001
+    ports:
+      - "127.0.0.1:${GAOQ_WEB_PORT:-3200}:3000"
+    networks: [private]
+    depends_on: [api]
+    pids_limit: 384
+    mem_limit: 1024m
+    cpus: 1.0
+
+  website:
+    image: ${GAOQ_WEBSITE_IMAGE:?必须提供不可变官网镜像引用}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    env_file:
+      - ${GAOQ_RUNTIME_DIR:?必须提供服务器运行时配置目录}/website.env
+    environment:
+      NODE_ENV: production
+      PORT: "3002"
+      ERP_API_INTERNAL_ORIGIN: http://api:3001
+    ports:
+      - "127.0.0.1:${GAOQ_WEBSITE_PORT:-3202}:3002"
+    networks: [private]
+    depends_on: [api]
+    pids_limit: 384
+    mem_limit: 768m
+    cpus: 0.75
+
+networks:
+  private:
+    name: gaoq-ai-private
+    internal: false
+
+volumes:
+  redis-data:
+    name: gaoq-ai-redis-data

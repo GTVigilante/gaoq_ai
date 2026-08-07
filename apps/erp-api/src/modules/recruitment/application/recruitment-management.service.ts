@@ -422,7 +422,7 @@ export class RecruitmentManagementService {
   async listPortalPositions(): Promise<readonly RecruitmentPortalPositionSummary[]> {
     const actor = this.context.getActorRequired();
     if (
-      actor.actorType !== 'service' ||
+      actor.actorType !== 'mcp_client' ||
       !actor.scopes.includes('erp:recruitment:portal:read')
     ) throw new ForbiddenException({
       code: 'RECRUITMENT_PORTAL_SERVICE_REQUIRED',

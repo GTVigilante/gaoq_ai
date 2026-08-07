@@ -40,7 +40,7 @@ type RequisitionStatus =
 
 type ApprovalStatus = 'draft' | 'running' | 'approved' | 'rejected';
 
-type ActorType = 'user' | 'service' | 'system_job';
+type ActorType = 'user' | 'service' | 'mcp_client' | 'system_job';
 
 interface FixtureOptions {
   readonly requisitionStatus?: RequisitionStatus;
@@ -439,7 +439,7 @@ function fixture(options?: FixtureOptions) {
 describe('RecruitmentManagementService', () => {
   it('门户服务只返回开放职位的公开投影且不暴露内部引用', async () => {
     const store = fixture({
-      actorType: 'service',
+      actorType: 'mcp_client',
       actorScopes: ['erp:recruitment:portal:read'],
       actorDepartments: [],
     });
@@ -455,7 +455,7 @@ describe('RecruitmentManagementService', () => {
     expect(JSON.stringify(result)).not.toMatch(/tenant|requisition|jobLevel|department-001/u);
   });
 
-  it('门户职位投影拒绝人员令牌和缺失专用 Scope 的服务令牌', async () => {
+  it('门户职位投影拒绝人员令牌、内部服务身份和缺失专用 Scope 的门户令牌', async () => {
     await expect(fixture({
       actorType: 'user',
       actorScopes: ['erp:recruitment:portal:read'],
@@ -464,6 +464,12 @@ describe('RecruitmentManagementService', () => {
     });
     await expect(fixture({
       actorType: 'service',
+      actorScopes: ['erp:recruitment:portal:read'],
+    }).service.listPortalPositions()).rejects.toMatchObject({
+      response: { code: 'RECRUITMENT_PORTAL_SERVICE_REQUIRED' },
+    });
+    await expect(fixture({
+      actorType: 'mcp_client',
       actorScopes: ['erp:recruitment:management:read_all'],
     }).service.listPortalPositions()).rejects.toMatchObject({
       response: { code: 'RECRUITMENT_PORTAL_SERVICE_REQUIRED' },
@@ -1227,7 +1233,7 @@ describe('RecruitmentManagementService', () => {
 
   it('门户过滤未发布职位、停用部门和无部门映射职位', async () => {
     const store = fixture({
-      actorType: 'service',
+      actorType: 'mcp_client',
       actorScopes: ['erp:recruitment:portal:read'],
       actorDepartments: [],
     });

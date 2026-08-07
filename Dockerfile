@@ -92,6 +92,7 @@ ENV HOSTNAME=0.0.0.0
 ENV PORT=3002
 COPY --from=website-build --chown=65532:65532 /workspace/apps/website/.next/standalone/ ./
 COPY --from=website-build --chown=65532:65532 /workspace/apps/website/.next/static/ ./apps/website/.next/static/
+COPY --from=website-build --chown=65532:65532 /workspace/apps/website/public/ ./apps/website/public/
 EXPOSE 3002
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
   CMD ["/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:3002/zh-CN').then((response)=>{if(!response.ok)process.exit(1)}).catch(()=>process.exit(1))"]

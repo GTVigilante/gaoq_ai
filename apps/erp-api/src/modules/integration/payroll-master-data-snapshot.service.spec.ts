@@ -13,7 +13,7 @@ import { PayrollMasterDataSnapshotService } from './payroll-master-data-snapshot
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 
 const context = (
-  actorType: 'user' | 'service' | 'system_job',
+  actorType: 'user' | 'service' | 'mcp_client' | 'system_job',
   tenantId: string,
 ): TenantContextService => ({
   getRequired: () => ({
@@ -77,7 +77,7 @@ const encodeCursor = (value: unknown): string =>
   Buffer.from(JSON.stringify(value)).toString('base64url');
 
 function fixture(options: {
-  readonly actorType?: 'user' | 'service' | 'system_job';
+  readonly actorType?: 'user' | 'service' | 'mcp_client' | 'system_job';
   readonly tenantId?: string;
   readonly departmentCount?: number;
 } = {}) {
@@ -108,7 +108,7 @@ function fixture(options: {
 }
 
 describe('算薪组织主数据快照', () => {
-  it.each(['service', 'system_job'] as const)(
+  it.each(['service', 'mcp_client', 'system_job'] as const)(
     '允许可信 %s 身份读取脱敏快照并记录批量访问审计',
     async (actorType) => {
       const store = fixture({ actorType });

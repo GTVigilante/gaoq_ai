@@ -26,6 +26,7 @@ for (const marker of [
   'ERP_MOBILE_FRAME_ANCESTORS',
   'COPY packages/platform-contracts/package.json packages/platform-contracts/package.json',
   'pnpm --filter @gaoq/platform-contracts build',
+  '/workspace/apps/website/public/ ./apps/website/public/',
 ]) {
   if (!dockerfile.includes(marker)) throw new Error('PHASE5_CONTAINER_BASELINE_INCOMPLETE');
 }

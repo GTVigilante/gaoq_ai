@@ -9,6 +9,11 @@
   容灾、业务 UAT、Go/No-Go、统一切换和四周 Hypercare 仍以现场证据为准。
 - ERP 是组织与员工唯一主数据源；多租户从可信身份上下文强制；REST、事件、
   MCP 和 Worker 必须复用应用服务。
+- 2026-08-06 首发版已使用 `production/initial` 档位在独立 Compose Project
+  上线 `aio.gaoq.com`、`recruit.gaoq.com` 与 `www.gaoq.com`；HTTPS、健康检查、
+  未授权拒绝、空职位投影和 CMS 访客站已验证。本次没有执行 MongoDB 迁移、
+  演示数据写入、删除或重建。独立专业算薪、企业 SSO 与外部资金/税务/eSign/WORM
+  仍需完成生产接入，已验证证据和回滚边界见 `deploy/standalone/LAUNCH_STATUS.md`。
 - 2026-07-29 已交付标准 MCP 本地 stdio 入口，与生产 Streamable HTTP 共用
   `McpRuntimeService` 和 `AccessTokenVerifier`。启动要求秘密管理器注入短时
   Token 与 `erp:mcp:server:connect`，先预检、后逐消息复验，撤销/过期立即关闭；

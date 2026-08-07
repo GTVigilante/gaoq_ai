@@ -103,6 +103,33 @@ describe('validateEnvironment', () => {
     expect(environment.OP_SSO_CLIENT_SECRET).toBeUndefined();
     expect(environment.OP_SSO_REDIRECT_URI).toBeUndefined();
     expect(environment.MCP_OAUTH_CLIENTS_JSON).toBe('[]');
+    expect(environment.GAOQ_RELEASE_PROFILE).toBe('full');
+  });
+
+  it('内部 JWKS 取钥只允许公开地址或 API 本进程回环地址', () => {
+    const base = {
+      NODE_ENV: 'test',
+      PORT: '3001',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0',
+      WEB_ORIGIN: 'https://erp.example.com',
+      AUTH_ISSUER: 'https://erp.example.com',
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://erp.example.com/.well-known/jwks.json',
+      MCP_AUTHORIZATION_SERVER: 'https://erp.example.com',
+      MCP_ALLOWED_ORIGINS: 'https://erp.example.com',
+    };
+    expect(validateEnvironment({
+      ...base,
+      AUTH_JWKS_FETCH_URI: 'http://127.0.0.1:3001/.well-known/jwks.json',
+    })).toMatchObject({
+      AUTH_JWKS_FETCH_URI: 'http://127.0.0.1:3001/.well-known/jwks.json',
+    });
+    expect(() => validateEnvironment({
+      ...base,
+      AUTH_JWKS_FETCH_URI: 'http://api:3001/.well-known/jwks.json',
+    })).toThrow('只允许公开 JWKS 地址或 API 本进程回环地址');
   });
 
   it('关怀通知网关与租户策略必须完整、独立且失败关闭', () => {
@@ -905,6 +932,48 @@ describe('validateEnvironment', () => {
       MCP_AUTHORIZATION_SERVER: 'https://erp.example.com',
       MCP_ALLOWED_ORIGINS: 'https://erp.example.com',
     })).toThrow('必须完整配置独立 WORM 锚定端点');
+  });
+
+  it('initial 首发生产档位允许未接通的企业外部通道保持禁用', () => {
+    const environment = validateEnvironment({
+      NODE_ENV: 'production',
+      GAOQ_RELEASE_PROFILE: 'initial',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0',
+      WEB_ORIGIN: 'https://erp.example.com',
+      MARKETING_WEBSITE_ORIGIN: 'https://www.example.com',
+      MARKETING_LEAD_ENCRYPTION_KEY_BASE64: 'm'.repeat(43),
+      MARKETING_LEAD_BLIND_INDEX_KEY_BASE64: 'n'.repeat(43),
+      AUTH_ISSUER: 'https://erp.example.com',
+      AUTH_AUDIENCE: 'gaoq-erp',
+      AUTH_RESOURCE: 'https://erp.example.com/mcp',
+      AUTH_JWKS_URI: 'https://erp.example.com/.well-known/jwks.json',
+      AUTH_SIGNING_PRIVATE_KEY_BASE64: 'a'.repeat(64),
+      AUTH_SIGNING_KEY_ID: 'signing-key-001',
+      PAYROLL_SYSTEM_MODE: 'external',
+      PAYROLL_DATA_ENCRYPTION_KEYS: 'p'.repeat(64),
+      TREASURY_DATA_ENCRYPTION_KEYS: 't'.repeat(64),
+      TREASURY_BLIND_INDEX_KEYS: 'u'.repeat(64),
+      ESIGN_WEBHOOK_ENCRYPTION_KEYS: 'e'.repeat(64),
+      OP_WEBHOOK_ENCRYPTION_KEYS: 'o'.repeat(64),
+      OP_APPROVAL_WEBHOOK_ENCRYPTION_KEYS: 'q'.repeat(64),
+      AUDIT_INTEGRITY_KEYS: 'i'.repeat(64),
+      APPROVAL_DATA_ENCRYPTION_KEYS: 'd'.repeat(64),
+      RECRUITMENT_DATA_ENCRYPTION_KEYS: 'r'.repeat(64),
+      RECRUITMENT_BLIND_INDEX_KEYS: 's'.repeat(64),
+      ATTENDANCE_DATA_ENCRYPTION_KEYS: 'c'.repeat(64),
+      ATTENDANCE_BLIND_INDEX_KEYS: 'b'.repeat(64),
+      METRICS_BEARER_TOKEN: 'metrics-token-that-is-at-least-32-characters',
+      MCP_AUTHORIZATION_SERVER: 'https://erp.example.com',
+      MCP_ALLOWED_ORIGINS: 'https://erp.example.com',
+    });
+    expect(environment).toMatchObject({
+      NODE_ENV: 'production',
+      GAOQ_RELEASE_PROFILE: 'initial',
+    });
+    expect(environment).not.toHaveProperty('OP_API_BASE_URL');
+    expect(environment).not.toHaveProperty('AUDIT_WORM_ENDPOINT');
+    expect(environment).not.toHaveProperty('MARKETING_CAPTCHA_VERIFY_ENDPOINT');
   });
 
   it('生产环境拒绝与 ERP 同域或携带查询参数的 WORM 端点', () => {
