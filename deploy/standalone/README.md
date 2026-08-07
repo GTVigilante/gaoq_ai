@@ -39,6 +39,11 @@
 固定摘要时使用 `pnpm deployment:production:set-images -- <运行时绝对目录>
 <API摘要> <Worker摘要> <Web摘要>`；脚本会拒绝非官方仓库、组件错配、浮动标签、
 符号链接和重复环境变量，并以原子替换方式更新受保护的 `compose.env`。
+如生产链路无法稳定直拉某个已发布镜像，可从 `main` 手动运行
+`export-production-images.yml`，同时提供固定发布标签、完整源码 revision 和组件名。
+该流程只读取并核验既有镜像，不重建、不推送、不覆盖标签；离线包和 SHA-256 校验
+文件只保留 1 天。导入后仍须执行一次 `docker pull <固定标签>`，由 Registry 清单把
+本地层绑定到官方 `RepoDigest`，再按内容摘要部署。
 
 公网反向代理必须同时转发 `/api/payroll/v1`，以及 RFC 9728 对带路径 Resource
 规定的 `/.well-known/oauth-protected-resource/api/payroll/v1`；不得把元数据错误地

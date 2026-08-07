@@ -25,7 +25,7 @@ services:
         - mongosh
         - --quiet
         - --eval
-        - db.getSiblingDB('admin').auth(process.env.MONGO_INITDB_ROOT_USERNAME, process.env.MONGO_INITDB_ROOT_PASSWORD); db.adminCommand({ ping: 1 }).ok
+        - "db.getSiblingDB('admin').auth(process.env.MONGO_INITDB_ROOT_USERNAME, process.env.MONGO_INITDB_ROOT_PASSWORD); db.adminCommand({ ping: 1 }).ok"
       interval: 10s
       timeout: 5s
       retries: 30

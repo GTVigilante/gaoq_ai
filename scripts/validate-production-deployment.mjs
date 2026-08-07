@@ -2,13 +2,14 @@ import { readFile } from 'node:fs/promises';
 import process from 'node:process';
 import { URL } from 'node:url';
 
-const [dockerfile, compose, generator, imageSetter, mongoInit, publishWorkflow] = await Promise.all([
+const [dockerfile, compose, generator, imageSetter, mongoInit, publishWorkflow, exportWorkflow] = await Promise.all([
   readFile(new URL('../Dockerfile', import.meta.url), 'utf8'),
   readFile(new URL('../deploy/standalone/compose.yaml', import.meta.url), 'utf8'),
   readFile(new URL('./generate-production-runtime.mjs', import.meta.url), 'utf8'),
   readFile(new URL('./set-production-image-digests.mjs', import.meta.url), 'utf8'),
   readFile(new URL('../docker/mongo-init.js', import.meta.url), 'utf8'),
   readFile(new URL('../.github/workflows/publish-production-images.yml', import.meta.url), 'utf8'),
+  readFile(new URL('../.github/workflows/export-production-images.yml', import.meta.url), 'utf8'),
 ]);
 const [main, metadataController, bearerGuard] = await Promise.all([
   readFile(new URL('../apps/payroll-api/src/main.ts', import.meta.url), 'utf8'),
@@ -44,6 +45,10 @@ for (const marker of [
   'cap_drop: ["ALL"]',
   'no-new-privileges:true',
 ]) if (!compose.includes(marker)) throw new Error('PAYROLL_STANDALONE_ISOLATION_INCOMPLETE');
+
+if (!compose.includes('        - "db.getSiblingDB(\'admin\').auth(')) {
+  throw new Error('PAYROLL_MONGO_HEALTHCHECK_YAML_SCALAR_INVALID');
+}
 
 if (/\n\s+ports:\s*\n\s+- ["']?\$\{?PAYROLL_MONGO_PORT/mu.test(compose) ||
   /\n\s+ports:\s*\n\s+- ["']?\$\{?PAYROLL_REDIS_PORT/mu.test(compose)) {
@@ -105,5 +110,18 @@ for (const marker of [
   "mode: 0o600, flag: 'wx'",
   'await rename(temporaryPath, composeEnvironmentPath)',
 ]) if (!imageSetter.includes(marker)) throw new Error('PAYROLL_IMAGE_DIGEST_SETTER_INCOMPLETE');
+
+for (const marker of [
+  'workflow_dispatch:',
+  'contents: read',
+  'docker pull "$IMAGE_NAME:$RELEASE_TAG"',
+  'org.opencontainers.image.revision',
+  'docker save "$IMAGE_NAME:$RELEASE_TAG"',
+  'retention-days: 1',
+  'compression-level: 0',
+]) if (!exportWorkflow.includes(marker)) throw new Error('PAYROLL_OFFLINE_IMAGE_EXPORT_INCOMPLETE');
+if (/packages: write|docker push|gaoq-payroll-.*:latest/u.test(exportWorkflow)) {
+  throw new Error('PAYROLL_OFFLINE_IMAGE_EXPORT_BOUNDARY_INVALID');
+}
 
 process.stdout.write('算薪生产镜像、独立编排、凭据和数据边界静态校验通过。\n');

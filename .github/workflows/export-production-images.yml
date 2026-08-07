@@ -1,0 +1,80 @@
+name: 导出专业算薪生产镜像离线包
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 已发布的固定版本标签（YYYYMMDD-提交前12位）
+        required: true
+        type: string
+      source_revision:
+        description: 镜像标签对应的完整 40 位 Git 提交
+        required: true
+        type: string
+      component:
+        description: 需要导出的镜像组件
+        required: true
+        default: web
+        type: choice
+        options:
+          - web
+          - api
+          - worker
+          - all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: payroll-production-export-${{ inputs.release_tag }}-${{ inputs.component }}
+  cancel-in-progress: false
+
+jobs:
+  export:
+    name: 导出离线包（${{ matrix.image }}）
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(inputs.component == 'all' && '["api","worker","web"]' || format('["{0}"]', inputs.component)) }}
+    steps:
+      - name: 校验并拉取既有不可变镜像
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+          IMAGE_NAME: ghcr.io/gtvigilante/gaoq-payroll-${{ matrix.image }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^[0-9]{8}-[a-f0-9]{12}$ ]] ||
+             [[ ! "$SOURCE_REVISION" =~ ^[a-f0-9]{40}$ ]] ||
+             [[ "$RELEASE_TAG" != "${RELEASE_TAG%%-*}-${SOURCE_REVISION:0:12}" ]]; then
+            echo "发布标签与源码 revision 不匹配。" >&2
+            exit 1
+          fi
+          docker pull "$IMAGE_NAME:$RELEASE_TAG"
+          actual_revision="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE_NAME:$RELEASE_TAG")"
+          if [[ "$actual_revision" != "$SOURCE_REVISION" ]]; then
+            echo "镜像 revision 与输入不一致。" >&2
+            exit 1
+          fi
+      - name: 生成可校验的 Docker 离线包
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          IMAGE_NAME: ghcr.io/gtvigilante/gaoq-payroll-${{ matrix.image }}
+          IMAGE_COMPONENT: ${{ matrix.image }}
+        run: |
+          archive="gaoq-payroll-${IMAGE_COMPONENT}-${RELEASE_TAG}.tar.gz"
+          docker save "$IMAGE_NAME:$RELEASE_TAG" | gzip -1 > "$archive"
+          sha256sum "$archive" > "$archive.sha256"
+      - name: 上传一天有效的生产恢复包
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gaoq-payroll-${{ matrix.image }}-${{ inputs.release_tag }}
+          path: |
+            gaoq-payroll-${{ matrix.image }}-${{ inputs.release_tag }}.tar.gz
+            gaoq-payroll-${{ matrix.image }}-${{ inputs.release_tag }}.tar.gz.sha256
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
