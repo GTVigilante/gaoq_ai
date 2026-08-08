@@ -1,4 +1,3 @@
-import { AntdRegistry } from '@ant-design/nextjs-registry';
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 
@@ -11,7 +10,7 @@ export default function RootLayout({ children }: { readonly children: ReactNode 
   return (
     <html lang="zh-CN">
       <body style={{ margin: 0, background: '#f5f7fa' }}>
-        <AntdRegistry>{children}</AntdRegistry>
+        {children}
       </body>
     </html>
   );
