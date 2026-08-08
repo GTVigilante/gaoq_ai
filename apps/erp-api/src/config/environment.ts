@@ -1565,6 +1565,7 @@ export const validateWorkerEnvironment = (input: Record<string, unknown>): AppEn
     AUTH_RESOURCE: 'https://worker.invalid/mcp',
     AUTH_ADDITIONAL_RESOURCES_JSON: '[]',
     AUTH_JWKS_URI: 'https://worker.invalid/.well-known/jwks.json',
+    AUTH_JWKS_FETCH_URI: 'https://worker.invalid/.well-known/jwks.json',
     MCP_AUTHORIZATION_SERVER: 'https://worker.invalid',
     MCP_ALLOWED_ORIGINS: 'https://worker.invalid',
     MCP_OAUTH_CLIENTS_JSON: '[]',

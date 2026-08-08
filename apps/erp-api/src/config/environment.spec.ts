@@ -2,7 +2,7 @@ import { generateKeyPairSync } from 'node:crypto';
 
 import { describe, expect, it } from 'vitest';
 
-import { validateEnvironment } from './environment.js';
+import { validateEnvironment, validateWorkerEnvironment } from './environment.js';
 
 const knowledgeSigning = {
   KNOWLEDGE_EVIDENCE_GATEWAY_SIGNING_PUBLIC_KEY_BASE64:
@@ -39,6 +39,20 @@ const payrollTaxSigning = {
 };
 
 describe('validateEnvironment', () => {
+  it('Worker 忽略 API 进程的公开 JWKS 取钥覆盖', () => {
+    const environment = validateWorkerEnvironment({
+      NODE_ENV: 'test',
+      PORT: '3001',
+      MONGODB_URI: 'mongodb://localhost:27017/gaoq_os?replicaSet=rs0',
+      REDIS_URL: 'redis://localhost:6379/0',
+      AUTH_JWKS_FETCH_URI: 'https://aio.gaoq.com/.well-known/jwks.json',
+    });
+
+    expect(environment.AUTH_JWKS_FETCH_URI).toBe(
+      'https://worker.invalid/.well-known/jwks.json',
+    );
+  });
+
   it('接受完整且合法的本地配置', () => {
     const environment = validateEnvironment({
       NODE_ENV: 'test',
