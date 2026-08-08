@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GaoQ OS 与专业算薪生产交接</title>
+  <style>
+    :root { color-scheme: light; --ink:#172033; --muted:#5d687a; --line:#dfe5ef;
+      --brand:#165dff; --soft:#f5f8ff; --ok:#087443; --warn:#a05a00; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); background:#eef2f8;
+      font:15px/1.72 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif; }
+    main { width:min(1100px,calc(100% - 32px)); margin:32px auto; padding:44px;
+      background:white; border:1px solid var(--line); border-radius:18px;
+      box-shadow:0 16px 45px rgba(25,42,70,.08); }
+    h1 { margin:0 0 8px; font-size:32px; line-height:1.25; }
+    h2 { margin:36px 0 12px; padding-bottom:8px; font-size:22px;
+      border-bottom:2px solid var(--line); }
+    h3 { margin:24px 0 8px; font-size:17px; }
+    p,li { max-width:90ch; }
+    .meta,.note { color:var(--muted); }
+    .summary { margin:24px 0; padding:18px 20px; background:var(--soft);
+      border-left:4px solid var(--brand); border-radius:10px; }
+    .warning { padding:14px 18px; background:#fff7e8; color:#673b00;
+      border:1px solid #f4d7a2; border-radius:10px; }
+    table { width:100%; margin:14px 0 22px; border-collapse:collapse; }
+    th,td { padding:10px 12px; text-align:left; vertical-align:top;
+      border:1px solid var(--line); }
+    th { background:#f7f9fc; }
+    code { padding:.12em .36em; border-radius:5px; background:#f0f3f8;
+      font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; overflow-wrap:anywhere; }
+    pre { overflow:auto; padding:16px; color:#edf5ff; background:#101827;
+      border-radius:10px; }
+    pre code { padding:0; color:inherit; background:transparent; }
+    .ok { color:var(--ok); font-weight:650; }
+    .todo { color:var(--warn); font-weight:650; }
+    footer { margin-top:42px; padding-top:16px; color:var(--muted);
+      border-top:1px solid var(--line); }
+    @media (max-width:700px) { main { margin:0; width:100%; padding:24px 18px;
+      border:0; border-radius:0; } table { display:block; overflow-x:auto; } }
+    @media print { body { background:white; } main { margin:0; width:100%; padding:0;
+      border:0; box-shadow:none; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>GaoQ OS 与专业算薪生产交接</h1>
+  <p class="meta">交接时间：2026-08-08（Asia/Shanghai） · 适用于项目维护人员、SRE 与后续 AI 代理</p>
+  <p class="warning"><strong>安全声明：</strong>本文不包含密码、Token、私钥、数据库连接串或可复用凭据。</p>
+
+  <section class="summary">
+    <strong>交付结论：</strong>GaoQ OS 与专业算薪已部署到 <code>121.5.32.244</code>。
+    GaoQ 5 个容器、专业算薪 5 个容器均健康；既有 <code>agents100-prod</code>
+    3 个容器保持健康且未被修改。未执行任何数据库删除、迁移、初始化、种子数据写入或重建。
+  </section>
+
+  <h2>1. 仓库与版本</h2>
+  <table>
+    <thead><tr><th>系统</th><th>仓库</th><th>生产应用提交</th><th>验证</th></tr></thead>
+    <tbody>
+      <tr><td>GaoQ OS</td><td><code>GTVigilante/gaoq_ai</code></td><td>API/Worker：<code>e357c43277d421c716f967e55d66369203a88ee6</code><br>Web/CMS：<code>d5a19277bd62f4d37aa3dc78c4d3448482c60671</code></td><td>440 个测试文件、7,223 项测试；工程、安全、文档、发布门禁通过</td></tr>
+      <tr><td>专业算薪</td><td><code>GTVigilante/gaoq-payroll</code></td><td><code>503509b8023a4a38cc9f6bb9034a560ca8ea1d4a</code></td><td><code>pnpm check</code>、审计、构建与镜像发布通过</td></tr>
+    </tbody>
+  </table>
+  <p>历史分支和脏工作区的保全备份：<code>/Users/gilberthomemacmini/Projects/gaoq-repository-backups/20260808-branch-consolidation</code>。其中包含 Git bundle、补丁、未跟踪文件归档和校验和；不要把旧实现直接合入生产 <code>main</code>。</p>
+
+  <h2>2. 生产拓扑</h2>
+  <table>
+    <thead><tr><th>入口</th><th>回环监听</th><th>用途</th><th>验收</th></tr></thead>
+    <tbody>
+      <tr><td><code>aio.gaoq.com</code></td><td><code>3200 / 3201</code></td><td>ERP Web / GaoQ API</td><td class="ok">公网 200</td></tr>
+      <tr><td><code>recruit.gaoq.com</code></td><td><code>3200 / 3201</code></td><td>招聘门户</td><td class="ok"><code>/careers</code> 200</td></tr>
+      <tr><td><code>www.gaoq.com</code></td><td><code>3202</code></td><td>CMS 访客站</td><td class="ok"><code>/zh-CN</code> 200</td></tr>
+      <tr><td><code>gaoq.com</code></td><td>301</td><td>跳转 www</td><td class="ok">已验证</td></tr>
+      <tr><td>专业算薪 Web</td><td><code>3210</code></td><td>Payroll Web</td><td class="ok">本机 200 / 健康</td></tr>
+      <tr><td>专业算薪 API</td><td><code>3211</code></td><td>Payroll API</td><td class="ok">ready 200 / 健康</td></tr>
+    </tbody>
+  </table>
+  <ul>
+    <li>GaoQ 运行目录：<code>/opt/gaoq-ai-runtime</code>；发布快照：<code>/opt/gaoq-ai-releases/e357c43277d4</code>；Compose Project：<code>gaoq-ai</code>。</li>
+    <li>算薪运行目录：<code>/opt/gaoq-payroll-runtime</code>；发布快照：<code>/opt/gaoq-payroll-releases/503509b8023a</code>；Compose Project：<code>gaoq-payroll</code>。</li>
+    <li>运行时目录/环境文件保持 <code>0700/0600</code> 级别权限，禁止输出 Secret 值。</li>
+  </ul>
+
+  <h2>3. 当前镜像</h2>
+  <h3>GaoQ OS</h3>
+  <table><thead><tr><th>组件</th><th>本机镜像 ID</th><th>修订</th></tr></thead><tbody>
+    <tr><td>API</td><td><code>sha256:496c5694bca64f98f43e64e35475ddd1ccc46ae801e29b3fc0c2ce6e21d42634</code></td><td><code>e357c43…</code></td></tr>
+    <tr><td>Worker</td><td><code>sha256:468ad2cb79e264e3dd9a9d504882ebd2dc861a623104928477ecf941bd995659</code></td><td><code>e357c43…</code></td></tr>
+    <tr><td>ERP Web</td><td><code>sha256:b926bce0d190551cf20f94064c2e106e308369583289315b4c3fde26a2047cf4</code></td><td><code>d5a1927…</code></td></tr>
+    <tr><td>CMS</td><td><code>sha256:1b1ff22aff7b570f9ac808fe21d148aa432256f23784d700ff2c172e5ce282eb</code></td><td><code>d5a1927…</code></td></tr>
+  </tbody></table>
+  <h3>专业算薪（均为 <code>503509b8023a…</code>）</h3>
+  <table><thead><tr><th>组件</th><th>本机镜像 ID</th></tr></thead><tbody>
+    <tr><td>API</td><td><code>sha256:5cb5a3082863777f066b2856b0af9ee486865155e8ffcda269ac709e655f7bf4</code></td></tr>
+    <tr><td>Worker</td><td><code>sha256:02ea8e584834cd16ebf15cba24cc190fbe94010563729e40982151ed7486d8e8</code></td></tr>
+    <tr><td>Web</td><td><code>sha256:78cebfa82d0789ee01cc955a79b29ad5b398e43d8c3d0e8dd91eb131bd6af305</code></td></tr>
+  </tbody></table>
+  <p class="note">GHCR 已发布对应官方镜像。生产机访问 GHCR/GCR 新层不稳定，当前使用同一提交、锁文件和既有已验证 distroless Node 22 基础镜像在隔离目录构建的内容寻址镜像。网络恢复后在维护窗口替换为官方摘要，禁止使用 <code>latest</code>。</p>
+
+  <h2>4. 数据与安全边界</h2>
+  <ul>
+    <li>GaoQ MongoDB 只执行过 <code>hello</code> 只读探测：可写，但不是 Replica Set。容器与 <code>/live</code> 健康；严格 <code>/ready</code> 因此为 503，禁止放宽代码绕过。</li>
+    <li>算薪 MongoDB/Redis 与 GaoQ Redis 均未发布主机端口，部署时未重启或重建数据库。</li>
+    <li><code>MASTER_DATA_SYNC_ENABLED=false</code>；正式 OAuth 与联调完成前不得开启。</li>
+    <li>服务客户端注册表仅补充原客户端的当前 ERP <code>allowedResources</code>；身份、Scope、角色、部门、凭据摘要与有效期未改。</li>
+    <li>运行目录内的 <code>pre-...-20260808</code> 文件是敏感回滚备份，禁止提交、转发或打印。</li>
+  </ul>
+
+  <h2>5. 日常验活</h2>
+  <pre><code># GaoQ
+cd /opt/gaoq-ai-runtime
+docker compose --env-file compose.env \
+  -f /opt/gaoq-ai-releases/e357c43277d4/deploy/standalone/compose.yaml ps
+curl -fsS http://127.0.0.1:3201/api/health/live
+curl -fsS http://127.0.0.1:3200/ &gt;/dev/null
+curl -fsS http://127.0.0.1:3202/zh-CN &gt;/dev/null
+
+# 专业算薪
+cd /opt/gaoq-payroll-runtime
+docker compose --env-file compose.env \
+  -f /opt/gaoq-payroll-releases/503509b8023a/deploy/standalone/compose.yaml ps
+curl -fsS http://127.0.0.1:3211/api/payroll/v1/health/ready
+curl -fsS http://127.0.0.1:3210/ &gt;/dev/null</code></pre>
+  <p><strong>回滚：</strong>只恢复 <code>compose.env.pre-...</code> 中对应应用镜像键，先 <code>docker compose config --quiet</code>，再执行 <code>up -d --no-deps &lt;service&gt;</code>。禁止重建 MongoDB/Redis，永远禁止 <code>down -v</code>。</p>
+
+  <h2>6. 人工待办</h2>
+  <h3 class="todo">P0 · 立即处理</h3>
+  <ol>
+    <li><strong>撤销并重新授权本机 GitHub CLI OAuth。</strong>下载中转时临时授权曾短暂进入远端进程参数，已立即终止且未写入仓库/配置，但必须按凭据暴露处理。</li>
+    <li><strong>规划 GaoQ MongoDB Replica Set 升级。</strong>先做备份、恢复演练、窗口和回滚审批；升级后验证 ready、事务、Worker 和审计链。自动代理不得直接改库。</li>
+    <li><strong>完成 <code>payroll.gaoq.com</code> 回源。</strong>目标机当前没有 payroll 专属证书/server block，直接以该 Host 访问会命中其他项目默认页。需配置 DNS/CDN → <code>121.5.32.244</code>、独立证书及仅代理 <code>3210/3211</code> 的 Nginx 配置；不得编辑其他项目 server block。</li>
+  </ol>
+  <h3 class="todo">P1 · 上线联调</h3>
+  <ol>
+    <li>通过 Secret Manager 增加 <code>payroll-sync-production</code> 客户端与轮换凭据，完成跨资源、Scope、错误租户、撤销和过期测试后再开启主数据同步。</li>
+    <li>完成算薪 Web 的 ERP OAuth 登录、回调、会话及员工/财务角色 UAT。</li>
+    <li>配置企业 SSO、验证码、通知、招聘渠道、eSign、税务、银行、WORM、AI/媒体网关；未配置副作用通道保持关闭。</li>
+    <li>在维护窗口把本机镜像替换为官方 GHCR 摘要并逐组件验活。</li>
+  </ol>
+  <h3 class="todo">P2 · 正式投产证据</h3>
+  <p>完成数据库恢复演练、两个影子算薪周期、差异对账、容量/安全/容灾测试、业务 UAT、Go/No-Go 签署和 Hypercare。</p>
+
+  <h2>7. AI 接手规则</h2>
+  <ol>
+    <li>先读 <code>AGENTS.md</code>、<code>CODEX.md</code>、<code>.codex/AGENTS.md</code> 和本交接。</li>
+    <li>只操作两个目标仓库和两个对应 Compose Project；其他项目禁止修改。</li>
+    <li>数据库、证书/Nginx、删除、强推、批量覆盖必须先获人类批准。</li>
+    <li>Secret 只检查存在性、长度、权限和结构，禁止打印值。</li>
+    <li>外部配置缺失不阻塞其他安全工作，最后统一形成待办，不能使用假配置冒充验收。</li>
+  </ol>
+
+  <h2>8. 验收清单</h2>
+  <ul>
+    <li class="ok">✓ GaoQ 5 个容器健康；专业算薪 5 个容器健康。</li>
+    <li class="ok">✓ aio、recruit、www 与根域跳转已验证。</li>
+    <li class="ok">✓ 目标端口仅绑定 127.0.0.1，数据库/Redis 无主机端口。</li>
+    <li class="ok">✓ 其他 agents100-prod 容器保持健康；未做数据库迁移、初始化或删除。</li>
+    <li class="todo">□ MongoDB Replica Set、payroll 公网入口、GitHub OAuth 轮换与外部 UAT 待人工完成。</li>
+  </ul>
+
+  <footer>本 HTML 与同目录 Markdown 文件为同一交接基线；发生生产变更时必须同步更新两种格式。</footer>
+</main>
+</body>
+</html>

@@ -14,6 +14,13 @@
   未授权拒绝、空职位投影和 CMS 访客站已验证。本次没有执行 MongoDB 迁移、
   演示数据写入、删除或重建。独立专业算薪、企业 SSO 与外部资金/税务/eSign/WORM
   仍需完成生产接入，已验证证据和回滚边界见 `deploy/standalone/LAUNCH_STATUS.md`。
+- 2026-08-08 已把 GaoQ OS 全量应用与独立专业算薪部署到单机生产：两个
+  Compose Project 共 10 个目标容器健康，目标端口仅绑定回环，数据库与 Redis
+  均未发布主机端口；既有其他项目保持健康。本次没有执行数据库迁移、初始化、
+  种子或删除。GaoQ MongoDB 仍不是 Replica Set，因此严格 `/ready` 保持 503；
+  `payroll.gaoq.com` 的 DNS、证书和专属 Nginx 入口仍待人工完成。生产拓扑、镜像、
+  回滚、安全边界和人工待办见
+  `docs/handover/PRODUCTION_HANDOVER_2026-08-08.md`（同时提供 HTML）。
 - 2026-07-29 已交付标准 MCP 本地 stdio 入口，与生产 Streamable HTTP 共用
   `McpRuntimeService` 和 `AccessTokenVerifier`。启动要求秘密管理器注入短时
   Token 与 `erp:mcp:server:connect`，先预检、后逐消息复验，撤销/过期立即关闭；
