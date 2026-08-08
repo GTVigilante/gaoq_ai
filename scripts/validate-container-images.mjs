@@ -8,6 +8,9 @@ const workflow = await readFile(
 const qualityWorkflow = await readFile(
   new URL('../.github/workflows/phase-1-ci.yml', import.meta.url), 'utf8',
 );
+const standalonePublishWorkflow = await readFile(
+  new URL('../.github/workflows/publish-standalone-images.yml', import.meta.url), 'utf8',
+);
 const dependabot = await readFile(new URL('../.github/dependabot.yml', import.meta.url), 'utf8');
 
 for (const marker of [
@@ -57,6 +60,29 @@ for (const marker of [
   'image-ref: gaoq-os/${{ matrix.image }}:${{ github.sha }}',
 ]) {
   if (!workflow.includes(marker)) throw new Error('PHASE5_CONTAINER_CI_GATE_INCOMPLETE');
+}
+
+for (const marker of [
+  'workflow_dispatch:',
+  'packages: write',
+  'persist-credentials: false',
+  'target: erp-api',
+  'target: erp-worker',
+  'target: erp-web',
+  'target: erp-website',
+  'ghcr.io/gtvigilante/gaoq-os-${{ matrix.image }}',
+  '--build-arg IMAGE_REVISION="$GITHUB_SHA"',
+  '--build-arg NEXT_PUBLIC_ERP_API_ORIGIN=https://aio.gaoq.com',
+  '--build-arg NEXT_PUBLIC_WEBSITE_ORIGIN=https://www.gaoq.com',
+  'docker push "$IMAGE_NAME:$RELEASE_TAG"',
+  'docker push "$IMAGE_NAME:sha-$GITHUB_SHA"',
+]) {
+  if (!standalonePublishWorkflow.includes(marker)) {
+    throw new Error('STANDALONE_IMAGE_PUBLISH_WORKFLOW_INCOMPLETE');
+  }
+}
+if (/pull_request:|gaoq-os-.*:latest/u.test(standalonePublishWorkflow)) {
+  throw new Error('STANDALONE_IMAGE_PUBLISH_WORKFLOW_BOUNDARY_INVALID');
 }
 
 if (!/- package-ecosystem: docker\n\s+directory: \/$/mu.test(dependabot)) {

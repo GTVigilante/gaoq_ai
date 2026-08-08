@@ -23,6 +23,10 @@
 - `initial` 不等于允许真实发薪、报税、银行提交或电子签副作用；相关通道保持
   sandbox/未配置状态，ERP 旧工资和 Treasury REST 继续由 `PAYROLL_SYSTEM_MODE=external`
   返回迁移边界响应。
+- 单机生产镜像只允许从 `main` 手动运行
+  `.github/workflows/publish-standalone-images.yml` 发布。四个组件同时绑定完整提交
+  SHA 和日期标签；生产运行时必须把标签解析为 `@sha256:` 摘要后再部署，禁止
+  使用 `latest`、分支名或其他浮动引用。
 - `AUTH_JWKS_URI` 始终保留公开 issuer 地址；单机部署仅用
   `AUTH_JWKS_FETCH_URI=http://127.0.0.1:3001/.well-known/jwks.json` 在 API 进程内部
   取钥，禁止改成 Docker DNS、任意内网地址或外部非同源地址。
