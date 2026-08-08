@@ -63,6 +63,10 @@
     </tbody>
   </table>
   <p>历史分支和脏工作区的保全备份：<code>/Users/gilberthomemacmini/Projects/gaoq-repository-backups/20260808-branch-consolidation</code>。其中包含 Git bundle、补丁、未跟踪文件归档和校验和；不要把旧实现直接合入生产 <code>main</code>。</p>
+  <p>分支收敛已完成：两个仓库均只有 1 条本地 <code>main</code>、1 条 GitHub 远端
+    <code>main</code> 和 1 个主工作区，且 <code>HEAD</code> 与 <code>origin/main</code>
+    一致。原 GaoQ 招聘工作区和旧版算薪 MVP 已保存为带日期说明的 Git stash；
+    干净的辅助 worktree 已移除。历史内容只能在隔离目录验证后恢复。</p>
 
   <h2>2. 生产拓扑</h2>
   <table>

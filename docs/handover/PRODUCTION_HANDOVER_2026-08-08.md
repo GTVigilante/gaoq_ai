@@ -31,6 +31,12 @@ GaoQ 使用服务器既有 MongoDB；专业算薪使用自己的独立 MongoDB �
 `SHA256SUMS`。历史工作区内容先保全后收敛，不应把备份中的旧实现直接合入生产
 `main`。
 
+分支收敛已完成：两个仓库均只有 1 条本地 `main`、1 条 GitHub 远端 `main` 和
+1 个主工作区，工作区干净且 `HEAD` 与 `origin/main` 一致。原 GaoQ
+`recruit-resume` 工作区和旧版算薪 MVP 工作区另存为带日期说明的 Git stash；
+已确认干净的辅助 worktree 已移除。恢复历史内容时必须先在隔离目录验证 bundle
+或 stash，不得直接覆盖当前 `main`。
+
 ## 3. 生产拓扑
 
 | 入口或组件 | 主机监听 | 容器/用途 | 状态 |
