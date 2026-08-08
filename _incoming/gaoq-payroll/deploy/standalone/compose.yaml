@@ -1,0 +1,155 @@
+name: gaoq-payroll
+
+services:
+  payroll-mongo:
+    image: ${PAYROLL_MONGO_IMAGE:?必须提供带 digest 的 MongoDB 镜像引用}
+    restart: unless-stopped
+    command:
+      - mongod
+      - --replSet
+      - payroll-rs0
+      - --bind_ip_all
+      - --auth
+      - --keyFile
+      - /run/secrets/payroll-mongo-keyfile
+    env_file:
+      - ${PAYROLL_RUNTIME_DIR:?必须提供独立运行时目录}/mongo.env
+    volumes:
+      - payroll-mongo-data:/data/db
+      - payroll-mongo-config:/data/configdb
+      - ${PAYROLL_RUNTIME_DIR}/mongo-keyfile:/run/secrets/payroll-mongo-keyfile:ro
+    networks: [data]
+    healthcheck:
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - --eval
+        - "db.getSiblingDB('admin').auth(process.env.MONGO_INITDB_ROOT_USERNAME, process.env.MONGO_INITDB_ROOT_PASSWORD); db.adminCommand({ ping: 1 }).ok"
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    pids_limit: 512
+    mem_limit: 1536m
+    cpus: 1.5
+
+  payroll-mongo-init:
+    image: ${PAYROLL_MONGO_IMAGE:?必须提供带 digest 的 MongoDB 镜像引用}
+    restart: "no"
+    depends_on:
+      payroll-mongo:
+        condition: service_healthy
+    env_file:
+      - ${PAYROLL_RUNTIME_DIR:?必须提供独立运行时目录}/mongo.env
+    volumes:
+      - ../../docker/mongo-init.js:/scripts/mongo-init.js:ro
+    entrypoint:
+      - mongosh
+      - mongodb://payroll-mongo:27017/admin
+      - --quiet
+      - /scripts/mongo-init.js
+    networks: [data]
+
+  payroll-redis:
+    image: ${PAYROLL_REDIS_IMAGE:?必须提供带 digest 的 Redis 镜像引用}
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1000"]
+    read_only: true
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "SETGID", "SETUID"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    volumes:
+      - payroll-redis-data:/data
+    networks: [data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  payroll-api:
+    image: ${PAYROLL_API_IMAGE:?必须提供不可变 API 镜像引用}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    env_file:
+      - ${PAYROLL_RUNTIME_DIR:?必须提供独立运行时目录}/api.env
+    environment:
+      NODE_ENV: production
+      PORT: "3101"
+    ports:
+      - "127.0.0.1:${PAYROLL_API_PORT:-3211}:3101"
+    networks: [data, egress]
+    depends_on:
+      payroll-mongo-init:
+        condition: service_completed_successfully
+    pids_limit: 512
+    mem_limit: 1536m
+    cpus: 1.5
+
+  payroll-worker:
+    image: ${PAYROLL_WORKER_IMAGE:?必须提供不可变 Worker 镜像引用}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    env_file:
+      - ${PAYROLL_RUNTIME_DIR:?必须提供独立运行时目录}/worker.env
+    environment:
+      NODE_ENV: production
+      REDIS_URL: redis://payroll-redis:6379/0
+    networks: [data, egress]
+    depends_on:
+      payroll-redis:
+        condition: service_healthy
+      payroll-api:
+        condition: service_healthy
+    pids_limit: 384
+    mem_limit: 1024m
+    cpus: 1.0
+
+  payroll-web:
+    image: ${PAYROLL_WEB_IMAGE:?必须提供不可变 Web 镜像引用}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    env_file:
+      - ${PAYROLL_RUNTIME_DIR:?必须提供独立运行时目录}/web.env
+    environment:
+      NODE_ENV: production
+      PORT: "3100"
+    ports:
+      - "127.0.0.1:${PAYROLL_WEB_PORT:-3210}:3100"
+    networks: [egress]
+    depends_on:
+      payroll-api:
+        condition: service_healthy
+    pids_limit: 384
+    mem_limit: 1024m
+    cpus: 1.0
+
+networks:
+  data:
+    name: gaoq-payroll-data
+    internal: true
+  egress:
+    name: gaoq-payroll-egress
+
+volumes:
+  payroll-mongo-data:
+    name: gaoq-payroll-mongo-data
+  payroll-mongo-config:
+    name: gaoq-payroll-mongo-config
+  payroll-redis-data:
+    name: gaoq-payroll-redis-data

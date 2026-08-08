@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.next/
+coverage/
+*.tsbuildinfo
+.env
+*.log
+*.pid
+.DS_Store
+
+# 旧 MVP 构建产物与本地依赖
+backend/dist/
+backend/node_modules/
+frontend/node_modules/

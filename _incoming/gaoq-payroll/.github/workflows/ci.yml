@@ -1,0 +1,151 @@
+name: 专业算薪质量与供应链门禁
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: payroll-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: 代码、契约与依赖
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 10.29.2
+      - name: 安装 Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: 执行冻结安装、审计和完整门禁
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm audit
+          pnpm check
+          pnpm deployment:production:validate
+      - name: 验证生产 Compose 严格解析
+        shell: bash
+        run: |
+          runtime_directory="/tmp/gaoq-payroll-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          release_tag="$(date -u +%Y%m%d)-${GITHUB_SHA:0:12}"
+          sudo "$(command -v node)" scripts/generate-production-runtime.mjs "$runtime_directory" "$release_tag"
+          sudo docker compose \
+            --env-file "$runtime_directory/compose.env" \
+            -f deploy/standalone/compose.yaml \
+            config --quiet
+      - name: 验证 Redis 最小权限运行时
+        shell: bash
+        run: |
+          container="payroll-redis-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          volume="payroll-redis-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker volume create "$volume"
+          docker run --detach --name "$container" \
+            --read-only \
+            --cap-drop ALL \
+            --cap-add CHOWN \
+            --cap-add SETGID \
+            --cap-add SETUID \
+            --security-opt no-new-privileges:true \
+            --tmpfs /tmp:size=32m,mode=1777 \
+            --volume "$volume:/data" \
+            redis:7.2-alpine@sha256:05a97a479bc73de66f087dc05b569010772880f778cc8671fa6b8aadee32e5c6 \
+            redis-server --appendonly yes --save 60 1000
+          for attempt in {1..30}; do
+            if docker exec "$container" redis-cli ping | grep -qx PONG; then exit 0; fi
+            sleep 1
+          done
+          docker logs "$container"
+          exit 1
+      - name: 清理 Redis 最小权限验证资源
+        if: always()
+        shell: bash
+        run: |
+          container="payroll-redis-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          volume="payroll-redis-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker rm --force "$container" 2>/dev/null || true
+          docker volume rm "$volume" 2>/dev/null || true
+
+  container-images:
+    name: 生产镜像（${{ matrix.image }}）
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: api
+            target: payroll-api
+          - image: worker
+            target: payroll-worker
+          - image: web
+            target: payroll-web
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: 构建不可变生产镜像
+        run: |
+          docker build \
+            --target "${{ matrix.target }}" \
+            --build-arg IMAGE_REVISION="$GITHUB_SHA" \
+            --build-arg NEXT_PUBLIC_PAYROLL_ORIGIN=https://payroll.example.invalid \
+            --tag "gaoq-payroll/${{ matrix.image }}:$GITHUB_SHA" \
+            .
+      - name: 验证非 root 与健康检查
+        run: |
+          image="gaoq-payroll/${{ matrix.image }}:$GITHUB_SHA"
+          test "$(docker image inspect "$image" --format '{{.Config.User}}')" = '65532:65532'
+          test "$(docker image inspect "$image" --format '{{json .Config.Healthcheck.Test}}')" != 'null'
+      - name: 验证 API ESM 生产入口可启动
+        if: matrix.image == 'api'
+        shell: bash
+        run: |
+          image="gaoq-payroll/${{ matrix.image }}:$GITHUB_SHA"
+          docker run --detach --name payroll-api-esm-smoke --network none \
+            --env NODE_ENV=test \
+            --env MONGODB_URI='mongodb://127.0.0.1:1/payroll-smoke' \
+            --env WEB_ORIGIN='http://payroll.example.invalid' \
+            --env AUTH_ISSUER='http://auth.example.invalid' \
+            --env AUTH_AUDIENCE='gaoq-payroll' \
+            --env AUTH_RESOURCE='http://payroll.example.invalid/api/payroll/v1' \
+            --env AUTH_JWKS_URI='http://auth.example.invalid/.well-known/jwks.json' \
+            --env MCP_ALLOWED_ORIGINS='http://payroll.example.invalid' \
+            "$image"
+          sleep 5
+          if [ "$(docker inspect --format '{{.State.Running}}' payroll-api-esm-smoke)" != true ]; then
+            docker logs payroll-api-esm-smoke
+            exit 1
+          fi
+      - name: 清理 API ESM 启动验证容器
+        if: always() && matrix.image == 'api'
+        run: docker rm --force payroll-api-esm-smoke 2>/dev/null || true
+      - name: 生成 SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: gaoq-payroll/${{ matrix.image }}:${{ github.sha }}
+          artifact-name: gaoq-payroll-${{ matrix.image }}-sbom
+          upload-artifact: true
+          upload-artifact-retention: 30
+      - name: 阻断 High/Critical 漏洞
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: gaoq-payroll/${{ matrix.image }}:${{ github.sha }}
+          format: table
+          exit-code: 1
+          ignore-unfixed: false
+          severity: HIGH,CRITICAL
