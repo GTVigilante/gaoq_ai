@@ -17,6 +17,22 @@
 - ERP 是组织与员工唯一主数据源；多租户从可信身份上下文强制；MCP 随业务模块
   同步交付。
 
+## 专业算薪系统（payroll）范围
+
+原 `gaoq-payroll` 仓库已并入本单仓（2026-08-08，subtree 保留历史）：
+
+- 代码位于 `apps/payroll-{api,web,worker}`、`packages/payroll-core`；生产编排在
+  `deploy/payroll/standalone/`，生产脚本在 `scripts/payroll/`，镜像构建使用
+  `docker/payroll.Dockerfile`，文档在 `docs/payroll/`。
+- 算薪质量门禁：`pnpm payroll:check`；生产部署静态校验：
+  `pnpm payroll:deployment:validate`。修改算薪代码后至少运行这两条。
+- 金额跨边界使用整数分字符串，领域计算使用 BigInt，禁止 JavaScript 浮点。
+- `tenantId` 只能来自已验证 GaoQ 访问令牌或服务身份，禁止请求头回退。
+- L4 工资、税务、证件和银行数据必须加密；精确检索使用独立盲索引密钥。
+- 算薪与 ERP 不共享数据库；跨系统固定使用 `tenantId + GaoQ employeeId` 关联。
+- 生产运维以 `docs/handover/PRODUCTION_HANDOVER_2026-08-08.md` 为准：禁止
+  `docker compose down -v`，禁止删除或重建 MongoDB/Redis。
+
 ## 通用编码要求
 
 - 回复、代码注释、文档注释、迁移说明、Git commit message 必须使用中文。

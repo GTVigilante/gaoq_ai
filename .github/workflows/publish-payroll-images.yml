@@ -1,0 +1,61 @@
+name: 发布专业算薪生产镜像
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: payroll-production-images-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: 发布生产镜像（${{ matrix.image }}）
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: api
+            target: payroll-api
+          - image: worker
+            target: payroll-worker
+          - image: web
+            target: payroll-web
+    steps:
+      - name: 检出 main 发布源
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: 生成不可变发布标签
+        id: release
+        shell: bash
+        run: |
+          release_tag="$(date -u +%Y%m%d)-${GITHUB_SHA:0:12}"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+      - name: 登录 GaoQ GitHub Container Registry
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+      - name: 构建并发布固定提交镜像
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+          IMAGE_NAME: ghcr.io/gtvigilante/gaoq-payroll-${{ matrix.image }}
+        run: |
+          docker build \
+            -f docker/payroll.Dockerfile \
+            --target "${{ matrix.target }}" \
+            --build-arg IMAGE_REVISION="$GITHUB_SHA" \
+            --build-arg NEXT_PUBLIC_PAYROLL_ORIGIN=https://payroll.gaoq.com \
+            --tag "$IMAGE_NAME:$RELEASE_TAG" \
+            --tag "$IMAGE_NAME:sha-$GITHUB_SHA" \
+            .
+          docker push "$IMAGE_NAME:$RELEASE_TAG"
+          docker push "$IMAGE_NAME:sha-$GITHUB_SHA"

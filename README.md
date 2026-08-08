@@ -45,6 +45,24 @@
 - **AI接口**: MCP当前稳定规范（Streamable HTTP / stdio）+ OAuth 2.1
 - **部署**: 中国境内云私有VPC + Kubernetes/Helm + WAF/API Gateway + 托管MongoDB/Redis + 对象存储/WORM + KMS/Secret Manager
 
+## 专业算薪系统（payroll）
+
+独立部署的专业算薪产品（原 `GTVigilante/gaoq-payroll` 仓库，2026-08-08 起并入本单仓），
+与 GaoQ ERP 使用统一身份、租户和组织员工主数据，不共享数据库：
+
+- `apps/payroll-api`：NestJS 算薪 API 与独立 OAuth Resource 的 MCP 服务
+- `apps/payroll-web`：Next.js App Router + Ant Design，GaoQ SSO BFF
+- `apps/payroll-worker`：BullMQ 确定性算薪任务
+- `packages/payroll-core`：整数分 + BigInt 的无副作用算薪核心
+- 生产编排：`deploy/payroll/standalone/`（Compose Project `gaoq-payroll`）
+- 生产脚本：`scripts/payroll/`；镜像构建：`docker/payroll.Dockerfile`
+- 文档：`docs/payroll/`（系统边界 ADR、契约溯源、PRD）
+
+常用命令：`pnpm dev:payroll`（本地开发）、`pnpm payroll:check`（质量门禁）、
+`pnpm payroll:deployment:validate`（生产部署静态校验）。原 `gaoq-payroll`
+仓库保留为历史来源（GitHub 归档待人工确认）；旧版算薪 MVP（`backend/`、
+`frontend/`）未并入本仓。
+
 ## 开发门禁
 
 - 所有代码、接口、事件和MCP能力必须带可信租户上下文、服务端权限校验、幂等与审计。

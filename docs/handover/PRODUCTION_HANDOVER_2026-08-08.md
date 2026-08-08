@@ -188,3 +188,6 @@ UAT、Go/No-Go 签署与 Hypercare。仓库门禁和当前单机验活不能替�
 - [ ] `payroll.gaoq.com` DNS、证书、Nginx 与公网验活（人工 P0）。
 - [ ] GitHub CLI OAuth 撤销并重新授权（人工 P0）。
 - [ ] 外部系统、OAuth、业务 UAT 和正式投产证据（人工 P1/P2）。
+
+> 2026-08-08 后续：`gaoq-payroll` 已并入 `gaoq_ai` 单仓，目录与命令变化见
+> [REPO_CONSOLIDATION_2026-08-08.md](./REPO_CONSOLIDATION_2026-08-08.md)。
