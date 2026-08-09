@@ -1,5 +1,5 @@
-import { ResumeLibraryConsole } from './resume-library-console';
+import { RecruitmentOperationsConsole } from './recruitment-operations-console';
 
 export default function RecruitmentWorkspacePage() {
-  return <ResumeLibraryConsole />;
+  return <RecruitmentOperationsConsole />;
 }

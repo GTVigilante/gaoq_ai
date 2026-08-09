@@ -15,8 +15,8 @@ import {
 describe('REST 请求机器契约', () => {
   it('为全部 unknown 运行时入口提供唯一命名 Schema', () => {
     const contracts = openApiRequestContracts();
-    expect(Object.keys(contracts)).toHaveLength(27);
-    expect(new Set(Object.values(contracts).map(({ name }) => name)).size).toBe(27);
+    expect(Object.keys(contracts)).toHaveLength(29);
+    expect(new Set(Object.values(contracts).map(({ name }) => name)).size).toBe(29);
     expect(
       Object.values(contracts).every(({ schema }) =>
         JSON.stringify(schema).includes('"additionalProperties":false'),

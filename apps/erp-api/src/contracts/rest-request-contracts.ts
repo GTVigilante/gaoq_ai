@@ -404,6 +404,22 @@ export const restRequestContracts: Readonly<Record<string, RestRequestContract>>
     runtimeSource:
       'apps/erp-api/src/modules/recruitment/recruitment-management.controller.ts#requireEmptyBody',
   },
+  'PerformanceController.publish': {
+    name: 'PerformanceCyclePublishRequest',
+    contentType: 'application/json',
+    schema: strictEmptyRequestSchema,
+    required: false,
+    runtimeSource:
+      'apps/erp-api/src/modules/performance/performance.controller.ts#empty',
+  },
+  'PerformanceController.confirm': {
+    name: 'PerformanceAssignmentConfirmRequest',
+    contentType: 'application/json',
+    schema: strictEmptyRequestSchema,
+    required: false,
+    runtimeSource:
+      'apps/erp-api/src/modules/performance/performance.controller.ts#empty',
+  },
   'TalentLifecycleController.createTouchpoint': {
     name: 'TalentTouchpointCreateRequest',
     contentType: 'application/json',

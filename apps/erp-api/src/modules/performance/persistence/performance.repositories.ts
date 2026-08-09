@@ -1,0 +1,41 @@
+import { ConflictException, Injectable } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import type { ClientSession, Model } from 'mongoose';
+
+import { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
+import type { PerformanceAssignment, PerformanceCycle, PerformanceRating, PerformanceTemplate } from '../domain/performance.js';
+import { PerformanceAssignmentRecord, type PerformanceAssignmentDocument, PerformanceCycleRecord, type PerformanceCycleDocument, PerformancePayrollSnapshotRecord, type PerformancePayrollSnapshotDocument, PerformanceTemplateRecord, type PerformanceTemplateDocument } from './performance.schemas.js';
+
+@Injectable()
+export class PerformanceRepository {
+  constructor(
+    private readonly context: TenantContextService,
+    @InjectModel(PerformanceTemplateRecord.name) private readonly templates: Model<PerformanceTemplateDocument>,
+    @InjectModel(PerformanceCycleRecord.name) private readonly cycles: Model<PerformanceCycleDocument>,
+    @InjectModel(PerformanceAssignmentRecord.name) private readonly assignments: Model<PerformanceAssignmentDocument>,
+    @InjectModel(PerformancePayrollSnapshotRecord.name) private readonly snapshots: Model<PerformancePayrollSnapshotDocument>,
+  ) {}
+
+  async insertTemplate(value: PerformanceTemplate, session: ClientSession): Promise<void> { await this.templates.create([{ ...value, thresholds: { ...value.thresholds }, coefficients: { ...value.coefficients }, createdAt: new Date(value.createdAt), updatedAt: new Date(value.updatedAt) }], { session }); }
+  async findTemplate(id: string, session?: ClientSession): Promise<PerformanceTemplate | null> { const query = this.templates.findOne({ tenantId: this.tenant(), id }); if (session !== undefined) query.session(session); const row = await query.lean().exec(); return row === null ? null : template(row); }
+  async listTemplates(): Promise<readonly PerformanceTemplate[]> { return Object.freeze((await this.templates.find({ tenantId: this.tenant() }).sort({ createdAt: -1, id: 1 }).limit(201).lean().exec()).map(template)); }
+
+  async insertCycle(value: PerformanceCycle, session: ClientSession): Promise<void> { await this.cycles.create([{ ...value, publishedAt: null, createdAt: new Date(value.createdAt), updatedAt: new Date(value.updatedAt) }], { session }); }
+  async findCycle(id: string, session?: ClientSession): Promise<PerformanceCycle | null> { const query = this.cycles.findOne({ tenantId: this.tenant(), id }); if (session !== undefined) query.session(session); const row = await query.lean().exec(); return row === null ? null : cycle(row); }
+  async listCycles(): Promise<readonly PerformanceCycle[]> { return Object.freeze((await this.cycles.find({ tenantId: this.tenant() }).sort({ startDate: -1, id: 1 }).limit(201).lean().exec()).map(cycle)); }
+  async replaceCycle(value: PerformanceCycle, expectedVersion: number, session: ClientSession): Promise<void> { const result = await this.cycles.updateOne({ tenantId: this.tenant(), id: value.id, version: expectedVersion }, { $set: { status: value.status, assignmentCount: value.assignmentCount, version: value.version, publishedAt: value.publishedAt === null ? null : new Date(value.publishedAt), updatedAt: new Date(value.updatedAt) } }, { session, timestamps: false, runValidators: true }); if (result.matchedCount !== 1) conflict(); }
+
+  async insertAssignments(values: readonly PerformanceAssignment[], session: ClientSession): Promise<void> { if (values.length === 0) return; await this.assignments.insertMany(values.map((value) => ({ ...value, createdAt: new Date(value.createdAt), updatedAt: new Date(value.updatedAt) })), { session }); }
+  async findAssignment(id: string, session?: ClientSession): Promise<PerformanceAssignment | null> { const query = this.assignments.findOne({ tenantId: this.tenant(), id }); if (session !== undefined) query.session(session); const row = await query.lean().exec(); return row === null ? null : assignment(row); }
+  async listAssignments(filter: { employeeId?: string; managerEmployeeId?: string; hrbpEmployeeId?: string; cycleId?: string }): Promise<readonly PerformanceAssignment[]> { const rows = await this.assignments.find({ tenantId: this.tenant(), ...filter }).sort({ updatedAt: -1, id: 1 }).limit(1001).lean().exec(); if (rows.length > 1000) throw new Error('PERFORMANCE_ASSIGNMENT_LIST_LIMIT'); return Object.freeze(rows.map(assignment)); }
+  async replaceAssignment(value: PerformanceAssignment, expectedVersion: number, session: ClientSession): Promise<void> { const result = await this.assignments.updateOne({ tenantId: this.tenant(), id: value.id, version: expectedVersion }, { $set: { status: value.status, selfScoreBps: value.selfScoreBps, managerScoreBps: value.managerScoreBps, calibratedScoreBps: value.calibratedScoreBps, finalScoreBps: value.finalScoreBps, rating: value.rating, coefficientBps: value.coefficientBps, selfEvidenceRef: value.selfEvidenceRef, managerEvidenceRef: value.managerEvidenceRef, calibrationReasonCode: value.calibrationReasonCode, appealReasonCode: value.appealReasonCode, appealEvidenceRef: value.appealEvidenceRef, version: value.version, updatedAt: new Date(value.updatedAt) } }, { session, timestamps: false, runValidators: true }); if (result.matchedCount !== 1) conflict(); }
+
+  async insertSnapshot(value: { id: string; assignmentId: string; cycleId: string; employeeId: string; employmentId: string; resultVersion: number; rating: PerformanceRating; coefficientBps: number; finalizedAt: string; digest: string }, session: ClientSession): Promise<void> { await this.snapshots.create([{ ...value, tenantId: this.tenant(), finalizedAt: new Date(value.finalizedAt) }], { session }); }
+  async listSnapshots(cycleId: string): Promise<readonly Record<string, unknown>[]> { const rows = await this.snapshots.find({ tenantId: this.tenant(), cycleId }).sort({ employeeId: 1 }).limit(10_001).select('id assignmentId cycleId employeeId employmentId resultVersion rating coefficientBps finalizedAt digest -_id').lean().exec(); if (rows.length > 10_000) throw new Error('PERFORMANCE_SNAPSHOT_LIST_LIMIT'); return Object.freeze(rows.map((row) => Object.freeze({ ...row, finalizedAt: row.finalizedAt.toISOString() }))); }
+  private tenant(): string { return this.context.getTenantRequired().tenantId; }
+}
+
+function conflict(): never { throw new ConflictException({ code: 'PERFORMANCE_VERSION_CONFLICT', message: '绩效记录版本已变化' }); }
+function template(row: PerformanceTemplateRecord): PerformanceTemplate { return Object.freeze({ id: row.id, tenantId: row.tenantId, name: row.name, okrWeightBps: row.okrWeightBps, kpiWeightBps: row.kpiWeightBps, competencyWeightBps: row.competencyWeightBps, thresholds: Object.freeze({ ...row.thresholds }), coefficients: Object.freeze({ ...row.coefficients }), version: row.version, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() }); }
+function cycle(row: PerformanceCycleRecord): PerformanceCycle { return Object.freeze({ id: row.id, tenantId: row.tenantId, name: row.name, templateId: row.templateId, startDate: row.startDate, endDate: row.endDate, status: row.status, assignmentCount: row.assignmentCount, version: row.version, publishedAt: row.publishedAt?.toISOString() ?? null, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() }); }
+function assignment(row: PerformanceAssignmentRecord): PerformanceAssignment { return Object.freeze({ id: row.id, tenantId: row.tenantId, cycleId: row.cycleId, employeeId: row.employeeId, employmentId: row.employmentId, departmentId: row.departmentId, managerEmployeeId: row.managerEmployeeId, hrbpEmployeeId: row.hrbpEmployeeId, status: row.status, selfScoreBps: row.selfScoreBps, managerScoreBps: row.managerScoreBps, calibratedScoreBps: row.calibratedScoreBps, finalScoreBps: row.finalScoreBps, rating: row.rating, coefficientBps: row.coefficientBps, selfEvidenceRef: row.selfEvidenceRef, managerEvidenceRef: row.managerEvidenceRef, calibrationReasonCode: row.calibrationReasonCode, appealReasonCode: row.appealReasonCode, appealEvidenceRef: row.appealEvidenceRef, version: row.version, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() }); }

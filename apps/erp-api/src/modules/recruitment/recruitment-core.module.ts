@@ -20,6 +20,7 @@ import {
 import { RecruitmentOnboardingBridgeService } from './application/recruitment-onboarding-bridge.service.js';
 import { RecruitmentResumeService } from './application/recruitment-resume.service.js';
 import { RecruitmentTalentSourceService } from './application/recruitment-talent-source.service.js';
+import { RecruitmentWorkspaceService } from './application/recruitment-workspace.service.js';
 import {
   RecruitmentResumeAiAnalyzer,
   RecruitmentResumeSourceGateway,
@@ -122,6 +123,7 @@ import {
     RecruitmentOnboardingBridgeService,
     RecruitmentResumeService,
     RecruitmentTalentSourceService,
+    RecruitmentWorkspaceService,
     HttpRecruitmentResumeSourceGateway,
     OpenAiRecruitmentResumeAnalyzer,
     {
@@ -151,6 +153,7 @@ import {
     RecruitmentOnboardingBridgeService,
     RecruitmentResumeService,
     RecruitmentTalentSourceService,
+    RecruitmentWorkspaceService,
   ],
 })
 export class RecruitmentCoreModule {}

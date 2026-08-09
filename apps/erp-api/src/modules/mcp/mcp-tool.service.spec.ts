@@ -38,6 +38,7 @@ import type { AnalyticsExportService } from '../analytics/application/analytics-
 import type { DataMigrationService } from '../data-migration/application/data-migration.service.js';
 import type { TalentLifecycleService } from '../talent-lifecycle/application/talent-lifecycle.service.js';
 import type { MarketingCmsService } from '../marketing-cms/marketing-cms.service.js';
+import type { PerformanceService } from '../performance/application/performance.service.js';
 import { McpToolService } from './mcp-tool.service.js';
 import type { McpConfirmationService } from './mcp-confirmation.service.js';
 
@@ -130,6 +131,7 @@ function assemble() {
   const dataMigrations = { report: vi.fn() };
   const talentLifecycle = { getForMcp: vi.fn() };
   const marketing = { getSideEffectStatus: vi.fn() };
+  const performance = { listMine: vi.fn() };
   const service = new McpToolService(
     context,
     audit as unknown as AuditService,
@@ -162,6 +164,7 @@ function assemble() {
     confirmations as unknown as McpConfirmationService,
     careOccasions as unknown as CareOccasionApplicationService,
     careAlumniCleanup as unknown as CareAlumniCleanupApplicationService,
+    performance as unknown as PerformanceService,
   );
   return {
     context, audit, organization, approvals, recruitmentApplications,
@@ -172,7 +175,7 @@ function assemble() {
     payrollAdjustments, payrollAdjustmentTaxCorrections, annualPayrollReconciliations,
     opSummaries, opApprovalBridges, managementDashboard, analyticsExports, dataMigrations,
     talentLifecycle,
-    marketing,
+    marketing, performance,
   };
 }
 
@@ -1997,5 +2000,24 @@ describe('McpToolService', () => {
     expect(error).toHaveBeenCalledWith(expect.objectContaining({
       code: 'MCP_TOOL_AUDIT_AFTER_COMMIT_FAILED',
     }));
+  });
+
+  it('本人绩效 Tool 复用应用服务且不返回证据和校准原因', async () => {
+    const store = assemble();
+    store.performance.listMine.mockResolvedValue([{
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4A1', cycleId: '01J8ZQK7V0A2M4N6P8R0T2W4A2',
+      employeeId: 'employee-001', status: 'confirmation', selfScoreBps: 8200,
+      managerScoreBps: 7900, calibratedScoreBps: 8050, finalScoreBps: null,
+      rating: null, coefficientBps: null, selfEvidenceRef: 'private-self-evidence',
+      managerEvidenceRef: 'private-manager-evidence', calibrationReasonCode: 'private-reason',
+      version: 4, updatedAt: '2026-08-09T08:00:00.000Z',
+    }]);
+    const denied = await store.service.getMyPerformanceAssignments(extra([]));
+    expect(denied.isError).toBe(true);
+    expect(store.performance.listMine).not.toHaveBeenCalled();
+
+    const result = await store.service.getMyPerformanceAssignments(extra(['erp:performance:self:read']));
+    expect(result.structuredContent).toMatchObject({ items: [{ status: 'confirmation', calibratedScoreBps: 8050 }] });
+    expect(JSON.stringify(result)).not.toMatch(/private|evidence|reason/iu);
   });
 });

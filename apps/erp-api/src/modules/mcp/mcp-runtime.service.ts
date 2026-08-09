@@ -120,6 +120,19 @@ const confirmationExecuteInputSchema = {
   confirmationCredential: z.string().regex(/^mcpc_[A-Za-z0-9_-]{43}$/),
 };
 const recruitmentIdSchema = z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/);
+const performanceAssignmentSummarySchema = z.object({
+  id: recruitmentIdSchema,
+  cycleId: recruitmentIdSchema,
+  status: z.enum(['goal_setting', 'self_review', 'manager_review', 'calibration', 'confirmation', 'confirmed', 'appealed', 'finalized']),
+  selfScoreBps: z.number().int().min(0).max(10_000).nullable(),
+  managerScoreBps: z.number().int().min(0).max(10_000).nullable(),
+  calibratedScoreBps: z.number().int().min(0).max(10_000).nullable(),
+  finalScoreBps: z.number().int().min(0).max(10_000).nullable(),
+  rating: z.enum(['S', 'A', 'B', 'C', 'D']).nullable(),
+  coefficientBps: z.number().int().min(0).max(30_000).nullable(),
+  version: z.number().int().positive(),
+  updatedAt: z.string().datetime({ offset: true }),
+}).strict();
 const marketingEventIdSchema = z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/);
 const marketingSideEffectSchema = z.object({
   eventId: marketingEventIdSchema,
@@ -1826,6 +1839,17 @@ export class McpRuntimeService {
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
       },
       async ({ id }, extra) => this.tools.getRecruitmentApplication(id, extra),
+    );
+
+    server.registerTool(
+      'performance_my_assignments',
+      {
+        title: '查询本人绩效摘要',
+        description: '只返回当前身份本人的评分、等级与流程状态，不返回证据、校准原因或他人记录。风险等级 R1。',
+        outputSchema: z.object({ items: z.array(performanceAssignmentSummarySchema).max(1000) }).strict(),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      },
+      async (extra) => this.tools.getMyPerformanceAssignments(extra),
     );
 
     server.registerTool(

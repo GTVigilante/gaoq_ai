@@ -583,6 +583,7 @@ describe('MCP Streamable HTTP 协议集成', () => {
       'approval_decide_execute',
       'get_org_chart',
       'recruitment_application_get',
+      'performance_my_assignments',
       'recruitment_requisition_get',
       'recruitment_position_get',
       'recruitment_interview_get',

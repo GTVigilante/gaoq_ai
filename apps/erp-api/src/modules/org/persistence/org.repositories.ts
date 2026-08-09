@@ -174,6 +174,17 @@ export class EmployeeRepository extends TenantBoundRepository {
     return records.map((record) => this.toDomain(record));
   }
 
+  async findByIds(ids: readonly string[], session?: ClientSession): Promise<readonly Employee[]> {
+    if (ids.length > 1000 || new Set(ids).size !== ids.length) {
+      throw new Error('ORG_EMPLOYEE_ID_BATCH_INVALID');
+    }
+    const query = this.records
+      .find({ tenantId: this.tenantId(), id: { $in: [...ids] } })
+      .sort({ id: 1 });
+    if (session !== undefined) query.session(session);
+    return (await query.lean().exec()).map((record) => this.toDomain(record));
+  }
+
   async findAll(session?: ClientSession): Promise<readonly Employee[]> {
     const query = this.records.find({ tenantId: this.tenantId() }).sort({ employeeNo: 1 });
     if (session !== undefined) query.session(session);

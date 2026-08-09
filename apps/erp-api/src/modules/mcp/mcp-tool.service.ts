@@ -46,6 +46,7 @@ import { AnalyticsExportService } from '../analytics/application/analytics-expor
 import { DataMigrationService } from '../data-migration/application/data-migration.service.js';
 import { TalentLifecycleService } from '../talent-lifecycle/application/talent-lifecycle.service.js';
 import { MarketingCmsService } from '../marketing-cms/marketing-cms.service.js';
+import { PerformanceService } from '../performance/application/performance.service.js';
 import { parseMcpIdentity, type McpIdentity } from './mcp-auth-context.js';
 import {
   McpConfirmationService,
@@ -110,7 +111,34 @@ export class McpToolService {
     private readonly confirmations: McpConfirmationService,
     private readonly careOccasions: CareOccasionApplicationService,
     private readonly careAlumniCleanup: CareAlumniCleanupApplicationService,
+    private readonly performance: PerformanceService,
   ) {}
+
+  async getMyPerformanceAssignments(extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:performance:self:read')) {
+        await this.auditTool(identity, 'performance_my_assignments', 'R1', 'denied');
+        return scopeError('erp:performance:self:read');
+      }
+      const assignments = await this.performance.listMine();
+      const items = Object.freeze(assignments.map((item) => Object.freeze({
+        id: item.id,
+        cycleId: item.cycleId,
+        status: item.status,
+        selfScoreBps: item.selfScoreBps,
+        managerScoreBps: item.managerScoreBps,
+        calibratedScoreBps: item.calibratedScoreBps,
+        finalScoreBps: item.finalScoreBps,
+        rating: item.rating,
+        coefficientBps: item.coefficientBps,
+        version: item.version,
+        updatedAt: item.updatedAt,
+      })));
+      await this.auditTool(identity, 'performance_my_assignments', 'R1', 'success', { count: items.length });
+      return structuredResult({ items });
+    });
+  }
 
   async getMarketingSideEffect(
     eventId: string,
