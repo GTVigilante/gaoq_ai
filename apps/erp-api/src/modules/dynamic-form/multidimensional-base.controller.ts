@@ -13,10 +13,10 @@ const ETAG = /^"([1-9][0-9]*)"$/;
 export class MultidimensionalBaseController {
   constructor(private readonly bases: MultidimensionalBaseService) {}
 
-  @Get() @RequiredScopes('erp:bases:read') async list() { return this.bases.list(); }
-  @Get(':id') @RequiredScopes('erp:bases:read') async get(@Param('id') id: string, @Res({ passthrough: true }) response: Response) { const base = await this.bases.get(this.id(id)); response.setHeader('ETag', `"${base.version}"`); return base; }
-  @Post() @RequiredScopes('erp:bases:design') async create(@Headers('idempotency-key') key: string | undefined, @Body() body: CreateMultidimensionalBaseDto, @Res({ passthrough: true }) response: Response) { const result = await this.bases.create(this.key(key), body); response.setHeader('ETag', `"${result.base.version}"`); return result; }
-  @Put(':id') @RequiredScopes('erp:bases:design') async update(@Param('id') id: string, @Headers('if-match') version: string | undefined, @Headers('idempotency-key') key: string | undefined, @Body() body: UpdateMultidimensionalBaseDto, @Res({ passthrough: true }) response: Response) { const result = await this.bases.update(this.id(id), this.version(version), this.key(key), body); response.setHeader('ETag', `"${result.base.version}"`); return result; }
+  @Get() @RequiredScopes('erp:bases:workspace:read') async list() { return this.bases.list(); }
+  @Get(':id') @RequiredScopes('erp:bases:workspace:read') async get(@Param('id') id: string, @Res({ passthrough: true }) response: Response) { const base = await this.bases.get(this.id(id)); response.setHeader('ETag', `"${base.version}"`); return base; }
+  @Post() @RequiredScopes('erp:bases:workspace:design') async create(@Headers('idempotency-key') key: string | undefined, @Body() body: CreateMultidimensionalBaseDto, @Res({ passthrough: true }) response: Response) { const result = await this.bases.create(this.key(key), body); response.setHeader('ETag', `"${result.base.version}"`); return result; }
+  @Put(':id') @RequiredScopes('erp:bases:workspace:design') async update(@Param('id') id: string, @Headers('if-match') version: string | undefined, @Headers('idempotency-key') key: string | undefined, @Body() body: UpdateMultidimensionalBaseDto, @Res({ passthrough: true }) response: Response) { const result = await this.bases.update(this.id(id), this.version(version), this.key(key), body); response.setHeader('ETag', `"${result.base.version}"`); return result; }
 
   private id(value: string): string { if (!ULID_PATTERN.test(value)) throw new BadRequestException({ code: 'BASE_ID_INVALID', message: '资源标识必须为严格 ULID' }); return value; }
   private key(value: string | undefined): string { if (value === undefined || !KEY.test(value)) throw new BadRequestException({ code: 'IDEMPOTENCY_KEY_REQUIRED', message: '写接口必须提供 Idempotency-Key' }); return value; }

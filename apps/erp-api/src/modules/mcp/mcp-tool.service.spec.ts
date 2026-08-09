@@ -207,7 +207,7 @@ describe('McpToolService', () => {
 
     const catalog = await store.service.getDynamicFormCatalog(extra(['erp:mcp:server:connect', 'erp:forms:data:read']));
     const record = await store.service.getDynamicFormRecord('01J00000000000000000000001', '01J00000000000000000000002', extra(['erp:mcp:server:connect', 'erp:forms:data:read']));
-    const bases = await store.service.getMultidimensionalBaseCatalog(extra(['erp:mcp:server:connect', 'erp:bases:read']));
+    const bases = await store.service.getMultidimensionalBaseCatalog(extra(['erp:mcp:server:connect', 'erp:bases:workspace:read']));
     expect(catalog.structuredContent).toMatchObject({ items: [{ code: 'candidate' }] });
     expect(record.structuredContent).toMatchObject({ record: { values: { stage: 'screening' } } });
     expect(bases.structuredContent).toMatchObject({ items: [{ code: 'recruitment', automationCount: 0 }] });

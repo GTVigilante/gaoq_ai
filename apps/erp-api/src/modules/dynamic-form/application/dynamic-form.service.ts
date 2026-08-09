@@ -19,7 +19,7 @@ export class DynamicFormService {
   ) {}
 
   async create(key: string, input: CreateDynamicFormDto): Promise<{ readonly form: DynamicFormDefinition }> {
-    this.scope('erp:forms:design');
+    this.scope('erp:forms:definition:design');
     const definition = parseFormDefinitionInput({ ...input.definition, code: input.code });
     return this.idempotency.execute('dynamic-form.definition.create', key, definition, async (session) => {
       const now = new Date();
@@ -32,7 +32,7 @@ export class DynamicFormService {
   }
 
   async update(id: string, expectedVersion: number, key: string, input: UpdateDynamicFormDto): Promise<{ readonly form: DynamicFormDefinition }> {
-    this.scope('erp:forms:design');
+    this.scope('erp:forms:definition:design');
     return this.idempotency.execute('dynamic-form.definition.update', key, { id, expectedVersion, definition: input.definition }, async (session) => {
       const current = await this.requiredForm(id, session);
       if (current.status !== 'draft' || current.version !== expectedVersion) throw new Error('FORM_DEFINITION_VERSION_CONFLICT');
@@ -47,7 +47,7 @@ export class DynamicFormService {
   }
 
   async publish(id: string, expectedVersion: number, key: string): Promise<{ readonly form: DynamicFormDefinition }> {
-    this.scope('erp:forms:publish');
+    this.scope('erp:forms:definition:publish');
     return this.idempotency.execute('dynamic-form.definition.publish', key, { id, expectedVersion }, async (session) => {
       const current = await this.requiredForm(id, session);
       if (current.status !== 'draft' || current.version !== expectedVersion) throw new Error('FORM_DEFINITION_VERSION_CONFLICT');
@@ -62,7 +62,7 @@ export class DynamicFormService {
   }
 
   async list(): Promise<{ readonly items: readonly DynamicFormDefinition[] }> {
-    this.scope('erp:forms:design');
+    this.scope('erp:forms:definition:design');
     return { items: await this.repository.listDefinitions() };
   }
 
@@ -77,7 +77,7 @@ export class DynamicFormService {
   }
 
   async get(id: string): Promise<DynamicFormDefinition> {
-    this.scope('erp:forms:design');
+    this.scope('erp:forms:definition:design');
     return this.requiredForm(id);
   }
 

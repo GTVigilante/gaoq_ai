@@ -141,7 +141,7 @@ export class McpToolService {
   async getMultidimensionalBaseCatalog(extra: McpExtra): Promise<McpToolResult> {
     const identity = parseMcpIdentity(extra.authInfo);
     return this.run(identity, async () => {
-      if (!identity.scopes.includes('erp:bases:read')) return scopeError('erp:bases:read');
+      if (!identity.scopes.includes('erp:bases:workspace:read')) return scopeError('erp:bases:workspace:read');
       const result = await this.multidimensionalBases.listForMcp();
       await this.auditTool(identity, 'multidimensional_base_catalog', 'R0', 'success', { count: result.items.length });
       return structuredResult({ items: result.items });

@@ -16,25 +16,25 @@ export class DynamicFormController {
   private readonly logger = new Logger(DynamicFormController.name);
   constructor(private readonly forms: DynamicFormService, private readonly audit: AuditService) {}
 
-  @Get() @RequiredScopes('erp:forms:design')
+  @Get() @RequiredScopes('erp:forms:definition:design')
   async list() { return this.forms.list(); }
 
-  @Get(':id') @RequiredScopes('erp:forms:design')
+  @Get(':id') @RequiredScopes('erp:forms:definition:design')
   async get(@Param('id') id: string, @Res({ passthrough: true }) response: Response) {
     const form = await this.forms.get(this.id(id)); this.etag(response, form.version); return form;
   }
 
-  @Post() @RequiredScopes('erp:forms:design')
+  @Post() @RequiredScopes('erp:forms:definition:design')
   async create(@Headers('idempotency-key') key: string | undefined, @Body() body: CreateDynamicFormDto, @Res({ passthrough: true }) response: Response) {
     const result = await this.forms.create(this.key(key), body); this.etag(response, result.form.version); await this.committed('dynamic_form.definition.create', 'dynamic_form_definition', result.form.id, result.form.version, 'R1'); return result;
   }
 
-  @Put(':id') @RequiredScopes('erp:forms:design')
+  @Put(':id') @RequiredScopes('erp:forms:definition:design')
   async update(@Param('id') id: string, @Headers('if-match') version: string | undefined, @Headers('idempotency-key') key: string | undefined, @Body() body: UpdateDynamicFormDto, @Res({ passthrough: true }) response: Response) {
     const result = await this.forms.update(this.id(id), this.version(version), this.key(key), body); this.etag(response, result.form.version); await this.committed('dynamic_form.definition.update', 'dynamic_form_definition', result.form.id, result.form.version, 'R1'); return result;
   }
 
-  @Post(':id/publish') @RequiredScopes('erp:forms:publish')
+  @Post(':id/publish') @RequiredScopes('erp:forms:definition:publish')
   async publish(@Param('id') id: string, @Headers('if-match') version: string | undefined, @Headers('idempotency-key') key: string | undefined, @Body() body: EmptyDynamicFormActionDto, @Res({ passthrough: true }) response: Response) {
     this.empty(body); const result = await this.forms.publish(this.id(id), this.version(version), this.key(key)); this.etag(response, result.form.version); await this.committed('dynamic_form.definition.publish', 'dynamic_form_definition', result.form.id, result.form.version, 'R2'); return result;
   }

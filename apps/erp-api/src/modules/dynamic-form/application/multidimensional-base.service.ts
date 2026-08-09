@@ -13,7 +13,7 @@ export class MultidimensionalBaseService {
   constructor(private readonly context: TenantContextService, private readonly idempotency: IdempotencyService, private readonly bases: MultidimensionalBaseRepository, private readonly forms: DynamicFormRepository) {}
 
   async create(key: string, input: CreateMultidimensionalBaseDto): Promise<{ readonly base: MultidimensionalBase }> {
-    this.scope('erp:bases:design');
+    this.scope('erp:bases:workspace:design');
     const parsed = parseMultidimensionalBaseInput({ ...input.definition, code: input.code });
     return this.idempotency.execute('multidimensional-base.create', key, parsed, async (session) => {
       await this.validate(parsed, session);
@@ -25,7 +25,7 @@ export class MultidimensionalBaseService {
   }
 
   async update(id: string, version: number, key: string, input: UpdateMultidimensionalBaseDto): Promise<{ readonly base: MultidimensionalBase }> {
-    this.scope('erp:bases:design');
+    this.scope('erp:bases:workspace:design');
     return this.idempotency.execute('multidimensional-base.update', key, { id, version, input }, async (session) => {
       const current = await this.required(id, session);
       if (current.version !== version) throw new Error('BASE_VERSION_CONFLICT');
@@ -37,8 +37,8 @@ export class MultidimensionalBaseService {
     });
   }
 
-  async list(): Promise<{ readonly items: readonly MultidimensionalBase[] }> { this.scope('erp:bases:read'); return { items: await this.bases.list() }; }
-  async get(id: string): Promise<MultidimensionalBase> { this.scope('erp:bases:read'); return this.required(id); }
+  async list(): Promise<{ readonly items: readonly MultidimensionalBase[] }> { this.scope('erp:bases:workspace:read'); return { items: await this.bases.list() }; }
+  async get(id: string): Promise<MultidimensionalBase> { this.scope('erp:bases:workspace:read'); return this.required(id); }
 
   /** MCP 目录不返回自动化动作、筛选值或成员权限，仅暴露可导航的 Base/Table/View 元数据。 */
   async listForMcp(): Promise<{ readonly items: readonly Readonly<Record<string, unknown>>[] }> {
@@ -52,7 +52,7 @@ export class MultidimensionalBaseService {
   }
 
   async assertTable(baseId: string, tableId: string): Promise<MultidimensionalBase> {
-    this.scope('erp:bases:read');
+    this.scope('erp:bases:workspace:read');
     const base = await this.required(baseId);
     if (!base.tables.some((table) => table.formId === tableId)) throw new NotFoundException({ code: 'BASE_TABLE_NOT_FOUND', message: '数据表不属于当前 Base' });
     return base;

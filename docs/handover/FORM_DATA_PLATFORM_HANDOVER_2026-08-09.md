@@ -172,8 +172,9 @@ CLI 只读取 `GAOQ_API_ORIGIN` 与短时 `GAOQ_ACCESS_TOKEN`，不接受命令�
    批准 apply；本次部署没有创建索引。
 2. 在 Secret Manager/KMS 生成独立 `FORM_DATA_ENCRYPTION_KEYS`，完成双密钥轮换演练；
    禁止复用审批、招聘或算薪密钥。
-3. 注册最小 Scope：`erp:forms:design`、`erp:forms:publish`、
-   `erp:forms:data:read/write`、`erp:bases:read/design`；完成职责分离和角色矩阵 UAT。
+3. 注册最小 Scope：`erp:forms:definition:design/publish`、
+   `erp:forms:data:read/write`、`erp:bases:workspace:read/design`；完成职责分离和角色
+   矩阵 UAT。所有 Scope 必须保持 `erp:{domain}:{resource}:{action}` 四段式。
 4. 为每个外部系统注册独立 OAuth Client Credentials 与可撤销短时 Token，不得共享。
 5. 完成 Mongo Replica Set 事务、并发幂等、关系完整性、密钥轮换和备份恢复演练。
 6. 重新执行 Kimi、Inspector 及计划支持客户端的 54 Tool 实体目录发现；旧 50 Tool

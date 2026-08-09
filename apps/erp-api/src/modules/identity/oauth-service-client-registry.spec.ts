@@ -142,6 +142,23 @@ describe('OAuthServiceClientRegistry', () => {
     });
   });
 
+  it('接受动态表单与多维 Base 的四段式最小权限集合', () => {
+    const formClient = {
+      ...validClient(),
+      allowedScopes: [
+        'erp:forms:definition:design',
+        'erp:forms:definition:publish',
+        'erp:forms:data:read',
+        'erp:forms:data:write',
+        'erp:bases:workspace:read',
+        'erp:bases:workspace:design',
+      ],
+    };
+    const registry = createRegistry([formClient]);
+    expect(registry.resolveActive(formClient.clientId)?.allowedScopes)
+      .toEqual(formClient.allowedScopes);
+  });
+
   it('空配置安全解析为空注册表，非法 JSON 失败关闭', () => {
     const empty = new OAuthServiceClientRegistry({
       get: (key: keyof AppEnvironment) => key === 'MCP_SERVICE_CLIENTS_JSON' ? '' : undefined,

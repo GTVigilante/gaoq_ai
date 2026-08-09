@@ -10405,7 +10405,7 @@
         "security": [
           {
             "oauth2": [
-              "erp:forms:design"
+              "erp:forms:definition:design"
             ]
           }
         ],
@@ -11010,7 +11010,7 @@
         "x-nest-method": "GET",
         "x-authentication": "oauth-scoped",
         "x-required-scopes": [
-          "erp:forms:design"
+          "erp:forms:definition:design"
         ],
         "x-guards": [],
         "x-runtime-parameters": []
@@ -11024,7 +11024,7 @@
         "security": [
           {
             "oauth2": [
-              "erp:forms:design"
+              "erp:forms:definition:design"
             ]
           }
         ],
@@ -11646,7 +11646,7 @@
         "x-nest-method": "POST",
         "x-authentication": "oauth-scoped",
         "x-required-scopes": [
-          "erp:forms:design"
+          "erp:forms:definition:design"
         ],
         "x-guards": [],
         "x-runtime-parameters": [
@@ -13208,7 +13208,7 @@
         "security": [
           {
             "oauth2": [
-              "erp:forms:design"
+              "erp:forms:definition:design"
             ]
           }
         ],
@@ -13809,7 +13809,7 @@
         "x-nest-method": "GET",
         "x-authentication": "oauth-scoped",
         "x-required-scopes": [
-          "erp:forms:design"
+          "erp:forms:definition:design"
         ],
         "x-guards": [],
         "x-runtime-parameters": [
@@ -13834,7 +13834,7 @@
         "security": [
           {
             "oauth2": [
-              "erp:forms:design"
+              "erp:forms:definition:design"
             ]
           }
         ],
@@ -14474,7 +14474,7 @@
         "x-nest-method": "PUT",
         "x-authentication": "oauth-scoped",
         "x-required-scopes": [
-          "erp:forms:design"
+          "erp:forms:definition:design"
         ],
         "x-guards": [],
         "x-runtime-parameters": [
@@ -14516,7 +14516,7 @@
         "security": [
           {
             "oauth2": [
-              "erp:forms:publish"
+              "erp:forms:definition:publish"
             ]
           }
         ],
@@ -15156,7 +15156,7 @@
         "x-nest-method": "POST",
         "x-authentication": "oauth-scoped",
         "x-required-scopes": [
-          "erp:forms:publish"
+          "erp:forms:definition:publish"
         ],
         "x-guards": [],
         "x-runtime-parameters": [
@@ -23969,7 +23969,7 @@
         "security": [
           {
             "oauth2": [
-              "erp:bases:read"
+              "erp:bases:workspace:read"
             ]
           }
         ],
@@ -24662,7 +24662,7 @@
         "x-nest-method": "GET",
         "x-authentication": "oauth-scoped",
         "x-required-scopes": [
-          "erp:bases:read"
+          "erp:bases:workspace:read"
         ],
         "x-guards": [],
         "x-runtime-parameters": []
@@ -24676,7 +24676,7 @@
         "security": [
           {
             "oauth2": [
-              "erp:bases:design"
+              "erp:bases:workspace:design"
             ]
           }
         ],
@@ -25386,7 +25386,7 @@
         "x-nest-method": "POST",
         "x-authentication": "oauth-scoped",
         "x-required-scopes": [
-          "erp:bases:design"
+          "erp:bases:workspace:design"
         ],
         "x-guards": [],
         "x-runtime-parameters": [
@@ -25418,7 +25418,7 @@
         "security": [
           {
             "oauth2": [
-              "erp:bases:read"
+              "erp:bases:workspace:read"
             ]
           }
         ],
@@ -26107,7 +26107,7 @@
         "x-nest-method": "GET",
         "x-authentication": "oauth-scoped",
         "x-required-scopes": [
-          "erp:bases:read"
+          "erp:bases:workspace:read"
         ],
         "x-guards": [],
         "x-runtime-parameters": [
@@ -26132,7 +26132,7 @@
         "security": [
           {
             "oauth2": [
-              "erp:bases:design"
+              "erp:bases:workspace:design"
             ]
           }
         ],
@@ -26860,7 +26860,7 @@
         "x-nest-method": "PUT",
         "x-authentication": "oauth-scoped",
         "x-required-scopes": [
-          "erp:bases:design"
+          "erp:bases:workspace:design"
         ],
         "x-guards": [],
         "x-runtime-parameters": [
@@ -52164,8 +52164,8 @@
               "erp:attendance:shift_assignment:attest": "访问 erp:attendance:shift_assignment:attest 保护的 ERP 能力。",
               "erp:attendance:shift_plan:write": "访问 erp:attendance:shift_plan:write 保护的 ERP 能力。",
               "erp:attendance:source:ingest": "访问 erp:attendance:source:ingest 保护的 ERP 能力。",
-              "erp:bases:design": "访问 erp:bases:design 保护的 ERP 能力。",
-              "erp:bases:read": "访问 erp:bases:read 保护的 ERP 能力。",
+              "erp:bases:workspace:design": "访问 erp:bases:workspace:design 保护的 ERP 能力。",
+              "erp:bases:workspace:read": "访问 erp:bases:workspace:read 保护的 ERP 能力。",
               "erp:care:alumni:cleanup:read": "访问 erp:care:alumni:cleanup:read 保护的 ERP 能力。",
               "erp:care:alumni:consent:attest": "访问 erp:care:alumni:consent:attest 保护的 ERP 能力。",
               "erp:care:alumni:consent:withdraw": "访问 erp:care:alumni:consent:withdraw 保护的 ERP 能力。",
@@ -52180,8 +52180,8 @@
               "erp:care:task:record": "访问 erp:care:task:record 保护的 ERP 能力。",
               "erp:forms:data:read": "访问 erp:forms:data:read 保护的 ERP 能力。",
               "erp:forms:data:write": "访问 erp:forms:data:write 保护的 ERP 能力。",
-              "erp:forms:design": "访问 erp:forms:design 保护的 ERP 能力。",
-              "erp:forms:publish": "访问 erp:forms:publish 保护的 ERP 能力。",
+              "erp:forms:definition:design": "访问 erp:forms:definition:design 保护的 ERP 能力。",
+              "erp:forms:definition:publish": "访问 erp:forms:definition:publish 保护的 ERP 能力。",
               "erp:identity:profile:read": "访问 erp:identity:profile:read 保护的 ERP 能力。",
               "erp:integration:calendar:operate": "访问 erp:integration:calendar:operate 保护的 ERP 能力。",
               "erp:integration:calendar:read": "访问 erp:integration:calendar:read 保护的 ERP 能力。",
@@ -52354,8 +52354,8 @@
               "erp:attendance:shift_assignment:attest": "访问 erp:attendance:shift_assignment:attest 保护的 ERP 能力。",
               "erp:attendance:shift_plan:write": "访问 erp:attendance:shift_plan:write 保护的 ERP 能力。",
               "erp:attendance:source:ingest": "访问 erp:attendance:source:ingest 保护的 ERP 能力。",
-              "erp:bases:design": "访问 erp:bases:design 保护的 ERP 能力。",
-              "erp:bases:read": "访问 erp:bases:read 保护的 ERP 能力。",
+              "erp:bases:workspace:design": "访问 erp:bases:workspace:design 保护的 ERP 能力。",
+              "erp:bases:workspace:read": "访问 erp:bases:workspace:read 保护的 ERP 能力。",
               "erp:care:alumni:cleanup:read": "访问 erp:care:alumni:cleanup:read 保护的 ERP 能力。",
               "erp:care:alumni:consent:attest": "访问 erp:care:alumni:consent:attest 保护的 ERP 能力。",
               "erp:care:alumni:consent:withdraw": "访问 erp:care:alumni:consent:withdraw 保护的 ERP 能力。",
@@ -52370,8 +52370,8 @@
               "erp:care:task:record": "访问 erp:care:task:record 保护的 ERP 能力。",
               "erp:forms:data:read": "访问 erp:forms:data:read 保护的 ERP 能力。",
               "erp:forms:data:write": "访问 erp:forms:data:write 保护的 ERP 能力。",
-              "erp:forms:design": "访问 erp:forms:design 保护的 ERP 能力。",
-              "erp:forms:publish": "访问 erp:forms:publish 保护的 ERP 能力。",
+              "erp:forms:definition:design": "访问 erp:forms:definition:design 保护的 ERP 能力。",
+              "erp:forms:definition:publish": "访问 erp:forms:definition:publish 保护的 ERP 能力。",
               "erp:identity:profile:read": "访问 erp:identity:profile:read 保护的 ERP 能力。",
               "erp:integration:calendar:operate": "访问 erp:integration:calendar:operate 保护的 ERP 能力。",
               "erp:integration:calendar:read": "访问 erp:integration:calendar:read 保护的 ERP 能力。",
