@@ -30,10 +30,14 @@
   新增 6 个集合的 15 个索引仅完成生产 dry-run，未获独立迁移批准前不得执行写入
   或分配新模块写 Scope；准确状态、回滚和人工待办见
   `docs/handover/PRODUCTION_HANDOVER_2026-08-09_HR.md`（同时提供 HTML）。
-- 2026-08-09 本地新增动态表单、审批流程设计、多维 Base/Table/View、外部批量写入、
-  REST/OpenAPI、CloudEvents、MCP 只读投影与 CLI 底座；该切片尚未部署生产。
+- 2026-08-09 已将动态表单、审批流程设计、多维 Base/Table/View、外部批量写入、
+  REST/OpenAPI、CloudEvents、MCP 只读投影与 CLI 底座随
+  `main@bdb09a0a5304` 部署生产。API、Worker、ERP Web 健康且
+  `restart=0`，CMS 与专业算薪未重启并保持健康；新增 11 个索引只完成生产
+  dry-run，未 apply。`FORM_DATA_ENCRYPTION_KEYS` 尚未配置，记录写入按设计失败
+  关闭；表单/多维 Base 最小 Scope、角色 UAT 与 54 Tool 实体客户端复验仍待人工。
   当前 MCP 目录为 54 Tool、4 Resource、27 Resource Template、25 Prompt，既有
-  50 Tool 厂商实体发现证据已经过期，必须在发布候选上重新验收。
+  50 Tool 厂商实体发现证据已经过期，不能作为当前发布验收证据。
 - 2026-07-29 已交付标准 MCP 本地 stdio 入口，与生产 Streamable HTTP 共用
   `McpRuntimeService` 和 `AccessTokenVerifier`。启动要求秘密管理器注入短时
   Token 与 `erp:mcp:server:connect`，先预检、后逐消息复验，撤销/过期立即关闭；

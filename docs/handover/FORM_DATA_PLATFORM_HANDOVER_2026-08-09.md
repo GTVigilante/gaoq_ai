@@ -3,8 +3,9 @@
 交接日期：2026-08-09（Asia/Shanghai）
 适用对象：产品负责人、架构师、开发、SRE、安全评审人员及后续 AI 代理
 
-> 本文不包含密码、Token、数据库连接串或密钥。当前切片仅在本地仓库实现并验证，
-> **尚未部署生产、尚未连接生产 MongoDB，也未修改同机其他项目**。
+> 本文不包含密码、Token、数据库连接串或密钥。当前切片已受控部署生产；部署只
+> 更新 GaoQ API、Worker 与 ERP Web，未删除或重建数据库/Redis，未重启 CMS、
+> 专业算薪或同机其他项目。
 
 ## 1. 结论
 
@@ -17,6 +18,19 @@
 Record Engine，不存在“外部写一套、页面再复制一套”的旁路。当前已经具备可继续
 扩展的底座，但不应宣称已经完整复刻飞书多维表格：专用看板/日历/甘特/画册/仪表盘
 渲染、公式与聚合引擎、自动化执行 Worker、Base 行列权限和 MCP 写确认仍待后续切片。
+
+### 1.1 生产发布状态
+
+- Git：`main@bdb09a0a53046a89f048650de9ccd60208479f41`，已推送 `origin/main`。
+- Release：`/opt/gaoq-ai-releases/bdb09a0a530`；Compose Project：`gaoq-ai`。
+- API 镜像：`sha256:fa8847e4f9e79eddb0a00c54b75186c2fd17de15da99313156be2515da39f2f0`。
+- Worker 镜像：`sha256:627128c0b6ce7e15338ab317094a480f0a78a128b025d582091d5e9c8da7e816`。
+- ERP Web 镜像：`sha256:b09fe7fb0b061af615aba4f519d7d0e8308313412f6ae8369122aeda36f9ac7f`。
+- 三个目标容器均为 Docker `healthy`、`restart=0`；API live/ready、新表单页面与
+  多维 Base 页面均为 200。
+- CMS Website 与专业算薪沿用原镜像，未重建；回环健康检查均为 200。
+- `FORM_DATA_ENCRYPTION_KEYS` 尚未配置，记录写入失败关闭；不得用临时或复用密钥
+  绕过该边界。
 
 ## 2. 已实现能力
 
@@ -120,9 +134,11 @@ CLI 只读取 `GAOQ_API_ORIGIN` 与短时 `GAOQ_ACCESS_TOKEN`，不接受命令�
 - `multidimensional_bases`
 
 事件继续复用 `integration_outbox`。仅追加迁移
-`phase-6-dynamic-data-platform-indexes-v1` 已随代码交付，但当前没有执行任何生产
-迁移。生产发布前必须先 dry-run，再在备份与维护窗口批准后 apply。禁止删除
-集合、索引、MongoDB、Redis 或运行卷；禁止执行 `docker compose down -v`。
+`phase-6-dynamic-data-platform-indexes-v1` 已随代码交付。生产只读 dry-run 已执行：
+`checksum=hbtv21c45wIB1xjf2L1zkIRqX2Sr38s2ehIzUGOlMmA`、`missing=11`、
+`created=0`、`verified=0`；尚未 apply。只有在备份、维护窗口和人类独立批准后才可
+创建这 11 个追加索引。禁止删除集合、索引、MongoDB、Redis 或运行卷；禁止执行
+`docker compose down -v`。
 
 ## 5. 已完成验证
 
@@ -135,17 +151,25 @@ CLI 只读取 `GAOQ_API_ORIGIN` 与短时 `GAOQ_ACCESS_TOKEN`，不接受命令�
 - MCP 确定性目录与联调证据门禁自测通过。
 - OpenAPI 和 AsyncAPI 已重新生成。
 - 定向 ESLint 与 `git diff --check` 通过。
+- 全仓覆盖测试 449 个文件、7,249 项；并发运行 7,247 项通过，两个 MCP 协议用例
+  因资源竞争超时，单进程定向复跑 2/2 通过。
+- `pnpm audit` 无已知漏洞；全工作区生产构建、`pnpm payroll:check` 和
+  `pnpm payroll:deployment:validate` 通过。
+- 生产 API/Worker/Web 镜像修订逐一绑定 `bdb09a0a530…`；新 REST 无 Token 均返回
+  401，证明路由与身份边界生效。
+- 公网 `aio.gaoq.com` 健康、表单、多维 Base 与算薪为 200，`joinus.gaoq.com/careers`
+  和 `www.gaoq.com/zh-CN` 为 200；`gaoq.com` 的 HTTP/HTTPS 均 301 到 `www`。
+- `recruit.gaoq.com/careers` 当前仍被 CDN 返回 404，属于外部配置待办。
 
-上述均为本地仓库证据，不替代生产等价 Mongo 事务、浏览器 UAT、外部系统、附件、
+上述仓库与生产验活不替代生产等价 Mongo 事务、浏览器 UAT、外部系统、附件、
 自动化、实体 MCP 客户端、性能、安全和灾备验收。
 
-## 6. 发布前人工待办
+## 6. 发布后人工待办
 
 ### P0：必须完成
 
-1. 审查四个新增集合的追加索引迁移，生产先执行
-   `pnpm --filter @gaoq/erp-api migrate:phase6:dynamic-data-platform-indexes -- --dry-run`；
-   保存清单摘要并另行批准 apply。
+1. 审查四个新增集合的 11 个追加索引及上述 dry-run 摘要，在备份与维护窗口另行
+   批准 apply；本次部署没有创建索引。
 2. 在 Secret Manager/KMS 生成独立 `FORM_DATA_ENCRYPTION_KEYS`，完成双密钥轮换演练；
    禁止复用审批、招聘或算薪密钥。
 3. 注册最小 Scope：`erp:forms:design`、`erp:forms:publish`、
@@ -155,6 +179,8 @@ CLI 只读取 `GAOQ_API_ORIGIN` 与短时 `GAOQ_ACCESS_TOKEN`，不接受命令�
 6. 重新执行 Kimi、Inspector 及计划支持客户端的 54 Tool 实体目录发现；旧 50 Tool
    证据不能用于当前发布。
 7. 完成安全/隐私评审，尤其是 L3/L4 表单、员工/部门字段、附件和外部数据写入。
+8. 在阿里 CDN 修复 `recruit.gaoq.com` 回源/缓存规则，并明确 recruit 与 joinus 的
+   canonical 关系；当前可用招聘门户为 `joinus.gaoq.com/careers`。
 
 ### P1：启用完整产品能力前完成
 
@@ -170,10 +196,13 @@ CLI 只读取 `GAOQ_API_ORIGIN` 与短时 `GAOQ_ACCESS_TOKEN`，不接受命令�
 
 ## 7. 发布与回滚边界
 
-当前版本 **No-Go for production**。发布不得只上传 Web；API、Worker、Web、契约、
-索引迁移和密钥配置必须绑定同一 commit 与镜像摘要。回滚时保留新增集合和数据，
-只回滚应用镜像与 Scope，不删除记录或密钥；旧应用不能识别新数据时应停止新写入，
-不得通过删库“恢复”。
+应用底座已经生产部署，但在 P0 完成前，**记录写入、外部系统写入和业务启用仍为
+No-Go**。API、Worker、Web 与契约已绑定同一 commit；索引和密钥明确保持未启用。
+
+运行时回滚备份：`/opt/gaoq-ai-runtime/compose.env.pre-bdb09a0-20260809`。回滚只恢复
+该文件并对 `api worker web` 执行 `docker compose ... up -d --no-deps`，随后复核
+live/ready 与公网入口。必须保留新增集合和数据，不删除记录、索引、密钥、MongoDB、
+Redis 或卷，不得通过删库“恢复”。
 
 ## 8. 后续 AI 接手顺序
 

@@ -10,10 +10,18 @@
 </head>
 <body><main>
   <header><h1>GaoQ 动态表单、多维数据与自动化平台交接</h1><p class="meta">2026-08-09 · 面向人类维护者与后续 AI 代理</p></header>
-  <div class="status"><strong>当前状态：本地代码已交付，生产 No-Go。</strong><br>本次没有连接生产 MongoDB、没有执行迁移、没有部署，也没有触碰同机其他项目。本文不包含任何凭据。</div>
+  <div class="status good"><strong>当前状态：应用底座已受控部署生产。</strong><br><code>main@bdb09a0a530…</code> 的 API、Worker、ERP Web 均健康且 restart=0；CMS、专业算薪和同机其他项目未重启。索引仅 dry-run，记录写入因独立密钥未配置而失败关闭。本文不包含任何凭据。</div>
   <h2>交付结论</h2>
   <p>系统建立了共享的 Dynamic Form / Record Engine，并提供表单审批设计器与 Base/Table/View 多维数据工作台。REST、表单、多维表格、MCP 和 CLI 使用同一应用服务、租户、权限、字段校验、加密、关联和事件边界。</p>
   <div class="status good"><strong>已可用底座：</strong>22 类字段、附件引用、双向关系、关联属性、审批流程画布、加密记录、单条与 50 条批量幂等写入、Grid 真实数据表、7 类 View 定义、自动化定义、OpenAPI、AsyncAPI、3 个 MCP 只读工具和 REST CLI。</div>
+  <h2>生产发布</h2>
+  <table><tbody>
+    <tr><th>Git / Release</th><td><code>bdb09a0a53046a89f048650de9ccd60208479f41</code><br><code>/opt/gaoq-ai-releases/bdb09a0a530</code></td></tr>
+    <tr><th>目标容器</th><td>GaoQ API、Worker、ERP Web：Docker healthy、restart=0；live/ready/表单/Base 页面均为 200。</td></tr>
+    <tr><th>未变更</th><td>CMS Website、专业算薪、MongoDB、Redis、Nginx 与同机其他项目。</td></tr>
+    <tr><th>索引</th><td><code>phase-6-dynamic-data-platform-indexes-v1</code> dry-run：missing=11、created=0、verified=0，未 apply。</td></tr>
+    <tr><th>启用边界</th><td><code>FORM_DATA_ENCRYPTION_KEYS</code> 未配置；记录写入、外部写入与正式业务启用仍为 No-Go。</td></tr>
+  </tbody></table>
   <h2>能力状态</h2>
   <table><thead><tr><th>能力</th><th>状态</th><th>说明</th></tr></thead><tbody>
     <tr><td>拖拽表单与审批流程</td><td>已实现</td><td>字段/布局拖拽、属性、预览、关系图、会签/或签、条件、审批人解析器和审批模板草稿适配。</td></tr>
@@ -33,10 +41,10 @@
     <tr><th>CLI</th><td><code>scripts/dynamic-form-cli.mjs</code></td></tr>
     <tr><th>完整交接</th><td><code>docs/handover/FORM_DATA_PLATFORM_HANDOVER_2026-08-09.md</code></td></tr>
   </tbody></table>
-  <h2>生产前 P0</h2>
-  <ol><li>审查已交付的四集合仅追加索引迁移，生产先 dry-run，保存摘要后另行批准 apply。</li><li>在 KMS/Secret Manager 配置独立 <code>FORM_DATA_ENCRYPTION_KEYS</code> 并演练轮换。</li><li>配置 forms/bases 最小 Scope、职责分离、角色矩阵和独立外部 OAuth Client。</li><li>完成 Replica Set 事务、并发幂等、备份恢复、安全隐私和浏览器 UAT。</li><li>在发布候选上重新验证 54 Tool 的 Kimi/Inspector/目标客户端实体目录。</li></ol>
+  <h2>生产启用前 P0</h2>
+  <ol><li>审查四集合 11 个追加索引与 dry-run 摘要，在备份和维护窗口另行批准 apply。</li><li>在 KMS/Secret Manager 配置独立 <code>FORM_DATA_ENCRYPTION_KEYS</code> 并演练轮换。</li><li>配置 forms/bases 最小 Scope、职责分离、角色矩阵和独立外部 OAuth Client。</li><li>完成 Replica Set 事务、并发幂等、备份恢复、安全隐私和浏览器 UAT。</li><li>在发布候选上重新验证 54 Tool 的 Kimi/Inspector/目标客户端实体目录。</li><li>修复 <code>recruit.gaoq.com</code> 的 CDN 404，并明确 recruit/joinus canonical 关系。</li></ol>
   <h2>后续 P1</h2>
   <ul><li>附件存储、病毒扫描、摘要、保留与下载授权。</li><li>专用视图渲染、Grid 行内编辑、公式 AST、聚合与重算队列。</li><li>Base 行列权限和服务端查询强制。</li><li>自动化 Worker、Connector 注册表、Webhook 验签、重试与人工复核。</li><li>动态流程与审批模板不可变版本绑定、MCP 写确认、签名分页与大表性能门禁。</li></ul>
   <h2>安全与回滚</h2>
-  <p>禁止删除新增集合、索引、MongoDB、Redis 或卷，禁止 <code>docker compose down -v</code>。回滚只回滚应用镜像与新 Scope，并保留数据和密钥。未取得明确生产授权前，后续 AI 不得 SSH、连接生产数据库、执行迁移或发布。</p>
+  <p>回滚备份为 <code>/opt/gaoq-ai-runtime/compose.env.pre-bdb09a0-20260809</code>。禁止删除新增集合、索引、MongoDB、Redis 或卷，禁止 <code>docker compose down -v</code>。回滚只恢复 API、Worker、Web 镜像并保留数据。未取得新的明确授权前，后续 AI 不得执行迁移、配置密钥/Scope 或再次发布。</p>
 </main></body></html>
