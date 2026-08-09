@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GaoQ OS 招聘、HRBP、绩效与算薪生产交接</title>
+  <style>
+    :root { color-scheme:light; --ink:#182033; --muted:#657086; --line:#dde4ef;
+      --brand:#165dff; --soft:#f5f8ff; --ok:#087443; --warn:#9a5800; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); background:#edf2f8;
+      font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif; }
+    main { width:min(1120px,calc(100% - 32px)); margin:32px auto; padding:44px;
+      background:#fff; border:1px solid var(--line); border-radius:18px;
+      box-shadow:0 16px 44px rgba(25,42,70,.08); }
+    h1 { margin:0 0 6px; font-size:31px; line-height:1.3; }
+    h2 { margin:34px 0 12px; padding-bottom:8px; font-size:22px; border-bottom:2px solid var(--line); }
+    h3 { margin:22px 0 6px; font-size:17px; }
+    p,li { max-width:92ch; } .meta { color:var(--muted); }
+    .summary,.warning { margin:20px 0; padding:16px 18px; border-radius:10px; }
+    .summary { background:var(--soft); border-left:4px solid var(--brand); }
+    .warning { color:#633700; background:#fff7e8; border:1px solid #f0d49e; }
+    table { width:100%; margin:12px 0 20px; border-collapse:collapse; }
+    th,td { padding:10px 12px; text-align:left; vertical-align:top; border:1px solid var(--line); }
+    th { background:#f6f8fc; } code { padding:.12em .35em; border-radius:5px;
+      background:#eef2f7; font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+      overflow-wrap:anywhere; }
+    pre { overflow:auto; padding:16px; color:#eef6ff; background:#101827; border-radius:10px; }
+    pre code { padding:0; color:inherit; background:transparent; }
+    .ok { color:var(--ok); font-weight:650; } .todo { color:var(--warn); font-weight:650; }
+    footer { margin-top:38px; padding-top:14px; color:var(--muted); border-top:1px solid var(--line); }
+    @media (max-width:720px) { main { width:100%; margin:0; padding:24px 18px; border:0;
+      border-radius:0; } table { display:block; overflow-x:auto; } }
+    @media print { body { background:#fff; } main { width:100%; margin:0; padding:0;
+      border:0; box-shadow:none; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>GaoQ OS 招聘、HRBP、绩效与专业算薪生产交接</h1>
+  <p class="meta">交接时间：2026-08-09（Asia/Shanghai） · 面向维护人员、SRE、HR 产品负责人和后续 AI 代理</p>
+  <p class="warning"><strong>安全声明：</strong>本文不包含密码、Token、私钥或数据库连接串。禁止输出运行时环境文件的值。</p>
+
+  <section class="summary"><strong>结论：</strong><code>main@51460191c871</code> 已部署。
+    GaoQ API、Worker、ERP Web 均健康且 <code>restart=0</code>；招聘、绩效、HRBP 页面公网 200。
+    CMS 和专业算薪未重启并保持健康。新模块 15 个索引仅完成 dry-run，未批准前不得授予写 Scope。</section>
+
+  <h2>1. 仓库与镜像</h2>
+  <table><thead><tr><th>项目</th><th>事实</th></tr></thead><tbody>
+    <tr><td>仓库/分支</td><td><code>GTVigilante/gaoq_ai</code>；本地与远端仅 <code>main</code></td></tr>
+    <tr><td>业务实现</td><td><code>ac8c91a05990532070644335ff522a77f668c577</code></td></tr>
+    <tr><td>最终生产提交</td><td><code>51460191c871c7cd99c77d3306c1c315ddec917b</code></td></tr>
+    <tr><td>生产 release</td><td><code>/opt/gaoq-ai-releases/51460191c871</code></td></tr>
+    <tr><td>镜像发布证据</td><td>GitHub Actions <code>31293553459</code>，四组件成功</td></tr>
+  </tbody></table>
+  <table><thead><tr><th>组件</th><th>生产镜像 ID</th><th>修订</th></tr></thead><tbody>
+    <tr><td>API</td><td><code>sha256:0d6b65de4b9c197ba6cd20067dc44ee02d5086f93b5d6145861eb03e3847304c</code></td><td><code>51460191c871…</code></td></tr>
+    <tr><td>Worker</td><td><code>sha256:19bbb578cc9245b177a6a57549700a2972430d3bdd2a7ced0879caceafa9ae44</code></td><td><code>51460191c871…</code></td></tr>
+    <tr><td>ERP Web</td><td><code>sha256:482e3e69b60a7ccce6bfca989e2f6d872648a80f23b54a8cd21aa5b57d7b75fb</code></td><td><code>51460191c871…</code></td></tr>
+    <tr><td>CMS</td><td><code>sha256:1b1ff22aff7b570f9ac808fe21d148aa432256f23784d700ff2c172e5ce282eb</code></td><td>未变更</td></tr>
+  </tbody></table>
+
+  <h2>2. 已交付能力</h2>
+  <h3>招聘管理</h3>
+  <ul><li>运营总览、HC、职位、候选流程、面试、Offer、简历库统一工作台。</li>
+    <li>固定最小投影、稳定排序、部门数据范围、状态白名单和硬上限。</li>
+    <li>AI 仅辅助解析，不排名、不淘汰、不自动录用。</li></ul>
+  <h3>HRBP 与汇报关系</h3>
+  <ul><li>员工级直属经理、生效区间、重叠拒绝和 100 层环路检测。</li>
+    <li>部门 HRBP 主负责人、最多三名备份和子部门继承。</li></ul>
+  <h3>绩效</h3>
+  <ul><li>季度 OKR/KPI/胜任力 40/40/20，自评、经理、HRBP 校准、确认/申诉、最终定级。</li>
+    <li>S/A/B/C/D，无强制分布；最终快照带摘要和 Outbox 事件，ERP 不计算奖金。</li>
+    <li>算薪快照仅可信服务身份可读；标准 MCP 仅本人脱敏只读。</li></ul>
+
+  <h2>3. 数据与启用边界</h2>
+  <p>生产 MongoDB 为 GaoQ 独立 <code>gaoq-rs0</code>，无主机端口。本次没有删除、
+    覆盖、导入或修改业务数据。新建六类集合的迁移 dry-run 结果如下：</p>
+  <table><thead><tr><th>迁移</th><th>摘要</th><th>结果</th></tr></thead><tbody>
+    <tr><td><code>phase-6-workforce-performance-indexes-v1</code></td>
+      <td><code>VC9EKbPolholLEh7wRELY6vC2L7e5HDk6ba_QvuIzbk</code></td>
+      <td><code>missing=15, created=0</code></td></tr>
+  </tbody></table>
+  <p class="todo">未执行索引 apply、未写入新模块数据、未分配新模块写 Scope。</p>
+
+  <h2>4. 验证</h2>
+  <ul><li>API：446 个测试文件、7,240 项通过；类型检查、ESLint、生产构建通过。</li>
+    <li>Web：14 个测试文件、88 项通过；类型检查、生产构建通过。</li>
+    <li>专业算薪：22 项测试、全组件构建和生产编排校验通过。</li>
+    <li>公网：GaoQ 健康、招聘、绩效、HRBP、算薪、CMS 均 200；根域 301 到 www。</li>
+    <li>新 REST 无 Token 返回 401，身份边界生效。</li></ul>
+  <p>第一次 API 候选镜像因 DTO 声明顺序失败，自动回滚且未写数据；修复后补做生产
+    编译产物直接导入和二次切换，最终目标容器全部健康。</p>
+
+  <h2>5. 域名状态</h2>
+  <p><code>joinus.gaoq.com/careers</code> 公网 200。源站把 <code>recruit.gaoq.com</code>
+    301 到 joinus，但阿里 CDN 当前仍返回 404；需人工统一回源/缓存。建议遵循用户原始要求，
+    将 recruit 设为 canonical，joinus 301 到 recruit。<code>gaoq.com</code> 已正确 301 到 www。</p>
+
+  <h2>6. 回滚</h2>
+  <pre><code>cp -p /opt/gaoq-ai-runtime/compose.env.pre-5146019-20260809 \
+  /opt/gaoq-ai-runtime/compose.env
+docker compose -p gaoq-ai \
+  --env-file /opt/gaoq-ai-runtime/compose.env \
+  -f /opt/gaoq-ai-releases/e357c43277d4/deploy/standalone/compose.yaml \
+  config --quiet
+docker compose -p gaoq-ai \
+  --env-file /opt/gaoq-ai-runtime/compose.env \
+  -f /opt/gaoq-ai-releases/e357c43277d4/deploy/standalone/compose.yaml \
+  up -d --no-deps api worker web</code></pre>
+  <p class="warning">禁止 <code>docker compose down -v</code>，禁止删除或重建 MongoDB/Redis，禁止清理其他 Compose Project。</p>
+
+  <h2>7. 人工待办</h2>
+  <h3>P0：启用前</h3>
+  <ol><li>审批并执行 15 个追加索引；执行前复核备份并再次 dry-run。</li>
+    <li>为 HR、HRBP、经理、员工和 Payroll service client 配置最小 Scope 与部门范围。</li>
+    <li>核对员工/部门/经理/HRBP 权威数据，完成五类实体账号 UAT。</li>
+    <li>按旧交接要求撤销并重新授权曾用于中转的本机 GitHub CLI OAuth。</li></ol>
+  <h3>P1：业务闭环</h3>
+  <ol><li>修正阿里 CDN 的 recruit/joinus canonical、回源与缓存。</li>
+    <li>提供短信/邮件 OTP 服务商及风控配置，启用候选人账户中心。</li>
+    <li>配置绩效到专业算薪的 OAuth、事件传输、重放/死信、消费和财务对账。</li>
+    <li>补齐新模块 Excel/CSV 字段映射，经预检、dry-run、抽样和对账迁移。</li></ol>
+  <h3>P2：企业验收</h3>
+  <p>完成真实 SSO、通知、招聘渠道、日历、eSign、WORM、银行、税务联调，以及性能、
+    安全、容灾、财务 UAT、Go/No-Go 和 Hypercare。</p>
+
+  <footer>完整命令、集合清单和只读验活见同目录 Markdown 版本。后续代理必须先读
+    <code>AGENTS.md</code>、<code>CODEX.md</code>、<code>CONTEXT.md</code>、
+    <code>apps/erp-web/PRODUCT.md</code> 和本交接。</footer>
+</main>
+</body>
+</html>

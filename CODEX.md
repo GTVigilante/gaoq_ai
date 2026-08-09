@@ -24,6 +24,12 @@
   Nginx 更新仍待人工完成。生产拓扑、镜像、
   回滚、安全边界和人工待办见
   `docs/handover/PRODUCTION_HANDOVER_2026-08-08.md`（同时提供 HTML）。
+- 2026-08-09 已在 `main@51460191c871` 上线招聘运营工作台、直属汇报关系、
+  HRBP 主备管辖和季度绩效（OKR/KPI/胜任力 40/40/20）模块。GaoQ API、Worker、
+  ERP Web 已定向更新且 `live/ready=200`，CMS 与专业算薪未重启并保持健康。
+  新增 6 个集合的 15 个索引仅完成生产 dry-run，未获独立迁移批准前不得执行写入
+  或分配新模块写 Scope；准确状态、回滚和人工待办见
+  `docs/handover/PRODUCTION_HANDOVER_2026-08-09_HR.md`（同时提供 HTML）。
 - 2026-07-29 已交付标准 MCP 本地 stdio 入口，与生产 Streamable HTTP 共用
   `McpRuntimeService` 和 `AccessTokenVerifier`。启动要求秘密管理器注入短时
   Token 与 `erp:mcp:server:connect`，先预检、后逐消息复验，撤销/过期立即关闭；
@@ -86,13 +92,14 @@
   DoS、MCP/提示注入、工资资金与供应链；每项分别列仓库控制和现场残余风险。
   文档门禁锁定核心威胁与 Phase 0 三方签署要求；真实 DAST/ASVS、红队、角色
   矩阵、外部密钥轮换和三方签署仍未完成。
-- 2026-07-30 已建立源码确定性生成的 OpenAPI 3.1 REST 基线：47 个
-  Controller、225 个 Nest 路由声明、218 个 Path 和 231 个 Operation 均记录
-  精确 OAuth Scope、公开状态、Guard、Header/Query/Path/Body、成功响应与源码
-  位置。103 个 class-validator DTO 已展开字段级约束；116/116 个 Body 全部绑定
-  命名组件（85 个 DTO、27 个运行时 Zod、4 个编译器内联类型），共 135 个
-  Component Schema。231/231 个成功响应包括 229 个显式内容 Schema、1 个 302
-  和 1 个 204；TypeScript Program 展开跨文件/推断返回值，RawResponse 从实际
+- 2026-07-30 已建立源码确定性生成的 OpenAPI 3.1 REST 基线；随 2026-08-09
+  招聘、HRBP 与绩效模块交付，当前为 50 个 Controller、250 个 Nest 路由声明、
+  256 个 Operation，均记录精确 OAuth Scope、公开状态、Guard、
+  Header/Query/Path/Body、成功响应与源码位置。114 个 class-validator DTO 已展开
+  字段级约束；127/127 个 Body 全部绑定命名组件（94 个 DTO、29 个运行时 Zod、
+  4 个编译器内联类型），共 148 个 Component Schema。256 个成功响应包括
+  254 个显式内容 Schema 和 2 个 204；TypeScript Program 展开跨文件/推断返回值，
+  RawResponse 从实际
   `json/send/redirect` 提取状态码与媒体类型，OAuth 表单、CSV、MCP SSE 和
   WebAuthn 不再误报。生成器拒绝未命名/unknown 写请求、顶层 unknown 成功响应、
   失效运行时来源、动态路由/Scope、重复操作、路径参数漂移、公开/Scope 冲突及

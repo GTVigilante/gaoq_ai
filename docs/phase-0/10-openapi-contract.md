@@ -3,7 +3,7 @@
 ## 1. 目的与适用范围
 
 `contracts/openapi/erp-api.openapi.json` 是 ERP REST 接入面的机器可读基线。
-它由 47 个 NestJS Controller 源文件确定性生成，覆盖全局 `/api` 前缀、四个
+它由 50 个 NestJS Controller 源文件确定性生成，覆盖全局 `/api` 前缀、四个
 前缀例外、HTTP 方法、路径、OAuth Scope、公开路由、Guard、Header、Query、
 Path、Body、响应类型和源码定位。
 
@@ -33,18 +33,18 @@ pnpm contracts:openapi:validate
 
 | 项目 | 数量 | 说明 |
 |---|---:|---|
-| Controller | 47 | 全部生产 Controller |
-| Nest 路由声明 | 225 | `Get/Post/Put/Patch/Delete/All` |
-| OpenAPI Path | 218 | 相同路径的不同方法合并 |
-| OpenAPI Operation | 231 | MCP 的 `@All` 展开为七种标准方法 |
-| OAuth Scope | 165 | 从 `RequiredScopes` 静态提取并写入安全方案 |
+| Controller | 50 | 全部生产 Controller |
+| Nest 路由声明 | 250 | `Get/Post/Put/Patch/Delete/All` |
+| OpenAPI Path | 239 | 相同路径的不同方法合并 |
+| OpenAPI Operation | 256 | MCP 的 `@All` 展开为七种标准方法 |
+| OAuth Scope | 179 | 从 `RequiredScopes` 静态提取并写入安全方案 |
 | 公开 Operation | 27 | 必须显式 `PublicRoute` |
-| Scope 保护 Operation | 203 | 每项写入精确 scope |
+| Scope 保护 Operation | 228 | 每项写入精确 scope |
 | 已认证无 Scope Operation | 1 | 当前会话撤销，仅要求已认证主体 |
-| class-validator DTO Schema | 103 | 字段、必填、类型、长度、范围、枚举、数组与继承 |
-| 命名 Body Schema | 116 / 116 | 85 个 DTO、27 个运行时 Zod 登记、4 个编译器内联类型 |
-| 成功响应 | 231 / 231 | 229 个显式内容 Schema、1 个 302 跳转、1 个 204 无正文 |
-| Component Schema | 135 | `Problem`、103 个 DTO 与 31 个补充请求组件 |
+| class-validator DTO Schema | 114 | 字段、必填、类型、长度、范围、枚举、数组与继承 |
+| 命名 Body Schema | 127 / 127 | 94 个 DTO、29 个运行时 Zod 登记、4 个编译器内联类型 |
+| 成功响应 | 256 / 256 | 254 个显式内容 Schema、2 个 204 无正文 |
+| Component Schema | 148 | `Problem`、114 个 DTO 与 34 个补充请求组件 |
 
 生成器拒绝动态路由字符串、动态 Scope、重复 Method + Path、重复
 `operationId`、路径占位符与 `@Param` 不一致、公开路由同时声明 Scope、缺少
@@ -53,17 +53,17 @@ Schema 来源或计数漂移。`@All` 的原始语义保留在 `x-nest-method`�
 
 ## 4. 字段约束边界
 
-当前生成器已扫描 103 个 class-validator DTO，生成字段级 JSON Schema
+当前生成器已扫描 114 个 class-validator DTO，生成字段级 JSON Schema
 2020-12：必填/可选、原始类型、nullable union、继承、嵌套 DTO、长度/范围、
-数组大小/唯一性、静态枚举、格式和正则来源均进入组件；85 个请求体通过 `$ref`
+数组大小/唯一性、静态枚举、格式和正则来源均进入组件；94 个请求体通过 `$ref`
 绑定 DTO。生成器会拒绝名称重复、动态字段名、悬空 DTO 引用和 DTO 请求体未绑定。
 
-其余 31 个请求体全部提升为命名组件：27 个 `unknown` 入口由
+其余 33 个请求体全部提升为命名组件：29 个 `unknown` 入口由
 `apps/erp-api/src/contracts/rest-request-contracts.ts` 的运行时 Zod 注册表生成
 JSON Schema，4 个内联类型由 TypeScript Program 展开。注册表绑定实际解析器
 源码位置，来源文件、符号、Operation 或名称失效时生成失败；已有 Zod 的 OAuth、
 审批通知、组织投递、招聘日历、生日与人才触点运行时直接复用同一 Schema。
-7 个明确允许省略的空 Body 标为 `required: false`，但一旦提交正文只能是严格
+9 个明确允许省略的空 Body 标为 `required: false`，但一旦提交正文只能是严格
 空对象。
 
 成功响应使用 TypeScript Program 展开显式类型及推断类型；直接操作 Express
