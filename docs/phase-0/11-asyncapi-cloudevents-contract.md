@@ -35,6 +35,7 @@ pnpm contracts:asyncapi:validate
 | Attendance | 13 | ERP 出站 |
 | Care | 22 | ERP 出站 |
 | Document | 1 | ERP 出站 |
+| Dynamic Form | 5 | ERP 出站 |
 | Knowledge | 15 | ERP 出站 |
 | Marketing | 1 | ERP 出站 |
 | Onboarding | 4 | ERP 出站 |
@@ -45,7 +46,7 @@ pnpm contracts:asyncapi:validate
 | Talent Lifecycle | 3 | ERP 出站 |
 | Treasury | 14 | ERP 出站 |
 | 专业算薪平台契约 | 7 | ERP→专业算薪 3；专业算薪→ERP 4 |
-| **合计** | **184** | **出站 180；入站 4** |
+| **合计** | **189** | **出站 185；入站 4** |
 
 专业算薪的 7 个事件来自 `packages/platform-contracts` 的冻结数组与逐 type
 JSON Schema；兼容窗口内的 `com.gaoq.*` 旧 type 不进入现行目录。

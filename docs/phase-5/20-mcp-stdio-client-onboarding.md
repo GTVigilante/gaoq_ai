@@ -103,7 +103,7 @@ pnpm mcp:client:inspector:run
 ```
 
 自动化测试使用官方 TypeScript Client 和真实 stdio 字节流完成初始化，验证同一
-运行时可以发现 50 个 Tool、4 个静态 Resource、27 个 Resource Template 与
+运行时可以发现 54 个 Tool、4 个静态 Resource、27 个 Resource Template 与
 25 个 Prompt。专项覆盖环境白名单、
 连接 Scope、启动预检、逐消息复验、消息顺序、认证失败关闭、错误脱敏和幂等关闭。
 进程入口测试还验证应用模块只在环境预检后动态加载，输入结束、`SIGINT`、
@@ -122,7 +122,7 @@ banner 的非纯 JSON 输出。该探针不读取 Resource 内容、不渲染 Pr
 每个客户端版本至少记录：
 
 1. 客户端名称、精确版本、操作系统、commit 和 `catalogHash`。
-2. 初始化协商、50 个 Tool、4 个静态 Resource、27 个 Resource Template
+2. 初始化协商、54 个 Tool、4 个静态 Resource、27 个 Resource Template
    和 25 个 Prompt 的目录一致性。
 3. R0 读取、R1 确认、R2 外部浏览器强认证、结构化输出和 Resource Link。
 4. 无 Scope、跨租户、过期、即时撤销、重放、取消、超时和客户端重连。
@@ -163,8 +163,9 @@ pnpm mcp:client:inspector:run
 ```
 
 Inspector 通过 stdio 连接同一个 `McpRuntimeService` 目录夹具，并以正式 CLI
-方法发现 50 个 Tool、4 个静态 Resource、27 个 Resource Template 和 25 个
-Prompt。探针输出绑定当前 `catalogHash` 与 `runtimeContractHash`，同时明确记录
+方法发现当时的 50 个 Tool、4 个静态 Resource、27 个 Resource Template 和 25 个
+Prompt。新增绩效、动态表单与多维 Base Tool 后当前目录为 54/4/27/25，旧证据
+不能绑定当前 `catalogHash`，必须重跑。历史探针输出同时明确记录
 `businessToolInvoked=false`、`resourceContentRead=false`、
 `promptRendered=false` 和 `modelInvoked=false`。
 

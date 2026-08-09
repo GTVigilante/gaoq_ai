@@ -47,6 +47,8 @@ import { DataMigrationService } from '../data-migration/application/data-migrati
 import { TalentLifecycleService } from '../talent-lifecycle/application/talent-lifecycle.service.js';
 import { MarketingCmsService } from '../marketing-cms/marketing-cms.service.js';
 import { PerformanceService } from '../performance/application/performance.service.js';
+import { DynamicFormService } from '../dynamic-form/application/dynamic-form.service.js';
+import { MultidimensionalBaseService } from '../dynamic-form/application/multidimensional-base.service.js';
 import { parseMcpIdentity, type McpIdentity } from './mcp-auth-context.js';
 import {
   McpConfirmationService,
@@ -112,7 +114,39 @@ export class McpToolService {
     private readonly careOccasions: CareOccasionApplicationService,
     private readonly careAlumniCleanup: CareAlumniCleanupApplicationService,
     private readonly performance: PerformanceService,
+    private readonly dynamicForms: DynamicFormService,
+    private readonly multidimensionalBases: MultidimensionalBaseService,
   ) {}
+
+  async getDynamicFormCatalog(extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:forms:data:read')) return scopeError('erp:forms:data:read');
+      const result = await this.dynamicForms.listPublishedCatalog();
+      await this.auditTool(identity, 'dynamic_form_catalog', 'R0', 'success', { count: result.items.length });
+      return structuredResult({ items: result.items });
+    });
+  }
+
+  async getDynamicFormRecord(formId: string, recordId: string, extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:forms:data:read')) return scopeError('erp:forms:data:read');
+      const record = await this.dynamicForms.getRecordForMcp(formId, recordId);
+      await this.auditTool(identity, 'dynamic_form_record_get', 'R1', 'success', { formId, recordId });
+      return structuredResult({ record });
+    });
+  }
+
+  async getMultidimensionalBaseCatalog(extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:bases:read')) return scopeError('erp:bases:read');
+      const result = await this.multidimensionalBases.listForMcp();
+      await this.auditTool(identity, 'multidimensional_base_catalog', 'R0', 'success', { count: result.items.length });
+      return structuredResult({ items: result.items });
+    });
+  }
 
   async getMyPerformanceAssignments(extra: McpExtra): Promise<McpToolResult> {
     const identity = parseMcpIdentity(extra.authInfo);

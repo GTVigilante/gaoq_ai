@@ -120,6 +120,11 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(64).max(16_384).optional(),
   ),
+  /** 动态表单记录 AES-256-GCM 密钥环；禁止复用审批、招聘或算薪密钥。 */
+  FORM_DATA_ENCRYPTION_KEYS: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(64).max(16_384).optional(),
+  ),
   /** 招聘 L3/L4 数据密钥环，与审批和盲索引密钥域隔离。 */
   RECRUITMENT_DATA_ENCRYPTION_KEYS: z.preprocess(
     (value) => value === '' ? undefined : value,

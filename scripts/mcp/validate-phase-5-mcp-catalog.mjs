@@ -15,7 +15,8 @@ const RISK = Object.freeze({
     'care_alumni_cleanup_status_get',
     'talent_lifecycle_get',
     'attendance_month_get', 'payroll_period_get', 'op_operating_summary_get',
-    'op_approval_bridge_get',
+    'op_approval_bridge_get', 'performance_my_assignments', 'dynamic_form_catalog',
+    'multidimensional_base_catalog',
   ],
   R1: [
     'approval_submit_prepare', 'approval_submit_execute', 'approval_withdraw_prepare',
@@ -27,6 +28,7 @@ const RISK = Object.freeze({
     'data_migration_report_get', 'attendance_correction_prepare',
     'attendance_correction_execute', 'recruitment_position_transition_prepare',
     'recruitment_position_transition_execute', 'marketing_side_effect_get',
+    'dynamic_form_record_get',
   ],
   R2: [
     'approval_decide_prepare', 'approval_decide_execute',
@@ -40,6 +42,9 @@ const EMPTY_INPUT = new Set([
   'approval_get_inbox',
   'get_org_chart',
   'care_occasion_summary_get_self',
+  'performance_my_assignments',
+  'dynamic_form_catalog',
+  'multidimensional_base_catalog',
 ]);
 
 const runtime = await readFile(runtimeUrl, 'utf8');
@@ -139,7 +144,7 @@ function buildCatalog(runtimeSource, toolServiceSource) {
   });
   const riskByName = new Map(Object.entries(RISK).flatMap(([risk, names]) =>
     names.map((name) => [name, risk])));
-  if (riskByName.size !== 50 || registrations.length !== 50) fail('PHASE5_MCP_TOOL_COUNT_INVALID');
+  if (riskByName.size !== 54 || registrations.length !== 54) fail('PHASE5_MCP_TOOL_COUNT_INVALID');
   const names = registrations.map((item) => item.name);
   if (new Set(names).size !== names.length || names.some((name) => !riskByName.has(name))) {
     fail('PHASE5_MCP_RISK_CATALOG_INCOMPLETE');
@@ -218,9 +223,9 @@ function buildCatalog(runtimeSource, toolServiceSource) {
     transports: ['streamable-http', 'stdio'],
     oauthProfile: 'oauth-2.1',
     counts: {
-      total: 50,
-      R0: 23,
-      R1: 19,
+      total: 54,
+      R0: 26,
+      R1: 20,
       R2: 8,
       R3: 0,
       resources: 4,

@@ -8,7 +8,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const outputPath = resolve(repoRoot, 'contracts/asyncapi/erp-events.asyncapi.json');
 const args = new Set(process.argv.slice(2));
 const domainEventPattern =
-  /^(?:department|employee|person|employment|position|job_level|approval_[a-z0-9_]+|care|knowledge|onboarding|recruitment|attendance|payroll|treasury)\.[a-z0-9_]+(?:\.[a-z0-9_]+)*$/u;
+  /^(?:department|employee|person|employment|position|job_level|approval_[a-z0-9_]+|care|knowledge|onboarding|recruitment|attendance|payroll|treasury|dynamic_form)\.[a-z0-9_]+(?:\.[a-z0-9_]+)*$/u;
 const fullEventPattern = /^cn\.gaoq\.(?:erp|payroll)\.[a-z0-9_]+(?:\.[a-z0-9_]+)*\.v[1-9][0-9]*$/u;
 
 const eventGroups = [
@@ -98,6 +98,12 @@ const eventGroups = [
     source: '//gaoq-erp/marketing-cms',
     classification: 'L1',
     files: ['apps/erp-api/src/modules/marketing-cms/marketing-cms.types.ts'],
+  },
+  {
+    name: 'dynamic-form',
+    source: '//gaoq-erp/dynamic-form-module',
+    classification: 'L2',
+    files: ['apps/erp-api/src/modules/dynamic-form/persistence/dynamic-form-outbox.writer.ts'],
   },
 ];
 

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>GaoQ 动态表单与多维数据平台交接</title>
+  <style>
+    :root{color-scheme:light;--ink:#172334;--muted:#637083;--line:#dce2e9;--blue:#245fc5;--bg:#f5f7fa}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:var(--bg);font:15px/1.72 system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}main{max-width:1120px;margin:36px auto;padding:42px 52px;border:1px solid var(--line);border-radius:18px;background:#fff;box-shadow:0 20px 60px #1d36520d}h1{margin:0;font-size:34px;letter-spacing:-.03em}h2{margin-top:34px;padding-bottom:8px;border-bottom:1px solid var(--line);font-size:21px}h3{font-size:17px}p,li{color:#334255}code{padding:2px 5px;border-radius:5px;background:#edf2f8}table{width:100%;border-collapse:collapse}th,td{padding:9px 11px;border:1px solid var(--line);text-align:left;vertical-align:top}th{background:#f3f6fa}.status{margin:22px 0;padding:16px 18px;border-left:4px solid #c47a05;background:#fff7e8}.good{border-left-color:#168654;background:#effaf4}.meta{color:var(--muted)}@media(max-width:720px){main{margin:0;padding:26px 18px;border:0;border-radius:0}h1{font-size:28px}}
+  </style>
+</head>
+<body><main>
+  <header><h1>GaoQ 动态表单、多维数据与自动化平台交接</h1><p class="meta">2026-08-09 · 面向人类维护者与后续 AI 代理</p></header>
+  <div class="status"><strong>当前状态：本地代码已交付，生产 No-Go。</strong><br>本次没有连接生产 MongoDB、没有执行迁移、没有部署，也没有触碰同机其他项目。本文不包含任何凭据。</div>
+  <h2>交付结论</h2>
+  <p>系统建立了共享的 Dynamic Form / Record Engine，并提供表单审批设计器与 Base/Table/View 多维数据工作台。REST、表单、多维表格、MCP 和 CLI 使用同一应用服务、租户、权限、字段校验、加密、关联和事件边界。</p>
+  <div class="status good"><strong>已可用底座：</strong>22 类字段、附件引用、双向关系、关联属性、审批流程画布、加密记录、单条与 50 条批量幂等写入、Grid 真实数据表、7 类 View 定义、自动化定义、OpenAPI、AsyncAPI、3 个 MCP 只读工具和 REST CLI。</div>
+  <h2>能力状态</h2>
+  <table><thead><tr><th>能力</th><th>状态</th><th>说明</th></tr></thead><tbody>
+    <tr><td>拖拽表单与审批流程</td><td>已实现</td><td>字段/布局拖拽、属性、预览、关系图、会签/或签、条件、审批人解析器和审批模板草稿适配。</td></tr>
+    <tr><td>共享记录引擎</td><td>已实现</td><td>AES-256-GCM、严格 Schema、租户绑定、关系完整性、幂等事务和脱敏 Outbox。</td></tr>
+    <tr><td>多维 Base/Table/View</td><td>部分实现</td><td>Base、Table、7 类 View 控制面和真实 Grid 已实现；专用看板/日历/甘特/画册/仪表盘渲染待完成。</td></tr>
+    <tr><td>自动化</td><td>定义层</td><td>触发器、条件和受控动作 Schema 已实现；执行 Worker、Webhook 验签、租约、重试和人工复核待完成。</td></tr>
+    <tr><td>外部系统写入</td><td>已实现</td><td>OAuth 服务身份、Scope、Idempotency-Key、If-Match、单条/批量 REST 与 CLI。</td></tr>
+    <tr><td>MCP</td><td>只读已实现</td><td>表单目录、L1/L2 记录投影、Base 目录；写入仍须未来的 prepare/execute。</td></tr>
+  </tbody></table>
+  <h2>机器契约</h2>
+  <ul><li>OpenAPI 3.1：52 Controller、265 路由声明、271 Operation。</li><li>AsyncAPI 3.0：189 个事件，动态表单新增 5 个不含业务正文的事件。</li><li>MCP：54 Tool、4 Resource、27 Resource Template、25 Prompt；旧 50 Tool 实体发现证据已过期。</li><li>CLI：<code>pnpm forms:cli -- help</code>，仅使用环境注入的 API Origin 和短时 Token，不直连数据库。</li></ul>
+  <h2>关键代码</h2>
+  <table><tbody>
+    <tr><th>后端模块</th><td><code>apps/erp-api/src/modules/dynamic-form/</code></td></tr>
+    <tr><th>表单/流程 UI</th><td><code>apps/erp-web/app/workspace/forms/</code></td></tr>
+    <tr><th>多维工作台 UI</th><td><code>apps/erp-web/app/workspace/bases/</code></td></tr>
+    <tr><th>CLI</th><td><code>scripts/dynamic-form-cli.mjs</code></td></tr>
+    <tr><th>完整交接</th><td><code>docs/handover/FORM_DATA_PLATFORM_HANDOVER_2026-08-09.md</code></td></tr>
+  </tbody></table>
+  <h2>生产前 P0</h2>
+  <ol><li>审查已交付的四集合仅追加索引迁移，生产先 dry-run，保存摘要后另行批准 apply。</li><li>在 KMS/Secret Manager 配置独立 <code>FORM_DATA_ENCRYPTION_KEYS</code> 并演练轮换。</li><li>配置 forms/bases 最小 Scope、职责分离、角色矩阵和独立外部 OAuth Client。</li><li>完成 Replica Set 事务、并发幂等、备份恢复、安全隐私和浏览器 UAT。</li><li>在发布候选上重新验证 54 Tool 的 Kimi/Inspector/目标客户端实体目录。</li></ol>
+  <h2>后续 P1</h2>
+  <ul><li>附件存储、病毒扫描、摘要、保留与下载授权。</li><li>专用视图渲染、Grid 行内编辑、公式 AST、聚合与重算队列。</li><li>Base 行列权限和服务端查询强制。</li><li>自动化 Worker、Connector 注册表、Webhook 验签、重试与人工复核。</li><li>动态流程与审批模板不可变版本绑定、MCP 写确认、签名分页与大表性能门禁。</li></ul>
+  <h2>安全与回滚</h2>
+  <p>禁止删除新增集合、索引、MongoDB、Redis 或卷，禁止 <code>docker compose down -v</code>。回滚只回滚应用镜像与新 Scope，并保留数据和密钥。未取得明确生产授权前，后续 AI 不得 SSH、连接生产数据库、执行迁移或发布。</p>
+</main></body></html>

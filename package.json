@@ -14,6 +14,7 @@
     "dev:payroll": "pnpm --parallel --filter './apps/payroll-*' dev",
     "dev:up": "node scripts/dev/local-runtime.mjs up",
     "dev:down": "node scripts/dev/local-runtime.mjs down",
+    "forms:cli": "node scripts/dynamic-form-cli.mjs",
     "smoke:runtime:live": "pnpm --filter @gaoq/erp-api smoke:worker:live && pnpm --filter @gaoq/erp-api smoke:mcp:live",
     "smoke:kubernetes:live": "node scripts/kubernetes-runtime-smoke.mjs",
     "prelint": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && pnpm --filter @gaoq/platform-contracts build && pnpm --filter @gaoq/payroll-core build",

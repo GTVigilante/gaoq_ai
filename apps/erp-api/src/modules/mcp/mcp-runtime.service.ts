@@ -134,6 +134,24 @@ const performanceAssignmentSummarySchema = z.object({
   updatedAt: z.string().datetime({ offset: true }),
 }).strict();
 const marketingEventIdSchema = z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/);
+const dynamicFormFieldSchema = z.object({
+  key: z.string(), label: z.string(), type: z.string(), required: z.boolean(),
+  sensitivity: z.enum(['L1', 'L2', 'L3', 'L4']),
+}).strict();
+const dynamicFormCatalogOutputSchema = z.object({ items: z.array(z.object({
+  id: recruitmentIdSchema, code: z.string(), name: z.string(), revision: z.number().int().positive(),
+  fields: z.array(dynamicFormFieldSchema).max(200),
+}).strict()).max(200) }).strict();
+const dynamicFormRecordOutputSchema = z.object({ record: z.object({
+  id: recruitmentIdSchema, formId: recruitmentIdSchema, formRevision: z.number().int().positive(),
+  version: z.number().int().positive(), values: z.record(z.string(), z.unknown()),
+}).strict() }).strict();
+const multidimensionalBaseCatalogOutputSchema = z.object({ items: z.array(z.object({
+  id: recruitmentIdSchema, code: z.string(), name: z.string(), version: z.number().int().positive(),
+  tables: z.array(z.object({ formId: recruitmentIdSchema, name: z.string(), primaryFieldKey: z.string() }).strict()).max(100),
+  views: z.array(z.object({ id: recruitmentIdSchema, tableId: recruitmentIdSchema, name: z.string(), type: z.enum(['grid', 'kanban', 'calendar', 'gallery', 'gantt', 'form', 'dashboard']) }).strict()).max(500),
+  automationCount: z.number().int().nonnegative().max(100),
+}).strict()).max(100) }).strict();
 const marketingSideEffectSchema = z.object({
   eventId: marketingEventIdSchema,
   kind: z.enum(['lead_notification', 'scheduled_publish']),
@@ -1850,6 +1868,40 @@ export class McpRuntimeService {
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
       },
       async (extra) => this.tools.getMyPerformanceAssignments(extra),
+    );
+
+    server.registerTool(
+      'dynamic_form_catalog',
+      {
+        title: '查询已发布动态表单目录',
+        description: '返回已发布表单及字段 Schema，不返回审批人、流程解析器、租户或记录数据。风险等级 R0。',
+        outputSchema: dynamicFormCatalogOutputSchema,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      },
+      async (extra) => this.tools.getDynamicFormCatalog(extra),
+    );
+
+    server.registerTool(
+      'dynamic_form_record_get',
+      {
+        title: '查询动态表单记录安全投影',
+        description: '按表单与记录标识返回 L1/L2 字段；永久排除 L3/L4、附件和凭据。风险等级 R1。',
+        inputSchema: { formId: recruitmentIdSchema, recordId: recruitmentIdSchema },
+        outputSchema: dynamicFormRecordOutputSchema,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      },
+      async ({ formId, recordId }, extra) => this.tools.getDynamicFormRecord(formId, recordId, extra),
+    );
+
+    server.registerTool(
+      'multidimensional_base_catalog',
+      {
+        title: '查询多维表格目录',
+        description: '返回 Base、数据表和视图的导航元数据；不返回自动化动作、筛选值、成员权限或业务记录。风险等级 R0。',
+        outputSchema: multidimensionalBaseCatalogOutputSchema,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      },
+      async (extra) => this.tools.getMultidimensionalBaseCatalog(extra),
     );
 
     server.registerTool(

@@ -145,7 +145,7 @@ describe('MCP stdio 协议集成', () => {
       name: 'gaoq-erp',
       version: '0.1.0',
     });
-    expect(tools.tools).toHaveLength(51);
+    expect(tools.tools).toHaveLength(54);
     expect(tools.tools.map((tool) => tool.name)).toContain('performance_my_assignments');
     expect(resources.resources.map((resource) => resource.uri))
       .toContain('gaoq://mcp/guide');

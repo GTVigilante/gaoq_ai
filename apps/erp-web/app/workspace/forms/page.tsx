@@ -1,5 +1,5 @@
-import { TemplateDesigner } from './template-designer';
+import { DynamicFormDesigner } from './dynamic-form-designer';
 
 export default function FormsPage() {
-  return <TemplateDesigner />;
+  return <DynamicFormDesigner />;
 }

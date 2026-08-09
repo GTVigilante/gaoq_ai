@@ -511,6 +511,51 @@
       },
       "description": "cn.gaoq.erp.department.upserted.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
     },
+    "event_cn.gaoq.erp.dynamic_form.definition.created.v1": {
+      "address": "cn.gaoq.erp.dynamic_form.definition.created.v1",
+      "messages": {
+        "cn.gaoq.erp.dynamic_form.definition.created.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.dynamic_form.definition.created.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.dynamic_form.definition.created.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.dynamic_form.definition.published.v1": {
+      "address": "cn.gaoq.erp.dynamic_form.definition.published.v1",
+      "messages": {
+        "cn.gaoq.erp.dynamic_form.definition.published.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.dynamic_form.definition.published.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.dynamic_form.definition.published.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.dynamic_form.definition.updated.v1": {
+      "address": "cn.gaoq.erp.dynamic_form.definition.updated.v1",
+      "messages": {
+        "cn.gaoq.erp.dynamic_form.definition.updated.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.dynamic_form.definition.updated.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.dynamic_form.definition.updated.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.dynamic_form.record.created.v1": {
+      "address": "cn.gaoq.erp.dynamic_form.record.created.v1",
+      "messages": {
+        "cn.gaoq.erp.dynamic_form.record.created.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.dynamic_form.record.created.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.dynamic_form.record.created.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.dynamic_form.record.updated.v1": {
+      "address": "cn.gaoq.erp.dynamic_form.record.updated.v1",
+      "messages": {
+        "cn.gaoq.erp.dynamic_form.record.updated.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.dynamic_form.record.updated.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.dynamic_form.record.updated.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
     "event_cn.gaoq.erp.employee.created.v1": {
       "address": "cn.gaoq.erp.employee.created.v1",
       "messages": {
@@ -2388,6 +2433,71 @@
       "messages": [
         {
           "$ref": "#/channels/event_cn.gaoq.erp.department.upserted.v1/messages/cn.gaoq.erp.department.upserted.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.dynamic_form.definition.created.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.dynamic_form.definition.created.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.dynamic_form.definition.created.v1/messages/cn.gaoq.erp.dynamic_form.definition.created.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.dynamic_form.definition.published.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.dynamic_form.definition.published.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.dynamic_form.definition.published.v1/messages/cn.gaoq.erp.dynamic_form.definition.published.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.dynamic_form.definition.updated.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.dynamic_form.definition.updated.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.dynamic_form.definition.updated.v1/messages/cn.gaoq.erp.dynamic_form.definition.updated.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.dynamic_form.record.created.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.dynamic_form.record.created.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.dynamic_form.record.created.v1/messages/cn.gaoq.erp.dynamic_form.record.created.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.dynamic_form.record.updated.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.dynamic_form.record.updated.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.dynamic_form.record.updated.v1/messages/cn.gaoq.erp.dynamic_form.record.updated.v1"
         }
       ],
       "x-idempotency-key": "tenantId + type + aggregateId + version",
@@ -6076,6 +6186,186 @@
           "packages/platform-contracts/src/payroll-event-schemas.ts"
         ],
         "x-delivery": "external-contract"
+      },
+      "cn.gaoq.erp.dynamic_form.definition.created.v1": {
+        "name": "cn.gaoq.erp.dynamic_form.definition.created.v1",
+        "title": "cn.gaoq.erp.dynamic_form.definition.created.v1",
+        "summary": "dynamic-form 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/dynamic-form-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.dynamic_form.definition.created.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "dynamic-form",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/dynamic-form/persistence/dynamic-form-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.dynamic_form.definition.published.v1": {
+        "name": "cn.gaoq.erp.dynamic_form.definition.published.v1",
+        "title": "cn.gaoq.erp.dynamic_form.definition.published.v1",
+        "summary": "dynamic-form 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/dynamic-form-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.dynamic_form.definition.published.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "dynamic-form",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/dynamic-form/persistence/dynamic-form-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.dynamic_form.definition.updated.v1": {
+        "name": "cn.gaoq.erp.dynamic_form.definition.updated.v1",
+        "title": "cn.gaoq.erp.dynamic_form.definition.updated.v1",
+        "summary": "dynamic-form 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/dynamic-form-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.dynamic_form.definition.updated.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "dynamic-form",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/dynamic-form/persistence/dynamic-form-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.dynamic_form.record.created.v1": {
+        "name": "cn.gaoq.erp.dynamic_form.record.created.v1",
+        "title": "cn.gaoq.erp.dynamic_form.record.created.v1",
+        "summary": "dynamic-form 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/dynamic-form-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.dynamic_form.record.created.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "dynamic-form",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/dynamic-form/persistence/dynamic-form-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.dynamic_form.record.updated.v1": {
+        "name": "cn.gaoq.erp.dynamic_form.record.updated.v1",
+        "title": "cn.gaoq.erp.dynamic_form.record.updated.v1",
+        "summary": "dynamic-form 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/dynamic-form-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.dynamic_form.record.updated.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "dynamic-form",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/dynamic-form/persistence/dynamic-form-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
       },
       "cn.gaoq.erp.employee.created.v1": {
         "name": "cn.gaoq.erp.employee.created.v1",
@@ -10767,14 +11057,15 @@
       }
     }
   },
-  "x-event-count": 184,
-  "x-outbound-count": 180,
+  "x-event-count": 189,
+  "x-outbound-count": 185,
   "x-inbound-count": 4,
   "x-generated-from": [
     "apps/erp-api/src/modules/approval/domain/approval-events.ts",
     "apps/erp-api/src/modules/attendance/persistence/attendance-outbox.writer.ts",
     "apps/erp-api/src/modules/care/persistence/care-outbox.writer.ts",
     "apps/erp-api/src/modules/document/persistence/business-attachment-outbox.writer.ts",
+    "apps/erp-api/src/modules/dynamic-form/persistence/dynamic-form-outbox.writer.ts",
     "apps/erp-api/src/modules/knowledge/persistence/knowledge-outbox.writer.ts",
     "apps/erp-api/src/modules/marketing-cms/marketing-cms.types.ts",
     "apps/erp-api/src/modules/onboarding/persistence/onboarding-outbox.writer.ts",

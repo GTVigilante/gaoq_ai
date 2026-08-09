@@ -22,6 +22,8 @@
   27 Resource Template 和 25 Prompt；这只证明四类目录兼容。读取、渲染、
   业务 Tool、正式 Token、OAuth、撤销/重连和 UAT 未完成前 Inspector 整体仍
   保持 No-Go。
+- 当前运行时目录已扩展为 54 Tool、4 Resource、27 Resource Template 和
+  25 Prompt；上述 50 Tool 历史证据不得用于当前发布，必须在发布候选上重跑。
 - Phase 5/6 工作流只使用 GitHub Hosted `ubuntu-latest`；禁止接入 NAS、虚拟机、
   self-hosted Runner 或本地证据挂载。受保护证据和 Kubernetes 身份必须使用
   workflow/policy 专用单次 OIDC；生产 Apply 另需外部双人 Ed25519 签名授权，

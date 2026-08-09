@@ -69,6 +69,7 @@
     "migrate:phase5:treasury-batch-migration-indexes": "node dist/migrations/phase-5-treasury-batch-migration-indexes.js",
     "migrate:phase5:treasury-return-migration-indexes": "node dist/migrations/phase-5-treasury-return-migration-indexes.js",
     "migrate:phase6:workforce-performance-indexes": "node dist/migrations/phase-6-workforce-performance-indexes.js",
+    "migrate:phase6:dynamic-data-platform-indexes": "node dist/migrations/phase-6-dynamic-data-platform-indexes.js",
     "migration:package": "node dist/cli/data-migration-package.js",
     "typecheck": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && pnpm --filter @gaoq/platform-contracts build && tsc --noEmit",
     "test": "pnpm --filter @gaoq/shared-types build && pnpm --filter @gaoq/shared-utils build && pnpm --filter @gaoq/platform-contracts build && vitest run",

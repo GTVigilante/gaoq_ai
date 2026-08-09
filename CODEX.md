@@ -30,6 +30,10 @@
   新增 6 个集合的 15 个索引仅完成生产 dry-run，未获独立迁移批准前不得执行写入
   或分配新模块写 Scope；准确状态、回滚和人工待办见
   `docs/handover/PRODUCTION_HANDOVER_2026-08-09_HR.md`（同时提供 HTML）。
+- 2026-08-09 本地新增动态表单、审批流程设计、多维 Base/Table/View、外部批量写入、
+  REST/OpenAPI、CloudEvents、MCP 只读投影与 CLI 底座；该切片尚未部署生产。
+  当前 MCP 目录为 54 Tool、4 Resource、27 Resource Template、25 Prompt，既有
+  50 Tool 厂商实体发现证据已经过期，必须在发布候选上重新验收。
 - 2026-07-29 已交付标准 MCP 本地 stdio 入口，与生产 Streamable HTTP 共用
   `McpRuntimeService` 和 `AccessTokenVerifier`。启动要求秘密管理器注入短时
   Token 与 `erp:mcp:server:connect`，先预检、后逐消息复验，撤销/过期立即关闭；
@@ -93,12 +97,12 @@
   文档门禁锁定核心威胁与 Phase 0 三方签署要求；真实 DAST/ASVS、红队、角色
   矩阵、外部密钥轮换和三方签署仍未完成。
 - 2026-07-30 已建立源码确定性生成的 OpenAPI 3.1 REST 基线；随 2026-08-09
-  招聘、HRBP 与绩效模块交付，当前为 50 个 Controller、250 个 Nest 路由声明、
-  256 个 Operation，均记录精确 OAuth Scope、公开状态、Guard、
-  Header/Query/Path/Body、成功响应与源码位置。114 个 class-validator DTO 已展开
-  字段级约束；127/127 个 Body 全部绑定命名组件（94 个 DTO、29 个运行时 Zod、
-  4 个编译器内联类型），共 148 个 Component Schema。256 个成功响应包括
-  254 个显式内容 Schema 和 2 个 204；TypeScript Program 展开跨文件/推断返回值，
+  动态表单与多维 Base 控制面交付，当前为 52 个 Controller、265 个 Nest 路由声明、
+  271 个 Operation，均记录精确 OAuth Scope、公开状态、Guard、
+  Header/Query/Path/Body、成功响应与源码位置。121 个 class-validator DTO 已展开
+  字段级约束；135/135 个 Body 全部绑定命名组件（102 个 DTO、29 个运行时 Zod、
+  4 个编译器内联类型），共 155 个 Component Schema。271 个成功响应包括
+  269 个显式内容 Schema 和 2 个 204；TypeScript Program 展开跨文件/推断返回值，
   RawResponse 从实际
   `json/send/redirect` 提取状态码与媒体类型，OAuth 表单、CSV、MCP SSE 和
   WebAuthn 不再误报。生成器拒绝未命名/unknown 写请求、顶层 unknown 成功响应、
@@ -107,8 +111,8 @@
   2026-08-01 已在 `main` 的 GitHub Hosted Actions 实际通过 Phase 1 工程质量、
   Phase 5 安全与供应链及文档质量门禁；该结果不替代外部系统和目标环境验收。
 - 2026-07-30 已建立 AsyncAPI 3.0 / CloudEvents 1.0 机器契约：从固定生产
-  Outbox 与专业算薪平台契约确定性收集 184 个现行事件，其中 ERP/平台出站
-  180 个、专业算薪入站 4 个；每项声明固定 source、方向、权威系统、分级、
+  Outbox 与专业算薪平台契约确定性收集 189 个现行事件，其中 ERP/平台出站
+  185 个、专业算薪入站 4 个；每项声明固定 source、方向、权威系统、分级、
   幂等规则和运行时 Schema 源。生成器排除兼容窗口旧 type，拒绝动态
   `EVENT_TYPES`、重复 type、来源缺失及目录漂移，并与 OpenAPI 一起通过
   `pretypecheck` 接入总门禁。物理 Broker、Topic ACL、mTLS、保留/死信和

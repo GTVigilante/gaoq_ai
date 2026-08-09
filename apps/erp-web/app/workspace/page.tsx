@@ -4,6 +4,7 @@ import {
   ApartmentOutlined,
   AuditOutlined,
   FileTextOutlined,
+  DatabaseOutlined,
   GlobalOutlined,
   RobotOutlined,
   SafetyCertificateOutlined,
@@ -34,6 +35,11 @@ const modules = [
     href: '/workspace/forms', icon: <FileTextOutlined />, title: '表单与流程',
     description: '创建版本化字段与审批节点，发布动作执行职责分离。',
     tag: '治理',
+  },
+  {
+    href: '/workspace/bases', icon: <DatabaseOutlined />, title: '多维数据工作台',
+    description: '用表格、看板、日历等视图管理同一份业务数据，并开放受控外部写入。',
+    tag: 'Data Platform',
   },
   {
     href: '/workspace/org', icon: <ApartmentOutlined />, title: '组织主数据',

@@ -39,6 +39,8 @@ import type { DataMigrationService } from '../data-migration/application/data-mi
 import type { TalentLifecycleService } from '../talent-lifecycle/application/talent-lifecycle.service.js';
 import type { MarketingCmsService } from '../marketing-cms/marketing-cms.service.js';
 import type { PerformanceService } from '../performance/application/performance.service.js';
+import type { DynamicFormService } from '../dynamic-form/application/dynamic-form.service.js';
+import type { MultidimensionalBaseService } from '../dynamic-form/application/multidimensional-base.service.js';
 import { McpToolService } from './mcp-tool.service.js';
 import type { McpConfirmationService } from './mcp-confirmation.service.js';
 
@@ -132,6 +134,8 @@ function assemble() {
   const talentLifecycle = { getForMcp: vi.fn() };
   const marketing = { getSideEffectStatus: vi.fn() };
   const performance = { listMine: vi.fn() };
+  const dynamicForms = { listPublishedCatalog: vi.fn(), getRecordForMcp: vi.fn() };
+  const multidimensionalBases = { listForMcp: vi.fn() };
   const service = new McpToolService(
     context,
     audit as unknown as AuditService,
@@ -165,6 +169,8 @@ function assemble() {
     careOccasions as unknown as CareOccasionApplicationService,
     careAlumniCleanup as unknown as CareAlumniCleanupApplicationService,
     performance as unknown as PerformanceService,
+    dynamicForms as unknown as DynamicFormService,
+    multidimensionalBases as unknown as MultidimensionalBaseService,
   );
   return {
     context, audit, organization, approvals, recruitmentApplications,
@@ -175,7 +181,7 @@ function assemble() {
     payrollAdjustments, payrollAdjustmentTaxCorrections, annualPayrollReconciliations,
     opSummaries, opApprovalBridges, managementDashboard, analyticsExports, dataMigrations,
     talentLifecycle,
-    marketing, performance,
+    marketing, performance, dynamicForms, multidimensionalBases,
   };
 }
 
@@ -187,6 +193,24 @@ describe('McpToolService', () => {
       UnauthorizedException,
     );
     expect(store.audit.record).not.toHaveBeenCalled();
+  });
+
+  it('动态表单与多维 Base MCP 只复用安全应用服务投影', async () => {
+    const store = assemble();
+    store.dynamicForms.listPublishedCatalog.mockResolvedValue({ items: [{ id: '01J00000000000000000000001', code: 'candidate', name: '候选人', revision: 1, fields: [] }] });
+    store.dynamicForms.getRecordForMcp.mockResolvedValue({ id: '01J00000000000000000000002', formId: '01J00000000000000000000001', formRevision: 1, version: 1, values: { stage: 'screening' } });
+    store.multidimensionalBases.listForMcp.mockResolvedValue({ items: [{ id: '01J00000000000000000000003', code: 'recruitment', name: '招聘运营', version: 1, tables: [], views: [], automationCount: 0 }] });
+
+    const denied = await store.service.getDynamicFormCatalog(extra(['erp:mcp:server:connect']));
+    expect(denied.isError).toBe(true);
+    expect(store.dynamicForms.listPublishedCatalog).not.toHaveBeenCalled();
+
+    const catalog = await store.service.getDynamicFormCatalog(extra(['erp:mcp:server:connect', 'erp:forms:data:read']));
+    const record = await store.service.getDynamicFormRecord('01J00000000000000000000001', '01J00000000000000000000002', extra(['erp:mcp:server:connect', 'erp:forms:data:read']));
+    const bases = await store.service.getMultidimensionalBaseCatalog(extra(['erp:mcp:server:connect', 'erp:bases:read']));
+    expect(catalog.structuredContent).toMatchObject({ items: [{ code: 'candidate' }] });
+    expect(record.structuredContent).toMatchObject({ record: { values: { stage: 'screening' } } });
+    expect(bases.structuredContent).toMatchObject({ items: [{ code: 'recruitment', automationCount: 0 }] });
   });
 
   it('审批待办复用应用服务并且缺 Scope 时失败关闭', async () => {

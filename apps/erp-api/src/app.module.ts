@@ -38,6 +38,7 @@ import { MarketingCmsModule } from './modules/marketing-cms/marketing-cms.module
 import { TalentLifecycleModule } from './modules/talent-lifecycle/talent-lifecycle.module.js';
 import { WorkforceModule } from './modules/workforce/workforce.module.js';
 import { PerformanceModule } from './modules/performance/performance.module.js';
+import { DynamicFormModule } from './modules/dynamic-form/dynamic-form.module.js';
 
 const mongoLogger = new Logger('MongoDB');
 
@@ -89,6 +90,7 @@ const mongoLogger = new Logger('MongoDB');
     TalentLifecycleModule,
     WorkforceModule,
     PerformanceModule,
+    DynamicFormModule,
     DataMigrationModule,
     TraceMiddlewareModule,
     TenantContextModule,
