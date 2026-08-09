@@ -10,16 +10,17 @@ GaoQ-OS 首发版已使用 `NODE_ENV=production`、`GAOQ_RELEASE_PROFILE=initial
 | 入口 | 首发用途 | 检查结果 |
 | --- | --- | --- |
 | `https://aio.gaoq.com/` | ERP 工作台与 API | 首页、存活、就绪、JWKS 正常；受保护组织接口未认证返回 401 |
-| `https://recruit.gaoq.com/careers` | 招聘门户 | 页面与 ERP 职位投影接口正常，当前公开职位数为 0 |
+| `https://joinus.gaoq.com/careers` | 招聘门户 | 链路已在原 recruit 域名验证：页面与 ERP 职位投影接口正常，当前公开职位数为 0；joinus 公网验活待人工 P0 |
 | `https://www.gaoq.com/zh-CN` | CMS 访客官网 | 页面正常 |
 | `https://www.gaoq.com/system-status.html` | 系统介绍与交付状态 | 独立静态页面正常；明确代码交付与现场验收边界 |
 
 2026-08-07 根域 `gaoq.com` 已切换到目标服务器并取得独立证书；HTTP 和 HTTPS
 均永久跳转到 `https://www.gaoq.com/`，不复用仅包含 `www` 的证书。
 
-2026-08-08 起招聘门户新增域名 `joinus.gaoq.com`（与 `recruit.gaoq.com` 共用
-`/careers` 受限路由）；DNS、独立证书与 Nginx 上线仍待人工执行，配置模板见
-`nginx/gaoq-ai.conf.example` 与 `nginx/gaoq-ai-acme-bootstrap.conf.example`。
+2026-08-08 起招聘门户域名由 `recruit.gaoq.com` 切换为 `joinus.gaoq.com`
+（`/careers` 受限路由不变）；joinus 的 DNS、独立证书与 Nginx 上线及 recruit
+server block 的停用仍待人工执行，配置模板见 `nginx/gaoq-ai.conf.example` 与
+`nginx/gaoq-ai-acme-bootstrap.conf.example`。
 
 ## 首发能力边界
 

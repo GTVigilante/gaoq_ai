@@ -73,8 +73,8 @@
     <thead><tr><th>入口</th><th>回环监听</th><th>用途</th><th>验收</th></tr></thead>
     <tbody>
       <tr><td><code>aio.gaoq.com</code></td><td><code>3200 / 3201</code></td><td>ERP Web / GaoQ API</td><td class="ok">公网 200</td></tr>
-      <tr><td><code>recruit.gaoq.com</code></td><td><code>3200 / 3201</code></td><td>招聘门户</td><td class="ok"><code>/careers</code> 200</td></tr>
-      <tr><td><code>joinus.gaoq.com</code></td><td><code>3200</code></td><td>招聘门户新增域名（与 recruit 共用受限路由）</td><td>待 DNS/证书/Nginx 上线（人工 P0）</td></tr>
+      <tr><td><code>joinus.gaoq.com</code></td><td><code>3200</code></td><td>招聘门户（替代 recruit，受限路由不变）</td><td>待 DNS/证书/Nginx 上线（人工 P0）</td></tr>
+      <tr><td><code><s>recruit.gaoq.com</s></code></td><td>—</td><td>已决定停用，由 joinus 替代</td><td>待 Nginx 停用并验活（人工 P0）</td></tr>
       <tr><td><code>www.gaoq.com</code></td><td><code>3202</code></td><td>CMS 访客站</td><td class="ok"><code>/zh-CN</code> 200</td></tr>
       <tr><td><code>gaoq.com</code></td><td>301</td><td>跳转 www</td><td class="ok">已验证</td></tr>
       <tr><td>专业算薪 Web</td><td><code>3210</code></td><td>Payroll Web</td><td class="ok">本机 200 / 健康</td></tr>
@@ -135,7 +135,7 @@ curl -fsS http://127.0.0.1:3210/ &gt;/dev/null</code></pre>
     <li><strong>撤销并重新授权本机 GitHub CLI OAuth。</strong>下载中转时临时授权曾短暂进入远端进程参数，已立即终止且未写入仓库/配置，但必须按凭据暴露处理。</li>
     <li><strong>规划 GaoQ MongoDB Replica Set 升级。</strong>先做备份、恢复演练、窗口和回滚审批；升级后验证 ready、事务、Worker 和审计链。自动代理不得直接改库。</li>
     <li><strong>完成专业算薪公网入口（已改为路径挂载，取消独立域名）。</strong>2026-08-08 起算薪统一挂载在 <code>aio.gaoq.com</code>：<code>/payroll</code> 代理 <code>127.0.0.1:3210</code>（Web），<code>/api/payroll/</code> 与 <code>/.well-known/oauth-protected-resource/api/payroll/v1</code> 代理 <code>127.0.0.1:3211</code>（API）。参照 <code>deploy/standalone/nginx/gaoq-ai.conf.example</code> 更新 aio server block（不得编辑其他项目 server block），<code>nginx -t</code> 后 reload，并验证 <code>https://aio.gaoq.com/payroll</code> 公网 200。无需新证书和 DNS 变更。</li>
-    <li><strong>上线招聘门户新增域名 <code>joinus.gaoq.com</code>。</strong>完成 DNS/CDN 回源指向 <code>121.5.32.244</code>，用 ACME bootstrap 配置（已含该域名）签发独立证书，再按 <code>gaoq-ai.conf.example</code> 中 joinus server block（与 recruit 共用 <code>/careers</code> 受限路由）更新 Nginx，<code>nginx -t</code> 后 reload，并验证 <code>https://joinus.gaoq.com/careers</code> 公网 200。</li>
+    <li><strong>招聘门户域名切换为 <code>joinus.gaoq.com</code>（<code>recruit.gaoq.com</code> 停用）。</strong>完成 joinus 的 DNS/CDN 回源指向 <code>121.5.32.244</code>，用 ACME bootstrap 配置（已含该域名）签发独立证书，再按 <code>gaoq-ai.conf.example</code> 中 joinus server block（<code>/careers</code> 受限路由不变）更新 Nginx，<code>nginx -t</code> 后 reload，验证 <code>https://joinus.gaoq.com/careers</code> 公网 200；确认无误后停用 recruit server block（证书到期不续期即可，不得编辑其他项目 server block）。</li>
   </ol>
   <h3 class="todo">P1 · 上线联调</h3>
   <ol>

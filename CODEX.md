@@ -12,7 +12,8 @@
 - 2026-08-06 首发版已使用 `production/initial` 档位在独立 Compose Project
   上线 `aio.gaoq.com`、`recruit.gaoq.com` 与 `www.gaoq.com`；HTTPS、健康检查、
   未授权拒绝、空职位投影和 CMS 访客站已验证。本次没有执行 MongoDB 迁移、
-  演示数据写入、删除或重建。独立专业算薪、企业 SSO 与外部资金/税务/eSign/WORM
+  演示数据写入、删除或重建。2026-08-08 起招聘门户域名切换为 `joinus.gaoq.com`，
+  `recruit.gaoq.com` 停用。独立专业算薪、企业 SSO 与外部资金/税务/eSign/WORM
   仍需完成生产接入，已验证证据和回滚边界见 `deploy/standalone/LAUNCH_STATUS.md`。
 - 2026-08-08 已把 GaoQ OS 全量应用与独立专业算薪部署到单机生产：两个
   Compose Project 共 10 个目标容器健康，目标端口仅绑定回环，数据库与 Redis

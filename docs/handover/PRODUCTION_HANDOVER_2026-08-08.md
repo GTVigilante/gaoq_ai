@@ -42,8 +42,8 @@ GaoQ 使用服务器既有 MongoDB；专业算薪使用自己的独立 MongoDB �
 | 入口或组件 | 主机监听 | 容器/用途 | 状态 |
 | --- | --- | --- | --- |
 | `aio.gaoq.com` | Nginx → `127.0.0.1:3200/3201` | ERP Web 与 GaoQ API | 公网 200 |
-| `recruit.gaoq.com` | Nginx → `127.0.0.1:3200/3201` | 招聘门户受限路由 | `/careers` 公网 200 |
-| `joinus.gaoq.com` | Nginx → `127.0.0.1:3200` | 招聘门户新增域名，与 recruit 共用受限路由 | 待 DNS、证书与 Nginx 上线（人工 P0） |
+| `joinus.gaoq.com` | Nginx → `127.0.0.1:3200` | 招聘门户受限路由（替代 recruit） | 待 DNS、证书与 Nginx 上线（人工 P0） |
+| ~~`recruit.gaoq.com`~~ | — | 已决定停用，由 joinus 替代 | 待 Nginx 停用并验活（人工 P0） |
 | `www.gaoq.com` | Nginx → `127.0.0.1:3202` | CMS 访客站 | `/zh-CN` 公网 200 |
 | `gaoq.com` | Nginx 301 | 跳转 `https://www.gaoq.com` | 已验证 |
 | 专业算薪 Web | `127.0.0.1:3210` | `gaoq-payroll-payroll-web-1` | 本机 200、健康 |
@@ -149,11 +149,12 @@ curl -fsS http://127.0.0.1:3210/ >/dev/null
    （API）。参照 `deploy/standalone/nginx/gaoq-ai.conf.example` 更新 aio 的
    server block（不得编辑其他项目的 server block），`nginx -t` 后再 reload，
    并验证 `https://aio.gaoq.com/payroll` 公网 200。无需新证书和 DNS 变更。
-4. **上线招聘门户新增域名 `joinus.gaoq.com`。** 完成 DNS/CDN 回源指向
-   `121.5.32.244`，用 ACME bootstrap 配置（已含该域名）签发独立证书，再按
-   `deploy/standalone/nginx/gaoq-ai.conf.example` 中 joinus server block
-   （与 recruit 共用 `/careers` 受限路由）更新 Nginx，`nginx -t` 后 reload，
-   并验证 `https://joinus.gaoq.com/careers` 公网 200。
+4. **招聘门户域名切换为 `joinus.gaoq.com`（`recruit.gaoq.com` 停用）。** 完成
+   joinus 的 DNS/CDN 回源指向 `121.5.32.244`，用 ACME bootstrap 配置（已含该
+   域名）签发独立证书，再按 `deploy/standalone/nginx/gaoq-ai.conf.example` 中
+   joinus server block（`/careers` 受限路由不变）更新 Nginx，`nginx -t` 后
+   reload，验证 `https://joinus.gaoq.com/careers` 公网 200；确认无误后停用
+   recruit server block（证书到期不续期即可，不得编辑其他项目的 server block）。
 
 ### P1：上线联调
 
@@ -194,7 +195,7 @@ UAT、Go/No-Go 签署与 Hypercare。仓库门禁和当前单机验活不能替�
 - [x] 代码与历史工作区已做可校验备份。
 - [ ] GaoQ MongoDB Replica Set 与 `/ready=200`（人工 P0）。
 - [ ] `aio.gaoq.com/payroll` 路径挂载 Nginx 更新与公网验活（人工 P0；已取消独立域名方案）。
-- [ ] `joinus.gaoq.com` DNS、证书、Nginx 与公网验活（人工 P0，配置模板已就位）。
+- [ ] `joinus.gaoq.com` DNS、证书、Nginx 上线与公网验活，并停用 `recruit.gaoq.com`（人工 P0，配置模板已就位）。
 - [ ] GitHub CLI OAuth 撤销并重新授权（人工 P0）。
 - [ ] 外部系统、OAuth、业务 UAT 和正式投产证据（人工 P1/P2）。
 

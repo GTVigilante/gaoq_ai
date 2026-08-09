@@ -103,7 +103,6 @@ if (
 
 for (const marker of [
   'server_name aio.gaoq.com;',
-  'server_name recruit.gaoq.com;',
   'server_name joinus.gaoq.com;',
   'server_name gaoq.com;',
   'server_name www.gaoq.com;',
@@ -133,7 +132,7 @@ if (
 ) throw new Error('STANDALONE_NGINX_ROOT_HTTPS_REDIRECT_INCOMPLETE');
 
 for (const marker of [
-  'server_name aio.gaoq.com recruit.gaoq.com joinus.gaoq.com www.gaoq.com;',
+  'server_name aio.gaoq.com joinus.gaoq.com www.gaoq.com;',
   'location ^~ /.well-known/acme-challenge/',
   'root /var/www/acme-challenge;',
   'try_files $uri =404;',
@@ -174,7 +173,7 @@ for (const marker of [
 for (const marker of [
   'GAOQ_RELEASE_PROFILE=initial',
   'https://aio.gaoq.com/',
-  'https://recruit.gaoq.com/careers',
+  'https://joinus.gaoq.com/careers',
   'https://www.gaoq.com/zh-CN',
   'https://www.gaoq.com/system-status.html',
   '当前公开职位数为 0',

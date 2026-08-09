@@ -1,7 +1,7 @@
 # 仅用于首次签发证书；不得代理应用，也不得包含现有项目域名。
 server {
     listen 80;
-    server_name aio.gaoq.com recruit.gaoq.com joinus.gaoq.com www.gaoq.com;
+    server_name aio.gaoq.com joinus.gaoq.com www.gaoq.com;
 
     location ^~ /.well-known/acme-challenge/ {
         root /var/www/acme-challenge;
