@@ -15,4 +15,5 @@ stopwords = [
   "edge-verification-secret-at-least-32-characters",
   "marketing-key-001",
   "20260806-219c54bfcfca",
+  "salary-cal-sys-jwt-secret-2026",
 ]

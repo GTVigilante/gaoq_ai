@@ -64,7 +64,7 @@ jobs:
             --volume "$volume:/data" \
             redis:7.2-alpine@sha256:05a97a479bc73de66f087dc05b569010772880f778cc8671fa6b8aadee32e5c6 \
             redis-server --appendonly yes --save 60 1000
-          for attempt in {1..30}; do
+          for _ in {1..30}; do
             if docker exec "$container" redis-cli ping | grep -qx PONG; then exit 0; fi
             sleep 1
           done
