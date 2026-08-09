@@ -18,7 +18,8 @@
 - 2026-08-08 已把 GaoQ OS 全量应用与独立专业算薪部署到单机生产：两个
   Compose Project 共 10 个目标容器健康，目标端口仅绑定回环，数据库与 Redis
   均未发布主机端口；既有其他项目保持健康。本次没有执行数据库迁移、初始化、
-  种子或删除。GaoQ MongoDB 仍不是 Replica Set，因此严格 `/ready` 保持 503；
+  种子或删除。2026-08-09 GaoQ MongoDB 已切换为生产机独立单节点 Replica Set
+  容器 `gaoq-mongo`（`gaoq-rs0`），严格 `/ready` 恢复 200；
   专业算薪公网入口改为 `aio.gaoq.com/payroll` 路径挂载（不再使用独立域名），
   Nginx 更新仍待人工完成。生产拓扑、镜像、
   回滚、安全边界和人工待办见

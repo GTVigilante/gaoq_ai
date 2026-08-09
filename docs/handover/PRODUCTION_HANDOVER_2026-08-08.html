@@ -105,7 +105,7 @@
 
   <h2>4. 数据与安全边界</h2>
   <ul>
-    <li>GaoQ MongoDB 只执行过 <code>hello</code> 只读探测：可写，但不是 Replica Set。容器与 <code>/live</code> 健康；严格 <code>/ready</code> 因此为 503，禁止放宽代码绕过。</li>
+    <li>2026-08-09 起 GaoQ MongoDB 切换到生产机独立单节点 Replica Set 容器 <code>gaoq-mongo</code>（<code>gaoq-rs0</code>，认证 + keyFile + 最小权限账号，无主机端口）；<code>/ready</code> 已恢复 200。原共享实例（含其他项目库）未修改，<code>gaoqos</code> 保留为回滚副本；备份位于 <code>/opt/gaoq-backups/pre-rs-20260809/</code>。</li>
     <li>算薪 MongoDB/Redis 与 GaoQ Redis 均未发布主机端口，部署时未重启或重建数据库。</li>
     <li><code>MASTER_DATA_SYNC_ENABLED=false</code>；正式 OAuth 与联调完成前不得开启。</li>
     <li>服务客户端注册表仅补充原客户端的当前 ERP <code>allowedResources</code>；身份、Scope、角色、部门、凭据摘要与有效期未改。</li>
@@ -133,7 +133,7 @@ curl -fsS http://127.0.0.1:3210/ &gt;/dev/null</code></pre>
   <h3 class="todo">P0 · 立即处理</h3>
   <ol>
     <li><strong>撤销并重新授权本机 GitHub CLI OAuth。</strong>下载中转时临时授权曾短暂进入远端进程参数，已立即终止且未写入仓库/配置，但必须按凭据暴露处理。</li>
-    <li><strong>规划 GaoQ MongoDB Replica Set 升级。</strong>先做备份、恢复演练、窗口和回滚审批；升级后验证 ready、事务、Worker 和审计链。自动代理不得直接改库。</li>
+    <li><strong><s>规划 GaoQ MongoDB Replica Set 升级</s>（2026-08-09 已完成）。</strong>原共享实例无主机管理通道且承载其他项目数据库，改为生产机新建独立单节点 RS 容器并迁移 <code>gaoqos</code>；<code>/ready=200</code> 已验证，备份与回滚见第 4 节。</li>
     <li><strong><s>完成专业算薪公网入口</s>（2026-08-09 已完成）。</strong>算薪已按路径挂载上线：<code>https://aio.gaoq.com/payroll</code>、<code>/api/payroll/v1</code> 与 RFC 9728 元数据均公网 200；Nginx 与运行环境备份见第 2 节。</li>
     <li><strong><s>招聘门户域名切换为 <code>joinus.gaoq.com</code></s>（2026-08-09 已完成）。</strong>joinus 证书已通过 acme.sh（Let's Encrypt ECC，webroot HTTP-01）签发并进入 cron 自动续期；<code>https://joinus.gaoq.com/careers</code> 公网 200，非白名单路径 404；<code>recruit.gaoq.com</code> 全站 301 到 joinus（保留 ACME 块以维持证书续期）。</li>
   </ol>
@@ -162,7 +162,7 @@ curl -fsS http://127.0.0.1:3210/ &gt;/dev/null</code></pre>
     <li class="ok">✓ aio、recruit、www 与根域跳转已验证。</li>
     <li class="ok">✓ 目标端口仅绑定 127.0.0.1，数据库/Redis 无主机端口。</li>
     <li class="ok">✓ 其他 agents100-prod 容器保持健康；未做数据库迁移、初始化或删除。</li>
-    <li class="todo">□ MongoDB Replica Set、payroll 公网入口、GitHub OAuth 轮换与外部 UAT 待人工完成。</li>
+    <li class="todo">□ GitHub OAuth 轮换与外部 UAT 待人工完成；MongoDB Replica Set、payroll 公网入口、joinus 域名已于 2026-08-09 完成。</li>
   </ul>
 
   <footer>本 HTML 与同目录 Markdown 文件为同一交接基线；发生生产变更时必须同步更新两种格式。</footer>

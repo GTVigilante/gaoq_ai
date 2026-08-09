@@ -100,10 +100,16 @@ GitHub 已发布相同算薪提交的官方 GHCR 镜像。生产机访问 GHCR/G
 
 ## 4. 数据与安全边界
 
-- GaoQ MongoDB 仅通过服务器内部地址连接。本次只执行了 `hello` 只读探测，确认
-  节点可写但不是 Replica Set；没有查询业务集合或修改数据。
-- GaoQ `/api/health/live` 为 200，容器健康；严格 `/api/health/ready` 因 MongoDB
-  不是 Replica Set 返回 503。这是事务/可靠性门禁，不得通过放宽代码绕过。
+- 2026-08-09 起 GaoQ MongoDB 切换到生产机上的独立单节点 Replica Set 容器
+  `gaoq-mongo`（`gaoq-rs0`，独立 Compose Project `gaoq-mongo`，运行目录
+  `/opt/gaoq-mongo-runtime`，0700/0600/0400 权限，开启认证与 keyFile，应用使用
+  `gaoqos` 库 `readWrite` 最小权限账号，无主机发布端口，仅接入
+  `gaoq-ai-private` 网络）。`/api/health/ready` 已恢复 200，事务与审计链可用。
+- 迁移方式：`mongodump` 备份并存放到 `/opt/gaoq-backups/pre-rs-20260809/`
+  （含 127 集合 / 23 文档），随后导入新实例并逐库校验文档数一致。原共享实例
+  （`172.17.0.13`，含其他项目数据库）全程未修改，其 `gaoqos` 库保留为回滚副本；
+  回滚只需恢复 `api.env.pre-rs-20260809` 并重建 api/worker 容器。
+- 确认新实例稳定运行后，是否删除原共享实例中的 `gaoqos` 库由人工另行决定。
 - 专业算薪 MongoDB、Redis 和 GaoQ Redis 均无主机发布端口。
 - 专业算薪主数据同步保持 `MASTER_DATA_SYNC_ENABLED=false`，未获得正式 OAuth
   客户端与联调证据前不得开启。
@@ -154,9 +160,10 @@ curl -fsS http://127.0.0.1:3210/payroll >/dev/null
 1. **撤销并重新授权本机 GitHub CLI OAuth。** 下载中转时临时授权曾短暂进入远端
    进程参数，已立即终止且未写入仓库或配置，但应按凭据暴露处理。完成全部 Git
    操作后，在 GitHub 账户中撤销该 OAuth 授权并重新登录，旧凭据不得继续使用。
-2. **制定 GaoQ MongoDB Replica Set 升级方案。** 必须先做备份、恢复演练、维护
-   窗口与回滚审批；不得由自动代理直接修改现有数据库。升级后验证 `/ready=200`、
-   事务、Worker 与审计链。
+2. ~~制定 GaoQ MongoDB Replica Set 升级方案~~ **（2026-08-09 已完成）** 原共享
+   实例无主机管理通道且承载其他项目数据库，改为在生产机新建独立单节点 RS
+   容器 `gaoq-mongo`（`gaoq-rs0`）并迁移 `gaoqos` 数据；`/ready=200` 已验证，
+   备份、回滚与边界见第 4 节。
 3. ~~完成专业算薪的公网入口~~ **（2026-08-09 已完成）** 算薪已按路径挂载上线：
    `https://aio.gaoq.com/payroll`、`/api/payroll/v1` 与 RFC 9728 元数据均公网 200；
    Nginx 与运行环境备份见第 3 节。
@@ -202,7 +209,7 @@ UAT、Go/No-Go 签署与 Hypercare。仓库门禁和当前单机验活不能替�
 - [x] 其他 `agents100-prod` 容器保持健康。
 - [x] 未执行数据库迁移、初始化、种子或删除。
 - [x] 代码与历史工作区已做可校验备份。
-- [ ] GaoQ MongoDB Replica Set 与 `/ready=200`（人工 P0）。
+- [x] GaoQ MongoDB 单节点 Replica Set（gaoq-mongo / gaoq-rs0）上线，`/ready=200`（2026-08-09 完成）。
 - [x] `aio.gaoq.com/payroll` 路径挂载 Nginx 更新与公网验活（2026-08-09 完成）。
 - [x] `joinus.gaoq.com` 证书签发、Nginx 上线与公网验活；`recruit.gaoq.com` 保留 301 跳转（2026-08-09 完成）。
 - [ ] GitHub CLI OAuth 撤销并重新授权（人工 P0）。
