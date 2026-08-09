@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@gaoq/payroll-core": "workspace:*",
-    "bullmq": "^5.80.9",
+    "bullmq": "^6.0.8",
     "ioredis": "^5.11.1"
   },
   "devDependencies": {

@@ -221,7 +221,7 @@
     "@nestjs/mongoose": "^11.0.4",
     "@nestjs/platform-express": "^11.1.28",
     "@simplewebauthn/server": "13.3.2",
-    "bullmq": "^5.80.9",
+    "bullmq": "^6.0.8",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "helmet": "^8.3.0",
