@@ -18,9 +18,8 @@ GaoQ-OS 首发版已使用 `NODE_ENV=production`、`GAOQ_RELEASE_PROFILE=initial
 均永久跳转到 `https://www.gaoq.com/`，不复用仅包含 `www` 的证书。
 
 2026-08-08 起招聘门户域名由 `recruit.gaoq.com` 切换为 `joinus.gaoq.com`
-（`/careers` 受限路由不变）；joinus 的 DNS、独立证书与 Nginx 上线及 recruit
-server block 的停用仍待人工执行，配置模板见 `nginx/gaoq-ai.conf.example` 与
-`nginx/gaoq-ai-acme-bootstrap.conf.example`。
+（`/careers` 受限路由不变）；2026-08-09 joinus 已签发独立证书并上线，
+`/careers` 公网 200，recruit 全站 301 跳转 joinus。
 
 ## 首发能力边界
 

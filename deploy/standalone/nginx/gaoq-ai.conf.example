@@ -46,6 +46,24 @@ server {
     location / { return 404; }
 }
 
+# 旧招聘域名 recruit.gaoq.com 已停用，仅保留到 joinus 的 301 跳转（2026-08-09 生产已实施）。
+server {
+    listen 80;
+    server_name recruit.gaoq.com;
+    location ^~ /.well-known/acme-challenge/ { root /var/www/acme-challenge; }
+    location / { return 301 https://$host$request_uri; }
+}
+
+server {
+    listen 443 ssl;
+    server_name recruit.gaoq.com;
+    ssl_certificate /etc/nginx/ssl/recruit.gaoq.com.pem;
+    ssl_certificate_key /etc/nginx/ssl/recruit.gaoq.com.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    location / { return 301 https://joinus.gaoq.com$request_uri; }
+}
+
 server {
     listen 80;
     server_name gaoq.com;
