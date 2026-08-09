@@ -398,8 +398,8 @@ importers:
   tools/mcp-inspector-client:
     devDependencies:
       '@modelcontextprotocol/inspector':
-        specifier: 2.0.0
-        version: 2.0.0(@modelcontextprotocol/sdk@1.29.0(patch_hash=6d5cb58a99d5394a0eb5fcb4039bbb24cd0639a3057f60072be200a27377078d)(zod@4.4.3))(@types/node@26.1.2)(@types/react@19.2.18)(esbuild@0.28.1)(express@5.2.1)(react-dom@19.2.8(react@19.2.8))(terser@5.49.0)(tsx@4.23.11)
+        specifier: 2.1.0
+        version: 2.1.0(@modelcontextprotocol/sdk@1.29.0(patch_hash=6d5cb58a99d5394a0eb5fcb4039bbb24cd0639a3057f60072be200a27377078d)(zod@4.4.3))(@types/node@26.1.2)(@types/react@19.2.18)(esbuild@0.28.1)(express@5.2.1)(react-dom@19.2.8(react@19.2.8))(terser@5.49.0)(tsx@4.23.11)
       vite:
         specifier: 8.1.5
         version: 8.1.5(@types/node@26.1.2)(esbuild@0.28.1)(terser@5.49.0)(tsx@4.23.11)(yaml@2.9.0)
@@ -1125,8 +1125,8 @@ packages:
       react-dom:
         optional: true
 
-  '@modelcontextprotocol/inspector@2.0.0':
-    resolution: {integrity: sha512-uEoeEG7/+ZbrvccPF3EsgbfjcyJ3bWVJXT4pcZtpmDUhA0zdK4T4Tuj2oUphi2Huwl66LqVdo3Mx2PkS2SUHXA==}
+  '@modelcontextprotocol/inspector@2.1.0':
+    resolution: {integrity: sha512-Fp3kvgW5W6tcttErlYKy9iud6nE1oKUUB+qpFgh+ImfvYDJDgtGtx7IHJ+E6K1rXAerr9HQvYQenWrGP8lAqPQ==}
     engines: {node: '>=22.19.0'}
     hasBin: true
 
@@ -2201,8 +2201,8 @@ packages:
     resolution: {integrity: sha512-8C71BQkGjiMmXtop7pHVJu1l2NNShFdkCyD6a2ezzs5vU/L3LRtb69EtcteFwz0mYMPzIgOw0n6OV4VBUWZd7A==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
 
-  '@vitejs/plugin-react@6.0.4':
-    resolution: {integrity: sha512-XcCQz0TBpBgljhj0gMuuDj49i6Ytqh5q1osT/Gp5uAVJUCTWxyskk/l1jwYYiu2xcNHHipdMz40EGfM1VdamVg==}
+  '@vitejs/plugin-react@6.0.5':
+    resolution: {integrity: sha512-BOVzne/NL162sMdResB25mUv+vWMF5NoAjNf09TeGlE7ZpszZWSD3winycicLJw72yeVsoCn/2kOhEuCvEShMA==}
     engines: {node: ^20.19.0 || >=22.12.0}
     peerDependencies:
       '@rolldown/plugin-babel': ^0.1.7 || ^0.2.0
@@ -2678,6 +2678,7 @@ packages:
   cron-parser@4.9.0:
     resolution: {integrity: sha512-p0SaNjrHOnQeR8/VnfGbmg9te2kfyYSQ7Sc/j/6DtPL3JQvKxmjO9TSjNFpujqV3vEYYBvNNvXSxzyksBWAx1Q==}
     engines: {node: '>=12.0.0'}
+    deprecated: v4 is no longer maintained, upgrade to v5
 
   cross-spawn@7.0.6:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
@@ -2908,6 +2909,12 @@ packages:
 
   express-rate-limit@8.6.0:
     resolution: {integrity: sha512-XKJXDsASUOo0LLtFwW5hCcQGH0N4WQc/Rn8/Pvoia+TJFOkkFPvrtW9lZOeeNcxQJspvOIERMwiRLsVFlhHEkA==}
+    engines: {node: '>= 16'}
+    peerDependencies:
+      express: '>= 4.11'
+
+  express-rate-limit@8.6.2:
+    resolution: {integrity: sha512-YH4ru+eOJxQABscKFfRCy9R7x9QFGdezclVMwwgFFndzS2Xnm0uo6B0ABZsLhcpeptGv2qvuJVWlQr9gQZoC3A==}
     engines: {node: '>= 16'}
     peerDependencies:
       express: '>= 4.11'
@@ -3737,8 +3744,8 @@ packages:
     resolution: {integrity: sha512-vkcDPrRZo1QZLbn5RLGPpg/WmIQ65qoWWhcGKf/b5eplkkarX0m9z8ppCat4mlOqUsWpyNuYgO3VRyrYHSzX5g==}
     engines: {node: '>= 0.8.0'}
 
-  process-warning@5.0.0:
-    resolution: {integrity: sha512-a39t9ApHNx2L4+HBnQKqxxHNs1r7KF+Intd8Q/g1bUh6q0WIp9voPXJ/x0j+ZL45KF1pJd9+q2jLIRMfvEshkA==}
+  process-warning@5.1.0:
+    resolution: {integrity: sha512-jQSaVHsPgtyw60e1rQ/A+/ArPEj/S8pS/vFnyGa/gYFXrKk/6RuDkoqVDQ5NI5MmS01698ltlAk0NoDBNLujRw==}
 
   prom-client@15.1.3:
     resolution: {integrity: sha512-6ZiOBfCywsD4k1BN9IX0uZhF+tJkV8q8llP64G5Hajs4JOeVLPCwpPVcpXy3BwYiUGgyJzsJJQeOIv7+hDSq8g==}
@@ -4244,8 +4251,8 @@ packages:
   undici-types@8.3.0:
     resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
 
-  undici@8.9.0:
-    resolution: {integrity: sha512-aWZpUj7XoGonMClx4gdDRfgBjqeA+F473aDmROQQbM9n6PRfK/u1q/a0X4wMTgcHfT8H6fpbt98PFuDUwFg2YA==}
+  undici@8.10.0:
+    resolution: {integrity: sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==}
     engines: {node: '>=22.19.0'}
 
   universalify@2.0.1:
@@ -4465,8 +4472,8 @@ packages:
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
 
-  ws@8.21.1:
-    resolution: {integrity: sha512-+0NTnW77fFN/DjQi6k/Sq/Yvk4Sgajw7urW8V+asjXnRgDs9gyGkdb7EzgfhA4goXsRIZKE28fzIXBHEzhuiWw==}
+  ws@8.21.3:
+    resolution: {integrity: sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw==}
     engines: {node: '>=10.0.0'}
     peerDependencies:
       bufferutil: ^4.0.1
@@ -5113,7 +5120,7 @@ snapshots:
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)
 
-  '@modelcontextprotocol/inspector@2.0.0(@modelcontextprotocol/sdk@1.29.0(patch_hash=6d5cb58a99d5394a0eb5fcb4039bbb24cd0639a3057f60072be200a27377078d)(zod@4.4.3))(@types/node@26.1.2)(@types/react@19.2.18)(esbuild@0.28.1)(express@5.2.1)(react-dom@19.2.8(react@19.2.8))(terser@5.49.0)(tsx@4.23.11)':
+  '@modelcontextprotocol/inspector@2.1.0(@modelcontextprotocol/sdk@1.29.0(patch_hash=6d5cb58a99d5394a0eb5fcb4039bbb24cd0639a3057f60072be200a27377078d)(zod@4.4.3))(@types/node@26.1.2)(@types/react@19.2.18)(esbuild@0.28.1)(express@5.2.1)(react-dom@19.2.8(react@19.2.8))(terser@5.49.0)(tsx@4.23.11)':
     dependencies:
       '@hono/node-server': 2.0.10(hono@4.12.34)
       '@modelcontextprotocol/client': 2.0.0-beta.5
@@ -5122,7 +5129,7 @@ snapshots:
       '@modelcontextprotocol/server': 2.0.0-beta.5
       '@modelcontextprotocol/server-legacy': 2.0.0-beta.5(express@5.2.1)
       '@napi-rs/keyring': 1.3.0
-      '@vitejs/plugin-react': 6.0.4(vite@8.1.5(@types/node@26.1.2)(esbuild@0.28.1)(terser@5.49.0)(tsx@4.23.11)(yaml@2.9.0))
+      '@vitejs/plugin-react': 6.0.5(vite@8.1.5(@types/node@26.1.2)(esbuild@0.28.1)(terser@5.49.0)(tsx@4.23.11)(yaml@2.9.0))
       ajv: 8.20.0
       atomically: 2.1.1
       chokidar: 4.0.3
@@ -5134,7 +5141,7 @@ snapshots:
       open: 10.2.0
       pino: 9.14.0
       react: 19.2.8
-      undici: 8.9.0
+      undici: 8.10.0
       vite: 8.1.5(@types/node@26.1.2)(esbuild@0.28.1)(terser@5.49.0)(tsx@4.23.11)(yaml@2.9.0)
       yaml: 2.9.0
       zod: 4.4.3
@@ -5188,7 +5195,7 @@ snapshots:
       '@modelcontextprotocol/core': 2.0.0-beta.5
       content-type: 1.0.5
       cors: 2.8.6
-      express-rate-limit: 8.6.0(express@5.2.1)
+      express-rate-limit: 8.6.2(express@5.2.1)
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
       zod: 4.4.3
@@ -6236,7 +6243,7 @@ snapshots:
       '@typescript-eslint/types': 8.65.0
       eslint-visitor-keys: 5.0.1
 
-  '@vitejs/plugin-react@6.0.4(vite@8.1.5(@types/node@26.1.2)(esbuild@0.28.1)(terser@5.49.0)(tsx@4.23.11)(yaml@2.9.0))':
+  '@vitejs/plugin-react@6.0.5(vite@8.1.5(@types/node@26.1.2)(esbuild@0.28.1)(terser@5.49.0)(tsx@4.23.11)(yaml@2.9.0))':
     dependencies:
       '@rolldown/pluginutils': 1.0.1
       vite: 8.1.5(@types/node@26.1.2)(esbuild@0.28.1)(terser@5.49.0)(tsx@4.23.11)(yaml@2.9.0)
@@ -6992,6 +6999,14 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  express-rate-limit@8.6.2(express@5.2.1):
+    dependencies:
+      debug: 4.4.3
+      express: 5.2.1
+      ip-address: 10.3.1
+    transitivePeerDependencies:
+      - supports-color
+
   express@5.2.1:
     dependencies:
       accepts: 2.0.0
@@ -7266,7 +7281,7 @@ snapshots:
       type-fest: 5.8.0
       widest-line: 6.0.0
       wrap-ansi: 9.0.2
-      ws: 8.21.1
+      ws: 8.21.3
       yoga-layout: 3.2.1
     optionalDependencies:
       '@types/react': 19.2.18
@@ -7776,7 +7791,7 @@ snapshots:
       on-exit-leak-free: 2.1.2
       pino-abstract-transport: 2.0.0
       pino-std-serializers: 7.1.0
-      process-warning: 5.0.0
+      process-warning: 5.1.0
       quick-format-unescaped: 4.0.4
       real-require: 0.2.0
       safe-stable-stringify: 2.5.0
@@ -7795,7 +7810,7 @@ snapshots:
 
   prelude-ls@1.2.1: {}
 
-  process-warning@5.0.0: {}
+  process-warning@5.1.0: {}
 
   prom-client@15.1.3:
     dependencies:
@@ -8334,7 +8349,7 @@ snapshots:
 
   undici-types@8.3.0: {}
 
-  undici@8.9.0: {}
+  undici@8.10.0: {}
 
   universalify@2.0.1: {}
 
@@ -8506,7 +8521,7 @@ snapshots:
 
   wrappy@1.0.2: {}
 
-  ws@8.21.1: {}
+  ws@8.21.3: {}
 
   wsl-utils@0.1.0:
     dependencies:
