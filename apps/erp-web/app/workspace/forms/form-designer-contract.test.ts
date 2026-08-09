@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createDesignerItem, createUlid, itemId, moveItem, PALETTE, type DesignerItem } from './form-designer-contract';
+import { createDesignerItem, createUlid, duplicateDesignerItem, itemId, moveItem, PALETTE, type DesignerItem } from './form-designer-contract';
 
 describe('form-designer contract', () => {
   it('生成严格 ULID，并为附件与关联字段装配安全默认值', () => {
@@ -21,5 +21,16 @@ describe('form-designer contract', () => {
     const moved = moveItem(items, 0, 2);
     expect(moved.map(itemId)).toEqual(['01K00000000000000000000002', '01K00000000000000000000003', '01K00000000000000000000001']);
     expect(items.map(itemId)).toEqual(['01K00000000000000000000001', '01K00000000000000000000002', '01K00000000000000000000003']);
+  });
+
+  it('复制字段时生成独立标识和不重复字段键', () => {
+    const original = createDesignerItem(PALETTE[0]!, []);
+    const duplicated = duplicateDesignerItem(original, [original]);
+    expect(itemId(duplicated)).not.toBe(itemId(original));
+    expect(duplicated.kind).toBe('field');
+    if (original.kind === 'field' && duplicated.kind === 'field') {
+      expect(duplicated.field.key).not.toBe(original.field.key);
+      expect(duplicated.field.label).toContain('副本');
+    }
   });
 });

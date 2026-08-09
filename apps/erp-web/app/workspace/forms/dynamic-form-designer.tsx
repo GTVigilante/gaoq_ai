@@ -3,21 +3,22 @@
 import {
   ApartmentOutlined, ArrowDownOutlined, ArrowUpOutlined, CalendarOutlined,
   CheckSquareOutlined, CloudUploadOutlined, DatabaseOutlined, DeleteOutlined,
-  DollarOutlined, DragOutlined, EditOutlined, FileAddOutlined, FileTextOutlined,
+  CopyOutlined, DesktopOutlined, DollarOutlined, DragOutlined, FileAddOutlined, FileTextOutlined,
   FontSizeOutlined, LinkOutlined, MailOutlined, NumberOutlined, PaperClipOutlined,
-  PhoneOutlined, PlusOutlined, SaveOutlined, SafetyCertificateOutlined,
-  SelectOutlined, TeamOutlined, BranchesOutlined, NotificationOutlined, UserOutlined,
+  PhoneOutlined, PlusOutlined, RedoOutlined, SaveOutlined, SafetyCertificateOutlined, SearchOutlined,
+  SelectOutlined, TeamOutlined, NotificationOutlined, UserOutlined,
+  MobileOutlined, UndoOutlined,
 } from '@ant-design/icons';
 import {
   Alert, App as AntApp, Badge, Button, Checkbox, Drawer, Empty, Flex, Input,
   InputNumber, Radio, Select, Segmented, Space, Spin, Switch, Tag, Tooltip, Typography,
 } from 'antd';
-import type { DragEvent, ReactNode } from 'react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { Dispatch, DragEvent, ReactNode, SetStateAction } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { createIdempotencyKey, ErpApiError, erpFetch, strongEtag } from '../../lib/api-client';
 import {
-  createDesignerItem, itemId, moveItem, PALETTE, type DesignerField,
+  createDesignerItem, duplicateDesignerItem, itemId, moveItem, PALETTE, type DesignerField,
   type DesignerItem, type DesignerLayout, type FieldType, type PaletteEntry, type WorkflowNode,
 } from './form-designer-contract';
 
@@ -33,6 +34,7 @@ interface StoredForm {
 interface FormListResult { readonly items: readonly StoredForm[] }
 interface FormMutationResult { readonly form: StoredForm }
 interface ApprovalMutationResult { readonly template: { readonly id: string; readonly code: string; readonly revision: number; readonly version: number } }
+interface DesignerHistory { readonly past: readonly (readonly DesignerItem[])[]; readonly present: readonly DesignerItem[]; readonly future: readonly (readonly DesignerItem[])[] }
 
 const GROUPS = ['基础字段', '选择与组织', '业务与关联', '布局组件'] as const;
 const ICONS: Readonly<Record<FieldType | DesignerLayout['type'], ReactNode>> = {
@@ -53,7 +55,8 @@ export function DynamicFormDesigner() {
   const [name, setName] = useState('员工异动申请');
   const [code, setCode] = useState('employee_change');
   const [description, setDescription] = useState('收集员工异动信息，并关联员工与目标部门。');
-  const [items, setItems] = useState<readonly DesignerItem[]>(() => seedItems());
+  const [history, setHistory] = useState<DesignerHistory>(() => ({ past: [], present: seedItems(), future: [] }));
+  const items = history.present;
   const [riskLevel, setRiskLevel] = useState<'R1' | 'R2'>('R1');
   const [workflowNodes, setWorkflowNodes] = useState<readonly WorkflowNode[]>(() => seedWorkflow());
   const [selectedId, setSelectedId] = useState<string | null>(() => itemId(seedItems()[1]!));
@@ -81,19 +84,28 @@ export function DynamicFormDesigner() {
   const add = useCallback((entry: PaletteEntry, at = items.length) => {
     if (!editable) return;
     const item = createDesignerItem(entry, items);
-    setItems((current) => Object.freeze([...current.slice(0, at), item, ...current.slice(at)]));
+    commitItems(setHistory, (current) => Object.freeze([...current.slice(0, at), item, ...current.slice(at)]));
     setSelectedId(itemId(item)); setView('design');
   }, [editable, items]);
 
   const remove = useCallback((id: string) => {
     if (!editable) return;
-    setItems((current) => Object.freeze(current.filter((item) => itemId(item) !== id)));
-    setSelectedId((current) => current === id ? null : current);
-  }, [editable]);
+    const target = items.find((item) => itemId(item) === id);
+    if (target === undefined) return;
+    const references = target.kind === 'field'
+      ? items.filter((item) => item.kind === 'field' && item.field.relatedProperty?.relationFieldKey === target.field.key).length + workflowNodes.filter((node) => node.condition?.field === target.field.key || (node.resolver.type === 'department_manager' && node.resolver.departmentField === target.field.key)).length
+      : 0;
+    modal.confirm({
+      title: target.kind === 'field' ? `删除字段“${target.field.label}”？` : `删除组件“${target.layout.title}”？`,
+      content: references === 0 ? '删除会从当前草稿移除该组件。已发布修订和历史记录不会被改写。' : `检测到 ${references} 处关联属性或流程引用。请先确认依赖；保存时仍会执行完整定义校验。`,
+      okText: '删除组件', okButtonProps: { danger: true },
+      onOk: () => { commitItems(setHistory, (current) => Object.freeze(current.filter((item) => itemId(item) !== id))); setSelectedId((current) => current === id ? null : current); },
+    });
+  }, [editable, items, modal, workflowNodes]);
 
   const reorder = useCallback((from: number, to: number) => {
     if (!editable) return;
-    setItems((current) => moveItem(current, from, to));
+    commitItems(setHistory, (current) => moveItem(current, from, to));
   }, [editable]);
 
   const drop = useCallback((event: DragEvent, at: number) => {
@@ -154,12 +166,22 @@ export function DynamicFormDesigner() {
 
   const updateField = (patch: Partial<DesignerField>) => {
     if (selected?.kind !== 'field' || !editable) return;
-    setItems((current) => Object.freeze(current.map((item) => item.kind === 'field' && item.field.id === selected.field.id ? { kind: 'field' as const, field: { ...item.field, ...patch } } : item)));
+    commitItems(setHistory, (current) => Object.freeze(current.map((item) => item.kind === 'field' && item.field.id === selected.field.id ? { kind: 'field' as const, field: { ...item.field, ...patch } } : item)));
   };
   const updateLayout = (patch: Partial<DesignerLayout>) => {
     if (selected?.kind !== 'layout' || !editable) return;
-    setItems((current) => Object.freeze(current.map((item) => item.kind === 'layout' && item.layout.id === selected.layout.id ? { kind: 'layout' as const, layout: { ...item.layout, ...patch } } : item)));
+    commitItems(setHistory, (current) => Object.freeze(current.map((item) => item.kind === 'layout' && item.layout.id === selected.layout.id ? { kind: 'layout' as const, layout: { ...item.layout, ...patch } } : item)));
   };
+
+  const duplicateSelected = () => {
+    if (selected === null || !editable) return;
+    const index = items.findIndex((item) => itemId(item) === itemId(selected));
+    const copy = duplicateDesignerItem(selected, items);
+    commitItems(setHistory, (current) => Object.freeze([...current.slice(0, index + 1), copy, ...current.slice(index + 1)]));
+    setSelectedId(itemId(copy));
+  };
+  const undo = () => setHistory((current) => current.past.length === 0 ? current : { past: current.past.slice(0, -1), present: current.past.at(-1)!, future: [current.present, ...current.future] });
+  const redo = () => setHistory((current) => current.future.length === 0 ? current : { past: [...current.past, current.present], present: current.future[0]!, future: current.future.slice(1) });
 
   return <main className="form-studio" aria-labelledby="forms-title">
     <header className="form-studio-header">
@@ -170,6 +192,7 @@ export function DynamicFormDesigner() {
       <Flex gap={10} wrap align="center">
         {stored === null ? <Tag>未保存草稿</Tag> : <Tag color={stored.status === 'published' ? 'green' : 'blue'}>{stored.status === 'published' ? '已发布' : `草稿 v${stored.version}`}</Tag>}
         <Segmented<View> value={view} onChange={setView} options={[{ value: 'design', label: '表单' }, { value: 'process', label: '流程' }, { value: 'preview', label: '填写预览' }, { value: 'relations', label: '数据关系' }]} />
+        <Space.Compact className="form-history-actions"><Tooltip title="撤销"><Button aria-label="撤销" icon={<UndoOutlined />} disabled={!editable || history.past.length === 0} onClick={undo} /></Tooltip><Tooltip title="重做"><Button aria-label="重做" icon={<RedoOutlined />} disabled={!editable || history.future.length === 0} onClick={redo} /></Tooltip><Tooltip title="复制选中组件"><Button aria-label="复制选中组件" icon={<CopyOutlined />} disabled={!editable || selected === null} onClick={duplicateSelected} /></Tooltip></Space.Compact>
         <Button icon={<SaveOutlined />} loading={saveState === 'saving'} disabled={!editable} onClick={() => { void save(); }}>保存草稿</Button>
         <Button type="primary" disabled={stored === null || stored.status !== 'draft'} onClick={() => setPublishOpen(true)}>发布</Button>
       </Flex>
@@ -200,16 +223,19 @@ export function DynamicFormDesigner() {
 }
 
 function Palette({ editable, onAdd }: { readonly editable: boolean; readonly onAdd: (entry: PaletteEntry) => void }) {
+  const [query, setQuery] = useState('');
+  const keyword = query.trim().toLocaleLowerCase('zh-CN');
   return <aside className="form-palette" aria-label="字段组件库">
-    <div className="form-panel-heading"><strong>字段组件</strong><span>拖到中间画布</span></div>
-    <div className="form-palette-scroll">{GROUPS.map((group) => <section key={group}><h2>{group}</h2><div className="form-palette-list">{PALETTE.filter((entry) => entry.group === group).map((entry) => <button key={entry.type} type="button" draggable={editable} disabled={!editable} onDragStart={(event) => { event.dataTransfer.effectAllowed = 'copy'; event.dataTransfer.setData('application/x-gaoq-field-type', entry.type); }} onClick={() => onAdd(entry)}><span className="form-palette-icon">{ICONS[entry.type]}</span><span><strong>{entry.label}</strong><small>{entry.hint}</small></span><PlusOutlined /></button>)}</div></section>)}</div>
+    <div className="form-panel-heading"><strong>字段组件</strong><span>拖到中间画布</span></div><div className="form-palette-search"><Input allowClear prefix={<SearchOutlined />} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索字段" /></div>
+    <div className="form-palette-scroll">{GROUPS.map((group) => { const entries = PALETTE.filter((entry) => entry.group === group && (keyword === '' || `${entry.label}${entry.hint}`.toLocaleLowerCase('zh-CN').includes(keyword))); return entries.length === 0 ? null : <section key={group}><h2>{group}</h2><div className="form-palette-list">{entries.map((entry) => <button key={entry.type} type="button" draggable={editable} disabled={!editable} onDragStart={(event) => { event.dataTransfer.effectAllowed = 'copy'; event.dataTransfer.setData('application/x-gaoq-field-type', entry.type); }} onClick={() => onAdd(entry)}><span className="form-palette-icon">{ICONS[entry.type]}</span><span><strong>{entry.label}</strong><small>{entry.hint}</small></span><PlusOutlined /></button>)}</div></section>; })}</div>
   </aside>;
 }
 
 function DesignerCanvas(props: { readonly items: readonly DesignerItem[]; readonly selectedId: string | null; readonly draggingId: string | null; readonly editable: boolean; readonly onSelect: (id: string) => void; readonly onRemove: (id: string) => void; readonly onReorder: (from: number, to: number) => void; readonly onDrop: (event: DragEvent, at: number) => void; readonly onDragStart: (id: string) => void; readonly onDragEnd: () => void }) {
+  const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop');
   return <section className="form-canvas" aria-label="表单画布">
-    <div className="form-canvas-bar"><span>桌面端 · 720 px</span><Badge status="processing" text={`${props.items.length} 个组件`} /></div>
-    <div className="form-canvas-sheet" onDragOver={(event) => event.preventDefault()} onDrop={(event) => props.onDrop(event, props.items.length)}>
+    <div className="form-canvas-bar"><Segmented<'desktop' | 'mobile'> value={device} options={[{ value: 'desktop', label: <span><DesktopOutlined /> 桌面</span> }, { value: 'mobile', label: <span><MobileOutlined /> 手机</span> }]} onChange={setDevice} /><Badge status="processing" text={`${props.items.length} 个组件`} /></div>
+    <div className={`form-canvas-sheet is-${device}`} onDragOver={(event) => event.preventDefault()} onDrop={(event) => props.onDrop(event, props.items.length)}>
       {props.items.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="把左侧字段拖到这里，或点击字段直接添加" /> : null}
       {props.items.map((item, index) => <div key={itemId(item)} className="form-canvas-slot">
         <DropLine onDrop={(event) => props.onDrop(event, index)} />
@@ -334,7 +360,8 @@ function WorkflowDesigner(props: { readonly nodes: readonly WorkflowNode[]; read
 }
 
 function FormPreview({ name, description, items }: { readonly name: string; readonly description: string; readonly items: readonly DesignerItem[] }) {
-  return <section className="form-preview-stage" aria-label="表单填写预览"><div className="form-preview-sheet"><div className="form-preview-heading"><Typography.Title level={2}>{name || '未命名表单'}</Typography.Title><Typography.Paragraph>{description || '暂无用途说明'}</Typography.Paragraph></div><div className="form-preview-fields">{items.map((item) => <div key={itemId(item)} className={item.kind === 'field' && item.field.width === 'half' ? 'is-half' : 'is-full'}>{item.kind === 'field' ? <FieldPreview field={item.field} /> : <LayoutPreview layout={item.layout} />}</div>)}</div><Flex justify="flex-end" gap={10} className="form-preview-actions"><Button>暂存</Button><Button type="primary">提交记录</Button></Flex></div></section>;
+  const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop');
+  return <section className="form-preview-stage" aria-label="表单填写预览"><div className="form-preview-device"><Segmented<'desktop' | 'mobile'> value={device} options={[{ value: 'desktop', label: <span><DesktopOutlined /> 桌面预览</span> }, { value: 'mobile', label: <span><MobileOutlined /> 手机预览</span> }]} onChange={setDevice} /></div><div className={`form-preview-sheet is-${device}`}><div className="form-preview-heading"><Typography.Title level={2}>{name || '未命名表单'}</Typography.Title><Typography.Paragraph>{description || '暂无用途说明'}</Typography.Paragraph></div><div className="form-preview-fields">{items.map((item) => <div key={itemId(item)} className={item.kind === 'field' && item.field.width === 'half' ? 'is-half' : 'is-full'}>{item.kind === 'field' ? <FieldPreview field={item.field} /> : <LayoutPreview layout={item.layout} />}</div>)}</div><Flex justify="flex-end" gap={10} className="form-preview-actions"><Button>暂存</Button><Button type="primary">提交记录</Button></Flex></div></section>;
 }
 
 function RelationMap({ currentName, items, forms }: { readonly currentName: string; readonly items: readonly DesignerItem[]; readonly forms: readonly StoredForm[] }) {
@@ -408,7 +435,21 @@ function defaultResolver(type: WorkflowNode['resolver']['type'], fields: readonl
 function csv(value: string): readonly string[] { return Object.freeze([...new Set(value.split(',').map((item) => item.trim()).filter(Boolean))]); }
 function createWorkflowId(): string { return crypto.randomUUID().replaceAll('-', '').slice(0, 24); }
 
-function safeOptionValue(label: string, index: number): string { const value = label.trim().replace(/[<>\u0000-\u001F]/gu, '_').slice(0, 100); return value === '' ? `option_${index + 1}` : value; }
+function commitItems(setHistory: Dispatch<SetStateAction<DesignerHistory>>, update: (items: readonly DesignerItem[]) => readonly DesignerItem[]): void {
+  setHistory((current) => {
+    const next = update(current.present);
+    if (next === current.present) return current;
+    return { past: Object.freeze([...current.past.slice(-49), current.present]), present: next, future: Object.freeze([]) };
+  });
+}
+
+function safeOptionValue(label: string, index: number): string {
+  const value = Array.from(label.trim(), (character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return character === '<' || character === '>' || codePoint < 32 ? '_' : character;
+  }).join('').slice(0, 100);
+  return value === '' ? `option_${index + 1}` : value;
+}
 
 function seedItems(): readonly DesignerItem[] {
   return Object.freeze([

@@ -100,6 +100,20 @@ export function moveItem(items: readonly DesignerItem[], from: number, to: numbe
   const next = [...items]; const [item] = next.splice(from, 1); if (item === undefined) return items; next.splice(to, 0, item); return Object.freeze(next);
 }
 
+/** 复制组件时生成新标识；字段键不会复用，避免历史数据与 API 映射发生碰撞。 */
+export function duplicateDesignerItem(item: DesignerItem, existing: readonly DesignerItem[]): DesignerItem {
+  if (item.kind === 'layout') return { kind: 'layout', layout: { ...item.layout, id: createUlid(), title: `${item.layout.title} 副本` } };
+  return {
+    kind: 'field',
+    field: {
+      ...structuredClone(item.field),
+      id: createUlid(),
+      key: uniqueKey(item.field.key.replace(/_[0-9]+$/u, ''), existing),
+      label: `${item.field.label} 副本`,
+    },
+  };
+}
+
 export function itemId(item: DesignerItem): string { return item.kind === 'field' ? item.field.id : item.layout.id; }
 
 export function createUlid(now = Date.now()): string {
