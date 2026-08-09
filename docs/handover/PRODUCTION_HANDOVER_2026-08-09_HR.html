@@ -75,7 +75,9 @@
 
   <h2>3. 数据与启用边界</h2>
   <p>生产 MongoDB 为 GaoQ 独立 <code>gaoq-rs0</code>，无主机端口。本次没有删除、
-    覆盖、导入或修改业务数据。新建六类集合的迁移 dry-run 结果如下：</p>
+    覆盖、导入或修改业务数据。应用启动时由 Mongoose 创建了六个空集合，逐集合
+    只读核验均为 0 条文档；除 MongoDB 默认 <code>_id</code> 索引外，业务索引的
+    dry-run 结果如下：</p>
   <table><thead><tr><th>迁移</th><th>摘要</th><th>结果</th></tr></thead><tbody>
     <tr><td><code>phase-6-workforce-performance-indexes-v1</code></td>
       <td><code>VC9EKbPolholLEh7wRELY6vC2L7e5HDk6ba_QvuIzbk</code></td>

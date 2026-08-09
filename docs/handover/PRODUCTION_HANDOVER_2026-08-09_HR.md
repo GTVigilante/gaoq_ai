@@ -83,12 +83,14 @@ Web `sha256:53b0ff93ee495dc54217e5ab83afd7392c31dbca83d9215a1dc687c1c3cb6674`。
 
 - GaoQ 生产 MongoDB：独立容器 `gaoq-mongo`，Replica Set `gaoq-rs0`，无主机端口，
   仅接入 `gaoq-ai-private`。原共享实例中的 `gaoqos` 由既有流程保留作回滚副本。
-- 新增集合：`workforce_reporting_lines`、`workforce_hrbp_assignments`、
+- 应用启动时由 Mongoose 创建了 6 个空集合，逐集合只读核验均为 0 条文档；除
+  MongoDB 默认 `_id` 索引外，未 apply 业务索引。集合为：
+  `workforce_reporting_lines`、`workforce_hrbp_assignments`、
   `performance_templates`、`performance_cycles`、`performance_assignments`、
   `performance_payroll_snapshots`。
 - 生产 dry-run：迁移 ID `phase-6-workforce-performance-indexes-v1`，校验摘要
   `VC9EKbPolholLEh7wRELY6vC2L7e5HDk6ba_QvuIzbk`，`missing=15`，
-  `created=0`。因此数据库尚无新模块生产索引，也没有写入新模块业务数据。
+  `created=0`。因此数据库尚无新模块生产业务索引，也没有写入新模块业务数据。
 - 迁移脚本只允许追加并核验索引，不删除集合或索引：
 
 ```bash
