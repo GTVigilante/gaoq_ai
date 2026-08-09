@@ -83,6 +83,6 @@ COPY --from=web-build --chown=65532:65532 /workspace/apps/payroll-web/.next/stan
 COPY --from=web-build --chown=65532:65532 /workspace/apps/payroll-web/.next/static/ ./apps/payroll-web/.next/static/
 EXPOSE 3100
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
-  CMD ["/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:3100/').then((response)=>{if(!response.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+  CMD ["/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:3100/payroll').then((response)=>{if(!response.ok)process.exit(1)}).catch(()=>process.exit(1))"]
 ENTRYPOINT ["/nodejs/bin/node"]
 CMD ["apps/payroll-web/server.js"]
