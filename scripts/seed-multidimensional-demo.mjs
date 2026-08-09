@@ -153,8 +153,7 @@ async function ensureForm(code, definition) {
   if (form.status === 'draft') {
     const published = await request(PUBLISHER_TOKEN, `/dynamic-forms/${form.id}/publish`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'idempotency-key': `demo-20260809:${code}:publish`, 'if-match': `"${form.version}"` },
-      body: '{}',
+      headers: { 'idempotency-key': `demo-20260809:${code}:publish`, 'if-match': `"${form.version}"` },
     });
     form = published.form;
   }

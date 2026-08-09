@@ -74,7 +74,17 @@ export class DynamicFormController {
   private id(value: string): string { if (!ULID_PATTERN.test(value)) throw new BadRequestException({ code: 'FORM_ID_INVALID', message: '资源标识必须为严格 ULID' }); return value; }
   private key(value: string | undefined): string { if (value === undefined || !KEY.test(value)) throw new BadRequestException({ code: 'IDEMPOTENCY_KEY_REQUIRED', message: '写接口必须提供 8–128 位白名单 Idempotency-Key' }); return value; }
   private version(value: string | undefined): number { const match = ETAG.exec(value ?? ''); const version = Number(match?.[1]); if (match === null || !Number.isSafeInteger(version) || version >= Number.MAX_SAFE_INTEGER) throw new BadRequestException({ code: 'FORM_IF_MATCH_REQUIRED', message: '写接口必须提供强 If-Match 版本' }); return version; }
-  private empty(value: unknown): void { if (value === undefined) return; if (typeof value !== 'object' || value === null || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype || Reflect.ownKeys(value).length !== 0) throw new BadRequestException({ code: 'FORM_BODY_FORBIDDEN', message: '该操作不接受请求正文' }); }
+  private empty(value: unknown): void {
+    if (value === undefined) return;
+    const prototype = typeof value === 'object' && value !== null
+      ? Object.getPrototypeOf(value) as unknown
+      : undefined;
+    if (
+      typeof value !== 'object' || value === null || Array.isArray(value) ||
+      (prototype !== Object.prototype && prototype !== EmptyDynamicFormActionDto.prototype) ||
+      Reflect.ownKeys(value).length !== 0
+    ) throw new BadRequestException({ code: 'FORM_BODY_FORBIDDEN', message: '该操作不接受请求正文' });
+  }
   private etag(response: Response, version: number): void { response.setHeader('ETag', `"${version}"`); }
   private async committed(action: string, resourceType: string, resourceId: string, version: number, riskLevel: 'R1' | 'R2'): Promise<void> { try { await this.audit.record({ action, resourceType, resourceId, riskLevel, outcome: 'success', metadata: { version } }); } catch { this.logger.error('DYNAMIC_FORM_COMMITTED_AUDIT_WRITE_FAILED'); } }
 }
