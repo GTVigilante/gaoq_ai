@@ -109,7 +109,7 @@
 .base-demo-brand { display: flex; align-items: center; gap: 9px; color: #172033 !important; text-decoration: none; }
 .base-demo-brand > span { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 9px; color: #fff; background: #155eef; font-size: 16px; }
 .base-demo-brand strong { font-size: 15px; }
-.base-demo-brand small { padding-left: 9px; border-left: 1px solid #c9d4e3; color: #718096; font-size: 11px; }
+.base-demo-brand small { padding-left: 9px; border-left: 1px solid #c9d4e3; color: #43536a; font-size: 11px; }
 .base-demo-status { display: flex; align-items: center; gap: 18px; color: #52647b; font-size: 11px; }
 .base-demo-status span { display: flex; align-items: center; gap: 6px; }
 .base-demo-status span:first-child { color: #147a47; }
@@ -119,7 +119,7 @@
 .base-demo-intro dl { display: flex; flex: 0 0 auto; margin: 0; border-top: 1px solid #cbd6e5; border-bottom: 1px solid #cbd6e5; }
 .base-demo-intro dl > div { min-width: 92px; padding: 12px 16px; border-right: 1px solid #cbd6e5; }
 .base-demo-intro dl > div:last-child { border-right: 0; }
-.base-demo-intro dt { color: #6b7b91; font-size: 10px; }
+.base-demo-intro dt { color: #44536a; font-size: 11px; }
 .base-demo-intro dd { margin: 2px 0 0; font-size: 23px; font-weight: 780; font-variant-numeric: tabular-nums; }
 .base-demo-workbench { display: grid; width: min(1680px, 100%); min-height: 720px; grid-template-columns: 238px minmax(0, 1fr); margin: 0 auto; overflow: hidden; border: 1px solid #cfd9e7; border-radius: 15px; background: #fff; box-shadow: 0 22px 55px rgb(28 45 76 / 11%); }
 .base-demo-sidebar { display: flex; min-width: 0; flex-direction: column; padding: 15px 10px; border-right: 1px solid var(--demo-line); background: #f6f8fb; }
@@ -134,7 +134,7 @@
 .base-demo-main { min-width: 0; }
 .base-demo-base-header { display: flex; min-height: 82px; align-items: center; justify-content: space-between; gap: 18px; padding: 14px 20px; }
 .base-demo-base-header h2 { margin: 0 0 3px; font-size: 20px; letter-spacing: -.02em; }
-.base-demo-base-header p { margin: 0; color: #77859a; font-size: 11px; }
+.base-demo-base-header p { margin: 0; color: #53647b; font-size: 11px; }
 .base-demo-table-tabs { display: flex; min-height: 44px; align-items: end; gap: 2px; padding: 0 16px; overflow-x: auto; border-bottom: 1px solid var(--demo-line); }
 .base-demo-table-tabs button { display: inline-flex; min-height: 43px; align-items: center; gap: 7px; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; color: #64748b; background: transparent; font: inherit; font-size: 12px; font-weight: 680; white-space: nowrap; cursor: pointer; }
 .base-demo-table-tabs button:hover, .base-demo-table-tabs button.is-active { color: #174ea6; border-bottom-color: #155eef; }
@@ -159,7 +159,7 @@
 .base-demo-kanban section > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; color: #47576e; font-size: 11px; }
 .base-demo-kanban section > header span { display: flex; align-items: center; gap: 7px; font-weight: 750; }
 .base-demo-kanban section > header i { width: 7px; height: 7px; border-radius: 50%; background: #64748b; }
-.base-demo-kanban section > header b { display: grid; width: 20px; height: 20px; place-items: center; border-radius: 50%; color: #68778c; background: #e5eaf1; font-size: 9px; }
+.base-demo-kanban section > header b { display: grid; width: 20px; height: 20px; place-items: center; border-radius: 50%; color: #3e4b5f; background: #e5eaf1; font-size: 10px; }
 .base-demo-kanban section > div { display: grid; gap: 8px; }
 .base-demo-kanban article { padding: 11px; border: 1px solid #dae2ed; border-radius: 8px; background: #fff; box-shadow: 0 6px 16px rgb(28 45 76 / 5%); }
 .base-demo-kanban article > div, .base-demo-kanban article footer { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
@@ -177,7 +177,7 @@
 .base-demo-funnel .ant-progress { margin: 0; }
 .base-demo-funnel strong { text-align: right; font-variant-numeric: tabular-nums; }
 .base-demo-sources > div { display: grid; grid-template-columns: 1fr auto auto; gap: 14px; padding: 15px 0; border-bottom: 1px solid #edf0f4; font-size: 11px; }
-.base-demo-sources small { min-width: 30px; color: #758399; text-align: right; }
+.base-demo-sources small { min-width: 30px; color: #53647b; font-size: 10px; text-align: right; }
 .base-demo-attention > div { display: grid; grid-template-columns: 52px 1fr; align-items: center; padding: 18px 0; border-bottom: 1px solid #edf0f4; }
 .base-demo-attention b { color: #174ea6; font-size: 25px; font-variant-numeric: tabular-nums; }
 .base-demo-attention span { color: #596a81; font-size: 10px; }
@@ -186,7 +186,7 @@
 .base-demo-calendar h3 { margin: 0; font-size: 16px; }
 .base-demo-calendar > header span { color: #5d6d82; font-size: 10px; }
 .base-demo-week, .base-demo-days { display: grid; grid-template-columns: repeat(5, minmax(150px, 1fr)); }
-.base-demo-week span { padding: 8px 10px; border: 1px solid #dfe6ef; border-right: 0; color: #718096; background: #f6f8fb; font-size: 9px; text-align: center; }
+.base-demo-week span { padding: 8px 10px; border: 1px solid #dfe6ef; border-right: 0; color: #4e5f76; background: #f6f8fb; font-size: 10px; text-align: center; }
 .base-demo-week span:last-child { border-right: 1px solid #dfe6ef; }
 .base-demo-days { min-height: 390px; overflow-x: auto; }
 .base-demo-days > section { min-width: 150px; padding: 10px; border-right: 1px solid #dfe6ef; border-bottom: 1px solid #dfe6ef; }
