@@ -100,7 +100,11 @@ export class DynamicFormService {
   async createRecords(formId: string, key: string, input: BulkWriteDynamicFormRecordDto): Promise<{ readonly records: readonly DynamicFormRecord[] }> {
     this.scope('erp:forms:data:write');
     if (!Array.isArray(input.items) || input.items.length < 1 || input.items.length > 50) throw new Error('FORM_BULK_SIZE_INVALID');
-    return this.idempotency.execute('dynamic-form.record.bulk-create', key, { formId, items: input.items }, async (session) => {
+    const request = {
+      formId,
+      items: input.items.map((item) => ({ values: item.values })),
+    };
+    return this.idempotency.execute('dynamic-form.record.bulk-create', key, request, async (session) => {
       const form = await this.requiredPublished(formId, session);
       const parsed = input.items.map((item) => parseRecordValues(item.values, form));
       const allEdges = parsed.map((values) => relationEdges(form, values));
