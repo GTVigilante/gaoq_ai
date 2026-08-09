@@ -17,6 +17,10 @@ GaoQ-OS 首发版已使用 `NODE_ENV=production`、`GAOQ_RELEASE_PROFILE=initial
 2026-08-07 根域 `gaoq.com` 已切换到目标服务器并取得独立证书；HTTP 和 HTTPS
 均永久跳转到 `https://www.gaoq.com/`，不复用仅包含 `www` 的证书。
 
+2026-08-08 起招聘门户新增域名 `joinus.gaoq.com`（与 `recruit.gaoq.com` 共用
+`/careers` 受限路由）；DNS、独立证书与 Nginx 上线仍待人工执行，配置模板见
+`nginx/gaoq-ai.conf.example` 与 `nginx/gaoq-ai-acme-bootstrap.conf.example`。
+
 ## 首发能力边界
 
 - 企业 SSO 尚未接入，因此 ERP 登录按钮不能完成真实企业身份登录。

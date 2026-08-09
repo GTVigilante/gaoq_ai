@@ -45,6 +45,28 @@ server {
     location / { return 404; }
 }
 
+# 招聘门户新增域名 joinus.gaoq.com，与 recruit.gaoq.com 共用同一组受限路由。
+server {
+    listen 80;
+    server_name joinus.gaoq.com;
+    location ^~ /.well-known/acme-challenge/ { root /var/www/acme-challenge; }
+    location / { return 301 https://$host$request_uri; }
+}
+
+server {
+    listen 443 ssl;
+    server_name joinus.gaoq.com;
+    ssl_certificate /etc/nginx/ssl/joinus.gaoq.com.pem;
+    ssl_certificate_key /etc/nginx/ssl/joinus.gaoq.com.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    location = / { return 302 /careers; }
+    location /careers { proxy_pass http://127.0.0.1:3200; include /etc/nginx/gaoq-ai-proxy-headers.conf; }
+    location /api/careers/ { proxy_pass http://127.0.0.1:3200; include /etc/nginx/gaoq-ai-proxy-headers.conf; }
+    location /_next/ { proxy_pass http://127.0.0.1:3200; include /etc/nginx/gaoq-ai-proxy-headers.conf; }
+    location / { return 404; }
+}
+
 server {
     listen 80;
     server_name gaoq.com;

@@ -104,6 +104,7 @@ if (
 for (const marker of [
   'server_name aio.gaoq.com;',
   'server_name recruit.gaoq.com;',
+  'server_name joinus.gaoq.com;',
   'server_name gaoq.com;',
   'server_name www.gaoq.com;',
   'ssl_protocols TLSv1.2 TLSv1.3;',
@@ -132,7 +133,7 @@ if (
 ) throw new Error('STANDALONE_NGINX_ROOT_HTTPS_REDIRECT_INCOMPLETE');
 
 for (const marker of [
-  'server_name aio.gaoq.com recruit.gaoq.com www.gaoq.com;',
+  'server_name aio.gaoq.com recruit.gaoq.com joinus.gaoq.com www.gaoq.com;',
   'location ^~ /.well-known/acme-challenge/',
   'root /var/www/acme-challenge;',
   'try_files $uri =404;',

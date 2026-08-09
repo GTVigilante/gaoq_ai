@@ -40,6 +40,7 @@
 
 - `aio.gaoq.com`：ERP Web，`/api`、`/mcp`、`/.well-known` 转发 API。
 - `recruit.gaoq.com`：只开放 `/careers`、招聘 BFF 和 Next.js 静态资源。
+- `joinus.gaoq.com`：招聘门户新增域名，与 `recruit.gaoq.com` 共用同一组受限路由。
 - `gaoq.com`：HTTP 和使用根域独立证书的 HTTPS 均永久重定向到
   `https://www.gaoq.com`；禁止让根域 HTTPS 复用仅含 `www` 的证书。
 - `www.gaoq.com`：转发 CMS 访客站。
@@ -48,5 +49,6 @@
 取得独立证书前，不得复制到 Nginx 配置目录，也不得 reload Nginx。
 
 首次签发证书时，只允许先安装 `nginx/gaoq-ai-acme-bootstrap.conf.example`。该配置
-仅服务 `aio.gaoq.com`、`recruit.gaoq.com`、`www.gaoq.com` 的 ACME HTTP-01
-挑战，其余请求返回 503，不代理开发模式应用，也不包含服务器上的其他项目域名。
+仅服务 `aio.gaoq.com`、`recruit.gaoq.com`、`joinus.gaoq.com`、`www.gaoq.com` 的
+ACME HTTP-01 挑战，其余请求返回 503，不代理开发模式应用，也不包含服务器上的
+其他项目域名。
