@@ -141,11 +141,13 @@ curl -fsS http://127.0.0.1:3210/ >/dev/null
 2. **制定 GaoQ MongoDB Replica Set 升级方案。** 必须先做备份、恢复演练、维护
    窗口与回滚审批；不得由自动代理直接修改现有数据库。升级后验证 `/ready=200`、
    事务、Worker 与审计链。
-3. **完成 `payroll.gaoq.com` 的真实回源。** 当前目标服务器没有 payroll 专属证书
-   和 Nginx server block；直接以该 Host 访问目标机命中其他站点默认页。需要把
-   DNS/CDN 回源指向 `121.5.32.244`，签发独立证书，新增只代理
-   `127.0.0.1:3210/3211` 的 server block，`nginx -t` 后再 reload。不得编辑其他
-   项目的 server block。
+3. **完成专业算薪的公网入口（已改为路径挂载，不再需要独立域名）。** 2026-08-08
+   起算薪不使用 `payroll.gaoq.com`，统一挂载在 `aio.gaoq.com`：`/payroll` 代理
+   `127.0.0.1:3210`（Web），`/api/payroll/` 与
+   `/.well-known/oauth-protected-resource/api/payroll/v1` 代理 `127.0.0.1:3211`
+   （API）。参照 `deploy/standalone/nginx/gaoq-ai.conf.example` 更新 aio 的
+   server block（不得编辑其他项目的 server block），`nginx -t` 后再 reload，
+   并验证 `https://aio.gaoq.com/payroll` 公网 200。无需新证书和 DNS 变更。
 
 ### P1：上线联调
 
@@ -185,7 +187,7 @@ UAT、Go/No-Go 签署与 Hypercare。仓库门禁和当前单机验活不能替�
 - [x] 未执行数据库迁移、初始化、种子或删除。
 - [x] 代码与历史工作区已做可校验备份。
 - [ ] GaoQ MongoDB Replica Set 与 `/ready=200`（人工 P0）。
-- [ ] `payroll.gaoq.com` DNS、证书、Nginx 与公网验活（人工 P0）。
+- [ ] `aio.gaoq.com/payroll` 路径挂载 Nginx 更新与公网验活（人工 P0；已取消独立域名方案）。
 - [ ] GitHub CLI OAuth 撤销并重新授权（人工 P0）。
 - [ ] 外部系统、OAuth、业务 UAT 和正式投产证据（人工 P1/P2）。
 

@@ -75,12 +75,12 @@ export function PayrollHomeView({ authenticated }: PayrollHomeViewProps) {
         {authenticated ? (
           <>
             <p style={styles.note}>短期访问令牌仅保存在服务端 HttpOnly Cookie。</p>
-            <form action="/api/auth/logout" method="post">
+            <form action="/payroll/api/auth/logout" method="post">
               <button style={styles.action} type="submit">退出算薪工作台</button>
             </form>
           </>
         ) : (
-          <a style={styles.action} href="/api/auth/login">使用 GaoQ ERP 登录</a>
+          <a style={styles.action} href="/payroll/api/auth/login">使用 GaoQ ERP 登录</a>
         )}
       </section>
     </main>

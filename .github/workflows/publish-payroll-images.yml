@@ -53,7 +53,7 @@ jobs:
             -f docker/payroll.Dockerfile \
             --target "${{ matrix.target }}" \
             --build-arg IMAGE_REVISION="$GITHUB_SHA" \
-            --build-arg NEXT_PUBLIC_PAYROLL_ORIGIN=https://payroll.gaoq.com \
+            --build-arg NEXT_PUBLIC_PAYROLL_ORIGIN=https://aio.gaoq.com/payroll \
             --tag "$IMAGE_NAME:$RELEASE_TAG" \
             --tag "$IMAGE_NAME:sha-$GITHUB_SHA" \
             .

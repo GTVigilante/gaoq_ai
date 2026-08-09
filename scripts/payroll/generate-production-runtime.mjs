@@ -41,12 +41,12 @@ const encodedPassword = encodeURIComponent(applicationPassword);
 
 const apiEnvironment = lines({
   MONGODB_URI: `mongodb://${encodedUsername}:${encodedPassword}@payroll-mongo:27017/${database}?authSource=${database}&replicaSet=payroll-rs0`,
-  WEB_ORIGIN: 'https://payroll.gaoq.com',
+  WEB_ORIGIN: 'https://aio.gaoq.com',
   AUTH_ISSUER: 'https://aio.gaoq.com',
   AUTH_AUDIENCE: 'gaoq-payroll',
-  AUTH_RESOURCE: 'https://payroll.gaoq.com/api/payroll/v1',
+  AUTH_RESOURCE: 'https://aio.gaoq.com/api/payroll/v1',
   AUTH_JWKS_URI: 'https://aio.gaoq.com/.well-known/jwks.json',
-  MCP_ALLOWED_ORIGINS: 'https://payroll.gaoq.com',
+  MCP_ALLOWED_ORIGINS: 'https://aio.gaoq.com',
   PAYROLL_DATA_ENCRYPTION_KEYS: keyRing(`payroll-data-${date}-001`),
   PAYROLL_BLIND_INDEX_KEYS: keyRing(`payroll-blind-${date}-001`),
 });
@@ -57,7 +57,7 @@ const workerEnvironment = lines({
   GAOQ_SYNC_CLIENT_ID: '',
   GAOQ_SYNC_CLIENT_SECRET: '',
   GAOQ_ERP_RESOURCE: 'https://aio.gaoq.com/mcp',
-  GAOQ_PAYROLL_RESOURCE: 'https://payroll.gaoq.com/api/payroll/v1',
+  GAOQ_PAYROLL_RESOURCE: 'https://aio.gaoq.com/api/payroll/v1',
   GAOQ_ERP_API_URL: 'https://aio.gaoq.com',
   PAYROLL_API_URL: 'http://payroll-api:3101',
 });
@@ -65,8 +65,8 @@ const webEnvironment = lines({
   GAOQ_AUTHORIZATION_ENDPOINT: 'https://aio.gaoq.com/api/auth/oauth/authorize',
   GAOQ_TOKEN_ENDPOINT: 'https://aio.gaoq.com/api/auth/oauth/token',
   GAOQ_PAYROLL_CLIENT_ID: 'payroll-web-production',
-  GAOQ_PAYROLL_REDIRECT_URI: 'https://payroll.gaoq.com/api/auth/callback',
-  AUTH_RESOURCE: 'https://payroll.gaoq.com/api/payroll/v1',
+  GAOQ_PAYROLL_REDIRECT_URI: 'https://aio.gaoq.com/payroll/api/auth/callback',
+  AUTH_RESOURCE: 'https://aio.gaoq.com/api/payroll/v1',
   GAOQ_PAYROLL_SCOPES: 'erp:payroll:payslip:self',
 });
 const mongoEnvironment = lines({

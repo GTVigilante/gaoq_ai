@@ -133,7 +133,7 @@ curl -fsS http://127.0.0.1:3210/ &gt;/dev/null</code></pre>
   <ol>
     <li><strong>撤销并重新授权本机 GitHub CLI OAuth。</strong>下载中转时临时授权曾短暂进入远端进程参数，已立即终止且未写入仓库/配置，但必须按凭据暴露处理。</li>
     <li><strong>规划 GaoQ MongoDB Replica Set 升级。</strong>先做备份、恢复演练、窗口和回滚审批；升级后验证 ready、事务、Worker 和审计链。自动代理不得直接改库。</li>
-    <li><strong>完成 <code>payroll.gaoq.com</code> 回源。</strong>目标机当前没有 payroll 专属证书/server block，直接以该 Host 访问会命中其他项目默认页。需配置 DNS/CDN → <code>121.5.32.244</code>、独立证书及仅代理 <code>3210/3211</code> 的 Nginx 配置；不得编辑其他项目 server block。</li>
+    <li><strong>完成专业算薪公网入口（已改为路径挂载，取消独立域名）。</strong>2026-08-08 起算薪统一挂载在 <code>aio.gaoq.com</code>：<code>/payroll</code> 代理 <code>127.0.0.1:3210</code>（Web），<code>/api/payroll/</code> 与 <code>/.well-known/oauth-protected-resource/api/payroll/v1</code> 代理 <code>127.0.0.1:3211</code>（API）。参照 <code>deploy/standalone/nginx/gaoq-ai.conf.example</code> 更新 aio server block（不得编辑其他项目 server block），<code>nginx -t</code> 后 reload，并验证 <code>https://aio.gaoq.com/payroll</code> 公网 200。无需新证书和 DNS 变更。</li>
   </ol>
   <h3 class="todo">P1 · 上线联调</h3>
   <ol>

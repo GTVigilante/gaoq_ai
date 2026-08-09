@@ -74,4 +74,4 @@
 - [ ] 确认合并无误后，在 GitHub 将 `GTVigilante/gaoq-payroll` 设为 archived 只读。
 - [ ] 确认后可删除或归档本地 `/Users/gilberthomemacmini/Projects/salary-cal-sys`。
 - [ ] 原交接文档 P0/P1/P2 人工待办（GitHub CLI OAuth 重授权、MongoDB Replica Set、
-  `payroll.gaoq.com` 回源等）不因本次合并改变，继续按原文执行。
+  `aio.gaoq.com/payroll` 路径挂载回源等）不因本次合并改变，继续按原文执行。

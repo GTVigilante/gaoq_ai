@@ -41,7 +41,7 @@ const signingKey = Buffer.from(
   'utf8',
 ).toString('base64');
 const erpResource = 'https://aio.gaoq.com/mcp';
-const payrollResource = 'https://payroll.gaoq.com/api/payroll/v1';
+const payrollResource = 'https://aio.gaoq.com/api/payroll/v1';
 const portalSecret = secret();
 const portalClientId = 'recruit-portal-001';
 const payrollWebClientId = 'payroll-web-production';
@@ -102,7 +102,7 @@ const serviceClients = JSON.stringify([
 const oauthClients = JSON.stringify([{
   clientId: payrollWebClientId,
   clientName: 'GaoQ 专业算薪门户与 MCP',
-  redirectUris: ['https://payroll.gaoq.com/api/auth/callback'],
+  redirectUris: ['https://aio.gaoq.com/payroll/api/auth/callback'],
   allowedScopes: [
     'erp:payroll:mcp:connect',
     'erp:payroll:payslip:self',
@@ -136,7 +136,7 @@ const apiEnvironment = lines({
   AUTH_SIGNING_PRIVATE_KEY_BASE64: signingKey,
   AUTH_SIGNING_KEY_ID: `auth-${date}-001`,
   PAYROLL_SYSTEM_MODE: 'external',
-  PAYROLL_WEB_ORIGIN: 'https://payroll.gaoq.com',
+  PAYROLL_WEB_ORIGIN: 'https://aio.gaoq.com/payroll',
   AUDIT_INTEGRITY_KEYS: keyRing(`audit-${date}-001`),
   APPROVAL_DATA_ENCRYPTION_KEYS: keyRing(`approval-${date}-001`),
   RECRUITMENT_DATA_ENCRYPTION_KEYS: keyRing(`recruitment-${date}-001`),

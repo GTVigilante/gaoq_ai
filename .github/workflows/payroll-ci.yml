@@ -104,7 +104,7 @@ jobs:
             -f docker/payroll.Dockerfile \
             --target "${{ matrix.target }}" \
             --build-arg IMAGE_REVISION="$GITHUB_SHA" \
-            --build-arg NEXT_PUBLIC_PAYROLL_ORIGIN=https://payroll.example.invalid \
+            --build-arg NEXT_PUBLIC_PAYROLL_ORIGIN=https://payroll.example.invalid/payroll \
             --tag "gaoq-payroll/${{ matrix.image }}:$GITHUB_SHA" \
             .
       - name: 验证非 root 与健康检查

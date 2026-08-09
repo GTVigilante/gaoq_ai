@@ -42,7 +42,7 @@ FROM dependencies AS web-build
 ARG NEXT_PUBLIC_PAYROLL_ORIGIN
 ENV NEXT_PUBLIC_PAYROLL_ORIGIN=${NEXT_PUBLIC_PAYROLL_ORIGIN}
 COPY apps/payroll-web apps/payroll-web
-RUN node -e "const endpoint = new URL(process.env.NEXT_PUBLIC_PAYROLL_ORIGIN); if (endpoint.protocol !== 'https:' || endpoint.pathname !== '/' || endpoint.search || endpoint.hash || endpoint.username || endpoint.password) process.exit(1)" && \
+RUN node -e "const endpoint = new URL(process.env.NEXT_PUBLIC_PAYROLL_ORIGIN); if (endpoint.protocol !== 'https:' || !['/', '/payroll', '/payroll/'].includes(endpoint.pathname) || endpoint.search || endpoint.hash || endpoint.username || endpoint.password) process.exit(1)" && \
     pnpm --filter @gaoq/payroll-web build
 
 FROM ${NODE_RUNTIME_IMAGE} AS runtime-base

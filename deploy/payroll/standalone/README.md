@@ -29,7 +29,8 @@
 4. 先执行 Compose 配置展开检查，确认仅出现 `3210/3211` 回环端口和
    `gaoq-payroll-*` 资源，再启动编排。
 5. 验证容器健康、API 存活、Web 首页、未认证 API 为 401，且 Mongo/Redis 无主机端口。
-6. 公网域名、Nginx、证书、GaoQ OAuth 客户端和主数据同步属于共享入口变更，必须
+6. 公网入口更新（`aio.gaoq.com` Nginx server block 增加 `/payroll` 与
+   `/api/payroll/` 路由）、GaoQ OAuth 客户端和主数据同步属于共享入口变更，必须
    获得用户明确批准后单独启用。
 
 生产服务器无法直连构建基础镜像仓库时，只允许在 GitHub `main` 手动触发
@@ -45,9 +46,12 @@
 文件只保留 1 天。导入后仍须执行一次 `docker pull <固定标签>`，由 Registry 清单把
 本地层绑定到官方 `RepoDigest`，再按内容摘要部署。
 
-公网反向代理必须同时转发 `/api/payroll/v1`，以及 RFC 9728 对带路径 Resource
-规定的 `/.well-known/oauth-protected-resource/api/payroll/v1`；不得把元数据错误地
-放到 `/api/payroll/v1/.well-known/*`。
+公网反向代理不签发独立域名：专业算薪统一挂载在 `aio.gaoq.com` 下，Web 为
+`/payroll`（Next.js `basePath`），API 为 `/api/payroll/v1`，以及 RFC 9728 对带
+路径 Resource 规定的 `/.well-known/oauth-protected-resource/api/payroll/v1`；
+不得把元数据错误地放到 `/api/payroll/v1/.well-known/*`。参照
+`deploy/standalone/nginx/gaoq-ai.conf.example` 中 aio server block 的更长前缀
+路由。
 
 ## 回滚
 

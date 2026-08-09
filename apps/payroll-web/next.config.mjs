@@ -3,6 +3,8 @@ const nextConfig = {
   poweredByHeader: false,
   reactStrictMode: true,
   output: 'standalone',
+  // 专业算薪不使用独立域名，统一挂载在 aio.gaoq.com 的 /payroll 路径下。
+  basePath: '/payroll',
   async headers() {
     return [{
       source: '/(.*)',

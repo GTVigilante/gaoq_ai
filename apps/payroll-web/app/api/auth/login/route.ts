@@ -15,14 +15,14 @@ export const GET = async (): Promise<NextResponse> => {
     httpOnly: true,
     sameSite: 'lax',
     secure,
-    path: '/api/auth/callback',
+    path: '/payroll/api/auth/callback',
     maxAge: 600,
   });
   cookieStore.set('payroll_pkce_verifier', pkce.verifier, {
     httpOnly: true,
     sameSite: 'lax',
     secure,
-    path: '/api/auth/callback',
+    path: '/payroll/api/auth/callback',
     maxAge: 600,
   });
   const target = new URL(config.authorizationEndpoint);

@@ -60,7 +60,7 @@ for (const marker of [
 }
 
 for (const marker of [
-  "const payrollResource = 'https://payroll.gaoq.com/api/payroll/v1';",
+  "const payrollResource = 'https://aio.gaoq.com/api/payroll/v1';",
   "const payrollWebClientId = 'payroll-web-production';",
   "const payrollSyncClientId = 'payroll-sync-production';",
   "'erp:payroll:master-data:read'",

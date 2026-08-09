@@ -26,14 +26,14 @@ describe('算薪 Bearer 发现协议', () => {
     const verify = vi.fn();
     const verifier = { verify } as unknown as AccessTokenVerifier;
     const config = {
-      get: vi.fn().mockReturnValue('https://payroll.gaoq.com/api/payroll/v1'),
+      get: vi.fn().mockReturnValue('https://aio.gaoq.com/api/payroll/v1'),
     } as unknown as ConfigService<AppEnvironment, true>;
     const guard = new BearerAuthGuard(reflector, verifier, config);
 
     await expect(guard.canActivate(context)).rejects.toBeInstanceOf(UnauthorizedException);
     expect(setHeader).toHaveBeenCalledWith(
       'WWW-Authenticate',
-      'Bearer resource_metadata="https://payroll.gaoq.com/.well-known/oauth-protected-resource/api/payroll/v1"',
+      'Bearer resource_metadata="https://aio.gaoq.com/.well-known/oauth-protected-resource/api/payroll/v1"',
     );
     expect(verify).not.toHaveBeenCalled();
   });
