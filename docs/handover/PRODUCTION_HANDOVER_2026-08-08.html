@@ -77,13 +77,13 @@
       <tr><td><code><s>recruit.gaoq.com</s></code></td><td>—</td><td>已决定停用，由 joinus 替代</td><td>待 Nginx 停用并验活（人工 P0）</td></tr>
       <tr><td><code>www.gaoq.com</code></td><td><code>3202</code></td><td>CMS 访客站</td><td class="ok"><code>/zh-CN</code> 200</td></tr>
       <tr><td><code>gaoq.com</code></td><td>301</td><td>跳转 www</td><td class="ok">已验证</td></tr>
-      <tr><td>专业算薪 Web</td><td><code>3210</code></td><td>Payroll Web</td><td class="ok">本机 200 / 健康</td></tr>
-      <tr><td>专业算薪 API</td><td><code>3211</code></td><td>Payroll API</td><td class="ok">ready 200 / 健康</td></tr>
+      <tr><td>专业算薪 Web</td><td><code>3210</code></td><td>Payroll Web（公网经 <code>aio.gaoq.com/payroll</code>）</td><td class="ok">本机与公网 200 / 健康</td></tr>
+      <tr><td>专业算薪 API</td><td><code>3211</code></td><td>Payroll API（公网经 <code>aio.gaoq.com/api/payroll/</code>）</td><td class="ok">ready 公网 200 / 健康</td></tr>
     </tbody>
   </table>
   <ul>
     <li>GaoQ 运行目录：<code>/opt/gaoq-ai-runtime</code>；发布快照：<code>/opt/gaoq-ai-releases/e357c43277d4</code>；Compose Project：<code>gaoq-ai</code>。</li>
-    <li>算薪运行目录：<code>/opt/gaoq-payroll-runtime</code>；发布快照：<code>/opt/gaoq-payroll-releases/503509b8023a</code>；Compose Project：<code>gaoq-payroll</code>。</li>
+    <li>算薪运行目录：<code>/opt/gaoq-payroll-runtime</code>；发布快照：<code>/opt/gaoq-payroll-releases/591dcaae692d</code>（2026-08-09 起，编排位于快照内 <code>deploy/payroll/standalone/compose.yaml</code>）；Compose Project：<code>gaoq-payroll</code>。</li>
     <li>运行时目录/环境文件保持 <code>0700/0600</code> 级别权限，禁止输出 Secret 值。</li>
   </ul>
 
@@ -95,11 +95,11 @@
     <tr><td>ERP Web</td><td><code>sha256:b926bce0d190551cf20f94064c2e106e308369583289315b4c3fde26a2047cf4</code></td><td><code>d5a1927…</code></td></tr>
     <tr><td>CMS</td><td><code>sha256:1b1ff22aff7b570f9ac808fe21d148aa432256f23784d700ff2c172e5ce282eb</code></td><td><code>d5a1927…</code></td></tr>
   </tbody></table>
-  <h3>专业算薪（均为 <code>503509b8023a…</code>）</h3>
+  <h3>专业算薪（API/Worker 为 <code>503509b8023a…</code>，Web 自 2026-08-09 起为 <code>591dcaae692d…</code>）</h3>
   <table><thead><tr><th>组件</th><th>本机镜像 ID</th></tr></thead><tbody>
     <tr><td>API</td><td><code>sha256:5cb5a3082863777f066b2856b0af9ee486865155e8ffcda269ac709e655f7bf4</code></td></tr>
     <tr><td>Worker</td><td><code>sha256:02ea8e584834cd16ebf15cba24cc190fbe94010563729e40982151ed7486d8e8</code></td></tr>
-    <tr><td>Web</td><td><code>sha256:78cebfa82d0789ee01cc955a79b29ad5b398e43d8c3d0e8dd91eb131bd6af305</code></td></tr>
+    <tr><td>Web</td><td><code>sha256:53b0ff93ee495dc54217e5ab83afd7392c31dbca83d9215a1dc687c1c3cb6674</code>（2026-08-09 起）</td></tr>
   </tbody></table>
   <p class="note">GHCR 已发布对应官方镜像。生产机访问 GHCR/GCR 新层不稳定，当前使用同一提交、锁文件和既有已验证 distroless Node 22 基础镜像在隔离目录构建的内容寻址镜像。网络恢复后在维护窗口替换为官方摘要，禁止使用 <code>latest</code>。</p>
 
@@ -124,7 +124,7 @@ curl -fsS http://127.0.0.1:3202/zh-CN &gt;/dev/null
 # 专业算薪
 cd /opt/gaoq-payroll-runtime
 docker compose --env-file compose.env \
-  -f /opt/gaoq-payroll-releases/503509b8023a/deploy/standalone/compose.yaml ps
+  -f /opt/gaoq-payroll-releases/591dcaae692d/deploy/payroll/standalone/compose.yaml ps
 curl -fsS http://127.0.0.1:3211/api/payroll/v1/health/ready
 curl -fsS http://127.0.0.1:3210/ &gt;/dev/null</code></pre>
   <p><strong>回滚：</strong>只恢复 <code>compose.env.pre-...</code> 中对应应用镜像键，先 <code>docker compose config --quiet</code>，再执行 <code>up -d --no-deps &lt;service&gt;</code>。禁止重建 MongoDB/Redis，永远禁止 <code>down -v</code>。</p>
@@ -134,7 +134,7 @@ curl -fsS http://127.0.0.1:3210/ &gt;/dev/null</code></pre>
   <ol>
     <li><strong>撤销并重新授权本机 GitHub CLI OAuth。</strong>下载中转时临时授权曾短暂进入远端进程参数，已立即终止且未写入仓库/配置，但必须按凭据暴露处理。</li>
     <li><strong>规划 GaoQ MongoDB Replica Set 升级。</strong>先做备份、恢复演练、窗口和回滚审批；升级后验证 ready、事务、Worker 和审计链。自动代理不得直接改库。</li>
-    <li><strong>完成专业算薪公网入口（已改为路径挂载，取消独立域名）。</strong>2026-08-08 起算薪统一挂载在 <code>aio.gaoq.com</code>：<code>/payroll</code> 代理 <code>127.0.0.1:3210</code>（Web），<code>/api/payroll/</code> 与 <code>/.well-known/oauth-protected-resource/api/payroll/v1</code> 代理 <code>127.0.0.1:3211</code>（API）。参照 <code>deploy/standalone/nginx/gaoq-ai.conf.example</code> 更新 aio server block（不得编辑其他项目 server block），<code>nginx -t</code> 后 reload，并验证 <code>https://aio.gaoq.com/payroll</code> 公网 200。无需新证书和 DNS 变更。</li>
+    <li><strong><s>完成专业算薪公网入口</s>（2026-08-09 已完成）。</strong>算薪已按路径挂载上线：<code>https://aio.gaoq.com/payroll</code>、<code>/api/payroll/v1</code> 与 RFC 9728 元数据均公网 200；Nginx 与运行环境备份见第 2 节。</li>
     <li><strong>招聘门户域名切换为 <code>joinus.gaoq.com</code>（<code>recruit.gaoq.com</code> 停用）。</strong>完成 joinus 的 DNS/CDN 回源指向 <code>121.5.32.244</code>，用 ACME bootstrap 配置（已含该域名）签发独立证书，再按 <code>gaoq-ai.conf.example</code> 中 joinus server block（<code>/careers</code> 受限路由不变）更新 Nginx，<code>nginx -t</code> 后 reload，验证 <code>https://joinus.gaoq.com/careers</code> 公网 200；确认无误后停用 recruit server block（证书到期不续期即可，不得编辑其他项目 server block）。</li>
   </ol>
   <h3 class="todo">P1 · 上线联调</h3>
