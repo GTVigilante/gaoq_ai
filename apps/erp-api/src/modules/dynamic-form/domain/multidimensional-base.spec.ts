@@ -15,8 +15,22 @@ const base = () => ({
 describe('多维 Base 领域约束', () => {
   it('接受复用动态表单的数据表与表格视图', () => {
     const parsed = parseMultidimensionalBaseInput(base());
-    expect(parsed.tables[0]?.formId).toBe(TABLE_ID);
+    expect(parsed.tables[0]).toMatchObject({ kind: 'native', formId: TABLE_ID });
     expect(Object.isFrozen(parsed.views)).toBe(true);
+  });
+
+  it('接受绑定 Schema 版本的 OP 外部数据集', () => {
+    const externalTableId = '01J00000000000000000000004';
+    const input = {
+      ...base(),
+      tables: [{
+        kind: 'external', id: externalTableId, name: 'OP 经营摘要', primaryFieldKey: 'summaryDate', position: 0,
+        dataset: { kind: 'external', system: 'op', objectType: 'operating_summary', schemaVersion: '1.0' },
+      }],
+      views: [{ ...base().views[0], tableId: externalTableId, config: { ...base().views[0]!.config, visibleFieldKeys: ['summaryDate'] } }],
+    };
+    const parsed = parseMultidimensionalBaseInput(input);
+    expect(parsed.tables[0]).toMatchObject({ kind: 'external', id: externalTableId, dataset: { system: 'op', schemaVersion: '1.0' } });
   });
 
   it('拒绝指向 Base 外数据表的视图', () => {

@@ -38,6 +38,14 @@
   关闭；表单/多维 Base 最小 Scope、角色 UAT 与 54 Tool 实体客户端复验仍待人工。
   当前 MCP 目录为 54 Tool、4 Resource、27 Resource Template、25 Prompt，既有
   50 Tool 厂商实体发现证据已经过期，不能作为当前发布验收证据。
+- 2026-08-10 已在仓库实现版本化 Dataset Runtime：原生动态表单与 OP 经营摘要
+  通过统一 Schema、记录引用、精确查询和证据快照参与表单、多维 Base、审批、
+  REST、MCP 与 CLI。Base 记录创建/更新自动化已具备持久运行账本、逐动作幂等和
+  Worker，可执行原生建记录、更新记录与发起审批；通知与 Connector/OP Command
+  在正式 Adapter 未登记前失败关闭为人工复核。MCP 目录提升为 56 Tool。新增
+  `base_automation_runs` 及 `phase-6-dynamic-data-platform-indexes-v2` 只追加索引
+  迁移；当前仓库实现与本地验证已完成，尚未执行生产迁移或部署，准确
+  边界见 `docs/handover/BUSINESS_RUNTIME_HANDOVER_2026-08-10.md`（同时提供 HTML）。
 - 2026-07-29 已交付标准 MCP 本地 stdio 入口，与生产 Streamable HTTP 共用
   `McpRuntimeService` 和 `AccessTokenVerifier`。启动要求秘密管理器注入短时
   Token 与 `erp:mcp:server:connect`，先预检、后逐消息复验，撤销/过期立即关闭；

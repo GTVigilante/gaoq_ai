@@ -15,6 +15,7 @@ export class MultidimensionalBaseController {
 
   @Get() @RequiredScopes('erp:bases:workspace:read') async list() { return this.bases.list(); }
   @Get(':id') @RequiredScopes('erp:bases:workspace:read') async get(@Param('id') id: string, @Res({ passthrough: true }) response: Response) { const base = await this.bases.get(this.id(id)); response.setHeader('ETag', `"${base.version}"`); return base; }
+  @Get(':id/automation-runs/:runId') @RequiredScopes('erp:bases:workspace:read') async getAutomationRun(@Param('id') id: string, @Param('runId') runId: string) { return this.bases.getAutomationRun(this.id(id), this.id(runId)); }
   @Post() @RequiredScopes('erp:bases:workspace:design') async create(@Headers('idempotency-key') key: string | undefined, @Body() body: CreateMultidimensionalBaseDto, @Res({ passthrough: true }) response: Response) { const result = await this.bases.create(this.key(key), body); response.setHeader('ETag', `"${result.base.version}"`); return result; }
   @Put(':id') @RequiredScopes('erp:bases:workspace:design') async update(@Param('id') id: string, @Headers('if-match') version: string | undefined, @Headers('idempotency-key') key: string | undefined, @Body() body: UpdateMultidimensionalBaseDto, @Res({ passthrough: true }) response: Response) { const result = await this.bases.update(this.id(id), this.version(version), this.key(key), body); response.setHeader('ETag', `"${result.base.version}"`); return result; }
 

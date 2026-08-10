@@ -3,7 +3,7 @@
 ## 1. 目的与适用范围
 
 `contracts/openapi/erp-api.openapi.json` 是 ERP REST 接入面的机器可读基线。
-它由 52 个 NestJS Controller 源文件确定性生成，覆盖全局 `/api` 前缀、四个
+它由 53 个 NestJS Controller 源文件确定性生成，覆盖全局 `/api` 前缀、四个
 前缀例外、HTTP 方法、路径、OAuth Scope、公开路由、Guard、Header、Query、
 Path、Body、响应类型和源码定位。
 
@@ -33,18 +33,18 @@ pnpm contracts:openapi:validate
 
 | 项目 | 数量 | 说明 |
 |---|---:|---|
-| Controller | 52 | 全部生产 Controller |
-| Nest 路由声明 | 265 | `Get/Post/Put/Patch/Delete/All` |
-| OpenAPI Path | 248 | 相同路径的不同方法合并 |
-| OpenAPI Operation | 271 | MCP 的 `@All` 展开为七种标准方法 |
+| Controller | 53 | 全部生产 Controller |
+| Nest 路由声明 | 272 | `Get/Post/Put/Patch/Delete/All` |
+| OpenAPI Path | 255 | 相同路径的不同方法合并 |
+| OpenAPI Operation | 278 | MCP 的 `@All` 展开为七种标准方法 |
 | OAuth Scope | 185 | 从 `RequiredScopes` 静态提取并写入安全方案 |
 | 公开 Operation | 27 | 必须显式 `PublicRoute` |
-| Scope 保护 Operation | 243 | 每项写入精确 scope |
+| Scope 保护 Operation | 250 | 每项写入精确 scope |
 | 已认证无 Scope Operation | 1 | 当前会话撤销，仅要求已认证主体 |
-| class-validator DTO Schema | 121 | 字段、必填、类型、长度、范围、枚举、数组与继承 |
-| 命名 Body Schema | 135 / 135 | 102 个 DTO、29 个运行时 Zod 登记、4 个编译器内联类型 |
-| 成功响应 | 271 / 271 | 269 个显式内容 Schema、2 个 204 无正文 |
-| Component Schema | 155 | `Problem`、121 个 DTO 与 34 个补充请求组件 |
+| class-validator DTO Schema | 123 | 字段、必填、类型、长度、范围、枚举、数组与继承 |
+| 命名 Body Schema | 140 / 140 | 107 个 DTO、29 个运行时 Zod 登记、4 个编译器内联类型 |
+| 成功响应 | 278 / 278 | 276 个显式内容 Schema、2 个 204 无正文 |
+| Component Schema | 157 | `Problem`、123 个 DTO 与 34 个补充请求组件 |
 
 生成器拒绝动态路由字符串、动态 Scope、重复 Method + Path、重复
 `operationId`、路径占位符与 `@Param` 不一致、公开路由同时声明 Scope、缺少
@@ -53,9 +53,9 @@ Schema 来源或计数漂移。`@All` 的原始语义保留在 `x-nest-method`�
 
 ## 4. 字段约束边界
 
-当前生成器已扫描 121 个 class-validator DTO，生成字段级 JSON Schema
+当前生成器已扫描 123 个 class-validator DTO，生成字段级 JSON Schema
 2020-12：必填/可选、原始类型、nullable union、继承、嵌套 DTO、长度/范围、
-数组大小/唯一性、静态枚举、格式和正则来源均进入组件；102 个请求体通过 `$ref`
+数组大小/唯一性、静态枚举、格式和正则来源均进入组件；107 个请求体通过 `$ref`
 绑定 DTO。生成器会拒绝名称重复、动态字段名、悬空 DTO 引用和 DTO 请求体未绑定。
 
 其余 33 个请求体全部提升为命名组件：29 个 `unknown` 入口由

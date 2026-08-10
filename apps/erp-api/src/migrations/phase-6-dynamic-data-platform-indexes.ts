@@ -7,15 +7,17 @@ import {
   DynamicFormDefinitionRecordSchema,
   DynamicFormRelationRecordSchema,
 } from '../modules/dynamic-form/persistence/dynamic-form.schemas.js';
+import { BaseAutomationRunRecordSchema } from '../modules/dynamic-form/persistence/base-automation-run.schema.js';
 import { MultidimensionalBaseRecordSchema } from '../modules/dynamic-form/persistence/multidimensional-base.schema.js';
 import { buildIndexManifestFromSchemas, runAdditiveIndexMigration } from './phase-3-indexes.js';
 
-const MIGRATION_ID = 'phase-6-dynamic-data-platform-indexes-v1';
+const MIGRATION_ID = 'phase-6-dynamic-data-platform-indexes-v2';
 const SCHEMAS = Object.freeze([
   DynamicFormDefinitionRecordSchema,
   DynamicFormDataRecordSchema,
   DynamicFormRelationRecordSchema,
   MultidimensionalBaseRecordSchema,
+  BaseAutomationRunRecordSchema,
 ]);
 
 /** 动态表单与多维 Base 只追加索引迁移；禁止删除集合、索引或业务数据。 */

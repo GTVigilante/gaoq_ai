@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>GaoQ 业务运行时交接（2026-08-10）</title>
+  <style>
+    :root{color-scheme:light;--ink:#172033;--muted:#64748b;--line:#dce3ec;--brand:#3157d5;--soft:#f5f7fb;--warn:#fff7df}body{margin:0;background:#eef2f7;color:var(--ink);font:15px/1.7 system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}.page{max-width:1080px;margin:32px auto;padding:44px 52px;background:#fff;box-shadow:0 12px 40px #1e293b18;border-radius:16px}h1{font-size:30px;line-height:1.25;margin:0 0 8px}h2{font-size:21px;margin:34px 0 10px;border-bottom:1px solid var(--line);padding-bottom:8px}h3{font-size:17px;margin:22px 0 6px}.meta{color:var(--muted)}.notice{background:var(--warn);border-left:4px solid #d89b15;padding:12px 16px;margin:20px 0}.summary{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:22px 0}.card{background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:14px}.card b{display:block;color:var(--brand);font-size:18px}code{background:#eef2ff;padding:1px 5px;border-radius:4px;word-break:break-word}pre{background:#111827;color:#e5e7eb;padding:14px;border-radius:8px;overflow:auto}table{border-collapse:collapse;width:100%}th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}th{background:var(--soft)}li{margin:4px 0}.flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:18px 0}.node{border:1px solid #b8c3d4;border-radius:8px;padding:8px 12px;background:#fff}.arrow{color:var(--brand);font-weight:700}@media(max-width:760px){.page{margin:0;padding:24px;border-radius:0}.summary{grid-template-columns:1fr}}
+  </style>
+</head>
+<body><main class="page">
+  <h1>GaoQ 业务运行时、流程表单与联邦多维数据交接</h1>
+  <div class="meta">2026-08-10 · Asia/Shanghai · 面向产品、架构、开发、SRE、安全评审与后续 AI</div>
+  <div class="notice"><strong>安全边界：</strong>本文不含密码、Token、连接串或密钥。当前为仓库实现状态；禁止删除或重建数据库、集合、索引、Redis、运行卷及同机其他项目。</div>
+
+  <h2>一、结论</h2>
+  <p>架构师提出需要 Interpreter 的判断正确。生产解释层必须共同约束 Schema 版本、来源、权限、类型、查询、记录版本、证据和命令边界。本切片已将它实现为版本化 <strong>Dataset Runtime</strong>。拖拽表单、多维 Base、审批、自动化、REST、MCP 和 CLI 使用同一语义；OP 继续是唯一事实源，数据不复制，运行时不直连 OP 数据库。</p>
+  <div class="flow"><span class="node">OP 应用服务</span><span class="arrow">→</span><span class="node">External Adapter</span><span class="arrow">→</span><span class="node">Dataset Runtime</span><span class="arrow">→</span><span class="node">表单 / Base / 审批 / REST / MCP / CLI</span></div>
+  <div class="summary"><div class="card"><b>56 Tool</b>MCP 统一目录</div><div class="card"><b>7,298</b>ERP API 全量测试</div><div class="card"><b>0 次</b>生产数据库操作</div></div>
+
+  <h2>二、已实现能力</h2>
+  <h3>Dataset Runtime 与 OP 引用</h3>
+  <ul><li>原生引用绑定 <code>datasetId + schemaRevision</code>；外部引用绑定 <code>system + objectType + schemaVersion</code>。</li><li>记录引用绑定 <code>recordId + version</code>；Schema、来源或版本漂移时失败关闭。</li><li>首个外部数据集为 <code>op / operating_summary / 1.0</code>，只经 OP 应用服务读取。</li><li>L3/L4 字段不进入通用投影；查询仅允许有界等值精确查询。</li></ul>
+  <h3>表单、审批与多维 Base</h3>
+  <ul><li>拖拽字段新增 <code>dataset_reference</code>，可选择显示字段和审批快照字段。</li><li>提交审批时固定来源 Schema、记录版本、观察时间、最小字段和内容摘要。</li><li>Base 可挂原生 Table 和只读 External Table，Grid 通过同一 Runtime 读取。</li><li>动态表单到审批模板由服务端编译；发布修订不可被覆盖。</li></ul>
+  <h3>自动化</h3>
+  <ul><li><code>base_automation_runs</code> 保存不可变计划、来源版本、进度、最小结果和稳定失败码。</li><li>Worker 可幂等发起审批、创建原生记录、更新来源记录；自动化写入 v1 不级联。</li><li>通知和 Connector/OP Command 尚无正式 Adapter，任何副作用前转 <code>manual_review</code>。</li></ul>
+  <h3>外部接口</h3>
+  <ul><li>MCP 新增 <code>dataset_catalog</code>、<code>dataset_record_resolve</code>，均为只读 R0。</li><li>CLI 新增 <code>bases list</code>、<code>datasets list</code>、<code>datasets resolve --file</code>。</li><li>OpenAPI：53 Controller、272 路由声明、278 操作、123 DTO Schema；AsyncAPI：189 事件。</li></ul>
+
+  <h2>三、数据迁移</h2>
+  <p>迁移 ID：<code>phase-6-dynamic-data-platform-indexes-v2</code>，覆盖五个动态数据基础设施集合，新增 <code>base_automation_runs</code>。迁移只能追加缺失索引，不删除或重建任何对象。</p>
+  <pre>pnpm --filter @gaoq/erp-api build
+MONGODB_URI='&lt;由服务器秘密环境注入&gt;' \
+  pnpm --filter @gaoq/erp-api migrate:phase6:dynamic-data-platform-indexes -- --dry-run</pre>
+  <p>必须先 dry-run、备份和人工审查，再单独批准 apply。应用回滚保留集合、索引和全部数据。</p>
+
+  <h2>四、验证</h2>
+  <table><thead><tr><th>范围</th><th>结果</th></tr></thead><tbody>
+    <tr><td>最终增量定向</td><td>Dataset Runtime/账本 2 文件、12 项通过</td></tr><tr><td>ERP API 全量</td><td>462 文件、7,298 项通过；全仓 check 通过</td></tr><tr><td>ERP Web</td><td>16 文件、94 项，类型检查与生产构建通过</td></tr><tr><td>协议</td><td>MCP 56 Tool 目录与 HTTP/stdio 测试通过；OpenAPI 已生成；AsyncAPI 通过</td></tr><tr><td>迁移</td><td>v2 清单测试 2 项通过；未连接生产、未 apply</td></tr>
+  </tbody></table>
+  <p>仓库证据不替代生产 Replica Set、Redis、密钥、索引、OP 实体接口、浏览器、实体 MCP 客户端、安全、性能和业务 UAT。</p>
+
+  <h2>五、当前缺口与人类待办</h2>
+  <ol><li>审核 v2 dry-run、备份和维护窗口，并独立批准追加索引 apply。</li><li>在 KMS/Secret Manager 配置独立 <code>FORM_DATA_ENCRYPTION_KEYS</code>。</li><li>登记 <code>erp:approval:dynamic_form:automate</code> 服务主体 Scope 并完成职责矩阵 UAT。</li><li>OP 团队确认经营摘要 1.0 契约、版本冲突语义、查询上限和 SLO。</li><li>通知团队提供固定模板、网关契约与独立凭据。</li><li>OP 团队逐个提供固定 Command、Schema、幂等、权限、超时、人工处置与事件回执；不接受万能命令接口。</li><li>计划支持的 MCP/CLI 实体客户端重新发现 56 Tool；旧 54 Tool 证据失效。</li></ol>
+
+  <h2>六、发布和接手边界</h2>
+  <p><strong>仓库实现与本地门禁已完成；生产数据库未连接，v2 未 dry-run、未 apply，生产应用未部署。</strong>后续只能定向更新 GaoQ OS API、Worker、ERP Web，不得重启或覆盖 CMS、专业算薪和其他项目。回滚只回退这三项应用并保留全部数据，禁止 <code>docker compose down -v</code>。</p>
+  <p>后续 AI 先阅读根 <code>AGENTS.md</code>、<code>CODEX.md</code>、Markdown 完整版和 ADR-0007；先检查工作区。新增数据源必须走窄 Adapter 并测试租户、来源、Schema、版本、字段和权限错位；新增 Command 必须走固定契约、可靠账本与人工复核，不得为 MCP 提供直接外部写入。</p>
+  <p class="meta">完整路径与逐项实现说明见同目录 BUSINESS_RUNTIME_HANDOVER_2026-08-10.md。</p>
+</main></body></html>

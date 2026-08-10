@@ -6,6 +6,7 @@ import { AuditService } from '../../core/audit/audit.service.js';
 import { RequiredScopes } from '../identity/auth.decorators.js';
 import { BulkWriteDynamicFormRecordDto, CreateDynamicFormDto, EmptyDynamicFormActionDto, UpdateDynamicFormDto, WriteDynamicFormRecordDto } from './application/dynamic-form.dto.js';
 import { DynamicFormService } from './application/dynamic-form.service.js';
+import { DynamicFormApprovalBridgeService } from './application/dynamic-form-approval-bridge.service.js';
 
 const KEY = /^[A-Za-z0-9._:-]{8,128}$/;
 const ETAG = /^"([1-9][0-9]*)"$/;
@@ -14,7 +15,7 @@ const ETAG = /^"([1-9][0-9]*)"$/;
 @Controller('dynamic-forms')
 export class DynamicFormController {
   private readonly logger = new Logger(DynamicFormController.name);
-  constructor(private readonly forms: DynamicFormService, private readonly audit: AuditService) {}
+  constructor(private readonly forms: DynamicFormService, private readonly approvals: DynamicFormApprovalBridgeService, private readonly audit: AuditService) {}
 
   @Get() @RequiredScopes('erp:forms:definition:design')
   async list() { return this.forms.list(); }
@@ -37,6 +38,15 @@ export class DynamicFormController {
   @Post(':id/publish') @RequiredScopes('erp:forms:definition:publish')
   async publish(@Param('id') id: string, @Headers('if-match') version: string | undefined, @Headers('idempotency-key') key: string | undefined, @Body() body: EmptyDynamicFormActionDto, @Res({ passthrough: true }) response: Response) {
     this.empty(body); const result = await this.forms.publish(this.id(id), this.version(version), this.key(key)); this.etag(response, result.form.version); await this.committed('dynamic_form.definition.publish', 'dynamic_form_definition', result.form.id, result.form.version, 'R2'); return result;
+  }
+
+  @Post(':id/approval-template/sync')
+  @RequiredScopes('erp:forms:definition:design', 'erp:approval:template:write')
+  async syncApprovalTemplate(@Param('id') id: string, @Headers('if-match') version: string | undefined, @Headers('idempotency-key') key: string | undefined, @Body() body: EmptyDynamicFormActionDto) {
+    this.empty(body);
+    const result = await this.approvals.syncTemplate(this.id(id), this.version(version), this.key(key));
+    await this.committed('dynamic_form.approval_template.sync', 'approval_template', result.template.id, result.template.version, 'R2');
+    return result;
   }
 
   @Post(':formId/records') @RequiredScopes('erp:forms:data:write')
@@ -66,6 +76,16 @@ export class DynamicFormController {
   @Put(':formId/records/:recordId') @RequiredScopes('erp:forms:data:write')
   async updateRecord(@Param('formId') formId: string, @Param('recordId') recordId: string, @Headers('if-match') version: string | undefined, @Headers('idempotency-key') key: string | undefined, @Body() body: WriteDynamicFormRecordDto, @Res({ passthrough: true }) response: Response) {
     const result = await this.forms.updateRecord(this.id(formId), this.id(recordId), this.version(version), this.key(key), body); this.etag(response, result.record.version); await this.committed('dynamic_form.record.update', 'dynamic_form_record', result.record.id, result.record.version, 'R2'); return result;
+  }
+
+  @Post(':formId/records/:recordId/submit-approval')
+  @RequiredScopes('erp:forms:data:read', 'erp:approval:instance:submit')
+  async submitRecordApproval(@Param('formId') formId: string, @Param('recordId') recordId: string, @Headers('if-match') version: string | undefined, @Headers('idempotency-key') key: string | undefined, @Body() body: EmptyDynamicFormActionDto, @Res({ passthrough: true }) response: Response) {
+    this.empty(body);
+    const result = await this.approvals.submitRecord(this.id(formId), this.id(recordId), this.version(version), this.key(key));
+    this.etag(response, result.instance.version);
+    await this.committed('dynamic_form.record.submit_approval', 'approval_instance', result.instance.id, result.instance.version, 'R2');
+    return result;
   }
 
   @Get(':formId/records/:recordId/related') @RequiredScopes('erp:forms:data:read')

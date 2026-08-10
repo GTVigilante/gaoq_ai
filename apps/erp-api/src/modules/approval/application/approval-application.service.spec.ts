@@ -241,6 +241,110 @@ function service(
 }
 
 describe('ApprovalApplicationService', () => {
+  it('动态表单生成模板首次创建、重复同步时原地更新草稿', async () => {
+    const source = { type: 'dynamic_form' as const, id: '01K00000000000000000000001', revision: 2 };
+    const createDeps = dependencies();
+    await expect(service(
+      createDeps, trustedContext(['erp:approval:template:write']),
+    ).syncGeneratedTemplate('dynamic-template-sync-001', {
+      source, code: 'op_review.approval', name: '经营复核', riskLevel: 'R1', definition: definition(),
+    })).resolves.toMatchObject({ template: { code: 'op_review.approval', status: 'draft', revision: 1 } });
+    expect(createDeps.templates.insert).toHaveBeenCalledOnce();
+
+    const draft = createApprovalTemplateDraft({
+      id: 'template-generated-001', tenantId: 'tenant-001', code: 'op_review.approval',
+      name: '旧名称', riskLevel: 'R1', definition: definition(), actorId: 'actor-001',
+    }, NOW);
+    const updateDeps = dependencies();
+    updateDeps.templates.findLatestByCode.mockResolvedValue(draft);
+    await service(
+      updateDeps, trustedContext(['erp:approval:template:write']),
+    ).syncGeneratedTemplate('dynamic-template-sync-002', {
+      source, code: 'op_review.approval', name: '新名称', riskLevel: 'R2', definition: definition(),
+    });
+    expect(updateDeps.templates.replace).toHaveBeenCalledWith(expect.objectContaining({
+      id: draft.id, name: '新名称', riskLevel: 'R2', version: 2,
+    }), 1, SESSION);
+    expect(updateDeps.templates.insert).not.toHaveBeenCalled();
+
+    const publishedDeps = dependencies();
+    publishedDeps.templates.findLatestByCode.mockResolvedValue(template('op_review.approval'));
+    await expect(service(
+      publishedDeps, trustedContext(['erp:approval:template:write']),
+    ).syncGeneratedTemplate('dynamic-template-sync-003', {
+      source, code: 'op_review.approval', name: '下一版经营复核', riskLevel: 'R2', definition: definition(),
+    })).resolves.toMatchObject({ template: { code: 'op_review.approval', status: 'draft', revision: 2 } });
+    expect(publishedDeps.templates.insert).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'op_review.approval', status: 'draft', revision: 2,
+    }), SESSION);
+  });
+
+  it('动态表单生成模板拒绝非法来源修订', async () => {
+    await expect(service(
+      dependencies(), trustedContext(['erp:approval:template:write']),
+    ).syncGeneratedTemplate('dynamic-template-sync-invalid', {
+      source: { type: 'dynamic_form', id: '01K00000000000000000000001', revision: 0 },
+      code: 'op_review.approval', name: '经营复核', riskLevel: 'R1', definition: definition(),
+    })).rejects.toMatchObject({ response: { code: 'APPROVAL_GENERATED_SOURCE_INVALID' } });
+  });
+
+  it('动态表单按模板摘要在单事务创建并提交审批', async () => {
+    const published = template('op_review.approval');
+    const deps = dependencies();
+    deps.templates.findPublishedByCode.mockResolvedValue(published);
+    const input = {
+      instanceId: '01K00000000000000000000011', templateCode: published.code,
+      expectedDefinitionHash: published.definitionHash, title: '经营复核',
+      formData: { amount: 123_45 },
+      sourceFormId: '01K00000000000000000000001',
+      sourceRecordId: '01K00000000000000000000002', sourceRecordVersion: 3,
+      initiatorActorId: 'actor-001',
+    };
+    const result = await service(
+      deps, trustedContext(['erp:approval:instance:submit']),
+    ).createAndSubmitFromDynamicForm('dynamic-form-submit-001', input);
+    expect(result.instance).toMatchObject({ id: input.instanceId, status: 'running', version: 2 });
+    expect(deps.instances.insert).toHaveBeenCalledWith(expect.objectContaining({
+      id: input.instanceId, status: 'running', formData: { amount: 123_45 },
+    }), SESSION);
+    expect(deps.actions.append).toHaveBeenCalledOnce();
+    expect(deps.notifications.append).toHaveBeenCalledOnce();
+  });
+
+  it('动态表单模板摘要漂移时在写聚合前失败关闭', async () => {
+    const deps = dependencies();
+    await expect(service(
+      deps, trustedContext(['erp:approval:instance:submit']),
+    ).createAndSubmitFromDynamicForm('dynamic-form-submit-002', {
+      instanceId: '01K00000000000000000000011', templateCode: 'EXPENSE',
+      expectedDefinitionHash: 'z'.repeat(43), title: '经营复核', formData: { amount: 123_45 },
+      sourceFormId: '01K00000000000000000000001',
+      sourceRecordId: '01K00000000000000000000002', sourceRecordVersion: 3,
+      initiatorActorId: 'actor-001',
+    })).rejects.toMatchObject({ response: { code: 'APPROVAL_DYNAMIC_FORM_TEMPLATE_STALE' } });
+    expect(deps.instances.insert).not.toHaveBeenCalled();
+    expect(deps.actions.append).not.toHaveBeenCalled();
+  });
+
+  it('动态表单审批拒绝缺少专用权限的自动化主体和错位交互发起人', async () => {
+    const published = template('op_review.approval');
+    const input = {
+      instanceId: '01K00000000000000000000011', templateCode: published.code,
+      expectedDefinitionHash: published.definitionHash, title: '经营复核', formData: { amount: 123_45 },
+      sourceFormId: '01K00000000000000000000001',
+      sourceRecordId: '01K00000000000000000000002', sourceRecordVersion: 3,
+      initiatorActorId: 'actor-001',
+    };
+    await expect(service(
+      dependencies(), opWorkerContext(['erp:approval:instance:submit']),
+    ).createAndSubmitFromDynamicForm('dynamic-form-submit-system-denied', input))
+      .rejects.toMatchObject({ response: { code: 'APPROVAL_DYNAMIC_FORM_AUTOMATION_DENIED' } });
+    await expect(service(
+      dependencies(), trustedContext(['erp:approval:instance:submit'], 'actor-002'),
+    ).createAndSubmitFromDynamicForm('dynamic-form-submit-actor-mismatch', input))
+      .rejects.toMatchObject({ response: { code: 'APPROVAL_DYNAMIC_FORM_INITIATOR_MISMATCH' } });
+  });
+
   it('考勤修订迁移只读取已通过专用历史的时间与证据摘要', async () => {
     const deps = dependencies({
       legacyHistories: {

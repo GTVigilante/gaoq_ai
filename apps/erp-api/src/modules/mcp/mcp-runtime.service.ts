@@ -146,9 +146,29 @@ const dynamicFormRecordOutputSchema = z.object({ record: z.object({
   id: recruitmentIdSchema, formId: recruitmentIdSchema, formRevision: z.number().int().positive(),
   version: z.number().int().positive(), values: z.record(z.string(), z.unknown()),
 }).strict() }).strict();
+const datasetRefMcpSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('native'), datasetId: recruitmentIdSchema, schemaRevision: z.number().int().positive() }).strict(),
+  z.object({ kind: z.literal('external'), system: z.string().regex(/^[A-Za-z][A-Za-z0-9._-]{0,63}$/), objectType: z.string().regex(/^[A-Za-z][A-Za-z0-9._-]{0,63}$/), schemaVersion: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/) }).strict(),
+]);
+const datasetFieldMcpSchema = z.object({
+  key: z.string(), label: z.string(), type: z.string(), sensitivity: z.enum(['L1', 'L2']),
+  required: z.boolean(), readOnly: z.boolean(),
+}).strict();
+const datasetCatalogOutputSchema = z.object({ items: z.array(z.object({
+  ref: datasetRefMcpSchema, name: z.string(), primaryFieldKey: z.string(),
+  fields: z.array(datasetFieldMcpSchema).max(200),
+  capabilities: z.object({ resolve: z.literal(true), snapshot: z.boolean(), query: z.enum(['none', 'exact']) }).strict(),
+}).strict()).max(200) }).strict();
+const datasetRecordOutputSchema = z.object({ record: z.object({
+  ref: z.object({ dataset: datasetRefMcpSchema, recordId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/), version: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/) }).strict(),
+  values: z.record(z.string(), z.unknown()), observedAt: z.string().datetime({ offset: true }),
+}).strict() }).strict();
 const multidimensionalBaseCatalogOutputSchema = z.object({ items: z.array(z.object({
   id: recruitmentIdSchema, code: z.string(), name: z.string(), version: z.number().int().positive(),
-  tables: z.array(z.object({ formId: recruitmentIdSchema, name: z.string(), primaryFieldKey: z.string() }).strict()).max(100),
+  tables: z.array(z.discriminatedUnion('kind', [
+    z.object({ tableId: recruitmentIdSchema, kind: z.literal('native'), name: z.string(), primaryFieldKey: z.string() }).strict(),
+    z.object({ tableId: recruitmentIdSchema, kind: z.literal('external'), name: z.string(), primaryFieldKey: z.string(), dataset: datasetRefMcpSchema }).strict(),
+  ])).max(100),
   views: z.array(z.object({ id: recruitmentIdSchema, tableId: recruitmentIdSchema, name: z.string(), type: z.enum(['grid', 'kanban', 'calendar', 'gallery', 'gantt', 'form', 'dashboard']) }).strict()).max(500),
   automationCount: z.number().int().nonnegative().max(100),
 }).strict()).max(100) }).strict();
@@ -1902,6 +1922,32 @@ export class McpRuntimeService {
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       },
       async (extra) => this.tools.getMultidimensionalBaseCatalog(extra),
+    );
+
+    server.registerTool(
+      'dataset_catalog',
+      {
+        title: '查询业务数据集目录',
+        description: '返回当前身份可访问的原生与外部数据集 Schema；只包含 L1/L2 通用字段，不返回命令、凭据或专用敏感字段。风险等级 R0。',
+        outputSchema: datasetCatalogOutputSchema,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      },
+      async (extra) => this.tools.getDatasetCatalog(extra),
+    );
+
+    server.registerTool(
+      'dataset_record_resolve',
+      {
+        title: '解析业务数据集记录',
+        description: '通过版本化记录引用读取权威来源的 L1/L2 投影；不复制外部数据库，不开放写命令。风险等级 R1。',
+        inputSchema: {
+          record: z.object({ dataset: datasetRefMcpSchema, recordId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/), version: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/).optional() }).strict(),
+          fieldKeys: z.array(z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/)).max(100).optional(),
+        },
+        outputSchema: datasetRecordOutputSchema,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      },
+      async ({ record, fieldKeys }, extra) => this.tools.resolveDatasetRecord(record, fieldKeys, extra),
     );
 
     server.registerTool(

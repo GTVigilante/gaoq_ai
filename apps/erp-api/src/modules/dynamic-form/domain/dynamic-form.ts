@@ -2,11 +2,14 @@ import { BadRequestException } from '@nestjs/common';
 import { ULID_PATTERN } from '@gaoq/shared-utils';
 import { z } from 'zod';
 
+import { datasetRecordRefSchema, externalDatasetRefSchema, sameDatasetRef } from './dataset-reference.js';
+
 export const FORM_FIELD_TYPES = [
   'short_text', 'long_text', 'number', 'money_minor', 'percentage', 'boolean',
   'date', 'datetime', 'time', 'email', 'phone', 'url', 'single_select',
   'multi_select', 'radio', 'checkbox_group', 'employee', 'department',
   'attachment', 'relation_single', 'relation_multiple', 'related_property',
+  'dataset_reference',
 ] as const;
 export type FormFieldType = typeof FORM_FIELD_TYPES[number];
 
@@ -24,7 +27,7 @@ const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const ACTOR_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 const optionSchema = z.object({
-  value: z.string().min(1).max(128).regex(/^[^<>\u0000-\u001F]+$/),
+  value: z.string().min(1).max(128).refine((value) => !value.includes('<') && !value.includes('>') && !hasAnyControlCharacter(value)),
   label: z.string().trim().min(1).max(128),
   color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
 }).strict();
@@ -40,6 +43,16 @@ const relatedPropertySchema = z.object({
   relationFieldKey: z.string().regex(KEY),
   targetFieldKey: z.string().regex(KEY),
 }).strict();
+
+const datasetReferenceSchema = z.object({
+  dataset: externalDatasetRefSchema,
+  displayFieldKey: z.string().regex(KEY),
+  snapshotFieldKeys: z.array(z.string().regex(KEY)).max(50).default([]),
+}).strict().superRefine((value, context) => {
+  if (new Set(value.snapshotFieldKeys).size !== value.snapshotFieldKeys.length) {
+    context.addIssue({ code: 'custom', path: ['snapshotFieldKeys'], message: '快照字段不得重复' });
+  }
+});
 
 const attachmentSchema = z.object({
   maxCount: z.number().int().min(1).max(20),
@@ -61,6 +74,7 @@ const fieldSchema = z.object({
   attachment: attachmentSchema.optional(),
   relation: relationSchema.optional(),
   relatedProperty: relatedPropertySchema.optional(),
+  datasetReference: datasetReferenceSchema.optional(),
 }).strict();
 
 const layoutSchema = z.object({
@@ -128,6 +142,16 @@ export const formDefinitionInputSchema = z.object({
     if (node.condition !== undefined && !allowed.has(node.condition.field)) {
       context.addIssue({ code: 'custom', path: ['workflow', 'nodes', index, 'condition', 'field'], message: '审批条件只能引用当前表单字段' });
     }
+    if (node.condition !== undefined && fields.find((field) => field.key === node.condition?.field)?.type === 'dataset_reference') {
+      context.addIssue({ code: 'custom', path: ['workflow', 'nodes', index, 'condition', 'field'], message: '外部记录引用不能直接参与审批条件，请使用受控证据快照字段' });
+    }
+    const conditionField = node.condition === undefined ? undefined : fields.find((field) => field.key === node.condition?.field);
+    if (conditionField !== undefined && ['attachment', 'relation_multiple', 'related_property', 'multi_select', 'checkbox_group'].includes(conditionField.type)) {
+      context.addIssue({ code: 'custom', path: ['workflow', 'nodes', index, 'condition', 'field'], message: '集合或只读字段不能直接参与审批条件' });
+    }
+    if (node.condition !== undefined && ['gt', 'gte', 'lt', 'lte'].includes(node.condition.op) && conditionField !== undefined && !['number', 'percentage'].includes(conditionField.type)) {
+      context.addIssue({ code: 'custom', path: ['workflow', 'nodes', index, 'condition', 'op'], message: '数值比较只能用于数字或百分比字段' });
+    }
     if (node.resolver.type === 'department_manager') {
       const departmentField = node.resolver.departmentField;
       const department = fields.find((field) => field.key === departmentField);
@@ -150,11 +174,17 @@ export const formDefinitionInputSchema = z.object({
     if ((field.type === 'related_property') !== (field.relatedProperty !== undefined)) {
       context.addIssue({ code: 'custom', path: [...path, 'relatedProperty'], message: '关联属性必须且只能配置取值路径' });
     }
+    if ((field.type === 'dataset_reference') !== (field.datasetReference !== undefined)) {
+      context.addIssue({ code: 'custom', path: [...path, 'datasetReference'], message: '数据集引用字段必须且只能配置数据源' });
+    }
     if (field.type === 'related_property' && field.required) {
       context.addIssue({ code: 'custom', path: [...path, 'required'], message: '关联属性为只读实时值，不能设为必填' });
     }
     if (/token|secret|password|authorization/iu.test(field.key)) {
       context.addIssue({ code: 'custom', path: [...path, 'key'], message: '字段键不得使用凭据类保留字' });
+    }
+    if (/^gaoq_/iu.test(field.key)) {
+      context.addIssue({ code: 'custom', path: [...path, 'key'], message: 'gaoq_ 前缀保留给基础设施生成字段' });
     }
   }
 });
@@ -233,7 +263,7 @@ export function relationEdges(
   for (const item of definition.items) {
     if (item.kind !== 'field' || item.field.relation === undefined) continue;
     const value = values[item.field.key];
-    const ids = Array.isArray(value) ? value : typeof value === 'string' ? [value] : [];
+    const ids = isStringArray(value) ? value : typeof value === 'string' ? [value] : [];
     for (const targetRecordId of ids) {
       result.push({ fieldKey: item.field.key, targetFormId: item.field.relation.targetFormId, targetRecordId });
     }
@@ -267,7 +297,7 @@ function parseFieldValue(field: DynamicFormField, value: unknown): unknown {
       if (typeof value === 'string' && field.options?.some((option) => option.value === value)) return value;
       break;
     case 'multi_select': case 'checkbox_group': {
-      if (Array.isArray(value) && value.length <= 200 && new Set(value).size === value.length &&
+      if (isStringArray(value) && value.length <= 200 && new Set(value).size === value.length &&
         value.every((entry) => typeof entry === 'string' && field.options?.some((option) => option.value === entry))) return Object.freeze([...value]);
       break;
     }
@@ -276,18 +306,25 @@ function parseFieldValue(field: DynamicFormField, value: unknown): unknown {
       break;
     case 'relation_multiple': case 'attachment': {
       const max = field.type === 'attachment' ? field.attachment?.maxCount ?? 20 : 100;
-      if (Array.isArray(value) && value.length <= max && new Set(value).size === value.length && value.every((entry) => typeof entry === 'string' && ULID_PATTERN.test(entry))) return Object.freeze([...value]);
+      if (isStringArray(value) && value.length <= max && new Set(value).size === value.length && value.every((entry) => ULID_PATTERN.test(entry))) return Object.freeze([...value]);
       break;
     }
     case 'related_property':
       break;
+    case 'dataset_reference': {
+      const parsed = datasetRecordRefSchema.safeParse(value);
+      if (parsed.success && parsed.data.version !== undefined && field.datasetReference !== undefined && sameDatasetRef(parsed.data.dataset, field.datasetReference.dataset)) {
+        return deepFreeze(structuredClone(parsed.data));
+      }
+      break;
+    }
   }
   throw invalid('FORM_FIELD_VALUE_INVALID', `字段“${field.label}”的值不合法`);
 }
 
 function textValue(field: DynamicFormField, value: unknown): string {
   const max = field.type === 'long_text' ? 20_000 : 2_000;
-  if (typeof value !== 'string' || value.length > max || /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/u.test(value)) {
+  if (typeof value !== 'string' || value.length > max || hasControlCharacter(value)) {
     throw invalid('FORM_FIELD_VALUE_INVALID', `字段“${field.label}”的值不合法`);
   }
   if (field.type === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(value)) throw invalid('FORM_FIELD_VALUE_INVALID', `字段“${field.label}”的值不合法`);
@@ -295,6 +332,21 @@ function textValue(field: DynamicFormField, value: unknown): string {
     try { if (new URL(value).protocol !== 'https:') throw new Error('scheme'); } catch { throw invalid('FORM_FIELD_VALUE_INVALID', `字段“${field.label}”的值不合法`); }
   }
   return value;
+}
+
+function isStringArray(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every((entry: unknown) => typeof entry === 'string');
+}
+
+function hasControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 31 && codePoint !== 9 && codePoint !== 10 && codePoint !== 13;
+  });
+}
+
+function hasAnyControlCharacter(value: string): boolean {
+  return [...value].some((character) => (character.codePointAt(0) ?? 0) <= 31);
 }
 
 function validDate(value: string): boolean {

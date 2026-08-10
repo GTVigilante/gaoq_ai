@@ -32,6 +32,14 @@ export class MultidimensionalBaseRepository {
     return Object.freeze(rows.map((row) => hydrate(row, this.tenant(), row.id)));
   }
 
+  async listByTable(tableId: string, session: ClientSession): Promise<readonly MultidimensionalBase[]> {
+    const query = this.records.find({ tenantId: this.tenant(), 'tables.formId': tableId })
+      .sort({ id: 1 }).limit(101).select('-_id').lean().session(session);
+    const rows = await query.exec();
+    if (rows.length > 100) throw new Error('BASE_AUTOMATION_SOURCE_LIMIT');
+    return Object.freeze(rows.map((row) => hydrate(row, this.tenant(), row.id)));
+  }
+
   private tenant(): string { return this.context.getTenantRequired().tenantId; }
 }
 

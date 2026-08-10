@@ -49,6 +49,8 @@ import { MarketingCmsService } from '../marketing-cms/marketing-cms.service.js';
 import { PerformanceService } from '../performance/application/performance.service.js';
 import { DynamicFormService } from '../dynamic-form/application/dynamic-form.service.js';
 import { MultidimensionalBaseService } from '../dynamic-form/application/multidimensional-base.service.js';
+import { DatasetRuntimeService } from '../dynamic-form/runtime/dataset-runtime.service.js';
+import type { DatasetRecordRef } from '../dynamic-form/domain/dataset-runtime.js';
 import { parseMcpIdentity, type McpIdentity } from './mcp-auth-context.js';
 import {
   McpConfirmationService,
@@ -116,6 +118,7 @@ export class McpToolService {
     private readonly performance: PerformanceService,
     private readonly dynamicForms: DynamicFormService,
     private readonly multidimensionalBases: MultidimensionalBaseService,
+    private readonly datasets: DatasetRuntimeService,
   ) {}
 
   async getDynamicFormCatalog(extra: McpExtra): Promise<McpToolResult> {
@@ -145,6 +148,41 @@ export class McpToolService {
       const result = await this.multidimensionalBases.listForMcp();
       await this.auditTool(identity, 'multidimensional_base_catalog', 'R0', 'success', { count: result.items.length });
       return structuredResult({ items: result.items });
+    });
+  }
+
+  async getDatasetCatalog(extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:bases:workspace:read')) return scopeError('erp:bases:workspace:read');
+      const result = await this.datasets.catalog();
+      const items = result.items.map((schema) => ({
+        ref: schema.ref, name: schema.name, primaryFieldKey: schema.primaryFieldKey,
+        fields: schema.fields.filter((field) => field.availability === 'generic').map((field) => ({
+          key: field.key, label: field.label, type: field.type, sensitivity: field.sensitivity,
+          required: field.required, readOnly: field.readOnly,
+        })),
+        capabilities: { resolve: true as const, snapshot: schema.capabilities.snapshot, query: schema.capabilities.query },
+      }));
+      await this.auditTool(identity, 'dataset_catalog', 'R0', 'success', { count: items.length });
+      return structuredResult({ items });
+    });
+  }
+
+  async resolveDatasetRecord(
+    record: DatasetRecordRef,
+    fieldKeys: readonly string[] | undefined,
+    extra: McpExtra,
+  ): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:bases:workspace:read')) return scopeError('erp:bases:workspace:read');
+      const resolved = await this.datasets.resolve({ record, ...(fieldKeys === undefined ? {} : { fieldKeys }) });
+      await this.auditTool(identity, 'dataset_record_resolve', 'R1', 'success', {
+        sourceKind: resolved.ref.dataset.kind, recordId: resolved.ref.recordId,
+        fieldCount: Object.keys(resolved.values).length,
+      });
+      return structuredResult({ record: resolved });
     });
   }
 

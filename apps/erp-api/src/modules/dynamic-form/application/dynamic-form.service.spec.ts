@@ -6,6 +6,7 @@ import type { IdempotencyService } from '../../../core/idempotency/idempotency.s
 import type { TenantContextService } from '../../../core/tenant/tenant-context.service.js';
 import type { DynamicFormRepository } from '../persistence/dynamic-form.repository.js';
 import type { DynamicFormOutboxWriter } from '../persistence/dynamic-form-outbox.writer.js';
+import type { ExternalDatasetReferenceService } from '../runtime/external-dataset-reference.service.js';
 import { BulkWriteDynamicFormRecordDto, WriteDynamicFormRecordDto } from './dynamic-form.dto.js';
 import { DynamicFormService } from './dynamic-form.service.js';
 
@@ -24,6 +25,8 @@ describe('DynamicFormService', () => {
       { execute } as unknown as IdempotencyService,
       {} as DynamicFormRepository,
       {} as DynamicFormOutboxWriter,
+      {} as ExternalDatasetReferenceService,
+      {} as never,
     );
     const item = new WriteDynamicFormRecordDto();
     item.values = { name: '演示记录' };

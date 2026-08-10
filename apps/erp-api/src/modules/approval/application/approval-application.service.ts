@@ -188,6 +188,26 @@ export interface OpApprovalSubmissionInput {
   readonly sourceDocumentId: string;
 }
 
+export interface GeneratedApprovalTemplateInput {
+  readonly source: { readonly type: 'dynamic_form'; readonly id: string; readonly revision: number };
+  readonly code: string;
+  readonly name: string;
+  readonly riskLevel: 'R1' | 'R2';
+  readonly definition: ApprovalTemplateDefinition;
+}
+
+export interface DynamicFormApprovalSubmissionInput {
+  readonly instanceId: string;
+  readonly templateCode: string;
+  readonly expectedDefinitionHash: string;
+  readonly title: string;
+  readonly formData: ApprovalFormData;
+  readonly sourceFormId: string;
+  readonly sourceRecordId: string;
+  readonly sourceRecordVersion: number;
+  readonly initiatorActorId: string;
+}
+
 export interface ImportApprovalTemplateFromMigrationInput {
   readonly code: string;
   readonly name: string;
@@ -353,6 +373,52 @@ export class ApprovalApplicationService {
               id: createEventId(now),
               tenantId: trusted.tenant.tenantId,
               actorId: trusted.actor.actorId,
+            }, now);
+        await this.templates.insert(template, session);
+        await this.outbox.append(buildApprovalTemplateEvent(template, 'draft_created'), session);
+        return { template: templateSummary(template) };
+      },
+    ));
+  }
+
+  /** 基础设施生成模板：同一动态表单草稿原地更新，已发布后才创建下一修订。 */
+  async syncGeneratedTemplate(
+    key: string,
+    input: GeneratedApprovalTemplateInput,
+  ): Promise<{ readonly template: ApprovalTemplateSummary }> {
+    this.requireActorScope('erp:approval:template:write');
+    if (input.source.type !== 'dynamic_form' || !ULID_PATTERN.test(input.source.id) ||
+      !Number.isSafeInteger(input.source.revision) || input.source.revision < 1) {
+      throw new BadRequestException({ code: 'APPROVAL_GENERATED_SOURCE_INVALID', message: '生成模板来源不合法' });
+    }
+    return this.run(async () => this.idempotency.execute(
+      'approval.template.sync_generated', key, input, async (session) => {
+        const trusted = this.context.getRequired();
+        const now = new Date();
+        const latest = await this.templates.findLatestByCode(input.code, session);
+        if (latest?.status === 'draft') {
+          const updated = updateApprovalTemplateDraft(latest, {
+            tenantId: trusted.tenant.tenantId,
+            expectedVersion: latest.version,
+            actorId: trusted.actor.actorId,
+            name: input.name,
+            riskLevel: input.riskLevel,
+            definition: input.definition,
+          }, now);
+          await this.templates.replace(updated, latest.version, session);
+          await this.outbox.append(buildApprovalTemplateEvent(updated, 'draft_updated'), session);
+          return { template: templateSummary(updated) };
+        }
+        const template = latest === null
+          ? createApprovalTemplateDraft({
+              code: input.code, name: input.name, riskLevel: input.riskLevel,
+              definition: input.definition, id: createEventId(now),
+              tenantId: trusted.tenant.tenantId, actorId: trusted.actor.actorId,
+            }, now)
+          : createNextApprovalTemplateRevision(latest, {
+              name: input.name, riskLevel: input.riskLevel,
+              definition: input.definition, id: createEventId(now),
+              tenantId: trusted.tenant.tenantId, actorId: trusted.actor.actorId,
             }, now);
         await this.templates.insert(template, session);
         await this.outbox.append(buildApprovalTemplateEvent(template, 'draft_created'), session);
@@ -897,6 +963,58 @@ export class ApprovalApplicationService {
         await this.outbox.append(
           buildApprovalActionEvent(submitted.instance, submitted.action), session,
         );
+        await this.notifications.append(submitted.instance, submitted.action, session);
+        return { instance: instanceSummary(submitted.instance) };
+      },
+    ));
+  }
+
+  /** 动态表单基础设施专用：校验发布模板摘要后，在单事务内创建并提交审批。 */
+  async createAndSubmitFromDynamicForm(
+    key: string,
+    input: DynamicFormApprovalSubmissionInput,
+  ): Promise<{ readonly instance: ApprovalInstanceSummary }> {
+    this.requireActorScope('erp:approval:instance:submit');
+    if (!ULID_PATTERN.test(input.instanceId) || !ULID_PATTERN.test(input.sourceFormId) ||
+      !ULID_PATTERN.test(input.sourceRecordId) || !Number.isSafeInteger(input.sourceRecordVersion) ||
+      input.sourceRecordVersion < 1 || !HASH_PATTERN.test(input.expectedDefinitionHash) ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(input.initiatorActorId)) {
+      throw new BadRequestException({ code: 'APPROVAL_DYNAMIC_FORM_SOURCE_INVALID', message: '动态表单审批来源不合法' });
+    }
+    return this.run(async () => this.idempotency.execute(
+      'approval.instance.dynamic_form_submit', key, input, async (session) => {
+        const trusted = this.context.getRequired();
+        const automated = trusted.actor.actorType === 'system_job';
+        if (automated && !trusted.actor.scopes.includes('erp:approval:dynamic_form:automate')) {
+          throw new ForbiddenException({ code: 'APPROVAL_DYNAMIC_FORM_AUTOMATION_DENIED', message: '后台自动审批缺少专用权限' });
+        }
+        if (!automated && input.initiatorActorId !== trusted.actor.actorId) {
+          throw new ForbiddenException({ code: 'APPROVAL_DYNAMIC_FORM_INITIATOR_MISMATCH', message: '交互式审批发起人与当前主体不一致' });
+        }
+        await this.requireActiveActor(input.initiatorActorId, session);
+        const template = await this.templates.findPublishedByCode(input.templateCode, session);
+        if (template === null) throw new NotFoundException({
+          code: 'APPROVAL_TEMPLATE_NOT_FOUND', message: '未找到动态表单对应的已发布审批模板',
+        });
+        if (template.definitionHash !== input.expectedDefinitionHash) throw new ConflictException({
+          code: 'APPROVAL_DYNAMIC_FORM_TEMPLATE_STALE', message: '审批模板与当前表单修订不一致，请先同步并发布模板',
+        });
+        const now = new Date();
+        const draft = createApprovalInstanceDraft({
+          id: input.instanceId, tenantId: trusted.tenant.tenantId, title: input.title,
+          initiatorId: input.initiatorActorId, template, formData: input.formData,
+        }, now);
+        const resolvedNodes = await this.resolvers.resolve(
+          draft.templateSnapshot, input.initiatorActorId, draft.formData, session,
+        );
+        const submitted = submitApprovalInstance(draft, {
+          tenantId: trusted.tenant.tenantId, expectedVersion: draft.version,
+          actorId: input.initiatorActorId, resolvedNodes,
+        }, now);
+        await this.instances.insert(submitted.instance, session);
+        await this.actions.append(submitted.instance, submitted.action, session);
+        await this.outbox.append(buildApprovalInstanceCreatedEvent(draft), session);
+        await this.outbox.append(buildApprovalActionEvent(submitted.instance, submitted.action), session);
         await this.notifications.append(submitted.instance, submitted.action, session);
         return { instance: instanceSummary(submitted.instance) };
       },

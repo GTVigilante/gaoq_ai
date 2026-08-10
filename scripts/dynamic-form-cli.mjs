@@ -18,6 +18,9 @@ const help = () => process.stdout.write(`GaoQ 动态数据 CLI
 
 命令：
   forms list
+  bases list
+  datasets list
+  datasets resolve --file <dataset-request.json>
   records list   --form <ULID> [--limit 1..200]
   records get    --form <ULID> --record <ULID>
   records create --form <ULID> --file <values.json> --key <Idempotency-Key>
@@ -76,7 +79,7 @@ const request = async (path, init = {}) => {
     try {
       const body = await response.json();
       if (typeof body?.code === 'string' && /^[A-Z][A-Z0-9_]{2,63}$/u.test(body.code)) code = body.code;
-    } catch {}
+    } catch { code = `HTTP_${response.status}`; }
     throw new Error(`${code}${traceId === null ? '' : `:${traceId}`}`);
   }
   return response.json();
@@ -88,6 +91,14 @@ const main = async () => {
   const [resource, action, ...tail] = argumentsList;
   if (resource === undefined || ['help', '--help', '-h'].includes(resource)) return help();
   if (resource === 'forms' && action === 'list' && tail.length === 0) return print(await request('/dynamic-forms'));
+  if (resource === 'bases' && action === 'list' && tail.length === 0) return print(await request('/multidimensional-bases'));
+  if (resource === 'datasets' && action === 'list' && tail.length === 0) return print(await request('/datasets'));
+  if (resource === 'datasets' && action === 'resolve') {
+    const options = parseOptions(tail, new Set(['file']));
+    const file = required(options, 'file', /^.{1,1024}$/u, 'CLI_FILE_REQUIRED');
+    const input = await readJson(file);
+    return print(await request('/datasets/records/resolve', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) }));
+  }
   if (resource !== 'records' || !['list', 'get', 'create', 'bulk', 'update'].includes(action ?? '')) throw new Error('CLI_COMMAND_INVALID');
 
   const allowed = new Set(action === 'list' ? ['form', 'limit'] : action === 'get' ? ['form', 'record'] : action === 'update' ? ['form', 'record', 'version', 'file', 'key'] : ['form', 'file', 'key']);

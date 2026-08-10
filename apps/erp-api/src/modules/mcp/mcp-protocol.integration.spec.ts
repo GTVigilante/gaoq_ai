@@ -587,6 +587,8 @@ describe('MCP Streamable HTTP 协议集成', () => {
       'dynamic_form_catalog',
       'dynamic_form_record_get',
       'multidimensional_base_catalog',
+      'dataset_catalog',
+      'dataset_record_resolve',
       'recruitment_requisition_get',
       'recruitment_position_get',
       'recruitment_interview_get',

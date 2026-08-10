@@ -19,6 +19,7 @@ import { MarketingCmsWorkerModule } from './modules/marketing-cms/marketing-cms-
 import { RecruitmentResumeWorkerModule } from './modules/recruitment/recruitment-resume-worker.module.js';
 import { KnowledgeSearchWorkerModule } from './modules/knowledge/knowledge-search-worker.module.js';
 import { KnowledgeExamWorkerModule } from './modules/knowledge/knowledge-exam-worker.module.js';
+import { DynamicFormWorkerModule } from './modules/dynamic-form/dynamic-form-worker.module.js';
 
 const mongoLogger = new Logger('WorkerMongoDB');
 
@@ -57,6 +58,7 @@ const mongoLogger = new Logger('WorkerMongoDB');
     RecruitmentResumeWorkerModule,
     KnowledgeSearchWorkerModule,
     KnowledgeExamWorkerModule,
+    DynamicFormWorkerModule,
     AuditWorkerModule,
     ObservabilityModule,
   ],

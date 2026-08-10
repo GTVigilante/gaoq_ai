@@ -16,7 +16,7 @@ const RISK = Object.freeze({
     'talent_lifecycle_get',
     'attendance_month_get', 'payroll_period_get', 'op_operating_summary_get',
     'op_approval_bridge_get', 'performance_my_assignments', 'dynamic_form_catalog',
-    'multidimensional_base_catalog',
+    'multidimensional_base_catalog', 'dataset_catalog', 'dataset_record_resolve',
   ],
   R1: [
     'approval_submit_prepare', 'approval_submit_execute', 'approval_withdraw_prepare',
@@ -45,6 +45,7 @@ const EMPTY_INPUT = new Set([
   'performance_my_assignments',
   'dynamic_form_catalog',
   'multidimensional_base_catalog',
+  'dataset_catalog',
 ]);
 
 const runtime = await readFile(runtimeUrl, 'utf8');
@@ -144,7 +145,7 @@ function buildCatalog(runtimeSource, toolServiceSource) {
   });
   const riskByName = new Map(Object.entries(RISK).flatMap(([risk, names]) =>
     names.map((name) => [name, risk])));
-  if (riskByName.size !== 54 || registrations.length !== 54) fail('PHASE5_MCP_TOOL_COUNT_INVALID');
+  if (riskByName.size !== 56 || registrations.length !== 56) fail('PHASE5_MCP_TOOL_COUNT_INVALID');
   const names = registrations.map((item) => item.name);
   if (new Set(names).size !== names.length || names.some((name) => !riskByName.has(name))) {
     fail('PHASE5_MCP_RISK_CATALOG_INCOMPLETE');

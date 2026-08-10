@@ -1,9 +1,11 @@
+import type { DatasetRef } from '../bases/multidimensional-base-types';
+
 export type FieldType =
   | 'short_text' | 'long_text' | 'number' | 'money_minor' | 'percentage' | 'boolean'
   | 'date' | 'datetime' | 'time' | 'email' | 'phone' | 'url'
   | 'single_select' | 'multi_select' | 'radio' | 'checkbox_group'
   | 'employee' | 'department' | 'attachment'
-  | 'relation_single' | 'relation_multiple' | 'related_property';
+  | 'relation_single' | 'relation_multiple' | 'related_property' | 'dataset_reference';
 export type LayoutType = 'section' | 'description' | 'divider';
 export type Sensitivity = 'L1' | 'L2' | 'L3' | 'L4';
 
@@ -22,6 +24,11 @@ export interface DesignerField {
   readonly attachment?: { readonly maxCount: number; readonly maxSizeMb: number; readonly accept: readonly ('image' | 'document' | 'spreadsheet' | 'archive' | 'pdf')[] };
   readonly relation?: { readonly targetFormId: string; readonly displayFieldKey: string; readonly filterFieldKey?: string; readonly allowCreate: boolean };
   readonly relatedProperty?: { readonly relationFieldKey: string; readonly targetFieldKey: string };
+  readonly datasetReference?: {
+    readonly dataset: Extract<DatasetRef, { readonly kind: 'external' }>;
+    readonly displayFieldKey: string;
+    readonly snapshotFieldKeys: readonly string[];
+  };
 }
 export interface DesignerLayout { readonly id: string; readonly type: LayoutType; readonly title: string; readonly description: string }
 export type DesignerItem = { readonly kind: 'field'; readonly field: DesignerField } | { readonly kind: 'layout'; readonly layout: DesignerLayout };
@@ -71,6 +78,7 @@ export const PALETTE: readonly PaletteEntry[] = Object.freeze([
   { type: 'relation_single', kind: 'field', label: '关联记录', group: '业务与关联', hint: '关联一条记录' },
   { type: 'relation_multiple', kind: 'field', label: '关联记录（多选）', group: '业务与关联', hint: '关联多条记录' },
   { type: 'related_property', kind: 'field', label: '关联属性', group: '业务与关联', hint: '实时读取目标字段' },
+  { type: 'dataset_reference', kind: 'field', label: '外部数据引用', group: '业务与关联', hint: '引用 OP 等权威系统记录' },
   { type: 'section', kind: 'layout', label: '分组标题', group: '布局组件', hint: '组织字段语义' },
   { type: 'description', kind: 'layout', label: '说明文字', group: '布局组件', hint: '填写提示' },
   { type: 'divider', kind: 'layout', label: '分隔线', group: '布局组件', hint: '弱化区块边界' },
@@ -91,6 +99,7 @@ export function createDesignerItem(entry: PaletteEntry, existing: readonly Desig
     ...(type === 'attachment' ? { attachment: { maxCount: 5, maxSizeMb: 20, accept: ['image', 'document', 'spreadsheet', 'pdf'] as const } } : {}),
     ...(type === 'relation_single' || type === 'relation_multiple' ? { relation: { targetFormId: '', displayFieldKey: '', allowCreate: false } } : {}),
     ...(type === 'related_property' ? { relatedProperty: { relationFieldKey: '', targetFieldKey: '' } } : {}),
+    ...(type === 'dataset_reference' ? { datasetReference: { dataset: { kind: 'external' as const, system: '', objectType: '', schemaVersion: '' }, displayFieldKey: '', snapshotFieldKeys: [] } } : {}),
   };
   return { kind: 'field', field: base };
 }

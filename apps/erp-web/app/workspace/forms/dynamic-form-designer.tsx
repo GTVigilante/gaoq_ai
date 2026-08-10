@@ -17,6 +17,7 @@ import type { Dispatch, DragEvent, ReactNode, SetStateAction } from 'react';
 import { useCallback, useEffect, useState } from 'react';
 
 import { createIdempotencyKey, ErpApiError, erpFetch, strongEtag } from '../../lib/api-client';
+import { datasetKey, type DatasetSchema } from '../bases/multidimensional-base-types';
 import {
   createDesignerItem, duplicateDesignerItem, itemId, moveItem, PALETTE, type DesignerField,
   type DesignerItem, type DesignerLayout, type FieldType, type PaletteEntry, type WorkflowNode,
@@ -32,6 +33,7 @@ interface StoredForm {
   readonly status: 'draft' | 'published' | 'retired'; readonly revision: number; readonly version: number;
 }
 interface FormListResult { readonly items: readonly StoredForm[] }
+interface DatasetCatalogResult { readonly items: readonly DatasetSchema[] }
 interface FormMutationResult { readonly form: StoredForm }
 interface ApprovalMutationResult { readonly template: { readonly id: string; readonly code: string; readonly revision: number; readonly version: number } }
 interface DesignerHistory { readonly past: readonly (readonly DesignerItem[])[]; readonly present: readonly DesignerItem[]; readonly future: readonly (readonly DesignerItem[])[] }
@@ -46,6 +48,7 @@ const ICONS: Readonly<Record<FieldType | DesignerLayout['type'], ReactNode>> = {
   checkbox_group: <CheckSquareOutlined />, employee: <TeamOutlined />, department: <ApartmentOutlined />,
   attachment: <PaperClipOutlined />, relation_single: <LinkOutlined />, relation_multiple: <LinkOutlined />,
   related_property: <DatabaseOutlined />, section: <FileAddOutlined />, description: <FileTextOutlined />,
+  dataset_reference: <DatabaseOutlined />,
   divider: <DragOutlined />,
 };
 
@@ -65,16 +68,22 @@ export function DynamicFormDesigner() {
   const [saveState, setSaveState] = useState<SaveState>('loading');
   const [stored, setStored] = useState<StoredForm | null>(null);
   const [forms, setForms] = useState<readonly StoredForm[]>([]);
+  const [datasets, setDatasets] = useState<readonly DatasetSchema[]>([]);
   const [publishOpen, setPublishOpen] = useState(false);
   const selected = items.find((item) => itemId(item) === selectedId) ?? null;
   const editable = stored?.status !== 'published';
 
   const load = useCallback(async () => {
     try {
-      const result = await erpFetch<FormListResult>('/api/dynamic-forms');
-      setForms(result.data.items);
+      const [formResult, datasetResult] = await Promise.all([
+        erpFetch<FormListResult>('/api/dynamic-forms'),
+        erpFetch<DatasetCatalogResult>('/api/datasets'),
+      ]);
+      setForms(formResult.data.items);
+      setDatasets(datasetResult.data.items.filter((schema) => schema.ref.kind === 'external'));
     } catch {
       setForms([]);
+      setDatasets([]);
     } finally {
       setSaveState('idle');
     }
@@ -143,13 +152,13 @@ export function DynamicFormDesigner() {
   const syncApprovalTemplate = async () => {
     const issue = workflowIssue(workflowNodes, items);
     if (issue !== null) { void message.error(issue); return; }
+    if (stored === null) { void message.error('请先保存表单草稿，再由后端编译审批模板'); return; }
     setSaveState('saving');
     try {
-      const result = await erpFetch<ApprovalMutationResult>('/api/approvals/templates', {
-        method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': createIdempotencyKey('dynamic-form-approval-adapter') },
-        body: JSON.stringify({ code: `${code}.approval`, name, riskLevel, definition: { fields: approvalFields(items), nodes: workflowNodes.map(approvalNode) } }),
+      const result = await erpFetch<ApprovalMutationResult>(`/api/dynamic-forms/${encodeURIComponent(stored.id)}/approval-template/sync`, {
+        method: 'POST', headers: { 'idempotency-key': createIdempotencyKey('dynamic-form-approval-sync'), 'if-match': strongEtag(stored.version) },
       });
-      void message.success(`已生成审批模板 ${result.data.template.code} · 修订 ${result.data.template.revision}`);
+      void message.success(`后端已编译审批模板 ${result.data.template.code} · 修订 ${result.data.template.revision}`);
     } catch (error) { showError(modal, error, '审批模板生成失败'); }
     finally { setSaveState('idle'); }
   };
@@ -208,7 +217,7 @@ export function DynamicFormDesigner() {
     {view === 'design' ? <div className="form-studio-grid">
       <Palette editable={editable} onAdd={add} />
       <DesignerCanvas items={items} selectedId={selectedId} draggingId={draggingId} editable={editable} onSelect={setSelectedId} onRemove={remove} onReorder={reorder} onDrop={drop} onDragStart={(id) => setDraggingId(id)} onDragEnd={() => setDraggingId(null)} />
-      <PropertyPanel item={selected} items={items} forms={forms} editable={editable} onFieldChange={updateField} onLayoutChange={updateLayout} />
+      <PropertyPanel item={selected} items={items} forms={forms} datasets={datasets} editable={editable} onFieldChange={updateField} onLayoutChange={updateLayout} />
     </div> : null}
     {view === 'process' ? <WorkflowDesigner nodes={workflowNodes} fields={items.flatMap((item) => item.kind === 'field' ? [item.field] : [])} riskLevel={riskLevel} editable={editable} syncing={saveState === 'saving'} onRiskChange={setRiskLevel} onChange={setWorkflowNodes} onSync={() => { void syncApprovalTemplate(); }} /> : null}
     {view === 'preview' ? <FormPreview name={name} description={description} items={items} /> : null}
@@ -270,6 +279,7 @@ function FieldControl({ field }: { readonly field: DesignerField }) {
   if (field.type === 'attachment') return <div className="form-attachment-preview"><CloudUploadOutlined /><span>点击或拖拽上传附件</span><small>最多 {field.attachment?.maxCount ?? 5} 个，单个不超过 {field.attachment?.maxSizeMb ?? 20} MB</small></div>;
   if (field.type === 'relation_single' || field.type === 'relation_multiple') return <Input prefix={<LinkOutlined />} placeholder="选择关联记录" disabled />;
   if (field.type === 'related_property') return <Input prefix={<DatabaseOutlined />} placeholder="随关联记录实时显示" disabled />;
+  if (field.type === 'dataset_reference') return <Input prefix={<DatabaseOutlined />} placeholder="从权威系统选择记录（保存引用与版本）" disabled />;
   return <Input prefix={field.type === 'email' ? <MailOutlined /> : field.type === 'phone' ? <PhoneOutlined /> : field.type === 'url' ? <LinkOutlined /> : undefined} placeholder={placeholder} disabled />;
 }
 
@@ -279,19 +289,21 @@ function LayoutPreview({ layout }: { readonly layout: DesignerLayout }) {
   return <div className="form-layout-description"><FileTextOutlined /><span><strong>{layout.title}</strong>{layout.description}</span></div>;
 }
 
-function PropertyPanel(props: { readonly item: DesignerItem | null; readonly items: readonly DesignerItem[]; readonly forms: readonly StoredForm[]; readonly editable: boolean; readonly onFieldChange: (patch: Partial<DesignerField>) => void; readonly onLayoutChange: (patch: Partial<DesignerLayout>) => void }) {
-  return <aside className="form-properties" aria-label="组件属性"><div className="form-panel-heading"><strong>属性设置</strong><span>{props.item === null ? '选择一个组件' : '即时生效'}</span></div>{props.item === null ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="点击画布中的字段进行配置" /> : props.item.kind === 'layout' ? <LayoutProperties layout={props.item.layout} editable={props.editable} onChange={props.onLayoutChange} /> : <FieldProperties field={props.item.field} items={props.items} forms={props.forms} editable={props.editable} onChange={props.onFieldChange} />}</aside>;
+function PropertyPanel(props: { readonly item: DesignerItem | null; readonly items: readonly DesignerItem[]; readonly forms: readonly StoredForm[]; readonly datasets: readonly DatasetSchema[]; readonly editable: boolean; readonly onFieldChange: (patch: Partial<DesignerField>) => void; readonly onLayoutChange: (patch: Partial<DesignerLayout>) => void }) {
+  return <aside className="form-properties" aria-label="组件属性"><div className="form-panel-heading"><strong>属性设置</strong><span>{props.item === null ? '选择一个组件' : '即时生效'}</span></div>{props.item === null ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="点击画布中的字段进行配置" /> : props.item.kind === 'layout' ? <LayoutProperties layout={props.item.layout} editable={props.editable} onChange={props.onLayoutChange} /> : <FieldProperties field={props.item.field} items={props.items} forms={props.forms} datasets={props.datasets} editable={props.editable} onChange={props.onFieldChange} />}</aside>;
 }
 
 function LayoutProperties({ layout, editable, onChange }: { readonly layout: DesignerLayout; readonly editable: boolean; readonly onChange: (patch: Partial<DesignerLayout>) => void }) {
   return <div className="form-property-list"><Property label="标题"><Input value={layout.title} maxLength={128} disabled={!editable} onChange={(event) => onChange({ title: event.target.value })} /></Property><Property label="说明"><Input.TextArea value={layout.description} maxLength={1_000} rows={4} disabled={!editable} onChange={(event) => onChange({ description: event.target.value })} /></Property></div>;
 }
 
-function FieldProperties({ field, items, forms, editable, onChange }: { readonly field: DesignerField; readonly items: readonly DesignerItem[]; readonly forms: readonly StoredForm[]; readonly editable: boolean; readonly onChange: (patch: Partial<DesignerField>) => void }) {
+function FieldProperties({ field, items, forms, datasets, editable, onChange }: { readonly field: DesignerField; readonly items: readonly DesignerItem[]; readonly forms: readonly StoredForm[]; readonly datasets: readonly DatasetSchema[]; readonly editable: boolean; readonly onChange: (patch: Partial<DesignerField>) => void }) {
   const relatedFields = items.flatMap((item) => item.kind === 'field' && item.field.relation !== undefined ? [item.field] : []);
   const target = forms.find((form) => form.id === field.relation?.targetFormId);
   const relationSource = relatedFields.find((candidate) => candidate.key === field.relatedProperty?.relationFieldKey);
   const propertyTarget = forms.find((form) => form.id === relationSource?.relation?.targetFormId);
+  const externalSchema = datasets.find((schema) => field.datasetReference !== undefined && datasetKey(schema.ref) === datasetKey(field.datasetReference.dataset));
+  const externalFields = externalSchema?.fields.filter((candidate) => candidate.availability === 'generic') ?? [];
   return <div className="form-property-list">
     <div className="form-property-type"><span>{ICONS[field.type]}</span><div><strong>{PALETTE.find((entry) => entry.type === field.type)?.label}</strong><small>字段类型创建后保持稳定</small></div></div>
     <Property label="字段名称"><Input value={field.label} maxLength={128} disabled={!editable} onChange={(event) => onChange({ label: event.target.value })} /></Property>
@@ -304,6 +316,7 @@ function FieldProperties({ field, items, forms, editable, onChange }: { readonly
     {field.attachment === undefined ? null : <><div className="form-property-row"><Property label="最多文件数"><InputNumber min={1} max={20} value={field.attachment.maxCount} disabled={!editable} onChange={(value) => onChange({ attachment: { ...field.attachment!, maxCount: value ?? 1 } })} /></Property><Property label="单文件上限（MB）"><InputNumber min={1} max={50} value={field.attachment.maxSizeMb} disabled={!editable} onChange={(value) => onChange({ attachment: { ...field.attachment!, maxSizeMb: value ?? 1 } })} /></Property></div><Property label="允许类型"><Select<AttachmentAccept[]> mode="multiple" value={[...field.attachment.accept]} disabled={!editable} options={(['image', 'document', 'spreadsheet', 'archive', 'pdf'] as const).map((value) => ({ value, label: value }))} onChange={(accept) => onChange({ attachment: { ...field.attachment!, accept } })} /></Property></>}
     {field.relation === undefined ? null : <><div className="form-property-section-title">数据关联</div><Property label="目标表单"><Select<string> value={field.relation.targetFormId} placeholder="选择已存在表单" disabled={!editable} options={forms.filter((form) => form.id !== '').map((form) => ({ value: form.id, label: `${form.name} · ${form.code}` }))} onChange={(targetFormId) => onChange({ relation: { targetFormId, displayFieldKey: '', allowCreate: field.relation!.allowCreate } })} /></Property><Property label="记录显示字段"><Select<string> value={field.relation.displayFieldKey} placeholder="选择目标字段" disabled={!editable || target === undefined} options={target?.items.flatMap((item) => item.kind === 'field' ? [{ value: item.field.key, label: item.field.label }] : []) ?? []} onChange={(displayFieldKey) => onChange({ relation: { ...field.relation!, displayFieldKey } })} /></Property><label className="form-property-switch"><span><strong>允许快捷新建</strong><small>从选择器直接创建目标记录</small></span><Switch checked={field.relation.allowCreate} disabled={!editable} onChange={(allowCreate) => onChange({ relation: { ...field.relation!, allowCreate } })} /></label></>}
     {field.relatedProperty === undefined ? null : <><div className="form-property-section-title">关联属性路径</div><Property label="来源关联字段"><Select<string> value={field.relatedProperty.relationFieldKey} placeholder="选择本表关联字段" disabled={!editable} options={relatedFields.map((candidate) => ({ value: candidate.key, label: candidate.label }))} onChange={(relationFieldKey) => onChange({ relatedProperty: { relationFieldKey, targetFieldKey: '' } })} /></Property><Property label="目标字段"><Select<string> value={field.relatedProperty.targetFieldKey} placeholder="选择要实时显示的字段" disabled={!editable || propertyTarget === undefined} options={propertyTarget?.items.flatMap((item) => item.kind === 'field' && item.field.sensitivity !== 'L4' ? [{ value: item.field.key, label: item.field.label }] : []) ?? []} onChange={(targetFieldKey) => onChange({ relatedProperty: { ...field.relatedProperty!, targetFieldKey } })} /></Property><Alert type="info" showIcon message="实时读取，不复制数据" description="目标记录变化后这里同步更新；L4 字段不能作为关联属性展示。" /></>}
+    {field.datasetReference === undefined ? null : <><div className="form-property-section-title">权威数据源</div><Property label="外部数据集"><Select<string> value={externalSchema === undefined ? null : datasetKey(externalSchema.ref)} placeholder="选择有权限的数据集" disabled={!editable} options={datasets.map((schema) => ({ value: datasetKey(schema.ref), label: schema.name }))} onChange={(key) => { const schema = datasets.find((candidate) => datasetKey(candidate.ref) === key); if (schema?.ref.kind !== 'external') return; onChange({ datasetReference: { dataset: schema.ref, displayFieldKey: schema.primaryFieldKey, snapshotFieldKeys: [schema.primaryFieldKey] } }); }} /></Property><Property label="记录显示字段"><Select<string> value={field.datasetReference.displayFieldKey || null} placeholder="选择列表中显示的字段" disabled={!editable || externalSchema === undefined} options={externalFields.map((candidate) => ({ value: candidate.key, label: `${candidate.label} · ${candidate.type}` }))} onChange={(displayFieldKey) => onChange({ datasetReference: { ...field.datasetReference!, displayFieldKey } })} /></Property><Property label="审批证据快照"><Select<string[]> mode="multiple" value={[...field.datasetReference.snapshotFieldKeys]} placeholder="选择提交审批时固化的字段" disabled={!editable || externalSchema === undefined} options={externalFields.map((candidate) => ({ value: candidate.key, label: `${candidate.label} · ${candidate.sensitivity}` }))} onChange={(snapshotFieldKeys) => onChange({ datasetReference: { ...field.datasetReference!, snapshotFieldKeys } })} /></Property><Alert type="info" showIcon message="引用权威记录，不复制业务库" description="表单保存记录标识与来源版本；审批时只固化所选字段及内容摘要，OP 仍是唯一事实源。" /></>}
   </div>;
 }
 
@@ -352,8 +365,8 @@ function WorkflowDesigner(props: { readonly nodes: readonly WorkflowNode[]; read
         {selected.resolver.type === 'roles' ? <><Property label="角色编码（逗号分隔）"><Input value={selected.resolver.roleCodes.join(', ')} disabled={!props.editable} onChange={(event) => update({ resolver: { ...selected.resolver as Extract<WorkflowNode['resolver'], { type: 'roles' }>, roleCodes: csv(event.target.value) } })} /></Property><Property label="角色范围"><Select value={selected.resolver.scope} disabled={!props.editable} options={[{ value: 'tenant', label: '全租户' }, { value: 'initiator_department', label: '发起人部门' }]} onChange={(scope) => update({ resolver: { ...selected.resolver as Extract<WorkflowNode['resolver'], { type: 'roles' }>, scope } })} /></Property></> : null}
         {selected.resolver.type === 'employees' ? <Property label="员工标识（逗号分隔）"><Input value={selected.resolver.employeeIds.join(', ')} disabled={!props.editable} onChange={(event) => update({ resolver: { type: 'employees', employeeIds: csv(event.target.value) } })} /></Property> : null}
         {selected.resolver.type === 'department_manager' ? <Property label="部门字段"><Select value={selected.resolver.departmentField} disabled={!props.editable} options={props.fields.filter((field) => field.type === 'department').map((field) => ({ value: field.key, label: field.label }))} onChange={(departmentField) => update({ resolver: { type: 'department_manager', departmentField } })} /></Property> : null}
-        <label className="form-property-switch"><span><strong>条件分支</strong><small>只在记录满足条件时执行本节点</small></span><Switch checked={selected.condition !== undefined} disabled={!props.editable} onChange={(checked) => update({ condition: checked ? { field: props.fields[0]?.key ?? '', op: 'eq', value: '' } : undefined })} /></label>
-        {selected.condition === undefined ? null : <><Property label="条件字段"><Select value={selected.condition.field} disabled={!props.editable} options={props.fields.filter((field) => field.type !== 'attachment' && field.type !== 'related_property').map((field) => ({ value: field.key, label: field.label }))} onChange={(field) => update({ condition: { ...selected.condition!, field } })} /></Property><Property label="比较方式"><Select value={selected.condition.op} disabled={!props.editable} options={[{ value: 'eq', label: '等于' }, { value: 'ne', label: '不等于' }, { value: 'gt', label: '大于' }, { value: 'gte', label: '大于等于' }, { value: 'lt', label: '小于' }, { value: 'lte', label: '小于等于' }, { value: 'is_empty', label: '为空' }]} onChange={(op) => update({ condition: op === 'is_empty' ? { field: selected.condition!.field, op } : { field: selected.condition!.field, op, value: ['gt', 'gte', 'lt', 'lte'].includes(op) ? 0 : '' } })} /></Property>{selected.condition.op === 'is_empty' ? null : <Property label="比较值">{['gt', 'gte', 'lt', 'lte'].includes(selected.condition.op) ? <InputNumber value={typeof selected.condition.value === 'number' ? selected.condition.value : 0} disabled={!props.editable} onChange={(value) => update({ condition: { ...selected.condition!, value: value ?? 0 } })} className="console-full-width" /> : <Input value={typeof selected.condition.value === 'string' ? selected.condition.value : ''} disabled={!props.editable} onChange={(event) => update({ condition: { ...selected.condition!, value: event.target.value } })} />}</Property>}</>}
+        <label className="form-property-switch"><span><strong>条件分支</strong><small>只在记录满足条件时执行本节点</small></span><Switch checked={selected.condition !== undefined} disabled={!props.editable} onChange={(checked) => update({ condition: checked ? { field: props.fields.find((field) => field.type !== 'attachment' && field.type !== 'related_property' && field.type !== 'dataset_reference')?.key ?? '', op: 'eq', value: '' } : undefined })} /></label>
+        {selected.condition === undefined ? null : <><Property label="条件字段"><Select value={selected.condition.field} disabled={!props.editable} options={props.fields.filter((field) => field.type !== 'attachment' && field.type !== 'related_property' && field.type !== 'dataset_reference').map((field) => ({ value: field.key, label: field.label }))} onChange={(field) => update({ condition: { ...selected.condition!, field } })} /></Property><Property label="比较方式"><Select value={selected.condition.op} disabled={!props.editable} options={[{ value: 'eq', label: '等于' }, { value: 'ne', label: '不等于' }, { value: 'gt', label: '大于' }, { value: 'gte', label: '大于等于' }, { value: 'lt', label: '小于' }, { value: 'lte', label: '小于等于' }, { value: 'is_empty', label: '为空' }]} onChange={(op) => update({ condition: op === 'is_empty' ? { field: selected.condition!.field, op } : { field: selected.condition!.field, op, value: ['gt', 'gte', 'lt', 'lte'].includes(op) ? 0 : '' } })} /></Property>{selected.condition.op === 'is_empty' ? null : <Property label="比较值">{['gt', 'gte', 'lt', 'lte'].includes(selected.condition.op) ? <InputNumber value={typeof selected.condition.value === 'number' ? selected.condition.value : 0} disabled={!props.editable} onChange={(value) => update({ condition: { ...selected.condition!, value: value ?? 0 } })} className="console-full-width" /> : <Input value={typeof selected.condition.value === 'string' ? selected.condition.value : ''} disabled={!props.editable} onChange={(event) => update({ condition: { ...selected.condition!, value: event.target.value } })} />}</Property>}</>}
       </div>}</aside>
     </div>
   </section>;
@@ -378,6 +391,7 @@ function validationIssue(name: string, code: string, items: readonly DesignerIte
   if (fields.some((field) => field.label.trim() === '' || !/^[A-Za-z][A-Za-z0-9_]{0,63}$/u.test(field.key))) return '请补全字段名称，并修正不合法的字段键';
   if (fields.some((field) => field.relation !== undefined && (field.relation.targetFormId === '' || field.relation.displayFieldKey === ''))) return '请为所有关联记录字段选择目标表单和显示字段';
   if (fields.some((field) => field.relatedProperty !== undefined && (field.relatedProperty.relationFieldKey === '' || field.relatedProperty.targetFieldKey === ''))) return '请补全所有关联属性的取值路径';
+  if (fields.some((field) => field.datasetReference !== undefined && (field.datasetReference.dataset.system === '' || field.datasetReference.dataset.objectType === '' || field.datasetReference.dataset.schemaVersion === '' || field.datasetReference.displayFieldKey === ''))) return '请为所有外部数据引用选择数据集和显示字段';
   return null;
 }
 
@@ -392,28 +406,6 @@ function workflowIssue(nodes: readonly WorkflowNode[], items: readonly DesignerI
     if (node.condition !== undefined && !fields.has(node.condition.field)) return `节点“${node.name}”的条件字段不存在`;
   }
   return null;
-}
-
-function approvalFields(items: readonly DesignerItem[]): readonly Record<string, unknown>[] {
-  return items.flatMap((item) => {
-    if (item.kind !== 'field' || item.field.type === 'related_property') return [];
-    const field = item.field;
-    const type = approvalFieldType(field.type);
-    return [{ key: field.key, label: field.label, type, required: field.required, sensitivity: field.sensitivity, ...(field.options === undefined ? {} : { options: field.options.map((option) => ({ key: option.value, label: option.label })) }), ...(type === 'text' ? { maximumLength: field.type === 'long_text' ? 10_000 : 2_000 } : {}) }];
-  });
-}
-
-function approvalFieldType(type: FieldType): 'text' | 'number' | 'money_minor' | 'boolean' | 'date' | 'single_select' | 'multi_select' | 'employee' | 'department' | 'file_reference' {
-  if (type === 'number' || type === 'percentage') return 'number';
-  if (type === 'money_minor' || type === 'boolean' || type === 'date' || type === 'single_select' || type === 'multi_select' || type === 'employee' || type === 'department') return type;
-  if (type === 'radio') return 'single_select';
-  if (type === 'checkbox_group') return 'multi_select';
-  if (type === 'attachment') return 'file_reference';
-  return 'text';
-}
-
-function approvalNode(node: WorkflowNode): Record<string, unknown> {
-  return { id: node.id, name: node.name, type: node.type, ...(node.approvalMode === undefined ? {} : { approvalMode: node.approvalMode }), resolver: node.resolver, ...(node.condition === undefined ? {} : { condition: node.condition.op === 'is_empty' ? { field: node.condition.field, op: node.condition.op } : { field: node.condition.field, op: node.condition.op, value: node.condition.value } }) };
 }
 
 function resolverLabel(node: WorkflowNode): string {

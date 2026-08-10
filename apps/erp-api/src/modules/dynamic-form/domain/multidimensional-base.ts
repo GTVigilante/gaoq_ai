@@ -2,6 +2,8 @@ import { BadRequestException } from '@nestjs/common';
 import { ULID_PATTERN } from '@gaoq/shared-utils';
 import { z } from 'zod';
 
+import { externalDatasetRefSchema } from './dataset-reference.js';
+
 export const BASE_VIEW_TYPES = ['grid', 'kanban', 'calendar', 'gallery', 'gantt', 'form', 'dashboard'] as const;
 const CODE = /^[A-Za-z][A-Za-z0-9._-]{0,63}$/;
 const FIELD_KEY = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
@@ -31,7 +33,7 @@ const viewSchema = z.object({
   }).strict(),
 }).strict();
 
-const actionSchema = z.discriminatedUnion('type', [
+export const automationActionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('notify'), channel: z.enum(['in_app', 'email']), recipientFieldKey: z.string().regex(FIELD_KEY).optional(), templateCode: z.string().regex(CODE) }).strict(),
   z.object({ type: z.literal('create_record'), targetTableId: z.string().regex(ULID_PATTERN), fieldMapping: z.record(z.string().regex(FIELD_KEY), z.string().regex(FIELD_KEY)).refine((value) => Object.keys(value).length <= 50) }).strict(),
   z.object({ type: z.literal('update_record'), fieldMapping: z.record(z.string().regex(FIELD_KEY), z.string().regex(FIELD_KEY)).refine((value) => Object.keys(value).length <= 50) }).strict(),
@@ -51,18 +53,35 @@ const automationSchema = z.object({
     z.object({ type: z.literal('manual'), tableId: z.string().regex(ULID_PATTERN) }).strict(),
   ]),
   conditions: z.object({ mode: z.enum(['all', 'any']), items: z.array(filterCondition).max(20) }).strict().optional(),
-  actions: z.array(actionSchema).min(1).max(20),
+  actions: z.array(automationActionSchema).min(1).max(20),
 }).strict();
+
+const tableCommon = {
+  name: z.string().trim().min(1).max(128),
+  primaryFieldKey: z.string().regex(FIELD_KEY),
+  position: z.number().int().min(0).max(999),
+};
+const nativeTableSchema = z.object({
+  kind: z.literal('native'), formId: z.string().regex(ULID_PATTERN), ...tableCommon,
+}).strict();
+const legacyNativeTableSchema = z.object({
+  formId: z.string().regex(ULID_PATTERN), ...tableCommon,
+}).strict().transform((table) => ({ kind: 'native' as const, ...table }));
+const externalTableSchema = z.object({
+  kind: z.literal('external'), id: z.string().regex(ULID_PATTERN),
+  dataset: externalDatasetRefSchema, ...tableCommon,
+}).strict();
+const tableSchema = z.union([nativeTableSchema, legacyNativeTableSchema, externalTableSchema]);
 
 export const multidimensionalBaseInputSchema = z.object({
   code: z.string().regex(CODE),
   name: z.string().trim().min(2).max(128),
   description: z.string().trim().max(500).default(''),
-  tables: z.array(z.object({ formId: z.string().regex(ULID_PATTERN), name: z.string().trim().min(1).max(128), primaryFieldKey: z.string().regex(FIELD_KEY), position: z.number().int().min(0).max(999) }).strict()).min(1).max(100),
+  tables: z.array(tableSchema).min(1).max(100),
   views: z.array(viewSchema).min(1).max(500),
   automations: z.array(automationSchema).max(100).default([]),
 }).strict().superRefine((base, context) => {
-  const tableIds = base.tables.map((table) => table.formId);
+  const tableIds = base.tables.map(baseTableId);
   if (new Set(tableIds).size !== tableIds.length) context.addIssue({ code: 'custom', path: ['tables'], message: '数据表不得重复' });
   if (new Set(base.views.map((view) => view.id)).size !== base.views.length) context.addIssue({ code: 'custom', path: ['views'], message: '视图标识不得重复' });
   if (new Set(base.automations.map((automation) => automation.id)).size !== base.automations.length) context.addIssue({ code: 'custom', path: ['automations'], message: '自动化标识不得重复' });
@@ -84,10 +103,25 @@ export interface MultidimensionalBase extends MultidimensionalBaseInput {
   readonly updatedAt: string;
 }
 
+export type MultidimensionalBaseTable = MultidimensionalBaseInput['tables'][number];
+export type MultidimensionalAutomation = MultidimensionalBaseInput['automations'][number];
+export type MultidimensionalAutomationAction = MultidimensionalAutomation['actions'][number];
+export type MultidimensionalAutomationCondition = NonNullable<MultidimensionalAutomation['conditions']>['items'][number];
+
+export function baseTableId(table: MultidimensionalBaseTable): string {
+  return table.kind === 'native' ? table.formId : table.id;
+}
+
 /** 解析并深冻结 Base、View 与 Automation 控制面定义。 */
 export function parseMultidimensionalBaseInput(value: unknown): MultidimensionalBaseInput {
   const parsed = multidimensionalBaseInputSchema.safeParse(value);
   if (!parsed.success) throw new BadRequestException({ code: 'BASE_DEFINITION_INVALID', message: '多维表格定义不合法' });
+  return freeze(structuredClone(parsed.data));
+}
+
+export function parseAutomationActions(value: unknown): readonly MultidimensionalAutomationAction[] {
+  const parsed = z.array(automationActionSchema).min(1).max(20).safeParse(value);
+  if (!parsed.success) throw new BadRequestException({ code: 'BASE_AUTOMATION_ACTIONS_INVALID', message: '自动化动作快照不合法' });
   return freeze(structuredClone(parsed.data));
 }
 

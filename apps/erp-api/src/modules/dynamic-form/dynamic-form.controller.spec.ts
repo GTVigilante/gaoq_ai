@@ -17,6 +17,7 @@ describe('DynamicFormController', () => {
     const setHeader = vi.fn();
     const controller = new DynamicFormController(
       { publish } as unknown as DynamicFormService,
+      {} as never,
       { record } as unknown as AuditService,
     );
 
@@ -34,6 +35,7 @@ describe('DynamicFormController', () => {
   it('拒绝携带字段或自定义原型的动作正文', async () => {
     const controller = new DynamicFormController(
       { publish: vi.fn() } as unknown as DynamicFormService,
+      {} as never,
       { record: vi.fn() } as unknown as AuditService,
     );
     const response = { setHeader: vi.fn() } as unknown as Response;

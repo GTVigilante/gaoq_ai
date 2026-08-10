@@ -7,7 +7,9 @@ import { TenantContextService } from '../../../core/tenant/tenant-context.servic
 import { parseFormDefinitionInput, parseRecordValues, relationEdges, type DynamicFormDefinition, type DynamicFormRecord } from '../domain/dynamic-form.js';
 import { DynamicFormRepository } from '../persistence/dynamic-form.repository.js';
 import { DynamicFormOutboxWriter } from '../persistence/dynamic-form-outbox.writer.js';
+import { ExternalDatasetReferenceService } from '../runtime/external-dataset-reference.service.js';
 import type { BulkWriteDynamicFormRecordDto, CreateDynamicFormDto, UpdateDynamicFormDto, WriteDynamicFormRecordDto } from './dynamic-form.dto.js';
+import { BaseAutomationSchedulerService } from './base-automation-scheduler.service.js';
 
 @Injectable()
 export class DynamicFormService {
@@ -16,6 +18,8 @@ export class DynamicFormService {
     private readonly idempotency: IdempotencyService,
     private readonly repository: DynamicFormRepository,
     private readonly outbox: DynamicFormOutboxWriter,
+    private readonly externalReferences: ExternalDatasetReferenceService,
+    private readonly automations: BaseAutomationSchedulerService,
   ) {}
 
   async create(key: string, input: CreateDynamicFormDto): Promise<{ readonly form: DynamicFormDefinition }> {
@@ -86,6 +90,7 @@ export class DynamicFormService {
     return this.idempotency.execute('dynamic-form.record.create', key, { formId, values: input.values }, async (session) => {
       const form = await this.requiredPublished(formId, session);
       const values = parseRecordValues(input.values, form);
+      await this.externalReferences.assertRecordReferences(form, values);
       const edges = relationEdges(form, values);
       await this.validateRelationTargets(edges, session);
       const now = new Date();
@@ -93,6 +98,7 @@ export class DynamicFormService {
       await this.repository.insertRecord(record, session);
       await this.repository.replaceRelationsForForm(form.id, record.id, edges, session);
       await this.outbox.append({ aggregateType: 'record', aggregateId: record.id, version: record.version, action: 'created', occurredAt: record.createdAt, data: { formId: record.formId, formRevision: record.formRevision } }, session);
+      await this.automations.scheduleRecord({ type: 'record_created', tableId: form.id, recordId: record.id, recordVersion: record.version, values: record.values, changedFieldKeys: Object.keys(record.values), occurredAt: record.createdAt }, session);
       return { record };
     });
   }
@@ -107,6 +113,7 @@ export class DynamicFormService {
     return this.idempotency.execute('dynamic-form.record.bulk-create', key, request, async (session) => {
       const form = await this.requiredPublished(formId, session);
       const parsed = input.items.map((item) => parseRecordValues(item.values, form));
+      for (const values of parsed) await this.externalReferences.assertRecordReferences(form, values);
       const allEdges = parsed.map((values) => relationEdges(form, values));
       for (const edges of allEdges) await this.validateRelationTargets(edges, session);
       const records: DynamicFormRecord[] = [];
@@ -116,6 +123,7 @@ export class DynamicFormService {
         await this.repository.insertRecord(record, session);
         await this.repository.replaceRelationsForForm(form.id, record.id, allEdges[index] ?? [], session);
         await this.outbox.append({ aggregateType: 'record', aggregateId: record.id, version: record.version, action: 'created', occurredAt: record.createdAt, data: { formId: record.formId, formRevision: record.formRevision } }, session);
+        await this.automations.scheduleRecord({ type: 'record_created', tableId: form.id, recordId: record.id, recordVersion: record.version, values: record.values, changedFieldKeys: Object.keys(record.values), occurredAt: record.createdAt }, session);
         records.push(record);
       }
       return { records: Object.freeze(records) };
@@ -129,12 +137,14 @@ export class DynamicFormService {
       const current = await this.requiredRecord(recordId, form, session);
       if (current.version !== expectedVersion) throw new Error('FORM_RECORD_VERSION_CONFLICT');
       const values = parseRecordValues(input.values, form);
+      await this.externalReferences.assertRecordReferences(form, values);
       const edges = relationEdges(form, values);
       await this.validateRelationTargets(edges, session);
       const record: DynamicFormRecord = Object.freeze({ ...current, values, version: current.version + 1, updatedAt: new Date().toISOString() });
       await this.repository.replaceRecord(record, expectedVersion, session);
       await this.repository.replaceRelationsForForm(form.id, record.id, edges, session);
       await this.outbox.append({ aggregateType: 'record', aggregateId: record.id, version: record.version, action: 'updated', occurredAt: record.updatedAt, data: { formId: record.formId, formRevision: record.formRevision } }, session);
+      await this.automations.scheduleRecord({ type: 'record_updated', tableId: form.id, recordId: record.id, recordVersion: record.version, values: record.values, changedFieldKeys: changedKeys(current.values, record.values), occurredAt: record.updatedAt }, session);
       return { record };
     });
   }
@@ -152,6 +162,19 @@ export class DynamicFormService {
     const record = await this.requiredRecord(recordId, form);
     const resolvedValues = await this.resolveRelatedProperties(form, record);
     return { record, resolvedValues };
+  }
+
+  /** 审批桥窄口：只返回已发布定义和精确版本记录，不解析实时关联属性。 */
+  async getApprovalSource(
+    formId: string,
+    recordId: string,
+    expectedRecordVersion: number,
+  ): Promise<{ readonly form: DynamicFormDefinition; readonly record: DynamicFormRecord }> {
+    this.scope('erp:forms:data:read');
+    const form = await this.requiredPublished(formId);
+    const record = await this.requiredRecord(recordId, form);
+    if (record.version !== expectedRecordVersion) throw new Error('FORM_RECORD_VERSION_CONFLICT');
+    return Object.freeze({ form, record });
   }
 
   /** MCP 安全投影只返回 L1/L2 字段；L3/L4 与附件引用永久留在专用业务界面。 */
@@ -208,6 +231,7 @@ export class DynamicFormService {
         if (target === null || targetField?.kind !== 'field' || targetField.field.sensitivity === 'L4' || (requirePublished && target.status !== 'published')) throw new Error('FORM_RELATED_PROPERTY_DEFINITION_INVALID');
       }
     }
+    await this.externalReferences.validateDefinition(form);
   }
 
   private async validateRelationTargets(edges: readonly { readonly targetFormId: string; readonly targetRecordId: string }[], session: ClientSession): Promise<void> {
@@ -236,4 +260,9 @@ export class DynamicFormService {
   private scope(scope: string): void { if (!this.actor().scopes.includes(scope)) throw new ForbiddenException({ code: 'FORM_ACCESS_DENIED', message: '当前身份无权访问动态表单' }); }
   private tenant(): string { return this.context.getTenantRequired().tenantId; }
   private actor() { return this.context.getActorRequired(); }
+}
+
+function changedKeys(left: Readonly<Record<string, unknown>>, right: Readonly<Record<string, unknown>>): readonly string[] {
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  return Object.freeze([...keys].filter((key) => JSON.stringify(left[key]) !== JSON.stringify(right[key])).sort());
 }

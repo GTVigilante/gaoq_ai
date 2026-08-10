@@ -47,11 +47,11 @@ export function createHrbpAssignment(input: Omit<HrbpAssignment, 'version' | 'cr
   assertId(input.tenantId, 'tenantId');
   assertId(input.departmentId, 'departmentId');
   assertId(input.primaryEmployeeId, 'primaryEmployeeId');
-  const backupEmployeeIds: readonly string[] = input.backupEmployeeIds;
-  if (!Array.isArray(backupEmployeeIds) || backupEmployeeIds.length > 3) {
+  const backupEmployeeIds: unknown = input.backupEmployeeIds;
+  if (!isStringArray(backupEmployeeIds) || backupEmployeeIds.length > 3) {
     throw new Error('WORKFORCE_HRBP_BACKUPS_INVALID');
   }
-  const backups = backupEmployeeIds.slice();
+  const backups = backupEmployeeIds.map((id) => id);
   backups.forEach((id) => assertId(id, 'backupEmployeeIds'));
   if (new Set(backups).size !== backups.length || backups.includes(input.primaryEmployeeId)) {
     throw new Error('WORKFORCE_HRBP_BACKUPS_INVALID');
@@ -89,4 +89,8 @@ function assertRange(from: string, to: string | null): void {
 
 function assertId(value: string, field: string): void {
   if (!ID.test(value)) throw new Error(`WORKFORCE_${field.toUpperCase()}_INVALID`);
+}
+
+function isStringArray(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every((entry: unknown) => typeof entry === 'string');
 }

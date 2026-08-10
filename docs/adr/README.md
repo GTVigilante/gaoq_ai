@@ -12,10 +12,10 @@ ADR 只记录已作出的重大架构决策，不替代阶段验收、外部联�
 | [ADR-0004](./0004-professional-payroll-system-boundary.md) | accepted | 独立专业算薪生产事实源 |
 | [ADR-0005](./0005-github-hosted-oidc-delivery.md) | accepted | GitHub Hosted + OIDC 发布 |
 | [ADR-0006](./0006-unified-cutover-and-evidence-gates.md) | accepted | 统一切换与证据门禁 |
+| [ADR-0007](./0007-business-runtime-and-federated-datasets.md) | accepted | 业务运行时与联邦数据集 |
 
 ## 记录模板
 
 每份 ADR 必须包含：状态、日期、关联 Issue、背景、决策、后果、被否决方案、
 安全/数据影响和替代关系。`accepted` 只表示架构结论冻结，不表示实现已合并或
 生产验收通过。
-
