@@ -309,13 +309,13 @@ describe('MarketingCmsService 管理端公开投影', () => {
       status: 'draft',
       revision: 1,
       version: 1,
+      publishedAt: '2026-07-27T00:00:00.000Z',
+      scheduledAt: null,
     });
     expect(detail).toEqual({
       ...summary,
       blocks: source.blocks,
       seo: source.seo,
-      publishedAt: '2026-07-27T00:00:00.000Z',
-      scheduledAt: null,
     });
     expect(revisions).toEqual({
       items: [{
@@ -341,18 +341,27 @@ describe('MarketingCmsService 管理端公开投影', () => {
       contact: 'brand@example.com',
       requestSummary: '需要完整品牌营销与内容合作方案',
       status: 'new',
+      assigneeId: 'actor-002',
       version: 1,
       createdAt: new Date('2026-07-27T00:00:00.000Z'),
       attribution: { secret: true },
-      notes: [{ body: 'internal-note' }],
+      notes: [{
+        actorId: 'actor-private',
+        body: 'internal-note',
+        createdAt: '2026-07-27T00:05:00.000Z',
+      }],
     });
     const media = marketingMediaConsoleView({
       id: 'media-001',
       fileName: 'hero.png',
       mimeType: 'image/png',
+      sizeBytes: 1024,
       status: 'ready',
       version: 2,
       variants: {},
+      altText: { 'zh-CN': '官网首图' },
+      copyrightSource: '内部原创',
+      createdAt: new Date('2026-07-27T00:00:00.000Z'),
       objectRef: 'private/object',
       checksum: 'private-checksum',
       scanEvidenceId: 'private-evidence',
@@ -388,6 +397,9 @@ describe('MarketingCmsService 管理端公开投影', () => {
       contact: 'brand@example.com',
       requestSummary: '需要完整品牌营销与内容合作方案',
       status: 'new',
+      assigneeId: 'actor-002',
+      noteCount: 1,
+      lastNoteAt: '2026-07-27T00:05:00.000Z',
       version: 1,
       createdAt: '2026-07-27T00:00:00.000Z',
     });
@@ -395,9 +407,13 @@ describe('MarketingCmsService 管理端公开投影', () => {
       id: 'media-001',
       fileName: 'hero.png',
       mimeType: 'image/png',
+      sizeBytes: 1024,
       status: 'ready',
       version: 2,
       variants: {},
+      altText: { 'zh-CN': '官网首图' },
+      copyrightSource: '内部原创',
+      createdAt: '2026-07-27T00:00:00.000Z',
     });
     expect(ticket).toEqual({
       id: 'media-001',

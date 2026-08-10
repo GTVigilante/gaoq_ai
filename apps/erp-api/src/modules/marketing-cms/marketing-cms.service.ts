@@ -992,6 +992,8 @@ export function marketingContentSummaryView(value: unknown): Readonly<Record<str
     status: source.status,
     revision: source.revision,
     version: source.version,
+    publishedAt: isoOrNull(source.publishedAt),
+    scheduledAt: isoOrNull(source.scheduledAt),
   });
 }
 
@@ -1002,8 +1004,6 @@ export function marketingContentDetailView(value: unknown): Readonly<Record<stri
     ...marketingContentSummaryView(source),
     blocks: source.blocks,
     seo: source.seo,
-    publishedAt: isoOrNull(source.publishedAt),
-    scheduledAt: isoOrNull(source.scheduledAt),
   });
 }
 
@@ -1025,9 +1025,14 @@ export function marketingRevisionListView(
   });
 }
 
-/** 含联系信息的 R1 线索视图；不公开归因、备注和负责人。 */
+/** 含联系信息的 R1 线索视图；只公开负责人标识和备注统计，不公开归因与备注正文。 */
 export function marketingLeadConsoleView(value: unknown): Readonly<Record<string, unknown>> {
   const source = recordView(value);
+  const notes: readonly unknown[] = Array.isArray(source.notes) ? source.notes : [];
+  const lastNote = notes.at(-1);
+  const lastNoteRecord = typeof lastNote === 'object' && lastNote !== null && !Array.isArray(lastNote)
+    ? lastNote as Readonly<Record<string, unknown>>
+    : null;
   return Object.freeze({
     id: source.id,
     audience: source.audience,
@@ -1035,6 +1040,9 @@ export function marketingLeadConsoleView(value: unknown): Readonly<Record<string
     contact: source.contact,
     requestSummary: source.requestSummary,
     status: source.status,
+    assigneeId: source.assigneeId ?? null,
+    noteCount: notes.length,
+    lastNoteAt: lastNoteRecord === null ? null : isoOrNull(lastNoteRecord.createdAt),
     version: source.version,
     createdAt: isoOrNull(source.createdAt),
   });
@@ -1053,9 +1061,13 @@ export function marketingMediaConsoleView(value: unknown): Readonly<Record<strin
     id: source.id,
     fileName: source.fileName,
     mimeType: source.mimeType,
+    sizeBytes: source.sizeBytes,
     status: source.status,
     version: source.version,
     variants: source.variants,
+    altText: source.altText,
+    copyrightSource: source.copyrightSource,
+    createdAt: isoOrNull(source.createdAt),
   });
 }
 

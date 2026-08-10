@@ -44,6 +44,8 @@ const contentSummary = {
   status: 'draft',
   revision: 2,
   version: 2,
+  publishedAt: null,
+  scheduledAt: null,
 };
 const contentDetail = {
   ...contentSummary,
@@ -352,11 +354,13 @@ describe('MarketingCmsController', () => {
         status: 'ready',
         version: 2,
         variants: { thumb: 'https://cdn.example.invalid/thumb.png' },
+        sizeBytes: 1024,
         objectRef: 'private/object',
         checksum: 'private-checksum',
         scanEvidenceId: 'private-evidence',
         altText: { 'zh-CN': '内部文案' },
         copyrightSource: 'private-source',
+        createdAt: new Date('2026-07-29T00:00:00.000Z'),
       }],
     });
     store.cms.verifyMedia.mockResolvedValue({
@@ -366,6 +370,10 @@ describe('MarketingCmsController', () => {
       status: 'ready',
       version: 2,
       variants: {},
+      sizeBytes: 1024,
+      altText: { 'zh-CN': '内部文案' },
+      copyrightSource: 'private-source',
+      createdAt: new Date('2026-07-29T00:00:00.000Z'),
       objectRef: 'private/object',
       checksum: 'private-checksum',
       scanEvidenceId: 'private-evidence',
@@ -404,6 +412,9 @@ describe('MarketingCmsController', () => {
       contact: 'brand@example.com',
       requestSummary: '需要完整品牌营销与内容合作方案',
       status: 'new',
+      assigneeId: 'actor-002',
+      noteCount: 1,
+      lastNoteAt: null,
       version: 1,
       createdAt: '2026-07-29T00:00:00.000Z',
     }] });
@@ -411,17 +422,25 @@ describe('MarketingCmsController', () => {
       id: 'media-001',
       fileName: 'hero.png',
       mimeType: 'image/png',
+      sizeBytes: 1024,
       status: 'ready',
       version: 2,
       variants: { thumb: 'https://cdn.example.invalid/thumb.png' },
+      altText: { 'zh-CN': '内部文案' },
+      copyrightSource: 'private-source',
+      createdAt: '2026-07-29T00:00:00.000Z',
     }] });
     expect(verified).toEqual({
       id: 'media-001',
       fileName: 'hero.png',
       mimeType: 'image/png',
+      sizeBytes: 1024,
       status: 'ready',
       version: 2,
       variants: {},
+      altText: { 'zh-CN': '内部文案' },
+      copyrightSource: 'private-source',
+      createdAt: '2026-07-29T00:00:00.000Z',
     });
     expect(generated).toEqual({
       id: 'generation-001',

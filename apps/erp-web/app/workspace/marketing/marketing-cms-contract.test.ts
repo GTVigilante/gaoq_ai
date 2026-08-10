@@ -3,13 +3,16 @@ import { describe, expect, it } from 'vitest';
 import type { IdentityProfileView } from '../../lib/approval-contract.js';
 import {
   buildMarketingContentInput,
+  buildMarketingStructuredContentInput,
   canRetryMarketingWrite,
   hasMarketingPermission,
   marketingPermissions,
   parseMarketingAiDraft,
   parseMarketingAiReview,
   parseMarketingContentList,
+  parseMarketingContentDetail,
   parseMarketingContentMutation,
+  parseMarketingRevisionList,
   parseMarketingLeadList,
   parseMarketingLeadMutation,
   parseMarketingMediaList,
@@ -28,6 +31,8 @@ const content = {
   status: 'draft',
   revision: 1,
   version: 1,
+  publishedAt: null,
+  scheduledAt: null,
 };
 
 const lead = {
@@ -37,6 +42,9 @@ const lead = {
   contact: 'contact@example.com',
   requestSummary: '需要完整营销咨询与交付方案',
   status: 'new',
+  assigneeId: null,
+  noteCount: 0,
+  lastNoteAt: null,
   version: 1,
   createdAt: '2026-07-29T00:00:00.000Z',
 };
@@ -45,9 +53,13 @@ const media = {
   id: 'media-001',
   fileName: 'hero.png',
   mimeType: 'image/png',
+  sizeBytes: 1024,
   status: 'ready',
   version: 2,
   variants: { thumb: 'https://cdn.example.invalid/thumb.png' },
+  altText: { 'zh-CN': '创作者服务首图' },
+  copyrightSource: '自有版权',
+  createdAt: '2026-07-29T00:00:00.000Z',
 };
 
 const profile: IdentityProfileView = Object.freeze({
@@ -88,7 +100,7 @@ describe('marketing-cms-contract', () => {
       seo: { title: '创作者服务', description: '服务摘要' },
     });
     expect(Object.isFrozen(result)).toBe(true);
-    expect(Object.isFrozen(result.blocks[0].data)).toBe(true);
+    expect(Object.isFrozen(result.blocks[0]?.data)).toBe(true);
   });
 
   it.each([
@@ -124,6 +136,44 @@ describe('marketing-cms-contract', () => {
       .toThrow('MARKETING_CONTENT_LIST_INVALID');
   });
 
+  it('支持受控区块编辑、SEO 配置与修订历史契约', () => {
+    const input = buildMarketingStructuredContentInput({
+      siteId: 'gaoq',
+      type: 'page',
+      locale: 'zh-CN',
+      slug: 'creator-services',
+      title: '创作者服务',
+      summary: '服务摘要',
+      heroTitle: '',
+      heroBody: '',
+      seoTitle: '创作者服务｜GaoQ',
+      seoDescription: '服务摘要',
+      canonicalPath: '/zh-CN/services/creator-services',
+      robots: 'index, follow',
+    }, [{ type: 'hero', data: { title: '专业服务', body: '完整服务。' } }]);
+    expect(input.blocks).toHaveLength(1);
+    expect(input.seo).toMatchObject({
+      canonicalPath: '/zh-CN/services/creator-services',
+      robots: 'index, follow',
+    });
+
+    const detail = {
+      ...content,
+      blocks: input.blocks,
+      seo: input.seo,
+      publishedAt: null,
+      scheduledAt: null,
+    };
+    expect(parseMarketingContentDetail(detail)).toEqual(detail);
+    expect(parseMarketingRevisionList({
+      items: [{ revision: 1, createdAt: '2026-07-29T00:00:00.000Z', snapshot: detail }],
+    })[0]?.snapshot).toEqual(detail);
+    expect(() => parseMarketingContentDetail({
+      ...detail,
+      blocks: [{ type: 'iframe', data: {} }],
+    })).toThrow('MARKETING_CONTENT_DETAIL_INVALID');
+  });
+
   it('线索视图拒绝归因、备注、负责人和内部租户字段', () => {
     expect(parseMarketingLeadList({ items: [lead] })).toEqual([lead]);
     expect(parseMarketingLeadMutation({
@@ -131,7 +181,7 @@ describe('marketing-cms-contract', () => {
       status: 'qualified',
       version: 2,
     })).toEqual({ id: lead.id, status: 'qualified', version: 2 });
-    for (const extra of ['tenantId', 'attribution', 'notes', 'assigneeId', 'consentedAt']) {
+    for (const extra of ['tenantId', 'attribution', 'notes', 'consentedAt']) {
       expect(() => parseMarketingLeadList({
         items: [{ ...lead, [extra]: 'secret' }],
       }), extra).toThrow('MARKETING_LEAD_INVALID');

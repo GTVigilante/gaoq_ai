@@ -27,6 +27,37 @@ export interface MarketingContentSummary {
   readonly status: MarketingContentStatus;
   readonly revision: number;
   readonly version: number;
+  readonly publishedAt: string | null;
+  readonly scheduledAt: string | null;
+}
+
+export type MarketingBlockType =
+  | 'hero'
+  | 'service_grid'
+  | 'case_list'
+  | 'metrics'
+  | 'process'
+  | 'rich_text'
+  | 'faq'
+  | 'logo_wall'
+  | 'cta';
+
+export interface MarketingBlockView {
+  readonly type: MarketingBlockType;
+  readonly data: Readonly<Record<string, unknown>>;
+}
+
+export interface MarketingContentDetail extends MarketingContentSummary {
+  readonly blocks: readonly MarketingBlockView[];
+  readonly seo: Readonly<Record<string, string>>;
+  readonly publishedAt: string | null;
+  readonly scheduledAt: string | null;
+}
+
+export interface MarketingRevisionView {
+  readonly revision: number;
+  readonly createdAt: string | null;
+  readonly snapshot: MarketingContentDetail;
 }
 
 export interface MarketingLeadView {
@@ -36,6 +67,9 @@ export interface MarketingLeadView {
   readonly contact: string;
   readonly requestSummary: string;
   readonly status: MarketingLeadStatus;
+  readonly assigneeId: string | null;
+  readonly noteCount: number;
+  readonly lastNoteAt: string | null;
   readonly version: number;
   readonly createdAt: string;
 }
@@ -46,13 +80,33 @@ export interface MarketingLeadMutation {
   readonly version: number;
 }
 
+export interface MarketingLeadAssigneeMutation {
+  readonly id: string;
+  readonly assigneeId: string;
+  readonly version: number;
+}
+
+export interface MarketingLeadNoteMutation {
+  readonly id: string;
+  readonly note: Readonly<{
+    readonly actorId: string;
+    readonly body: string;
+    readonly createdAt: string;
+  }>;
+  readonly version: number;
+}
+
 export interface MarketingMediaView {
   readonly id: string;
   readonly fileName: string;
   readonly mimeType: string;
+  readonly sizeBytes: number;
   readonly status: 'uploading' | 'scanning' | 'ready' | 'rejected';
   readonly version: number;
   readonly variants: Readonly<Record<string, string>>;
+  readonly altText: Readonly<Record<string, string>>;
+  readonly copyrightSource: string;
+  readonly createdAt: string;
 }
 
 export interface MarketingUploadTicket {
@@ -82,11 +136,8 @@ export interface MarketingContentInput {
   readonly slug: string;
   readonly title: string;
   readonly summary: string;
-  readonly blocks: readonly [{
-    readonly type: 'hero';
-    readonly data: Readonly<{ readonly title: string; readonly body: string }>;
-  }];
-  readonly seo: Readonly<{ readonly title: string; readonly description: string }>;
+  readonly blocks: readonly MarketingBlockView[];
+  readonly seo: Readonly<Record<string, string>>;
 }
 
 export interface MarketingContentFormValue {
@@ -100,6 +151,8 @@ export interface MarketingContentFormValue {
   readonly heroBody: string;
   readonly seoTitle?: string;
   readonly seoDescription?: string;
+  readonly canonicalPath?: string;
+  readonly robots?: string;
 }
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9-]{7,127}$/u;
@@ -122,18 +175,26 @@ const LEAD_STATUSES = new Set<MarketingLeadStatus>([
 const MEDIA_STATUSES = new Set<MarketingMediaView['status']>([
   'uploading', 'scanning', 'ready', 'rejected',
 ]);
+const BLOCK_TYPES = new Set<MarketingBlockType>([
+  'hero', 'service_grid', 'case_list', 'metrics', 'process', 'rich_text',
+  'faq', 'logo_wall', 'cta',
+]);
 const AI_ACTIONS = new Set<MarketingAiReviewView['action']>([
   'translate', 'rewrite', 'outline', 'seo', 'alt_text',
 ]);
 const EXECUTABLE_MARKUP = /<\s*script|javascript:|data:\s*text\/html|on[a-z]+\s*=/iu;
 const CONTENT_KEYS = [
   'id', 'siteId', 'type', 'locale', 'slug', 'title', 'summary',
-  'status', 'revision', 'version',
+  'status', 'revision', 'version', 'publishedAt', 'scheduledAt',
 ] as const;
 const LEAD_KEYS = [
-  'id', 'audience', 'name', 'contact', 'requestSummary', 'status', 'version', 'createdAt',
+  'id', 'audience', 'name', 'contact', 'requestSummary', 'status', 'assigneeId',
+  'noteCount', 'lastNoteAt', 'version', 'createdAt',
 ] as const;
-const MEDIA_KEYS = ['id', 'fileName', 'mimeType', 'status', 'version', 'variants'] as const;
+const MEDIA_KEYS = [
+  'id', 'fileName', 'mimeType', 'sizeBytes', 'status', 'version', 'variants',
+  'altText', 'copyrightSource', 'createdAt',
+] as const;
 
 /** 构造 CMS 创建请求；所有自由文本在进入请求快照前规范化并受限。 */
 export function buildMarketingContentInput(value: MarketingContentFormValue): MarketingContentInput {
@@ -154,6 +215,45 @@ export function buildMarketingContentInput(value: MarketingContentFormValue): Ma
     !SLUG.test(slug) ||
     [title, summary, heroTitle, heroBody, seoTitle, seoDescription].some(hasExecutableMarkup)
   ) throw new Error('MARKETING_CONTENT_INPUT_INVALID');
+  return buildMarketingStructuredContentInput(value, [{
+    type: 'hero',
+    data: { title: heroTitle, body: heroBody },
+  }]);
+}
+
+/** 构造区块化内容写入快照；保留受控区块数据并拒绝可执行或非纯 JSON 值。 */
+export function buildMarketingStructuredContentInput(
+  value: MarketingContentFormValue,
+  blocks: readonly MarketingBlockView[],
+): MarketingContentInput {
+  const siteId = normalized(value.siteId, 1, 128, 'MARKETING_CONTENT_INPUT_INVALID');
+  const type = normalized(value.type, 1, 64, 'MARKETING_CONTENT_INPUT_INVALID');
+  const slug = normalized(value.slug, 1, 160, 'MARKETING_CONTENT_INPUT_INVALID');
+  const title = normalized(value.title, 1, 160, 'MARKETING_CONTENT_INPUT_INVALID');
+  const summary = optionalNormalized(value.summary, 500, 'MARKETING_CONTENT_INPUT_INVALID');
+  const seoTitle = optionalNormalized(value.seoTitle, 160, 'MARKETING_CONTENT_INPUT_INVALID') || title;
+  const seoDescription = optionalNormalized(
+    value.seoDescription, 500, 'MARKETING_CONTENT_INPUT_INVALID',
+  ) || summary;
+  const canonicalPath = optionalNormalized(
+    value.canonicalPath, 500, 'MARKETING_CONTENT_INPUT_INVALID',
+  );
+  const robots = optionalNormalized(value.robots, 100, 'MARKETING_CONTENT_INPUT_INVALID');
+  if (
+    !SITE_ID.test(siteId) || !CONTENT_TYPE.test(type) ||
+    (value.locale !== 'zh-CN' && value.locale !== 'en') || !SLUG.test(slug) ||
+    blocks.length < 1 || blocks.length > 100 ||
+    canonicalPath !== '' && !/^\/[A-Za-z0-9/_-]*$/u.test(canonicalPath) ||
+    robots !== '' && !/^(?:index|noindex),\s*(?:follow|nofollow)$/u.test(robots) ||
+    [title, summary, seoTitle, seoDescription, canonicalPath, robots].some(hasExecutableMarkup)
+  ) throw new Error('MARKETING_CONTENT_INPUT_INVALID');
+  const safeBlocks = blocks.map((block) => {
+    if (!BLOCK_TYPES.has(block.type)) throw new Error('MARKETING_CONTENT_INPUT_INVALID');
+    return Object.freeze({
+      type: block.type,
+      data: safeJsonObject(block.data, 'MARKETING_CONTENT_INPUT_INVALID'),
+    });
+  });
   return deepFreeze({
     siteId,
     type,
@@ -161,8 +261,13 @@ export function buildMarketingContentInput(value: MarketingContentFormValue): Ma
     slug,
     title,
     summary,
-    blocks: [{ type: 'hero', data: { title: heroTitle, body: heroBody } }],
-    seo: { title: seoTitle, description: seoDescription },
+    blocks: safeBlocks,
+    seo: {
+      title: seoTitle,
+      description: seoDescription,
+      ...(canonicalPath === '' ? {} : { canonicalPath }),
+      ...(robots === '' ? {} : { robots }),
+    },
   });
 }
 
@@ -180,6 +285,53 @@ export function parseMarketingContentMutation(value: unknown): MarketingContentS
   const record = objectRecord(value, 'MARKETING_CONTENT_MUTATION_INVALID');
   if (!exactKeys(record, ['content'])) throw new Error('MARKETING_CONTENT_MUTATION_INVALID');
   return parseContentSummary(record.content);
+}
+
+/** 校验内容详情，供区块编辑、SEO 检查与安全预览使用。 */
+export function parseMarketingContentDetail(value: unknown): MarketingContentDetail {
+  const record = objectRecord(value, 'MARKETING_CONTENT_DETAIL_INVALID');
+  if (!exactKeys(record, [...CONTENT_KEYS, 'blocks', 'seo'])) {
+    throw new Error('MARKETING_CONTENT_DETAIL_INVALID');
+  }
+  const summary = parseContentSummary(Object.fromEntries(
+    CONTENT_KEYS.map((key) => [key, record[key]]),
+  ));
+  if (!Array.isArray(record.blocks) || record.blocks.length < 1 || record.blocks.length > 100) {
+    throw new Error('MARKETING_CONTENT_DETAIL_INVALID');
+  }
+  const blocks = record.blocks.map(parseBlock);
+  const seoRecord = objectRecord(record.seo, 'MARKETING_CONTENT_DETAIL_INVALID');
+  if (
+    Object.keys(seoRecord).length > 5 ||
+    Object.keys(seoRecord).some((key) =>
+      !['title', 'description', 'canonicalPath', 'imageRef', 'robots'].includes(key)) ||
+    Object.values(seoRecord).some((entry) => typeof entry !== 'string' || entry.length > 500)
+  ) throw new Error('MARKETING_CONTENT_DETAIL_INVALID');
+  return Object.freeze({
+    ...summary,
+    blocks: Object.freeze(blocks),
+    seo: Object.freeze({ ...(seoRecord as Readonly<Record<string, string>>) }),
+    publishedAt: nullableIso(record.publishedAt, 'MARKETING_CONTENT_DETAIL_INVALID'),
+    scheduledAt: nullableIso(record.scheduledAt, 'MARKETING_CONTENT_DETAIL_INVALID'),
+  });
+}
+
+/** 校验内容修订历史，历史快照与当前详情使用同一严格契约。 */
+export function parseMarketingRevisionList(value: unknown): readonly MarketingRevisionView[] {
+  const record = objectRecord(value, 'MARKETING_REVISION_LIST_INVALID');
+  if (!exactKeys(record, ['items']) || !Array.isArray(record.items) || record.items.length > 500) {
+    throw new Error('MARKETING_REVISION_LIST_INVALID');
+  }
+  return Object.freeze(record.items.map((item) => {
+    const revision = objectRecord(item, 'MARKETING_REVISION_INVALID');
+    if (!exactKeys(revision, ['revision', 'createdAt', 'snapshot']) ||
+      !positiveInteger(revision.revision)) throw new Error('MARKETING_REVISION_INVALID');
+    return Object.freeze({
+      revision: revision.revision,
+      createdAt: nullableIso(revision.createdAt, 'MARKETING_REVISION_INVALID'),
+      snapshot: parseMarketingContentDetail(revision.snapshot),
+    });
+  }));
 }
 
 /** 校验含联系信息的 R1 线索列表，拒绝归因、备注和内部负责人字段。 */
@@ -204,6 +356,48 @@ export function parseMarketingLeadMutation(value: unknown): MarketingLeadMutatio
   return Object.freeze({
     id: record.id,
     status: record.status as MarketingLeadStatus,
+    version: record.version,
+  });
+}
+
+/** 校验线索负责人更新结果。 */
+export function parseMarketingLeadAssigneeMutation(
+  value: unknown,
+): MarketingLeadAssigneeMutation {
+  const record = objectRecord(value, 'MARKETING_LEAD_ASSIGNEE_MUTATION_INVALID');
+  if (
+    !exactKeys(record, ['id', 'assigneeId', 'version']) ||
+    typeof record.id !== 'string' || !ID.test(record.id) ||
+    typeof record.assigneeId !== 'string' || !SITE_ID.test(record.assigneeId) ||
+    !positiveInteger(record.version)
+  ) throw new Error('MARKETING_LEAD_ASSIGNEE_MUTATION_INVALID');
+  return Object.freeze({
+    id: record.id,
+    assigneeId: record.assigneeId,
+    version: record.version,
+  });
+}
+
+/** 校验新增跟进备注结果；正文仅在提交者当前会话中短暂显示。 */
+export function parseMarketingLeadNoteMutation(value: unknown): MarketingLeadNoteMutation {
+  const record = objectRecord(value, 'MARKETING_LEAD_NOTE_MUTATION_INVALID');
+  const note = objectRecord(record.note, 'MARKETING_LEAD_NOTE_MUTATION_INVALID');
+  if (
+    !exactKeys(record, ['id', 'note', 'version']) ||
+    typeof record.id !== 'string' || !ID.test(record.id) ||
+    !positiveInteger(record.version) ||
+    !exactKeys(note, ['actorId', 'body', 'createdAt']) ||
+    typeof note.actorId !== 'string' || !SITE_ID.test(note.actorId) ||
+    !boundedText(note.body, 1, 2_000) || hasExecutableMarkup(note.body) ||
+    typeof note.createdAt !== 'string' || !canonicalIso(note.createdAt)
+  ) throw new Error('MARKETING_LEAD_NOTE_MUTATION_INVALID');
+  return Object.freeze({
+    id: record.id,
+    note: Object.freeze({
+      actorId: note.actorId,
+      body: note.body,
+      createdAt: note.createdAt,
+    }),
     version: record.version,
   });
 }
@@ -292,6 +486,7 @@ export const marketingPermissions = Object.freeze({
   contentRollback: 'erp:marketing:content:rollback',
   leadRead: 'erp:marketing:lead:read',
   leadUpdate: 'erp:marketing:lead:update',
+  leadExport: 'erp:marketing:lead:export',
   mediaRead: 'erp:marketing:media:read',
   mediaCreate: 'erp:marketing:media:create',
   aiGenerate: 'erp:marketing:ai:generate',
@@ -320,6 +515,8 @@ export function canRetryMarketingWrite(
 
 function parseContentSummary(value: unknown): MarketingContentSummary {
   const record = objectRecord(value, 'MARKETING_CONTENT_INVALID');
+  const publishedAt = nullableIso(record.publishedAt, 'MARKETING_CONTENT_INVALID');
+  const scheduledAt = nullableIso(record.scheduledAt, 'MARKETING_CONTENT_INVALID');
   if (
     !exactKeys(record, CONTENT_KEYS) ||
     typeof record.id !== 'string' || !ID.test(record.id) ||
@@ -345,11 +542,27 @@ function parseContentSummary(value: unknown): MarketingContentSummary {
     status: record.status as MarketingContentStatus,
     revision: record.revision,
     version: record.version,
+    publishedAt,
+    scheduledAt,
+  });
+}
+
+function parseBlock(value: unknown): MarketingBlockView {
+  const record = objectRecord(value, 'MARKETING_CONTENT_DETAIL_INVALID');
+  if (
+    !exactKeys(record, ['type', 'data']) ||
+    typeof record.type !== 'string' ||
+    !BLOCK_TYPES.has(record.type as MarketingBlockType)
+  ) throw new Error('MARKETING_CONTENT_DETAIL_INVALID');
+  return Object.freeze({
+    type: record.type as MarketingBlockType,
+    data: safeJsonObject(record.data, 'MARKETING_CONTENT_DETAIL_INVALID'),
   });
 }
 
 function parseLead(value: unknown): MarketingLeadView {
   const record = objectRecord(value, 'MARKETING_LEAD_INVALID');
+  const lastNoteAt = nullableIso(record.lastNoteAt, 'MARKETING_LEAD_INVALID');
   if (
     !exactKeys(record, LEAD_KEYS) ||
     typeof record.id !== 'string' || !ID.test(record.id) ||
@@ -359,6 +572,10 @@ function parseLead(value: unknown): MarketingLeadView {
     !boundedText(record.requestSummary, 10, 2_000) ||
     typeof record.status !== 'string' ||
     !LEAD_STATUSES.has(record.status as MarketingLeadStatus) ||
+    (record.assigneeId !== null &&
+      (typeof record.assigneeId !== 'string' || !SITE_ID.test(record.assigneeId))) ||
+    typeof record.noteCount !== 'number' || !Number.isSafeInteger(record.noteCount) ||
+    record.noteCount < 0 || record.noteCount > 100 ||
     !positiveInteger(record.version) ||
     typeof record.createdAt !== 'string' || !canonicalIso(record.createdAt) ||
     [record.name, record.contact, record.requestSummary].some(hasExecutableMarkup)
@@ -370,6 +587,9 @@ function parseLead(value: unknown): MarketingLeadView {
     contact: record.contact,
     requestSummary: record.requestSummary,
     status: record.status as MarketingLeadStatus,
+    assigneeId: record.assigneeId,
+    noteCount: record.noteCount,
+    lastNoteAt,
     version: record.version,
     createdAt: record.createdAt,
   });
@@ -383,19 +603,46 @@ function parseMedia(value: unknown): MarketingMediaView {
     !boundedText(record.fileName, 1, 180) ||
     /[/\\\0]/u.test(record.fileName) ||
     typeof record.mimeType !== 'string' || !MIME_TYPES.has(record.mimeType) ||
+    typeof record.sizeBytes !== 'number' || !Number.isSafeInteger(record.sizeBytes) ||
+    record.sizeBytes < 1 || record.sizeBytes > 20_971_520 ||
     typeof record.status !== 'string' ||
     !MEDIA_STATUSES.has(record.status as MarketingMediaView['status']) ||
-    !positiveInteger(record.version)
+    !positiveInteger(record.version) ||
+    !boundedText(record.copyrightSource, 0, 500) ||
+    typeof record.createdAt !== 'string' || !canonicalIso(record.createdAt)
   ) throw new Error('MARKETING_MEDIA_INVALID');
   const variants = parseVariants(record.variants);
+  const altText = parseStringRecord(record.altText, 2, 500, 'MARKETING_MEDIA_INVALID');
   return Object.freeze({
     id: record.id,
     fileName: record.fileName,
     mimeType: record.mimeType,
+    sizeBytes: record.sizeBytes,
     status: record.status as MarketingMediaView['status'],
     version: record.version,
     variants,
+    altText,
+    copyrightSource: record.copyrightSource,
+    createdAt: record.createdAt,
   });
+}
+
+function parseStringRecord(
+  value: unknown,
+  maximumEntries: number,
+  maximumLength: number,
+  code: string,
+): Readonly<Record<string, string>> {
+  const record = objectRecord(value, code);
+  const entries = Object.entries(record);
+  if (entries.length > maximumEntries) throw new Error(code);
+  const result: Record<string, string> = Object.create(null) as Record<string, string>;
+  for (const [key, entry] of entries) {
+    if (!['zh-CN', 'en'].includes(key) || !boundedText(entry, 0, maximumLength) ||
+      hasExecutableMarkup(entry)) throw new Error(code);
+    result[key] = entry;
+  }
+  return Object.freeze(result);
 }
 
 function parseVariants(value: unknown): Readonly<Record<string, string>> {
@@ -513,6 +760,12 @@ function boundedText(value: unknown, minimum: number, maximum: number): value is
 function canonicalIso(value: string): boolean {
   const parsed = new Date(value);
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
+}
+
+function nullableIso(value: unknown, code: string): string | null {
+  if (value === null) return null;
+  if (typeof value !== 'string' || !canonicalIso(value)) throw new Error(code);
+  return value;
 }
 
 function hasExecutableMarkup(value: unknown): boolean {

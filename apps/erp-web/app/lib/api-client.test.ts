@@ -1,8 +1,25 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ErpApiError, isDefinitiveWriteRejection, parseApiEnvelope, strongEtag } from './api-client.js';
+import {
+  clearBrowserSession,
+  ErpApiError,
+  erpDownload,
+  isDefinitiveWriteRejection,
+  parseApiEnvelope,
+  strongEtag,
+} from './api-client.js';
+
+const accessToken = 'a'.repeat(40);
+const successEnvelope = (data: unknown) => ({
+  code: 'SUCCESS', message: '成功', data,
+  traceId: 'trace-web-001', timestamp: '2026-07-22T00:00:00.000Z',
+});
 
 describe('ERP Web API Client', () => {
+  beforeEach(() => {
+    clearBrowserSession();
+    vi.restoreAllMocks();
+  });
   it('只接受带 traceId 的统一成功信封', () => {
     const value = parseApiEnvelope<{ readonly count: number }>({
       code: 'SUCCESS', message: '成功', data: { count: 3 },
@@ -37,5 +54,40 @@ describe('ERP Web API Client', () => {
     expect(isDefinitiveWriteRejection(new ErpApiError('IDEMPOTENCY_KEY_REUSED', '键已被其他请求使用', null, 409))).toBe(true);
     expect(isDefinitiveWriteRejection(new ErpApiError('RATE_LIMITED', '稍后重试', null, 429))).toBe(false);
     expect(isDefinitiveWriteRejection(new ErpApiError('UPSTREAM_FAILED', '服务异常', null, 503))).toBe(false);
+  });
+
+  it('通过内存访问令牌下载类型和大小均受控的文件', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify(successEnvelope({
+        accessToken, tokenType: 'Bearer', expiresIn: 300, scope: 'erp:marketing:lead:export',
+      })), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response('id,name\nlead-001,测试\n', {
+        status: 200,
+        headers: { 'content-type': 'text/csv; charset=utf-8', 'content-length': '25' },
+      }));
+
+    const file = await erpDownload('/api/marketing-cms/leads/export', 'text/csv', 1024);
+
+    expect(file.type).toBe('text/csv');
+    expect(file.size).toBeGreaterThan(0);
+    expect(fetchMock.mock.calls[1]?.[1]).toEqual(expect.objectContaining({
+      method: 'GET', credentials: 'include', cache: 'no-store',
+    }));
+    const headers = fetchMock.mock.calls[1]?.[1]?.headers as Headers;
+    expect(headers.get('authorization')).toBe(`Bearer ${accessToken}`);
+  });
+
+  it('拒绝类型不符、超出声明上限或空文件', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify(successEnvelope({
+        accessToken, tokenType: 'Bearer', expiresIn: 300, scope: 'erp:marketing:lead:export',
+      })), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response('secret', {
+        status: 200,
+        headers: { 'content-type': 'application/octet-stream', 'content-length': '2048' },
+      }));
+
+    await expect(erpDownload('/api/marketing-cms/leads/export', 'text/csv', 1024))
+      .rejects.toMatchObject({ code: 'DOWNLOAD_RESPONSE_INVALID', status: 502 });
   });
 });

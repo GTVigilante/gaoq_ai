@@ -61,6 +61,40 @@ export async function erpFetch<T>(
   return readResponse<T>(response);
 }
 
+/** 下载受保护的有界文件；访问令牌仍只存在于当前页面内存。 */
+export async function erpDownload(
+  path: string,
+  expectedContentType: string,
+  maximumBytes = 10 * 1024 * 1024,
+): Promise<Blob> {
+  assertApiPath(path);
+  if (!/^[a-z]+\/[a-z0-9.+-]+$/u.test(expectedContentType) ||
+    !Number.isSafeInteger(maximumBytes) || maximumBytes < 1 || maximumBytes > 50 * 1024 * 1024) {
+    throw new Error('ERP_DOWNLOAD_CONTRACT_INVALID');
+  }
+  let response = await request(path, await accessToken(), { method: 'GET' });
+  if (response.status === 401) {
+    clearBrowserSession();
+    response = await request(path, await accessToken(), { method: 'GET' });
+  }
+  if (!response.ok) {
+    await readResponse<unknown>(response);
+    throw new ErpApiError('DOWNLOAD_FAILED', '文件下载失败', null, response.status);
+  }
+  const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.trim();
+  const declaredLength = response.headers.get('content-length');
+  if (
+    contentType !== expectedContentType ||
+    (declaredLength !== null &&
+      (!/^(?:0|[1-9][0-9]*)$/u.test(declaredLength) || Number(declaredLength) > maximumBytes))
+  ) throw new ErpApiError('DOWNLOAD_RESPONSE_INVALID', '文件响应格式无效', null, 502);
+  const bytes = await response.arrayBuffer();
+  if (bytes.byteLength < 1 || bytes.byteLength > maximumBytes) {
+    throw new ErpApiError('DOWNLOAD_RESPONSE_INVALID', '文件响应大小无效', null, 502);
+  }
+  return new Blob([bytes], { type: expectedContentType });
+}
+
 /** 调用无需 Bearer 的浏览器认证入口；仍强制 Cookie 和 no-store。 */
 export async function erpPublicFetch<T>(
   path: string,
