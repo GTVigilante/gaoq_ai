@@ -33,9 +33,10 @@
 - 2026-08-09 已将动态表单、审批流程设计、多维 Base/Table/View、外部批量写入、
   REST/OpenAPI、CloudEvents、MCP 只读投影与 CLI 底座随
   `main@bdb09a0a5304` 部署生产。API、Worker、ERP Web 健康且
-  `restart=0`，CMS 与专业算薪未重启并保持健康；新增 11 个索引只完成生产
-  dry-run，未 apply。`FORM_DATA_ENCRYPTION_KEYS` 尚未配置，记录写入按设计失败
-  关闭；表单/多维 Base 最小 Scope、角色 UAT 与 54 Tool 实体客户端复验仍待人工。
+  `restart=0`，CMS 与专业算薪未重启并保持健康；该次发布的 11 个索引仅完成
+  dry-run，密钥也尚未配置。2026-08-10 后续发布已通过 v2 迁移完成动态数据平台
+  索引并配置 `FORM_DATA_ENCRYPTION_KEYS`；表单/多维 Base 最小 Scope、角色 UAT
+  与 54 Tool 实体客户端复验仍待人工。
   当前 MCP 目录为 54 Tool、4 Resource、27 Resource Template、25 Prompt，既有
   50 Tool 厂商实体发现证据已经过期，不能作为当前发布验收证据。
 - 2026-08-10 已在仓库实现版本化 Dataset Runtime：原生动态表单与 OP 经营摘要
@@ -44,7 +45,11 @@
   Worker，可执行原生建记录、更新记录与发起审批；通知与 Connector/OP Command
   在正式 Adapter 未登记前失败关闭为人工复核。MCP 目录提升为 56 Tool。新增
   `base_automation_runs` 及 `phase-6-dynamic-data-platform-indexes-v2` 只追加索引
-  迁移；当前仓库实现与本地验证已完成，尚未执行生产迁移或部署，准确
+  迁移。2026-08-10 已经用户明确批准，将 `main@cf5d44af3cda` 定向部署到生产
+  API、Worker 与 ERP Web；三个容器均 `healthy`、`restart=0`。生产备份及其
+  `mongorestore --dryRun` 校验通过，迁移已创建并验证 14 个索引，复检缺失为 0；
+  `FORM_DATA_ENCRYPTION_KEYS` 已存在。CMS、Redis、MongoDB、专业算薪和同机其他
+  项目容器均未重启或覆盖。准确
   边界见 `docs/handover/BUSINESS_RUNTIME_HANDOVER_2026-08-10.md`（同时提供 HTML）。
 - 2026-07-29 已交付标准 MCP 本地 stdio 入口，与生产 Streamable HTTP 共用
   `McpRuntimeService` 和 `AccessTokenVerifier`。启动要求秘密管理器注入短时

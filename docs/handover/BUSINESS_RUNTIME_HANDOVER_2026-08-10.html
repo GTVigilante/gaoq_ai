@@ -11,12 +11,12 @@
 <body><main class="page">
   <h1>GaoQ 业务运行时、流程表单与联邦多维数据交接</h1>
   <div class="meta">2026-08-10 · Asia/Shanghai · 面向产品、架构、开发、SRE、安全评审与后续 AI</div>
-  <div class="notice"><strong>安全边界：</strong>本文不含密码、Token、连接串或密钥。当前为仓库实现状态；禁止删除或重建数据库、集合、索引、Redis、运行卷及同机其他项目。</div>
+  <div class="notice"><strong>安全边界：</strong>本文不含密码、Token、连接串或密钥。仓库实现、生产迁移和定向部署均已完成；禁止删除或重建数据库、集合、索引、Redis、运行卷及同机其他项目。</div>
 
   <h2>一、结论</h2>
-  <p>架构师提出需要 Interpreter 的判断正确。生产解释层必须共同约束 Schema 版本、来源、权限、类型、查询、记录版本、证据和命令边界。本切片已将它实现为版本化 <strong>Dataset Runtime</strong>。拖拽表单、多维 Base、审批、自动化、REST、MCP 和 CLI 使用同一语义；OP 继续是唯一事实源，数据不复制，运行时不直连 OP 数据库。</p>
+  <p>架构师提出需要 Interpreter 的判断正确。生产解释层必须共同约束 Schema 版本、来源、权限、类型、查询、记录版本、证据和命令边界。本切片已将它实现为版本化 <strong>Dataset Runtime</strong>。拖拽表单、多维 Base、审批、自动化、REST、MCP 和 CLI 使用同一语义；OP 继续是唯一事实源，数据不会复制为表单或 Base 的私有记录，运行时也不直连 OP 数据库。</p>
   <div class="flow"><span class="node">OP 应用服务</span><span class="arrow">→</span><span class="node">External Adapter</span><span class="arrow">→</span><span class="node">Dataset Runtime</span><span class="arrow">→</span><span class="node">表单 / Base / 审批 / REST / MCP / CLI</span></div>
-  <div class="summary"><div class="card"><b>56 Tool</b>MCP 统一目录</div><div class="card"><b>7,298</b>ERP API 全量测试</div><div class="card"><b>0 次</b>生产数据库操作</div></div>
+  <div class="summary"><div class="card"><b>56 Tool</b>MCP 统一目录</div><div class="card"><b>7,298</b>ERP API 全量测试</div><div class="card"><b>14 / 0</b>生产索引已验证 / 缺失</div></div>
 
   <h2>二、已实现能力</h2>
   <h3>Dataset Runtime 与 OP 引用</h3>
@@ -33,19 +33,21 @@
   <pre>pnpm --filter @gaoq/erp-api build
 MONGODB_URI='&lt;由服务器秘密环境注入&gt;' \
   pnpm --filter @gaoq/erp-api migrate:phase6:dynamic-data-platform-indexes -- --dry-run</pre>
-  <p>必须先 dry-run、备份和人工审查，再单独批准 apply。应用回滚保留集合、索引和全部数据。</p>
+  <p>2026-08-10 已在用户明确批准后依次完成首次 dry-run、受保护备份、<code>mongorestore --dryRun</code> 完整性检查、apply 和 apply 后 dry-run。迁移创建并验证 14 个索引，复检缺失为 0；没有删除或重建任何集合、索引和业务数据。</p>
 
   <h2>四、验证</h2>
   <table><thead><tr><th>范围</th><th>结果</th></tr></thead><tbody>
-    <tr><td>最终增量定向</td><td>Dataset Runtime/账本 2 文件、12 项通过</td></tr><tr><td>ERP API 全量</td><td>462 文件、7,298 项通过；全仓 check 通过</td></tr><tr><td>ERP Web</td><td>16 文件、94 项，类型检查与生产构建通过</td></tr><tr><td>协议</td><td>MCP 56 Tool 目录与 HTTP/stdio 测试通过；OpenAPI 已生成；AsyncAPI 通过</td></tr><tr><td>迁移</td><td>v2 清单测试 2 项通过；未连接生产、未 apply</td></tr>
+    <tr><td>最终增量定向</td><td>Dataset Runtime/账本 2 文件、12 项通过</td></tr><tr><td>ERP API 全量</td><td>462 文件、7,298 项通过；全仓 check 通过</td></tr><tr><td>ERP Web</td><td>16 文件、94 项，类型检查与生产构建通过</td></tr><tr><td>协议</td><td>MCP 56 Tool 目录与 HTTP/stdio 测试通过；OpenAPI 已生成；AsyncAPI 通过</td></tr><tr><td>迁移</td><td>v2 清单测试、生产 dry-run、备份验证、apply 与复检全部通过；14 个索引已验证、0 个缺失</td></tr><tr><td>生产运行</td><td>API、Worker、ERP Web 均 healthy、restart=0；live/ready、表单、Base 和公开样例页为 200，未认证数据 API 为 401</td></tr>
   </tbody></table>
   <p>仓库证据不替代生产 Replica Set、Redis、密钥、索引、OP 实体接口、浏览器、实体 MCP 客户端、安全、性能和业务 UAT。</p>
 
   <h2>五、当前缺口与人类待办</h2>
-  <ol><li>审核 v2 dry-run、备份和维护窗口，并独立批准追加索引 apply。</li><li>在 KMS/Secret Manager 配置独立 <code>FORM_DATA_ENCRYPTION_KEYS</code>。</li><li>登记 <code>erp:approval:dynamic_form:automate</code> 服务主体 Scope 并完成职责矩阵 UAT。</li><li>OP 团队确认经营摘要 1.0 契约、版本冲突语义、查询上限和 SLO。</li><li>通知团队提供固定模板、网关契约与独立凭据。</li><li>OP 团队逐个提供固定 Command、Schema、幂等、权限、超时、人工处置与事件回执；不接受万能命令接口。</li><li>计划支持的 MCP/CLI 实体客户端重新发现 56 Tool；旧 54 Tool 证据失效。</li></ol>
+  <ol><li><code>FORM_DATA_ENCRYPTION_KEYS</code> 已存在于生产 Secret 环境；KMS/Secret Manager 负责人仍需完成轮换、旧版本解密和恢复演练。</li><li>登记 <code>erp:approval:dynamic_form:automate</code> 服务主体 Scope 并完成职责矩阵 UAT。</li><li>OP 团队确认经营摘要 1.0 契约、版本冲突语义、查询上限和 SLO。当前 OP 直连配置未登记，运行时只读取受控入站链路已经落库的权威经营摘要。</li><li>完成外部引用、审批快照、自动化幂等/重试/人工复核和回滚 UAT。</li><li>通知团队提供固定模板、网关契约与独立凭据。</li><li>OP 团队逐个提供固定 Command、Schema、幂等、权限、超时、人工处置与事件回执；不接受万能命令接口。</li><li>计划支持的 MCP/CLI 实体客户端重新发现 56 Tool；旧 54 Tool 证据失效。</li></ol>
 
   <h2>六、发布和接手边界</h2>
-  <p><strong>仓库实现与本地门禁已完成；生产数据库未连接，v2 未 dry-run、未 apply，生产应用未部署。</strong>后续只能定向更新 GaoQ OS API、Worker、ERP Web，不得重启或覆盖 CMS、专业算薪和其他项目。回滚只回退这三项应用并保留全部数据，禁止 <code>docker compose down -v</code>。</p>
+  <p><strong><code>main@cf5d44af3cda0bbb7d919820d9120e5cbb3b1dff</code> 已定向部署生产。</strong>发布目录为 <code>/opt/gaoq-ai-releases/cf5d44af3cda</code>；API、Worker、ERP Web 镜像 ID 分别为 <code>sha256:45fd5ee4425f…</code>、<code>sha256:7ecb27a1524c…</code>、<code>sha256:62b00251518e…</code>。</p>
+  <table><thead><tr><th>生产证据</th><th>结果</th></tr></thead><tbody><tr><td>数据库备份</td><td><code>/opt/gaoq-backups/pre-dynamic-data-v2-20260810-cf5d44af3cda/gaoqos.archive.gz</code>，0600，SHA-256 <code>d66412241bae051034b3e21b8e175c225c4b591628420cdda14e3b67360639f6</code></td></tr><tr><td>迁移</td><td><code>phase-6-dynamic-data-platform-indexes-v2</code>，校验和 <code>ReolFMtzZH_1zFA7_6ZHcYFCL1D98Lw4TC5GpGEzmd0</code>，创建 14、验证 14、缺失 0</td></tr><tr><td>配置回滚</td><td><code>/opt/gaoq-ai-runtime/compose.env.pre-cf5d44af3cda-20260810</code>，0600</td></tr><tr><td>公开样例</td><td><a href="https://aio.gaoq.com/demo/multidimensional-base">https://aio.gaoq.com/demo/multidimensional-base</a>；只读，不写生产演示数据</td></tr><tr><td>隔离证明</td><td>CMS、GaoQ Redis/MongoDB、专业算薪、agents100-prod 与 csp-redis 的容器 ID、镜像、启动时间和重启次数前后一致</td></tr></tbody></table>
+  <p>后续只能定向更新 GaoQ OS API、Worker、ERP Web，不得重启或覆盖 CMS、专业算薪和其他项目。回滚只回退这三项应用并保留全部数据，禁止 <code>docker compose down -v</code>。</p>
   <p>后续 AI 先阅读根 <code>AGENTS.md</code>、<code>CODEX.md</code>、Markdown 完整版和 ADR-0007；先检查工作区。新增数据源必须走窄 Adapter 并测试租户、来源、Schema、版本、字段和权限错位；新增 Command 必须走固定契约、可靠账本与人工复核，不得为 MCP 提供直接外部写入。</p>
   <p class="meta">完整路径与逐项实现说明见同目录 BUSINESS_RUNTIME_HANDOVER_2026-08-10.md。</p>
 </main></body></html>

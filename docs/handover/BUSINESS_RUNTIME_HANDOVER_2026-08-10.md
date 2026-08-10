@@ -3,8 +3,8 @@
 交接日期：2026-08-10（Asia/Shanghai）
 适用对象：产品负责人、架构师、开发、SRE、安全评审人员和后续 AI 代理
 
-> 本文不包含密码、Token、连接串或密钥。本文描述的是当前仓库实现状态；生产迁移
-> 与部署状态必须以第 8 节及发布后追加的证据为准。禁止删除数据库、集合、索引、
+> 本文不包含密码、Token、连接串或密钥。仓库实现、生产迁移与部署状态以第 8 节
+> 的发布证据为准。禁止删除数据库、集合、索引、
 > Redis、运行卷或同机其他项目。
 
 ## 1. 结论
@@ -14,8 +14,8 @@
 记录版本、证据快照和命令边界。本切片已经把这组能力实现为版本化 Dataset Runtime。
 
 拖拽表单、多维 Base、审批、自动化、REST、MCP 和 CLI 现在共享同一套数据集语义。
-OP 数据不复制进 GaoQ OS，也不允许动态运行时直连 OP 数据库；它由受控 Adapter
-通过 OP 应用服务读取，OP 继续是唯一事实源。
+OP 数据不会被复制为表单或 Base 的私有记录，也不允许动态运行时直连 OP 数据库；
+它由受控 Adapter 通过 OP 应用服务及其入站权威投影读取，OP 继续是唯一事实源。
 
 ```mermaid
 flowchart LR
@@ -47,7 +47,7 @@ flowchart LR
 ### 2.2 OP 数据直接引用
 
 首个外部数据集为 `op / operating_summary / 1.0`。表单或 Base 保存的是 OP 记录
-引用，不是数据副本。展示时通过 OP 应用服务读取；提交审批时重新解析指定版本，
+引用，不是动态平台私有数据副本。展示时通过 OP 应用服务读取；提交审批时重新解析指定版本，
 固定允许字段、来源版本、观察时间和 SHA-256 内容摘要。
 
 这意味着实时页面能看到权威数据，而已发生的审批仍能证明“当时依据的事实”。若
@@ -140,6 +140,10 @@ MONGODB_URI='<由服务器秘密环境注入>' \
 它只允许追加缺失索引，不允许删除或重建集合/索引。先 dry-run、备份与人工审查，再
 单独批准 apply；应用回滚不得删除新集合或其数据。
 
+2026-08-10 已在用户明确批准后完成生产执行：首次 dry-run 报告 14 个缺失索引；
+备份生成并通过 `mongorestore --dryRun` 完整性检查后，apply 创建并验证 14 个索引；
+再次 dry-run 报告 `missing=0`、`verified=14`。全过程未删除或重建集合、索引及业务数据。
+
 ## 5. 权限与秘密
 
 既有最小 Scope：
@@ -165,7 +169,8 @@ MONGODB_URI='<由服务器秘密环境注入>' \
   Branches 87.92%、Functions 88.84%、Lines 92.14%。
 - ERP Web：16 个文件、94 项测试通过；TypeScript 与生产构建通过。
 - ERP API TypeScript 与生产构建通过。
-- 动态数据 v2 迁移清单测试 2 项通过，未连接数据库、未执行 apply。
+- 动态数据 v2 迁移清单测试 2 项通过；生产 dry-run、备份、apply 与 apply 后 dry-run
+  均通过，迁移结果为 14 个索引已验证、0 个缺失。
 - MCP 目录门禁通过，官方 HTTP/stdio 协议测试已包含 56 Tool。
 - OpenAPI 已生成：53 个 Controller、272 个路由声明、278 个操作、123 个 DTO Schema；
   AsyncAPI 189 个事件校验通过。
@@ -185,9 +190,25 @@ MONGODB_URI='<由服务器秘密环境注入>' \
 
 ## 8. 发布状态与安全边界
 
-截至本文最后一次验证：仓库实现与本地门禁已完成；生产数据库未连接，v2 迁移未 dry-run、
-未 apply，生产应用未部署。后续发布必须把最终 commit、镜像摘要、发布目录、健康检查、迁移 dry-run
-摘要与回滚文件补入本文和 HTML 版本后，才能声称已上线。
+截至本文最后一次验证，Dataset Runtime、拖拽流程表单、多维 Base 与自动化运行时已经
+随 `main@cf5d44af3cda0bbb7d919820d9120e5cbb3b1dff` 部署生产。发布证据如下：
+
+| 证据 | 生产结果 |
+|---|---|
+| 发布目录 | `/opt/gaoq-ai-releases/cf5d44af3cda` |
+| API 镜像 | `sha256:45fd5ee4425f2aa1e4839be995259c41011aca33e8614d412c4f14d2e239bf9f` |
+| Worker 镜像 | `sha256:7ecb27a1524c0d4d548f22576d4cbae1310f8b83f1d64d920d213c0056d1c5b6` |
+| ERP Web 镜像 | `sha256:62b00251518e3ad0787c86e6f1dccd75bba30bbb04fc536158c2b2a331f6a191` |
+| 数据库备份 | `/opt/gaoq-backups/pre-dynamic-data-v2-20260810-cf5d44af3cda/gaoqos.archive.gz`，权限 `0600`，SHA-256 `d66412241bae051034b3e21b8e175c225c4b591628420cdda14e3b67360639f6` |
+| 迁移 | `phase-6-dynamic-data-platform-indexes-v2`，校验和 `ReolFMtzZH_1zFA7_6ZHcYFCL1D98Lw4TC5GpGEzmd0`，创建 14、验证 14、缺失 0 |
+| 运行配置回滚 | `/opt/gaoq-ai-runtime/compose.env.pre-cf5d44af3cda-20260810`，权限 `0600` |
+| 容器健康 | API、Worker、ERP Web 均为 `healthy`，`restart=0`，镜像 revision 与上述 commit 一致 |
+| 公网检查 | `/api/health/live=200`、`/api/health/ready=200`、表单/Base/公开样例页 `=200`；未认证 Dataset、表单与 Base API `=401` |
+| 公开样例 | `https://aio.gaoq.com/demo/multidimensional-base`，只读样例，不向生产数据库写演示数据 |
+
+生产就绪响应已证明 MongoDB 与 Redis 均为 `up`。CMS Website、GaoQ Redis、GaoQ
+MongoDB、专业算薪全套容器、`agents100-prod` 与 `csp-redis` 的容器 ID、镜像、启动时间
+和重启次数在切换前后完全一致；它们没有被重启或覆盖。
 
 只允许定向更新 GaoQ OS API、Worker 和 ERP Web。不得重启、覆盖或删除 CMS、专业
 算薪、同机其他 Compose Project、MongoDB、Redis、配置和代码。回滚只回退三项应用
@@ -195,13 +216,15 @@ MONGODB_URI='<由服务器秘密环境注入>' \
 
 ## 9. 人类与外部配置待办
 
-### P0：启用生产前
+### P0：开放业务用户与外部联调前
 
-1. 由数据/SRE 审核 v2 dry-run、备份和维护窗口，再明确批准追加索引 apply。
-2. 由 KMS/Secret Manager 配置并演练独立 `FORM_DATA_ENCRYPTION_KEYS`。
-3. 注册并分配自动化服务主体 Scope，完成发布者、表单提交人和自动化主体职责矩阵 UAT。
-4. OP 团队确认经营摘要 `1.0` 的字段、版本冲突、查询上限和可用性 SLO。
-5. 完成表单外部引用、审批证据快照、自动化幂等/重试/人工复核和回滚 UAT。
+1. `FORM_DATA_ENCRYPTION_KEYS` 已存在于生产 Secret 环境；仍需由 KMS/Secret Manager
+   负责人完成轮换、旧版本解密和恢复演练，禁止把密钥写入仓库或交接文档。
+2. 注册并分配自动化服务主体 Scope，完成发布者、表单提交人和自动化主体职责矩阵 UAT。
+3. OP 团队确认经营摘要 `1.0` 的字段、版本冲突、查询上限和可用性 SLO。当前
+   `OP_API_BASE_URL` 与 `OP_OPERATING_SUMMARY_PROVIDER` 未配置，生产运行时读取的是
+   已经通过受控 OP 入站链路落库的权威经营摘要，不会直连或模拟 OP 外部接口。
+4. 完成表单外部引用、审批证据快照、自动化幂等/重试/人工复核和回滚 UAT。
 
 ### P1：启用外部副作用前
 
