@@ -1,5 +1,6 @@
 version: 2
 
+# 仓库治理要求远端只保留 main；保留更新清单用于审计，但禁止机器人创建更新分支。
 updates:
   - package-ecosystem: docker
     directory: /
@@ -8,7 +9,7 @@ updates:
       day: monday
       time: "01:15"
       timezone: Asia/Shanghai
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     labels:
       - type:task
       - domain:security
@@ -22,7 +23,7 @@ updates:
       day: monday
       time: "01:30"
       timezone: Asia/Shanghai
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 0
     labels:
       - type:task
       - domain:security
@@ -46,7 +47,7 @@ updates:
       day: monday
       time: "02:00"
       timezone: Asia/Shanghai
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     labels:
       - type:task
       - domain:devops
