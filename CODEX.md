@@ -55,9 +55,11 @@
   展示的 `/workspace/contacts`，管理员可复用 R3 加密链路发起员工钉钉开户；登录页
   与 `/auth/callback/dingtalk` 已接通现有 SSO。钉钉通讯录 `userid` 与网页登录
   `openId` 分字段绑定，首次可信扫码按 `corpId + unionId` 原子登记，后续逐字匹配。
-  Phase 1 索引迁移升级为只追加 `phase-1-indexes-v4`。仓库测试与浏览器布局复核已
-  通过；真实企业授权、Secret 注入、迁移执行、角色分配和实体扫码 UAT 尚未完成，
-  运行手册见 `docs/phase-1/09-dingtalk-contacts-sso-runbook.md`。
+  Phase 1 索引迁移升级为只追加 `phase-1-indexes-v4`。2026-08-11 已将
+  `main@30409ae6e24f` 定向部署至生产 API、Worker 与 ERP Web，三个容器均健康且
+  `restart=0`；索引仅完成 dry-run，真实企业授权、Secret 注入、角色分配和实体扫码
+  UAT 尚未完成，运行手册见 `docs/phase-1/09-dingtalk-contacts-sso-runbook.md`，发布
+  证据见 `docs/handover/DINGTALK_CONTACTS_RELEASE_2026-08-11.md`。
 - 2026-07-29 已交付标准 MCP 本地 stdio 入口，与生产 Streamable HTTP 共用
   `McpRuntimeService` 和 `AccessTokenVerifier`。启动要求秘密管理器注入短时
   Token 与 `erp:mcp:server:connect`，先预检、后逐消息复验，撤销/过期立即关闭；
