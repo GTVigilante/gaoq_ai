@@ -39,6 +39,10 @@ import { TalentLifecycleModule } from './modules/talent-lifecycle/talent-lifecyc
 import { WorkforceModule } from './modules/workforce/workforce.module.js';
 import { PerformanceModule } from './modules/performance/performance.module.js';
 import { DynamicFormModule } from './modules/dynamic-form/dynamic-form.module.js';
+import { SupplierModule } from './modules/supplier/supplier.module.js';
+import { SourcingModule } from './modules/sourcing/sourcing.module.js';
+import { EngagementModule } from './modules/engagement/engagement.module.js';
+import { PayablesModule } from './modules/payables/payables.module.js';
 
 const mongoLogger = new Logger('MongoDB');
 
@@ -91,6 +95,10 @@ const mongoLogger = new Logger('MongoDB');
     WorkforceModule,
     PerformanceModule,
     DynamicFormModule,
+    SupplierModule,
+    SourcingModule,
+    EngagementModule,
+    PayablesModule,
     DataMigrationModule,
     TraceMiddlewareModule,
     TenantContextModule,

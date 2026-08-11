@@ -133,6 +133,20 @@ const performanceAssignmentSummarySchema = z.object({
   version: z.number().int().positive(),
   updatedAt: z.string().datetime({ offset: true }),
 }).strict();
+const supplierStatusSchema = z.enum(['draft', 'under_review', 'active', 'suspended', 'closed', 'rejected']);
+const supplierProfileSchema = z.object({
+  id: recruitmentIdSchema, supplierNumber: z.string().regex(/^SUP-[0-9A-HJKMNP-TV-Z]{10}$/),
+  partyKind: z.enum(['individual', 'organization']), legalForm: z.enum(['individual', 'sole_proprietor', 'studio', 'company', 'agency']),
+  displayName: z.string().min(2).max(128), riskTier: z.enum(['low', 'medium', 'high']), status: supplierStatusSchema,
+  capabilities: z.array(z.object({ serviceCategoryCode: z.string(), level: z.enum(['basic', 'verified', 'preferred', 'strategic']), validUntil: z.string().nullable() }).strict()).max(50),
+  rates: z.array(z.object({ serviceCategoryCode: z.string(), unit: z.enum(['per_piece', 'per_minute', 'per_day', 'per_project', 'per_hour']), amountMinor: z.string().regex(/^(0|[1-9][0-9]{0,14})$/), currency: z.literal('CNY'), taxIncluded: z.boolean(), validFrom: z.string(), validUntil: z.string().nullable() }).strict()).max(100),
+  qualifications: z.array(z.object({ type: z.enum(['identity', 'business_registration', 'authority', 'contract_terms', 'tax_profile', 'conflict_review']), verifiedAt: z.string(), validUntil: z.string().nullable() }).strict()).max(6),
+  version: z.number().int().positive(), updatedAt: z.string().datetime({ offset: true }),
+}).strict();
+const supplierEligibilitySchema = z.object({
+  supplierId: recruitmentIdSchema, supplierVersion: z.number().int().positive(), purpose: z.string(), serviceCategoryCode: z.string(),
+  evaluatedAt: z.string().datetime({ offset: true }), eligible: z.boolean(), reasonCodes: z.array(z.string()).max(20), digest: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+}).strict();
 const marketingEventIdSchema = z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/);
 const dynamicFormFieldSchema = z.object({
   key: z.string(), label: z.string(), type: z.string(), required: z.boolean(),
@@ -1888,6 +1902,41 @@ export class McpRuntimeService {
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
       },
       async (extra) => this.tools.getMyPerformanceAssignments(extra),
+    );
+
+    server.registerTool(
+      'supplier_search',
+      {
+        title: '查询供应方目录', description: '按当前主体数据范围返回脱敏供应方、能力和参考价摘要。风险等级 R0。',
+        inputSchema: { status: supplierStatusSchema.optional(), serviceCategoryCode: z.string().regex(/^[a-z][a-z0-9_.:-]{1,63}$/).optional(), limit: z.number().int().min(1).max(100).optional() },
+        outputSchema: z.object({ items: z.array(supplierProfileSchema).max(100), nextCursor: recruitmentIdSchema.nullable() }).strict(),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: { 'com.gaoq/riskLevel': 'R0', 'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema' },
+      },
+      async (input, extra) => this.tools.searchSuppliers(input, extra),
+    );
+
+    server.registerTool(
+      'supplier_profile_get',
+      {
+        title: '查询供应方档案', description: '返回脱敏供应关系、能力、价目与准入结论，不返回身份、证件、账户或证据引用。风险等级 R0。',
+        inputSchema: { id: recruitmentIdSchema }, outputSchema: z.object({ supplier: supplierProfileSchema }).strict(),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: { 'com.gaoq/riskLevel': 'R0', 'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema' },
+      },
+      async ({ id }, extra) => this.tools.getSupplierProfile(id, extra),
+    );
+
+    server.registerTool(
+      'supplier_eligibility_check',
+      {
+        title: '检查供应方合作资格', description: '按当前权威主档解析某服务用途的资格快照，仅返回稳定结论与原因码。风险等级 R0。',
+        inputSchema: { id: recruitmentIdSchema, purpose: z.string().regex(/^[a-z][a-z0-9_.:-]{1,63}$/), serviceCategoryCode: z.string().regex(/^[a-z][a-z0-9_.:-]{1,63}$/) },
+        outputSchema: z.object({ eligibility: supplierEligibilitySchema }).strict(),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        _meta: { 'com.gaoq/riskLevel': 'R0', 'com.gaoq/jsonSchemaDialect': 'https://json-schema.org/draft/2020-12/schema' },
+      },
+      async ({ id, purpose, serviceCategoryCode }, extra) => this.tools.checkSupplierEligibility(id, purpose, serviceCategoryCode, extra),
     );
 
     server.registerTool(

@@ -13,6 +13,7 @@ ADR 只记录已作出的重大架构决策，不替代阶段验收、外部联�
 | [ADR-0005](./0005-github-hosted-oidc-delivery.md) | accepted | GitHub Hosted + OIDC 发布 |
 | [ADR-0006](./0006-unified-cutover-and-evidence-gates.md) | accepted | 统一切换与证据门禁 |
 | [ADR-0007](./0007-business-runtime-and-federated-datasets.md) | accepted | 业务运行时与联邦数据集 |
+| [ADR-0009](./0009-supplier-party-and-engagement-boundary.md) | accepted | 供应方主档与外部履约边界 |
 
 ## 记录模板
 

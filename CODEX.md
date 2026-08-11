@@ -9,6 +9,14 @@
   容灾、业务 UAT、Go/No-Go、统一切换和四周 Hypercare 仍以现场证据为准。
 - ERP 是组织与员工唯一主数据源；多租户从可信身份上下文强制；REST、事件、
   MCP 和 Worker 必须复用应用服务。
+- 2026-08-11 供应方管理纵向体系已在仓库交付：Supplier、Sourcing、Engagement、
+  Payables 四个独立领域，支持个人兼职者与组织供应方准入、成员授权、能力与整数
+  分价目、需求响应和选定、签署意图、履约交付验收，以及从可信验收幂等形成应付。
+  管理端已有供应方、寻源、履约与结算页面；本人门户已覆盖档案、机会响应、交付与
+  收入投影；资格到期 Worker、追加式索引迁移、REST/OpenAPI、CloudEvents/
+  AsyncAPI 和三项 Supplier 只读 MCP 同步交付。eSign/Treasury 脱敏事务意图已纳入
+  逐文件四维 90% 门禁；真实技术厂商账号、合同模板、收款配置、旧兼职平台整合及
+  业务/法务/财务/安全 UAT 尚未完成，详见 `docs/supplier-management/README.md`。
 - 2026-08-06 首发版已使用 `production/initial` 档位在独立 Compose Project
   上线 `aio.gaoq.com`、`recruit.gaoq.com` 与 `www.gaoq.com`；HTTPS、健康检查、
   未授权拒绝、空职位投影和 CMS 访客站已验证。本次没有执行 MongoDB 迁移、

@@ -50,6 +50,7 @@ import { PerformanceService } from '../performance/application/performance.servi
 import { DynamicFormService } from '../dynamic-form/application/dynamic-form.service.js';
 import { MultidimensionalBaseService } from '../dynamic-form/application/multidimensional-base.service.js';
 import { DatasetRuntimeService } from '../dynamic-form/runtime/dataset-runtime.service.js';
+import { SupplierService } from '../supplier/application/supplier.service.js';
 import type { DatasetRecordRef } from '../dynamic-form/domain/dataset-runtime.js';
 import { parseMcpIdentity, type McpIdentity } from './mcp-auth-context.js';
 import {
@@ -119,7 +120,49 @@ export class McpToolService {
     private readonly dynamicForms: DynamicFormService,
     private readonly multidimensionalBases: MultidimensionalBaseService,
     private readonly datasets: DatasetRuntimeService,
+    private readonly suppliers: SupplierService,
   ) {}
+
+  async searchSuppliers(input: { readonly status?: string | undefined; readonly serviceCategoryCode?: string | undefined; readonly limit?: number | undefined }, extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:supplier:relationship:read')) {
+        await this.auditTool(identity, 'supplier_search', 'R0', 'denied'); return scopeError('erp:supplier:relationship:read');
+      }
+      const result = await this.suppliers.search({
+        ...(input.status === undefined ? {} : { status: input.status as 'draft' | 'under_review' | 'active' | 'suspended' | 'closed' | 'rejected' }),
+        ...(input.serviceCategoryCode === undefined ? {} : { serviceCategoryCode: input.serviceCategoryCode }),
+        ...(input.limit === undefined ? {} : { limit: input.limit }),
+      });
+      const items = result.items.map(supplierMcpProjection);
+      await this.auditTool(identity, 'supplier_search', 'R0', 'success', { count: items.length });
+      return structuredResult({ items, nextCursor: result.nextCursor });
+    });
+  }
+
+  async getSupplierProfile(id: string, extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:supplier:relationship:read')) {
+        await this.auditTool(identity, 'supplier_profile_get', 'R0', 'denied'); return scopeError('erp:supplier:relationship:read');
+      }
+      const supplier = supplierMcpProjection(await this.suppliers.get(id));
+      await this.auditTool(identity, 'supplier_profile_get', 'R0', 'success', { supplierId: id, status: supplier.status });
+      return structuredResult({ supplier });
+    });
+  }
+
+  async checkSupplierEligibility(id: string, purpose: string, serviceCategoryCode: string, extra: McpExtra): Promise<McpToolResult> {
+    const identity = parseMcpIdentity(extra.authInfo);
+    return this.run(identity, async () => {
+      if (!identity.scopes.includes('erp:supplier:eligibility:read')) {
+        await this.auditTool(identity, 'supplier_eligibility_check', 'R0', 'denied'); return scopeError('erp:supplier:eligibility:read');
+      }
+      const eligibility = await this.suppliers.resolveEligibility(id, { purpose, serviceCategoryCode });
+      await this.auditTool(identity, 'supplier_eligibility_check', 'R0', 'success', { supplierId: id, eligible: eligibility.eligible });
+      return structuredResult({ eligibility });
+    });
+  }
 
   async getDynamicFormCatalog(extra: McpExtra): Promise<McpToolResult> {
     const identity = parseMcpIdentity(extra.authInfo);
@@ -1563,6 +1606,22 @@ export class McpToolService {
       operation,
     );
   }
+}
+
+function supplierMcpProjection(value: {
+  readonly id: string; readonly supplierNumber: string; readonly partyKind: string; readonly legalForm: string;
+  readonly displayName: string; readonly riskTier: string; readonly status: string; readonly capabilities: readonly Record<string, unknown>[];
+  readonly rates: readonly Record<string, unknown>[]; readonly qualifications: readonly Record<string, unknown>[];
+  readonly version: number; readonly updatedAt: string;
+}) {
+  return Object.freeze({
+    id: value.id, supplierNumber: value.supplierNumber, partyKind: value.partyKind, legalForm: value.legalForm,
+    displayName: value.displayName, riskTier: value.riskTier, status: value.status,
+    capabilities: value.capabilities.map((item) => Object.freeze({ serviceCategoryCode: item.serviceCategoryCode, level: item.level, validUntil: item.validUntil })),
+    rates: value.rates.map((item) => Object.freeze({ serviceCategoryCode: item.serviceCategoryCode, unit: item.unit, amountMinor: item.amountMinor, currency: item.currency, taxIncluded: item.taxIncluded, validFrom: item.validFrom, validUntil: item.validUntil })),
+    qualifications: value.qualifications.map((item) => Object.freeze({ type: item.type, verifiedAt: item.verifiedAt, validUntil: item.validUntil })),
+    version: value.version, updatedAt: value.updatedAt,
+  });
 }
 
 function scopeError(scope: string): McpToolResult {
