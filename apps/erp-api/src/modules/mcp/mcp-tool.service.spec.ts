@@ -42,6 +42,7 @@ import type { PerformanceService } from '../performance/application/performance.
 import type { DynamicFormService } from '../dynamic-form/application/dynamic-form.service.js';
 import type { MultidimensionalBaseService } from '../dynamic-form/application/multidimensional-base.service.js';
 import type { DatasetRuntimeService } from '../dynamic-form/runtime/dataset-runtime.service.js';
+import type { SupplierService } from '../supplier/application/supplier.service.js';
 import { McpToolService } from './mcp-tool.service.js';
 import type { McpConfirmationService } from './mcp-confirmation.service.js';
 
@@ -138,6 +139,7 @@ function assemble() {
   const dynamicForms = { listPublishedCatalog: vi.fn(), getRecordForMcp: vi.fn() };
   const multidimensionalBases = { listForMcp: vi.fn() };
   const datasets = { catalog: vi.fn(), resolve: vi.fn() };
+  const suppliers = { search: vi.fn(), get: vi.fn(), resolveEligibility: vi.fn() };
   const service = new McpToolService(
     context,
     audit as unknown as AuditService,
@@ -174,6 +176,7 @@ function assemble() {
     dynamicForms as unknown as DynamicFormService,
     multidimensionalBases as unknown as MultidimensionalBaseService,
     datasets as unknown as DatasetRuntimeService,
+    suppliers as unknown as SupplierService,
   );
   return {
     context, audit, organization, approvals, recruitmentApplications,
@@ -184,7 +187,7 @@ function assemble() {
     payrollAdjustments, payrollAdjustmentTaxCorrections, annualPayrollReconciliations,
     opSummaries, opApprovalBridges, managementDashboard, analyticsExports, dataMigrations,
     talentLifecycle,
-    marketing, performance, dynamicForms, multidimensionalBases, datasets,
+    marketing, performance, dynamicForms, multidimensionalBases, datasets, suppliers,
   };
 }
 
@@ -196,6 +199,31 @@ describe('McpToolService', () => {
       UnauthorizedException,
     );
     expect(store.audit.record).not.toHaveBeenCalled();
+  });
+
+  it('供应方 MCP 只复用应用模块并移除身份与证据引用', async () => {
+    const store = assemble();
+    const supplier = {
+      id: '01J00000000000000000000001', supplierNumber: 'SUP-0000000001', partyKind: 'individual', legalForm: 'individual',
+      displayName: '林一工作室', identityHint: '****1234', ownerEmployeeId: 'employee-001', responsibleDepartmentId: 'department-001',
+      riskTier: 'medium', status: 'active',
+      capabilities: [{ serviceCategoryCode: 'video_editing', level: 'verified', evidenceRef: 'secret-evidence', validUntil: null }],
+      rates: [{ serviceCategoryCode: 'video_editing', unit: 'per_project', amountMinor: '120000', currency: 'CNY', taxIncluded: true, validFrom: '2026-08-01', validUntil: null }],
+      qualifications: [{ type: 'identity', evidenceRef: 'secret-identity-evidence', verifiedAt: '2026-08-10T00:00:00.000Z', validUntil: null }],
+      statusReasonCode: null, version: 3, createdAt: '2026-08-10T00:00:00.000Z', updatedAt: '2026-08-10T01:00:00.000Z',
+    };
+    store.suppliers.search.mockResolvedValue({ items: [supplier], nextCursor: null });
+    store.suppliers.get.mockResolvedValue(supplier);
+    store.suppliers.resolveEligibility.mockResolvedValue({ supplierId: supplier.id, supplierVersion: 3, purpose: 'engagement_create', serviceCategoryCode: 'video_editing', evaluatedAt: '2026-08-10T01:00:00.000Z', eligible: true, reasonCodes: [], digest: 'a'.repeat(43) });
+    const auth = extra(['erp:mcp:server:connect', 'erp:supplier:relationship:read', 'erp:supplier:eligibility:read']);
+    const search = await store.service.searchSuppliers({ status: 'active' }, auth);
+    const profile = await store.service.getSupplierProfile(supplier.id, auth);
+    const eligibility = await store.service.checkSupplierEligibility(supplier.id, 'engagement_create', 'video_editing', auth);
+    expect(search.structuredContent).toMatchObject({ items: [{ displayName: '林一工作室' }] });
+    expect(profile.structuredContent).toMatchObject({ supplier: { status: 'active' } });
+    expect(eligibility.structuredContent).toMatchObject({ eligibility: { eligible: true } });
+    const serialized = JSON.stringify([search.structuredContent, profile.structuredContent]);
+    expect(serialized).not.toContain('identityHint'); expect(serialized).not.toContain('secret-evidence');
   });
 
   it('动态表单与多维 Base MCP 只复用安全应用服务投影', async () => {

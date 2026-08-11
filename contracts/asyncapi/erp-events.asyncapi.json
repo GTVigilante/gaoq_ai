@@ -628,6 +628,87 @@
       },
       "description": "cn.gaoq.erp.employment.terminated.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
     },
+    "event_cn.gaoq.erp.engagement.service.accepted.v1": {
+      "address": "cn.gaoq.erp.engagement.service.accepted.v1",
+      "messages": {
+        "cn.gaoq.erp.engagement.service.accepted.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.engagement.service.accepted.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.engagement.service.accepted.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.engagement.service.activated.v1": {
+      "address": "cn.gaoq.erp.engagement.service.activated.v1",
+      "messages": {
+        "cn.gaoq.erp.engagement.service.activated.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.engagement.service.activated.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.engagement.service.activated.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.engagement.service.approved.v1": {
+      "address": "cn.gaoq.erp.engagement.service.approved.v1",
+      "messages": {
+        "cn.gaoq.erp.engagement.service.approved.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.engagement.service.approved.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.engagement.service.approved.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.engagement.service.cancelled.v1": {
+      "address": "cn.gaoq.erp.engagement.service.cancelled.v1",
+      "messages": {
+        "cn.gaoq.erp.engagement.service.cancelled.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.engagement.service.cancelled.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.engagement.service.cancelled.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.engagement.service.created.v1": {
+      "address": "cn.gaoq.erp.engagement.service.created.v1",
+      "messages": {
+        "cn.gaoq.erp.engagement.service.created.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.engagement.service.created.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.engagement.service.created.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.engagement.service.delivered.v1": {
+      "address": "cn.gaoq.erp.engagement.service.delivered.v1",
+      "messages": {
+        "cn.gaoq.erp.engagement.service.delivered.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.engagement.service.delivered.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.engagement.service.delivered.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.engagement.service.disputed.v1": {
+      "address": "cn.gaoq.erp.engagement.service.disputed.v1",
+      "messages": {
+        "cn.gaoq.erp.engagement.service.disputed.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.engagement.service.disputed.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.engagement.service.disputed.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.engagement.service.submitted.v1": {
+      "address": "cn.gaoq.erp.engagement.service.submitted.v1",
+      "messages": {
+        "cn.gaoq.erp.engagement.service.submitted.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.engagement.service.submitted.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.engagement.service.submitted.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.engagement.signature.requested.v1": {
+      "address": "cn.gaoq.erp.engagement.signature.requested.v1",
+      "messages": {
+        "cn.gaoq.erp.engagement.signature.requested.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.engagement.signature.requested.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.engagement.signature.requested.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
     "event_cn.gaoq.erp.job_level.created.v1": {
       "address": "cn.gaoq.erp.job_level.created.v1",
       "messages": {
@@ -834,6 +915,78 @@
         }
       },
       "description": "cn.gaoq.erp.op.operating_summary.published.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.payables.item.approved.v1": {
+      "address": "cn.gaoq.erp.payables.item.approved.v1",
+      "messages": {
+        "cn.gaoq.erp.payables.item.approved.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.payables.item.approved.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.payables.item.approved.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.payables.item.failed.v1": {
+      "address": "cn.gaoq.erp.payables.item.failed.v1",
+      "messages": {
+        "cn.gaoq.erp.payables.item.failed.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.payables.item.failed.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.payables.item.failed.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.payables.item.frozen.v1": {
+      "address": "cn.gaoq.erp.payables.item.frozen.v1",
+      "messages": {
+        "cn.gaoq.erp.payables.item.frozen.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.payables.item.frozen.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.payables.item.frozen.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.payables.item.paid.v1": {
+      "address": "cn.gaoq.erp.payables.item.paid.v1",
+      "messages": {
+        "cn.gaoq.erp.payables.item.paid.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.payables.item.paid.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.payables.item.paid.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.payables.item.prepared.v1": {
+      "address": "cn.gaoq.erp.payables.item.prepared.v1",
+      "messages": {
+        "cn.gaoq.erp.payables.item.prepared.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.payables.item.prepared.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.payables.item.prepared.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.payables.item.submitted_for_approval.v1": {
+      "address": "cn.gaoq.erp.payables.item.submitted_for_approval.v1",
+      "messages": {
+        "cn.gaoq.erp.payables.item.submitted_for_approval.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.payables.item.submitted_for_approval.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.payables.item.submitted_for_approval.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.payables.item.submitted_to_treasury.v1": {
+      "address": "cn.gaoq.erp.payables.item.submitted_to_treasury.v1",
+      "messages": {
+        "cn.gaoq.erp.payables.item.submitted_to_treasury.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.payables.item.submitted_to_treasury.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.payables.item.submitted_to_treasury.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.payables.treasury.materialization_requested.v1": {
+      "address": "cn.gaoq.erp.payables.treasury.materialization_requested.v1",
+      "messages": {
+        "cn.gaoq.erp.payables.treasury.materialization_requested.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.payables.treasury.materialization_requested.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.payables.treasury.materialization_requested.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
     },
     "event_cn.gaoq.erp.payroll.adjustment_tax_correction.approved.v1": {
       "address": "cn.gaoq.erp.payroll.adjustment_tax_correction.approved.v1",
@@ -1518,6 +1671,204 @@
         }
       },
       "description": "cn.gaoq.erp.recruitment.resume_analysis.reviewed.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.sourcing.request.awarded.v1": {
+      "address": "cn.gaoq.erp.sourcing.request.awarded.v1",
+      "messages": {
+        "cn.gaoq.erp.sourcing.request.awarded.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.sourcing.request.awarded.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.sourcing.request.awarded.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.sourcing.request.cancelled.v1": {
+      "address": "cn.gaoq.erp.sourcing.request.cancelled.v1",
+      "messages": {
+        "cn.gaoq.erp.sourcing.request.cancelled.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.sourcing.request.cancelled.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.sourcing.request.cancelled.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.sourcing.request.closed.v1": {
+      "address": "cn.gaoq.erp.sourcing.request.closed.v1",
+      "messages": {
+        "cn.gaoq.erp.sourcing.request.closed.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.sourcing.request.closed.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.sourcing.request.closed.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.sourcing.request.created.v1": {
+      "address": "cn.gaoq.erp.sourcing.request.created.v1",
+      "messages": {
+        "cn.gaoq.erp.sourcing.request.created.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.sourcing.request.created.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.sourcing.request.created.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.sourcing.request.evaluation_started.v1": {
+      "address": "cn.gaoq.erp.sourcing.request.evaluation_started.v1",
+      "messages": {
+        "cn.gaoq.erp.sourcing.request.evaluation_started.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.sourcing.request.evaluation_started.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.sourcing.request.evaluation_started.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.sourcing.request.published.v1": {
+      "address": "cn.gaoq.erp.sourcing.request.published.v1",
+      "messages": {
+        "cn.gaoq.erp.sourcing.request.published.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.sourcing.request.published.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.sourcing.request.published.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.sourcing.request.response_recorded.v1": {
+      "address": "cn.gaoq.erp.sourcing.request.response_recorded.v1",
+      "messages": {
+        "cn.gaoq.erp.sourcing.request.response_recorded.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.sourcing.request.response_recorded.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.sourcing.request.response_recorded.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.sourcing.request.submitted.v1": {
+      "address": "cn.gaoq.erp.sourcing.request.submitted.v1",
+      "messages": {
+        "cn.gaoq.erp.sourcing.request.submitted.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.sourcing.request.submitted.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.sourcing.request.submitted.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.supplier.capabilities.updated.v1": {
+      "address": "cn.gaoq.erp.supplier.capabilities.updated.v1",
+      "messages": {
+        "cn.gaoq.erp.supplier.capabilities.updated.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.supplier.capabilities.updated.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.supplier.capabilities.updated.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.supplier.member.authorized.v1": {
+      "address": "cn.gaoq.erp.supplier.member.authorized.v1",
+      "messages": {
+        "cn.gaoq.erp.supplier.member.authorized.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.supplier.member.authorized.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.supplier.member.authorized.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.supplier.member.revoked.v1": {
+      "address": "cn.gaoq.erp.supplier.member.revoked.v1",
+      "messages": {
+        "cn.gaoq.erp.supplier.member.revoked.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.supplier.member.revoked.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.supplier.member.revoked.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.supplier.qualification.expired.v1": {
+      "address": "cn.gaoq.erp.supplier.qualification.expired.v1",
+      "messages": {
+        "cn.gaoq.erp.supplier.qualification.expired.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.supplier.qualification.expired.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.supplier.qualification.expired.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.supplier.qualification.expiring.v1": {
+      "address": "cn.gaoq.erp.supplier.qualification.expiring.v1",
+      "messages": {
+        "cn.gaoq.erp.supplier.qualification.expiring.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.supplier.qualification.expiring.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.supplier.qualification.expiring.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.supplier.rates.updated.v1": {
+      "address": "cn.gaoq.erp.supplier.rates.updated.v1",
+      "messages": {
+        "cn.gaoq.erp.supplier.rates.updated.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.supplier.rates.updated.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.supplier.rates.updated.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.supplier.relationship.activated.v1": {
+      "address": "cn.gaoq.erp.supplier.relationship.activated.v1",
+      "messages": {
+        "cn.gaoq.erp.supplier.relationship.activated.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.supplier.relationship.activated.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.supplier.relationship.activated.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.supplier.relationship.closed.v1": {
+      "address": "cn.gaoq.erp.supplier.relationship.closed.v1",
+      "messages": {
+        "cn.gaoq.erp.supplier.relationship.closed.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.supplier.relationship.closed.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.supplier.relationship.closed.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.supplier.relationship.created.v1": {
+      "address": "cn.gaoq.erp.supplier.relationship.created.v1",
+      "messages": {
+        "cn.gaoq.erp.supplier.relationship.created.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.supplier.relationship.created.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.supplier.relationship.created.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.supplier.relationship.reactivated.v1": {
+      "address": "cn.gaoq.erp.supplier.relationship.reactivated.v1",
+      "messages": {
+        "cn.gaoq.erp.supplier.relationship.reactivated.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.supplier.relationship.reactivated.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.supplier.relationship.reactivated.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.supplier.relationship.rejected.v1": {
+      "address": "cn.gaoq.erp.supplier.relationship.rejected.v1",
+      "messages": {
+        "cn.gaoq.erp.supplier.relationship.rejected.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.supplier.relationship.rejected.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.supplier.relationship.rejected.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.supplier.relationship.submitted.v1": {
+      "address": "cn.gaoq.erp.supplier.relationship.submitted.v1",
+      "messages": {
+        "cn.gaoq.erp.supplier.relationship.submitted.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.supplier.relationship.submitted.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.supplier.relationship.submitted.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.supplier.relationship.suspended.v1": {
+      "address": "cn.gaoq.erp.supplier.relationship.suspended.v1",
+      "messages": {
+        "cn.gaoq.erp.supplier.relationship.suspended.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.supplier.relationship.suspended.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.supplier.relationship.suspended.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
+    },
+    "event_cn.gaoq.erp.supplier.relationship.updated.v1": {
+      "address": "cn.gaoq.erp.supplier.relationship.updated.v1",
+      "messages": {
+        "cn.gaoq.erp.supplier.relationship.updated.v1": {
+          "$ref": "#/components/messages/cn.gaoq.erp.supplier.relationship.updated.v1"
+        }
+      },
+      "description": "cn.gaoq.erp.supplier.relationship.updated.v1 的逻辑事件通道；物理 Broker 由目标环境准入决定。"
     },
     "event_cn.gaoq.erp.talent.touchpoint.cancelled.v1": {
       "address": "cn.gaoq.erp.talent.touchpoint.cancelled.v1",
@@ -2607,6 +2958,123 @@
       "x-idempotency-key": "tenantId + type + aggregateId + version",
       "x-tenant-source": "verified-identity-context"
     },
+    "send_cn.gaoq.erp.engagement.service.accepted.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.engagement.service.accepted.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.engagement.service.accepted.v1/messages/cn.gaoq.erp.engagement.service.accepted.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.engagement.service.activated.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.engagement.service.activated.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.engagement.service.activated.v1/messages/cn.gaoq.erp.engagement.service.activated.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.engagement.service.approved.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.engagement.service.approved.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.engagement.service.approved.v1/messages/cn.gaoq.erp.engagement.service.approved.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.engagement.service.cancelled.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.engagement.service.cancelled.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.engagement.service.cancelled.v1/messages/cn.gaoq.erp.engagement.service.cancelled.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.engagement.service.created.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.engagement.service.created.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.engagement.service.created.v1/messages/cn.gaoq.erp.engagement.service.created.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.engagement.service.delivered.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.engagement.service.delivered.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.engagement.service.delivered.v1/messages/cn.gaoq.erp.engagement.service.delivered.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.engagement.service.disputed.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.engagement.service.disputed.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.engagement.service.disputed.v1/messages/cn.gaoq.erp.engagement.service.disputed.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.engagement.service.submitted.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.engagement.service.submitted.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.engagement.service.submitted.v1/messages/cn.gaoq.erp.engagement.service.submitted.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.engagement.signature.requested.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.engagement.signature.requested.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.engagement.signature.requested.v1/messages/cn.gaoq.erp.engagement.signature.requested.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
     "send_cn.gaoq.erp.job_level.created.v1": {
       "action": "send",
       "channel": {
@@ -2901,6 +3369,110 @@
       "messages": [
         {
           "$ref": "#/channels/event_cn.gaoq.erp.op.operating_summary.published.v1/messages/cn.gaoq.erp.op.operating_summary.published.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.payables.item.approved.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.payables.item.approved.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.payables.item.approved.v1/messages/cn.gaoq.erp.payables.item.approved.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.payables.item.failed.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.payables.item.failed.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.payables.item.failed.v1/messages/cn.gaoq.erp.payables.item.failed.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.payables.item.frozen.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.payables.item.frozen.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.payables.item.frozen.v1/messages/cn.gaoq.erp.payables.item.frozen.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.payables.item.paid.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.payables.item.paid.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.payables.item.paid.v1/messages/cn.gaoq.erp.payables.item.paid.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.payables.item.prepared.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.payables.item.prepared.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.payables.item.prepared.v1/messages/cn.gaoq.erp.payables.item.prepared.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.payables.item.submitted_for_approval.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.payables.item.submitted_for_approval.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.payables.item.submitted_for_approval.v1/messages/cn.gaoq.erp.payables.item.submitted_for_approval.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.payables.item.submitted_to_treasury.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.payables.item.submitted_to_treasury.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.payables.item.submitted_to_treasury.v1/messages/cn.gaoq.erp.payables.item.submitted_to_treasury.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.payables.treasury.materialization_requested.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.payables.treasury.materialization_requested.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.payables.treasury.materialization_requested.v1/messages/cn.gaoq.erp.payables.treasury.materialization_requested.v1"
         }
       ],
       "x-idempotency-key": "tenantId + type + aggregateId + version",
@@ -3889,6 +4461,292 @@
       "messages": [
         {
           "$ref": "#/channels/event_cn.gaoq.erp.recruitment.resume_analysis.reviewed.v1/messages/cn.gaoq.erp.recruitment.resume_analysis.reviewed.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.sourcing.request.awarded.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.sourcing.request.awarded.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.sourcing.request.awarded.v1/messages/cn.gaoq.erp.sourcing.request.awarded.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.sourcing.request.cancelled.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.sourcing.request.cancelled.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.sourcing.request.cancelled.v1/messages/cn.gaoq.erp.sourcing.request.cancelled.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.sourcing.request.closed.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.sourcing.request.closed.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.sourcing.request.closed.v1/messages/cn.gaoq.erp.sourcing.request.closed.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.sourcing.request.created.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.sourcing.request.created.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.sourcing.request.created.v1/messages/cn.gaoq.erp.sourcing.request.created.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.sourcing.request.evaluation_started.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.sourcing.request.evaluation_started.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.sourcing.request.evaluation_started.v1/messages/cn.gaoq.erp.sourcing.request.evaluation_started.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.sourcing.request.published.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.sourcing.request.published.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.sourcing.request.published.v1/messages/cn.gaoq.erp.sourcing.request.published.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.sourcing.request.response_recorded.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.sourcing.request.response_recorded.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.sourcing.request.response_recorded.v1/messages/cn.gaoq.erp.sourcing.request.response_recorded.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.sourcing.request.submitted.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.sourcing.request.submitted.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.sourcing.request.submitted.v1/messages/cn.gaoq.erp.sourcing.request.submitted.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.supplier.capabilities.updated.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.supplier.capabilities.updated.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.supplier.capabilities.updated.v1/messages/cn.gaoq.erp.supplier.capabilities.updated.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.supplier.member.authorized.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.supplier.member.authorized.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.supplier.member.authorized.v1/messages/cn.gaoq.erp.supplier.member.authorized.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.supplier.member.revoked.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.supplier.member.revoked.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.supplier.member.revoked.v1/messages/cn.gaoq.erp.supplier.member.revoked.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.supplier.qualification.expired.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.supplier.qualification.expired.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.supplier.qualification.expired.v1/messages/cn.gaoq.erp.supplier.qualification.expired.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.supplier.qualification.expiring.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.supplier.qualification.expiring.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.supplier.qualification.expiring.v1/messages/cn.gaoq.erp.supplier.qualification.expiring.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.supplier.rates.updated.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.supplier.rates.updated.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.supplier.rates.updated.v1/messages/cn.gaoq.erp.supplier.rates.updated.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.supplier.relationship.activated.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.supplier.relationship.activated.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.supplier.relationship.activated.v1/messages/cn.gaoq.erp.supplier.relationship.activated.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.supplier.relationship.closed.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.supplier.relationship.closed.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.supplier.relationship.closed.v1/messages/cn.gaoq.erp.supplier.relationship.closed.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.supplier.relationship.created.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.supplier.relationship.created.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.supplier.relationship.created.v1/messages/cn.gaoq.erp.supplier.relationship.created.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.supplier.relationship.reactivated.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.supplier.relationship.reactivated.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.supplier.relationship.reactivated.v1/messages/cn.gaoq.erp.supplier.relationship.reactivated.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.supplier.relationship.rejected.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.supplier.relationship.rejected.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.supplier.relationship.rejected.v1/messages/cn.gaoq.erp.supplier.relationship.rejected.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.supplier.relationship.submitted.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.supplier.relationship.submitted.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.supplier.relationship.submitted.v1/messages/cn.gaoq.erp.supplier.relationship.submitted.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.supplier.relationship.suspended.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.supplier.relationship.suspended.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.supplier.relationship.suspended.v1/messages/cn.gaoq.erp.supplier.relationship.suspended.v1"
+        }
+      ],
+      "x-idempotency-key": "tenantId + type + aggregateId + version",
+      "x-tenant-source": "verified-identity-context"
+    },
+    "send_cn.gaoq.erp.supplier.relationship.updated.v1": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/event_cn.gaoq.erp.supplier.relationship.updated.v1"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/event_cn.gaoq.erp.supplier.relationship.updated.v1/messages/cn.gaoq.erp.supplier.relationship.updated.v1"
         }
       ],
       "x-idempotency-key": "tenantId + type + aggregateId + version",
@@ -6657,6 +7515,330 @@
         ],
         "x-delivery": "transactional-outbox"
       },
+      "cn.gaoq.erp.engagement.service.accepted.v1": {
+        "name": "cn.gaoq.erp.engagement.service.accepted.v1",
+        "title": "cn.gaoq.erp.engagement.service.accepted.v1",
+        "summary": "engagement 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/engagement-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.engagement.service.accepted.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "engagement",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/engagement/persistence/engagement-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.engagement.service.activated.v1": {
+        "name": "cn.gaoq.erp.engagement.service.activated.v1",
+        "title": "cn.gaoq.erp.engagement.service.activated.v1",
+        "summary": "engagement 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/engagement-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.engagement.service.activated.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "engagement",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/engagement/persistence/engagement-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.engagement.service.approved.v1": {
+        "name": "cn.gaoq.erp.engagement.service.approved.v1",
+        "title": "cn.gaoq.erp.engagement.service.approved.v1",
+        "summary": "engagement 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/engagement-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.engagement.service.approved.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "engagement",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/engagement/persistence/engagement-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.engagement.service.cancelled.v1": {
+        "name": "cn.gaoq.erp.engagement.service.cancelled.v1",
+        "title": "cn.gaoq.erp.engagement.service.cancelled.v1",
+        "summary": "engagement 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/engagement-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.engagement.service.cancelled.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "engagement",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/engagement/persistence/engagement-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.engagement.service.created.v1": {
+        "name": "cn.gaoq.erp.engagement.service.created.v1",
+        "title": "cn.gaoq.erp.engagement.service.created.v1",
+        "summary": "engagement 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/engagement-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.engagement.service.created.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "engagement",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/engagement/persistence/engagement-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.engagement.service.delivered.v1": {
+        "name": "cn.gaoq.erp.engagement.service.delivered.v1",
+        "title": "cn.gaoq.erp.engagement.service.delivered.v1",
+        "summary": "engagement 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/engagement-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.engagement.service.delivered.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "engagement",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/engagement/persistence/engagement-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.engagement.service.disputed.v1": {
+        "name": "cn.gaoq.erp.engagement.service.disputed.v1",
+        "title": "cn.gaoq.erp.engagement.service.disputed.v1",
+        "summary": "engagement 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/engagement-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.engagement.service.disputed.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "engagement",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/engagement/persistence/engagement-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.engagement.service.submitted.v1": {
+        "name": "cn.gaoq.erp.engagement.service.submitted.v1",
+        "title": "cn.gaoq.erp.engagement.service.submitted.v1",
+        "summary": "engagement 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/engagement-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.engagement.service.submitted.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "engagement",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/engagement/persistence/engagement-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.engagement.signature.requested.v1": {
+        "name": "cn.gaoq.erp.engagement.signature.requested.v1",
+        "title": "cn.gaoq.erp.engagement.signature.requested.v1",
+        "summary": "engagement 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/engagement-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.engagement.signature.requested.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "engagement",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/engagement/persistence/engagement-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
       "cn.gaoq.erp.job_level.created.v1": {
         "name": "cn.gaoq.erp.job_level.created.v1",
         "title": "cn.gaoq.erp.job_level.created.v1",
@@ -7482,6 +8664,294 @@
         "x-data-classification": "L2",
         "x-runtime-schema-sources": [
           "apps/erp-api/src/modules/op/persistence/op-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.payables.item.approved.v1": {
+        "name": "cn.gaoq.erp.payables.item.approved.v1",
+        "title": "cn.gaoq.erp.payables.item.approved.v1",
+        "summary": "payables 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/payables-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.payables.item.approved.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "payables",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L3",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/payables/persistence/payable-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.payables.item.failed.v1": {
+        "name": "cn.gaoq.erp.payables.item.failed.v1",
+        "title": "cn.gaoq.erp.payables.item.failed.v1",
+        "summary": "payables 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/payables-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.payables.item.failed.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "payables",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L3",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/payables/persistence/payable-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.payables.item.frozen.v1": {
+        "name": "cn.gaoq.erp.payables.item.frozen.v1",
+        "title": "cn.gaoq.erp.payables.item.frozen.v1",
+        "summary": "payables 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/payables-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.payables.item.frozen.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "payables",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L3",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/payables/persistence/payable-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.payables.item.paid.v1": {
+        "name": "cn.gaoq.erp.payables.item.paid.v1",
+        "title": "cn.gaoq.erp.payables.item.paid.v1",
+        "summary": "payables 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/payables-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.payables.item.paid.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "payables",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L3",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/payables/persistence/payable-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.payables.item.prepared.v1": {
+        "name": "cn.gaoq.erp.payables.item.prepared.v1",
+        "title": "cn.gaoq.erp.payables.item.prepared.v1",
+        "summary": "payables 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/payables-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.payables.item.prepared.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "payables",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L3",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/payables/persistence/payable-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.payables.item.submitted_for_approval.v1": {
+        "name": "cn.gaoq.erp.payables.item.submitted_for_approval.v1",
+        "title": "cn.gaoq.erp.payables.item.submitted_for_approval.v1",
+        "summary": "payables 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/payables-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.payables.item.submitted_for_approval.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "payables",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L3",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/payables/persistence/payable-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.payables.item.submitted_to_treasury.v1": {
+        "name": "cn.gaoq.erp.payables.item.submitted_to_treasury.v1",
+        "title": "cn.gaoq.erp.payables.item.submitted_to_treasury.v1",
+        "summary": "payables 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/payables-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.payables.item.submitted_to_treasury.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "payables",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L3",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/payables/persistence/payable-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.payables.treasury.materialization_requested.v1": {
+        "name": "cn.gaoq.erp.payables.treasury.materialization_requested.v1",
+        "title": "cn.gaoq.erp.payables.treasury.materialization_requested.v1",
+        "summary": "payables 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/payables-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.payables.treasury.materialization_requested.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "payables",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L3",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/payables/persistence/payable-outbox.writer.ts"
         ],
         "x-delivery": "transactional-outbox"
       },
@@ -10221,6 +11691,812 @@
         ],
         "x-delivery": "transactional-outbox"
       },
+      "cn.gaoq.erp.sourcing.request.awarded.v1": {
+        "name": "cn.gaoq.erp.sourcing.request.awarded.v1",
+        "title": "cn.gaoq.erp.sourcing.request.awarded.v1",
+        "summary": "sourcing 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/sourcing-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.sourcing.request.awarded.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "sourcing",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/sourcing/persistence/sourcing-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.sourcing.request.cancelled.v1": {
+        "name": "cn.gaoq.erp.sourcing.request.cancelled.v1",
+        "title": "cn.gaoq.erp.sourcing.request.cancelled.v1",
+        "summary": "sourcing 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/sourcing-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.sourcing.request.cancelled.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "sourcing",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/sourcing/persistence/sourcing-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.sourcing.request.closed.v1": {
+        "name": "cn.gaoq.erp.sourcing.request.closed.v1",
+        "title": "cn.gaoq.erp.sourcing.request.closed.v1",
+        "summary": "sourcing 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/sourcing-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.sourcing.request.closed.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "sourcing",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/sourcing/persistence/sourcing-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.sourcing.request.created.v1": {
+        "name": "cn.gaoq.erp.sourcing.request.created.v1",
+        "title": "cn.gaoq.erp.sourcing.request.created.v1",
+        "summary": "sourcing 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/sourcing-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.sourcing.request.created.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "sourcing",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/sourcing/persistence/sourcing-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.sourcing.request.evaluation_started.v1": {
+        "name": "cn.gaoq.erp.sourcing.request.evaluation_started.v1",
+        "title": "cn.gaoq.erp.sourcing.request.evaluation_started.v1",
+        "summary": "sourcing 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/sourcing-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.sourcing.request.evaluation_started.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "sourcing",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/sourcing/persistence/sourcing-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.sourcing.request.published.v1": {
+        "name": "cn.gaoq.erp.sourcing.request.published.v1",
+        "title": "cn.gaoq.erp.sourcing.request.published.v1",
+        "summary": "sourcing 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/sourcing-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.sourcing.request.published.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "sourcing",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/sourcing/persistence/sourcing-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.sourcing.request.response_recorded.v1": {
+        "name": "cn.gaoq.erp.sourcing.request.response_recorded.v1",
+        "title": "cn.gaoq.erp.sourcing.request.response_recorded.v1",
+        "summary": "sourcing 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/sourcing-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.sourcing.request.response_recorded.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "sourcing",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/sourcing/persistence/sourcing-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.sourcing.request.submitted.v1": {
+        "name": "cn.gaoq.erp.sourcing.request.submitted.v1",
+        "title": "cn.gaoq.erp.sourcing.request.submitted.v1",
+        "summary": "sourcing 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/sourcing-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.sourcing.request.submitted.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "sourcing",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/sourcing/persistence/sourcing-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.supplier.capabilities.updated.v1": {
+        "name": "cn.gaoq.erp.supplier.capabilities.updated.v1",
+        "title": "cn.gaoq.erp.supplier.capabilities.updated.v1",
+        "summary": "supplier 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/supplier-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.supplier.capabilities.updated.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "supplier",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/supplier/persistence/supplier-outbox.writer.ts",
+          "apps/erp-api/src/modules/supplier/persistence/supplier-member-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.supplier.member.authorized.v1": {
+        "name": "cn.gaoq.erp.supplier.member.authorized.v1",
+        "title": "cn.gaoq.erp.supplier.member.authorized.v1",
+        "summary": "supplier 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/supplier-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.supplier.member.authorized.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "supplier",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/supplier/persistence/supplier-outbox.writer.ts",
+          "apps/erp-api/src/modules/supplier/persistence/supplier-member-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.supplier.member.revoked.v1": {
+        "name": "cn.gaoq.erp.supplier.member.revoked.v1",
+        "title": "cn.gaoq.erp.supplier.member.revoked.v1",
+        "summary": "supplier 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/supplier-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.supplier.member.revoked.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "supplier",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/supplier/persistence/supplier-outbox.writer.ts",
+          "apps/erp-api/src/modules/supplier/persistence/supplier-member-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.supplier.qualification.expired.v1": {
+        "name": "cn.gaoq.erp.supplier.qualification.expired.v1",
+        "title": "cn.gaoq.erp.supplier.qualification.expired.v1",
+        "summary": "supplier 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/supplier-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.supplier.qualification.expired.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "supplier",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/supplier/persistence/supplier-outbox.writer.ts",
+          "apps/erp-api/src/modules/supplier/persistence/supplier-member-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.supplier.qualification.expiring.v1": {
+        "name": "cn.gaoq.erp.supplier.qualification.expiring.v1",
+        "title": "cn.gaoq.erp.supplier.qualification.expiring.v1",
+        "summary": "supplier 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/supplier-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.supplier.qualification.expiring.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "supplier",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/supplier/persistence/supplier-outbox.writer.ts",
+          "apps/erp-api/src/modules/supplier/persistence/supplier-member-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.supplier.rates.updated.v1": {
+        "name": "cn.gaoq.erp.supplier.rates.updated.v1",
+        "title": "cn.gaoq.erp.supplier.rates.updated.v1",
+        "summary": "supplier 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/supplier-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.supplier.rates.updated.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "supplier",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/supplier/persistence/supplier-outbox.writer.ts",
+          "apps/erp-api/src/modules/supplier/persistence/supplier-member-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.supplier.relationship.activated.v1": {
+        "name": "cn.gaoq.erp.supplier.relationship.activated.v1",
+        "title": "cn.gaoq.erp.supplier.relationship.activated.v1",
+        "summary": "supplier 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/supplier-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.supplier.relationship.activated.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "supplier",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/supplier/persistence/supplier-outbox.writer.ts",
+          "apps/erp-api/src/modules/supplier/persistence/supplier-member-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.supplier.relationship.closed.v1": {
+        "name": "cn.gaoq.erp.supplier.relationship.closed.v1",
+        "title": "cn.gaoq.erp.supplier.relationship.closed.v1",
+        "summary": "supplier 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/supplier-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.supplier.relationship.closed.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "supplier",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/supplier/persistence/supplier-outbox.writer.ts",
+          "apps/erp-api/src/modules/supplier/persistence/supplier-member-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.supplier.relationship.created.v1": {
+        "name": "cn.gaoq.erp.supplier.relationship.created.v1",
+        "title": "cn.gaoq.erp.supplier.relationship.created.v1",
+        "summary": "supplier 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/supplier-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.supplier.relationship.created.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "supplier",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/supplier/persistence/supplier-outbox.writer.ts",
+          "apps/erp-api/src/modules/supplier/persistence/supplier-member-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.supplier.relationship.reactivated.v1": {
+        "name": "cn.gaoq.erp.supplier.relationship.reactivated.v1",
+        "title": "cn.gaoq.erp.supplier.relationship.reactivated.v1",
+        "summary": "supplier 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/supplier-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.supplier.relationship.reactivated.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "supplier",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/supplier/persistence/supplier-outbox.writer.ts",
+          "apps/erp-api/src/modules/supplier/persistence/supplier-member-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.supplier.relationship.rejected.v1": {
+        "name": "cn.gaoq.erp.supplier.relationship.rejected.v1",
+        "title": "cn.gaoq.erp.supplier.relationship.rejected.v1",
+        "summary": "supplier 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/supplier-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.supplier.relationship.rejected.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "supplier",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/supplier/persistence/supplier-outbox.writer.ts",
+          "apps/erp-api/src/modules/supplier/persistence/supplier-member-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.supplier.relationship.submitted.v1": {
+        "name": "cn.gaoq.erp.supplier.relationship.submitted.v1",
+        "title": "cn.gaoq.erp.supplier.relationship.submitted.v1",
+        "summary": "supplier 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/supplier-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.supplier.relationship.submitted.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "supplier",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/supplier/persistence/supplier-outbox.writer.ts",
+          "apps/erp-api/src/modules/supplier/persistence/supplier-member-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.supplier.relationship.suspended.v1": {
+        "name": "cn.gaoq.erp.supplier.relationship.suspended.v1",
+        "title": "cn.gaoq.erp.supplier.relationship.suspended.v1",
+        "summary": "supplier 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/supplier-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.supplier.relationship.suspended.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "supplier",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/supplier/persistence/supplier-outbox.writer.ts",
+          "apps/erp-api/src/modules/supplier/persistence/supplier-member-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
+      "cn.gaoq.erp.supplier.relationship.updated.v1": {
+        "name": "cn.gaoq.erp.supplier.relationship.updated.v1",
+        "title": "cn.gaoq.erp.supplier.relationship.updated.v1",
+        "summary": "supplier 发布的 CloudEvents 1.0 事件。",
+        "contentType": "application/cloudevents+json",
+        "correlationId": {
+          "description": "跨 REST、Worker 与外部适配器关联的追踪标识。",
+          "location": "$message.payload#/traceId"
+        },
+        "payload": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/CloudEventEnvelope"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "const": "//gaoq-erp/supplier-module"
+                },
+                "type": {
+                  "const": "cn.gaoq.erp.supplier.relationship.updated.v1"
+                }
+              }
+            }
+          ]
+        },
+        "x-domain": "supplier",
+        "x-direction": "outbound",
+        "x-authoritative-system": "erp",
+        "x-data-classification": "L2",
+        "x-runtime-schema-sources": [
+          "apps/erp-api/src/modules/supplier/persistence/supplier-outbox.writer.ts",
+          "apps/erp-api/src/modules/supplier/persistence/supplier-member-outbox.writer.ts"
+        ],
+        "x-delivery": "transactional-outbox"
+      },
       "cn.gaoq.erp.talent.touchpoint.cancelled.v1": {
         "name": "cn.gaoq.erp.talent.touchpoint.cancelled.v1",
         "title": "cn.gaoq.erp.talent.touchpoint.cancelled.v1",
@@ -11057,8 +13333,8 @@
       }
     }
   },
-  "x-event-count": 189,
-  "x-outbound-count": 185,
+  "x-event-count": 228,
+  "x-outbound-count": 224,
   "x-inbound-count": 4,
   "x-generated-from": [
     "apps/erp-api/src/modules/approval/domain/approval-events.ts",
@@ -11066,13 +13342,18 @@
     "apps/erp-api/src/modules/care/persistence/care-outbox.writer.ts",
     "apps/erp-api/src/modules/document/persistence/business-attachment-outbox.writer.ts",
     "apps/erp-api/src/modules/dynamic-form/persistence/dynamic-form-outbox.writer.ts",
+    "apps/erp-api/src/modules/engagement/persistence/engagement-outbox.writer.ts",
     "apps/erp-api/src/modules/knowledge/persistence/knowledge-outbox.writer.ts",
     "apps/erp-api/src/modules/marketing-cms/marketing-cms.types.ts",
     "apps/erp-api/src/modules/onboarding/persistence/onboarding-outbox.writer.ts",
     "apps/erp-api/src/modules/op/persistence/op-outbox.writer.ts",
     "apps/erp-api/src/modules/org/domain/org-events.ts",
+    "apps/erp-api/src/modules/payables/persistence/payable-outbox.writer.ts",
     "apps/erp-api/src/modules/payroll/persistence/payroll-outbox.writer.ts",
     "apps/erp-api/src/modules/recruitment/persistence/recruitment-outbox.writer.ts",
+    "apps/erp-api/src/modules/sourcing/persistence/sourcing-outbox.writer.ts",
+    "apps/erp-api/src/modules/supplier/persistence/supplier-member-outbox.writer.ts",
+    "apps/erp-api/src/modules/supplier/persistence/supplier-outbox.writer.ts",
     "apps/erp-api/src/modules/talent-lifecycle/persistence/talent-lifecycle-outbox.writer.ts",
     "apps/erp-api/src/modules/treasury/persistence/treasury-outbox.writer.ts",
     "packages/platform-contracts/src/payroll-event-schemas.ts",

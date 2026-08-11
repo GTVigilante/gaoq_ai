@@ -8,6 +8,15 @@
   `../../../treasury/integration/treasury-evidence-http.adapter.ts`。
 - 外部验收：真实银行格式、签名/加密、沙箱回执、法定留存和财务签署仍待完成。
 
+## 供应方应付边界
+
+供应方应付审批后由 Payables 在同一事务发布
+`payables.treasury.materialization_requested`。事件只携带供应方、委托、税务处理码、
+整数分控制量和不透明验收/审批证据引用；银行账号、户名和付款凭据不得进入事件。
+Treasury 必须按 `tenantId + supplierId` 解析已审批且冻结的收款账户快照，创建独立
+付款指令后以受控服务身份回写不透明指令引用；银行结果再通过 Payables 结算入口
+推进 `paid|failed|frozen`。现有工资批次文件模型不得直接冒充供应方应付批次。
+
 ## 代发提交
 
 | ERP canonical 字段 | 银行隔离网关字段 | 约束 |

@@ -8,7 +8,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const outputPath = resolve(repoRoot, 'contracts/asyncapi/erp-events.asyncapi.json');
 const args = new Set(process.argv.slice(2));
 const domainEventPattern =
-  /^(?:department|employee|person|employment|position|job_level|approval_[a-z0-9_]+|care|knowledge|onboarding|recruitment|attendance|payroll|treasury|dynamic_form)\.[a-z0-9_]+(?:\.[a-z0-9_]+)*$/u;
+  /^(?:department|employee|person|employment|position|job_level|approval_[a-z0-9_]+|care|knowledge|onboarding|recruitment|attendance|payroll|treasury|dynamic_form|supplier|sourcing|engagement|payables)\.[a-z0-9_]+(?:\.[a-z0-9_]+)*$/u;
 const fullEventPattern = /^cn\.gaoq\.(?:erp|payroll)\.[a-z0-9_]+(?:\.[a-z0-9_]+)*\.v[1-9][0-9]*$/u;
 
 const eventGroups = [
@@ -104,6 +104,25 @@ const eventGroups = [
     source: '//gaoq-erp/dynamic-form-module',
     classification: 'L2',
     files: ['apps/erp-api/src/modules/dynamic-form/persistence/dynamic-form-outbox.writer.ts'],
+  },
+  {
+    name: 'supplier', source: '//gaoq-erp/supplier-module', classification: 'L2',
+    files: [
+      'apps/erp-api/src/modules/supplier/persistence/supplier-outbox.writer.ts',
+      'apps/erp-api/src/modules/supplier/persistence/supplier-member-outbox.writer.ts',
+    ],
+  },
+  {
+    name: 'sourcing', source: '//gaoq-erp/sourcing-module', classification: 'L2',
+    files: ['apps/erp-api/src/modules/sourcing/persistence/sourcing-outbox.writer.ts'],
+  },
+  {
+    name: 'engagement', source: '//gaoq-erp/engagement-module', classification: 'L2',
+    files: ['apps/erp-api/src/modules/engagement/persistence/engagement-outbox.writer.ts'],
+  },
+  {
+    name: 'payables', source: '//gaoq-erp/payables-module', classification: 'L3',
+    files: ['apps/erp-api/src/modules/payables/persistence/payable-outbox.writer.ts'],
   },
 ];
 

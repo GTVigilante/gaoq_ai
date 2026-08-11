@@ -135,6 +135,16 @@ const environmentSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(64).max(16_384).optional(),
   ),
+  /** 供应方 L3/L4 法定身份密钥环；不得复用招聘、审批、薪酬或资金密钥。 */
+  SUPPLIER_DATA_ENCRYPTION_KEYS: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(64).max(16_384).optional(),
+  ),
+  /** 供应方身份精确去重 HMAC 密钥环；必须与供应方数据加密密钥隔离。 */
+  SUPPLIER_BLIND_INDEX_KEYS: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(64).max(16_384).optional(),
+  ),
   /** Person 生日月日 HMAC 盲索引密钥环；不得复用招聘、考勤或资金密钥。 */
   ORG_PERSON_BIRTHDAY_BLIND_INDEX_KEYS: z.preprocess(
     (value) => value === '' ? undefined : value,
@@ -879,6 +889,13 @@ const environmentSchema = z.object({
   ) context.addIssue({
     code: 'custom', path: ['TREASURY_BLIND_INDEX_KEYS'],
     message: '资金数据加密与账号盲索引不得复用同一密钥环',
+  });
+  if (
+    environment.SUPPLIER_DATA_ENCRYPTION_KEYS !== undefined &&
+    environment.SUPPLIER_DATA_ENCRYPTION_KEYS === environment.SUPPLIER_BLIND_INDEX_KEYS
+  ) context.addIssue({
+    code: 'custom', path: ['SUPPLIER_BLIND_INDEX_KEYS'],
+    message: '供应方数据加密与身份盲索引不得复用同一密钥环',
   });
   const treasuryArchive = [
     environment.TREASURY_WORM_ARCHIVE_ENDPOINT,

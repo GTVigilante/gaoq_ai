@@ -25,6 +25,27 @@ describe('MCP Streamable HTTP 协议集成', () => {
   });
 
   it('官方 MCP Client 可初始化、发现资源/工具并调用 R0 工具', async () => {
+    const supplierProfile = {
+      id: '01J8ZQK7V0A2M4N6P8R0T2W4S1',
+      supplierNumber: 'SUP-01J8ZQK7V0',
+      partyKind: 'individual',
+      legalForm: 'individual',
+      displayName: '创作者一号',
+      riskTier: 'low',
+      status: 'active',
+      capabilities: [{
+        serviceCategoryCode: 'video.editing', level: 'verified', validUntil: null,
+      }],
+      rates: [{
+        serviceCategoryCode: 'video.editing', unit: 'per_piece', amountMinor: '120000',
+        currency: 'CNY', taxIncluded: true, validFrom: '2026-08-01', validUntil: null,
+      }],
+      qualifications: [{
+        type: 'identity', verifiedAt: '2026-08-01T08:00:00.000Z', validUntil: null,
+      }],
+      version: 3,
+      updatedAt: '2026-08-11T08:00:00.000Z',
+    } as const;
     const tools = {
       getMyPermissions: vi.fn().mockResolvedValue({
         content: [{ type: 'text' as const, text: '{"actorId":"employee-001"}' }],
@@ -86,6 +107,28 @@ describe('MCP Streamable HTTP 协议集成', () => {
       prepareApprovalDecision: vi.fn(),
       executeApprovalDecision: vi.fn(),
       getRecruitmentApplication: vi.fn(),
+      searchSuppliers: vi.fn().mockResolvedValue({
+        content: [{ type: 'text' as const, text: JSON.stringify({
+          items: [supplierProfile], nextCursor: null,
+        }) }],
+        structuredContent: { items: [supplierProfile], nextCursor: null },
+      }),
+      getSupplierProfile: vi.fn().mockResolvedValue({
+        content: [{ type: 'text' as const, text: JSON.stringify({ supplier: supplierProfile }) }],
+        structuredContent: { supplier: supplierProfile },
+      }),
+      checkSupplierEligibility: vi.fn().mockResolvedValue({
+        content: [{ type: 'text' as const, text: JSON.stringify({ eligibility: {
+          supplierId: supplierProfile.id, supplierVersion: 3, purpose: 'engagement.create',
+          serviceCategoryCode: 'video.editing', evaluatedAt: '2026-08-11T08:00:00.000Z',
+          eligible: true, reasonCodes: [], digest: 'a'.repeat(43),
+        } }) }],
+        structuredContent: { eligibility: {
+          supplierId: supplierProfile.id, supplierVersion: 3, purpose: 'engagement.create',
+          serviceCategoryCode: 'video.editing', evaluatedAt: '2026-08-11T08:00:00.000Z',
+          eligible: true, reasonCodes: [], digest: 'a'.repeat(43),
+        } },
+      }),
       getRecruitmentRequisition: vi.fn(),
       getRecruitmentPosition: vi.fn(),
       getRecruitmentInterview: vi.fn(),
@@ -584,6 +627,9 @@ describe('MCP Streamable HTTP 协议集成', () => {
       'get_org_chart',
       'recruitment_application_get',
       'performance_my_assignments',
+      'supplier_search',
+      'supplier_profile_get',
+      'supplier_eligibility_check',
       'dynamic_form_catalog',
       'dynamic_form_record_get',
       'multidimensional_base_catalog',
@@ -838,6 +884,38 @@ describe('MCP Streamable HTTP 协议集成', () => {
     const result = await client.callTool({ name: 'get_org_chart', arguments: {} });
     expect(result.structuredContent).toEqual({ departments: [], employees: [] });
     expect(tools.getOrgChart).toHaveBeenCalledOnce();
+
+    const supplierSearchResult = await client.callTool({
+      name: 'supplier_search',
+      arguments: { status: 'active', serviceCategoryCode: 'video.editing', limit: 20 },
+    });
+    expect(supplierSearchResult.structuredContent).toMatchObject({
+      items: [{ id: supplierProfile.id, status: 'active' }], nextCursor: null,
+    });
+    expect(tools.searchSuppliers).toHaveBeenCalledOnce();
+
+    const supplierProfileResult = await client.callTool({
+      name: 'supplier_profile_get', arguments: { id: supplierProfile.id },
+    });
+    expect(supplierProfileResult.structuredContent).toMatchObject({
+      supplier: { id: supplierProfile.id, supplierNumber: supplierProfile.supplierNumber },
+    });
+    expect(tools.getSupplierProfile).toHaveBeenCalledOnce();
+
+    const supplierEligibilityResult = await client.callTool({
+      name: 'supplier_eligibility_check',
+      arguments: {
+        id: supplierProfile.id, purpose: 'engagement.create',
+        serviceCategoryCode: 'video.editing',
+      },
+    });
+    expect(supplierEligibilityResult.structuredContent).toMatchObject({
+      eligibility: { supplierId: supplierProfile.id, eligible: true },
+    });
+    expect(tools.checkSupplierEligibility).toHaveBeenCalledOnce();
+    expect(JSON.stringify([
+      supplierSearchResult, supplierProfileResult, supplierEligibilityResult,
+    ])).not.toMatch(/tenantId|identityEnvelope|bankAccount|taxIdentifier|evidenceRef/iu);
 
     const cleanupId = '01J8ZQK7V0A2M4N6P8R0T2W4C4';
     const cleanupResult = await client.callTool({

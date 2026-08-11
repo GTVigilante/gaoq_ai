@@ -18,6 +18,7 @@ import { TalentLifecycleModule } from '../talent-lifecycle/talent-lifecycle.modu
 import { MarketingCmsModule } from '../marketing-cms/marketing-cms.module.js';
 import { PerformanceModule } from '../performance/performance.module.js';
 import { DynamicFormModule } from '../dynamic-form/dynamic-form.module.js';
+import { SupplierModule } from '../supplier/supplier.module.js';
 import { McpConfirmationController } from './mcp-confirmation.controller.js';
 import {
   McpConfirmationRecord,
@@ -49,6 +50,7 @@ import { McpToolService } from './mcp-tool.service.js';
     MarketingCmsModule,
     PerformanceModule,
     DynamicFormModule,
+    SupplierModule,
     MongooseModule.forFeature([
       { name: McpConfirmationRecord.name, schema: McpConfirmationRecordSchema },
     ]),

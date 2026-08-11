@@ -20,6 +20,7 @@ import { RecruitmentResumeWorkerModule } from './modules/recruitment/recruitment
 import { KnowledgeSearchWorkerModule } from './modules/knowledge/knowledge-search-worker.module.js';
 import { KnowledgeExamWorkerModule } from './modules/knowledge/knowledge-exam-worker.module.js';
 import { DynamicFormWorkerModule } from './modules/dynamic-form/dynamic-form-worker.module.js';
+import { SupplierWorkerModule } from './modules/supplier/supplier-worker.module.js';
 
 const mongoLogger = new Logger('WorkerMongoDB');
 
@@ -59,6 +60,7 @@ const mongoLogger = new Logger('WorkerMongoDB');
     KnowledgeSearchWorkerModule,
     KnowledgeExamWorkerModule,
     DynamicFormWorkerModule,
+    SupplierWorkerModule,
     AuditWorkerModule,
     ObservabilityModule,
   ],

@@ -7,6 +7,16 @@
 - 外部验收：真实企业认证、签署人核验、回调、拉单、恶意文件扫描和 WORM
   Object Lock 仍待完成。
 
+## 供应方委托边界
+
+供应方履约审批后由 Engagement 在同一事务发布
+`engagement.signature.requested`。该事件只包含 `tenantId`、`engagementId`、
+`supplierId`、服务分类、整数分金额、币种、委托版本和不透明审批证据引用。
+Integration 必须通过独立的供应方合同模板与主体解析窄口取得合同文件和签署人，
+不得复用下方招聘劳动合同的固定名称、候选人来源或 Offer 状态机。完成签署、证据
+验真和归档后，只能以受控服务身份调用 Engagement 激活入口并提交不透明证据引用。
+真实供应方合同模板、签署主体映射和 e签宝租户联调属于目标环境验收。
+
 ## 发起与签署
 
 | ERP canonical 字段 | e签宝 V3 字段 | 约束 |
@@ -34,4 +44,3 @@
 | 签署文件 SHA-256 | 证据摘要 | 病毒扫描和 WORM 归档后才完成 |
 | Webhook 原始正文 | AES-256-GCM Inbox 密文 | AAD 绑定可信租户和 Inbox ID |
 | `appId` | 可信租户绑定 | 仅在验签后解析，拒绝 body/header 自报租户 |
-

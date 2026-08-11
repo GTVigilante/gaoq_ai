@@ -1,0 +1,17 @@
+export interface SupplierEngagementView {
+  readonly id: string; readonly engagementNumber: string; readonly serviceCategoryCode: string;
+  readonly agreedAmountMinor: string; readonly currency: 'CNY';
+  readonly status: 'draft' | 'pending_approval' | 'pending_signature' | 'active' |
+    'delivered' | 'accepted' | 'disputed' | 'cancelled';
+  readonly deliveryCount: number; readonly version: number;
+  readonly createdAt: string; readonly updatedAt: string;
+}
+const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/u;
+const NUMBER = /^ENG-[0-9A-HJKMNP-TV-Z]{10}$/u;
+const CODE = /^[a-z][a-z0-9_.:-]{1,63}$/u;
+const MONEY = /^(0|[1-9][0-9]{0,14})$/u;
+const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
+export function parseSupplierEngagementList(value: unknown): { readonly items: readonly SupplierEngagementView[]; readonly nextCursor: string | null } { const root = object(value); exact(root, ['items','nextCursor']); const items = array(root.items,100,parse); if(new Set(items.map((item)=>item.id)).size!==items.length)fail(); return Object.freeze({items:Object.freeze(items),nextCursor:root.nextCursor===null?null:string(root.nextCursor,ULID)}); }
+export function parseSupplierEngagementWrite(value: unknown): { readonly engagement: SupplierEngagementView } { const root=object(value);exact(root,['engagement']);return Object.freeze({engagement:parse(root.engagement)}); }
+function parse(value:unknown):SupplierEngagementView{const item=object(value);exact(item,['id','engagementNumber','serviceCategoryCode','agreedAmountMinor','currency','status','deliveryCount','version','createdAt','updatedAt']);return Object.freeze({id:string(item.id,ULID),engagementNumber:string(item.engagementNumber,NUMBER),serviceCategoryCode:string(item.serviceCategoryCode,CODE),agreedAmountMinor:string(item.agreedAmountMinor,MONEY),currency:literal(item.currency,'CNY'),status:enumeration(item.status,['draft','pending_approval','pending_signature','active','delivered','accepted','disputed','cancelled']),deliveryCount:integer(item.deliveryCount,0,100),version:integer(item.version,1,Number.MAX_SAFE_INTEGER-1),createdAt:string(item.createdAt,ISO),updatedAt:string(item.updatedAt,ISO)});}
+function object(value:unknown):Record<string,unknown>{if(typeof value!=='object'||value===null||Array.isArray(value)||Object.getPrototypeOf(value)!==Object.prototype)fail();return value as Record<string,unknown>;}function exact(value:Record<string,unknown>,keys:readonly string[]):void{const actual=Reflect.ownKeys(value);if(actual.length!==keys.length||actual.some((key)=>typeof key!=='string')||keys.some((key)=>!Object.hasOwn(value,key)))fail();}function array<T>(value:unknown,maximum:number,parser:(entry:unknown)=>T):T[]{if(!Array.isArray(value)||value.length>maximum||Object.getPrototypeOf(value)!==Array.prototype)fail();return value.map(parser);}function string(value:unknown,pattern:RegExp):string{if(typeof value!=='string'||!pattern.test(value))fail();return value;}function literal<const T extends string>(value:unknown,expected:T):T{if(value!==expected)fail();return expected;}function enumeration<const T extends string>(value:unknown,values:readonly T[]):T{if(typeof value!=='string'||!values.includes(value as T))fail();return value as T;}function integer(value:unknown,minimum:number,maximum:number):number{if(!Number.isSafeInteger(value)||(value as number)<minimum||(value as number)>maximum)fail();return value as number;}function fail():never{throw new Error('SUPPLIER_ENGAGEMENT_BROWSER_CONTRACT_INVALID');}
