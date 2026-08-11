@@ -25,7 +25,11 @@ const validIdentity = () => ({
 
 describe('ExternalIdentitySchema', () => {
   it('接受严格的租户内双标识映射', async () => {
-    await expect(new Identity(validIdentity()).validate()).resolves.toBeUndefined();
+    const identity = new Identity(validIdentity());
+    await expect(identity.validate()).resolves.toBeUndefined();
+    expect(identity.loginOpenId).toBeNull();
+    await expect(new Identity({ ...validIdentity(), provider: 'dingtalk', loginOpenId: 'open-001' })
+      .validate()).resolves.toBeUndefined();
   });
 
   it('拒绝操作符形态 ERP 标识与外部标识', async () => {
@@ -36,6 +40,7 @@ describe('ExternalIdentitySchema', () => {
       { externalTenantId: '$bad' },
       { unionId: '$bad' },
       { externalUserId: '$bad' },
+      { loginOpenId: '$bad' },
     ]) {
       await expect(new Identity({
         ...validIdentity(), ...override,

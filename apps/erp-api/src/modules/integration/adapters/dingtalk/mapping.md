@@ -33,7 +33,7 @@
 | --- | --- | --- |
 | Token `corpId` | `externalTenantId` | 必须等于服务端 state 绑定的预期企业 |
 | Profile `unionId` | `unionId` | 与 `openId` 联合解析已绑定身份 |
-| Profile `openId` | `externalUserId` | 不使用手机号或邮箱自动合并 |
+| Profile `openId` | `loginOpenId` | 与通讯录 `userid` 分栏；首次可信扫码由同一 `corpId + unionId` 原子登记，后续必须精确匹配 |
 | Profile `nick` | `displayName` | 仅显示，不授予角色或组织权限 |
 | `accessToken` | 无持久化映射 | 只在固定钉钉域名请求期间短暂使用 |
 

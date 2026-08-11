@@ -38,6 +38,22 @@ export class ExternalIdentity {
   @Prop({ type: String, required: true, immutable: true, maxlength: 256, match: EXTERNAL_ID_PATTERN })
   externalUserId!: string;
 
+  /**
+   * 钉钉网页登录返回的应用级 openId；与通讯录 userid 分属不同命名空间。
+   * 首次可信扫码由 corpId + unionId 原子登记，其他平台保持 null。
+   */
+  @Prop({
+    type: String,
+    default: null,
+    maxlength: 256,
+    validate: {
+      validator: (value: string | null): boolean =>
+        value === null || EXTERNAL_ID_PATTERN.test(value),
+      message: 'loginOpenId 外部身份标识非法',
+    },
+  })
+  loginOpenId!: string | null;
+
   /** 本系统租户内的操作主体标识。 */
   @Prop({ type: String, required: true, maxlength: 128, match: ID_PATTERN })
   actorId!: string;
@@ -68,6 +84,10 @@ ExternalIdentitySchema.index(
 ExternalIdentitySchema.index(
   { tenantId: 1, provider: 1, externalTenantId: 1, externalUserId: 1 },
   { unique: true },
+);
+ExternalIdentitySchema.index(
+  { tenantId: 1, provider: 1, externalTenantId: 1, loginOpenId: 1 },
+  { unique: true, partialFilterExpression: { loginOpenId: { $type: 'string' } } },
 );
 ExternalIdentitySchema.index({ tenantId: 1, provider: 1, employeeId: 1 }, { unique: true });
 // 反查：租户内按 actor 查其外部身份绑定。

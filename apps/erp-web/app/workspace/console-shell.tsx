@@ -3,6 +3,7 @@
 import {
   ApartmentOutlined,
   AuditOutlined,
+  ContactsOutlined,
   DashboardOutlined,
   DatabaseOutlined,
   FileTextOutlined,
@@ -28,6 +29,7 @@ const { Header, Sider, Content } = Layout;
 
 const NAVIGATION: NonNullable<MenuProps['items']> = [
   { key: '/workspace', icon: <DashboardOutlined />, label: <Link href="/workspace">工作台</Link> },
+  { key: '/workspace/contacts', icon: <ContactsOutlined />, label: <Link href="/workspace/contacts">企业通讯录</Link> },
   { key: '/workspace/approvals', icon: <AuditOutlined />, label: <Link href="/workspace/approvals">审批中心</Link> },
   { key: '/workspace/forms', icon: <FileTextOutlined />, label: <Link href="/workspace/forms">表单设计</Link> },
   { key: '/workspace/bases', icon: <DatabaseOutlined />, label: <Link href="/workspace/bases">多维表格</Link> },

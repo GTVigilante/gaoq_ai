@@ -10,7 +10,7 @@ type Provider = 'dingtalk' | 'feishu' | 'op';
 
 interface StartSsoResult { readonly authorizationUrl: string; readonly expiresIn: number }
 
-/** 双平台 SSO 登录；state、PKCE 与租户绑定全部由 API 生成。 */
+/** 企业 SSO 登录；state、PKCE 与租户绑定全部由 API 生成。 */
 export function LoginClient() {
   const [provider, setProvider] = useState<Provider>('dingtalk');
   const [submitting, setSubmitting] = useState(false);
@@ -76,10 +76,10 @@ export function LoginClient() {
               <Input prefix={<LockOutlined />} autoComplete="organization" maxLength={64} placeholder="例如 gaoq" />
             </Form.Item>
             <Button type="primary" htmlType="submit" size="large" block loading={submitting} icon={<DingdingOutlined />}>
-              使用企业 SSO 登录
+              {provider === 'dingtalk' ? '使用钉钉扫码登录' : '使用企业 SSO 登录'}
             </Button>
           </Form>
-          <Typography.Text type="secondary">登录将跳转到身份提供方；授权回调必须匹配一次性 state 与 HttpOnly 绑定 Cookie。</Typography.Text>
+          <Typography.Text type="secondary">钉钉登录会打开官方扫码授权页；授权回调必须匹配一次性 state 与 HttpOnly 绑定 Cookie。</Typography.Text>
         </Space>
       </Card>
     </main>

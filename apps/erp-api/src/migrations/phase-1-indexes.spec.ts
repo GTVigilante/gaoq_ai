@@ -10,7 +10,7 @@ import {
 describe('Phase 1 索引迁移清单', () => {
   it('覆盖全部 Phase 1 集合且集合内索引名唯一', () => {
     const manifest = buildPhaseOneIndexManifest();
-    expect(manifest).toHaveLength(63);
+    expect(manifest).toHaveLength(64);
     expect(new Set(manifest.map((index) => index.collection))).toHaveLength(19);
     expect(new Set(manifest.map((index) => `${index.collection}:${index.name}`))).toHaveLength(
       manifest.length,
@@ -35,6 +35,14 @@ describe('Phase 1 索引迁移清单', () => {
         collection: 'identity_external_identities',
         name: 'tenantId_1_provider_1_externalTenantId_1_unionId_1',
         options: { unique: true },
+      }),
+      expect.objectContaining({
+        collection: 'identity_external_identities',
+        name: 'tenantId_1_provider_1_externalTenantId_1_loginOpenId_1',
+        options: {
+          unique: true,
+          partialFilterExpression: { loginOpenId: { $type: 'string' } },
+        },
       }),
     ]));
   });

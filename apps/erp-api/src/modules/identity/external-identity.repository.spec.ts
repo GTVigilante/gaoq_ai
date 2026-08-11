@@ -19,7 +19,7 @@ const createRepository = (model: ReturnType<typeof createModelMock>) =>
   new ExternalIdentityRepository(model as unknown as Model<ExternalIdentityDocument>);
 
 const profile: ExternalProfile = {
-  provider: 'dingtalk',
+  provider: 'feishu',
   externalTenantId: 'corp-001',
   unionId: 'union-001',
   externalUserId: 'ext-user-001',
@@ -27,7 +27,7 @@ const profile: ExternalProfile = {
 
 const createBoundRecord = () => ({
   tenantId: 'tenant-001',
-  provider: 'dingtalk',
+  provider: 'feishu',
   externalTenantId: 'corp-001',
   unionId: 'union-001',
   externalUserId: 'ext-user-001',
@@ -52,7 +52,7 @@ describe('ExternalIdentityRepository', () => {
       expect(model.findOne).toHaveBeenCalledWith(
         {
           tenantId: 'tenant-001',
-          provider: 'dingtalk',
+          provider: 'feishu',
           externalTenantId: 'corp-001',
           status: 'bound',
           unionId: 'union-001',
@@ -60,7 +60,7 @@ describe('ExternalIdentityRepository', () => {
         },
         {
           tenantId: 1, provider: 1, externalTenantId: 1, unionId: 1,
-          externalUserId: 1, actorId: 1, employeeId: 1, status: 1, _id: 0,
+          externalUserId: 1, loginOpenId: 1, actorId: 1, employeeId: 1, status: 1, _id: 0,
         },
       );
     });
@@ -75,7 +75,7 @@ describe('ExternalIdentityRepository', () => {
 
       expect(result).toEqual({
         tenantId: 'tenant-001',
-        provider: 'dingtalk',
+        provider: 'feishu',
         externalTenantId: 'corp-001',
         unionId: 'union-001',
         externalUserId: 'ext-user-001',
@@ -111,7 +111,7 @@ describe('ExternalIdentityRepository', () => {
 
     it.each([
       { field: 'tenantId', value: 'tenant-attacker' },
-      { field: 'provider', value: 'feishu' },
+      { field: 'provider', value: 'dingtalk' },
       { field: 'externalTenantId', value: 'corp-attacker' },
       { field: 'unionId', value: 'union-attacker' },
       { field: 'externalUserId', value: 'user-attacker' },
@@ -123,6 +123,97 @@ describe('ExternalIdentityRepository', () => {
       await expect(createRepository(model).findBoundByExternalProfile(
         'tenant-001', profile,
       )).rejects.toThrow();
+    });
+
+    it('钉钉首次扫码按 corpId+unionId 原子登记 openId，通讯录 userid 保持不变', async () => {
+      const model = createModelMock();
+      const dingtalkProfile: ExternalProfile = {
+        provider: 'dingtalk', externalTenantId: 'corp-001',
+        unionId: 'union-001', externalUserId: 'open-id-001',
+      };
+      model.findOne.mockReturnValue(createLeanQuery({
+        ...createBoundRecord(),
+        provider: 'dingtalk',
+        externalUserId: 'userid-001',
+        loginOpenId: null,
+      }));
+      model.updateOne.mockResolvedValue({ modifiedCount: 1 });
+      const result = await createRepository(model).findBoundByExternalProfile(
+        'tenant-001', dingtalkProfile,
+      );
+      expect(model.findOne).toHaveBeenCalledWith(
+        {
+          tenantId: 'tenant-001', provider: 'dingtalk', externalTenantId: 'corp-001',
+          status: 'bound', unionId: 'union-001',
+        },
+        {
+          tenantId: 1, provider: 1, externalTenantId: 1, unionId: 1,
+          externalUserId: 1, loginOpenId: 1, actorId: 1, employeeId: 1, status: 1, _id: 0,
+        },
+      );
+      expect(model.updateOne).toHaveBeenCalledWith(
+        {
+          tenantId: 'tenant-001', provider: 'dingtalk', externalTenantId: 'corp-001',
+          status: 'bound', unionId: 'union-001', externalUserId: 'userid-001',
+          loginOpenId: null,
+        },
+        { $set: { loginOpenId: 'open-id-001' } },
+        { runValidators: true },
+      );
+      expect(result).toMatchObject({
+        provider: 'dingtalk', externalUserId: 'open-id-001', employeeId: 'employee-001',
+      });
+    });
+
+    it('钉钉后续扫码必须精确匹配已登记 openId', async () => {
+      const model = createModelMock();
+      model.findOne.mockReturnValue(createLeanQuery({
+        ...createBoundRecord(), provider: 'dingtalk', externalUserId: 'userid-001',
+        loginOpenId: 'open-id-001',
+      }));
+      const repository = createRepository(model);
+      await expect(repository.findBoundByExternalProfile('tenant-001', {
+        provider: 'dingtalk', externalTenantId: 'corp-001', unionId: 'union-001',
+        externalUserId: 'open-id-001',
+      })).resolves.toMatchObject({ externalUserId: 'open-id-001' });
+      expect(model.updateOne).not.toHaveBeenCalled();
+
+      await expect(repository.findBoundByExternalProfile('tenant-001', {
+        provider: 'dingtalk', externalTenantId: 'corp-001', unionId: 'union-001',
+        externalUserId: 'open-id-attacker',
+      })).rejects.toThrow('持久化记录受损');
+    });
+
+    it('钉钉首次登记并发丢失时重读并验证胜出的 openId', async () => {
+      const model = createModelMock();
+      model.findOne
+        .mockReturnValueOnce(createLeanQuery({
+          ...createBoundRecord(), provider: 'dingtalk', externalUserId: 'userid-001',
+          loginOpenId: null,
+        }))
+        .mockReturnValueOnce(createLeanQuery({
+          ...createBoundRecord(), provider: 'dingtalk', externalUserId: 'userid-001',
+          loginOpenId: 'open-id-001',
+        }));
+      model.updateOne.mockResolvedValue({ modifiedCount: 0 });
+      await expect(createRepository(model).findBoundByExternalProfile('tenant-001', {
+        provider: 'dingtalk', externalTenantId: 'corp-001', unionId: 'union-001',
+        externalUserId: 'open-id-001',
+      })).resolves.toMatchObject({ externalUserId: 'open-id-001' });
+      expect(model.findOne).toHaveBeenCalledTimes(2);
+    });
+
+    it('钉钉 openId 唯一索引冲突失败关闭', async () => {
+      const model = createModelMock();
+      model.findOne.mockReturnValue(createLeanQuery({
+        ...createBoundRecord(), provider: 'dingtalk', externalUserId: 'userid-001',
+        loginOpenId: null,
+      }));
+      model.updateOne.mockRejectedValue({ code: 11_000 });
+      await expect(createRepository(model).findBoundByExternalProfile('tenant-001', {
+        provider: 'dingtalk', externalTenantId: 'corp-001', unionId: 'union-001',
+        externalUserId: 'open-id-001',
+      })).rejects.toThrow('持久化记录受损');
     });
   });
 
@@ -258,6 +349,62 @@ describe('ExternalIdentityRepository', () => {
     )).rejects.toThrow('提供者非法');
   });
 
+  it('批量绑定状态只查询可信可见员工并返回冻结排序标识', async () => {
+    const model = createModelMock();
+    const exec = vi.fn().mockResolvedValue([
+      {
+        tenantId: 'tenant-001', provider: 'dingtalk', externalTenantId: 'corp-001',
+        employeeId: 'employee-002', status: 'bound',
+      },
+      {
+        tenantId: 'tenant-001', provider: 'dingtalk', externalTenantId: 'corp-001',
+        employeeId: 'employee-001', status: 'bound',
+      },
+    ]);
+    model.find.mockReturnValue({ lean: () => ({ exec }) });
+    const result = await createRepository(model).findBoundEmployeeIds(
+      'tenant-001', 'dingtalk', 'corp-001', ['employee-001', 'employee-002'],
+    );
+    expect(model.find).toHaveBeenCalledWith(
+      {
+        tenantId: 'tenant-001', provider: 'dingtalk', externalTenantId: 'corp-001',
+        employeeId: { $in: ['employee-001', 'employee-002'] }, status: 'bound',
+      },
+      {
+        tenantId: 1, provider: 1, externalTenantId: 1, employeeId: 1, status: 1, _id: 0,
+      },
+    );
+    expect(result).toEqual(['employee-001', 'employee-002']);
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it('批量绑定状态拒绝越界范围、空范围直接返回且受损回读失败关闭', async () => {
+    const model = createModelMock();
+    const repository = createRepository(model);
+    await expect(repository.findBoundEmployeeIds(
+      'tenant-001', 'dingtalk', 'corp-001', [],
+    )).resolves.toEqual([]);
+    expect(model.find).not.toHaveBeenCalled();
+    await expect(repository.findBoundEmployeeIds(
+      'tenant-001', 'dingtalk', 'corp-001', ['employee-001', 'employee-001'],
+    )).rejects.toThrow('员工范围非法');
+    await expect(repository.findBoundEmployeeIds(
+      'tenant-001', 'unknown' as 'dingtalk', 'corp-001', ['employee-001'],
+    )).rejects.toThrow('提供者非法');
+
+    model.find.mockReturnValue({
+      lean: () => ({
+        exec: () => Promise.resolve([{
+          tenantId: 'tenant-attacker', provider: 'dingtalk', externalTenantId: 'corp-001',
+          employeeId: 'employee-001', status: 'bound',
+        }]),
+      }),
+    });
+    await expect(repository.findBoundEmployeeIds(
+      'tenant-001', 'dingtalk', 'corp-001', ['employee-001'],
+    )).rejects.toThrow('持久化记录受损');
+  });
+
   it('开户绑定用全部不可变身份做幂等 upsert 并透传事务', async () => {
     const model = createModelMock();
     model.updateOne.mockResolvedValue({ modifiedCount: 0 });
@@ -273,7 +420,11 @@ describe('ExternalIdentityRepository', () => {
     await createRepository(model).bindProvisioned('tenant-001', identity, session);
     expect(model.updateOne).toHaveBeenCalledWith(
       { tenantId: 'tenant-001', ...identity, status: 'bound' },
-      { $setOnInsert: { tenantId: 'tenant-001', ...identity, status: 'bound' } },
+      {
+        $setOnInsert: {
+          tenantId: 'tenant-001', ...identity, loginOpenId: null, status: 'bound',
+        },
+      },
       { upsert: true, session, runValidators: true },
     );
   });

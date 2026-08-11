@@ -131,4 +131,20 @@ describe('OrgEmployeeProvisioningController', () => {
     });
     expect(getStatus).toHaveBeenCalledWith('01K00000000000000000000000');
   });
+
+  it('绑定状态只允许固定平台并复用应用服务', async () => {
+    const listBindings = vi.fn().mockResolvedValue({
+      channel: 'dingtalk', boundEmployeeIds: ['employee-001'],
+    });
+    const controller = new OrgEmployeeProvisioningController(
+      { listBindings } as unknown as OrgEmployeeProvisioningService,
+      { record: vi.fn() } as unknown as AuditService,
+    );
+    await expect(controller.listBindings('dingtalk')).resolves.toEqual({
+      channel: 'dingtalk', boundEmployeeIds: ['employee-001'],
+    });
+    expect(listBindings).toHaveBeenCalledWith('dingtalk');
+    expect(() => controller.listBindings('op')).toThrow('开户渠道无效');
+    expect(listBindings).toHaveBeenCalledOnce();
+  });
 });

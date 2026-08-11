@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -77,5 +78,19 @@ export class OrgEmployeeProvisioningController {
   @RequiredScopes('erp:integration:org_provisioning:read')
   getStatus(@Param('requestId') requestId: string) {
     return this.provisioning.getStatus(requestId);
+  }
+
+  @Get('bindings/:channel')
+  @RequiredScopes('erp:integration:org_provisioning:read')
+  listBindings(@Param('channel') channel: string) {
+    return this.provisioning.listBindings(this.requireChannel(channel));
+  }
+
+  private requireChannel(value: string): 'dingtalk' | 'feishu' {
+    if (value === 'dingtalk' || value === 'feishu') return value;
+    throw new BadRequestException({
+      code: 'ORG_PROVISIONING_CHANNEL_INVALID',
+      message: '开户渠道无效',
+    });
   }
 }

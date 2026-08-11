@@ -11,6 +11,7 @@ import type { AuditService } from '../../core/audit/audit.service.js';
 import { TenantContextService } from '../../core/tenant/tenant-context.service.js';
 import type { AccessProfileRepository } from '../identity/access-profile.repository.js';
 import type { ExternalIdentityRepository } from '../identity/external-identity.repository.js';
+import type { OrgApplicationService } from '../org/application/org-application.service.js';
 import type { OrgEmployeeDocument } from '../org/persistence/org.schemas.js';
 import type { OrgEmployeeProvisioningRequestDocument } from './org-employee-provisioning.schema.js';
 import { OrgEmployeeProvisioningService } from './org-employee-provisioning.service.js';
@@ -93,6 +94,7 @@ function assemble() {
   const resolveEmployeeIdentity = vi.fn().mockResolvedValue(null);
   const ensureProvisionedEmployee = vi.fn().mockResolvedValue(undefined);
   const findBoundByEmployee = vi.fn().mockResolvedValue(null);
+  const findBoundEmployeeIds = vi.fn().mockResolvedValue(['employee-001']);
   const bindProvisioned = vi.fn().mockResolvedValue(undefined);
   const resolveExternalTenantId = vi.fn().mockResolvedValue('external-tenant-001');
   const provisionEmployee = vi.fn().mockImplementation(
@@ -106,6 +108,10 @@ function assemble() {
   const feishu = { channel: 'feishu' as const, provisionEmployee };
   const recordSystem = vi.fn().mockResolvedValue(undefined);
   const ensureAttendanceMapping = vi.fn().mockResolvedValue(undefined);
+  const getOrgChart = vi.fn().mockResolvedValue({
+    departments: [],
+    employees: [{ id: 'employee-001' }],
+  });
   const withTransaction = vi.fn(async (handler: () => Promise<void>) => handler());
   const endSession = vi.fn().mockResolvedValue(undefined);
   const startSession = vi.fn().mockResolvedValue({ withTransaction, endSession });
@@ -120,11 +126,16 @@ function assemble() {
       resolveEmployeeIdentity,
       ensureProvisionedEmployee,
     } as unknown as AccessProfileRepository,
-    { findBoundByEmployee, bindProvisioned } as unknown as ExternalIdentityRepository,
+    {
+      findBoundByEmployee,
+      findBoundEmployeeIds,
+      bindProvisioned,
+    } as unknown as ExternalIdentityRepository,
     { resolveExternalTenantId } as unknown as OrgPlatformCredentialService,
     new OrgPushAdapterRegistry(dingtalk as never, feishu as never),
     { ensure: ensureAttendanceMapping } as unknown as AttendanceProviderMappingRepository,
     { recordSystem } as unknown as AuditService,
+    { getOrgChart } as unknown as OrgApplicationService,
   );
   return {
     context,
@@ -144,10 +155,12 @@ function assemble() {
     resolveEmployeeIdentity,
     ensureProvisionedEmployee,
     findBoundByEmployee,
+    findBoundEmployeeIds,
     bindProvisioned,
     resolveExternalTenantId,
     provisionEmployee,
     ensureAttendanceMapping,
+    getOrgChart,
     recordSystem,
     withTransaction,
     endSession,
@@ -169,6 +182,27 @@ function requestUpdateSet(
 }
 
 describe('OrgEmployeeProvisioningService', () => {
+  it('绑定状态先按组织数据范围裁剪，再按可信平台租户查询最小员工标识', async () => {
+    const store = assemble();
+    const result = await store.context.run(trusted, () =>
+      store.service.listBindings('dingtalk'));
+    expect(store.getOrgChart).toHaveBeenCalledOnce();
+    expect(store.resolveExternalTenantId).toHaveBeenCalledWith('tenant-001', 'dingtalk');
+    expect(store.findBoundEmployeeIds).toHaveBeenCalledWith(
+      'tenant-001', 'dingtalk', 'external-tenant-001', ['employee-001'],
+    );
+    expect(result).toEqual({ channel: 'dingtalk', boundEmployeeIds: ['employee-001'] });
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it('绑定状态拒绝未知渠道且不读取组织或平台配置', async () => {
+    const store = assemble();
+    await expect(store.context.run(trusted, () =>
+      store.service.listBindings('op' as 'dingtalk'))).rejects.toBeInstanceOf(BadRequestException);
+    expect(store.getOrgChart).not.toHaveBeenCalled();
+    expect(store.resolveExternalTenantId).not.toHaveBeenCalled();
+  });
+
   it('提交时只持久密文与 HMAC 摘要，响应不含联系方式', async () => {
     const store = assemble();
     const result = await store.context.run(trusted, () => store.service.submit(

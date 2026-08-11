@@ -15,6 +15,7 @@ import { AuditService } from '../../core/audit/audit.service.js';
 import { TenantContextService } from '../../core/tenant/tenant-context.service.js';
 import { AccessProfileRepository } from '../identity/access-profile.repository.js';
 import { ExternalIdentityRepository } from '../identity/external-identity.repository.js';
+import { OrgApplicationService } from '../org/application/org-application.service.js';
 import {
   OrgEmployeeRecord,
   type OrgEmployeeDocument,
@@ -92,7 +93,32 @@ export class OrgEmployeeProvisioningService {
     private readonly adapters: OrgPushAdapterRegistry,
     private readonly attendanceMappings: AttendanceProviderMappingRepository,
     private readonly audit: AuditService,
+    private readonly organization: OrgApplicationService,
   ) {}
+
+  /** 返回当前数据范围内员工的最小平台绑定状态，不暴露任何外部身份标识。 */
+  async listBindings(channel: ProvisioningChannel): Promise<{
+    readonly channel: ProvisioningChannel;
+    readonly boundEmployeeIds: readonly string[];
+  }> {
+    if (channel !== 'dingtalk' && channel !== 'feishu') {
+      throw new BadRequestException({
+        code: 'ORG_PROVISIONING_CHANNEL_INVALID',
+        message: '开户渠道无效',
+      });
+    }
+    const tenantId = this.context.getTenantRequired().tenantId;
+    const chart = await this.organization.getOrgChart();
+    const employeeIds = chart.employees.map((employee) => employee.id);
+    const externalTenantId = await this.credentials.resolveExternalTenantId(tenantId, channel);
+    const boundEmployeeIds = await this.identities.findBoundEmployeeIds(
+      tenantId,
+      channel,
+      externalTenantId,
+      employeeIds,
+    );
+    return Object.freeze({ channel, boundEmployeeIds });
+  }
 
   /** 将联系方式在当前请求内立即加密，不经过通用幂等响应快照。 */
   async submit(

@@ -18132,7 +18132,7 @@
             "$ref": "#/components/responses/Problem"
           }
         },
-        "x-source": "apps/erp-api/src/modules/integration/org-employee-provisioning.controller.ts:27",
+        "x-source": "apps/erp-api/src/modules/integration/org-employee-provisioning.controller.ts:28",
         "x-controller": "OrgEmployeeProvisioningController",
         "x-handler": "submit",
         "x-nest-method": "POST",
@@ -18256,7 +18256,7 @@
             "$ref": "#/components/responses/Problem"
           }
         },
-        "x-source": "apps/erp-api/src/modules/integration/org-employee-provisioning.controller.ts:76",
+        "x-source": "apps/erp-api/src/modules/integration/org-employee-provisioning.controller.ts:77",
         "x-controller": "OrgEmployeeProvisioningController",
         "x-handler": "getStatus",
         "x-nest-method": "GET",
@@ -18269,6 +18269,88 @@
           {
             "decorator": "Param",
             "name": "requestId",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "/api/integrations/org-provisioning-requests/bindings/{channel}": {
+      "get": {
+        "operationId": "OrgEmployeeProvisioningController.listBindings",
+        "tags": [
+          "integration"
+        ],
+        "summary": "OrgEmployeeProvisioningController.listBindings",
+        "security": [
+          {
+            "oauth2": [
+              "erp:integration:org_provisioning:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "channel",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "x-typescript-type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "请求成功。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "channel": {
+                      "type": "string",
+                      "enum": [
+                        "dingtalk",
+                        "feishu"
+                      ],
+                      "x-typescript-type": "ProvisioningChannel"
+                    },
+                    "boundEmployeeIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "x-typescript-type": "string"
+                      },
+                      "x-typescript-type": "readonly string[]"
+                    }
+                  },
+                  "required": [
+                    "boundEmployeeIds",
+                    "channel"
+                  ],
+                  "x-typescript-type": "{ readonly channel: ProvisioningChannel; readonly boundEmployeeIds: readonly string[]; }"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-source": "apps/erp-api/src/modules/integration/org-employee-provisioning.controller.ts:83",
+        "x-controller": "OrgEmployeeProvisioningController",
+        "x-handler": "listBindings",
+        "x-nest-method": "GET",
+        "x-authentication": "oauth-scoped",
+        "x-required-scopes": [
+          "erp:integration:org_provisioning:read"
+        ],
+        "x-guards": [],
+        "x-runtime-parameters": [
+          {
+            "decorator": "Param",
+            "name": "channel",
             "type": "string"
           }
         ]
@@ -61887,8 +61969,8 @@
     "apps/erp-api/src/modules/workforce/workforce.controller.ts"
   ],
   "x-controller-count": 53,
-  "x-route-declaration-count": 272,
-  "x-operation-count": 278,
+  "x-route-declaration-count": 273,
+  "x-operation-count": 279,
   "x-dto-schema-count": 123,
   "x-runtime-request-schema-count": 29,
   "x-inline-request-schema-count": 4,
@@ -61896,7 +61978,7 @@
   "x-request-body-count": 140,
   "x-named-request-ref-count": 140,
   "x-dto-request-ref-count": 107,
-  "x-explicit-success-response-count": 276,
+  "x-explicit-success-response-count": 277,
   "x-no-content-success-response-count": 2,
   "x-contract-limitations": [
     "全部 Body 均绑定命名组件；DTO 取自 class-validator，特殊请求取自运行时 Zod 注册表或编译器内联类型。",

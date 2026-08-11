@@ -10,6 +10,7 @@
 - [`06-runtime-boundary-runbook.md`](./06-runtime-boundary-runbook.md)：公开错误、追踪、健康探针、Prometheus 与 Redis/Rediss 连接参数信任边界。
 - [`07-local-development-runtime.md`](./07-local-development-runtime.md)：本地 MongoDB、Redis、对象存储、API、Worker 与 Web 一键启动、凭据和失败关闭边界。
 - [`08-frontend-accessibility-baseline.md`](./08-frontend-accessibility-baseline.md)：ERP Web PC/H5 地标、键盘焦点、减少动画、可信权限和实体无障碍验收边界。
+- [`09-dingtalk-contacts-sso-runbook.md`](./09-dingtalk-contacts-sso-runbook.md)：企业通讯录、钉钉员工开户、双标识绑定、扫码登录、索引迁移与实体 UAT。
 
 当前审计追加代码已强制规范链载荷与规范 Base64URL，Mongo 事务提交后的会话清理
 故障不会反向诱发重复追加；独立 WORM 连接强制 HTTPS 443、成套凭据、载荷摘要与
@@ -22,9 +23,10 @@ Ed25519 签名绑定、16 KiB 严格 JSON 回执、时钟与保留期校验。HM
 身份白名单、失败终态审计隔离和 Mongo 事务提交后的会话清理隔离；R3 入口仍永久
 拒绝 MCP 服务主体，标准 MCP 不注册开户、重试、凭据或平台写 Tool。考勤映射
 仓储强制活动事务、员工/外部标识双向唯一查询、最小投影反向绑定和加密写回结果
-校验，冲突直接进入人工复核。8 个测试文件、124 项测试达到
-99.02%/97.69%/100%/100%，八个生产文件逐文件四维 90% 门禁已接入
-`pnpm precheck`。真实钉钉/飞书沙箱、Secret 轮换和身份核验仍待现场验收。
+校验，冲突直接进入人工复核。企业通讯录已按可信部门范围展示 ERP 员工及钉钉
+绑定状态，并复用同一 R3 开户链路；扫码登录回调已补齐，钉钉通讯录 `userid` 与
+网页登录 `openId` 使用独立字段和唯一索引。真实钉钉/飞书沙箱、Secret 轮换和
+身份核验仍待现场验收。
 
 组织图 REST、组织写响应与标准 MCP `get_org_chart` 已统一复用公开最小投影，
 禁止输出 `tenantId` 和持久化时间戳；MCP 输出使用严格对象契约。PC 在渲染前执行

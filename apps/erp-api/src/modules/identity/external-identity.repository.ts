@@ -65,6 +65,9 @@ export class ExternalIdentityRepository {
     this.assertId(tenantId);
     this.assertProvider(profile.provider);
     this.assertExternalIds(profile.externalTenantId, profile.unionId, profile.externalUserId);
+    if (profile.provider === 'dingtalk') {
+      return this.findBoundDingTalkProfile(tenantId, profile);
+    }
     const record = await this.externalIdentities.findOne(
       {
         tenantId,
@@ -76,7 +79,7 @@ export class ExternalIdentityRepository {
       },
       {
         tenantId: 1, provider: 1, externalTenantId: 1, unionId: 1,
-        externalUserId: 1, actorId: 1, employeeId: 1, status: 1, _id: 0,
+        externalUserId: 1, loginOpenId: 1, actorId: 1, employeeId: 1, status: 1, _id: 0,
       },
     ).lean().exec();
     if (record === null) return null;
@@ -87,6 +90,61 @@ export class ExternalIdentityRepository {
       externalTenantId: record.externalTenantId,
       unionId: record.unionId,
       externalUserId: record.externalUserId,
+      actorId: record.actorId,
+      employeeId: record.employeeId,
+    });
+  }
+
+  /** 钉钉 unionId 绑定通讯录 userid，首次可信登录再登记同应用 openId。 */
+  private async findBoundDingTalkProfile(
+    tenantId: string,
+    profile: ExternalProfile,
+  ): Promise<BoundExternalIdentitySnapshot | null> {
+    const projection = {
+      tenantId: 1, provider: 1, externalTenantId: 1, unionId: 1,
+      externalUserId: 1, loginOpenId: 1, actorId: 1, employeeId: 1, status: 1, _id: 0,
+    } as const;
+    const filter = {
+      tenantId,
+      provider: 'dingtalk' as const,
+      externalTenantId: profile.externalTenantId,
+      status: 'bound' as const,
+      unionId: profile.unionId,
+    };
+    let record = await this.externalIdentities.findOne(filter, projection).lean().exec();
+    if (record === null) return null;
+    this.assertDingTalkRecord(record, tenantId, profile);
+    const currentOpenId = record.loginOpenId ?? null;
+    if (currentOpenId === null) {
+      try {
+        const claimed = await this.externalIdentities.updateOne(
+          { ...filter, externalUserId: record.externalUserId, loginOpenId: null },
+          { $set: { loginOpenId: profile.externalUserId } },
+          { runValidators: true },
+        );
+        if (claimed.modifiedCount !== 1) {
+          record = await this.externalIdentities.findOne(filter, projection).lean().exec();
+          if (record === null) throw new Error('外部身份持久化记录受损');
+          this.assertDingTalkRecord(record, tenantId, profile);
+        } else {
+          record = { ...record, loginOpenId: profile.externalUserId } as typeof record;
+        }
+      } catch (error) {
+        if (this.isDuplicateKeyError(error)) {
+          throw new Error('外部身份持久化记录受损', { cause: error });
+        }
+        throw error;
+      }
+    }
+    if (record.loginOpenId !== profile.externalUserId) {
+      throw new Error('外部身份持久化记录受损');
+    }
+    return Object.freeze({
+      tenantId: record.tenantId,
+      provider: 'dingtalk',
+      externalTenantId: record.externalTenantId,
+      unionId: record.unionId,
+      externalUserId: profile.externalUserId,
       actorId: record.actorId,
       employeeId: record.employeeId,
     });
@@ -115,6 +173,57 @@ export class ExternalIdentityRepository {
       externalUserId: record.externalUserId,
       unionId: record.unionId,
     });
+  }
+
+  /**
+   * 批量返回当前可见员工中已经完成平台绑定的员工标识。
+   * 调用方必须先按可信数据范围裁剪 employeeIds；仓储再次约束租户、平台租户与状态。
+   */
+  async findBoundEmployeeIds(
+    tenantId: string,
+    provider: ExternalIdentityProvider,
+    externalTenantId: string,
+    employeeIds: readonly string[],
+  ): Promise<readonly string[]> {
+    this.assertId(tenantId);
+    this.assertProvider(provider);
+    this.assertExternalIds(externalTenantId);
+    if (
+      employeeIds.length > 10_000 ||
+      new Set(employeeIds).size !== employeeIds.length ||
+      employeeIds.some((employeeId) => !ID_PATTERN.test(employeeId))
+    ) {
+      throw new Error('外部身份员工范围非法');
+    }
+    if (employeeIds.length === 0) return Object.freeze([]);
+    const records = await this.externalIdentities.find(
+      {
+        tenantId,
+        provider,
+        externalTenantId,
+        employeeId: { $in: [...employeeIds] },
+        status: 'bound',
+      },
+      { tenantId: 1, provider: 1, externalTenantId: 1, employeeId: 1, status: 1, _id: 0 },
+    ).lean().exec();
+    const allowed = new Set(employeeIds);
+    const result = records.map((record) => {
+      if (
+        record.tenantId !== tenantId ||
+        record.provider !== provider ||
+        record.externalTenantId !== externalTenantId ||
+        record.status !== 'bound' ||
+        !allowed.has(record.employeeId)
+      ) {
+        throw new Error('外部身份持久化记录受损');
+      }
+      this.assertId(record.employeeId);
+      return record.employeeId;
+    });
+    if (new Set(result).size !== result.length) {
+      throw new Error('外部身份持久化记录受损');
+    }
+    return Object.freeze(result.sort());
   }
 
   /**
@@ -209,6 +318,7 @@ export class ExternalIdentityRepository {
           externalTenantId: input.externalTenantId,
           unionId: input.unionId,
           externalUserId: input.externalUserId,
+          loginOpenId: null,
           actorId: input.actorId,
           employeeId: input.employeeId,
           status: 'bound',
@@ -255,5 +365,31 @@ export class ExternalIdentityRepository {
     this.assertId(record.employeeId);
     this.assertProvider(record.provider);
     this.assertExternalIds(record.externalTenantId, record.unionId, record.externalUserId);
+  }
+
+  private assertDingTalkRecord(
+    record: ExternalIdentity,
+    expectedTenantId: string,
+    expectedProfile: ExternalProfile,
+  ): void {
+    if (
+      record.tenantId !== expectedTenantId ||
+      record.provider !== 'dingtalk' ||
+      record.externalTenantId !== expectedProfile.externalTenantId ||
+      record.unionId !== expectedProfile.unionId ||
+      record.status !== 'bound'
+    ) throw new Error('外部身份持久化记录受损');
+    this.assertId(record.tenantId);
+    this.assertId(record.actorId);
+    this.assertId(record.employeeId);
+    this.assertExternalIds(record.externalTenantId, record.unionId, record.externalUserId);
+    if (record.loginOpenId !== null && record.loginOpenId !== undefined) {
+      this.assertExternalIds(record.loginOpenId);
+    }
+  }
+
+  private isDuplicateKeyError(error: unknown): boolean {
+    return typeof error === 'object' && error !== null &&
+      'code' in error && (error as { readonly code?: unknown }).code === 11_000;
   }
 }

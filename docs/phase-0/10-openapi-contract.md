@@ -34,16 +34,16 @@ pnpm contracts:openapi:validate
 | 项目 | 数量 | 说明 |
 |---|---:|---|
 | Controller | 53 | 全部生产 Controller |
-| Nest 路由声明 | 272 | `Get/Post/Put/Patch/Delete/All` |
+| Nest 路由声明 | 273 | `Get/Post/Put/Patch/Delete/All` |
 | OpenAPI Path | 255 | 相同路径的不同方法合并 |
-| OpenAPI Operation | 278 | MCP 的 `@All` 展开为七种标准方法 |
+| OpenAPI Operation | 279 | MCP 的 `@All` 展开为七种标准方法 |
 | OAuth Scope | 185 | 从 `RequiredScopes` 静态提取并写入安全方案 |
 | 公开 Operation | 27 | 必须显式 `PublicRoute` |
 | Scope 保护 Operation | 250 | 每项写入精确 scope |
 | 已认证无 Scope Operation | 1 | 当前会话撤销，仅要求已认证主体 |
 | class-validator DTO Schema | 123 | 字段、必填、类型、长度、范围、枚举、数组与继承 |
 | 命名 Body Schema | 140 / 140 | 107 个 DTO、29 个运行时 Zod 登记、4 个编译器内联类型 |
-| 成功响应 | 278 / 278 | 276 个显式内容 Schema、2 个 204 无正文 |
+| 成功响应 | 279 / 279 | 277 个显式内容 Schema、2 个 204 无正文 |
 | Component Schema | 157 | `Problem`、123 个 DTO 与 34 个补充请求组件 |
 
 生成器拒绝动态路由字符串、动态 Scope、重复 Method + Path、重复

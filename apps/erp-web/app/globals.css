@@ -552,6 +552,46 @@
   .cms-editor-form .ant-col { max-width: 100%; flex: 0 0 100%; }
 }
 
+/* 企业通讯录：以部门名册为主，钉钉状态仅作为可信绑定的辅助信号。 */
+.contacts-console { --contacts-ink: #172033; --contacts-muted: #65748a; --contacts-line: rgb(34 56 88 / 10%); --contacts-ding: #1677ff; max-width: 1480px; margin: 0 auto; color: var(--contacts-ink); }
+.contacts-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 20px; }
+.contacts-heading h1 { margin: 6px 0 4px !important; font-size: clamp(32px, 4vw, 46px) !important; letter-spacing: -.035em; text-wrap: balance; }
+.contacts-heading p { max-width: 780px; margin: 0 !important; color: var(--contacts-muted); line-height: 1.65; text-wrap: pretty; }
+.contacts-alert { margin-bottom: 14px; }
+.contacts-trust-strip { display: grid; grid-template-columns: repeat(3, 1fr); margin-bottom: 14px; overflow: hidden; border: 1px solid var(--contacts-line); border-radius: 14px; background: #fff; box-shadow: 0 8px 28px rgb(23 32 51 / 4%); }
+.contacts-trust-strip > span { display: grid; min-height: 74px; grid-template-columns: 34px 1fr; grid-template-rows: auto auto; align-content: center; column-gap: 10px; padding: 12px 18px; border-right: 1px solid var(--contacts-line); }
+.contacts-trust-strip > span:last-child { border-right: 0; }
+.contacts-trust-strip .anticon { grid-row: 1 / 3; align-self: center; color: var(--contacts-ding); font-size: 22px; }
+.contacts-trust-strip strong { font-size: 13px; font-variant-numeric: tabular-nums; }
+.contacts-trust-strip small { color: var(--contacts-muted); font-size: 11px; }
+.contacts-workbench { display: grid; min-height: 650px; grid-template-columns: 244px minmax(0, 1fr); overflow: hidden; border: 1px solid var(--contacts-line); border-radius: 18px; background: #fff; box-shadow: 0 18px 48px rgb(23 32 51 / 7%); }
+.contacts-departments { padding: 18px 10px; border-right: 1px solid var(--contacts-line); background: #f8fafc; }
+.contacts-departments > .ant-typography { display: block; padding: 0 10px 10px; color: #7a8799; font-size: 11px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+.contacts-departments button { display: grid; width: 100%; min-height: 44px; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 0 10px; border: 0; border-radius: 9px; color: #435169; background: transparent; font: inherit; font-size: 13px; text-align: left; cursor: pointer; transition: color 140ms ease, background 140ms ease, transform 100ms ease; }
+.contacts-departments button:hover, .contacts-departments button.is-active { color: #155eef; background: #eaf1ff; }
+.contacts-departments button:active { transform: scale(.98); }
+.contacts-departments button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.contacts-departments button b { min-width: 24px; color: #758299; font-size: 10px; font-variant-numeric: tabular-nums; text-align: right; }
+.contacts-list-panel { min-width: 0; }
+.contacts-command-bar { display: grid; min-height: 66px; grid-template-columns: minmax(220px, 420px) auto; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 18px; border-bottom: 1px solid var(--contacts-line); }
+.contacts-command-bar .ant-input-affix-wrapper { min-height: 42px; background: #f4f7fa; }
+.contacts-command-bar > .ant-typography { font-size: 12px; font-variant-numeric: tabular-nums; }
+.contacts-list { margin: 0; padding: 0; list-style: none; }
+.contacts-list-item { display: grid; min-height: 82px; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 14px 20px; border-bottom: 1px solid var(--contacts-line); }
+.contacts-list-main { display: grid; min-width: 0; gap: 4px; }
+.contacts-list-action { margin-left: 18px; }
+.contacts-list .ant-btn { min-height: 40px; }
+.contacts-avatar { color: #155eef !important; background: #e8f0ff !important; font-weight: 750; }
+.contacts-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--contacts-muted); font-size: 12px; }
+.contacts-meta span + span::before { margin-right: 14px; color: #c3ccd8; content: '·'; }
+.contacts-skeleton { padding: 24px; }
+.contacts-empty { margin: 130px 0; }
+.contacts-modal-alert { margin-bottom: 16px; }
+
+.sso-callback-shell { display: grid; min-height: 100dvh; padding: 24px; place-items: center; color: #172033; background: #eef3f8; }
+.sso-callback-card { width: min(560px, 100%); border: 1px solid rgb(21 94 239 / 10%); border-radius: 22px !important; box-shadow: 0 24px 72px rgb(23 32 51 / 11%); }
+.sso-callback-success { color: #138a4b; }
+.sso-callback-footnote { display: block; padding: 0 24px 22px; text-align: center; }
 
 .form-studio {
   --form-ink: #162235;
@@ -750,6 +790,25 @@
   .console-header a .anticon { font-size: 16px; }
   .console-content { padding: 18px 14px 42px; }
   .console-environment { display: none; }
+  .contacts-heading { align-items: flex-start; }
+  .contacts-trust-strip { grid-template-columns: 1fr; }
+  .contacts-trust-strip > span { border-right: 0; border-bottom: 1px solid var(--contacts-line); }
+  .contacts-trust-strip > span:last-child { border-bottom: 0; }
+  .contacts-workbench { grid-template-columns: 1fr; }
+  .contacts-departments { display: flex; gap: 6px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--contacts-line); }
+  .contacts-departments > .ant-typography { display: none; }
+  .contacts-departments button { width: auto; min-width: 132px; }
+}
+
+@media (max-width: 560px) {
+  .contacts-heading { flex-direction: column; }
+  .contacts-command-bar { grid-template-columns: 1fr; padding: 12px; }
+  .contacts-list-item { grid-template-columns: auto minmax(0, 1fr); align-items: flex-start; padding: 14px; }
+  .contacts-list-action { grid-column: 1 / -1; width: 100%; margin: 0; }
+  .contacts-list-action .ant-btn { width: 100%; }
+  .contacts-meta { display: grid; gap: 2px; }
+  .contacts-meta span + span::before { display: none; }
+  .sso-callback-shell { padding: 12px; }
 }
 
 .consent-card {

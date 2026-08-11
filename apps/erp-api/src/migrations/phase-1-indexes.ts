@@ -29,7 +29,7 @@ import {
 } from '../modules/org/persistence/org.schemas.js';
 import { OutboxRecordSchema } from '../modules/org/persistence/outbox.schema.js';
 
-const MIGRATION_ID = 'phase-1-indexes-v3';
+const MIGRATION_ID = 'phase-1-indexes-v4';
 const LOCK_ID = `${MIGRATION_ID}:lock`;
 const LOCK_TTL_MS = 30 * 60 * 1_000;
 const INDEX_NAME_PATTERN = /^[A-Za-z0-9._:-]{1,127}$/;

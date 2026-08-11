@@ -51,6 +51,13 @@
   `FORM_DATA_ENCRYPTION_KEYS` 已存在。CMS、Redis、MongoDB、专业算薪和同机其他
   项目容器均未重启或覆盖。准确
   边界见 `docs/handover/BUSINESS_RUNTIME_HANDOVER_2026-08-10.md`（同时提供 HTML）。
+- 2026-08-11 已在仓库补齐企业通讯录与钉钉扫码登录：ERP Web 新增按可信部门范围
+  展示的 `/workspace/contacts`，管理员可复用 R3 加密链路发起员工钉钉开户；登录页
+  与 `/auth/callback/dingtalk` 已接通现有 SSO。钉钉通讯录 `userid` 与网页登录
+  `openId` 分字段绑定，首次可信扫码按 `corpId + unionId` 原子登记，后续逐字匹配。
+  Phase 1 索引迁移升级为只追加 `phase-1-indexes-v4`。仓库测试与浏览器布局复核已
+  通过；真实企业授权、Secret 注入、迁移执行、角色分配和实体扫码 UAT 尚未完成，
+  运行手册见 `docs/phase-1/09-dingtalk-contacts-sso-runbook.md`。
 - 2026-07-29 已交付标准 MCP 本地 stdio 入口，与生产 Streamable HTTP 共用
   `McpRuntimeService` 和 `AccessTokenVerifier`。启动要求秘密管理器注入短时
   Token 与 `erp:mcp:server:connect`，先预检、后逐消息复验，撤销/过期立即关闭；
